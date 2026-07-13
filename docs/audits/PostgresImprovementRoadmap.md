@@ -433,6 +433,45 @@ snapshot write skipping was not enabled or combined with this phase.
 - This follow-through does not enable PG-2 query optimization or PG-4 snapshot
   write skipping.
 
+### PG-1 / WORKER-0A correctness-ledger follow-through - code accepted, promotion hard-blocked
+
+- Additive metadata only: `leaderboard_scope_manifests`,
+  `scrape_writer_failures`, `scrape_phase_outcomes`, and durable failure/warning
+  columns on `scrape_log`. No leaderboard/history table rewrite, alternate
+  drive, or optional index build is part of this phase.
+- Published-source candidate construction requires a matching complete solo
+  manifest when `Features:EnforceScopeCompletenessManifests=true`; existing
+  physical row-count and content-fingerprint validation remains unchanged.
+- Solo and band manifest rows retain the candidate scrape ID even when
+  publication is rejected. Binary/JSON writer replay artifacts remain on the
+  mounted FST data root and are referenced by exact failed scope/page/row rows.
+- `scrape_log.status='failed'` is excluded from completed/publication fallback
+  resolution. The global pointer and per-scope map remain the only published
+  source contract.
+- Promotion requires one full candidate scrape with zero incomplete expected
+  manifests, zero writer failures, zero publication-critical phase failures,
+  exact physical/mapping validation, acceptable WAL/temp/CPU/memory/disk cost,
+  and a verified rollback to the three disabled enforcement flags.
+- This follow-through is a correctness dependency for later PG-2/PG-4 work; it
+  does not enable query optimization, physical write skipping, retention, or
+  broad maintenance.
+- Additive schema initialization completed without a leaderboard/history
+  rewrite. A candidate startup exposed a pre-existing unbounded logical-shadow
+  rollback scan after failed scrape `1237`; that run was stopped before network
+  scraping. Subsequent live attempts disabled the experimental logical shadow
+  writer only in candidate config, leaving physical snapshots authoritative.
+- Capacity guard remained scrape-allowed but below the seven-day target:
+  candidate-start free space was `95,961,432,064` bytes (`3.19` projected
+  days). No optional build, rewrite, repack, alternate-drive work, or
+  destructive cleanup was attempted.
+- Live promotion could not clear the data-parity gate because all configured
+  PIA exits were provider-blocked even after a complete 30-container reset.
+  Final production state is the accepted `824415e9` service/worker image,
+  worker held, published `1236`, public reads unfrozen, no ungranted locks, and
+  the additive tables retained for the next provider-valid window.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/worker0a-correctness-20260713T1552Z`.
+
 ## Phase PG-2: Run matched query A/Bs
 
 **Decision:** Accepted evaluation program  

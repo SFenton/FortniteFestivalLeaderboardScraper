@@ -30,7 +30,11 @@ psql_cmd -c """
 SELECT now() AS sampled_at;
 
 SELECT id, started_at, completed_at, now() - started_at AS age,
-       songs_scraped, total_entries, total_requests, total_bytes
+       songs_scraped, total_entries, total_requests, total_bytes,
+       COALESCE(to_jsonb(scrape_log)->>'status',
+                CASE WHEN completed_at IS NULL THEN 'running' ELSE 'completed' END) AS status,
+       to_jsonb(scrape_log)->>'failure_phase' AS failure_phase,
+       to_jsonb(scrape_log)->>'failure_message' AS failure_message
 FROM scrape_log
 ORDER BY id DESC
 LIMIT 5;

@@ -38,6 +38,161 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal(50_000, last.TotalEntries);
         Assert.NotNull(last.CompletedAt);
         Assert.False(last.EpicReportedOver100Pages);
+        Assert.Equal("completed", last.Status);
+    }
+
+    [Fact]
+    public void FailedCandidateRemainsVisibleAndCannotReplacePublishedScrape()
+    {
+        var publishedId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(publishedId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(publishedId, promoteCachedResponses: false);
+
+        foreach (var phase in PostScrapePhasePolicy.All
+                     .Where(static pair =>
+                         pair.Value == PostScrapePhaseCriticality.PublicationCritical)
+                     .Select(static pair => pair.Key))
+        {
+            var candidateId = Db.StartScrapeRun();
+            var ledger = new PostScrapeExecutionLedger();
+            ledger.Record(new PostScrapePhaseOutcome(
+                phase,
+                PostScrapePhaseCriticality.PublicationCritical,
+                false,
+                "injected"));
+
+            Assert.Throws<InvalidOperationException>(() =>
+                ScrapePublicationGuard.EnsureCanPublish(
+                    candidateId,
+                    ledger,
+                    enforcePublicationCriticalPhases: true));
+            Db.FailScrapeRun(candidateId, phase, "injected");
+
+            var runtime = Db.GetServiceRuntimeState(WorkerStatusPublisher.ScraperWorkerKey);
+            Assert.Equal(publishedId, runtime.PublishedScrape?.Id);
+            Assert.Equal(candidateId, runtime.LatestScrape?.Id);
+            Assert.Equal("failed", runtime.LatestScrape?.Status);
+            Assert.Equal(phase, runtime.LatestScrape?.FailurePhase);
+        }
+    }
+
+    [Fact]
+    public void BestEffortFailuresRemainVisibleAndAllowCorrectPublication()
+    {
+        var publishedId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(publishedId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(publishedId, promoteCachedResponses: false);
+
+        foreach (var phase in PostScrapePhasePolicy.All
+                     .Where(static pair =>
+                         pair.Value == PostScrapePhaseCriticality.BestEffort)
+                     .Select(static pair => pair.Key))
+        {
+            var candidateId = Db.StartScrapeRun();
+            var now = DateTime.UtcNow;
+            Db.RecordScrapePhaseOutcome(new ScrapePhaseOutcomeRecord(
+                candidateId,
+                phase,
+                "best_effort",
+                "failed",
+                now,
+                now.AddMilliseconds(1),
+                1,
+                "injected"));
+            var ledger = new PostScrapeExecutionLedger();
+            ledger.Record(new PostScrapePhaseOutcome(
+                phase,
+                PostScrapePhaseCriticality.BestEffort,
+                false,
+                "injected"));
+
+            ScrapePublicationGuard.EnsureCanPublish(
+                candidateId,
+                ledger,
+                enforcePublicationCriticalPhases: true);
+            Db.CompleteScrapeRun(candidateId, 1, 10, 1, 100);
+            Db.PublishScrapeRun(candidateId, promoteCachedResponses: false);
+
+            var runtime = Db.GetServiceRuntimeState(WorkerStatusPublisher.ScraperWorkerKey);
+            Assert.Equal(candidateId, runtime.PublishedScrape?.Id);
+            Assert.Equal(1, runtime.PublishedScrape?.BestEffortFailureCount);
+            Assert.Equal([phase], runtime.PublishedScrape?.BestEffortFailedPhases);
+        }
+    }
+
+    [Fact]
+    public void WriterFailuresPersistExactScopesAndFailedCandidateState()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        var occurredAt = DateTime.UtcNow;
+        var failure = new WriterBatchFailure(
+            "solo-online",
+            "Solo_Guitar",
+            [
+                new WriterFailedScope("song_1", 2, 150),
+                new WriterFailedScope("song_2", 1, 25),
+            ],
+            typeof(InvalidOperationException).FullName!,
+            "injected",
+            "/same-drive/replay",
+            occurredAt);
+        var drain = new WriterDrainResult(
+            "solo-online",
+            3,
+            175,
+            0,
+            0,
+            [failure],
+            "/same-drive/replay");
+
+        Db.RecordScrapeWriterFailures(scrapeId, [drain]);
+        Db.FailScrapeRun(scrapeId, "writer", "175 rows retained");
+
+        using var conn = DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT song_id, page_count, row_count, artifact_path
+            FROM scrape_writer_failures
+            WHERE scrape_id = @scrapeId
+            ORDER BY song_id
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal("song_1", reader.GetString(0));
+        Assert.Equal(2, reader.GetInt32(1));
+        Assert.Equal(150, reader.GetInt64(2));
+        Assert.Equal("/same-drive/replay", reader.GetString(3));
+        Assert.True(reader.Read());
+        Assert.Equal("song_2", reader.GetString(0));
+        Assert.Equal(1, reader.GetInt32(1));
+        Assert.Equal(25, reader.GetInt64(2));
+        Assert.False(reader.Read());
+
+        var runtime = Db.GetServiceRuntimeState(WorkerStatusPublisher.ScraperWorkerKey);
+        Assert.Equal("failed", runtime.LatestScrape?.Status);
+        Assert.Equal("writer", runtime.LatestScrape?.FailurePhase);
+        Assert.Throws<InvalidOperationException>(() =>
+            Db.CompleteScrapeRun(scrapeId, 1, 175, 1, 100));
+    }
+
+    [Fact]
+    public void CompletedButUnpublishedCandidateCanBeMarkedFailedAndCannotPublish()
+    {
+        var publishedId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(publishedId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(publishedId, promoteCachedResponses: false);
+
+        var candidateId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(candidateId, 1, 11, 1, 101);
+        Db.FailScrapeRun(candidateId, "publication", "injected publication failure");
+
+        var runtime = Db.GetServiceRuntimeState(WorkerStatusPublisher.ScraperWorkerKey);
+        Assert.Equal(candidateId, runtime.LatestScrape?.Id);
+        Assert.Equal("failed", runtime.LatestScrape?.Status);
+        Assert.Equal(publishedId, runtime.PublishedScrape?.Id);
+        Assert.Throws<InvalidOperationException>(() =>
+            Db.PublishScrapeRun(candidateId, promoteCachedResponses: false));
     }
 
     [Fact]

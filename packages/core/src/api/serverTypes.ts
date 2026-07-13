@@ -567,6 +567,8 @@ export type ServiceInfoResponse = {
     startedAt: string;
     completedAt: string | null;
     publishedAt?: string | null;
+    bestEffortFailureCount?: number;
+    bestEffortFailedPhases?: string[];
   } | null;
   currentUpdate: {
     status: 'idle' | 'updating' | 'failed' | 'stalled';

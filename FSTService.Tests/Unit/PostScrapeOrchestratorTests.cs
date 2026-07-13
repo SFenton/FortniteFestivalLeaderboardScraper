@@ -18,6 +18,9 @@ namespace FSTService.Tests.Unit;
 
 public class PostScrapeOrchestratorTests : IDisposable
 {
+    public static IEnumerable<object[]> ClassifiedPhases =>
+        PostScrapePhasePolicy.All.Select(static pair => new object[] { pair.Key, pair.Value });
+
     private readonly string _tempDir;
     private readonly InMemoryMetaDatabase _metaFixture = new();
     private readonly MetaDatabase _metaDb;
@@ -301,7 +304,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task RefreshRegisteredUsers_ThrowsException_DoesNotPropagate()
+    public async Task RefreshRegisteredUsers_PropagatesFailureForPhaseVisibility()
     {
         _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
             .Returns("test-access-token");
@@ -319,12 +322,12 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         var ctx = CreateContext(registeredIds: new HashSet<string> { "user-1" });
 
-        // Should not throw
-        await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None));
     }
 
     [Fact]
-    public async Task RefreshRegisteredUsers_WhenSongMachineTimesOut_Continues()
+    public async Task RefreshRegisteredUsers_WhenSongMachineTimesOut_PropagatesVisibleTimeout()
     {
         _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
             .Returns("test-access-token");
@@ -386,16 +389,16 @@ public class PostScrapeOrchestratorTests : IDisposable
             ]);
 
         var sw = Stopwatch.StartNew();
-        var result = await sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
+        await Assert.ThrowsAsync<TimeoutException>(
+            () => sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None));
         sw.Stop();
 
-        Assert.Equal(0, result.UsersProcessed);
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5), $"Refresh should be bounded but took {sw.Elapsed}.");
         Assert.Contains(_log.Entries, e => e.Message.Contains("Post-scrape registered-user refresh timed out", StringComparison.Ordinal));
     }
 
     [Fact]
-    public async Task RefreshRegisteredUsers_WhenSeasonDiscoveryTimesOut_Continues()
+    public async Task RefreshRegisteredUsers_WhenSeasonDiscoveryTimesOut_PropagatesVisibleTimeout()
     {
         _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
             .Returns("test-access-token");
@@ -449,10 +452,10 @@ public class PostScrapeOrchestratorTests : IDisposable
         var ctx = CreateContext(registeredIds: new HashSet<string> { "user-1" });
 
         var sw = Stopwatch.StartNew();
-        var result = await sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
+        await Assert.ThrowsAsync<TimeoutException>(
+            () => sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None));
         sw.Stop();
 
-        Assert.Equal(0, result.UsersProcessed);
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5), $"Refresh should be bounded but took {sw.Elapsed}.");
         Assert.Contains(_log.Entries, e => e.Message.Contains("Post-scrape registered-user refresh timed out", StringComparison.Ordinal));
         await _cyclicalMachine.DidNotReceiveWithAnyArgs().AttachAsync(
@@ -1508,7 +1511,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task ComputeRankingsAsync_ReturnsFalse_OnFailure()
+    public async Task ComputeRankingsAsync_PropagatesFailure()
     {
         // Seed data so rankings computation actually runs, then corrupt a required
         // table to trigger an error inside the rankings CTE.
@@ -1528,8 +1531,61 @@ public class PostScrapeOrchestratorTests : IDisposable
         }
 
         var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
-        var result = await _sut.ComputeRankingsAsync(service, CancellationToken.None);
-        Assert.False(result);
+        await Assert.ThrowsAsync<Npgsql.PostgresException>(
+            () => _sut.ComputeRankingsAsync(service, CancellationToken.None));
+    }
+
+    [Theory]
+    [MemberData(nameof(ClassifiedPhases))]
+    public async Task ClassifiedPhaseFaultsHaveExplicitPublicationBehavior(
+        string phase,
+        PostScrapePhaseCriticality criticality)
+    {
+        var ctx = CreateContext();
+
+        await _sut.RunClassifiedPhaseForTestAsync(
+            ctx,
+            phase,
+            () => throw new InvalidOperationException($"fault:{phase}"));
+
+        var outcome = Assert.Single(ctx.PostScrapeOutcomes.Outcomes);
+        Assert.Equal(phase, outcome.Phase);
+        Assert.Equal(criticality, outcome.Criticality);
+        Assert.False(outcome.Success);
+
+        if (criticality == PostScrapePhaseCriticality.PublicationCritical)
+        {
+            Assert.Throws<InvalidOperationException>(() =>
+                ScrapePublicationGuard.EnsureCanPublish(
+                    42,
+                    ctx.PostScrapeOutcomes,
+                    enforcePublicationCriticalPhases: true));
+        }
+        else
+        {
+            ScrapePublicationGuard.EnsureCanPublish(
+                42,
+                ctx.PostScrapeOutcomes,
+                enforcePublicationCriticalPhases: true);
+        }
+    }
+
+    [Fact]
+    public void PhasePolicyRejectsUnclassifiedPhasesAndExposesBestEffortFailures()
+    {
+        Assert.Throws<InvalidOperationException>(() =>
+            PostScrapePhasePolicy.GetCriticality("UnclassifiedPhase"));
+
+        var ledger = new PostScrapeExecutionLedger();
+        ledger.Record(new PostScrapePhaseOutcome(
+            "Checkpoint",
+            PostScrapePhaseCriticality.BestEffort,
+            false,
+            "injected"));
+
+        Assert.True(ledger.CanPublish);
+        Assert.Empty(ledger.FailedPublicationCriticalPhases);
+        Assert.Equal("Checkpoint", Assert.Single(ledger.FailedBestEffortPhases).Phase);
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•

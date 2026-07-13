@@ -625,8 +625,6 @@ public sealed class ResilientHttpExecutor
                 Interlocked.Increment(ref _totalHttpSends);
                 op.SetState(InflightState.Sending);
                 res = await _http.SendAsync(sentRequest, sendCts.Token);
-                if (res.IsSuccessStatusCode)
-                    _proxyHealth?.ReportSuccess(sentRequest);
             }
             catch (HttpRequestException ex)
             {
@@ -701,23 +699,24 @@ public sealed class ResilientHttpExecutor
                 continue; // transient timeout — retry indefinitely
             }
 
-            if (res.IsSuccessStatusCode)
-            {
-                limiter?.ReportSuccess();
-                return res;
-            }
-
             var statusCode = (int)res.StatusCode;
+            var disguisedCdnBlock =
+                res.IsSuccessStatusCode
+                && IsEpicEventsRequest(sentRequest)
+                && string.Equals(
+                    res.Content.Headers.ContentType?.MediaType,
+                    "text/html",
+                    StringComparison.OrdinalIgnoreCase);
 
             // ── CDN block detection (403 with non-JSON body) ──────────
             // On CDN block: try the curl transport fallback first. If that does
             // not recover, isolate the failure to the selected proxy before ever
             // entering the legacy global CDN probe.
-            if (statusCode == 403)
+            if (statusCode == 403 || disguisedCdnBlock)
             {
                 op.SetState(InflightState.ReadingBody);
                 var body = await res.Content.ReadAsStringAsync(ct);
-                bool isCdnBlock = !body.TrimStart().StartsWith('{');
+                bool isCdnBlock = disguisedCdnBlock || !body.TrimStart().StartsWith('{');
 
                 if (isCdnBlock)
                 {
@@ -791,6 +790,13 @@ public sealed class ResilientHttpExecutor
                 var mediaType = res.Content.Headers.ContentType?.MediaType ?? "application/json";
                 res.Content.Dispose();
                 res.Content = new StringContent(body, System.Text.Encoding.UTF8, mediaType);
+            }
+
+            if (res.IsSuccessStatusCode)
+            {
+                limiter?.ReportSuccess();
+                _proxyHealth?.ReportSuccess(sentRequest);
+                return res;
             }
 
             bool retryable = statusCode == 429 || statusCode >= 500;
@@ -1005,6 +1011,15 @@ public sealed class ResilientHttpExecutor
         if (!IsEpicEventsRequest(request))
             return null;
 
+        // A configured proxy pool can isolate the failed exit and retry through
+        // another proxy. Bypassing that pool with a direct curl process turns CDN
+        // HTML into misleading HTTP 200 responses and adds an unnecessary wire send.
+        if (_proxyHealth is IProxyCdnBlockHandler
+            && request.Options.TryGetValue(
+                ProxyRequestState.EndpointIndex,
+                out _))
+            return null;
+
         if (CdnBlockFallbackOverride is not null)
             return await CdnBlockFallbackOverride(request, label, ct);
 
@@ -1046,13 +1061,46 @@ public sealed class ResilientHttpExecutor
     private static bool IsEpicEventsRequest(HttpRequestMessage request)
         => request.RequestUri is { Host: "events-public-service-live.ol.epicgames.com" };
 
+    internal ProxyCdnBlockDecision ReportMalformedSuccessResponse(
+        HttpResponseMessage response,
+        string? label)
+    {
+        if (response.RequestMessage is not { } request
+            || !IsEpicEventsRequest(request))
+        {
+            return ProxyCdnBlockDecision.PauseGlobally;
+        }
+
+        Interlocked.Increment(ref _cdnBlocksDetected);
+        var decision = ProxyCdnBlockDecision.PauseGlobally;
+        if (_proxyHealth is IProxyCdnBlockHandler handler)
+        {
+            decision = handler.ReportCdnBlock(request);
+        }
+        else
+        {
+            _proxyHealth?.ReportFailure(request, ProxyFailureKind.CdnBlock);
+        }
+
+        _log.LogWarning(
+            "Malformed successful response for {Operation} was classified as a CDN block; decision={Decision}.",
+            label ?? "request",
+            decision);
+        return decision;
+    }
+
     private static async Task<bool> IsCdnBlockResponseAsync(HttpResponseMessage response, CancellationToken ct)
     {
-        if ((int)response.StatusCode != 403)
+        if ((int)response.StatusCode != 403 && !response.IsSuccessStatusCode)
             return false;
 
         var body = await response.Content.ReadAsStringAsync(ct);
-        return !body.TrimStart().StartsWith('{');
+        var trimmed = body.TrimStart();
+        var isJson = trimmed.StartsWith('{') || trimmed.StartsWith('[');
+        if ((int)response.StatusCode == 403)
+            return !isJson;
+
+        return !isJson;
     }
 
     /// <summary>

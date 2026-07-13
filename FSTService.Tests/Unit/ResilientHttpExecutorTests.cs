@@ -371,6 +371,145 @@ public sealed class ResilientHttpExecutorTests
     }
 
     [Fact]
+    public async Task SendAsync_EpicCdn403_WithProxyPool_SkipsCurlAndRetriesAlternateProxy()
+    {
+        var handler = new MockHttpMessageHandler();
+        var proxyHealth = new LocalCdnBlockReporter(
+            ProxyCdnBlockDecision.RetryOnAlternateProxy);
+        var fallbackCalls = 0;
+        var executor = new ResilientHttpExecutor(
+            new HttpClient(handler),
+            _log,
+            proxyHealth)
+        {
+            CdnRetryDelaysOverride = new TimeSpan[9],
+            CdnBlockFallbackOverride = (_, _, _) =>
+            {
+                Interlocked.Increment(ref fallbackCalls);
+                return Task.FromResult<HttpResponseMessage?>(
+                    new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(
+                            "<html>blocked</html>",
+                            System.Text.Encoding.UTF8,
+                            "text/html"),
+                    });
+            },
+        };
+
+        handler.EnqueueHtml403();
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+
+        using var response = await executor.SendAsync(
+            () =>
+            {
+                var request = MakeEpicEventsRequest();
+                request.Options.Set(ProxyRequestState.EndpointIndex, 0);
+                return request;
+            },
+            label: "html-200-fallback-test");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("""{"result":"ok"}""", await response.Content.ReadAsStringAsync());
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(1, executor.CdnBlocksDetected);
+        Assert.False(executor.IsCdnBlocked);
+        Assert.Equal(0, fallbackCalls);
+    }
+
+    [Fact]
+    public async Task SendAsync_EpicTransportFailure_WhenCurlFallbackReturnsHtml200_RetriesHttpClient()
+    {
+        var (executor, handler) = CreateExecutor();
+        handler.EnqueueException(new HttpRequestException("injected transport failure"));
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+        executor.CdnBlockFallbackOverride = (_, _, _) =>
+            Task.FromResult<HttpResponseMessage?>(
+                new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        "<html>blocked</html>",
+                        System.Text.Encoding.UTF8,
+                        "text/html"),
+                });
+
+        using var response = await executor.SendAsync(
+            () => MakeEpicEventsRequest(),
+            label: "html-200-transport-fallback-test");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("""{"result":"ok"}""", await response.Content.ReadAsStringAsync());
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
+    public void ReportMalformedSuccessResponse_ReportsRoutedProxyCdnBlock()
+    {
+        var reporter = new LocalCdnBlockReporter(
+            ProxyCdnBlockDecision.RetryOnAlternateProxy);
+        var executor = new ResilientHttpExecutor(
+            new HttpClient(new MockHttpMessageHandler()),
+            _log,
+            reporter);
+        using var request = MakeEpicEventsRequest();
+        request.Options.Set(ProxyRequestState.EndpointIndex, 3);
+        using var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            RequestMessage = request,
+            Content = new StringContent(
+                "<html>blocked</html>",
+                System.Text.Encoding.UTF8,
+                "text/html"),
+        };
+
+        var decision = executor.ReportMalformedSuccessResponse(
+            response,
+            "malformed-success-test");
+
+        Assert.Equal(ProxyCdnBlockDecision.RetryOnAlternateProxy, decision);
+        Assert.Equal(1, reporter.CdnBlocks);
+        Assert.Equal(1, executor.CdnBlocksDetected);
+    }
+
+    [Fact]
+    public async Task SendAsync_EpicHtml200_WithProxyPool_RetriesAlternateProxy()
+    {
+        var handler = new MockHttpMessageHandler();
+        var reporter = new LocalCdnBlockReporter(
+            ProxyCdnBlockDecision.RetryOnAlternateProxy);
+        var executor = new ResilientHttpExecutor(
+            new HttpClient(handler),
+            _log,
+            reporter)
+        {
+            CdnRetryDelaysOverride = new TimeSpan[9],
+        };
+        handler.EnqueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "<html>blocked</html>",
+                System.Text.Encoding.UTF8,
+                "text/html"),
+        });
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+
+        using var response = await executor.SendAsync(
+            () =>
+            {
+                var request = MakeEpicEventsRequest();
+                request.Options.Set(ProxyRequestState.EndpointIndex, 0);
+                return request;
+            },
+            label: "disguised-cdn-test");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("""{"result":"ok"}""", await response.Content.ReadAsStringAsync());
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(1, reporter.CdnBlocks);
+        Assert.Equal(1, reporter.Successes);
+    }
+
+    [Fact]
     public async Task SendAsync_Cdn403_LaunchesProbeAndThrows()
     {
         var handler = new MockHttpMessageHandler();

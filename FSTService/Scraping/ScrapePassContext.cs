@@ -18,4 +18,5 @@ public sealed class ScrapePassContext
     public bool EpicReportedOver100Pages { get; init; }
     public bool LeaderboardScrapeCompleted { get; init; } = true;
     public bool RankingsComputedSuccessfully { get; set; }
+    public PostScrapeExecutionLedger PostScrapeOutcomes { get; } = new();
 }

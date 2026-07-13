@@ -30,6 +30,63 @@ public class DeepScrapeTests
         return $@"{{""page"":{pageNum},""totalPages"":{totalPages},""entries"":[{entryJson}]}}";
     }
 
+    [Fact]
+    public async Task ScrapeManySongs_CoordinatedDeepScopePersistsExactlyOnceWithAllRows()
+    {
+        var (scraper, handler) = CreateScraper();
+
+        handler.EnqueueJsonOk(MakePage(0, 4, ("wave1-over", 1200), ("wave1-valid", 900)));
+        handler.EnqueueJsonOk(MakePage(1, 4, ("wave1-valid-2", 800)));
+        handler.EnqueueJsonOk(MakePage(2, 4, ("deep-valid-1", 700)));
+        handler.EnqueueJsonOk(MakePage(3, 4, ("deep-valid-2", 600)));
+
+        var callbacks = new List<GlobalLeaderboardResult>();
+        var results = await scraper.ScrapeManySongsAsync(
+            [
+                new GlobalLeaderboardScraper.SongScrapeRequest
+                {
+                    SongId = "song1",
+                    Instruments = ["Solo_Guitar"],
+                    MaxScores = new SongMaxScores { MaxLeadScore = 1000 },
+                },
+            ],
+            "token",
+            "acct",
+            maxConcurrency: 1,
+            onSongComplete: (_, scopeResults) =>
+            {
+                callbacks.AddRange(scopeResults.Select(result => new GlobalLeaderboardResult
+                {
+                    SongId = result.SongId,
+                    Instrument = result.Instrument,
+                    Entries = result.Entries.ToList(),
+                    EntriesCount = result.EntriesCount,
+                    TotalPages = result.TotalPages,
+                    ReportedTotalPages = result.ReportedTotalPages,
+                    PagesScraped = result.PagesScraped,
+                    Requests = result.Requests,
+                    BytesReceived = result.BytesReceived,
+                }));
+                return ValueTask.CompletedTask;
+            },
+            maxPages: 2,
+            overThresholdExtraPages: 2,
+            validEntryTarget: 4,
+            deferDeepScrape: true);
+
+        var persisted = Assert.Single(callbacks);
+        Assert.Equal(
+            ["wave1-over", "wave1-valid", "wave1-valid-2", "deep-valid-1", "deep-valid-2"],
+            persisted.Entries.Select(entry => entry.AccountId));
+        Assert.Equal(5, persisted.EntriesCount);
+        Assert.Equal(4, persisted.PagesScraped);
+
+        var returned = Assert.Single(results["song1"]);
+        Assert.Empty(returned.Entries);
+        Assert.Equal(5, returned.EntriesCount);
+        Assert.Equal(4, returned.PagesScraped);
+    }
+
     // ─── No CHOpt max → normal behavior ──────────────────
 
     [Fact]
@@ -403,6 +460,29 @@ public class DeepScrapeTests
 
         // Only wave 1 entries
         Assert.Equal(3, result.Entries.Count);
+        Assert.Equal(2, result.PagesScraped);
+    }
+
+    [Fact]
+    public async Task DeferredValidTarget_AlreadyMetInWave1_DoesNotCreateCoordinatorJob()
+    {
+        var (scraper, handler) = CreateScraper();
+        handler.EnqueueJsonOk(MakePage(0, 5, ("p1", 1100), ("p2", 900)));
+        handler.EnqueueJsonOk(MakePage(1, 5, ("p3", 800)));
+
+        var result = await scraper.ScrapeLeaderboardAsync(
+            "song1",
+            "Solo_Guitar",
+            "token",
+            "acct",
+            maxPages: 2,
+            choptMaxScore: 1000,
+            validEntryTarget: 2,
+            deferDeepScrape: true);
+
+        Assert.Null(result.DeferredDeepScrape);
+        Assert.Null(result.CompletenessManifest?.DeepStartPage);
+        Assert.Equal(3, result.EntriesCount);
         Assert.Equal(2, result.PagesScraped);
     }
 

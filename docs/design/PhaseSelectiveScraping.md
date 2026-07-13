@@ -65,6 +65,40 @@ When multiple flags enable phases on the solo chain, all phases between the lowe
 
 **Example:** `--solo-scrape --solo-leaderboards` enables positions 1 and 4–8. The resolver fills positions 2–3, resulting in all 8 solo phases running.
 
+## Publication Criticality
+
+Phase selection controls what runs; publication criticality controls whether a
+selected phase may fail without rejecting the candidate scrape. Every
+post-scrape operation has one explicit classification in
+`PostScrapePhasePolicy`.
+
+### Publication-critical
+
+- rank recomputation;
+- early and final shadow-snapshot activation;
+- legacy band scrape, band extraction, and band projection maintenance;
+- solo ranking, rivals, and player-stats generation;
+- solo current-projection refresh;
+- API response precomputation required by published routes.
+
+A failure is persisted in `scrape_phase_outcomes`. When
+`Features:EnforcePublicationCriticalPhases=true`, the candidate remains
+`failed`, the global publication pointer does not advance, and public reads
+return to the prior mapped scrape.
+
+### Best-effort
+
+- FirstSeenSeason calculation and account-name resolution;
+- registered-user refresh, targeted band discovery/processing, and deferred
+  registration sync;
+- checkpoints;
+- optional improvement notifications;
+- excess-row and history-retention cleanup.
+
+Best-effort failures are also persisted and appear as warnings on the
+published scrape in `/api/service-info`. They do not block publication because
+their outputs are retryable or outside the published route contract.
+
 ## Flag Expansion Examples
 
 ### Group flags

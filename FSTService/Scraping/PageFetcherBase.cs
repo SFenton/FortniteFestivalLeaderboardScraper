@@ -130,6 +130,7 @@ public abstract class PageFetcherBase<TEntry>
         }
 
         // Outer loop: retries on transient 403 and 500 with escalating backoff.
+        var exhaustedStatus = GlobalLeaderboardScraper.FetchStatus.RetryExhausted;
         for (int fetchAttempt = 0; fetchAttempt < 2; fetchAttempt++)
         {
             if (fetchAttempt > 0)
@@ -149,7 +150,7 @@ public abstract class PageFetcherBase<TEntry>
                     songId, type, page, ex.Message);
                 Interlocked.Increment(ref TotalRetries);
                 Progress.ReportRetry();
-                return (null, 0, GlobalLeaderboardScraper.FetchStatus.OtherFailure);
+                return (null, 0, GlobalLeaderboardScraper.FetchStatus.RetryExhausted);
             }
 
             using (res)
@@ -168,7 +169,17 @@ public abstract class PageFetcherBase<TEntry>
 
                     Log.LogWarning("Failed to parse {Song}/{Type} page {Page}: ContentLength={CL}",
                         songId, type, page, contentLength);
-                    return (null, 0, GlobalLeaderboardScraper.FetchStatus.OtherFailure);
+                    if (string.Equals(
+                            res.Content.Headers.ContentType?.MediaType,
+                            "text/html",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        Executor.ReportMalformedSuccessResponse(res, label);
+                    }
+                    exhaustedStatus = GlobalLeaderboardScraper.FetchStatus.ParseFailure;
+                    Interlocked.Increment(ref TotalRetries);
+                    Progress.ReportRetry();
+                    continue;
                 }
 
                 var statusCode = (int)res.StatusCode;
@@ -205,6 +216,9 @@ public abstract class PageFetcherBase<TEntry>
 
                 if (statusCode == 403 || statusCode == 500)
                 {
+                    exhaustedStatus = statusCode == 403
+                        ? GlobalLeaderboardScraper.FetchStatus.Forbidden
+                        : GlobalLeaderboardScraper.FetchStatus.RetryExhausted;
                     Progress.ReportRetry();
                     continue;
                 }
@@ -219,13 +233,13 @@ public abstract class PageFetcherBase<TEntry>
 
                 Log.LogWarning("Leaderboard request failed for {Song}/{Type} page {Page}: {StatusCode} {Body}",
                     songId, type, page, statusCode, errorBody);
-                return (null, 0, GlobalLeaderboardScraper.FetchStatus.OtherFailure);
+                return (null, 0, GlobalLeaderboardScraper.FetchStatus.HttpFailure);
             }
         }
 
         Log.LogWarning("Exhausted all retry attempts for {Song}/{Type} page {Page}.", songId, type, page);
         Interlocked.Increment(ref TotalRetries);
-        return (null, 0, GlobalLeaderboardScraper.FetchStatus.OtherFailure);
+        return (null, 0, exhaustedStatus);
     }
 
     // ── Helpers for subclass orchestration methods ────────────

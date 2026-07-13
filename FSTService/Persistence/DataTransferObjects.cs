@@ -921,6 +921,12 @@ public sealed class ScrapeRunInfo
     public int TotalRequests { get; init; }
     public long TotalBytes { get; init; }
     public bool EpicReportedOver100Pages { get; init; }
+    public string Status { get; init; } = "running";
+    public string? FailedAt { get; init; }
+    public string? FailurePhase { get; init; }
+    public string? FailureMessage { get; init; }
+    public int BestEffortFailureCount { get; init; }
+    public IReadOnlyList<string> BestEffortFailedPhases { get; init; } = [];
 }
 
 /// <summary>

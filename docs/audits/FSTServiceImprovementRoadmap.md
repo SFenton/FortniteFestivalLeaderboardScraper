@@ -319,6 +319,34 @@ and old cache artifacts.
   passing: two known pre-existing fixtures and one load-sensitive timeout that
   passed immediately in isolation. Settings status tests passed `56/56`.
 
+**WORKER-0A status follow-through - code accepted, live promotion hard-blocked**
+
+- Candidate scrape state is now durable in `scrape_log`, including failure
+  time, phase, and message. `/api/service-info` can therefore report a failed
+  candidate even after the worker's last-operation slot advances or the worker
+  restarts.
+- Published scrapes expose best-effort phase warning count/names. Those
+  warnings remain distinct from candidate failure: public data is current and
+  published, while retryable cleanup/notification/enrichment failures stay
+  visible.
+- Publication-critical phase, writer, or scope-manifest failure leaves
+  `publishedScrapeId` and all mapped reads on the prior generation. A completed
+  but not yet published row can be marked failed, and a failed row cannot later
+  be completed or published accidentally.
+- Candidate service restarts kept `/readyz`, the festivalweb shell, and
+  `/api/service-info` healthy. Failed candidate IDs `1237`-`1242` remained
+  visibly failed while `publishedScrapeId=1236`; public reads were unfrozen
+  after each stopped/rejected attempt.
+- The final production rollback restored `fstservice:service02-824415e9`.
+  Representative solo and band leaderboard bodies exactly matched the
+  pre-candidate baseline; the song route changed only with the normal item-shop
+  refresh. Published-source mapping remained `6,138` scopes /
+  `39,588,650` rows.
+- Live promotion is hard-blocked because all refreshed PIA exits returned CDN
+  blocks/timeouts and no complete candidate scrape could begin. The status/API
+  code remains committed behind worker enforcement flags for the next valid
+  provider window.
+
 ### SERVICE-0.3 - Protect or remove token-backed diagnostics
 
 **Evidence**

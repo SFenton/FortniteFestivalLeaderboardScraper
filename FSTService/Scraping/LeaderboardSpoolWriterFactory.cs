@@ -168,11 +168,13 @@ public static class LeaderboardSpoolWriterFactory
                 "Dropped {Songs} songs / {Entries:N0} entries. This will recur every scrape until DatabaseInitializer partitions are added. " +
                 "SqlState={SqlState} Message={Message}",
                 instrument, batch.Count, batch.Sum(b => b.Entries.Count), pex.SqlState, pex.MessageText);
+            throw;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            log.LogError(ex, "Spool [solo] flush failed for {Instrument} ({Songs} songs, {Entries:N0} entries). Data will be re-scraped next pass.",
+            log.LogError(ex, "Spool [solo] flush failed for {Instrument} ({Songs} songs, {Entries:N0} entries). The failed rows will be retained for replay.",
                 instrument, batch.Count, batch.Sum(b => b.Entries.Count));
+            throw;
         }
     }
 

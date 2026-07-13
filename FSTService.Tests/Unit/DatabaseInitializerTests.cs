@@ -139,6 +139,45 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public async Task EnsureSchemaAsync_creates_worker_correctness_ledgers()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT
+                to_regclass('public.leaderboard_scope_manifests') IS NOT NULL,
+                to_regclass('public.scrape_writer_failures') IS NOT NULL,
+                to_regclass('public.scrape_phase_outcomes') IS NOT NULL,
+                EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'scrape_log'
+                      AND column_name = 'status'
+                      AND is_nullable = 'NO'
+                ),
+                EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'scrape_log'
+                      AND column_name = 'best_effort_failed_phases'
+                      AND data_type = 'ARRAY'
+                )
+            """;
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.True(reader.GetBoolean(0));
+        Assert.True(reader.GetBoolean(1));
+        Assert.True(reader.GetBoolean(2));
+        Assert.True(reader.GetBoolean(3));
+        Assert.True(reader.GetBoolean(4));
+    }
+
+    [Fact]
     public async Task EnsureSchemaAsync_does_not_recreate_retired_composite_history_latest_index()
     {
         await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);

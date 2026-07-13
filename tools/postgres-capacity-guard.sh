@@ -154,7 +154,12 @@ sql_result="$(
             SELECT
                 pg_database_size(current_database()),
                 COALESCE((SELECT SUM(size)::bigint FROM pg_ls_waldir()), 0),
-                COALESCE((SELECT MAX(id) FROM scrape_log WHERE completed_at IS NULL), 0),
+                COALESCE((
+                    SELECT MAX(id)
+                    FROM scrape_log
+                    WHERE completed_at IS NULL
+                      AND COALESCE(to_jsonb(scrape_log)->>'status', 'running') = 'running'
+                ), 0),
                 COALESCE((SELECT published_scrape_id FROM scrape_publication_state WHERE id = TRUE), 0),
                 COALESCE((SELECT public_reads_frozen FROM scrape_publication_state WHERE id = TRUE), FALSE),
                 COALESCE((SELECT public_reads_frozen_reason FROM scrape_publication_state WHERE id = TRUE), ''),

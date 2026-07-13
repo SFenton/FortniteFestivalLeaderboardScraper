@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Services;
@@ -119,6 +120,11 @@ public sealed class ScrapeOrchestrator
         // After fetch completes: drop indexes → bulk flush → recreate indexes.
         var spoolDir = Path.Combine(Path.GetFullPath(opts.DataDirectory), "spool");
         var aggregates = new GlobalLeaderboardPersistence.PipelineAggregates();
+        var persistedSongsWithData = new ConcurrentDictionary<string, byte>(
+            StringComparer.OrdinalIgnoreCase);
+        var writerResults = new List<WriterDrainResult>();
+        LeaderboardScopeCoverageResult? soloCoverageResult = null;
+        Exception? soloCoverageFailure = null;
         int totalRequests = 0;
         long totalBytes = 0;
 
@@ -138,6 +144,7 @@ public sealed class ScrapeOrchestrator
                     opts.BoundedChannelCapacity,
                     opts.OnlineWriteBatchPages,
                     opts.OnlineDbWriterConcurrency,
+                    spoolDir,
                     passCt);
             }
             else
@@ -214,7 +221,7 @@ public sealed class ScrapeOrchestrator
 
                 aggregates.AddEntries(result.EntriesCount);
             }
-            if (hasData)
+            if (hasData && persistedSongsWithData.TryAdd(songId, 0))
             {
                 aggregates.IncrementSongsWithData();
                 aggregates.AddChangedSongId(songId);
@@ -300,19 +307,23 @@ public sealed class ScrapeOrchestrator
             if (useOnlineSoloWriter)
             {
                 _progress.SetSubOperation("draining_solo_writes");
-                await _persistence.DrainOnlineSoloWriterAsync();
+                writerResults.Add(await _persistence.DrainOnlineSoloWriterAsync());
             }
             else
             {
                 // ── Post-fetch bulk flush for solo: drop solo indexes → flush → recreate ──
                 _progress.SetSubOperation("dropping_solo_indexes");
                 _persistence.DropSoloIndexes();
-
-                _progress.SetSubOperation("flushing_solo");
-                await _persistence.FlushSpoolAsync(_progress);
-
-                _progress.SetSubOperation("creating_solo_indexes");
-                _persistence.CreateSoloIndexes();
+                try
+                {
+                    _progress.SetSubOperation("flushing_solo");
+                    writerResults.Add(await _persistence.FlushSpoolAsync(_progress));
+                }
+                finally
+                {
+                    _progress.SetSubOperation("creating_solo_indexes");
+                    _persistence.CreateSoloIndexes();
+                }
             }
 
             // ── Detect score changes for registered users (solo data only) ──
@@ -399,31 +410,38 @@ public sealed class ScrapeOrchestrator
                 populationItems.Count);
         }
 
-        if (doSoloScrape && _persistence.WritePublishedScopeSources)
+        if (doSoloScrape
+            && (_persistence.WritePublishedScopeSources
+                || _persistence.EnforceScopeCompletenessManifests)
+            && !writerResults.Any(static result => !result.IsSuccess))
         {
             var expectedPairs = BuildExpectedSoloLeaderboardPairs(scrapeRequests);
             var coverageStopwatch = System.Diagnostics.Stopwatch.StartNew();
-            var coverage = _persistence.RecordLeaderboardScopeCoverage(
-                scrapeId,
-                allResults.Values.SelectMany(static results => results),
-                expectedPairs);
-            coverageStopwatch.Stop();
-            _log.LogInformation(
-                "Recorded published-source coverage for scrape {ScrapeId}: expected={Expected:N0}, observed={Observed:N0}, persisted={Persisted:N0}, missing={Missing:N0}, incomplete={Incomplete:N0}, elapsed={Elapsed}.",
-                scrapeId,
-                coverage.ExpectedScopeCount,
-                coverage.ObservedScopeCount,
-                coverage.PersistedScopeCount,
-                coverage.MissingScopeCount,
-                coverage.IncompleteScopeCount,
-                coverageStopwatch.Elapsed);
-            if (!coverage.IsComplete)
+            try
             {
-                throw new InvalidOperationException(
-                    $"Scrape {scrapeId} published-source coverage is incomplete: " +
-                    $"expected={coverage.ExpectedScopeCount}, observed={coverage.ObservedScopeCount}, " +
-                    $"persisted={coverage.PersistedScopeCount}, missing={coverage.MissingScopeCount}, " +
-                    $"incomplete={coverage.IncompleteScopeCount}.");
+                soloCoverageResult = _persistence.RecordLeaderboardScopeCoverage(
+                    scrapeId,
+                    allResults.Values.SelectMany(static results => results),
+                    expectedPairs);
+                coverageStopwatch.Stop();
+                _log.LogInformation(
+                    "Recorded published-source coverage for scrape {ScrapeId}: expected={Expected:N0}, observed={Observed:N0}, persisted={Persisted:N0}, missing={Missing:N0}, incomplete={Incomplete:N0}, elapsed={Elapsed}.",
+                    scrapeId,
+                    soloCoverageResult.ExpectedScopeCount,
+                    soloCoverageResult.ObservedScopeCount,
+                    soloCoverageResult.PersistedScopeCount,
+                    soloCoverageResult.MissingScopeCount,
+                    soloCoverageResult.IncompleteScopeCount,
+                    coverageStopwatch.Elapsed);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                coverageStopwatch.Stop();
+                soloCoverageFailure = ex;
+                _log.LogError(
+                    ex,
+                    "Failed to persist solo scope coverage/manifests for scrape {ScrapeId}; band work will be observed before rejecting the candidate.",
+                    scrapeId);
             }
         }
 
@@ -469,17 +487,21 @@ public sealed class ScrapeOrchestrator
                 {
                     _progress.SetSubOperation("dropping_band_indexes");
                     _persistence.DropBandIndexes();
-
-                    _progress.SetSubOperation("flushing_band");
-                    bandSpool.Complete();
-                    _log.LogInformation("Flushing band spool: {Records:N0} pages, {Entries:N0} entries...",
-                        bandSpool.RecordCount, bandSpool.EntryCount);
-                    await Task.Run(() => bandSpool.FlushAll(
-                        maxBatchPages: 64,
-                        onProgress: ReportBandSpoolFlushProgress));
-
-                    _progress.SetSubOperation("creating_band_indexes");
-                    _persistence.CreateBandIndexes();
+                    try
+                    {
+                        _progress.SetSubOperation("flushing_band");
+                        bandSpool.Complete();
+                        _log.LogInformation("Flushing band spool: {Records:N0} pages, {Entries:N0} entries...",
+                            bandSpool.RecordCount, bandSpool.EntryCount);
+                        writerResults.Add(await Task.Run(() => bandSpool.FlushAll(
+                            maxBatchPages: 64,
+                            onProgress: ReportBandSpoolFlushProgress)));
+                    }
+                    finally
+                    {
+                        _progress.SetSubOperation("creating_band_indexes");
+                        _persistence.CreateBandIndexes();
+                    }
 
                     _log.LogInformation("Band flush complete.");
                 }
@@ -494,6 +516,94 @@ public sealed class ScrapeOrchestrator
                 bandSpool = null;
                 bandTimeoutCts?.Dispose();
             }
+        }
+
+        ScopeManifestPersistenceResult? bandManifestResult = null;
+        if (doBandScrape
+            && bandFetcher is not null
+            && (_persistence.WritePublishedScopeSources
+                || _persistence.EnforceScopeCompletenessManifests))
+        {
+            var expectedBandPairs = scrapeRequests
+                .SelectMany(request => bandInstruments.Select(
+                    instrument => (request.SongId, Instrument: instrument)))
+                .ToArray();
+            bandManifestResult = _persistence.RecordScopeCompletenessManifests(
+                scrapeId,
+                bandFetcher.ScopeManifests,
+                expectedBandPairs);
+            _log.LogInformation(
+                "Recorded band scope manifests for scrape {ScrapeId}: expected={Expected:N0}, observed={Observed:N0}, persisted={Persisted:N0}, missing={Missing:N0}, incomplete={Incomplete:N0}.",
+                scrapeId,
+                bandManifestResult.ExpectedScopeCount,
+                bandManifestResult.ObservedScopeCount,
+                bandManifestResult.PersistedScopeCount,
+                bandManifestResult.MissingScopeCount,
+                bandManifestResult.IncompleteScopeCount);
+        }
+
+        var failedWriterResults = writerResults
+            .Where(static result => !result.IsSuccess)
+            .ToArray();
+        if (failedWriterResults.Length > 0)
+        {
+            _persistence.Meta.RecordScrapeWriterFailures(scrapeId, failedWriterResults);
+            var writerException = new ScrapeWriterException(scrapeId, failedWriterResults);
+            if (_persistence.RequireSuccessfulScrapeWriters)
+            {
+                _persistence.Meta.FailScrapeRun(scrapeId, "writer", writerException.Message);
+                throw writerException;
+            }
+
+            _log.LogCritical(
+                writerException,
+                "Scrape {ScrapeId} has retained writer failures, but strict writer gating is disabled by rollback flag.",
+                scrapeId);
+        }
+
+        if (soloCoverageFailure is not null)
+        {
+            _persistence.Meta.FailScrapeRun(
+                scrapeId,
+                "scope_completeness",
+                soloCoverageFailure.Message);
+            throw new InvalidOperationException(
+                $"Scrape {scrapeId} solo scope coverage persistence failed.",
+                soloCoverageFailure);
+        }
+
+        if (soloCoverageResult is not null && !soloCoverageResult.IsComplete)
+        {
+            var exception = new InvalidOperationException(
+                $"Scrape {scrapeId} published-source coverage is incomplete: " +
+                $"expected={soloCoverageResult.ExpectedScopeCount}, " +
+                $"observed={soloCoverageResult.ObservedScopeCount}, " +
+                $"persisted={soloCoverageResult.PersistedScopeCount}, " +
+                $"missing={soloCoverageResult.MissingScopeCount}, " +
+                $"incomplete={soloCoverageResult.IncompleteScopeCount}.");
+            _persistence.Meta.FailScrapeRun(
+                scrapeId,
+                "scope_completeness",
+                exception.Message);
+            throw exception;
+        }
+
+        if (_persistence.EnforceScopeCompletenessManifests
+            && bandManifestResult is not null
+            && !bandManifestResult.IsComplete)
+        {
+            var exception = new InvalidOperationException(
+                $"Scrape {scrapeId} band scope manifests are incomplete: " +
+                $"expected={bandManifestResult.ExpectedScopeCount}, " +
+                $"observed={bandManifestResult.ObservedScopeCount}, " +
+                $"persisted={bandManifestResult.PersistedScopeCount}, " +
+                $"missing={bandManifestResult.MissingScopeCount}, " +
+                $"incomplete={bandManifestResult.IncompleteScopeCount}.");
+            _persistence.Meta.FailScrapeRun(
+                scrapeId,
+                "band_scope_completeness",
+                exception.Message);
+            throw exception;
         }
 
         // Build the explicit output contract

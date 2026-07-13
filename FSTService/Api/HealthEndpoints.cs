@@ -74,10 +74,14 @@ public static partial class ApiEndpoints
             var activeScrape = candidateScrape
                 ?? (IsScrapeOperation(durableCurrent) ? latestScrape : null);
             var workerUnavailable = effectiveWorkerStatus is "offline" or "stale" or "stopping" or "unknown";
+            var durableCandidateFailed = string.Equals(
+                candidateScrape?.Status,
+                "failed",
+                StringComparison.OrdinalIgnoreCase);
 
             var currentStatus = durableCurrent is not null || localCurrent is not null
                 ? "updating"
-                : candidateScrape is not null && lastFailedOperation is not null
+                : candidateScrape is not null && (durableCandidateFailed || lastFailedOperation is not null)
                     ? "failed"
                     : runtime.PublicReadFreeze.IsFrozen || candidateScrape is not null
                         ? workerUnavailable ? "stalled" : "updating"
@@ -86,6 +90,7 @@ public static partial class ApiEndpoints
             var currentPhase = durableCurrent?.Phase
                 ?? localCurrent?.Operation
                 ?? (currentStatus == "failed" ? lastFailedOperation?.Phase : null)
+                ?? (currentStatus == "failed" ? candidateScrape?.FailurePhase : null)
                 ?? GetFreezePhase(runtime.PublicReadFreeze.Reason)
                 ?? (candidateScrape?.CompletedAt is not null ? "Publishing" : candidateScrape is not null ? "Scraping" : null);
             var currentSubOperation = durableCurrent?.SubOperation
@@ -115,6 +120,8 @@ public static partial class ApiEndpoints
                     startedAt = publishedScrape.StartedAt,
                     completedAt = publishedScrape.CompletedAt,
                     publishedAt = FormatUtc(runtime.PublishedAtUtc),
+                    bestEffortFailureCount = publishedScrape.BestEffortFailureCount,
+                    bestEffortFailedPhases = publishedScrape.BestEffortFailedPhases,
                 },
                 currentUpdate = new
                 {
@@ -123,9 +130,14 @@ public static partial class ApiEndpoints
                     startedAt = currentStartedAt,
                     phase = currentPhase,
                     subOperation = currentSubOperation,
-                    detail = durableCurrent?.Detail ?? lastFailedOperation?.Detail,
+                    detail = durableCurrent?.Detail
+                        ?? lastFailedOperation?.Detail
+                        ?? candidateScrape?.FailureMessage,
                     updatedAt = FormatUtc(durableCurrent?.UpdatedAtUtc),
-                    endedAt = currentStatus == "failed" ? FormatUtc(lastFailedOperation?.EndedAtUtc) : null,
+                    endedAt = currentStatus == "failed"
+                        ? FormatUtc(lastFailedOperation?.EndedAtUtc)
+                            ?? candidateScrape?.FailedAt
+                        : null,
                     progressPercent = durableCurrent?.ProgressPercent ?? localCurrent?.ProgressPercent,
                     elapsedSeconds = currentElapsedSeconds,
                     estimatedRemainingSeconds = durableCurrent?.EstimatedRemainingSeconds ?? localCurrent?.EstimatedRemainingSeconds,
@@ -238,10 +250,17 @@ public static partial class ApiEndpoints
             return null;
 
         DateTime? scheduleBaseUtc = null;
-        if (currentStatus == "failed" && IsFailedScrapeOperation(runtime.WorkerStatus?.LastOperation))
+        if (currentStatus == "failed"
+            && IsFailedScrapeOperation(runtime.WorkerStatus?.LastOperation))
         {
             scheduleBaseUtc = runtime.WorkerStatus!.LastOperation!.EndedAtUtc
                 ?? runtime.WorkerStatus.LastOperation.UpdatedAtUtc;
+        }
+        else if (currentStatus == "failed"
+                 && runtime.LatestScrape?.FailedAt is not null
+                 && DateTimeOffset.TryParse(runtime.LatestScrape.FailedAt, out var failedAt))
+        {
+            scheduleBaseUtc = failedAt.UtcDateTime;
         }
         else if (runtime.PublishedAtUtc is not null)
         {

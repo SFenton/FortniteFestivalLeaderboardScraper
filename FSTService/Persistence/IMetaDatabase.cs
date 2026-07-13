@@ -12,6 +12,9 @@ public interface IMetaDatabase : IDisposable
     // ── Scrape log ───────────────────────────────────────────────────
     long StartScrapeRun();
     void CompleteScrapeRun(long scrapeId, int songsScraped, long totalEntries, int totalRequests, long totalBytes, bool epicReportedOver100Pages = false);
+    void FailScrapeRun(long scrapeId, string phase, string message);
+    void RecordScrapeWriterFailures(long scrapeId, IReadOnlyList<WriterDrainResult> results);
+    void RecordScrapePhaseOutcome(ScrapePhaseOutcomeRecord outcome);
     ScrapeRunInfo? GetLastCompletedScrapeRun();
     ScrapeRunInfo? GetPublishedScrapeRun();
     void PublishScrapeRun(
@@ -300,7 +303,7 @@ public interface IMetaDatabase : IDisposable
     /// <summary>Mark a deep-scrape job as complete or failed.</summary>
     void CompleteDeepScrapeJob(long scrapeId, string songId, string instrument, string status);
 
-    /// <summary>Delete all staging data, deep-scrape jobs, and abandoned incomplete scrape logs older than the given one.</summary>
+    /// <summary>Delete old staging/deep-scrape work and abandoned running scrape logs while retaining durable failed candidates.</summary>
     int CleanupAbandonedStaging(long currentScrapeId);
 
     /// <summary>Delete staged entries for one leaderboard combo.</summary>

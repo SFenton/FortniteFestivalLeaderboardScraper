@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 
 namespace FSTService.Scraping;
 
@@ -62,8 +63,11 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
     private readonly object _spoolsLock = new();
     private long _recordCount;
     private long _entryCount;
+    private readonly List<WriterBatchFailure> _failures = [];
+    private readonly List<(string Instrument, List<(string SongId, IReadOnlyList<T> Entries)> Batch)> _failedBatches = [];
     private int _disposed;
     private volatile bool _completed;
+    private volatile bool _retainArtifacts;
 
     /// <summary>Directory containing this writer's transient spool files.</summary>
     public string SpoolDirectory => _spoolDir;
@@ -202,7 +206,7 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
     /// <param name="onInstrumentFlush">Optional callback invoked before each instrument flush with (instrument, completedSoFar, totalInstruments).</param>
     /// <param name="onProgress">Optional callback invoked at instrument/chunk boundaries and every heartbeat interval while a chunk is being flushed.</param>
     /// <param name="heartbeatInterval">How often to invoke <paramref name="onProgress"/> while a chunk flush is in-flight. Defaults to one second.</param>
-    public void FlushAll(
+    public WriterDrainResult FlushAll(
         int maxBatchPages = 0,
         Action<string, int, int>? onInstrumentFlush = null,
         Action<FlushProgress>? onProgress = null,
@@ -349,18 +353,60 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
 
                     var chunkStopwatch = Stopwatch.StartNew();
                     ReportChunkProgress("running", chunkStopwatch.Elapsed);
-                    FlushWithHeartbeat(
-                        () => _flush(currentInstrument, currentBatch),
-                        () => ReportChunkProgress("running", chunkStopwatch.Elapsed),
-                        heartbeatEvery,
-                        onProgress is not null);
-                    chunkStopwatch.Stop();
+                    try
+                    {
+                        FlushWithHeartbeat(
+                            () => _flush(currentInstrument, currentBatch),
+                            () => ReportChunkProgress("running", chunkStopwatch.Elapsed),
+                            heartbeatEvery,
+                            onProgress is not null);
+                        chunkStopwatch.Stop();
 
-                    flushedPages += chunkPages;
-                    flushedEntries += chunkEntries;
-                    instrumentPagesFlushed += chunkPages;
-                    instrumentEntriesFlushed += chunkEntries;
-                    ReportChunkProgress("completed", chunkStopwatch.Elapsed);
+                        flushedPages += chunkPages;
+                        flushedEntries += chunkEntries;
+                        instrumentPagesFlushed += chunkPages;
+                        instrumentEntriesFlushed += chunkEntries;
+                        ReportChunkProgress("completed", chunkStopwatch.Elapsed);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        chunkStopwatch.Stop();
+                        _retainArtifacts = true;
+                        var scopes = currentBatch
+                            .GroupBy(static item => item.SongId, StringComparer.OrdinalIgnoreCase)
+                            .Select(static group => new WriterFailedScope(
+                                group.Key,
+                                group.Count(),
+                                group.Sum(static item => (long)item.Entries.Count)))
+                            .OrderBy(static scope => scope.SongId, StringComparer.OrdinalIgnoreCase)
+                            .ToArray();
+                        var failure = new WriterBatchFailure(
+                            _label,
+                            currentInstrument,
+                            scopes,
+                            ex.GetType().FullName ?? ex.GetType().Name,
+                            ex.Message,
+                            _spoolDir,
+                            DateTime.UtcNow);
+                        _failures.Add(failure);
+                        _failedBatches.Add((
+                            currentInstrument,
+                            currentBatch
+                                .Select(static item => (item.SongId, item.Entries))
+                                .ToList()));
+                        WriteFailureManifest();
+                        ReportChunkProgress("failed", chunkStopwatch.Elapsed);
+                        _log.LogError(
+                            ex,
+                            "Spool [{Label}/{Instrument}] retained failed chunk {Chunk}/{ChunkTotal}: {Pages:N0} pages, {Entries:N0} rows, artifact={ArtifactPath}.",
+                            _label,
+                            currentInstrument,
+                            currentChunkIndex,
+                            currentChunkTotal,
+                            chunkPages,
+                            chunkEntries,
+                            _spoolDir);
+                    }
 
                     void ReportChunkProgress(string state, TimeSpan elapsed)
                     {
@@ -390,6 +436,203 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
 
         _log.LogInformation("Spool [{Label}] FlushAll complete: {Pages:N0} pages, {Entries:N0} entries across {Instruments} instruments.",
             _label, flushedPages, flushedEntries, _spools.Count);
+        return new WriterDrainResult(
+            _label,
+            RecordCount,
+            EntryCount,
+            flushedPages,
+            flushedEntries,
+            _failures.ToArray(),
+            _failures.Count == 0 ? null : _spoolDir);
+    }
+
+    public WriterDrainResult ReplayFailures()
+    {
+        if (_failedBatches.Count == 0)
+            return new WriterDrainResult(
+                _label,
+                RecordCount,
+                EntryCount,
+                RecordCount,
+                EntryCount,
+                [],
+                null);
+
+        long attemptedPages = 0;
+        long attemptedRows = 0;
+        long replayedPages = 0;
+        long replayedRows = 0;
+        var remainingFailures = new List<WriterBatchFailure>();
+        var remainingBatches = new List<(string Instrument, List<(string SongId, IReadOnlyList<T> Entries)> Batch)>();
+
+        for (var index = 0; index < _failedBatches.Count; index++)
+        {
+            var (instrument, batch) = _failedBatches[index];
+            attemptedPages += batch.Count;
+            attemptedRows += batch.Sum(static item => (long)item.Entries.Count);
+            try
+            {
+                _flush(instrument, batch);
+                replayedPages += batch.Count;
+                replayedRows += batch.Sum(static item => (long)item.Entries.Count);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                var prior = _failures[index];
+                remainingFailures.Add(prior with
+                {
+                    ExceptionType = ex.GetType().FullName ?? ex.GetType().Name,
+                    ErrorMessage = ex.Message,
+                    OccurredAtUtc = DateTime.UtcNow,
+                });
+                remainingBatches.Add((instrument, batch));
+            }
+        }
+
+        _failures.Clear();
+        _failures.AddRange(remainingFailures);
+        _failedBatches.Clear();
+        _failedBatches.AddRange(remainingBatches);
+        _retainArtifacts = _failures.Count > 0;
+        WriteFailureManifest();
+
+        return new WriterDrainResult(
+            _label,
+            attemptedPages,
+            attemptedRows,
+            replayedPages,
+            replayedRows,
+            remainingFailures,
+            remainingFailures.Count == 0 ? null : _spoolDir);
+    }
+
+    public static WriterDrainResult ReplayArtifactDirectory(
+        ILogger log,
+        string writerKind,
+        string artifactDirectory,
+        DeserializePage deserialize,
+        FlushBatch flush,
+        int maxBatchPages = 64)
+    {
+        if (!Directory.Exists(artifactDirectory))
+            throw new DirectoryNotFoundException(artifactDirectory);
+        if (maxBatchPages <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxBatchPages));
+
+        long enqueuedPages = 0;
+        long enqueuedRows = 0;
+        long flushedPages = 0;
+        long flushedRows = 0;
+        var failures = new List<WriterBatchFailure>();
+
+        foreach (var file in Directory.GetFiles(artifactDirectory, "*.bin")
+                     .OrderBy(static file => file, StringComparer.Ordinal))
+        {
+            var instrument = Path.GetFileNameWithoutExtension(file);
+            using var stream = new FileStream(
+                file,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 4 * 1024 * 1024,
+                useAsync: false);
+            var header = new byte[8];
+            var batch = new List<(string SongId, IReadOnlyList<T> Entries)>();
+            while (stream.Position < stream.Length)
+            {
+                var record = deserialize(stream, header);
+                batch.Add(record);
+                if (batch.Count >= maxBatchPages)
+                {
+                    ReplayBatch(instrument, batch);
+                    batch = [];
+                }
+            }
+
+            if (batch.Count > 0)
+                ReplayBatch(instrument, batch);
+        }
+
+        return new WriterDrainResult(
+            writerKind,
+            enqueuedPages,
+            enqueuedRows,
+            flushedPages,
+            flushedRows,
+            failures,
+            failures.Count == 0 ? null : artifactDirectory);
+
+        void ReplayBatch(
+            string instrument,
+            List<(string SongId, IReadOnlyList<T> Entries)> batch)
+        {
+            var pages = batch.Count;
+            var rows = batch.Sum(static item => (long)item.Entries.Count);
+            enqueuedPages += pages;
+            enqueuedRows += rows;
+            try
+            {
+                flush(instrument, batch);
+                flushedPages += pages;
+                flushedRows += rows;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                var scopes = batch
+                    .GroupBy(static item => item.SongId, StringComparer.OrdinalIgnoreCase)
+                    .Select(static group => new WriterFailedScope(
+                        group.Key,
+                        group.Count(),
+                        group.Sum(static item => (long)item.Entries.Count)))
+                    .OrderBy(static scope => scope.SongId, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                failures.Add(new WriterBatchFailure(
+                    writerKind,
+                    instrument,
+                    scopes,
+                    ex.GetType().FullName ?? ex.GetType().Name,
+                    ex.Message,
+                    artifactDirectory,
+                    DateTime.UtcNow));
+                log.LogError(
+                    ex,
+                    "Persisted spool replay failed for {WriterKind}/{Instrument}: {Pages:N0} pages, {Rows:N0} rows.",
+                    writerKind,
+                    instrument,
+                    pages,
+                    rows);
+            }
+        }
+    }
+
+    private void WriteFailureManifest()
+    {
+        try
+        {
+            var path = Path.Combine(_spoolDir, "writer-failures.json");
+            if (_failures.Count == 0)
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+                return;
+            }
+
+            var json = JsonSerializer.Serialize(
+                new
+                {
+                    formatVersion = 1,
+                    writerKind = _label,
+                    createdAtUtc = DateTime.UtcNow,
+                    spoolDirectory = _spoolDir,
+                    failures = _failures,
+                },
+                new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(path, json);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Failed to persist spool replay manifest in {Path}.", _spoolDir);
+        }
     }
 
     private void EmitFlushProgress(
@@ -619,7 +862,18 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
                 }
             }
         }
-        TryDeleteSpoolDir();
+        if (_retainArtifacts)
+        {
+            _log.LogWarning(
+                "Spool [{Label}] retained replay artifacts at {Path} because {FailureCount} writer batch(es) failed.",
+                _label,
+                _spoolDir,
+                _failures.Count);
+        }
+        else
+        {
+            TryDeleteSpoolDir();
+        }
         return ValueTask.CompletedTask;
     }
 

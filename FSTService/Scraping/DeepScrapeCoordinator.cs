@@ -53,6 +53,7 @@ public sealed class DeepScrapeCoordinator
         // ── Storage ──
         /// <summary>All fetched entries keyed by page number.</summary>
         public ConcurrentDictionary<int, List<LeaderboardEntry>> Entries { get; } = new();
+        public ConcurrentDictionary<int, GlobalLeaderboardScraper.FetchStatus> PageStatuses { get; } = new();
 
         // ── Pending buffer for out-of-order pages ──
         /// <summary>
@@ -67,6 +68,7 @@ public sealed class DeepScrapeCoordinator
         // ── Boundary / completion ──
         public int Consecutive403s;
         public volatile bool Done;
+        public string? CompletionReason { get; set; }
         public CancellationTokenSource? Cts { get; set; }
 
         // ── Seeding ──
@@ -193,6 +195,7 @@ public sealed class DeepScrapeCoordinator
             var job = jobs[jobIndex];
             if (job.Done) return;
             job.Done = true;
+            job.CompletionReason = reason;
             Interlocked.Increment(ref completedJobCount);
 
             try { job.Cts?.Cancel(); } catch { }
@@ -208,17 +211,38 @@ public sealed class DeepScrapeCoordinator
                 .OrderBy(x => x.Key)
                 .SelectMany(x => x.Value)
                 .ToList();
+            var expectedLastPage = reason == "target_met"
+                ? job.CursorPage
+                : job.ReportedPages - 1;
+            var terminalBoundaryPage = job.PageStatuses
+                .Where(static pair => pair.Value == GlobalLeaderboardScraper.FetchStatus.Forbidden)
+                .Select(static pair => pair.Key)
+                .DefaultIfEmpty(-1)
+                .Min();
 
             results[jobIndex] = new GlobalLeaderboardResult
             {
                 SongId = job.SongId,
                 Instrument = job.Instrument,
                 Entries = ordered,
+                EntriesCount = ordered.Count,
                 TotalPages = job.Wave2Start + pagesScraped,
                 ReportedTotalPages = job.ReportedPages,
                 PagesScraped = pagesScraped,
                 Requests = job.RequestCount,
                 BytesReceived = job.BytesReceived,
+                CompletenessManifest = ScopeCompletenessManifest.Create(
+                    job.Wave2Start,
+                    expectedLastPage,
+                    job.PageStatuses,
+                    ordered,
+                    job.ReportedPages,
+                    reason == "access_boundary"
+                        ? ScopeTerminalBoundaryKind.EpicForbidden
+                        : ScopeTerminalBoundaryKind.None,
+                    terminalBoundaryPage >= 0 ? terminalBoundaryPage : null,
+                    job.Wave2Start,
+                    job.Entries.Keys.DefaultIfEmpty(job.Wave2Start - 1).Max()),
             };
 
             // Fire callback asynchronously — tracked so we await before returning
@@ -226,12 +250,7 @@ public sealed class DeepScrapeCoordinator
             {
                 callbackTasks.Add(Task.Run(async () =>
                 {
-                    try { await onJobComplete(results[jobIndex]!); }
-                    catch (Exception ex)
-                    {
-                        _log.LogWarning(ex, "onJobComplete callback failed for {Song}/{Instrument}.",
-                            job.SongId, job.Instrument);
-                    }
+                    await onJobComplete(results[jobIndex]!);
                 }));
             }
         }
@@ -285,6 +304,9 @@ public sealed class DeepScrapeCoordinator
                 Interlocked.Increment(ref job.RequestCount);
                 Interlocked.Add(ref job.BytesReceived, bodyLen);
                 _progress.ReportPageFetched(bodyLen);
+                job.PageStatuses[page] = parsed is not null
+                    ? GlobalLeaderboardScraper.FetchStatus.Success
+                    : status;
 
                 if (parsed is not null)
                 {
@@ -343,16 +365,19 @@ public sealed class DeepScrapeCoordinator
 
         // Wait for all job-completion callbacks to finish before returning,
         // so callers (e.g. ScrapeOrchestrator) can safely close channels.
-        if (!callbackTasks.IsEmpty)
-            await Task.WhenAll(callbackTasks);
+        try
+        {
+            if (!callbackTasks.IsEmpty)
+                await Task.WhenAll(callbackTasks);
+        }
+        finally
+        {
+            progressCts.Cancel();
+            try { await progressTask; } catch (OperationCanceledException) { }
 
-        // Stop progress logging
-        progressCts.Cancel();
-        try { await progressTask; } catch (OperationCanceledException) { }
-
-        // Dispose per-job CTS
-        foreach (var job in jobs)
-            job.Dispose();
+            foreach (var job in jobs)
+                job.Dispose();
+        }
 
         // Fill in results for any jobs that weren't completed normally
         for (int i = 0; i < jobs.Count; i++)
@@ -360,16 +385,30 @@ public sealed class DeepScrapeCoordinator
             if (results[i] is null)
             {
                 var job = jobs[i];
+                var ordered = job.Entries
+                    .OrderBy(x => x.Key)
+                    .SelectMany(x => x.Value)
+                    .ToList();
                 results[i] = new GlobalLeaderboardResult
                 {
                     SongId = job.SongId,
                     Instrument = job.Instrument,
-                    Entries = job.Entries.OrderBy(x => x.Key).SelectMany(x => x.Value).ToList(),
+                    Entries = ordered,
+                    EntriesCount = ordered.Count,
                     TotalPages = job.Wave2Start + job.Entries.Count,
                     ReportedTotalPages = job.ReportedPages,
                     PagesScraped = job.Entries.Count,
                     Requests = job.RequestCount,
                     BytesReceived = job.BytesReceived,
+                    CompletenessManifest = ScopeCompletenessManifest.Create(
+                        job.Wave2Start,
+                        job.ReportedPages - 1,
+                        job.PageStatuses,
+                        ordered,
+                        job.ReportedPages,
+                        ScopeTerminalBoundaryKind.None,
+                        deepStartPage: job.Wave2Start,
+                        deepEndPage: job.Entries.Keys.DefaultIfEmpty(job.Wave2Start - 1).Max()),
                 };
             }
         }

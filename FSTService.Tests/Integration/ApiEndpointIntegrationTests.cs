@@ -544,6 +544,67 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task ApiServiceInfo_UsesDurableCandidateFailureAndPublishedWarnings()
+    {
+        using var factory = _factory.WithWebHostBuilder(_ => { });
+        using var client = factory.CreateClient();
+        var metaDb = factory.Services.GetRequiredService<MetaDatabase>();
+        var now = DateTime.UtcNow;
+
+        var publishedId = metaDb.StartScrapeRun();
+        metaDb.RecordScrapePhaseOutcome(new ScrapePhaseOutcomeRecord(
+            publishedId,
+            "Checkpoint",
+            "best_effort",
+            "failed",
+            now,
+            now.AddMilliseconds(5),
+            5,
+            "checkpoint warning"));
+        metaDb.CompleteScrapeRun(publishedId, 1, 10, 1, 100);
+        metaDb.PublishScrapeRun(publishedId, promoteCachedResponses: false);
+
+        var failedId = metaDb.StartScrapeRun();
+        metaDb.FailScrapeRun(failedId, "scope_completeness", "page 7 missing");
+        metaDb.UpsertWorkerHeartbeat(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            "running",
+            "scraper",
+            "service-info-durable-failure",
+            now.AddMinutes(-1),
+            now,
+            "ready");
+        metaDb.UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            null,
+            new WorkerOperationInfo
+            {
+                OperationKey = "worker.idle",
+                OperationLabel = "Waiting",
+                Status = "completed",
+                StartedAtUtc = now.AddSeconds(-2),
+                UpdatedAtUtc = now,
+                EndedAtUtc = now,
+            },
+            updatedAtUtc: now);
+
+        var json = await (await client.GetAsync("/api/service-info"))
+            .Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal("failed", json.GetProperty("currentUpdate").GetProperty("status").GetString());
+        Assert.Equal(failedId, json.GetProperty("activeScrapeId").GetInt64());
+        Assert.Equal("scope_completeness", json.GetProperty("currentUpdate").GetProperty("phase").GetString());
+        Assert.Equal("page 7 missing", json.GetProperty("currentUpdate").GetProperty("detail").GetString());
+        Assert.Equal(publishedId, json.GetProperty("publishedScrapeId").GetInt64());
+        Assert.Equal(
+            1,
+            json.GetProperty("lastCompletedUpdate").GetProperty("bestEffortFailureCount").GetInt32());
+        Assert.Equal(
+            "Checkpoint",
+            json.GetProperty("lastCompletedUpdate").GetProperty("bestEffortFailedPhases")[0].GetString());
+    }
+
+    [Fact]
     public async Task PublishedResolver_ForcedFrozenColdMissAndExportIgnoreActiveProjectionAndSnapshot()
     {
         using var factory = _factory.WithWebHostBuilder(builder =>

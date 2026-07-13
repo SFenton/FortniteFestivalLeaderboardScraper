@@ -56,6 +56,12 @@ replace this monolithic path and localized `Ensure*Schema` calls with a
 versioned migration ledger, advisory lock, and bounded lock/statement
 timeouts.
 
+WORKER-0A live windows use
+`tools/postgres-worker-correctness-monitor.sh --scrape-id <id> --output
+<same-drive-path>` for 60-second public-health/resource/status samples and
+`tools/postgres-scrape-evidence.sh` for pre/post manifests, mappings, phase
+outcomes, writer failures, routes, WAL/temp, locks, and relation sizes.
+
 ## Live shape snapshot
 
 The 2026-07-10 inventory found 269 public tables/partitions, 735 public indexes,
@@ -108,9 +114,12 @@ or history data changed.
 
 | Tables | Class | Writer | Readers | Publication/retention |
 |---|---|---|---|---|
-| `scrape_log` | Durable source | Worker via `MetaDatabase` | Service status, maintenance, evidence tooling | One row per scrape; incomplete rows are not publishable |
+| `scrape_log` | Durable source | Worker via `MetaDatabase` | Service status, maintenance, evidence tooling | One row per scrape with durable `running`/`completed`/`failed` state; failed rows are never publishable |
 | `scrape_publication_state` | Publication ledger | Worker publish/freeze transaction | Public read resolvers, service status, notifications | Single row; preserve through every restore |
 | `leaderboard_published_scope_source` | Durable per-scope publication ledger | Worker coverage/build/publish path | Service current-state readers and solo exports behind rollback flag | One validated snapshot or explicit empty source per published `(song_id, instrument, scope_kind)` |
+| `leaderboard_scope_manifests` | Durable candidate-integrity ledger | Solo and band page fetchers through worker persistence | Publication gate, replay/evidence tooling | One row per scrape and expected scope with exact page outcomes, boundaries, deep range, and fingerprints |
+| `scrape_writer_failures` | Durable failure/replay ledger | Solo, band, and online writer drains | Worker status and replay/evidence tooling | Exact failed scopes/pages/rows plus same-drive artifact path; retained with failed scrape |
+| `scrape_phase_outcomes` | Durable publication-decision ledger | Post-scrape phase runner | Publication guard, service status, evidence tooling | Explicit `publication_critical` or `best_effort` result per selected phase |
 | `scrape_phase_timings` | Audit/artifact | Worker | Evidence and maintenance tooling | Bounded metadata retention |
 | `service_worker_status` | Durable operational state | Worker heartbeat/operation publisher | Service status/readiness | Keep current/last operation; stale state must be visible |
 | `instrument_scrape_state` | Durable work state | Worker | Resume/status logic | Retain latest per instrument |
@@ -129,6 +138,9 @@ and clears the public-read freeze in one transaction.
 |---|---|---:|---|---|
 | `Features__WritePublishedScopeSources` | `fstworker` | `false` | Backfills the current clean publication when needed, records scope coverage, builds the next mapping, and requires it in publication | Set `false`; incomplete candidates never move the global pointer |
 | `Features__UsePublishedScopeSources` | `fstservice` | `false` | Resolves solo current reads, projection readiness, totals, member filters, and published solo exports from the current mapping | Set `false`; active-state/legacy resolver remains available |
+| `Features__EnforceScopeCompletenessManifests` | `fstworker` | `false` | Requires every expected solo and band scope to have a complete page manifest before publication | Set `false`; manifests remain available as observe-only evidence |
+| `Features__RequireSuccessfulScrapeWriters` | `fstworker` | `false` | Rejects a candidate when any disk-spool or bounded-online writer reports failed pages/rows | Set `false`; durable failure rows and replay artifacts remain |
+| `Features__EnforcePublicationCriticalPhases` | `fstworker` | `false` | Rejects a candidate after any explicitly publication-critical post-scrape phase failure | Set `false`; phase outcomes remain visible while legacy swallow behavior is restored |
 
 ### Song, account, registration, and authentication metadata
 
@@ -196,13 +208,28 @@ published-generation join. This preserves solo and band export contents while
 avoiding an unbounded cold scan of `current_band_leaderboard_entries`.
 
 PG-1 does not enable physical snapshot write skipping or change max-page,
-deep-scrape, retry, or Epic request policy. Scope completeness means the
-expected result was observed, page zero did not fail, every page in the
-configured captured range completed, reported totals/pages were recorded, and
-the selected physical row count exactly matches the fingerprint. Fingerprints
-use the same highest-score-per-account deduplication as the snapshot primary
-key, so duplicate API rows cannot make a valid physical source appear
-incomplete. WORKER-0 continues the stricter request/failure-propagation work.
+deep-scrape, retry, or Epic request policy. WORKER-0A extends scope
+completeness with a per-scrape manifest containing the expected and received
+pages, every final page status, legitimate Epic empty/forbidden terminal
+boundary, parse status, retry exhaustion, reported totals/pages, coordinated
+deep range, and content/coverage fingerprints. Unexplained gaps, malformed
+pages, exhausted non-terminal retries, missing expected scopes, writer
+failures, or publication-critical phase failures reject the candidate. The
+selected physical row count and physical content fingerprint must still match
+the published-source mapping. Duplicate API rows remain deduplicated by
+highest score per account before physical-source validation.
+
+Disk-spool failures retain the original binary spool plus
+`writer-failures.json`; bounded-online failures retain typed JSON batches.
+Production passes the configured FST data-directory spool root, so all replay
+artifacts remain on the required 4 TB filesystem. A failed candidate keeps its
+durable status and diagnostics while the mapped published generation remains
+unchanged.
+
+`CleanupAbandonedStaging` may remove obsolete staging/deep-scrape rows and
+legacy `running` scrape-log rows, but it must retain `status='failed'` rows so
+their manifests, writer failures, phase outcomes, and service status remain
+auditable until bounded metadata retention applies.
 
 Mapped service reads use `current_leaderboard_entries` only for scopes whose
 projection ledger matches the mapped physical/empty source. Mismatched or

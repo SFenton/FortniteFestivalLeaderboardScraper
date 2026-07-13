@@ -55,6 +55,7 @@ public sealed class PostScrapeOrchestrator
     private readonly IDatabaseRetentionMaintenanceService? _retentionMaintenanceService;
     private readonly IOptions<ScraperOptions> _options;
     private readonly ILogger<PostScrapeOrchestrator> _log;
+    private readonly IPostScrapePhaseFaultInjector? _phaseFaultInjector;
 
     public PostScrapeOrchestrator(
         GlobalLeaderboardPersistence persistence,
@@ -89,7 +90,8 @@ public sealed class PostScrapeOrchestrator
         IOptions<BandRankHistoryOptions>? bandRankHistoryOptions = null,
         IOptions<DatabaseMaintenanceOptions>? databaseMaintenanceOptions = null,
         IDatabasePressureMonitor? databasePressureMonitor = null,
-        IDatabaseRetentionMaintenanceService? retentionMaintenanceService = null)
+        IDatabaseRetentionMaintenanceService? retentionMaintenanceService = null,
+        IPostScrapePhaseFaultInjector? phaseFaultInjector = null)
     {
         _persistence = persistence;
         _firstSeenCalculator = firstSeenCalculator;
@@ -124,6 +126,7 @@ public sealed class PostScrapeOrchestrator
         _retentionMaintenanceService = retentionMaintenanceService;
         _options = options;
         _log = log;
+        _phaseFaultInjector = phaseFaultInjector;
     }
 
     /// <summary>
@@ -134,11 +137,12 @@ public sealed class PostScrapeOrchestrator
     {
         // ── Solo enrichment ──
         if (resolvedPhases.HasFlag(ScrapePhase.SoloEnrichment))
-            await RunPhaseAsync("Enrichment", () => RunEnrichmentAsync(ctx, service, ct));
+            await RunEnrichmentAsync(ctx, service, ct);
 
         // ── Solo refresh registered users ──
         if (resolvedPhases.HasFlag(ScrapePhase.SoloRefreshUsers))
             await RunPhaseAsync(
+                ctx,
                 "RefreshRegisteredUsers",
                 () => RefreshRegisteredUsersAsync(ctx, ct),
                 new SongProcessingMachine.MachineResult());
@@ -149,7 +153,7 @@ public sealed class PostScrapeOrchestrator
             _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.PostScrapeEnrichment);
             _progress.SetSubOperation("activating_shadow_snapshots_early");
             _progress.BeginPhaseProgress(1);
-            await RunPhaseAsync("ActivateShadowSnapshotsEarly", () =>
+            await RunPhaseAsync(ctx, "ActivateShadowSnapshotsEarly", () =>
             {
                 var activated = _persistence.FinalizeShadowSnapshots(ctx.ScrapeId, expectedPairs: expectedSnapshotPairs);
                 _log.LogInformation(
@@ -193,20 +197,15 @@ public sealed class PostScrapeOrchestrator
         {
             _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.BandScraping);
             _progress.SetSubOperation("extracting_band_context");
-            bandExtractionResult = await RunPhaseAsync("BandExtraction", () => _bandExtractor.RunAsync(ct), BandExtractionResult.Empty);
+            bandExtractionResult = await RunPhaseAsync(ctx, "BandExtraction", () => _bandExtractor.RunAsync(ct), BandExtractionResult.Empty);
         }
 
         if (bandScrapeTask is not null)
         {
             try
             {
-                await bandScrapeTask;
+                await RunPhaseAsync(ctx, "LegacyBandScrape", () => bandScrapeTask);
                 _log.LogInformation("Background band scrape completed successfully.");
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                _log.LogWarning(ex, "Background band scrape failed. Band data may be incomplete this cycle.");
             }
             finally
             {
@@ -231,6 +230,7 @@ public sealed class PostScrapeOrchestrator
                 _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.SongMachine);
                 _progress.SetSubOperation("registered_player_band_discovery");
                 registeredPlayerBandDiscoveryResult = await RunPhaseAsync(
+                    ctx,
                     "RegisteredPlayerBandDiscovery",
                     () => RunWithPostScrapeNetworkTimeoutAsync(
                         "registered-player band discovery",
@@ -241,7 +241,6 @@ public sealed class PostScrapeOrchestrator
                             _tokenManager.AccountId!,
                             _pool,
                             phaseCt),
-                        RegisteredPlayerBandDiscoveryResult.Empty,
                         ct),
                     RegisteredPlayerBandDiscoveryResult.Empty);
             }
@@ -268,6 +267,7 @@ public sealed class PostScrapeOrchestrator
                 _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.SongMachine);
                 _progress.SetSubOperation("registered_band_targeted_processing");
                 registeredBandProcessingResult = await RunPhaseAsync(
+                    ctx,
                     "RegisteredBandTargetedProcessing",
                     () => RunWithPostScrapeNetworkTimeoutAsync(
                         "registered-band targeted processing",
@@ -278,7 +278,6 @@ public sealed class PostScrapeOrchestrator
                             _tokenManager.AccountId!,
                             _pool,
                             phaseCt),
-                        RegisteredBandProcessingResult.Empty,
                         ct),
                     RegisteredBandProcessingResult.Empty);
             }
@@ -309,7 +308,7 @@ public sealed class PostScrapeOrchestrator
                     registeredPlayerBandDiscoveryResult.ImpactedCurrentProjectionScopes,
                     registeredBandProcessingResult.ImpactedCurrentProjectionScopes),
             };
-            await RunPhaseAsync("BandMaintenance", () => RunBandMaintenanceAsync(ctx, mergedExtractionResult, runFullBandMaintenance, ct));
+            await RunPhaseAsync(ctx, "BandMaintenance", () => RunBandMaintenanceAsync(ctx, mergedExtractionResult, runFullBandMaintenance, ct));
         }
 
         var skipDerivedSoloPhases = ShouldSkipDerivedSoloPhasesForIncompleteScrape(ctx, resolvedPhases);
@@ -318,19 +317,19 @@ public sealed class PostScrapeOrchestrator
             // ── Solo rankings ──
             if (resolvedPhases.HasFlag(ScrapePhase.SoloRankings))
             {
-                ctx.RankingsComputedSuccessfully = await RunPhaseAsync("ComputeRankings", () => ComputeRankingsAsync(service, ctx.ScrapeId, ct));
+                ctx.RankingsComputedSuccessfully = await RunPhaseAsync(ctx, "ComputeRankings", () => ComputeRankingsAsync(service, ctx.ScrapeId, ct));
             }
             // ── Solo rivals ──
             if (resolvedPhases.HasFlag(ScrapePhase.SoloRivals))
             {
-                await RunPhaseAsync("Rivals", () => ComputeRivalsAsync(ctx, ct));
+                await RunPhaseAsync(ctx, "Rivals", () => ComputeRivalsAsync(ctx, ct));
             }
 
             // ── Solo player stats ──
             if (resolvedPhases.HasFlag(ScrapePhase.SoloPlayerStats))
             {
                 _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Precomputing);
-                await RunPhaseAsync("PlayerStatsTiers", () => ComputePlayerStatsTiersAsync(ctx, ct));
+                await RunPhaseAsync(ctx, "PlayerStatsTiers", () => ComputePlayerStatsTiersAsync(ctx, ct));
             }
 
             // ── Solo finalize ──
@@ -338,7 +337,7 @@ public sealed class PostScrapeOrchestrator
             {
                 _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Finalizing);
                 _progress.RegisterBranches(new[] { "final_checkpoint", "pre_warming_cache" });
-                await RunPhaseAsync("Checkpoint", () => Task.Run(() =>
+                await RunPhaseAsync(ctx, "Checkpoint", () => Task.Run(() =>
                 {
                     _progress.StartBranch("final_checkpoint");
                     _progress.SetSubOperation("final_checkpoint");
@@ -358,7 +357,7 @@ public sealed class PostScrapeOrchestrator
 
                 if (ctx.ScrapeId > 0)
                 {
-                    await RunPhaseAsync("ActivateShadowSnapshots", () =>
+                    await RunPhaseAsync(ctx, "ActivateShadowSnapshots", () =>
                     {
                         _persistence.FinalizeShadowSnapshots(ctx.ScrapeId, wave: 2, expectedPairs: expectedSnapshotPairs);
                         return Task.CompletedTask;
@@ -412,13 +411,13 @@ public sealed class PostScrapeOrchestrator
 
         if (refreshSoloCurrentProjection)
         {
-            await RunPhaseAsync("Cleanup.SoloCurrentProjection", () => RefreshSoloCurrentProjectionForCleanupAsync(ct));
+            await RunPhaseAsync(ctx, "Cleanup.SoloCurrentProjection", () => RefreshSoloCurrentProjectionForCleanupAsync(ct));
         }
 
         if (precomputeApiResponses)
         {
             _persistence.Meta.ClearBackfillRankingsPending(ctx.RegisteredIds);
-            await RunPhaseAsync("Cleanup.PrecomputeAll", () => PrecomputeAllForCleanupAsync(ctx.EpicReportedOver100Pages, ct));
+            await RunPhaseAsync(ctx, "Cleanup.PrecomputeAll", () => PrecomputeAllForCleanupAsync(ctx.EpicReportedOver100Pages, ct));
         }
     }
 
@@ -428,7 +427,21 @@ public sealed class PostScrapeOrchestrator
     /// and song-rivals become visible, while global rank-derived outputs remain
     /// flagged as pending until the next ranking pass includes them in ctx.RegisteredIds.
     /// </summary>
-    public async Task RunDeferredRegistrationSyncAsync(ScrapePassContext ctx, FestivalService service, ScrapePhase resolvedPhases, CancellationToken ct)
+    public Task RunDeferredRegistrationSyncAsync(
+        ScrapePassContext ctx,
+        FestivalService service,
+        ScrapePhase resolvedPhases,
+        CancellationToken ct) =>
+        RunPhaseAsync(
+            ctx,
+            "DeferredRegistrationSync",
+            () => RunDeferredRegistrationSyncCoreAsync(ctx, service, resolvedPhases, ct));
+
+    private async Task RunDeferredRegistrationSyncCoreAsync(
+        ScrapePassContext ctx,
+        FestivalService service,
+        ScrapePhase resolvedPhases,
+        CancellationToken ct)
     {
         if (ShouldSkipDeferredRegistrationSyncForIncompleteScrape(ctx, resolvedPhases))
             return;
@@ -576,9 +589,9 @@ public sealed class PostScrapeOrchestrator
             return;
 
         await RunPhaseAsync(
+            ctx,
             "ImprovementNotifications",
-            () => RunImprovementNotificationDetectionAsync(ctx, new SongProcessingMachine.MachineResult(), ct),
-            rethrowOnFailure: _improvementNotificationOptions.Value.FailScrapeOnError);
+            () => RunImprovementNotificationDetectionAsync(ctx, new SongProcessingMachine.MachineResult(), ct));
     }
 
     /// <summary>
@@ -615,7 +628,7 @@ public sealed class PostScrapeOrchestrator
 
         if (cleanupSoloExcessEntries)
         {
-            await RunPhaseAsync("Cleanup.SoloExcessEntries", () => Task.Run(() =>
+            await RunPhaseAsync(ctx, "Cleanup.SoloExcessEntries", () => Task.Run(() =>
             {
                 try
                 {
@@ -634,7 +647,7 @@ public sealed class PostScrapeOrchestrator
             if (await ShouldSkipMaintenanceCleanupAsync("rank history retention", ct))
                 ReportSkippedCleanupItems(GlobalLeaderboardScraper.AllInstruments.Count + 1);
             else
-                await RunPhaseAsync("Cleanup.RankHistoryRetention", () => CleanupRankHistoryRetentionAsync(ct));
+                await RunPhaseAsync(ctx, "Cleanup.RankHistoryRetention", () => CleanupRankHistoryRetentionAsync(ct));
         }
 
         if (cleanupBandRankHistoryRetention)
@@ -642,11 +655,11 @@ public sealed class PostScrapeOrchestrator
             if (await ShouldSkipMaintenanceCleanupAsync("band rank history retention", ct))
                 ReportSkippedCleanupItems(BandInstrumentMapping.AllBandTypes.Count);
             else
-                await RunPhaseAsync("Cleanup.BandRankHistoryRetention", () => CleanupBandRankHistoryRetentionAsync(ct));
+                await RunPhaseAsync(ctx, "Cleanup.BandRankHistoryRetention", () => CleanupBandRankHistoryRetentionAsync(ct));
         }
 
         if (cleanupServiceLevelRetention)
-            await RunPhaseAsync("Cleanup.ServiceLevelRetention", () => RunServiceLevelRetentionMaintenanceAsync(ct));
+            await RunPhaseAsync(ctx, "Cleanup.ServiceLevelRetention", () => RunServiceLevelRetentionMaintenanceAsync(ct));
     }
 
     private bool ShouldRunServiceLevelRetentionMaintenance(ScrapePhase resolvedPhases) =>
@@ -676,6 +689,7 @@ public sealed class PostScrapeOrchestrator
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(ex, "Service-level retention maintenance failed. Continuing without blocking fresh data publication.");
+            throw;
         }
         finally
         {
@@ -813,6 +827,7 @@ public sealed class PostScrapeOrchestrator
 
     private async Task CleanupRankHistoryRetentionAsync(CancellationToken ct)
     {
+        var failures = new List<Exception>();
         var maintenanceOptions = _databaseMaintenanceOptions.Value;
         var batchSize = PositiveOrDefault(
             maintenanceOptions.RankHistoryCleanupBatchSize,
@@ -845,6 +860,7 @@ public sealed class PostScrapeOrchestrator
                 _log.LogWarning(ex,
                     "Rank history retention cleanup failed for {Instrument}. Continuing without blocking fresh data publication.",
                     instrument);
+                failures.Add(ex);
             }
             finally
             {
@@ -872,15 +888,20 @@ public sealed class PostScrapeOrchestrator
         {
             _log.LogWarning(ex,
                 "Composite rank history retention cleanup failed. Continuing without blocking fresh data publication.");
+            failures.Add(ex);
         }
         finally
         {
             _progress.ReportPhaseItemComplete();
         }
+
+        if (failures.Count > 0)
+            throw new AggregateException("One or more rank history retention cleanup operations failed.", failures);
     }
 
     private async Task CleanupBandRankHistoryRetentionAsync(CancellationToken ct)
     {
+        var failures = new List<Exception>();
         var options = _bandRankHistoryOptions.Value;
         var maintenanceOptions = _databaseMaintenanceOptions.Value;
         var batchSize = PositiveOrDefault(
@@ -918,12 +939,16 @@ public sealed class PostScrapeOrchestrator
                 _log.LogWarning(ex,
                     "Band rank history retention cleanup failed for {BandType}. Continuing without blocking fresh data publication.",
                     bandType);
+                failures.Add(ex);
             }
             finally
             {
                 _progress.ReportPhaseItemComplete();
             }
         }
+
+        if (failures.Count > 0)
+            throw new AggregateException("One or more band rank history retention cleanup operations failed.", failures);
     }
 
     private static bool ShouldRunBandMaintenance(ScrapePhase resolvedPhases) =>
@@ -1141,6 +1166,11 @@ public sealed class PostScrapeOrchestrator
             result.DeletedRows,
             result.InsertedRows,
             result.FailedScopes);
+        if (result.FailedScopes > 0)
+        {
+            throw new InvalidOperationException(
+                $"Band current projection failed for {result.FailedScopes}/{result.ScopeCount} scope(s).");
+        }
     }
 
     private async Task RefreshBandCurrentProjectionScopesInChunksAsync(
@@ -1198,6 +1228,11 @@ public sealed class PostScrapeOrchestrator
             insertedRows,
             candidateRowsDeleted,
             failedScopes);
+        if (failedScopes > 0)
+        {
+            throw new InvalidOperationException(
+                $"Band current projection fallback failed for {failedScopes}/{scopes.Count} scope(s).");
+        }
     }
 
     private static IReadOnlyDictionary<string, IReadOnlyCollection<string>> MergeImpactedTeams(
@@ -1266,21 +1301,35 @@ public sealed class PostScrapeOrchestrator
     /// Run a post-scrape phase with timing and heap telemetry.
     /// Logs phase name, duration, and heap delta so the peak memory owner is identifiable.
     /// </summary>
-    private async Task RunPhaseAsync(string phaseName, Func<Task> phase, bool rethrowOnFailure = false)
+    private async Task RunPhaseAsync(
+        ScrapePassContext ctx,
+        string phaseName,
+        Func<Task> phase)
     {
+        var criticality = PostScrapePhasePolicy.GetCriticality(phaseName);
         var heapBefore = GC.GetTotalMemory(false);
         var sw = System.Diagnostics.Stopwatch.StartNew();
+        var startedAt = DateTime.UtcNow;
         try
         {
+            _phaseFaultInjector?.BeforePhase(phaseName);
             await phase();
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "PostScrape phase [{Phase}] failed. Will retry next pass.", phaseName);
-            if (rethrowOnFailure)
-                throw;
             sw.Stop();
+            RecordPhaseOutcome(ctx, phaseName, criticality, false, startedAt, sw.Elapsed, ex.Message);
+            _log.LogWarning(
+                ex,
+                "PostScrape phase [{Phase}] failed ({Criticality}). Will retry next pass.",
+                phaseName,
+                criticality);
+            if (criticality == PostScrapePhaseCriticality.PublicationCritical
+                && _persistence.EnforcePublicationCriticalPhases)
+            {
+                throw;
+            }
             var heapAfterFailure = GC.GetTotalMemory(false);
             _log.LogInformation(
                 "PostScrape phase [{Phase}] stopped after failure in {Elapsed}. Heap: {Before:N0} → {After:N0} ({Delta:+#,0;-#,0;0} bytes).",
@@ -1288,6 +1337,7 @@ public sealed class PostScrapeOrchestrator
             return;
         }
         sw.Stop();
+        RecordPhaseOutcome(ctx, phaseName, criticality, true, startedAt, sw.Elapsed, null);
         var heapAfter = GC.GetTotalMemory(false);
         _log.LogInformation(
             "PostScrape phase [{Phase}] completed in {Elapsed}. Heap: {Before:N0} → {After:N0} ({Delta:+#,0;-#,0;0} bytes).",
@@ -1297,22 +1347,37 @@ public sealed class PostScrapeOrchestrator
     /// <summary>
     /// Run a post-scrape phase that returns a result, with timing and heap telemetry.
     /// </summary>
-    private async Task<T> RunPhaseAsync<T>(string phaseName, Func<Task<T>> phase, T defaultValue = default!, bool rethrowOnFailure = false)
+    private async Task<T> RunPhaseAsync<T>(
+        ScrapePassContext ctx,
+        string phaseName,
+        Func<Task<T>> phase,
+        T defaultValue = default!)
     {
+        var criticality = PostScrapePhasePolicy.GetCriticality(phaseName);
         var heapBefore = GC.GetTotalMemory(false);
         var sw = System.Diagnostics.Stopwatch.StartNew();
+        var startedAt = DateTime.UtcNow;
         T result = defaultValue;
         try
         {
+            _phaseFaultInjector?.BeforePhase(phaseName);
             result = await phase();
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "PostScrape phase [{Phase}] failed. Will retry next pass.", phaseName);
-            if (rethrowOnFailure)
-                throw;
             sw.Stop();
+            RecordPhaseOutcome(ctx, phaseName, criticality, false, startedAt, sw.Elapsed, ex.Message);
+            _log.LogWarning(
+                ex,
+                "PostScrape phase [{Phase}] failed ({Criticality}). Will retry next pass.",
+                phaseName,
+                criticality);
+            if (criticality == PostScrapePhaseCriticality.PublicationCritical
+                && _persistence.EnforcePublicationCriticalPhases)
+            {
+                throw;
+            }
             var heapAfterFailure = GC.GetTotalMemory(false);
             _log.LogInformation(
                 "PostScrape phase [{Phase}] stopped after failure in {Elapsed}. Heap: {Before:N0} → {After:N0} ({Delta:+#,0;-#,0;0} bytes).",
@@ -1320,6 +1385,7 @@ public sealed class PostScrapeOrchestrator
             return result;
         }
         sw.Stop();
+        RecordPhaseOutcome(ctx, phaseName, criticality, true, startedAt, sw.Elapsed, null);
         var heapAfter = GC.GetTotalMemory(false);
         _log.LogInformation(
             "PostScrape phase [{Phase}] completed in {Elapsed}. Heap: {Before:N0} → {After:N0} ({Delta:+#,0;-#,0;0} bytes).",
@@ -1327,10 +1393,63 @@ public sealed class PostScrapeOrchestrator
         return result;
     }
 
+    internal Task RunClassifiedPhaseForTestAsync(
+        ScrapePassContext ctx,
+        string phaseName,
+        Func<Task> phase) =>
+        RunPhaseAsync(ctx, phaseName, phase);
+
+    private void RecordPhaseOutcome(
+        ScrapePassContext ctx,
+        string phaseName,
+        PostScrapePhaseCriticality criticality,
+        bool success,
+        DateTime startedAt,
+        TimeSpan duration,
+        string? errorMessage)
+    {
+        ctx.PostScrapeOutcomes.Record(new PostScrapePhaseOutcome(
+            phaseName,
+            criticality,
+            success,
+            errorMessage));
+
+        if (ctx.ScrapeId <= 0)
+            return;
+
+        try
+        {
+            _persistence.Meta.RecordScrapePhaseOutcome(new ScrapePhaseOutcomeRecord(
+                ctx.ScrapeId,
+                phaseName,
+                criticality == PostScrapePhaseCriticality.PublicationCritical
+                    ? "publication_critical"
+                    : "best_effort",
+                success ? "completed" : "failed",
+                startedAt,
+                startedAt + duration,
+                (long)duration.TotalMilliseconds,
+                errorMessage));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogError(
+                ex,
+                "Failed to persist post-scrape phase outcome for {Phase}.",
+                phaseName);
+            if (criticality == PostScrapePhaseCriticality.PublicationCritical
+                && _persistence.EnforcePublicationCriticalPhases)
+            {
+                throw new InvalidOperationException(
+                    $"Unable to persist publication-critical phase outcome for {phaseName}.",
+                    ex);
+            }
+        }
+    }
+
     private async Task<T> RunWithPostScrapeNetworkTimeoutAsync<T>(
         string operationName,
         Func<CancellationToken, Task<T>> operation,
-        T defaultValue,
         CancellationToken ct)
     {
         var timeout = _options.Value.PostScrapeRefreshTimeout;
@@ -1350,7 +1469,8 @@ public sealed class PostScrapeOrchestrator
                 "Post-scrape {OperationName} timed out after {Timeout}. Continuing with downstream ranking and notification phases; work will retry next pass.",
                 operationName,
                 timeout);
-            return defaultValue;
+            throw new TimeoutException(
+                $"Post-scrape {operationName} timed out after {timeout}.");
         }
     }
 
@@ -1366,7 +1486,7 @@ public sealed class PostScrapeOrchestrator
         _progress.RegisterBranches(new[] { "rank_recompute", "first_seen", "name_resolution" });
         _progress.SetSubOperation("enriching_parallel_rank_recompute");
 
-        var rankTask = Task.Run(() =>
+        var rankTask = RunPhaseAsync(ctx, "RankRecompute", () => Task.Run(() =>
         {
             _progress.StartBranch("rank_recompute");
             try
@@ -1392,10 +1512,11 @@ public sealed class PostScrapeOrchestrator
             {
                 _log.LogWarning(ex, "Rank recomputation failed. Stored ranks may be stale.");
                 _progress.CompleteBranch("rank_recompute", "failed", ex.Message);
+                throw;
             }
-        }, ct);
+        }, ct));
 
-        var firstSeenTask = Task.Run(async () =>
+        var firstSeenTask = RunPhaseAsync(ctx, "FirstSeenSeason", async () =>
         {
             _progress.StartBranch("first_seen");
             try
@@ -1421,10 +1542,11 @@ public sealed class PostScrapeOrchestrator
             {
                 _log.LogWarning(ex, "FirstSeenSeason calculation failed. Will retry next pass.");
                 _progress.CompleteBranch("first_seen", "failed", ex.Message);
+                throw;
             }
-        }, ct);
+        });
 
-        var nameResTask = Task.Run(async () =>
+        var nameResTask = RunPhaseAsync(ctx, "AccountNameResolution", async () =>
         {
             _progress.StartBranch("name_resolution");
             try
@@ -1436,12 +1558,23 @@ public sealed class PostScrapeOrchestrator
             {
                 _log.LogWarning(ex, "Account name resolution failed. Will retry next pass.");
                 _progress.CompleteBranch("name_resolution", "failed", ex.Message);
+                throw;
             }
-        }, ct);
+        });
 
-        await rankTask;
+        Exception? rankFailure = null;
+        try
+        {
+            await rankTask;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            rankFailure = ex;
+        }
         _progress.SetSubOperation("enriching_parallel_tail");
         await Task.WhenAll(firstSeenTask, nameResTask);
+        if (rankFailure is not null)
+            throw rankFailure;
     }
 
     /// <summary>
@@ -1459,17 +1592,9 @@ public sealed class PostScrapeOrchestrator
 
     internal async Task<bool> ComputeRankingsAsync(FestivalService service, long scrapeId, CancellationToken ct)
     {
-        try
-        {
-            _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRankings);
-            await _rankingsCalculator.ComputeAllAsync(service, ct, scrapeId);
-            return true;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.LogWarning(ex, "Rankings computation failed. Will retry next pass.");
-            return false;
-        }
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRankings);
+        await _rankingsCalculator.ComputeAllAsync(service, ct, scrapeId);
+        return true;
     }
 
     /// <summary>
@@ -1675,12 +1800,13 @@ public sealed class PostScrapeOrchestrator
             _log.LogWarning(
                 "Post-scrape registered-user refresh timed out after {Timeout}. Continuing with downstream ranking and notification phases; refresh will retry next pass.",
                 refreshTimeout);
-            return new SongProcessingMachine.MachineResult();
+            throw new TimeoutException(
+                $"Post-scrape registered-user refresh timed out after {refreshTimeout}.");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(ex, "Song processing machine failed. Will retry next pass.");
-            return new SongProcessingMachine.MachineResult();
+            throw;
         }
     }
 
@@ -1854,28 +1980,21 @@ public sealed class PostScrapeOrchestrator
         if (ctx.RegisteredIds.Count == 0)
             return;
 
-        try
-        {
-            var dirtySongs = ctx.Aggregates.DirtyRivalSongs
-                .Where(row => ctx.RegisteredIds.Contains(row.AccountId))
-                .ToList();
+        var dirtySongs = ctx.Aggregates.DirtyRivalSongs
+            .Where(row => ctx.RegisteredIds.Contains(row.AccountId))
+            .ToList();
 
-            _log.LogInformation(
-                "Song-rivals dirty summary: dirtySongs={DirtySongs}, dirtyAccounts={DirtyAccounts}, reasons={DirtyReasonCounts}.",
-                dirtySongs.Count,
-                dirtySongs.Select(row => row.AccountId).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
-                FormatCountSummary(dirtySongs.GroupBy(row => row.DirtyReason, StringComparer.OrdinalIgnoreCase)
-                    .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase)));
+        _log.LogInformation(
+            "Song-rivals dirty summary: dirtySongs={DirtySongs}, dirtyAccounts={DirtyAccounts}, reasons={DirtyReasonCounts}.",
+            dirtySongs.Count,
+            dirtySongs.Select(row => row.AccountId).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+            FormatCountSummary(dirtySongs.GroupBy(row => row.DirtyReason, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase)));
 
-            if (dirtySongs.Count > 0)
-                _persistence.Meta.UpsertDirtyRivalSongs(dirtySongs);
+        if (dirtySongs.Count > 0)
+            _persistence.Meta.UpsertDirtyRivalSongs(dirtySongs);
 
-            await _rivalsOrchestrator.ComputeAllAsync(ctx.RegisteredIds, null, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.LogWarning(ex, "Rivals computation failed. Will retry next pass.");
-        }
+        await _rivalsOrchestrator.ComputeAllAsync(ctx.RegisteredIds, null, ct);
     }
 
     private static string FormatCountSummary(IReadOnlyDictionary<string, int> counts)
@@ -1984,6 +2103,7 @@ public sealed class PostScrapeOrchestrator
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(ex, "Entry pruning failed. Will retry next pass.");
+            throw;
         }
     }
 
@@ -2045,7 +2165,7 @@ public sealed class PostScrapeOrchestrator
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _log.LogWarning(ex, "Stats tier bulk score load failed for {Count:N0} account(s).", accountChunk.Length);
-                continue;
+                throw;
             }
 
             var rows = new List<PlayerStatsTiersRow>();
@@ -2067,6 +2187,7 @@ public sealed class PostScrapeOrchestrator
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     _log.LogWarning(ex, "Stats tier computation failed for {AccountId}.", accountId);
+                    throw;
                 }
             }
 
@@ -2079,6 +2200,7 @@ public sealed class PostScrapeOrchestrator
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     _log.LogWarning(ex, "Stats tier batch write failed for {RowCount:N0} row(s).", rows.Count);
+                    throw;
                 }
             }
         }

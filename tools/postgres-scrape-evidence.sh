@@ -110,7 +110,16 @@ psql_csv() {
 }
 
 if [[ -z "$SCRAPE_ID" ]]; then
-    SCRAPE_ID="$(psql_scalar "SELECT COALESCE((SELECT id FROM scrape_log WHERE completed_at IS NOT NULL ORDER BY id DESC LIMIT 1), 0);")"
+    SCRAPE_ID="$(psql_scalar "
+        SELECT COALESCE((
+            SELECT id
+            FROM scrape_log
+            WHERE completed_at IS NOT NULL
+              AND COALESCE(to_jsonb(scrape_log)->>'status', 'completed') = 'completed'
+            ORDER BY id DESC
+            LIMIT 1
+        ), 0);
+    ")"
 fi
 if [[ "$SCRAPE_ID" == "0" ]]; then
     printf 'ERROR: no completed scrape is available and --scrape-id was not supplied\n' >&2
@@ -136,6 +145,23 @@ if [[ "$has_scope_complete" == "t" ]]; then
 else
     scope_complete_select="FALSE AS is_complete"
     scope_incomplete_predicate="TRUE"
+fi
+
+has_scrape_status="$(
+    psql_scalar "
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'scrape_log'
+              AND column_name = 'status'
+        );
+    "
+)"
+if [[ "$has_scrape_status" == "t" ]]; then
+    scrape_status_select="scrape.status, scrape.failed_at, scrape.failure_phase, scrape.failure_message, scrape.best_effort_failure_count, scrape.best_effort_failed_phases"
+else
+    scrape_status_select="CASE WHEN scrape.completed_at IS NULL THEN 'running' ELSE 'completed' END AS status, NULL::timestamptz AS failed_at, NULL::text AS failure_phase, NULL::text AS failure_message, 0::integer AS best_effort_failure_count, ARRAY[]::text[] AS best_effort_failed_phases"
 fi
 
 "$SCRIPT_DIR/postgres-capacity-guard.sh" \
@@ -175,6 +201,7 @@ psql_csv "
         scrape.total_requests,
         scrape.total_bytes,
         scrape.epic_reported_over_100_pages,
+        $scrape_status_select,
         publication.published_scrape_id,
         publication.published_at,
         publication.public_reads_frozen,
@@ -186,6 +213,54 @@ psql_csv "
     CROSS JOIN scrape_publication_state publication
     WHERE scrape.id = $SCRAPE_ID
 " "$OUT_DIR/scrape-publication.csv"
+
+if [[ "$(psql_scalar "SELECT to_regclass('public.leaderboard_scope_manifests') IS NOT NULL;")" == "t" ]]; then
+    psql_csv "
+        SELECT
+            scrape_id, song_id, instrument, scope_kind,
+            expected_first_page, expected_last_page, received_pages,
+            page_statuses, terminal_boundary, terminal_boundary_page,
+            parse_status, retry_exhausted, reported_total_entries,
+            reported_total_pages, deep_start_page, deep_end_page,
+            content_fingerprint, coverage_fingerprint, is_complete,
+            failure_reason, created_at, updated_at
+        FROM leaderboard_scope_manifests
+        WHERE scrape_id = $SCRAPE_ID
+        ORDER BY instrument, song_id, scope_kind
+    " "$OUT_DIR/scope-manifests.csv"
+else
+    printf '%s\n' \
+        'scrape_id,song_id,instrument,scope_kind,expected_first_page,expected_last_page,received_pages,page_statuses,terminal_boundary,terminal_boundary_page,parse_status,retry_exhausted,reported_total_entries,reported_total_pages,deep_start_page,deep_end_page,content_fingerprint,coverage_fingerprint,is_complete,failure_reason,created_at,updated_at' \
+        > "$OUT_DIR/scope-manifests.csv"
+fi
+
+if [[ "$(psql_scalar "SELECT to_regclass('public.scrape_writer_failures') IS NOT NULL;")" == "t" ]]; then
+    psql_csv "
+        SELECT writer_kind, instrument, song_id, page_count, row_count,
+               artifact_path, exception_type, error_message, occurred_at, replayed_at
+        FROM scrape_writer_failures
+        WHERE scrape_id = $SCRAPE_ID
+        ORDER BY writer_kind, instrument, song_id, id
+    " "$OUT_DIR/writer-failures.csv"
+else
+    printf '%s\n' \
+        'writer_kind,instrument,song_id,page_count,row_count,artifact_path,exception_type,error_message,occurred_at,replayed_at' \
+        > "$OUT_DIR/writer-failures.csv"
+fi
+
+if [[ "$(psql_scalar "SELECT to_regclass('public.scrape_phase_outcomes') IS NOT NULL;")" == "t" ]]; then
+    psql_csv "
+        SELECT phase, criticality, status, started_at, completed_at,
+               duration_ms, error_message
+        FROM scrape_phase_outcomes
+        WHERE scrape_id = $SCRAPE_ID
+        ORDER BY started_at, phase
+    " "$OUT_DIR/phase-outcomes.csv"
+else
+    printf '%s\n' \
+        'phase,criticality,status,started_at,completed_at,duration_ms,error_message' \
+        > "$OUT_DIR/phase-outcomes.csv"
+fi
 
 psql_csv "
     SELECT
@@ -495,6 +570,9 @@ scope_rows = rows("scope-summary.csv")
 published_source_rows = rows("published-scope-sources.csv")
 logical_rows = rows("logical-write-metrics.csv")
 phase_rows = rows("phase-timings.csv")
+manifest_rows = rows("scope-manifests.csv")
+writer_failure_rows = rows("writer-failures.csv")
+phase_outcome_rows = rows("phase-outcomes.csv")
 
 summary = {
     "label": (out_dir / "label.txt").read_text(encoding="utf-8").strip(),
@@ -540,6 +618,31 @@ summary = {
         "rows": len(phase_rows),
         "failed": sum(row["success"].lower() not in {"t", "true", "1"} for row in phase_rows),
         "durationMs": sum(int(row["duration_ms"] or 0) for row in phase_rows),
+    },
+    "scopeManifests": {
+        "scopes": len(manifest_rows),
+        "complete": sum(row["is_complete"].lower() in {"t", "true", "1"} for row in manifest_rows),
+        "incomplete": sum(row["is_complete"].lower() not in {"t", "true", "1"} for row in manifest_rows),
+        "parseFailures": sum(row["parse_status"] == "failed" for row in manifest_rows),
+        "retryExhausted": sum(row["retry_exhausted"].lower() in {"t", "true", "1"} for row in manifest_rows),
+        "terminalBoundaries": sum(row["terminal_boundary"] not in {"none", ""} for row in manifest_rows),
+        "deepScopes": sum(bool(row["deep_start_page"]) for row in manifest_rows),
+    },
+    "writerFailures": {
+        "scopes": len(writer_failure_rows),
+        "pages": sum(int(row["page_count"] or 0) for row in writer_failure_rows),
+        "rows": sum(int(row["row_count"] or 0) for row in writer_failure_rows),
+    },
+    "phaseOutcomes": {
+        "phases": len(phase_outcome_rows),
+        "criticalFailures": sum(
+            row["criticality"] == "publication_critical" and row["status"] == "failed"
+            for row in phase_outcome_rows
+        ),
+        "bestEffortFailures": sum(
+            row["criticality"] == "best_effort" and row["status"] == "failed"
+            for row in phase_outcome_rows
+        ),
     },
     "comparison": None,
 }
@@ -615,6 +718,10 @@ report = [
     f"- Published source row total and source scrape range: `{summary['publishedSources']['rows']}` / `{summary['publishedSources']['minSourceScrapeId']}`-`{summary['publishedSources']['maxSourceScrapeId']}`",
     f"- Logical observed/changed/unchanged rows: `{summary['logicalWrites']['observed_rows']}` / `{summary['logicalWrites']['changed_rows']}` / `{summary['logicalWrites']['unchanged_rows']}`",
     f"- Phase timing rows/failures: `{summary['phaseTimings']['rows']}` / `{summary['phaseTimings']['failed']}`",
+    f"- Scope manifests (complete/incomplete): `{summary['scopeManifests']['scopes']}` / `{summary['scopeManifests']['complete']}` / `{summary['scopeManifests']['incomplete']}`",
+    f"- Manifest parse failures/retry exhaustion/terminal boundaries/deep scopes: `{summary['scopeManifests']['parseFailures']}` / `{summary['scopeManifests']['retryExhausted']}` / `{summary['scopeManifests']['terminalBoundaries']}` / `{summary['scopeManifests']['deepScopes']}`",
+    f"- Writer failure scopes/pages/rows: `{summary['writerFailures']['scopes']}` / `{summary['writerFailures']['pages']}` / `{summary['writerFailures']['rows']}`",
+    f"- Phase outcomes critical/best-effort failures: `{summary['phaseOutcomes']['criticalFailures']}` / `{summary['phaseOutcomes']['bestEffortFailures']}`",
     "",
     "The manifest contains SHA-256 checksums for every captured evidence file.",
 ]

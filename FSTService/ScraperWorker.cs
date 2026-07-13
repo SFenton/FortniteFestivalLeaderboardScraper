@@ -535,6 +535,10 @@ public sealed class ScraperWorker : BackgroundService
                     _workerStatus?.FailOperation("scrape.post_process", ex);
                     postProcessOperationActive = false;
                     passDetail = $"Post-processing failed: {ex.Message}";
+                    _persistence.Meta.FailScrapeRun(
+                        ctx.ScrapeId,
+                        "post_process",
+                        ex.Message);
                     _log.LogError(ex, "Post-scrape orchestration failed. Finalizing pass with stale data.");
                 }
             }
@@ -622,6 +626,10 @@ public sealed class ScraperWorker : BackgroundService
                     try
                     {
                         _lifecycle.ScrapePublishing();
+                        ScrapePublicationGuard.EnsureCanPublish(
+                            result.ScrapeId,
+                            ctx.PostScrapeOutcomes,
+                            _persistence.EnforcePublicationCriticalPhases);
 
                         int? expectedPublishedScopeCount = null;
                         if (_persistence.WritePublishedScopeSources)
@@ -694,6 +702,10 @@ public sealed class ScraperWorker : BackgroundService
                     {
                         _workerStatus?.FailOperation("scrape.publication", ex);
                         passDetail = $"Publication failed: {ex.Message}";
+                        _persistence.Meta.FailScrapeRun(
+                            result.ScrapeId,
+                            "publication",
+                            ex.Message);
                         throw;
                     }
                 }

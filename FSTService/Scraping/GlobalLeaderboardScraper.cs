@@ -1011,7 +1011,16 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     private const int ForbiddenThreshold = 3;
 
     /// <summary>Outcome of a single page fetch.</summary>
-    public enum FetchStatus { Success, Forbidden, Unauthorized, OtherFailure }
+    public enum FetchStatus
+    {
+        Success,
+        Forbidden,
+        Unauthorized,
+        ParseFailure,
+        RetryExhausted,
+        HttpFailure,
+        OtherFailure,
+    }
 
     /// <summary>
     /// Fetch and parse a single leaderboard page with automatic retry on
@@ -1049,6 +1058,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         // Caps at 2 outer attempts (× 4 executor retries = 8 total HTTP attempts).
         // Some Epic pages are permanently broken (server-side data corruption);
         // a tight cap prevents one bad page from stalling the entire scrape.
+        var exhaustedStatus = FetchStatus.RetryExhausted;
         for (int fetchAttempt = 0; fetchAttempt < 2; fetchAttempt++)
         {
             if (fetchAttempt > 0)
@@ -1064,7 +1074,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 _log.LogWarning("HTTP error for {Song}/{Instrument} page {Page}: {Error}",
                     songId, instrument, page, ex.Message);
                 _progress.ReportRetry();
-                return (null, 0, FetchStatus.OtherFailure);
+                return (null, 0, FetchStatus.RetryExhausted);
             }
 
             using (res)
@@ -1080,7 +1090,16 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
                     _log.LogWarning("Failed to parse {Song}/{Instrument} page {Page}: ContentLength={CL}, ContentType={CT}",
                         songId, instrument, page, contentLength, res.Content.Headers.ContentType);
-                    return (null, 0, FetchStatus.OtherFailure);
+                    if (string.Equals(
+                            res.Content.Headers.ContentType?.MediaType,
+                            "text/html",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        _executor.ReportMalformedSuccessResponse(res, label);
+                    }
+                    exhaustedStatus = FetchStatus.ParseFailure;
+                    _progress.ReportRetry();
+                    continue;
                 }
 
                 var statusCode = (int)res.StatusCode;
@@ -1116,6 +1135,9 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
                 if (statusCode == 403 || statusCode == 500)
                 {
+                    exhaustedStatus = statusCode == 403
+                        ? FetchStatus.Forbidden
+                        : FetchStatus.RetryExhausted;
                     _progress.ReportRetry();
                     continue;
                 }
@@ -1131,13 +1153,13 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
                 _log.LogWarning("Leaderboard request failed for {Song}/{Instrument} page {Page}: {StatusCode} {Body}",
                     songId, instrument, page, statusCode, errorBody);
-                return (null, 0, FetchStatus.OtherFailure);
+                return (null, 0, FetchStatus.HttpFailure);
             }
         }
 
         // All outer retry attempts exhausted
         _log.LogWarning("Exhausted all retry attempts for {Song}/{Instrument} page {Page}.", songId, instrument, page);
-        return (null, 0, FetchStatus.OtherFailure);
+        return (null, 0, exhaustedStatus);
     }
 
     // ─── Single instrument (parallel pages) ─────────
@@ -1164,6 +1186,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         double validCutoffMultiplier = 0.95,
         ScrapeAccessTokenProvider? accessTokenProvider = null)
     {
+        var pageStatuses = new ConcurrentDictionary<int, FetchStatus>();
+
         if (!SupportsSongInstrument(songId, instrument))
         {
             _progress.ReportPage0(1);
@@ -1179,6 +1203,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 PagesScraped = 0,
                 Requests = 0,
                 BytesReceived = 0,
+                CompletenessManifest = ScopeCompletenessManifest.Unsupported([]),
             };
         }
 
@@ -1198,6 +1223,9 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             page0Admission?.Dispose();
             if (page0Acquired) limiter?.Release();
         }
+        pageStatuses[0] = page0.firstPage is not null
+            ? FetchStatus.Success
+            : page0.firstStatus;
 
         // Report page-0 to progress tracker (even if empty)
         if (page0.firstPage is not null)
@@ -1221,6 +1249,15 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 PagesScraped = page0.firstPage is not null ? 1 : 0,
                 Requests = 1,
                 BytesReceived = page0.firstLen,
+                CompletenessManifest = ScopeCompletenessManifest.Create(
+                    expectedFirstPage: 0,
+                    expectedLastPage: 0,
+                    pageStatuses,
+                    entries,
+                    reportedTotalPages: page0.firstPage?.TotalPages ?? 0,
+                    terminalBoundary: page0.firstPage is not null
+                        ? ScopeTerminalBoundaryKind.EpicEmpty
+                        : ScopeTerminalBoundaryKind.None),
             };
         }
 
@@ -1231,6 +1268,10 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int reportedPages = totalPages;
         if (maxPages > 0 && totalPages > maxPages)
             totalPages = maxPages;
+        var requestedLastPage = totalPages - 1;
+        var hitEpicBoundary = false;
+        int? deepStartPage = null;
+        int? deepEndPage = null;
 
         // ── Deep scrape detection: check if page 0's top score exceeds CHOpt threshold ──
         // overThreshold = trigger threshold (CHOpt × multiplier) — used only to decide whether to deep scrape.
@@ -1301,6 +1342,9 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                     Interlocked.Increment(ref requestCount);
                     Interlocked.Add(ref totalBytes, bodyLen);
                     _progress.ReportPageFetched(bodyLen);
+                    pageStatuses[pageNum] = parsed is not null
+                        ? FetchStatus.Success
+                        : status;
 
                     if (parsed is not null)
                     {
@@ -1313,6 +1357,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                         if (count >= ForbiddenThreshold &&
                             Interlocked.CompareExchange(ref boundaryLogged, 1, 0) == 0)
                         {
+                            hitEpicBoundary = true;
                             var entryCount = allEntries.Values.Sum(e => e.Count);
                             _log.LogInformation(
                                 "Hit access boundary for {Label} ({Song}/{Instrument}) at page {Page}. " +
@@ -1323,6 +1368,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                         }
                         else if (!pageCts.IsCancellationRequested && count >= ForbiddenThreshold)
                         {
+                            hitEpicBoundary = true;
                             // Already logged — just ensure cancellation
                             try { pageCts.Cancel(); } catch { }
                         }
@@ -1345,15 +1391,31 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         if (deepScrapeTriggered && totalPages < reportedPages)
         {
             int wave2Start = totalPages;
+            deepStartPage = wave2Start;
 
             if (deferDeepScrape && validEntryTarget > 0)
             {
                 // ── Deferred mode: return metadata for coordinated deep scrape ──
                 int validCount = allEntries.Values.Sum(page => page.Count(e => e.Score <= validCutoff));
-                _log.LogInformation(
-                    "Deferring deep scrape for {Label} ({Song}/{Instrument}): " +
-                    "{ValidCount:N0} valid entries from wave 1, wave 2 starts at page {Wave2Start} (of {ReportedPages:N0} reported).",
-                    label ?? songId, songId, instrument, validCount, wave2Start, reportedPages);
+                var needsDeepScrape = validCount < validEntryTarget;
+                if (needsDeepScrape)
+                {
+                    _log.LogInformation(
+                        "Deferring deep scrape for {Label} ({Song}/{Instrument}): " +
+                        "{ValidCount:N0} valid entries from wave 1, wave 2 starts at page {Wave2Start} (of {ReportedPages:N0} reported).",
+                        label ?? songId, songId, instrument, validCount, wave2Start, reportedPages);
+                }
+                else
+                {
+                    _log.LogInformation(
+                        "Skipping coordinated deep scrape for {Label} ({Song}/{Instrument}): " +
+                        "wave 1 already captured {ValidCount:N0}/{Target:N0} valid entries.",
+                        label ?? songId,
+                        songId,
+                        instrument,
+                        validCount,
+                        validEntryTarget);
+                }
 
                 var wave1Ordered = allEntries
                     .OrderBy(x => x.Key)
@@ -1373,16 +1435,30 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                     PagesScraped = allEntries.Count,
                     Requests = requestCount,
                     BytesReceived = totalBytes,
-                    DeferredDeepScrape = new DeepScrapeMetadata
-                    {
-                        SongId = songId,
-                        Instrument = instrument,
-                        Label = label,
-                        ValidCutoff = validCutoff,
-                        Wave2Start = wave2Start,
-                        ReportedPages = reportedPages,
-                        InitialValidCount = validCount,
-                    },
+                    CompletenessManifest = ScopeCompletenessManifest.Create(
+                        expectedFirstPage: 0,
+                        expectedLastPage: requestedLastPage,
+                        pageStatuses,
+                        wave1Ordered,
+                        reportedPages,
+                        hitEpicBoundary
+                            ? ScopeTerminalBoundaryKind.EpicForbidden
+                            : ScopeTerminalBoundaryKind.None,
+                        GetTerminalBoundaryPage(pageStatuses),
+                        needsDeepScrape ? deepStartPage : null,
+                        deepEndPage),
+                    DeferredDeepScrape = needsDeepScrape
+                        ? new DeepScrapeMetadata
+                        {
+                            SongId = songId,
+                            Instrument = instrument,
+                            Label = label,
+                            ValidCutoff = validCutoff,
+                            Wave2Start = wave2Start,
+                            ReportedPages = reportedPages,
+                            InitialValidCount = validCount,
+                        }
+                        : null,
                 };
             }
 
@@ -1397,6 +1473,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 {
                     int batchEnd = Math.Min(nextPage + overThresholdExtraPages, reportedPages);
                     int batchSize = batchEnd - nextPage;
+                    requestedLastPage = Math.Max(requestedLastPage, batchEnd - 1);
+                    deepEndPage = batchEnd - 1;
 
                     _log.LogInformation(
                         "Deep scrape for {Label} ({Song}/{Instrument}): fetching pages {Start}–{End} " +
@@ -1435,6 +1513,9 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                             Interlocked.Increment(ref requestCount);
                             Interlocked.Add(ref totalBytes, bodyLen);
                             _progress.ReportPageFetched(bodyLen);
+                            pageStatuses[pageNum] = parsed is not null
+                                ? FetchStatus.Success
+                                : status;
 
                             if (parsed is not null)
                             {
@@ -1447,6 +1528,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                                 if (count >= ForbiddenThreshold &&
                                     Interlocked.CompareExchange(ref batchBoundaryLogged, 1, 0) == 0)
                                 {
+                                    hitEpicBoundary = true;
                                     _log.LogInformation(
                                         "Hit access boundary during deep scrape for {Label} ({Song}/{Instrument}) at page {Page}.",
                                         label ?? songId, songId, instrument, pageNum);
@@ -1455,6 +1537,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                                 }
                                 else if (!batchCts.IsCancellationRequested && count >= ForbiddenThreshold)
                                 {
+                                    hitEpicBoundary = true;
                                     hitBoundary = true;
                                     try { batchCts.Cancel(); } catch { }
                                 }
@@ -1517,6 +1600,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 if (wave2End > wave2Start)
                 {
                     int wave2PageCount = wave2End - wave2Start;
+                    requestedLastPage = Math.Max(requestedLastPage, wave2End - 1);
+                    deepEndPage = wave2End - 1;
                     _log.LogInformation(
                         "Deep scrape wave 2 for {Label} ({Song}/{Instrument}): fetching pages {Start}–{End} " +
                         "({PageCount} pages, last over-threshold entry on page {LastPage}).",
@@ -1553,6 +1638,9 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                             Interlocked.Increment(ref requestCount);
                             Interlocked.Add(ref totalBytes, bodyLen);
                             _progress.ReportPageFetched(bodyLen);
+                            pageStatuses[pageNum] = parsed is not null
+                                ? FetchStatus.Success
+                                : status;
 
                             if (parsed is not null)
                             {
@@ -1565,6 +1653,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                                 if (count >= ForbiddenThreshold &&
                                     Interlocked.CompareExchange(ref wave2BoundaryLogged, 1, 0) == 0)
                                 {
+                                    hitEpicBoundary = true;
                                     _log.LogInformation(
                                         "Hit access boundary during deep scrape wave 2 for {Label} ({Song}/{Instrument}) at page {Page}.",
                                         label ?? songId, songId, instrument, pageNum);
@@ -1572,6 +1661,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                                 }
                                 else if (!wave2Cts.IsCancellationRequested && count >= ForbiddenThreshold)
                                 {
+                                    hitEpicBoundary = true;
                                     try { wave2Cts.Cancel(); } catch { }
                                 }
                             }
@@ -1626,7 +1716,29 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             PagesScraped = allEntries.Count,
             Requests = requestCount,
             BytesReceived = totalBytes,
+            CompletenessManifest = ScopeCompletenessManifest.Create(
+                expectedFirstPage: 0,
+                expectedLastPage: requestedLastPage,
+                pageStatuses,
+                ordered,
+                reportedPages,
+                hitEpicBoundary
+                    ? ScopeTerminalBoundaryKind.EpicForbidden
+                    : ScopeTerminalBoundaryKind.None,
+                GetTerminalBoundaryPage(pageStatuses),
+                deepStartPage,
+                deepEndPage),
         };
+    }
+
+    private static int? GetTerminalBoundaryPage(
+        IReadOnlyDictionary<int, FetchStatus> pageStatuses)
+    {
+        var forbiddenPages = pageStatuses
+            .Where(static pair => pair.Value == FetchStatus.Forbidden)
+            .Select(static pair => pair.Key)
+            .ToArray();
+        return forbiddenPages.Length == 0 ? null : forbiddenPages.Min();
     }
 
     /// <summary>
@@ -1767,19 +1879,17 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
             results[req.SongId] = songResults;
 
-            // Fire callback so caller can persist immediately (pipelined).
-            // Report song-level progress AFTER the callback so that the
-            // progress counter doesn't race ahead of actual persistence.
-            if (onSongComplete is not null)
-                await onSongComplete(req.SongId, songResults);
+            // Deferred scopes must retain their wave-1 rows until the coordinated
+            // deep result is merged. Persist every other scope immediately.
+            var immediateResults = songResults
+                .Where(static result => result.DeferredDeepScrape is null)
+                .ToList();
+            if (onSongComplete is not null && immediateResults.Count > 0)
+                await onSongComplete(req.SongId, immediateResults);
 
-            // Release entry data now that persistence has consumed it.
-            // The result shells remain in the dictionary for population updates
-            // (which only need EntriesCount and ReportedTotalPages).
-            foreach (var r in songResults)
+            foreach (var r in immediateResults)
             {
                 r.Entries = [];
-                r.DeferredDeepScrape = null;
             }
 
             _progress.ReportSongComplete();
@@ -1813,19 +1923,73 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 var deepResults = await coordinator.RunAsync(
                     deepJobs, limiter, accessToken, accountId,
                     seedBatch: overThresholdExtraPages,
-                    onJobComplete: async deepResult =>
-                    {
-                        if (deepResult.Entries.Count == 0) return;
-
-                        // Fire callback with deep scrape results for persistence (upsert handles merges)
-                        if (onSongComplete is not null)
-                            await onSongComplete(deepResult.SongId, [deepResult]);
-
-                        // Release entry data after persistence callback
-                        deepResult.Entries = [];
-                    },
+                    onJobComplete: null,
                     ct,
                     accessTokenProvider);
+
+                var deepResultsByScope = deepResults.ToDictionary(
+                    static result => (result.SongId, result.Instrument));
+                var mergedResultsBySong = new Dictionary<string, List<GlobalLeaderboardResult>>(
+                    StringComparer.OrdinalIgnoreCase);
+
+                foreach (var (songId, songResults) in results)
+                {
+                    for (var index = 0; index < songResults.Count; index++)
+                    {
+                        var wave1 = songResults[index];
+                        if (wave1.DeferredDeepScrape is null)
+                            continue;
+
+                        if (!deepResultsByScope.TryGetValue((wave1.SongId, wave1.Instrument), out var deep))
+                            throw new InvalidOperationException(
+                                $"Coordinated deep scrape returned no result for {wave1.SongId}/{wave1.Instrument}.");
+
+                        var mergedEntries = new List<LeaderboardEntry>(
+                            wave1.Entries.Count + deep.Entries.Count);
+                        mergedEntries.AddRange(wave1.Entries);
+                        mergedEntries.AddRange(deep.Entries);
+
+                        var merged = new GlobalLeaderboardResult
+                        {
+                            SongId = wave1.SongId,
+                            Instrument = wave1.Instrument,
+                            Entries = mergedEntries,
+                            EntriesCount = mergedEntries.Count,
+                            TotalPages = Math.Max(wave1.TotalPages, deep.TotalPages),
+                            ReportedTotalPages = Math.Max(
+                                wave1.ReportedTotalPages,
+                                deep.ReportedTotalPages),
+                            PagesScraped = wave1.PagesScraped + deep.PagesScraped,
+                            Requests = wave1.Requests + deep.Requests,
+                            BytesReceived = wave1.BytesReceived + deep.BytesReceived,
+                            CompletenessManifest =
+                                wave1.CompletenessManifest is not null
+                                && deep.CompletenessManifest is not null
+                                    ? ScopeCompletenessManifest.Merge(
+                                        wave1.CompletenessManifest,
+                                        deep.CompletenessManifest,
+                                        mergedEntries)
+                                    : null,
+                        };
+
+                        songResults[index] = merged;
+                        if (!mergedResultsBySong.TryGetValue(songId, out var pending))
+                        {
+                            pending = [];
+                            mergedResultsBySong[songId] = pending;
+                        }
+                        pending.Add(merged);
+                    }
+                }
+
+                foreach (var (songId, mergedResults) in mergedResultsBySong)
+                {
+                    if (onSongComplete is not null)
+                        await onSongComplete(songId, mergedResults);
+
+                    foreach (var result in mergedResults)
+                        result.Entries = [];
+                }
             }
         }
 
@@ -2314,6 +2478,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         }
 
         // Outer loop: retries on transient 403 and 500 with escalating backoff.
+        var exhaustedStatus = FetchStatus.RetryExhausted;
         for (int fetchAttempt = 0; fetchAttempt < 2; fetchAttempt++)
         {
             if (fetchAttempt > 0)
@@ -2329,7 +2494,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 _log.LogWarning("HTTP error for {Song}/{BandType} page {Page}: {Error}",
                     songId, bandType, page, ex.Message);
                 _progress.ReportRetry();
-                return (null, 0, FetchStatus.OtherFailure);
+                return (null, 0, FetchStatus.RetryExhausted);
             }
 
             using (res)
@@ -2345,7 +2510,16 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
                     _log.LogWarning("Failed to parse {Song}/{BandType} page {Page}: ContentLength={CL}",
                         songId, bandType, page, contentLength);
-                    return (null, 0, FetchStatus.OtherFailure);
+                    if (string.Equals(
+                            res.Content.Headers.ContentType?.MediaType,
+                            "text/html",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        _executor.ReportMalformedSuccessResponse(res, label);
+                    }
+                    exhaustedStatus = FetchStatus.ParseFailure;
+                    _progress.ReportRetry();
+                    continue;
                 }
 
                 var statusCode = (int)res.StatusCode;
@@ -2381,6 +2555,9 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
                 if (statusCode == 403 || statusCode == 500)
                 {
+                    exhaustedStatus = statusCode == 403
+                        ? FetchStatus.Forbidden
+                        : FetchStatus.RetryExhausted;
                     _progress.ReportRetry();
                     continue;
                 }
@@ -2395,12 +2572,12 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
                 _log.LogWarning("Band leaderboard request failed for {Song}/{BandType} page {Page}: {StatusCode} {Body}",
                     songId, bandType, page, statusCode, errorBody);
-                return (null, 0, FetchStatus.OtherFailure);
+                return (null, 0, FetchStatus.HttpFailure);
             }
         }
 
         _log.LogWarning("Exhausted all retry attempts for {Song}/{BandType} page {Page}.", songId, bandType, page);
-        return (null, 0, FetchStatus.OtherFailure);
+        return (null, 0, exhaustedStatus);
     }
 
     /// <summary>
@@ -2888,6 +3065,7 @@ public sealed class GlobalLeaderboardResult
     public int PagesScraped { get; init; }
     public int Requests { get; init; }
     public long BytesReceived { get; init; }
+    public ScopeCompletenessManifest? CompletenessManifest { get; init; }
     /// <summary>
     /// When non-null, deep scraping was triggered but deferred for coordinated execution.
     /// The coordinator should use this metadata to run wave 2 breadth-first across all deferred combos.

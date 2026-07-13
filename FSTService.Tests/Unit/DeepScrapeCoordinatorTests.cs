@@ -57,6 +57,7 @@ public class DeepScrapeCoordinatorTests
 
         Assert.Single(results);
         Assert.True(results[0].Entries.Count >= 2);
+        Assert.Equal(results[0].Entries.Count, results[0].EntriesCount);
         // Requests should be limited — no need to fetch all 8 remaining pages
         Assert.True(results[0].PagesScraped <= 5);
     }
@@ -477,5 +478,36 @@ public class DeepScrapeCoordinatorTests
         Assert.Equal(2, callbackCompleted.Count);
         Assert.Contains("song1", callbackCompleted);
         Assert.Contains("song2", callbackCompleted);
+    }
+
+    [Fact]
+    public async Task OnJobComplete_CallbackFailurePropagates()
+    {
+        var (coordinator, _, handler) = Create();
+        handler.EnqueueJsonOk(MakePage(2, 10, ("p1", 500)));
+
+        var jobs = new List<DeepScrapeJob>
+        {
+            new()
+            {
+                SongId = "song1",
+                Instrument = "Solo_Guitar",
+                ValidCutoff = 1000,
+                ValidEntryTarget = 1,
+                ReportedPages = 10,
+                Wave2Start = 2,
+                ValidCount = 0,
+            },
+        };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            coordinator.RunAsync(
+                jobs,
+                new AdaptiveConcurrencyLimiter(1, 1, 1, _log),
+                "token",
+                "acct",
+                seedBatch: 1,
+                _ => throw new InvalidOperationException("injected callback failure"),
+                CancellationToken.None));
     }
 }

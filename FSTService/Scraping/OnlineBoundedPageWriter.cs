@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using System.Text.Json;
 
 namespace FSTService.Scraping;
 
@@ -16,6 +17,10 @@ public sealed class OnlineBoundedPageWriter<T> : IAsyncDisposable
     private readonly ILogger _log;
     private readonly string _label;
     private readonly int _maxBatchPages;
+    private readonly string _artifactDirectory;
+    private readonly object _failureLock = new();
+    private readonly List<WriterBatchFailure> _failures = [];
+    private readonly List<(string Instrument, List<(string SongId, IReadOnlyList<T> Entries)> Batch)> _failedBatches = [];
     private long _enqueuedPages;
     private long _enqueuedEntries;
     private long _flushedPages;
@@ -24,6 +29,24 @@ public sealed class OnlineBoundedPageWriter<T> : IAsyncDisposable
 
     private readonly record struct PageWorkItem(string SongId, string Instrument, IReadOnlyList<T> Entries);
 
+    private sealed class ReplayArtifactPayload
+    {
+        public int FormatVersion { get; init; } = 1;
+        public string WriterKind { get; init; } = "";
+        public string Instrument { get; init; } = "";
+        public DateTime FailedAtUtc { get; init; }
+        public string ExceptionType { get; init; } = "";
+        public string ErrorMessage { get; init; } = "";
+        public IReadOnlyList<ReplayArtifactPage> Pages { get; init; } = [];
+    }
+
+    private sealed class ReplayArtifactPage
+    {
+        public string SongId { get; init; } = "";
+        public long RowCount { get; init; }
+        public IReadOnlyList<T> Entries { get; init; } = [];
+    }
+
     public OnlineBoundedPageWriter(
         ILogger log,
         string label,
@@ -31,7 +54,8 @@ public sealed class OnlineBoundedPageWriter<T> : IAsyncDisposable
         int channelCapacity,
         int maxBatchPages,
         int writerCount,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? replayBaseDirectory = null)
     {
         if (channelCapacity <= 0) throw new ArgumentOutOfRangeException(nameof(channelCapacity));
         if (maxBatchPages <= 0) throw new ArgumentOutOfRangeException(nameof(maxBatchPages));
@@ -41,6 +65,9 @@ public sealed class OnlineBoundedPageWriter<T> : IAsyncDisposable
         _label = label;
         _flush = flush;
         _maxBatchPages = maxBatchPages;
+        _artifactDirectory = Path.Combine(
+            replayBaseDirectory ?? Path.GetTempPath(),
+            $"fst_scrape_{label}_{Guid.NewGuid():N}");
         _channel = Channel.CreateBounded<PageWorkItem>(new BoundedChannelOptions(channelCapacity)
         {
             FullMode = BoundedChannelFullMode.Wait,
@@ -80,7 +107,7 @@ public sealed class OnlineBoundedPageWriter<T> : IAsyncDisposable
         Interlocked.Add(ref _enqueuedEntries, entries.Count);
     }
 
-    public async Task CompleteAndDrainAsync()
+    public async Task<WriterDrainResult> CompleteAndDrainAsync()
     {
         if (Interlocked.Exchange(ref _completed, 1) == 0)
             _channel.Writer.TryComplete();
@@ -90,6 +117,17 @@ public sealed class OnlineBoundedPageWriter<T> : IAsyncDisposable
         _log.LogInformation(
             "Online bounded writer [{Label}] drained: {Pages:N0}/{EnqueuedPages:N0} pages, {Entries:N0}/{EnqueuedEntries:N0} entries flushed.",
             _label, FlushedPages, EnqueuedPages, FlushedEntries, EnqueuedEntries);
+        lock (_failureLock)
+        {
+            return new WriterDrainResult(
+                _label,
+                EnqueuedPages,
+                EnqueuedEntries,
+                FlushedPages,
+                FlushedEntries,
+                _failures.ToArray(),
+                _failures.Count == 0 ? null : _artifactDirectory);
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -104,6 +142,30 @@ public sealed class OnlineBoundedPageWriter<T> : IAsyncDisposable
         catch (OperationCanceledException)
         {
             // Dispose may be called during scrape cancellation; cancellation is expected.
+        }
+
+        lock (_failureLock)
+        {
+            if (_failures.Count == 0)
+            {
+                try
+                {
+                    if (Directory.Exists(_artifactDirectory))
+                        Directory.Delete(_artifactDirectory, recursive: true);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Failed to delete online writer artifact directory {Path}.", _artifactDirectory);
+                }
+            }
+            else
+            {
+                _log.LogWarning(
+                    "Online bounded writer [{Label}] retained {FailureCount} replay artifact(s) at {Path}.",
+                    _label,
+                    _failures.Count,
+                    _artifactDirectory);
+            }
         }
     }
 
@@ -140,10 +202,241 @@ public sealed class OnlineBoundedPageWriter<T> : IAsyncDisposable
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                var scopes = currentBatch
+                    .GroupBy(static item => item.SongId, StringComparer.OrdinalIgnoreCase)
+                    .Select(static group => new WriterFailedScope(
+                        group.Key,
+                        group.Count(),
+                        group.Sum(static item => (long)item.Entries.Count)))
+                    .OrderBy(static scope => scope.SongId, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                var artifactPath = WriteReplayArtifact(
+                    workerIndex,
+                    group.Key,
+                    currentBatch,
+                    ex);
+                lock (_failureLock)
+                {
+                    _failures.Add(new WriterBatchFailure(
+                        _label,
+                        group.Key,
+                        scopes,
+                        ex.GetType().FullName ?? ex.GetType().Name,
+                        ex.Message,
+                        artifactPath,
+                        DateTime.UtcNow));
+                    _failedBatches.Add((group.Key, currentBatch));
+                }
                 _log.LogError(ex,
-                    "Online bounded writer [{Label}] worker {Worker} failed flushing {Instrument} ({Pages:N0} pages, {Entries:N0} entries). Data will be re-scraped next pass.",
-                    _label, workerIndex, group.Key, currentBatch.Count, entryCount);
+                    "Online bounded writer [{Label}] worker {Worker} failed flushing {Instrument} ({Pages:N0} pages, {Entries:N0} entries). Replay artifact={ArtifactPath}.",
+                    _label, workerIndex, group.Key, currentBatch.Count, entryCount, artifactPath);
             }
         }
+    }
+
+    public WriterDrainResult ReplayFailures()
+    {
+        List<(string Instrument, List<(string SongId, IReadOnlyList<T> Entries)> Batch)> batches;
+        lock (_failureLock)
+            batches = _failedBatches.ToList();
+
+        long attemptedPages = 0;
+        long attemptedRows = 0;
+        long flushedPages = 0;
+        long flushedRows = 0;
+        var remainingFailures = new List<WriterBatchFailure>();
+        var remainingBatches = new List<(string Instrument, List<(string SongId, IReadOnlyList<T> Entries)> Batch)>();
+
+        foreach (var (instrument, batch) in batches)
+        {
+            var pages = batch.Count;
+            var rows = batch.Sum(static item => (long)item.Entries.Count);
+            attemptedPages += pages;
+            attemptedRows += rows;
+            try
+            {
+                _flush(instrument, batch);
+                flushedPages += pages;
+                flushedRows += rows;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                var scopes = batch
+                    .GroupBy(static item => item.SongId, StringComparer.OrdinalIgnoreCase)
+                    .Select(static group => new WriterFailedScope(
+                        group.Key,
+                        group.Count(),
+                        group.Sum(static item => (long)item.Entries.Count)))
+                    .ToArray();
+                remainingFailures.Add(new WriterBatchFailure(
+                    _label,
+                    instrument,
+                    scopes,
+                    ex.GetType().FullName ?? ex.GetType().Name,
+                    ex.Message,
+                    _artifactDirectory,
+                    DateTime.UtcNow));
+                remainingBatches.Add((instrument, batch));
+            }
+        }
+
+        lock (_failureLock)
+        {
+            _failures.Clear();
+            _failures.AddRange(remainingFailures);
+            _failedBatches.Clear();
+            _failedBatches.AddRange(remainingBatches);
+        }
+
+        return new WriterDrainResult(
+            _label,
+            attemptedPages,
+            attemptedRows,
+            flushedPages,
+            flushedRows,
+            remainingFailures,
+            remainingFailures.Count == 0 ? null : _artifactDirectory);
+    }
+
+    public static WriterDrainResult ReplayArtifactDirectory(
+        ILogger log,
+        string writerKind,
+        string artifactDirectory,
+        FlushBatch flush)
+    {
+        if (!Directory.Exists(artifactDirectory))
+            throw new DirectoryNotFoundException(artifactDirectory);
+
+        long enqueuedPages = 0;
+        long enqueuedRows = 0;
+        long flushedPages = 0;
+        long flushedRows = 0;
+        var failures = new List<WriterBatchFailure>();
+        var options = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true,
+        };
+
+        foreach (var file in Directory.GetFiles(artifactDirectory, "worker-*.json")
+                     .OrderBy(static file => file, StringComparer.Ordinal))
+        {
+            ReplayArtifactPayload? artifact;
+            try
+            {
+                artifact = JsonSerializer.Deserialize<ReplayArtifactPayload>(
+                    File.ReadAllText(file),
+                    options);
+                if (artifact is null || artifact.FormatVersion != 1)
+                    throw new InvalidDataException($"Unsupported online replay artifact: {file}");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                failures.Add(new WriterBatchFailure(
+                    writerKind,
+                    "artifact",
+                    [new WriterFailedScope(Path.GetFileName(file), 0, 0)],
+                    ex.GetType().FullName ?? ex.GetType().Name,
+                    ex.Message,
+                    file,
+                    DateTime.UtcNow));
+                continue;
+            }
+
+            var batch = artifact.Pages
+                .Select(static page => (page.SongId, page.Entries))
+                .ToList();
+            var pages = batch.Count;
+            var rows = batch.Sum(static item => (long)item.Entries.Count);
+            enqueuedPages += pages;
+            enqueuedRows += rows;
+
+            try
+            {
+                flush(artifact.Instrument, batch);
+                flushedPages += pages;
+                flushedRows += rows;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                failures.Add(new WriterBatchFailure(
+                    writerKind,
+                    artifact.Instrument,
+                    batch
+                        .GroupBy(static item => item.SongId, StringComparer.OrdinalIgnoreCase)
+                        .Select(static group => new WriterFailedScope(
+                            group.Key,
+                            group.Count(),
+                            group.Sum(static item => (long)item.Entries.Count)))
+                        .ToArray(),
+                    ex.GetType().FullName ?? ex.GetType().Name,
+                    ex.Message,
+                    file,
+                    DateTime.UtcNow));
+                log.LogError(
+                    ex,
+                    "Persisted online replay failed for {WriterKind}/{Instrument}: {Pages:N0} pages, {Rows:N0} rows.",
+                    writerKind,
+                    artifact.Instrument,
+                    pages,
+                    rows);
+            }
+        }
+
+        return new WriterDrainResult(
+            writerKind,
+            enqueuedPages,
+            enqueuedRows,
+            flushedPages,
+            flushedRows,
+            failures,
+            failures.Count == 0 ? null : artifactDirectory);
+    }
+
+    private string WriteReplayArtifact(
+        int workerIndex,
+        string instrument,
+        List<(string SongId, IReadOnlyList<T> Entries)> batch,
+        Exception exception)
+    {
+        try
+        {
+            Directory.CreateDirectory(_artifactDirectory);
+            var path = Path.Combine(
+                _artifactDirectory,
+                $"worker-{workerIndex:D2}-{SanitizeFileName(instrument)}-{Guid.NewGuid():N}.json");
+            var json = JsonSerializer.Serialize(
+                new ReplayArtifactPayload
+                {
+                    FormatVersion = 1,
+                    WriterKind = _label,
+                    Instrument = instrument,
+                    FailedAtUtc = DateTime.UtcNow,
+                    ExceptionType = exception.GetType().FullName ?? exception.GetType().Name,
+                    ErrorMessage = exception.Message,
+                    Pages = batch.Select(static item => new ReplayArtifactPage
+                    {
+                        SongId = item.SongId,
+                        RowCount = item.Entries.Count,
+                        Entries = item.Entries,
+                    }).ToArray(),
+                },
+                new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(path, json);
+            return path;
+        }
+        catch (Exception artifactException)
+        {
+            _log.LogError(
+                artifactException,
+                "Failed to persist online writer replay artifact in {Path}.",
+                _artifactDirectory);
+            return _artifactDirectory;
+        }
+    }
+
+    private static string SanitizeFileName(string value)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        return new string(value.Select(ch => invalid.Contains(ch) ? '_' : ch).ToArray());
     }
 }

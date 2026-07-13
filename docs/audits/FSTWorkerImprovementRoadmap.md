@@ -203,6 +203,95 @@ until replay and live shadow parity pass.
 - Dual-write manifests without gating first. Publication gating remains blocked
   until replay proves all legitimate Epic terminal conditions are classified.
 
+### WORKER-0A correctness implementation - code accepted, live promotion hard-blocked
+
+**Execution class:** `full-scrape-ab`
+**Rollback switches:** `Features__RequireSuccessfulScrapeWriters`,
+`Features__EnforcePublicationCriticalPhases`, and
+`Features__EnforceScopeCompletenessManifests`.
+
+- Coordinated deep scopes now retain wave-one rows, merge wave-two rows once,
+  populate `EntriesCount`, and invoke persistence once per scope. Exact
+  PostgreSQL fixtures cover both disk-spool and bounded-online writers through
+  snapshot, current projection, manifest, published-source mapping, and global
+  publication.
+- Solo, band, and bounded-online writers return exact durable failure results.
+  Failed disk batches retain the original binary spool plus a versioned JSON
+  manifest; bounded-online batches retain versioned typed JSON. Both formats
+  have deterministic persisted-artifact replay tests.
+- `scrape_log` has durable `running`/`completed`/`failed` state.
+  `scrape_writer_failures` records exact failed scopes/pages/rows and artifact
+  paths. A failed candidate cannot later be completed or published, while the
+  prior mapped published scrape remains active.
+- Every post-scrape phase is explicitly `publication_critical` or
+  `best_effort`. Outcomes are persisted in `scrape_phase_outcomes`; critical
+  failures reject publication, while best-effort failures publish with visible
+  `/api/service-info` warnings.
+- `leaderboard_scope_manifests` records expected/received pages, final status
+  per page, Epic empty/forbidden boundaries, parse/retry state, reported
+  totals/pages, deep range, and content/coverage fingerprints for all expected
+  solo and band scopes. Missing, malformed, retry-exhausted, or unexplained
+  gap scopes cannot publish when enforcement is enabled.
+- A configured proxy pool no longer bypasses its alternate-exit recovery with
+  a direct curl process. Where curl fallback is still applicable, HTTP `200`
+  responses with non-JSON bodies are treated as continued CDN blocks rather
+  than successful leaderboard pages. Other malformed successful responses
+  receive one bounded outer retry before their manifest remains failed.
+- Focused correctness validation passes `418/418`; the final full diagnostic
+  passes `2,015/2,017`, with two deterministic pre-existing fixtures outside
+  WORKER-0A. CI-equivalent FSTService line coverage is `94.81%`. The web API
+  contract build and secret scan pass.
+
+**Live decision - hard-blocked 2026-07-13**
+
+- Baseline scrape `1237` failed closed with `4,575/6,138` incomplete solo
+  scopes while retaining published `1236`. It logged `162,454` parse failures,
+  `237,566` curl-fallback HTTP `200` responses, and `8,506` failed curl
+  transports. Public reads unfroze cleanly.
+- Candidate `1238` was stopped before network work because inherited logical
+  shadow rollback attempted an unbounded full-table scrape-ID scan. The safe
+  retry disabled the experimental logical-version shadow writer; physical
+  snapshots and published-source semantics remained authoritative.
+- A later retry exposed that legacy staging cleanup deleted older
+  `completed_at IS NULL` scrape-log rows even after they were marked failed.
+  Cleanup now removes only abandoned `status='running'` log rows, retaining
+  failed candidates and their manifest/writer/phase ledgers for audit.
+- Candidates `1239` and `1240` proved malformed HTML could no longer be treated
+  as valid data. The final executor path classified disguised HTTP `200` HTML
+  inside the proxy/CDN loop, skipped duplicate curl sends for routed requests,
+  and produced zero parser-level false successes.
+- Candidate `1241` completed zero scopes after all routed exits remained
+  blocked through cooldown and self-heal restarts (`1,471` alternate-proxy CDN
+  retries and `1,303` timeouts in the captured window). A manual reset of all
+  30 configured PIA containers did not restore a usable provider path.
+  Candidate `1242` again completed zero scopes (`460` alternate-proxy retries,
+  `376` timeouts, zero parse failures).
+- No writer, manifest, phase, projection, or publication gate could be
+  evaluated on a complete live candidate because Epic returned no valid page
+  zero through any refreshed PIA exit. This is a time/provider-accrual hard
+  gate, not a correctness acceptance.
+- Production was rolled back to `fstservice:service02-824415e9`; `fstworker`
+  is created on that image but held to avoid repeated partial writes while all
+  exits are blocked. `fstservice`, `festivalweb`, and Postgres are healthy,
+  published `1236` remains mapped with `6,138` sources and `39,588,650` rows,
+  and public reads are unfrozen.
+- During stopped-worker image normalization, `docker compose create` also
+  recreated Postgres and PIA dependencies in the stopped state. They were
+  immediately restarted; Postgres readiness, `/readyz`, festivalweb, service
+  status, locks, and the exact published mapping were revalidated with no data
+  or publication change. The incident and recovery are included in evidence.
+- Additive correctness tables remain harmless and backwards-compatible.
+  Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/worker0a-correctness-20260713T1552Z`.
+
+**Remaining WORKER-0A promotion gate**
+
+- Re-run exactly one full candidate scrape after at least one configured PIA
+  exit can return valid Epic leaderboard JSON. Require all expected solo/band
+  manifests complete, zero writer failures, zero publication-critical phase
+  failures, exact published-source/physical counts, healthy public routes, and
+  acceptable resource deltas before enabling the three enforcement flags.
+
 ### WORKER-0.5 - Separate solo and band completion
 
 A band timeout must not mark `LeaderboardScrapeCompleted=true`. A task still

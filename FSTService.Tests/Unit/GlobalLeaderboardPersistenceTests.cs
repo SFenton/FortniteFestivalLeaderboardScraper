@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
+using System.Text.Json;
 
 namespace FSTService.Tests.Unit;
 
@@ -130,15 +131,47 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
             reader.GetBoolean(3));
     }
 
+    private (int[] ReceivedPages, string ParseStatus, bool RetryExhausted, bool IsComplete, string? FailureReason)?
+        GetScopeManifest(long scrapeId, string songId, string instrument)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT received_pages, parse_status, retry_exhausted, is_complete, failure_reason
+            FROM leaderboard_scope_manifests
+            WHERE scrape_id = @scrapeId
+              AND song_id = @songId
+              AND instrument = @instrument
+              AND scope_kind = 'alltime'
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return null;
+        return (
+            reader.GetFieldValue<int[]>(0),
+            reader.GetString(1),
+            reader.GetBoolean(2),
+            reader.GetBoolean(3),
+            reader.IsDBNull(4) ? null : reader.GetString(4));
+    }
+
     private void InsertScrapeLog(long scrapeId, bool completed)
     {
         using var conn = _metaFixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO scrape_log (id, started_at, completed_at)
-            VALUES (@scrapeId, now(), CASE WHEN @completed THEN now() ELSE NULL END)
+            INSERT INTO scrape_log (id, started_at, completed_at, status)
+            VALUES (
+                @scrapeId,
+                now(),
+                CASE WHEN @completed THEN now() ELSE NULL END,
+                CASE WHEN @completed THEN 'completed' ELSE 'running' END)
             ON CONFLICT (id) DO UPDATE SET
-                completed_at = EXCLUDED.completed_at
+                completed_at = EXCLUDED.completed_at,
+                status = EXCLUDED.status
             """;
         cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
         cmd.Parameters.AddWithValue("completed", completed);
@@ -839,6 +872,363 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         Assert.False(coverage.IsComplete);
         Assert.Equal(1, coverage.IncompleteScopeCount);
         Assert.Equal((null, 0, 0, false), GetScopeCoverage("song_1", "Solo_Guitar"));
+    }
+
+    [Fact]
+    public async Task ScopeManifestGatePersistsCompleteCoverageAndAllowsCandidate()
+    {
+        using var glp = CreatePersistence(new FeatureOptions
+        {
+            WritePublishedScopeSources = true,
+            EnforceScopeCompletenessManifests = true,
+        });
+        InsertScrapeLog(42, completed: false);
+        var expectedPairs = new[] { ("song_1", "Solo_Guitar") };
+        var entries = new[]
+        {
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 100_000,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+        };
+
+        glp.StartSpoolWriter(42, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar", entries);
+        Assert.True((await glp.FlushSpoolAsync()).IsSuccess);
+        glp.FinalizeShadowSnapshots(42, expectedPairs: expectedPairs);
+
+        var result = new GlobalLeaderboardResult
+        {
+            SongId = "song_1",
+            Instrument = "Solo_Guitar",
+            EntriesCount = 1,
+            TotalPages = 1,
+            ReportedTotalPages = 1,
+            PagesScraped = 1,
+            Requests = 1,
+            CompletenessManifest = ScopeCompletenessManifest.Create(
+                0,
+                0,
+                new Dictionary<int, GlobalLeaderboardScraper.FetchStatus>
+                {
+                    [0] = GlobalLeaderboardScraper.FetchStatus.Success,
+                },
+                entries,
+                reportedTotalPages: 1),
+        };
+
+        var coverage = glp.RecordLeaderboardScopeCoverage(42, [result], expectedPairs);
+        var build = glp.BuildPublishedScopeSourceCandidate(42, expectedPairs);
+        var manifest = GetScopeManifest(42, "song_1", "Solo_Guitar");
+
+        Assert.True(coverage.IsComplete);
+        Assert.True(build.IsComplete);
+        Assert.NotNull(manifest);
+        Assert.Equal([0], manifest.Value.ReceivedPages);
+        Assert.Equal("complete", manifest.Value.ParseStatus);
+        Assert.False(manifest.Value.RetryExhausted);
+        Assert.True(manifest.Value.IsComplete);
+    }
+
+    [Fact]
+    public async Task ScopeManifestGateRejectsMissingMalformedAndUnmanifestedScopes()
+    {
+        using var glp = CreatePersistence(new FeatureOptions
+        {
+            WritePublishedScopeSources = true,
+            EnforceScopeCompletenessManifests = true,
+        });
+        InsertScrapeLog(42, completed: false);
+        var expectedPairs = new[] { ("song_1", "Solo_Guitar") };
+        var entries = new[]
+        {
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 100_000,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+        };
+
+        glp.StartSpoolWriter(42, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar", entries);
+        Assert.True((await glp.FlushSpoolAsync()).IsSuccess);
+        glp.FinalizeShadowSnapshots(42, expectedPairs: expectedPairs);
+
+        var gapResult = new GlobalLeaderboardResult
+        {
+            SongId = "song_1",
+            Instrument = "Solo_Guitar",
+            EntriesCount = 1,
+            TotalPages = 3,
+            ReportedTotalPages = 3,
+            PagesScraped = 2,
+            Requests = 3,
+            CompletenessManifest = ScopeCompletenessManifest.Create(
+                0,
+                2,
+                new Dictionary<int, GlobalLeaderboardScraper.FetchStatus>
+                {
+                    [0] = GlobalLeaderboardScraper.FetchStatus.Success,
+                    [2] = GlobalLeaderboardScraper.FetchStatus.ParseFailure,
+                },
+                entries,
+                reportedTotalPages: 3),
+        };
+
+        var gapCoverage = glp.RecordLeaderboardScopeCoverage(42, [gapResult], expectedPairs);
+        var gapBuild = glp.BuildPublishedScopeSourceCandidate(42, expectedPairs);
+        var manifest = GetScopeManifest(42, "song_1", "Solo_Guitar");
+
+        Assert.False(gapCoverage.IsComplete);
+        Assert.False(gapBuild.IsComplete);
+        Assert.NotNull(manifest);
+        Assert.False(manifest.Value.IsComplete);
+        Assert.Equal("failed", manifest.Value.ParseStatus);
+
+        var missingManifestCoverage = glp.RecordLeaderboardScopeCoverage(
+            42,
+            [CoverageResult("song_1", "Solo_Guitar", entries: 1)],
+            expectedPairs);
+        Assert.False(missingManifestCoverage.IsComplete);
+        Assert.False(glp.BuildPublishedScopeSourceCandidate(42, expectedPairs).IsComplete);
+        Assert.Null(GetScopeManifest(42, "song_1", "Solo_Guitar"));
+    }
+
+    [Fact]
+    public async Task ScopeManifestGateAcceptsContiguousEpicForbiddenBoundary()
+    {
+        using var glp = CreatePersistence(new FeatureOptions
+        {
+            WritePublishedScopeSources = true,
+            EnforceScopeCompletenessManifests = true,
+        });
+        InsertScrapeLog(42, completed: false);
+        var expectedPairs = new[] { ("song_1", "Solo_Guitar") };
+        var entries = new[]
+        {
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 100_000,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+        };
+
+        glp.StartSpoolWriter(42, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar", entries);
+        Assert.True((await glp.FlushSpoolAsync()).IsSuccess);
+        glp.FinalizeShadowSnapshots(42, expectedPairs: expectedPairs);
+
+        var result = new GlobalLeaderboardResult
+        {
+            SongId = "song_1",
+            Instrument = "Solo_Guitar",
+            EntriesCount = 1,
+            TotalPages = 5,
+            ReportedTotalPages = 5,
+            PagesScraped = 2,
+            Requests = 5,
+            CompletenessManifest = ScopeCompletenessManifest.Create(
+                0,
+                4,
+                new Dictionary<int, GlobalLeaderboardScraper.FetchStatus>
+                {
+                    [0] = GlobalLeaderboardScraper.FetchStatus.Success,
+                    [1] = GlobalLeaderboardScraper.FetchStatus.Success,
+                    [2] = GlobalLeaderboardScraper.FetchStatus.Forbidden,
+                    [3] = GlobalLeaderboardScraper.FetchStatus.Forbidden,
+                    [4] = GlobalLeaderboardScraper.FetchStatus.Forbidden,
+                },
+                entries,
+                reportedTotalPages: 5,
+                terminalBoundary: ScopeTerminalBoundaryKind.EpicForbidden,
+                terminalBoundaryPage: 2),
+        };
+
+        var coverage = glp.RecordLeaderboardScopeCoverage(42, [result], expectedPairs);
+
+        Assert.True(coverage.IsComplete);
+        Assert.True(glp.BuildPublishedScopeSourceCandidate(42, expectedPairs).IsComplete);
+        Assert.True(GetScopeManifest(42, "song_1", "Solo_Guitar")?.IsComplete);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CoordinatedDeepRowsReachSnapshotProjectionManifestAndPublication(
+        bool useOnlineWriter)
+    {
+        using var glp = CreatePersistence(new FeatureOptions
+        {
+            WriteLegacyLiveLeaderboardDuringScrape = false,
+            WritePublishedScopeSources = true,
+            EnforceScopeCompletenessManifests = true,
+        });
+        var scrapeId = _metaFixture.Db.StartScrapeRun();
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueJsonOk(MakePage(0, 4, ("wave1-over", 1200), ("wave1-valid", 900)));
+        handler.EnqueueJsonOk(MakePage(1, 4, ("wave1-valid-2", 800)));
+        handler.EnqueueJsonOk(MakePage(2, 4, ("deep-valid-1", 700)));
+        handler.EnqueueJsonOk(MakePage(3, 4, ("deep-valid-2", 600)));
+        var scraper = new GlobalLeaderboardScraper(
+            new HttpClient(handler),
+            new ScrapeProgressTracker(),
+            Substitute.For<ILogger<GlobalLeaderboardScraper>>(),
+            maxLookupRetries: 0);
+        var expectedPairs = new[] { ("song_deep", "Solo_Guitar") };
+
+        if (useOnlineWriter)
+        {
+            glp.StartOnlineSoloWriter(
+                scrapeId,
+                channelCapacity: 8,
+                maxBatchPages: 4,
+                writerCount: 1,
+                replayBaseDirectory: _dataDir);
+        }
+        else
+        {
+            glp.StartSpoolWriter(scrapeId, _dataDir);
+        }
+        var results = await scraper.ScrapeManySongsAsync(
+            [
+                new GlobalLeaderboardScraper.SongScrapeRequest
+                {
+                    SongId = "song_deep",
+                    Instruments = ["Solo_Guitar"],
+                    MaxScores = new SongMaxScores { MaxLeadScore = 1000 },
+                },
+            ],
+            "token",
+            "acct",
+            maxConcurrency: 1,
+            onSongComplete: async (songId, scopeResults) =>
+            {
+                foreach (var result in scopeResults)
+                {
+                    if (useOnlineWriter)
+                    {
+                        await glp.EnqueueOnlineSoloPageAsync(
+                            songId,
+                            result.Instrument,
+                            result.Entries);
+                    }
+                    else
+                    {
+                        glp.EnqueueSpoolPage(songId, result.Instrument, result.Entries);
+                    }
+                }
+            },
+            maxPages: 2,
+            overThresholdExtraPages: 2,
+            validEntryTarget: 4,
+            deferDeepScrape: true);
+
+        var writerResult = useOnlineWriter
+            ? await glp.DrainOnlineSoloWriterAsync()
+            : await glp.FlushSpoolAsync();
+        Assert.True(writerResult.IsSuccess);
+        glp.FinalizeShadowSnapshots(scrapeId, expectedPairs: expectedPairs);
+        var coverage = glp.RecordLeaderboardScopeCoverage(
+            scrapeId,
+            results.Values.SelectMany(static result => result),
+            expectedPairs);
+        var sourceBuild = glp.BuildPublishedScopeSourceCandidate(scrapeId, expectedPairs);
+
+        var projectionBuilder = new SoloCurrentProjectionBuilder(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<SoloCurrentProjectionBuilder>>());
+        await projectionBuilder.EnsureSchemaAsync();
+        var projection = await projectionBuilder.RefreshScopesAsync(
+            [new SoloCurrentProjectionScopeKey("song_deep", "Solo_Guitar")],
+            new SoloCurrentProjectionRebuildOptions { MaxDegreeOfParallelism = 1 });
+
+        _metaFixture.Db.CompleteScrapeRun(scrapeId, 1, 5, 4, 1000);
+        _metaFixture.Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false,
+            expectedPublishedScopeCount: 1);
+
+        Assert.True(coverage.IsComplete);
+        Assert.True(sourceBuild.IsComplete);
+        Assert.Equal(1, projection.SucceededScopeCount);
+        Assert.Equal(5, projection.InsertedRows);
+        Assert.Equal(
+            ["wave1-over", "wave1-valid", "wave1-valid-2", "deep-valid-1", "deep-valid-2"],
+            ReadAccounts(
+                "leaderboard_entries_snapshot",
+                "snapshot_id = @scrapeId",
+                scrapeId));
+        Assert.Equal(
+            ["wave1-over", "wave1-valid", "wave1-valid-2", "deep-valid-1", "deep-valid-2"],
+            ReadAccounts(
+                "current_leaderboard_entries",
+                "TRUE",
+                scrapeId));
+        var manifest = GetScopeManifest(scrapeId, "song_deep", "Solo_Guitar");
+        Assert.NotNull(manifest);
+        Assert.True(manifest.Value.IsComplete);
+        Assert.Equal([0, 1, 2, 3], manifest.Value.ReceivedPages);
+        Assert.Equal(scrapeId, _metaFixture.Db.GetPublishedScrapeRun()?.Id);
+        Assert.Equal(5, Assert.Single(glp.GetPublishedScopeSources(scrapeId)).RowCount);
+    }
+
+    private static string MakePage(
+        int page,
+        int totalPages,
+        params (string AccountId, int Score)[] entries)
+    {
+        var payload = new
+        {
+            page,
+            totalPages,
+            entries = entries.Select((entry, index) => new
+            {
+                teamId = entry.AccountId,
+                rank = page * 100 + index + 1,
+                percentile = 0.5,
+                sessionHistory = new[]
+                {
+                    new
+                    {
+                        trackedStats = new Dictionary<string, int>
+                        {
+                            ["SCORE"] = entry.Score,
+                        },
+                    },
+                },
+            }),
+        };
+        return JsonSerializer.Serialize(payload);
+    }
+
+    private string[] ReadAccounts(string table, string extraPredicate, long scrapeId)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT account_id
+            FROM {table}
+            WHERE song_id = 'song_deep'
+              AND instrument = 'Solo_Guitar'
+              AND {extraPredicate}
+            ORDER BY rank, account_id
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        using var reader = cmd.ExecuteReader();
+        var accounts = new List<string>();
+        while (reader.Read())
+            accounts.Add(reader.GetString(0));
+        return accounts.ToArray();
     }
 
     [Fact]

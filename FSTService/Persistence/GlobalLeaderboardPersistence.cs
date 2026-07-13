@@ -60,6 +60,12 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// published-source mappings.
     /// </summary>
     public bool WritePublishedScopeSources => _features.WritePublishedScopeSources;
+    public bool EnforceScopeCompletenessManifests =>
+        _features.EnforceScopeCompletenessManifests;
+    public bool RequireSuccessfulScrapeWriters =>
+        _features.RequireSuccessfulScrapeWriters;
+    public bool EnforcePublicationCriticalPhases =>
+        _features.EnforcePublicationCriticalPhases;
 
     /// <summary>
     /// True when service-side current reads should resolve only through the
@@ -860,6 +866,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         int channelCapacity,
         int maxBatchPages,
         int writerCount,
+        string? replayBaseDirectory = null,
         CancellationToken ct = default)
     {
         OnlineBoundedPageWriter<LeaderboardEntry> writer;
@@ -877,7 +884,8 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 Math.Max(1, channelCapacity),
                 Math.Max(1, maxBatchPages),
                 Math.Clamp(writerCount, 1, 16),
-                ct);
+                ct,
+                replayBaseDirectory);
             _onlineSoloWriter = writer;
         }
 
@@ -896,7 +904,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         return _onlineSoloWriter.EnqueueAsync(songId, instrument, entries, ct);
     }
 
-    public async Task DrainOnlineSoloWriterAsync()
+    public async Task<WriterDrainResult> DrainOnlineSoloWriterAsync()
     {
         OnlineBoundedPageWriter<LeaderboardEntry>? writer;
         lock (_activeWriterLock)
@@ -905,11 +913,11 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             _onlineSoloWriter = null;
         }
 
-        if (writer is null) return;
+        if (writer is null) return WriterDrainResult.Empty("solo-online");
 
         try
         {
-            await writer.CompleteAndDrainAsync().ConfigureAwait(false);
+            return await writer.CompleteAndDrainAsync().ConfigureAwait(false);
         }
         finally
         {
@@ -922,7 +930,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// all spool data to PG in bulk. Index management is handled externally
     /// by the orchestrator to coordinate with the band spool.
     /// </summary>
-    public async Task FlushSpoolAsync(ScrapeProgressTracker? progress = null)
+    public async Task<WriterDrainResult> FlushSpoolAsync(ScrapeProgressTracker? progress = null)
     {
         SpoolWriter<LeaderboardEntry>? spool;
         lock (_activeWriterLock)
@@ -931,7 +939,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             _spoolWriter = null;
         }
 
-        if (spool is null) return;
+        if (spool is null) return WriterDrainResult.Empty("solo");
 
         try
         {
@@ -939,7 +947,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
             _log.LogInformation("Flushing solo spool: {Records:N0} pages, {Entries:N0} entries...",
                 spool.RecordCount, spool.EntryCount);
-            await Task.Run(() => spool.FlushAll(
+            return await Task.Run(() => spool.FlushAll(
                 maxBatchPages: 64,
                 onProgress: p => ReportSpoolFlushProgress(progress, p)));
         }
@@ -1122,15 +1130,22 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                         && result.ReportedTotalPages == 0)
                     || (result.PagesScraped > 0
                         && result.PagesScraped >= Math.Max(1, result.TotalPages));
+                var manifest = result.CompletenessManifest;
+                if (EnforceScopeCompletenessManifests)
+                    isComplete = manifest?.IsComplete == true;
 
                 return new
                 {
                     pair.SongId,
                     pair.Instrument,
                     RowCount = result.EntriesCount,
-                    ReportedTotalEntries = Math.Max(reportedEntries, result.EntriesCount),
-                    result.ReportedTotalPages,
+                    ReportedTotalEntries = Math.Max(
+                        manifest?.ReportedTotalEntries ?? reportedEntries,
+                        result.EntriesCount),
+                    ReportedTotalPages =
+                        manifest?.ReportedTotalPages ?? result.ReportedTotalPages,
                     IsComplete = isComplete,
+                    Manifest = manifest,
                 };
             })
             .ToArray();
@@ -1149,25 +1164,29 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                         @rowCounts::integer[],
                         @reportedEntries::bigint[],
                         @reportedPages::integer[],
-                        @isComplete::boolean[]
+                        @isComplete::boolean[],
+                        @manifestCoverageFingerprints::text[]
                     ) AS source(
                         song_id,
                         instrument,
                         row_count,
                         reported_total_entries,
                         reported_total_pages,
-                        is_complete)
+                        is_complete,
+                        manifest_coverage_fingerprint)
                 ), updated AS (
                     UPDATE leaderboard_scope_fingerprints fingerprint
                     SET fingerprint_version = 2,
-                        coverage_fingerprint = md5(concat_ws(E'\x1f',
-                            fingerprint.entry_count::text,
-                            COALESCE(fingerprint.min_rank::text, ''),
-                            COALESCE(fingerprint.max_rank::text, ''),
-                            coverage.reported_total_entries::text,
-                            coverage.reported_total_pages::text,
-                            coverage.is_complete::text
-                        )),
+                        coverage_fingerprint = COALESCE(
+                            NULLIF(coverage.manifest_coverage_fingerprint, ''),
+                            md5(concat_ws(E'\x1f',
+                                fingerprint.entry_count::text,
+                                COALESCE(fingerprint.min_rank::text, ''),
+                                COALESCE(fingerprint.max_rank::text, ''),
+                                coverage.reported_total_entries::text,
+                                coverage.reported_total_pages::text,
+                                coverage.is_complete::text
+                            ))),
                         reported_total_entries = coverage.reported_total_entries,
                         reported_total_pages = coverage.reported_total_pages,
                         is_complete = coverage.is_complete,
@@ -1206,14 +1225,16 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                         'alltime',
                         2,
                         md5(''),
-                        md5(concat_ws(E'\x1f',
-                            '0',
-                            '',
-                            '',
-                            coverage.reported_total_entries::text,
-                            coverage.reported_total_pages::text,
-                            coverage.is_complete::text
-                        )),
+                        COALESCE(
+                            NULLIF(coverage.manifest_coverage_fingerprint, ''),
+                            md5(concat_ws(E'\x1f',
+                                '0',
+                                '',
+                                '',
+                                coverage.reported_total_entries::text,
+                                coverage.reported_total_pages::text,
+                                coverage.is_complete::text
+                            ))),
                         0,
                         coverage.reported_total_entries,
                         coverage.reported_total_pages,
@@ -1270,8 +1291,24 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             cmd.Parameters.AddWithValue("reportedEntries", coverageRows.Select(row => row.ReportedTotalEntries).ToArray());
             cmd.Parameters.AddWithValue("reportedPages", coverageRows.Select(row => row.ReportedTotalPages).ToArray());
             cmd.Parameters.AddWithValue("isComplete", coverageRows.Select(row => row.IsComplete).ToArray());
+            cmd.Parameters.Add(
+                "manifestCoverageFingerprints",
+                NpgsqlDbType.Array | NpgsqlDbType.Text).Value = coverageRows
+                    .Select(row => row.Manifest?.CoverageFingerprint ?? "")
+                    .ToArray();
             persistedCount = Convert.ToInt32(cmd.ExecuteScalar());
         }
+
+        RecordScopeCompletenessManifests(
+            scrapeId,
+            coverageRows
+            .Where(static row => row.Manifest is not null)
+            .Select(row => new ScopeCompletenessRecord(
+                row.SongId,
+                row.Instrument,
+                row.Manifest!))
+            .ToArray(),
+            expectedPairArray);
 
         return new LeaderboardScopeCoverageResult(
             scrapeId,
@@ -1280,6 +1317,122 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             persistedCount,
             expectedPairArray.Length - coverageRows.Length,
             coverageRows.Count(row => !row.IsComplete));
+    }
+
+    public ScopeManifestPersistenceResult RecordScopeCompletenessManifests(
+        long scrapeId,
+        IReadOnlyList<ScopeCompletenessRecord> rows,
+        IEnumerable<(string SongId, string Instrument)> expectedPairs)
+    {
+        if (scrapeId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(scrapeId));
+
+        var expectedPairArray = NormalizeExpectedPairs(expectedPairs);
+        var expectedPairSet = expectedPairArray.ToHashSet();
+        var normalizedRows = rows
+            .Where(row => expectedPairSet.Contains((row.SongId, row.Instrument)))
+            .GroupBy(static row => (row.SongId, row.Instrument))
+            .Select(static group => group.Last())
+            .ToArray();
+
+        using var conn = _pgDataSource.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        if (expectedPairArray.Length > 0)
+        {
+            using var clear = conn.CreateCommand();
+            clear.Transaction = tx;
+            clear.CommandText = """
+                DELETE FROM leaderboard_scope_manifests manifest
+                USING unnest(
+                    @expectedSongIds::text[],
+                    @expectedInstruments::text[]
+                ) AS expected(song_id, instrument)
+                WHERE manifest.scrape_id = @scrapeId
+                  AND manifest.scope_kind = 'alltime'
+                  AND manifest.song_id = expected.song_id
+                  AND manifest.instrument = expected.instrument
+                """;
+            clear.Parameters.AddWithValue("scrapeId", scrapeId);
+            clear.Parameters.AddWithValue(
+                "expectedSongIds",
+                expectedPairArray.Select(static pair => pair.SongId).ToArray());
+            clear.Parameters.AddWithValue(
+                "expectedInstruments",
+                expectedPairArray.Select(static pair => pair.Instrument).ToArray());
+            clear.ExecuteNonQuery();
+        }
+
+        if (normalizedRows.Length > 0)
+        {
+            using var writer = conn.BeginBinaryImport(
+                """
+                COPY leaderboard_scope_manifests (
+                    scrape_id, song_id, instrument, scope_kind,
+                    expected_first_page, expected_last_page, received_pages,
+                    page_statuses, terminal_boundary, terminal_boundary_page,
+                    parse_status, retry_exhausted, reported_total_entries,
+                    reported_total_pages, deep_start_page, deep_end_page,
+                    content_fingerprint, coverage_fingerprint, is_complete,
+                    failure_reason, created_at, updated_at)
+                FROM STDIN (FORMAT BINARY)
+                """);
+            var now = DateTime.UtcNow;
+            foreach (var row in normalizedRows)
+            {
+                var songId = row.SongId;
+                var instrument = row.Instrument;
+                var manifest = row.Manifest;
+                writer.StartRow();
+                writer.Write(scrapeId, NpgsqlDbType.Bigint);
+                writer.Write(songId, NpgsqlDbType.Text);
+                writer.Write(instrument, NpgsqlDbType.Text);
+                writer.Write("alltime", NpgsqlDbType.Text);
+                writer.Write(manifest.ExpectedFirstPage, NpgsqlDbType.Integer);
+                writer.Write(manifest.ExpectedLastPage, NpgsqlDbType.Integer);
+                writer.Write(manifest.ReceivedPages.ToArray(), NpgsqlDbType.Array | NpgsqlDbType.Integer);
+                writer.Write(
+                    JsonSerializer.Serialize(manifest.PageStatuses),
+                    NpgsqlDbType.Jsonb);
+                writer.Write(
+                    manifest.TerminalBoundary.ToString().ToLowerInvariant(),
+                    NpgsqlDbType.Text);
+                if (manifest.TerminalBoundaryPage.HasValue)
+                    writer.Write(manifest.TerminalBoundaryPage.Value, NpgsqlDbType.Integer);
+                else
+                    writer.WriteNull();
+                writer.Write(manifest.ParseStatus, NpgsqlDbType.Text);
+                writer.Write(manifest.RetryExhausted, NpgsqlDbType.Boolean);
+                writer.Write(manifest.ReportedTotalEntries, NpgsqlDbType.Bigint);
+                writer.Write(manifest.ReportedTotalPages, NpgsqlDbType.Integer);
+                if (manifest.DeepStartPage.HasValue)
+                    writer.Write(manifest.DeepStartPage.Value, NpgsqlDbType.Integer);
+                else
+                    writer.WriteNull();
+                if (manifest.DeepEndPage.HasValue)
+                    writer.Write(manifest.DeepEndPage.Value, NpgsqlDbType.Integer);
+                else
+                    writer.WriteNull();
+                writer.Write(manifest.ContentFingerprint, NpgsqlDbType.Text);
+                writer.Write(manifest.CoverageFingerprint, NpgsqlDbType.Text);
+                writer.Write(manifest.IsComplete, NpgsqlDbType.Boolean);
+                if (manifest.FailureReason is not null)
+                    writer.Write(manifest.FailureReason, NpgsqlDbType.Text);
+                else
+                    writer.WriteNull();
+                writer.Write(now, NpgsqlDbType.TimestampTz);
+                writer.Write(now, NpgsqlDbType.TimestampTz);
+            }
+            writer.Complete();
+        }
+
+        tx.Commit();
+        return new ScopeManifestPersistenceResult(
+            scrapeId,
+            expectedPairArray.Length,
+            normalizedRows.Length,
+            normalizedRows.Length,
+            expectedPairArray.Length - normalizedRows.Length,
+            normalizedRows.Count(static row => !row.Manifest.IsComplete));
     }
 
     public PublishedScopeSourceBackfillResult BackfillCurrentPublishedScopeSources()
@@ -1758,6 +1911,8 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                     END AS reported_total_entries,
                     fingerprint.reported_total_pages,
                     fingerprint.is_complete,
+                    manifest.coverage_fingerprint AS manifest_coverage_fingerprint,
+                    manifest.is_complete AS manifest_is_complete,
                     physical.row_count AS physical_row_count,
                     @now AS created_at,
                     @now AS validated_at
@@ -1774,6 +1929,11 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 LEFT JOIN leaderboard_population population
                   ON population.song_id = expected.song_id
                  AND population.instrument = expected.instrument
+                LEFT JOIN leaderboard_scope_manifests manifest
+                  ON manifest.scrape_id = @scrapeId
+                 AND manifest.song_id = expected.song_id
+                 AND manifest.instrument = expected.instrument
+                 AND manifest.scope_kind = 'alltime'
                 LEFT JOIN LATERAL (
                     SELECT COUNT(*)::bigint AS row_count
                     FROM leaderboard_entries_snapshot snapshot
@@ -1786,6 +1946,13 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 SELECT *
                 FROM candidate_sources
                 WHERE is_complete
+                  AND (
+                      NOT @enforceScopeCompletenessManifests
+                      OR (
+                          manifest_is_complete
+                          AND manifest_coverage_fingerprint = coverage_fingerprint
+                      )
+                  )
                   AND reported_total_entries IS NOT NULL
                   AND reported_total_pages IS NOT NULL
                   AND reported_total_entries >= row_count
@@ -1868,6 +2035,9 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             """;
         cmd.Parameters.AddWithValue("scrapeId", scrapeId);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.Parameters.AddWithValue(
+            "enforceScopeCompletenessManifests",
+            EnforceScopeCompletenessManifests);
         cmd.Parameters.AddWithValue("expectedSongIds", expectedPairArray.Select(pair => pair.SongId).ToArray());
         cmd.Parameters.AddWithValue("expectedInstruments", expectedPairArray.Select(pair => pair.Instrument).ToArray());
         using var reader = cmd.ExecuteReader();

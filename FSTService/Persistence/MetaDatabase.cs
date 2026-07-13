@@ -50,7 +50,7 @@ public sealed class MetaDatabase : IMetaDatabase
     {
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "INSERT INTO scrape_log (started_at) VALUES (@now) RETURNING id";
+        cmd.CommandText = "INSERT INTO scrape_log (started_at, status) VALUES (@now, 'running') RETURNING id";
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         return (long)(int)cmd.ExecuteScalar()!;
     }
@@ -59,7 +59,21 @@ public sealed class MetaDatabase : IMetaDatabase
     {
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "UPDATE scrape_log SET completed_at = @now, songs_scraped = @songs, total_entries = @entries, total_requests = @requests, total_bytes = @bytes, epic_reported_over_100_pages = @epicReportedOver100Pages WHERE id = @id";
+        cmd.CommandText = """
+            UPDATE scrape_log
+            SET completed_at = @now,
+                status = 'completed',
+                failed_at = NULL,
+                failure_phase = NULL,
+                failure_message = NULL,
+                songs_scraped = @songs,
+                total_entries = @entries,
+                total_requests = @requests,
+                total_bytes = @bytes,
+                epic_reported_over_100_pages = @epicReportedOver100Pages
+            WHERE id = @id
+              AND status <> 'failed'
+            """;
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         cmd.Parameters.AddWithValue("songs", songsScraped);
         cmd.Parameters.AddWithValue("entries", (int)totalEntries);
@@ -67,6 +81,132 @@ public sealed class MetaDatabase : IMetaDatabase
         cmd.Parameters.AddWithValue("bytes", totalBytes);
         cmd.Parameters.AddWithValue("epicReportedOver100Pages", epicReportedOver100Pages);
         cmd.Parameters.AddWithValue("id", (int)scrapeId);
+        if (cmd.ExecuteNonQuery() != 1)
+            throw new InvalidOperationException(
+                $"Scrape run {scrapeId} cannot be completed after it has failed.");
+    }
+
+    public void FailScrapeRun(long scrapeId, string phase, string message)
+    {
+        if (scrapeId <= 0)
+            return;
+
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE scrape_log
+            SET status = 'failed',
+                failed_at = COALESCE(failed_at, @now),
+                failure_phase = @phase,
+                failure_message = @message
+            WHERE id = @id
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM scrape_publication_state
+                  WHERE scrape_publication_state.id = TRUE
+                    AND published_scrape_id = @id
+              )
+            """;
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.Parameters.AddWithValue("phase", phase);
+        cmd.Parameters.AddWithValue("message", message);
+        cmd.Parameters.AddWithValue("id", (int)scrapeId);
+        cmd.ExecuteNonQuery();
+    }
+
+    public void RecordScrapeWriterFailures(
+        long scrapeId,
+        IReadOnlyList<WriterDrainResult> results)
+    {
+        if (scrapeId <= 0)
+            return;
+
+        var failures = results.SelectMany(static result => result.Failures).ToArray();
+        if (failures.Length == 0)
+            return;
+
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        foreach (var failure in failures)
+        {
+            foreach (var scope in failure.Scopes)
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.Transaction = tx;
+                cmd.CommandText = """
+                    INSERT INTO scrape_writer_failures (
+                        scrape_id, writer_kind, instrument, song_id, page_count,
+                        row_count, artifact_path, exception_type, error_message, occurred_at)
+                    VALUES (
+                        @scrapeId, @writerKind, @instrument, @songId, @pageCount,
+                        @rowCount, @artifactPath, @exceptionType, @errorMessage, @occurredAt)
+                    """;
+                cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+                cmd.Parameters.AddWithValue("writerKind", failure.WriterKind);
+                cmd.Parameters.AddWithValue("instrument", failure.Instrument);
+                cmd.Parameters.AddWithValue("songId", scope.SongId);
+                cmd.Parameters.AddWithValue("pageCount", scope.PageCount);
+                cmd.Parameters.AddWithValue("rowCount", scope.RowCount);
+                cmd.Parameters.AddWithValue(
+                    "artifactPath",
+                    (object?)failure.ArtifactPath ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("exceptionType", failure.ExceptionType);
+                cmd.Parameters.AddWithValue("errorMessage", failure.ErrorMessage);
+                cmd.Parameters.AddWithValue("occurredAt", failure.OccurredAtUtc);
+                cmd.ExecuteNonQuery();
+            }
+        }
+        tx.Commit();
+    }
+
+    public void RecordScrapePhaseOutcome(ScrapePhaseOutcomeRecord outcome)
+    {
+        if (outcome.ScrapeId <= 0 || string.IsNullOrWhiteSpace(outcome.Phase))
+            return;
+
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO scrape_phase_outcomes (
+                scrape_id, phase, criticality, status, started_at,
+                completed_at, duration_ms, error_message)
+            VALUES (
+                @scrapeId, @phase, @criticality, @status, @startedAt,
+                @completedAt, @durationMs, @errorMessage)
+            ON CONFLICT (scrape_id, phase) DO UPDATE SET
+                criticality = EXCLUDED.criticality,
+                status = EXCLUDED.status,
+                started_at = EXCLUDED.started_at,
+                completed_at = EXCLUDED.completed_at,
+                duration_ms = EXCLUDED.duration_ms,
+                error_message = EXCLUDED.error_message;
+
+            UPDATE scrape_log
+            SET best_effort_failure_count = (
+                    SELECT COUNT(*)::int
+                    FROM scrape_phase_outcomes
+                    WHERE scrape_id = @scrapeId
+                      AND criticality = 'best_effort'
+                      AND status = 'failed'
+                ),
+                best_effort_failed_phases = ARRAY(
+                    SELECT phase
+                    FROM scrape_phase_outcomes
+                    WHERE scrape_id = @scrapeId
+                      AND criticality = 'best_effort'
+                      AND status = 'failed'
+                    ORDER BY phase
+                )
+            WHERE id = @scrapeId
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", outcome.ScrapeId);
+        cmd.Parameters.AddWithValue("phase", outcome.Phase);
+        cmd.Parameters.AddWithValue("criticality", outcome.Criticality);
+        cmd.Parameters.AddWithValue("status", outcome.Status);
+        cmd.Parameters.AddWithValue("startedAt", outcome.StartedAtUtc);
+        cmd.Parameters.AddWithValue("completedAt", outcome.CompletedAtUtc);
+        cmd.Parameters.AddWithValue("durationMs", outcome.DurationMs);
+        cmd.Parameters.AddWithValue("errorMessage", (object?)outcome.ErrorMessage ?? DBNull.Value);
         cmd.ExecuteNonQuery();
     }
 
@@ -74,7 +214,17 @@ public sealed class MetaDatabase : IMetaDatabase
     {
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT id, started_at, completed_at, songs_scraped, total_entries, total_requests, total_bytes, epic_reported_over_100_pages FROM scrape_log WHERE completed_at IS NOT NULL ORDER BY id DESC LIMIT 1";
+        cmd.CommandText = """
+            SELECT id, started_at, completed_at, songs_scraped, total_entries,
+                   total_requests, total_bytes, epic_reported_over_100_pages,
+                   status, failed_at, failure_phase, failure_message,
+                   best_effort_failure_count, best_effort_failed_phases
+            FROM scrape_log
+            WHERE completed_at IS NOT NULL
+              AND status = 'completed'
+            ORDER BY id DESC
+            LIMIT 1
+            """;
         using var r = cmd.ExecuteReader();
         return ReadScrapeRunInfo(r);
     }
@@ -88,16 +238,22 @@ public sealed class MetaDatabase : IMetaDatabase
                         cmd.CommandText = """
                                 SELECT scrape.id, scrape.started_at, scrape.completed_at, scrape.songs_scraped,
                                              scrape.total_entries, scrape.total_requests, scrape.total_bytes,
-                                             scrape.epic_reported_over_100_pages
+                                             scrape.epic_reported_over_100_pages, scrape.status,
+                                             scrape.failed_at, scrape.failure_phase, scrape.failure_message,
+                                             scrape.best_effort_failure_count, scrape.best_effort_failed_phases
                                 FROM scrape_publication_state publication
                                 JOIN scrape_log scrape ON scrape.id = publication.published_scrape_id
                                 WHERE publication.id = TRUE
                                     AND scrape.completed_at IS NOT NULL
+                                    AND scrape.status = 'completed'
                                 UNION ALL
                                 SELECT id, started_at, completed_at, songs_scraped, total_entries, total_requests,
-                                             total_bytes, epic_reported_over_100_pages
+                                             total_bytes, epic_reported_over_100_pages, status,
+                                             failed_at, failure_phase, failure_message,
+                                             best_effort_failure_count, best_effort_failed_phases
                                 FROM scrape_log
                                 WHERE completed_at IS NOT NULL
+                                    AND status = 'completed'
                                     AND NOT EXISTS (SELECT 1 FROM scrape_publication_state WHERE id = TRUE AND published_scrape_id IS NOT NULL)
                                 ORDER BY id DESC
                                 LIMIT 1
@@ -123,7 +279,11 @@ public sealed class MetaDatabase : IMetaDatabase
         using (var verify = conn.CreateCommand())
         {
             verify.Transaction = tx;
-            verify.CommandText = "SELECT completed_at IS NOT NULL FROM scrape_log WHERE id = @id";
+            verify.CommandText = """
+                SELECT completed_at IS NOT NULL AND status = 'completed'
+                FROM scrape_log
+                WHERE id = @id
+                """;
             verify.Parameters.AddWithValue("id", (int)scrapeId);
             if (verify.ExecuteScalar() is not bool isCompleted || !isCompleted)
                 throw new InvalidOperationException($"Scrape run {scrapeId} cannot be published before it is completed.");
@@ -408,6 +568,14 @@ public sealed class MetaDatabase : IMetaDatabase
             TotalRequests = r.IsDBNull(startOrdinal + 5) ? 0 : r.GetInt32(startOrdinal + 5),
             TotalBytes = r.IsDBNull(startOrdinal + 6) ? 0 : r.GetInt64(startOrdinal + 6),
             EpicReportedOver100Pages = !r.IsDBNull(startOrdinal + 7) && r.GetBoolean(startOrdinal + 7),
+            Status = r.IsDBNull(startOrdinal + 8) ? "running" : r.GetString(startOrdinal + 8),
+            FailedAt = r.IsDBNull(startOrdinal + 9) ? null : r.GetDateTime(startOrdinal + 9).ToString("o"),
+            FailurePhase = r.IsDBNull(startOrdinal + 10) ? null : r.GetString(startOrdinal + 10),
+            FailureMessage = r.IsDBNull(startOrdinal + 11) ? null : r.GetString(startOrdinal + 11),
+            BestEffortFailureCount = r.IsDBNull(startOrdinal + 12) ? 0 : r.GetInt32(startOrdinal + 12),
+            BestEffortFailedPhases = r.IsDBNull(startOrdinal + 13)
+                ? []
+                : r.GetFieldValue<string[]>(startOrdinal + 13),
         };
     }
 
@@ -428,6 +596,7 @@ public sealed class MetaDatabase : IMetaDatabase
                     SELECT scrape.epic_reported_over_100_pages
                     FROM scrape_log scrape
                     WHERE scrape.completed_at IS NOT NULL
+                      AND scrape.status = 'completed'
                     ORDER BY scrape.id DESC
                     LIMIT 1
                 )
@@ -606,7 +775,9 @@ public sealed class MetaDatabase : IMetaDatabase
         cmd.CommandText = """
             WITH latest_scrape AS (
                 SELECT id, started_at, completed_at, songs_scraped, total_entries,
-                       total_requests, total_bytes, epic_reported_over_100_pages
+                       total_requests, total_bytes, epic_reported_over_100_pages,
+                       status, failed_at, failure_phase, failure_message,
+                       best_effort_failure_count, best_effort_failed_phases
                 FROM scrape_log
                 ORDER BY id DESC
                 LIMIT 1
@@ -621,16 +792,22 @@ public sealed class MetaDatabase : IMetaDatabase
             published_scrape AS (
                 SELECT scrape.id, scrape.started_at, scrape.completed_at, scrape.songs_scraped,
                        scrape.total_entries, scrape.total_requests, scrape.total_bytes,
-                       scrape.epic_reported_over_100_pages
+                       scrape.epic_reported_over_100_pages, scrape.status,
+                       scrape.failed_at, scrape.failure_phase, scrape.failure_message,
+                       scrape.best_effort_failure_count, scrape.best_effort_failed_phases
                 FROM publication
                 JOIN scrape_log scrape ON scrape.id = publication.published_scrape_id
                 WHERE scrape.completed_at IS NOT NULL
+                  AND scrape.status = 'completed'
                 UNION ALL
                 SELECT scrape.id, scrape.started_at, scrape.completed_at, scrape.songs_scraped,
                        scrape.total_entries, scrape.total_requests, scrape.total_bytes,
-                       scrape.epic_reported_over_100_pages
+                       scrape.epic_reported_over_100_pages, scrape.status,
+                       scrape.failed_at, scrape.failure_phase, scrape.failure_message,
+                       scrape.best_effort_failure_count, scrape.best_effort_failed_phases
                 FROM scrape_log scrape
                 WHERE scrape.completed_at IS NOT NULL
+                  AND scrape.status = 'completed'
                   AND NOT EXISTS (
                       SELECT 1
                       FROM publication
@@ -642,10 +819,14 @@ public sealed class MetaDatabase : IMetaDatabase
             SELECT
                 latest.id, latest.started_at, latest.completed_at, latest.songs_scraped,
                 latest.total_entries, latest.total_requests, latest.total_bytes,
-                latest.epic_reported_over_100_pages,
+                latest.epic_reported_over_100_pages, latest.status, latest.failed_at,
+                latest.failure_phase, latest.failure_message,
+                latest.best_effort_failure_count, latest.best_effort_failed_phases,
                 published.id, published.started_at, published.completed_at, published.songs_scraped,
                 published.total_entries, published.total_requests, published.total_bytes,
-                published.epic_reported_over_100_pages,
+                published.epic_reported_over_100_pages, published.status, published.failed_at,
+                published.failure_phase, published.failure_message,
+                published.best_effort_failure_count, published.best_effort_failed_phases,
                 publication.published_at,
                 COALESCE(publication.public_reads_frozen, FALSE),
                 publication.public_reads_frozen_at,
@@ -670,36 +851,36 @@ public sealed class MetaDatabase : IMetaDatabase
         if (!reader.Read())
             return new ServiceRuntimeState();
 
-        var frozen = reader.GetBoolean(17);
+        var frozen = reader.GetBoolean(29);
         WorkerStatusInfo? workerStatus = null;
-        if (!reader.IsDBNull(21))
+        if (!reader.IsDBNull(33))
         {
             workerStatus = new WorkerStatusInfo
             {
-                WorkerKey = reader.GetString(21),
-                Status = reader.GetString(22),
-                Mode = reader.IsDBNull(23) ? null : reader.GetString(23),
-                InstanceId = reader.IsDBNull(24) ? null : reader.GetString(24),
-                StartedAtUtc = GetNullableUtc(reader, 25),
-                LastHeartbeatAtUtc = GetNullableUtc(reader, 26),
-                LastStatusChangeAtUtc = GetUtc(reader, 27),
-                Message = reader.IsDBNull(28) ? null : reader.GetString(28),
-                CurrentOperation = DeserializeOperation(reader, 29),
-                LastOperation = DeserializeOperation(reader, 30),
+                WorkerKey = reader.GetString(33),
+                Status = reader.GetString(34),
+                Mode = reader.IsDBNull(35) ? null : reader.GetString(35),
+                InstanceId = reader.IsDBNull(36) ? null : reader.GetString(36),
+                StartedAtUtc = GetNullableUtc(reader, 37),
+                LastHeartbeatAtUtc = GetNullableUtc(reader, 38),
+                LastStatusChangeAtUtc = GetUtc(reader, 39),
+                Message = reader.IsDBNull(40) ? null : reader.GetString(40),
+                CurrentOperation = DeserializeOperation(reader, 41),
+                LastOperation = DeserializeOperation(reader, 42),
             };
         }
 
         return new ServiceRuntimeState
         {
             LatestScrape = ReadScrapeRunInfo(reader, 0),
-            PublishedScrape = ReadScrapeRunInfo(reader, 8),
-            PublishedAtUtc = GetNullableUtc(reader, 16),
+            PublishedScrape = ReadScrapeRunInfo(reader, 14),
+            PublishedAtUtc = GetNullableUtc(reader, 28),
             PublicReadFreeze = frozen
                 ? new PublicReadFreezeState(
                     true,
-                    GetNullableUtc(reader, 18),
-                    reader.IsDBNull(19) ? null : Convert.ToInt64(reader.GetValue(19)),
-                    reader.IsDBNull(20) ? null : reader.GetString(20))
+                    GetNullableUtc(reader, 30),
+                    reader.IsDBNull(31) ? null : Convert.ToInt64(reader.GetValue(31)),
+                    reader.IsDBNull(32) ? null : reader.GetString(32))
                 : PublicReadFreezeState.NotFrozen,
             WorkerStatus = workerStatus,
         };
@@ -9625,6 +9806,7 @@ public sealed class MetaDatabase : IMetaDatabase
                     DELETE FROM scrape_log log
                     WHERE log.id < @id
                       AND log.completed_at IS NULL
+                      AND log.status = 'running'
                       AND NOT EXISTS (
                           SELECT 1
                           FROM scrape_publication_state state

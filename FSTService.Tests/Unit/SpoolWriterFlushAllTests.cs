@@ -160,6 +160,117 @@ public class SpoolWriterFlushAllTests
         Assert.Empty(flushed);
     }
 
+    [Theory]
+    [InlineData("solo")]
+    [InlineData("band")]
+    public async Task FlushAll_FailureReturnsExactScopesAndReplaysDeterministically(string writerKind)
+    {
+        var baseDirectory = Path.Combine(
+            Path.GetTempPath(),
+            $"spool_failure_test_{Guid.NewGuid():N}");
+        var attempts = 0;
+        var replayed = new List<(string SongId, int Rows)>();
+        var spool = new SpoolWriter<TestEntry>(
+            _log,
+            writerKind,
+            serialize: (buf, header, songId, entries) =>
+            {
+                SpoolWriter<TestEntry>.WriteString(buf, header, songId);
+                SpoolWriter<TestEntry>.WriteInt32(buf, header, entries.Count);
+                foreach (var entry in entries)
+                {
+                    SpoolWriter<TestEntry>.WriteString(buf, header, entry.Id);
+                    SpoolWriter<TestEntry>.WriteInt32(buf, header, entry.Value);
+                }
+            },
+            deserialize: (stream, header) =>
+            {
+                var songId = SpoolWriter<TestEntry>.ReadString(stream, header);
+                var count = SpoolWriter<TestEntry>.ReadInt32(stream, header);
+                var entries = new TestEntry[count];
+                for (var index = 0; index < count; index++)
+                {
+                    entries[index] = new TestEntry
+                    {
+                        Id = SpoolWriter<TestEntry>.ReadString(stream, header),
+                        Value = SpoolWriter<TestEntry>.ReadInt32(stream, header),
+                    };
+                }
+                return (songId, entries);
+            },
+            flush: (_, batch) =>
+            {
+                if (Interlocked.Increment(ref attempts) == 1)
+                    throw new InvalidOperationException("injected spool failure");
+
+                replayed.AddRange(batch.Select(item => (item.SongId, item.Entries.Count)));
+            },
+            baseDirectory);
+
+        try
+        {
+            spool.Enqueue(
+                "song_1",
+                "Solo_Guitar",
+                [new TestEntry { Id = "a", Value = 1 }, new TestEntry { Id = "b", Value = 2 }]);
+            spool.Enqueue(
+                "song_2",
+                "Solo_Guitar",
+                [new TestEntry { Id = "c", Value = 3 }]);
+            spool.Complete();
+
+            var failed = spool.FlushAll();
+
+            Assert.False(failed.IsSuccess);
+            var failure = Assert.Single(failed.Failures);
+            Assert.Equal(2, failure.PageCount);
+            Assert.Equal(3, failure.RowCount);
+            Assert.Equal(
+                [new WriterFailedScope("song_1", 1, 2), new WriterFailedScope("song_2", 1, 1)],
+                failure.Scopes);
+            Assert.NotNull(failed.ReplayArtifactDirectory);
+            Assert.True(File.Exists(Path.Combine(
+                failed.ReplayArtifactDirectory!,
+                "writer-failures.json")));
+
+            await spool.DisposeAsync();
+            var replay = SpoolWriter<TestEntry>.ReplayArtifactDirectory(
+                _log,
+                writerKind,
+                failed.ReplayArtifactDirectory!,
+                deserialize: (stream, header) =>
+                {
+                    var songId = SpoolWriter<TestEntry>.ReadString(stream, header);
+                    var count = SpoolWriter<TestEntry>.ReadInt32(stream, header);
+                    var entries = new TestEntry[count];
+                    for (var index = 0; index < count; index++)
+                    {
+                        entries[index] = new TestEntry
+                        {
+                            Id = SpoolWriter<TestEntry>.ReadString(stream, header),
+                            Value = SpoolWriter<TestEntry>.ReadInt32(stream, header),
+                        };
+                    }
+                    return (songId, entries);
+                },
+                flush: (_, batch) =>
+                    replayed.AddRange(batch.Select(item => (item.SongId, item.Entries.Count))));
+
+            Assert.True(replay.IsSuccess);
+            Assert.Equal(2, replay.FlushedPages);
+            Assert.Equal(3, replay.FlushedRows);
+            Assert.Equal(
+                [("song_1", 2), ("song_2", 1)],
+                replayed);
+        }
+        finally
+        {
+            await spool.DisposeAsync();
+            if (Directory.Exists(baseDirectory))
+                Directory.Delete(baseDirectory, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task FlushAll_BeforeComplete_Throws()
     {

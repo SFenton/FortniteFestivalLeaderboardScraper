@@ -743,6 +743,22 @@ public class GlobalLeaderboardScraperTests
     }
 
     [Fact]
+    public async Task ScrapeLeaderboardAsync_TransientMalformedResponse_RetriesAndRecovers()
+    {
+        var (scraper, handler) = CreateScraper();
+        handler.EnqueueJsonOk("<html>transient proxy response</html>");
+        handler.EnqueueJsonOk(OnePage);
+
+        var result = await scraper.ScrapeLeaderboardAsync(
+            "song1", "Solo_Guitar", "token", "acct");
+
+        Assert.Single(result.Entries);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.True(result.CompletenessManifest?.IsComplete);
+        Assert.Equal("complete", result.CompletenessManifest?.ParseStatus);
+    }
+
+    [Fact]
     public async Task ScrapeLeaderboardAsync_MultiplePages_FetchesAll()
     {
         var (scraper, handler) = CreateScraper();

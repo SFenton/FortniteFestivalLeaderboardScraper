@@ -70,6 +70,24 @@ public sealed class FeatureOptions
     public bool WritePublishedScopeSources { get; set; }
 
     /// <summary>
+    /// When true, every expected solo scope must have a complete page manifest
+    /// before its published-source candidate can be promoted.
+    /// </summary>
+    public bool EnforceScopeCompletenessManifests { get; set; }
+
+    /// <summary>
+    /// When true, any solo, band, or bounded-online writer failure rejects the
+    /// candidate scrape after retaining replay artifacts.
+    /// </summary>
+    public bool RequireSuccessfulScrapeWriters { get; set; }
+
+    /// <summary>
+    /// When true, failures in explicitly publication-critical post-scrape phases
+    /// reject the candidate while best-effort failures remain visible warnings.
+    /// </summary>
+    public bool EnforcePublicationCriticalPhases { get; set; }
+
+    /// <summary>
     /// When true, service-side current leaderboard reads and published exports
     /// resolve through the per-scope published source map. Keep disabled on the
     /// worker so post-process calculations continue to use the active candidate.

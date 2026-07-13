@@ -67,6 +67,17 @@ node --test tools/secret-scan.test.mjs
 node tools/secret-scan.mjs
 ```
 
+Worker correctness rollout uses three rollback-safe environment switches:
+
+- `Features__EnforceScopeCompletenessManifests=true`
+- `Features__RequireSuccessfulScrapeWriters=true`
+- `Features__EnforcePublicationCriticalPhases=true`
+
+Enable them only on `fstworker` after the additive correctness schema has been
+initialized. Rollback sets them to `false`; failed candidates and replay
+artifacts remain diagnostic-only, and public reads stay on the prior mapped
+published scrape.
+
 # How to run the app
 
 Log in to Epic Games on your web browser of choice. Then, in the app, click "Generate Exchange Code" and that link will open in your browser. Copy the "code" value over to the app, and then click Run. You will see the console output with all the information that the app is querying. The app will run, and drop a file called "FortniteFestivalScores.xlsx" in the executing directory. These are all your scores- including scores on songs you don't own!

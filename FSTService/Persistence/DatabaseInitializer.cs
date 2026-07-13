@@ -635,9 +635,88 @@ public static class DatabaseInitializer
         );
 
         ALTER TABLE scrape_log ADD COLUMN IF NOT EXISTS epic_reported_over_100_pages BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE scrape_log ADD COLUMN IF NOT EXISTS status TEXT;
+        ALTER TABLE scrape_log ADD COLUMN IF NOT EXISTS failed_at TIMESTAMPTZ;
+        ALTER TABLE scrape_log ADD COLUMN IF NOT EXISTS failure_phase TEXT;
+        ALTER TABLE scrape_log ADD COLUMN IF NOT EXISTS failure_message TEXT;
+        ALTER TABLE scrape_log ADD COLUMN IF NOT EXISTS best_effort_failure_count INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE scrape_log ADD COLUMN IF NOT EXISTS best_effort_failed_phases TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
+        UPDATE scrape_log
+        SET status = CASE
+            WHEN completed_at IS NOT NULL THEN 'completed'
+            WHEN failed_at IS NOT NULL THEN 'failed'
+            ELSE 'running'
+        END
+        WHERE status IS NULL;
+        ALTER TABLE scrape_log ALTER COLUMN status SET DEFAULT 'running';
+        ALTER TABLE scrape_log ALTER COLUMN status SET NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS leaderboard_scope_manifests (
+            scrape_id               BIGINT      NOT NULL REFERENCES scrape_log(id) ON DELETE CASCADE,
+            song_id                 TEXT        NOT NULL,
+            instrument              TEXT        NOT NULL,
+            scope_kind              TEXT        NOT NULL DEFAULT 'alltime',
+            expected_first_page     INTEGER     NOT NULL,
+            expected_last_page      INTEGER     NOT NULL,
+            received_pages          INTEGER[]   NOT NULL,
+            page_statuses           JSONB       NOT NULL,
+            terminal_boundary       TEXT        NOT NULL,
+            terminal_boundary_page  INTEGER,
+            parse_status            TEXT        NOT NULL,
+            retry_exhausted         BOOLEAN     NOT NULL,
+            reported_total_entries  BIGINT      NOT NULL,
+            reported_total_pages    INTEGER     NOT NULL,
+            deep_start_page         INTEGER,
+            deep_end_page           INTEGER,
+            content_fingerprint     TEXT        NOT NULL,
+            coverage_fingerprint    TEXT        NOT NULL,
+            is_complete             BOOLEAN     NOT NULL,
+            failure_reason          TEXT,
+            created_at              TIMESTAMPTZ NOT NULL,
+            updated_at              TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (scrape_id, song_id, instrument, scope_kind)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_lsm_incomplete
+            ON leaderboard_scope_manifests (scrape_id, instrument, song_id)
+            WHERE NOT is_complete;
 
         CREATE INDEX IF NOT EXISTS ix_scrapelog_completed
             ON scrape_log (id DESC) WHERE completed_at IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS scrape_writer_failures (
+            id                BIGSERIAL   PRIMARY KEY,
+            scrape_id         BIGINT      NOT NULL REFERENCES scrape_log(id) ON DELETE CASCADE,
+            writer_kind       TEXT        NOT NULL,
+            instrument        TEXT        NOT NULL,
+            song_id           TEXT        NOT NULL,
+            page_count        INTEGER     NOT NULL,
+            row_count         BIGINT      NOT NULL,
+            artifact_path     TEXT,
+            exception_type    TEXT        NOT NULL,
+            error_message     TEXT        NOT NULL,
+            occurred_at       TIMESTAMPTZ NOT NULL,
+            replayed_at       TIMESTAMPTZ
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_swf_scrape
+            ON scrape_writer_failures (scrape_id, writer_kind, instrument, song_id);
+
+        CREATE TABLE IF NOT EXISTS scrape_phase_outcomes (
+            scrape_id          BIGINT      NOT NULL REFERENCES scrape_log(id) ON DELETE CASCADE,
+            phase              TEXT        NOT NULL,
+            criticality        TEXT        NOT NULL,
+            status             TEXT        NOT NULL,
+            started_at         TIMESTAMPTZ NOT NULL,
+            completed_at       TIMESTAMPTZ NOT NULL,
+            duration_ms        BIGINT      NOT NULL,
+            error_message      TEXT,
+            PRIMARY KEY (scrape_id, phase)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_spo_failures
+            ON scrape_phase_outcomes (scrape_id, criticality, phase)
+            WHERE status = 'failed';
 
         CREATE TABLE IF NOT EXISTS scrape_publication_state (
             id                  BOOLEAN     PRIMARY KEY DEFAULT TRUE CHECK (id),
@@ -718,6 +797,7 @@ public static class DatabaseInitializer
             SELECT id, completed_at
             FROM scrape_log
             WHERE completed_at IS NOT NULL
+              AND status = 'completed'
             ORDER BY id DESC
             LIMIT 1
         ) latest

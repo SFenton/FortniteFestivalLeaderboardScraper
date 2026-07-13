@@ -1,5 +1,8 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
+using System.Globalization;
 
 namespace FSTService.Scraping;
 
@@ -22,6 +25,17 @@ public sealed class BandPageFetcher : PageFetcherBase<BandLeaderboardEntry>
     private const string EventsBase = "https://events-public-service-live.ol.epicgames.com";
 
     private readonly SpoolWriter<BandLeaderboardEntry> _spool;
+    private readonly ConcurrentDictionary<(string SongId, string BandType), ScopeState> _scopeStates = new();
+
+    private sealed class ScopeState
+    {
+        public ConcurrentDictionary<int, GlobalLeaderboardScraper.FetchStatus> PageStatuses { get; } = new();
+        public ConcurrentDictionary<int, string> PageFingerprints { get; } = new();
+        public int ReportedTotalPages = -1;
+        public long EntryCount;
+    }
+
+    public IReadOnlyList<ScopeCompletenessRecord> ScopeManifests { get; private set; } = [];
 
     public BandPageFetcher(
         ResilientHttpExecutor executor,
@@ -87,16 +101,22 @@ public sealed class BandPageFetcher : PageFetcherBase<BandLeaderboardEntry>
 
         }, async (item, innerCt) =>
         {
+            var scopeState = _scopeStates.GetOrAdd(
+                (item.SongId, item.BandType),
+                static _ => new ScopeState());
             var (parsed, bodyLen, status) = await FetchPageWithResilienceAsync(
                 item.SongId, item.BandType, 0, accessToken, accountId, innerCt);
 
             Interlocked.Increment(ref TotalRequests);
             Interlocked.Add(ref TotalBytes, bodyLen);
             Progress.ReportPageFetched(bodyLen);
+            scopeState.PageStatuses[0] = parsed is not null
+                ? GlobalLeaderboardScraper.FetchStatus.Success
+                : status;
 
             long completed = Interlocked.Increment(ref page0Completed);
 
-            if (parsed is null || parsed.Entries.Count == 0)
+            if (parsed is null)
             {
                 // Still report progress even for empty pages
                 Progress.SetBandFetchProgress("page0_discovery",
@@ -104,10 +124,16 @@ public sealed class BandPageFetcher : PageFetcherBase<BandLeaderboardEntry>
                 return;
             }
 
-            ProcessEntries(item.SongId, item.BandType, parsed);
-            Interlocked.Increment(ref TotalPages);
-            Interlocked.Add(ref TotalEntries, parsed.Entries.Count);
-            TrackSongWithData(item.SongId);
+            Interlocked.Exchange(ref scopeState.ReportedTotalPages, parsed.TotalPages);
+            scopeState.PageFingerprints[0] = ComputePageFingerprint(parsed.Entries);
+            Interlocked.Add(ref scopeState.EntryCount, parsed.Entries.Count);
+            if (parsed.Entries.Count > 0)
+            {
+                ProcessEntries(item.SongId, item.BandType, parsed);
+                Interlocked.Increment(ref TotalPages);
+                Interlocked.Add(ref TotalEntries, parsed.Entries.Count);
+                TrackSongWithData(item.SongId);
+            }
 
             int totalPages = Math.Min(parsed.TotalPages, maxPages > 0 ? maxPages : int.MaxValue);
             for (int p = 1; p < totalPages; p++)
@@ -128,6 +154,7 @@ public sealed class BandPageFetcher : PageFetcherBase<BandLeaderboardEntry>
                 Interlocked.Read(ref TotalPages), Interlocked.Read(ref TotalPages),
                 SongsWithData, Interlocked.Read(ref TotalRetries));
             Progress.SetBandFetchComplete();
+            ScopeManifests = BuildScopeManifests(songIds, bandTypes, maxPages);
             return;
         }
 
@@ -145,9 +172,31 @@ public sealed class BandPageFetcher : PageFetcherBase<BandLeaderboardEntry>
             CancellationToken = ct,
         }, async (item, innerCt) =>
         {
-            await FetchAndProcessPageAsync(
+            var scopeState = _scopeStates.GetOrAdd(
+                (item.SongId, item.BandType),
+                static _ => new ScopeState());
+            var (parsed, bodyLen, status) = await FetchPageWithResilienceAsync(
                 item.SongId, item.BandType, item.Page,
                 accessToken, accountId, innerCt);
+            Interlocked.Increment(ref TotalRequests);
+            Interlocked.Add(ref TotalBytes, bodyLen);
+            Progress.ReportPageFetched(bodyLen);
+            scopeState.PageStatuses[item.Page] = parsed is not null
+                ? GlobalLeaderboardScraper.FetchStatus.Success
+                : status;
+
+            if (parsed is not null)
+            {
+                scopeState.PageFingerprints[item.Page] = ComputePageFingerprint(parsed.Entries);
+                Interlocked.Add(ref scopeState.EntryCount, parsed.Entries.Count);
+                if (parsed.Entries.Count > 0)
+                {
+                    ProcessEntries(item.SongId, item.BandType, parsed);
+                    Interlocked.Increment(ref TotalPages);
+                    Interlocked.Add(ref TotalEntries, parsed.Entries.Count);
+                    TrackSongWithData(item.SongId);
+                }
+            }
 
             // Live progress update on every page
             Progress.SetBandFetchProgress("fetching_pages",
@@ -161,6 +210,7 @@ public sealed class BandPageFetcher : PageFetcherBase<BandLeaderboardEntry>
             Interlocked.Read(ref TotalPages), totalWorkItems,
             SongsWithData, Interlocked.Read(ref TotalRetries));
         Progress.SetBandFetchComplete();
+        ScopeManifests = BuildScopeManifests(songIds, bandTypes, maxPages);
 
         Log.LogInformation(
             "BandPageFetcher complete in {Elapsed:F1}s: {Pages:N0} pages, {Entries:N0} entries, " +
@@ -168,5 +218,137 @@ public sealed class BandPageFetcher : PageFetcherBase<BandLeaderboardEntry>
             phase2Sw.Elapsed.TotalSeconds,
             Interlocked.Read(ref TotalPages), Interlocked.Read(ref TotalEntries),
             Interlocked.Read(ref TotalRequests), Interlocked.Read(ref TotalRetries), SongsWithData);
+    }
+
+    private IReadOnlyList<ScopeCompletenessRecord> BuildScopeManifests(
+        IReadOnlyList<string> songIds,
+        IReadOnlyList<string> bandTypes,
+        int maxPages)
+    {
+        var manifests = new List<ScopeCompletenessRecord>(songIds.Count * bandTypes.Count);
+        foreach (var songId in songIds)
+        {
+            foreach (var bandType in bandTypes)
+            {
+                var state = _scopeStates.GetOrAdd(
+                    (songId, bandType),
+                    static _ => new ScopeState());
+                var reportedPages = Math.Max(0, Volatile.Read(ref state.ReportedTotalPages));
+                var page0Succeeded = state.PageStatuses.TryGetValue(
+                    0,
+                    out var page0Status)
+                    && page0Status == GlobalLeaderboardScraper.FetchStatus.Success;
+                var expectedLastPage = page0Succeeded
+                    ? Math.Max(
+                            0,
+                            Math.Min(
+                                reportedPages,
+                                maxPages > 0 ? maxPages : int.MaxValue) - 1)
+                    : 0;
+                var forbiddenPages = state.PageStatuses
+                    .Where(static pair =>
+                        pair.Value == GlobalLeaderboardScraper.FetchStatus.Forbidden)
+                    .Select(static pair => pair.Key)
+                    .Order()
+                    .ToArray();
+                var terminalBoundary = reportedPages == 0
+                    && page0Succeeded
+                        ? ScopeTerminalBoundaryKind.EpicEmpty
+                        : forbiddenPages.Length >= 3
+                            ? ScopeTerminalBoundaryKind.EpicForbidden
+                            : ScopeTerminalBoundaryKind.None;
+                var contentFingerprint = ComputeScopeFingerprint(state.PageFingerprints);
+                var entryCount = Interlocked.Read(ref state.EntryCount);
+
+                manifests.Add(new ScopeCompletenessRecord(
+                    songId,
+                    bandType,
+                    ScopeCompletenessManifest.Create(
+                        0,
+                        expectedLastPage,
+                        state.PageStatuses,
+                        [],
+                        reportedPages,
+                        terminalBoundary,
+                        forbiddenPages.Length >= 3 ? forbiddenPages[0] : null,
+                        contentFingerprintOverride: contentFingerprint,
+                        reportedTotalEntriesOverride: reportedPages > 100
+                            ? (long)reportedPages * 100
+                            : entryCount)));
+            }
+        }
+
+        return manifests;
+    }
+
+    private static string ComputePageFingerprint(
+        IReadOnlyList<BandLeaderboardEntry> entries)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        foreach (var entry in entries
+                     .OrderBy(static entry => entry.TeamKey, StringComparer.Ordinal)
+                     .ThenBy(static entry => entry.InstrumentCombo, StringComparer.Ordinal)
+                     .ThenByDescending(static entry => entry.Score))
+        {
+            Append(hash, entry.TeamKey);
+            foreach (var member in entry.TeamMembers.OrderBy(
+                         static member => member,
+                         StringComparer.Ordinal))
+                Append(hash, member);
+            Append(hash, entry.InstrumentCombo);
+            Append(hash, entry.Score);
+            Append(hash, entry.BaseScore);
+            Append(hash, entry.InstrumentBonus);
+            Append(hash, entry.OverdriveBonus);
+            Append(hash, entry.Accuracy);
+            Append(hash, entry.IsFullCombo);
+            Append(hash, entry.Stars);
+            Append(hash, entry.Difficulty);
+            Append(hash, entry.Season);
+            Append(hash, entry.Rank);
+            Append(hash, entry.Percentile);
+            Append(hash, entry.EndTime);
+            Append(hash, entry.Source);
+            Append(hash, entry.IsOverThreshold);
+            foreach (var member in entry.MemberStats
+                         .OrderBy(static member => member.MemberIndex)
+                         .ThenBy(static member => member.AccountId, StringComparer.Ordinal))
+            {
+                Append(hash, member.MemberIndex);
+                Append(hash, member.AccountId);
+                Append(hash, member.InstrumentId);
+                Append(hash, member.Score);
+                Append(hash, member.Accuracy);
+                Append(hash, member.IsFullCombo);
+                Append(hash, member.Stars);
+                Append(hash, member.Difficulty);
+            }
+            Append(hash, null);
+        }
+        return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+    }
+
+    private static string ComputeScopeFingerprint(
+        IReadOnlyDictionary<int, string> pageFingerprints)
+    {
+        var value = string.Join(
+            '\u001f',
+            pageFingerprints
+                .OrderBy(static pair => pair.Key)
+                .Select(static pair => $"{pair.Key}:{pair.Value}"));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)))
+            .ToLowerInvariant();
+    }
+
+    private static void Append(IncrementalHash hash, object? value)
+    {
+        var text = value switch
+        {
+            null => "",
+            IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
+            _ => value.ToString() ?? "",
+        };
+        hash.AppendData(Encoding.UTF8.GetBytes(text));
+        hash.AppendData([0x1f]);
     }
 }

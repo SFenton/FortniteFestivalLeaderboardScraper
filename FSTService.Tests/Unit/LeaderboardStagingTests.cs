@@ -213,6 +213,35 @@ public class LeaderboardStagingTests : IDisposable
     }
 
     [Fact]
+    public void CleanupAbandonedStaging_RetainsFailedScrapeLogAndDeletesItsStaging()
+    {
+        var failedScrapeId = _metaFixture.Db.StartScrapeRun();
+        _metaFixture.Db.StageChunk(
+            failedScrapeId,
+            "song1",
+            TestInstrument,
+            MakeEntries(page: 0, count: 3));
+        _metaFixture.Db.FailScrapeRun(
+            failedScrapeId,
+            "scope_completeness",
+            "injected");
+        var newScrapeId = _metaFixture.Db.StartScrapeRun();
+
+        _metaFixture.Db.CleanupAbandonedStaging(newScrapeId);
+
+        Assert.Equal(1, CountScrapeLogRows(failedScrapeId));
+        Assert.Equal(
+            0,
+            _metaFixture.Db.GetStagedEntryCount(
+                failedScrapeId,
+                "song1",
+                TestInstrument));
+        var runtime = _metaFixture.Db.GetServiceRuntimeState(
+            WorkerStatusPublisher.ScraperWorkerKey);
+        Assert.Equal(newScrapeId, runtime.LatestScrape?.Id);
+    }
+
+    [Fact]
     public void CleanupAbandonedStaging_DeletesLegacyStagingRows()
     {
         var oldScrapeId = _metaFixture.Db.StartScrapeRun();

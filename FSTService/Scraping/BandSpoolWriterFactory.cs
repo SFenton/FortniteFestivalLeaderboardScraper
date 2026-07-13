@@ -314,8 +314,9 @@ public static class BandSpoolWriterFactory
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            log.LogError(ex, "Spool [band] flush failed for {BandType} ({Songs} songs, {Entries:N0} entries). Data will be re-scraped next pass.",
+            log.LogError(ex, "Spool [band] flush failed for {BandType} ({Songs} songs, {Entries:N0} entries). The failed rows will be retained for replay.",
                 bandType, batch.Count, allEntries.Count);
+            throw;
         }
     }
 
