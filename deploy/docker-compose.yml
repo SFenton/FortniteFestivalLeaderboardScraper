@@ -201,6 +201,7 @@ services:
       # ── Proxy rotation + VPN city cycling ──
       # Active when using gluetun proxy containers (docker compose --profile vpn up -d).
       # Each proxy needs a unique WireGuard identity (separate AirVPN device key).
+      - Scraper__ExpectedProxyEndpointCount=4
       - Scraper__ProxyUrls__0=http://gluetun-1:8888
       - Scraper__ProxyUrls__1=http://gluetun-2:8888
       - Scraper__ProxyUrls__2=http://gluetun-3:8888
@@ -209,6 +210,10 @@ services:
       - Scraper__ControlUrls__1=http://gluetun-2:8000
       - Scraper__ControlUrls__2=http://gluetun-3:8000
       - Scraper__ControlUrls__3=http://gluetun-4:8000
+      - Scraper__VpnProviders__0=AirVPN
+      - Scraper__VpnProviders__1=AirVPN
+      - Scraper__VpnProviders__2=AirVPN
+      - Scraper__VpnProviders__3=AirVPN
       # ── Container names for Docker-based VPN recycling ──
       # When set, FSTService recreates gluetun containers (stop/rm/run) via the
       # Docker Engine API instead of using the gluetun control API. More reliable

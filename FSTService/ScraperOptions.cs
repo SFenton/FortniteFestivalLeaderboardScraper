@@ -49,6 +49,14 @@ public sealed class ScraperOptions
     public List<string> ProxyUrls { get; set; } = [];
 
     /// <summary>
+    /// When greater than zero, requires exactly this many index-aligned proxy,
+    /// control, provider, and container entries. Production uses this as a
+    /// fail-closed guard against starting the worker without its canonical
+    /// proxy overlay. Zero keeps proxy configuration optional.
+    /// </summary>
+    public int ExpectedProxyEndpointCount { get; set; }
+
+    /// <summary>
     /// Optional Gluetun control URLs aligned with <see cref="ProxyUrls"/>.
     /// </summary>
     public List<string> ControlUrls { get; set; } = [];

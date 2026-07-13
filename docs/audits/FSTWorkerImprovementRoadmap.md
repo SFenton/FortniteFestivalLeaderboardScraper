@@ -91,6 +91,56 @@ commit/revert handling.
 Log counts are occurrences, not guaranteed unique requests. They are still
 sufficient to show the failure path is dominating the operational signal.
 
+### Inserted WORKER-0A provider recovery prerequisite
+
+**Decision:** Accepted for bounded recovery; full WORKER-0A live A/B remains
+the next scrape-boundary decision.
+
+Scrapes `1237` through `1242` did not identify an Epic token, entitlement,
+429, or Epic 5xx failure. Scrape `1242` refreshed the worker token successfully
+but produced 460 alternate-proxy retries and 376 timeouts with zero completed
+scopes. The failure was therefore isolated to provider-exit readiness and
+high-load routing, not account-global authentication.
+
+The recovery inventory found 30/30 Docker-healthy PIA containers but only
+26/30 general HTTP-proxy paths initially ready. Three sequential authenticated
+Epic canary rounds narrowed the stable set:
+
+| Recovery signal | Result |
+|---|---|
+| Stable authenticated PIA exits | 25/30, all with unique hashed egress |
+| Never-valid exits | `pia-gluetun-16`, `pia-gluetun-23` |
+| Flapping exits | `pia-gluetun-11`, `pia-gluetun-12`, `pia-gluetun-20` |
+| Direct control | Valid Epic JSON in every bounded round; not promoted |
+| Auth/account | Refresh succeeded; no JSON 401/403 or entitlement signal |
+| Matched publication-disabled slice | 25 direct + 25 proxied requests, 50/50 valid JSON, 25/25 exact entry-array matches, eight instruments |
+| Public/database safety | Published `1236`, 6,138 scopes, 39,588,650 rows; reads unfrozen; zero active scrape, active query, or ungranted lock |
+| Capacity | 96,006,438,912 bytes free; scrape allowed with 3.19-day capacity alert |
+
+Production now keeps the canonical 30 PIA service definitions but configures a
+25-exit effective worker pool, stops the five quarantined containers, and caps
+aggregate Epic pacing at 400 requests/s. Provider and control arrays are
+index-aligned with the proxy and container arrays. The stale held worker
+container was removed so it cannot be started with the prior 30-exit/480-RPS
+configuration.
+
+`tools/fst-worker-compose-guard.sh` is installed in production and is required
+for worker recreation. It fails closed unless the canonical
+`docker-compose.pia-30.yml` overlay resolves the expected effective endpoint
+count, all 30 canonical services, aligned provider/control/container metadata,
+the per-exit pacing cap, healthy controls, and unique hashed egress.
+`Scraper:ExpectedProxyEndpointCount` adds the matching application startup
+guard for guard-aware images.
+
+Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/proxy-recovery-20260713T171754Z`.
+
+**Next live A/B instruction:** keep the worker held, run the scrape capacity
+guard and proxy compose guard, deploy the accepted `b01d5c03` WORKER-0A
+candidate through `--recreate-runonce`, verify the full public path, then
+monitor exactly one complete scrape/post-process/publication decision and hold
+the worker again before another scrape.
+
 ## Great / good / okay / poor / bad
 
 | Rating | Areas |

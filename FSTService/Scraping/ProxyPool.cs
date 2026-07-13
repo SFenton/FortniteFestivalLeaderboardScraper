@@ -72,6 +72,8 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
 
     internal ProxyPool(ScraperOptions options, ILogger<ProxyPool> log, IProxyContainerRecycler? containerRecycler = null)
     {
+        ValidateExpectedConfiguration(options);
+
         _log = log;
         _activeStandby = options.ProxyActiveStandby;
         _activeRotationInterval = options.ProxyActiveRotationSeconds > 0
@@ -499,6 +501,67 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
 
     private static string GetOptional(IReadOnlyList<string> values, int index)
         => index >= 0 && index < values.Count ? values[index] : "";
+
+    private static void ValidateExpectedConfiguration(ScraperOptions options)
+    {
+        int expected = options.ExpectedProxyEndpointCount;
+        if (expected < 0)
+        {
+            throw new InvalidOperationException(
+                "Scraper ExpectedProxyEndpointCount cannot be negative.");
+        }
+        if (expected == 0)
+            return;
+
+        ValidateAlignedList(nameof(options.ProxyUrls), options.ProxyUrls, expected);
+        ValidateAlignedList(nameof(options.ControlUrls), options.ControlUrls, expected);
+        ValidateAlignedList(nameof(options.VpnProviders), options.VpnProviders, expected);
+        ValidateAlignedList(nameof(options.ContainerNames), options.ContainerNames, expected);
+
+        if (options.ContainerNames.Distinct(StringComparer.OrdinalIgnoreCase).Count() != expected)
+        {
+            throw new InvalidOperationException(
+                "Scraper proxy container names must be unique when ExpectedProxyEndpointCount is enabled.");
+        }
+
+        for (int index = 0; index < expected; index++)
+        {
+            string containerName = options.ContainerNames[index];
+            ValidateAlignedUri(options.ProxyUrls[index], containerName, 8888, "proxy", index);
+            ValidateAlignedUri(options.ControlUrls[index], containerName, 8000, "control", index);
+        }
+    }
+
+    private static void ValidateAlignedList(
+        string name,
+        IReadOnlyList<string> values,
+        int expected)
+    {
+        if (values.Count != expected || values.Any(string.IsNullOrWhiteSpace))
+        {
+            throw new InvalidOperationException(
+                $"Scraper {name} must contain exactly {expected} non-empty entries " +
+                "when ExpectedProxyEndpointCount is enabled.");
+        }
+    }
+
+    private static void ValidateAlignedUri(
+        string value,
+        string containerName,
+        int expectedPort,
+        string kind,
+        int index)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)
+            || !uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+            || !uri.Host.Equals(containerName, StringComparison.OrdinalIgnoreCase)
+            || uri.Port != expectedPort)
+        {
+            throw new InvalidOperationException(
+                $"Scraper {kind} endpoint {index} must target aligned container " +
+                $"{containerName} on port {expectedPort}.");
+        }
+    }
 
     public void Dispose()
     {

@@ -150,6 +150,95 @@ public sealed class ProxyPoolTests
         Assert.Empty(recycler.RestartedContainers);
     }
 
+    [Fact]
+    public void ExpectedEndpointCount_WhenOverlayIsMissing_Throws()
+    {
+        var options = new ScraperOptions
+        {
+            ExpectedProxyEndpointCount = 2,
+        };
+
+        var act = () => new ProxyPool(options, _log);
+
+        var error = Assert.Throws<InvalidOperationException>(act);
+        Assert.Contains("ProxyUrls", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExpectedEndpointCount_WhenNegative_Throws()
+    {
+        var options = CreateOptions(activeStandby: false);
+        options.ExpectedProxyEndpointCount = -1;
+
+        var act = () => new ProxyPool(options, _log);
+
+        var error = Assert.Throws<InvalidOperationException>(act);
+        Assert.Contains("cannot be negative", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExpectedEndpointCount_WhenMetadataIsMissing_Throws()
+    {
+        var options = CreateOptions(activeStandby: false);
+        options.ExpectedProxyEndpointCount = 2;
+        options.ControlUrls.Clear();
+
+        var act = () => new ProxyPool(options, _log);
+
+        var error = Assert.Throws<InvalidOperationException>(act);
+        Assert.Contains("ControlUrls", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExpectedEndpointCount_WhenContainerNamesAreDuplicated_Throws()
+    {
+        var options = CreateOptions(activeStandby: false);
+        options.ExpectedProxyEndpointCount = 2;
+        options.ContainerNames[1] = options.ContainerNames[0];
+
+        var act = () => new ProxyPool(options, _log);
+
+        var error = Assert.Throws<InvalidOperationException>(act);
+        Assert.Contains("must be unique", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExpectedEndpointCount_WhenProxyUriIsMisaligned_Throws()
+    {
+        var options = CreateOptions(activeStandby: false);
+        options.ExpectedProxyEndpointCount = 2;
+        options.ProxyUrls[1] = "http://gluetun-1:8888";
+
+        var act = () => new ProxyPool(options, _log);
+
+        var error = Assert.Throws<InvalidOperationException>(act);
+        Assert.Contains("proxy endpoint 1", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExpectedEndpointCount_WhenControlUriIsMisaligned_Throws()
+    {
+        var options = CreateOptions(activeStandby: false);
+        options.ExpectedProxyEndpointCount = 2;
+        options.ControlUrls[1] = "http://gluetun-2:8888";
+
+        var act = () => new ProxyPool(options, _log);
+
+        var error = Assert.Throws<InvalidOperationException>(act);
+        Assert.Contains("control endpoint 1", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExpectedEndpointCount_WhenConfigurationIsAligned_AllowsPool()
+    {
+        var options = CreateOptions(activeStandby: false);
+        options.ExpectedProxyEndpointCount = 2;
+
+        using var pool = new ProxyPool(options, _log);
+
+        Assert.Equal(2, pool.EndpointCount);
+    }
+
     private static ScraperOptions CreateOptions(bool activeStandby)
         => new()
         {
@@ -167,6 +256,11 @@ public sealed class ProxyPoolTests
             [
                 "AirVPN",
                 "AirVPN",
+            ],
+            ControlUrls =
+            [
+                "http://gluetun-1:8000",
+                "http://gluetun-2:8000",
             ],
             ProxyActiveStandby = activeStandby,
             ProxyCooldownSeconds = 30,

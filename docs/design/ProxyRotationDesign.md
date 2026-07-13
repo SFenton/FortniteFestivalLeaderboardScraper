@@ -3,6 +3,60 @@
 **Date:** April 8, 2026
 **Status:** Proposed
 
+## July 13, 2026 production recovery qualification
+
+The active production intent is now the canonical 30-service Private Internet
+Access overlay at
+`/home/sfenton/Docker/FestivalServiceTracker/docker-compose.pia-30.yml`.
+Docker health alone is not accepted as proxy readiness.
+
+The inserted WORKER-0A recovery prerequisite established:
+
+- all 30 containers used one valid PIA/OpenVPN account configuration with no
+  authentication errors;
+- three sequential authenticated, low-rate Epic canary rounds found 25 exits
+  that returned valid leaderboard JSON every time;
+- `pia-gluetun-16` and `pia-gluetun-23` never returned valid Epic JSON, while
+  `pia-gluetun-11`, `pia-gluetun-12`, and `pia-gluetun-20` flapped between valid
+  JSON and timeout;
+- the effective worker pool temporarily excludes those five exits but retains
+  all 30 canonical service definitions for later requalification;
+- the effective 25 exits passed Docker health, Epic DNS, Gluetun control,
+  HTTP-proxy readiness, and 25/25 unique hashed-egress checks;
+- a publication-disabled matched slice issued 25 direct and 25 proxied page
+  requests across eight instruments. All 50 responses were valid Epic JSON,
+  and all 25 proxied entry arrays exactly matched their direct controls;
+- aggregate Epic pacing is capped at 400 requests/s, no more than 16 requests/s
+  per effective unique exit. DOP was not increased.
+
+No AirVPN fallback was promoted. Direct access was valid in the bounded
+canaries but is not part of the effective production pool.
+
+### Fail-closed worker deployment
+
+`Scraper:ExpectedProxyEndpointCount` makes `ProxyPool` reject missing,
+incomplete, non-unique, or misaligned proxy/control/provider/container arrays.
+Production's base worker env carries the expected count, so omitting the PIA
+overlay cannot silently start a direct or partial-pool worker on a guard-aware
+image.
+
+All production worker recreates must use:
+
+```bash
+cd /home/sfenton/FortniteFestivalLeaderboardScraper
+tools/fst-worker-compose-guard.sh --check
+tools/fst-worker-compose-guard.sh --recreate-runonce
+```
+
+The guard resolves only the canonical PIA overlay, verifies 30 canonical
+services and the configured effective count, enforces aligned metadata and the
+16-RPS-per-exit cap, then proves live DNS, control, HTTP proxy, and unique
+hashed egress before recreation. It never prints public addresses or
+credentials.
+
+Recovery evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/proxy-recovery-20260713T171754Z`.
+
 ## Problem Statement
 
 CDN blocks from Epic's API are 403 responses with HTML bodies (not JSON). The current `ResilientHttpExecutor` detects these and runs a probe loop on the **same IP** with escalating backoff (500ms → 1s → 2s → 5s → 10s → 15s → 30s → 45s → 60s, up to 30 retries ≈ 7 minutes). If all retries are exhausted, a `CdnBlockedException` escapes to the scrape pass level, the pass is aborted, and the next attempt is 4 hours later.

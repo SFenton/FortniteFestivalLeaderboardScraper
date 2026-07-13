@@ -121,6 +121,8 @@ services:
       # - Scraper__DegreeOfParallelism=16
       # - Scraper__MaxRequestsPerSecond=600
       # ── Proxy rotation (round-robin across multiple HTTP proxies) ──
+      # Set this only with complete, index-aligned proxy/control/provider/container arrays.
+      # - Scraper__ExpectedProxyEndpointCount=4
       # - Scraper__ProxyUrls__0=http://gluetun-1:8888
       # - Scraper__ProxyUrls__1=http://gluetun-2:8888
       # - Scraper__ProxyUrls__2=http://gluetun-3:8888
@@ -130,6 +132,10 @@ services:
       # - Scraper__ControlUrls__1=http://gluetun-2:8000
       # - Scraper__ControlUrls__2=http://gluetun-3:8000
       # - Scraper__ControlUrls__3=http://gluetun-4:8000
+      # - Scraper__VpnProviders__0=AirVPN
+      # - Scraper__VpnProviders__1=AirVPN
+      # - Scraper__VpnProviders__2=AirVPN
+      # - Scraper__VpnProviders__3=AirVPN
       # ── Container names for Docker-based VPN recycling ──
       # - Scraper__ContainerNames__0=gluetun-1
       # - Scraper__ContainerNames__1=gluetun-2
