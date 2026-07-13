@@ -124,6 +124,7 @@ services:
       # Set this only with complete, index-aligned proxy/control/provider/container arrays.
       # - Scraper__ExpectedProxyEndpointCount=4
       # - Scraper__ProxyMaxRequestsPerSecondPerEndpoint=2
+      # - Scraper__ProxyMaxConcurrentRequestsPerEndpoint=1
       # - Scraper__ProxyUrls__0=http://gluetun-1:8888
       # - Scraper__ProxyUrls__1=http://gluetun-2:8888
       # - Scraper__ProxyUrls__2=http://gluetun-3:8888

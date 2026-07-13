@@ -116,6 +116,7 @@ expected = integer("Scraper__ExpectedProxyEndpointCount")
 canonical = integer("Scraper__CanonicalProxyServiceCount")
 max_rps = integer("Scraper__MaxRequestsPerSecond")
 per_endpoint_rps = integer("Scraper__ProxyMaxRequestsPerSecondPerEndpoint")
+per_endpoint_concurrency = integer("Scraper__ProxyMaxConcurrentRequestsPerEndpoint")
 if canonical != 30:
     raise SystemExit(f"ERROR: canonical PIA service count must be 30, found {canonical}")
 if expected > canonical:
@@ -174,15 +175,18 @@ if max_rps > expected * 16:
 if per_endpoint_rps > 16:
     raise SystemExit(
         f"ERROR: per-endpoint Epic rate {per_endpoint_rps} exceeds the 16 RPS ceiling")
+if per_endpoint_concurrency > 4:
+    raise SystemExit(
+        f"ERROR: per-endpoint concurrency {per_endpoint_concurrency} exceeds the qualified ceiling of 4")
 
-print(f"SUMMARY|{expected}|{canonical}|{max_rps}|{per_endpoint_rps}")
+print(f"SUMMARY|{expected}|{canonical}|{max_rps}|{per_endpoint_rps}|{per_endpoint_concurrency}")
 for container in containers:
     print(f"NODE|{container}")
 ' <<< "$compose_json"
 )"
 
 summary="$(head -n 1 <<< "$validation")"
-IFS='|' read -r _ expected_count canonical_count max_rps per_endpoint_rps <<< "$summary"
+IFS='|' read -r _ expected_count canonical_count max_rps per_endpoint_rps per_endpoint_concurrency <<< "$summary"
 mapfile -t effective_nodes < <(sed -n 's/^NODE|//p' <<< "$validation")
 
 if [[ "${#effective_nodes[@]}" -ne "$expected_count" ]]; then
@@ -190,8 +194,8 @@ if [[ "${#effective_nodes[@]}" -ne "$expected_count" ]]; then
     exit 1
 fi
 
-printf 'compose_guard config=ok overlay=%s effective=%s canonical=%s max_rps=%s per_endpoint_rps=%s\n' \
-    "$(basename "$pia_overlay")" "$expected_count" "$canonical_count" "$max_rps" "$per_endpoint_rps"
+printf 'compose_guard config=ok overlay=%s effective=%s canonical=%s max_rps=%s per_endpoint_rps=%s per_endpoint_concurrency=%s\n' \
+    "$(basename "$pia_overlay")" "$expected_count" "$canonical_count" "$max_rps" "$per_endpoint_rps" "$per_endpoint_concurrency"
 
 if $RUNTIME_PROBES; then
     if ! docker inspect fstservice >/dev/null 2>&1; then

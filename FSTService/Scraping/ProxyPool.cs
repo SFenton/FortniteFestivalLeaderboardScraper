@@ -58,6 +58,7 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
     private readonly int _timeoutFailureThreshold;
     private readonly int _httpFailureThreshold;
     private readonly int _perEndpointMaxRequestsPerSecond;
+    private readonly int _perEndpointMaxConcurrentRequests;
     private readonly object _lock = new();
     private int _activeIndex;
     private int _nextRoundRobinIndex;
@@ -90,17 +91,19 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
         _timeoutFailureThreshold = Math.Max(1, options.ProxyTimeoutFailureThreshold);
         _httpFailureThreshold = Math.Max(1, options.ProxyHttpFailureThreshold);
         _perEndpointMaxRequestsPerSecond = options.ProxyMaxRequestsPerSecondPerEndpoint;
+        _perEndpointMaxConcurrentRequests = options.ProxyMaxConcurrentRequestsPerEndpoint;
 
         _endpoints = BuildEndpoints(options).ToList();
         if (_endpoints.Count > 0)
         {
             _log.LogInformation(
-                "Epic proxy pool enabled with {Count} endpoint(s); mode={Mode}, cooldown={CooldownSeconds}s, rotation={RotationSeconds}s, perEndpointRps={PerEndpointRps}.",
+                "Epic proxy pool enabled with {Count} endpoint(s); mode={Mode}, cooldown={CooldownSeconds}s, rotation={RotationSeconds}s, perEndpointRps={PerEndpointRps}, perEndpointConcurrency={PerEndpointConcurrency}.",
                 _endpoints.Count,
                 _activeStandby ? "active-standby" : "least-in-flight",
                 _baseCooldown.TotalSeconds,
                 _activeRotationInterval.TotalSeconds,
-                _perEndpointMaxRequestsPerSecond);
+                _perEndpointMaxRequestsPerSecond,
+                _perEndpointMaxConcurrentRequests);
 
             if (_containerSelfHealEnabled)
             {
@@ -319,12 +322,12 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
         }
 
         var active = _endpoints[_activeIndex];
-        if (active.CooldownUntil <= now)
+        if (IsSelectable(active, now))
             return active;
 
         RotateActive(now, $"active proxy {active.Name} is cooling down");
         active = _endpoints[_activeIndex];
-        return active.CooldownUntil <= now ? active : null;
+        return IsSelectable(active, now) ? active : null;
     }
 
     private ProxyEndpoint? SelectLeastLoaded(DateTimeOffset now)
@@ -336,7 +339,7 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
         {
             int index = (start + offset) % _endpoints.Count;
             var endpoint = _endpoints[index];
-            if (endpoint.CooldownUntil > now)
+            if (!IsSelectable(endpoint, now))
                 continue;
 
             if (selected is null ||
@@ -359,13 +362,18 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
     private bool HasAvailableEndpoint(DateTimeOffset now)
         => _endpoints.Any(e => e.CooldownUntil <= now);
 
+    private bool IsSelectable(ProxyEndpoint endpoint, DateTimeOffset now) =>
+        endpoint.CooldownUntil <= now &&
+        (_perEndpointMaxConcurrentRequests <= 0 ||
+         endpoint.InFlight < _perEndpointMaxConcurrentRequests);
+
     private void RotateActive(DateTimeOffset now, string reason)
     {
         int start = _activeIndex;
         for (int offset = 1; offset <= _endpoints.Count; offset++)
         {
             int candidate = (start + offset) % _endpoints.Count;
-            if (_endpoints[candidate].CooldownUntil <= now)
+            if (IsSelectable(_endpoints[candidate], now))
             {
                 if (candidate != _activeIndex)
                 {
@@ -558,18 +566,20 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
         }
         if (expected == 0)
         {
-            if (options.ProxyMaxRequestsPerSecondPerEndpoint < 0)
+            if (options.ProxyMaxRequestsPerSecondPerEndpoint < 0 ||
+                options.ProxyMaxConcurrentRequestsPerEndpoint < 0)
             {
                 throw new InvalidOperationException(
-                    "Scraper ProxyMaxRequestsPerSecondPerEndpoint cannot be negative.");
+                    "Scraper per-endpoint proxy rate and concurrency limits cannot be negative.");
             }
             return;
         }
 
-        if (options.ProxyMaxRequestsPerSecondPerEndpoint < 0)
+        if (options.ProxyMaxRequestsPerSecondPerEndpoint < 0 ||
+            options.ProxyMaxConcurrentRequestsPerEndpoint < 0)
         {
             throw new InvalidOperationException(
-                "Scraper ProxyMaxRequestsPerSecondPerEndpoint cannot be negative.");
+                "Scraper per-endpoint proxy rate and concurrency limits cannot be negative.");
         }
 
         ValidateAlignedList(nameof(options.ProxyUrls), options.ProxyUrls, expected);

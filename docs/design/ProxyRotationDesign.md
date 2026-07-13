@@ -50,11 +50,13 @@ dedicated registration-sync workers retain that service.
 The pool now also supports
 `Scraper:ProxyMaxRequestsPerSecondPerEndpoint`. The global production ceiling
 remains `400` requests/s, while each effective exit is paced independently at
-`2` request starts/s so DOP bursts cannot concentrate the shared budget on an
+`1` request start/s so DOP bursts cannot concentrate the shared budget on an
 exit faster than its qualified rate. Publication-disabled five-round canaries
 at requested per-exit ceilings of `1`, `2`, `4`, and `8` each returned
-`125/125` valid leaderboard responses; production uses the conservative
-`2`-request setting.
+`125/125` valid leaderboard responses. Production also limits each exit to one
+simultaneous request: a 1-RPS candidate without that concurrency bound allowed
+slow 30-second requests to accumulate up to 19 in flight on one exit and
+stalled after 65 leaderboards.
 
 ### Fail-closed worker deployment
 

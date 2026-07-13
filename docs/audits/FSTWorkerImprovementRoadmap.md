@@ -168,8 +168,10 @@ Evidence:
 - Publication-disabled rate canaries then proved `125/125` valid responses at
   requested per-exit ceilings of `1`, `2`, `4`, and `8`. The next candidate
   keeps the global `400`-RPS ceiling and 25-exit pool but enforces a conservative
-  `2` request starts/s per exit to prevent adaptive-concurrency bursts from
-  immediately tarpitting every route.
+  `1` request start/s and one simultaneous request per exit. The rate-only
+  candidates proved why both controls are required: slow 30-second requests
+  accumulated up to 19 in flight on one proxy, then stalled at `65/6,138`
+  leaderboards despite the start-rate cap.
 
 **Next live A/B instruction:** keep the worker held, run the scrape capacity
 guard and proxy compose guard, deploy the accepted `b01d5c03` WORKER-0A

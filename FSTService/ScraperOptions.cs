@@ -106,6 +106,12 @@ public sealed class ScraperOptions
     public int ProxyMaxRequestsPerSecondPerEndpoint { get; set; }
 
     /// <summary>
+    /// Maximum simultaneous requests assigned to one proxy endpoint.
+    /// Zero leaves per-endpoint concurrency unrestricted.
+    /// </summary>
+    public int ProxyMaxConcurrentRequestsPerEndpoint { get; set; }
+
+    /// <summary>
     /// When true, repeated proxy transport failures trigger a Docker restart for
     /// the aligned <see cref="ContainerNames"/> entry. CDN blocks still only
     /// cool down/fail over because they do not prove the VPN tunnel is broken.

@@ -56,6 +56,29 @@ public sealed class ProxyPoolTests
     }
 
     [Fact]
+    public async Task AcquireAsync_PerEndpointConcurrencyCap_WaitsForLeaseRelease()
+    {
+        var options = CreateOptions(activeStandby: false);
+        options.ProxyUrls.RemoveAt(1);
+        options.ContainerNames.RemoveAt(1);
+        options.VpnProviders.RemoveAt(1);
+        options.ControlUrls.RemoveAt(1);
+        options.ProxyMaxConcurrentRequestsPerEndpoint = 1;
+        using var pool = new ProxyPool(options, _log);
+
+        var first = await pool.AcquireAsync(CancellationToken.None);
+        Assert.NotNull(first);
+
+        var secondTask = pool.AcquireAsync(CancellationToken.None).AsTask();
+        await Task.Delay(75);
+        Assert.False(secondTask.IsCompleted);
+
+        first!.Dispose();
+        using var second = await secondTask.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.NotNull(second);
+    }
+
+    [Fact]
     public async Task CdnBlock_CoolsEndpoint_AndRoutesToAnotherProxy()
     {
         using var pool = new ProxyPool(CreateOptions(activeStandby: true), _log);
@@ -208,7 +231,19 @@ public sealed class ProxyPoolTests
         var act = () => new ProxyPool(options, _log);
 
         var error = Assert.Throws<InvalidOperationException>(act);
-        Assert.Contains("ProxyMaxRequestsPerSecondPerEndpoint", error.Message, StringComparison.Ordinal);
+        Assert.Contains("per-endpoint proxy", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PerEndpointConcurrencyCap_WhenNegative_Throws()
+    {
+        var options = CreateOptions(activeStandby: false);
+        options.ProxyMaxConcurrentRequestsPerEndpoint = -1;
+
+        var act = () => new ProxyPool(options, _log);
+
+        var error = Assert.Throws<InvalidOperationException>(act);
+        Assert.Contains("per-endpoint proxy", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
