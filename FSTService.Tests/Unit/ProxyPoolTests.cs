@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FSTService.Scraping;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -30,6 +31,28 @@ public sealed class ProxyPoolTests
         Assert.NotNull(first);
         Assert.NotNull(second);
         Assert.NotEqual(first!.Index, second!.Index);
+    }
+
+    [Fact]
+    public async Task AcquireAsync_PerEndpointRateCap_PacesRepeatedSelections()
+    {
+        var options = CreateOptions(activeStandby: false);
+        options.ProxyUrls.RemoveAt(1);
+        options.ContainerNames.RemoveAt(1);
+        options.VpnProviders.RemoveAt(1);
+        options.ControlUrls.RemoveAt(1);
+        options.ProxyMaxRequestsPerSecondPerEndpoint = 5;
+        using var pool = new ProxyPool(options, _log);
+
+        using (var first = await pool.AcquireAsync(CancellationToken.None))
+            Assert.NotNull(first);
+
+        var sw = Stopwatch.StartNew();
+        using var second = await pool.AcquireAsync(CancellationToken.None);
+        sw.Stop();
+
+        Assert.NotNull(second);
+        Assert.True(sw.Elapsed >= TimeSpan.FromMilliseconds(100), $"Elapsed: {sw.Elapsed}");
     }
 
     [Fact]
@@ -174,6 +197,18 @@ public sealed class ProxyPoolTests
 
         var error = Assert.Throws<InvalidOperationException>(act);
         Assert.Contains("cannot be negative", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PerEndpointRateCap_WhenNegative_Throws()
+    {
+        var options = CreateOptions(activeStandby: false);
+        options.ProxyMaxRequestsPerSecondPerEndpoint = -1;
+
+        var act = () => new ProxyPool(options, _log);
+
+        var error = Assert.Throws<InvalidOperationException>(act);
+        Assert.Contains("ProxyMaxRequestsPerSecondPerEndpoint", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]

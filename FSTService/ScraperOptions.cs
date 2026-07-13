@@ -100,6 +100,12 @@ public sealed class ScraperOptions
     public int ProxyHttpFailureThreshold { get; set; } = 5;
 
     /// <summary>
+    /// Maximum request starts per second for each configured proxy endpoint.
+    /// Zero disables per-endpoint pacing; the global request cap still applies.
+    /// </summary>
+    public int ProxyMaxRequestsPerSecondPerEndpoint { get; set; }
+
+    /// <summary>
     /// When true, repeated proxy transport failures trigger a Docker restart for
     /// the aligned <see cref="ContainerNames"/> entry. CDN blocks still only
     /// cool down/fail over because they do not prove the VPN tunnel is broken.

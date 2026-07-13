@@ -115,6 +115,7 @@ def indexed(prefix):
 expected = integer("Scraper__ExpectedProxyEndpointCount")
 canonical = integer("Scraper__CanonicalProxyServiceCount")
 max_rps = integer("Scraper__MaxRequestsPerSecond")
+per_endpoint_rps = integer("Scraper__ProxyMaxRequestsPerSecondPerEndpoint")
 if canonical != 30:
     raise SystemExit(f"ERROR: canonical PIA service count must be 30, found {canonical}")
 if expected > canonical:
@@ -170,15 +171,18 @@ if max_rps > expected * 16:
     raise SystemExit(
         f"ERROR: aggregate Epic rate {max_rps} exceeds 16 RPS across "
         f"{expected} effective exits")
+if per_endpoint_rps > 16:
+    raise SystemExit(
+        f"ERROR: per-endpoint Epic rate {per_endpoint_rps} exceeds the 16 RPS ceiling")
 
-print(f"SUMMARY|{expected}|{canonical}|{max_rps}")
+print(f"SUMMARY|{expected}|{canonical}|{max_rps}|{per_endpoint_rps}")
 for container in containers:
     print(f"NODE|{container}")
 ' <<< "$compose_json"
 )"
 
 summary="$(head -n 1 <<< "$validation")"
-IFS='|' read -r _ expected_count canonical_count max_rps <<< "$summary"
+IFS='|' read -r _ expected_count canonical_count max_rps per_endpoint_rps <<< "$summary"
 mapfile -t effective_nodes < <(sed -n 's/^NODE|//p' <<< "$validation")
 
 if [[ "${#effective_nodes[@]}" -ne "$expected_count" ]]; then
@@ -186,8 +190,8 @@ if [[ "${#effective_nodes[@]}" -ne "$expected_count" ]]; then
     exit 1
 fi
 
-printf 'compose_guard config=ok overlay=%s effective=%s canonical=%s max_rps=%s\n' \
-    "$(basename "$pia_overlay")" "$expected_count" "$canonical_count" "$max_rps"
+printf 'compose_guard config=ok overlay=%s effective=%s canonical=%s max_rps=%s per_endpoint_rps=%s\n' \
+    "$(basename "$pia_overlay")" "$expected_count" "$canonical_count" "$max_rps" "$per_endpoint_rps"
 
 if $RUNTIME_PROBES; then
     if ! docker inspect fstservice >/dev/null 2>&1; then

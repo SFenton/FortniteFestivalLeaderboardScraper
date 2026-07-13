@@ -1,4 +1,5 @@
 using System.Net;
+using System.Threading.RateLimiting;
 using Microsoft.Extensions.Options;
 
 namespace FSTService.Scraping;
@@ -56,6 +57,7 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
     private readonly TimeSpan _containerRestartCooldown;
     private readonly int _timeoutFailureThreshold;
     private readonly int _httpFailureThreshold;
+    private readonly int _perEndpointMaxRequestsPerSecond;
     private readonly object _lock = new();
     private int _activeIndex;
     private int _nextRoundRobinIndex;
@@ -87,16 +89,18 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
         _containerRestartCooldown = TimeSpan.FromSeconds(Math.Max(1, options.ProxyContainerRestartCooldownSeconds));
         _timeoutFailureThreshold = Math.Max(1, options.ProxyTimeoutFailureThreshold);
         _httpFailureThreshold = Math.Max(1, options.ProxyHttpFailureThreshold);
+        _perEndpointMaxRequestsPerSecond = options.ProxyMaxRequestsPerSecondPerEndpoint;
 
         _endpoints = BuildEndpoints(options).ToList();
         if (_endpoints.Count > 0)
         {
             _log.LogInformation(
-                "Epic proxy pool enabled with {Count} endpoint(s); mode={Mode}, cooldown={CooldownSeconds}s, rotation={RotationSeconds}s.",
+                "Epic proxy pool enabled with {Count} endpoint(s); mode={Mode}, cooldown={CooldownSeconds}s, rotation={RotationSeconds}s, perEndpointRps={PerEndpointRps}.",
                 _endpoints.Count,
                 _activeStandby ? "active-standby" : "least-in-flight",
                 _baseCooldown.TotalSeconds,
-                _activeRotationInterval.TotalSeconds);
+                _activeRotationInterval.TotalSeconds,
+                _perEndpointMaxRequestsPerSecond);
 
             if (_containerSelfHealEnabled)
             {
@@ -138,24 +142,65 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
         while (true)
         {
             ct.ThrowIfCancellationRequested();
-            TimeSpan delay;
+            TimeSpan delay = TimeSpan.Zero;
+            ProxyEndpoint? selected;
             lock (_lock)
             {
                 ThrowIfDisposed();
 
                 var now = DateTimeOffset.UtcNow;
-                var selected = _activeStandby
+                selected = _activeStandby
                     ? SelectActiveStandby(now)
                     : SelectLeastLoaded(now);
 
                 if (selected is not null)
                 {
                     selected.InFlight++;
-                    selected.TotalSelected++;
-                    return new ProxyLease(this, selected.Index, selected.Name, selected.ProxyUri, selected.Invoker);
                 }
+                else
+                {
+                    delay = GetDelayUntilNextEndpoint(now);
+                }
+            }
 
-                delay = GetDelayUntilNextEndpoint(now);
+            if (selected is not null)
+            {
+                try
+                {
+                    using var pacingLease = selected.RateLimiter is null
+                        ? null
+                        : await selected.RateLimiter.AcquireAsync(1, ct);
+                    if (pacingLease is { IsAcquired: false })
+                    {
+                        Release(selected.Index);
+                        await Task.Delay(TimeSpan.FromMilliseconds(25), ct);
+                        continue;
+                    }
+
+                    lock (_lock)
+                    {
+                        ThrowIfDisposed();
+                        if (selected.CooldownUntil > DateTimeOffset.UtcNow)
+                        {
+                            if (selected.InFlight > 0)
+                                selected.InFlight--;
+                            continue;
+                        }
+
+                        selected.TotalSelected++;
+                        return new ProxyLease(
+                            this,
+                            selected.Index,
+                            selected.Name,
+                            selected.ProxyUri,
+                            selected.Invoker);
+                    }
+                }
+                catch
+                {
+                    Release(selected.Index);
+                    throw;
+                }
             }
 
             await Task.Delay(delay, ct);
@@ -495,7 +540,8 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
                 name: name,
                 provider: string.IsNullOrWhiteSpace(provider) ? "unknown" : provider,
                 controlUrl: controlUrl,
-                containerName: containerName);
+                containerName: containerName,
+                maxRequestsPerSecond: options.ProxyMaxRequestsPerSecondPerEndpoint);
         }
     }
 
@@ -511,7 +557,20 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
                 "Scraper ExpectedProxyEndpointCount cannot be negative.");
         }
         if (expected == 0)
+        {
+            if (options.ProxyMaxRequestsPerSecondPerEndpoint < 0)
+            {
+                throw new InvalidOperationException(
+                    "Scraper ProxyMaxRequestsPerSecondPerEndpoint cannot be negative.");
+            }
             return;
+        }
+
+        if (options.ProxyMaxRequestsPerSecondPerEndpoint < 0)
+        {
+            throw new InvalidOperationException(
+                "Scraper ProxyMaxRequestsPerSecondPerEndpoint cannot be negative.");
+        }
 
         ValidateAlignedList(nameof(options.ProxyUrls), options.ProxyUrls, expected);
         ValidateAlignedList(nameof(options.ControlUrls), options.ControlUrls, expected);
@@ -604,7 +663,14 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
 
     private sealed class ProxyEndpoint : IDisposable
     {
-        public ProxyEndpoint(int index, Uri proxyUri, string name, string provider, string controlUrl, string containerName)
+        public ProxyEndpoint(
+            int index,
+            Uri proxyUri,
+            string name,
+            string provider,
+            string controlUrl,
+            string containerName,
+            int maxRequestsPerSecond)
         {
             Index = index;
             ProxyUri = proxyUri;
@@ -613,6 +679,18 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
             ControlUrl = controlUrl;
             ContainerName = containerName;
             Invoker = new HttpMessageInvoker(CreateHandler(proxyUri), disposeHandler: true);
+            if (maxRequestsPerSecond > 0)
+            {
+                RateLimiter = new TokenBucketRateLimiter(new TokenBucketRateLimiterOptions
+                {
+                    TokenLimit = 1,
+                    TokensPerPeriod = 1,
+                    ReplenishmentPeriod = TimeSpan.FromSeconds(1d / maxRequestsPerSecond),
+                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                    QueueLimit = 512,
+                    AutoReplenishment = true,
+                });
+            }
         }
 
         public int Index { get; }
@@ -622,6 +700,7 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
         public string ControlUrl { get; }
         public string ContainerName { get; }
         public HttpMessageInvoker Invoker { get; private set; }
+        public TokenBucketRateLimiter? RateLimiter { get; }
         public int InFlight { get; set; }
         public long TotalSelected { get; set; }
         public long Successes { get; set; }
@@ -636,7 +715,11 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
         public DateTimeOffset? LastContainerRestartAttempt { get; set; }
         public Task? ContainerRestartTask { get; set; }
 
-        public void Dispose() => Invoker.Dispose();
+        public void Dispose()
+        {
+            RateLimiter?.Dispose();
+            Invoker.Dispose();
+        }
 
         public HttpMessageInvoker ResetInvoker()
         {

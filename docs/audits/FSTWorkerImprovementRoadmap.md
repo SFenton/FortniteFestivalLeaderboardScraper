@@ -160,6 +160,16 @@ Evidence:
   backfill hosted service. Normal scheduled workers and dedicated registration
   sync workers retain it, and the scrape's explicit deferred registration-sync
   phase remains available after core post-processing.
+- With registration isolated and logical-shadow writes disabled, scrape `1247`
+  reached core leaderboard work but adaptive DOP `90` produced
+  `6,260/7,370` CDN-blocked sends. A DOP-25 retry still ramped to `83` and
+  reached only `84/6,138` leaderboards at `0.9` request/s before the measured
+  network estimate exceeded the allowed performance envelope.
+- Publication-disabled rate canaries then proved `125/125` valid responses at
+  requested per-exit ceilings of `1`, `2`, `4`, and `8`. The next candidate
+  keeps the global `400`-RPS ceiling and 25-exit pool but enforces a conservative
+  `2` request starts/s per exit to prevent adaptive-concurrency bursts from
+  immediately tarpitting every route.
 
 **Next live A/B instruction:** keep the worker held, run the scrape capacity
 guard and proxy compose guard, deploy the accepted `b01d5c03` WORKER-0A
