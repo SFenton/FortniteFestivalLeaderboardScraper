@@ -81,6 +81,11 @@ another CDN block and not retryable `429`/`5xx` status. This prevents a curl
 `503` observed after a transient process/tunnel failure from becoming a final
 scope `HttpFailure`; the original request remains in the bounded retry loop.
 
+Epic JSON `404 com.epicgames.events.event_not_found` on page zero is treated as
+a legitimate empty solo or band scope. This covers newly cataloged songs whose
+leaderboard event has not been created yet without weakening later-page gap,
+malformed-response, or retry-exhaustion gates.
+
 ### Fail-closed worker deployment
 
 `Scraper:ExpectedProxyEndpointCount` makes `ProxyPool` reject missing,

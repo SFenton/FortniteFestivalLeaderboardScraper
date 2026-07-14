@@ -726,6 +726,46 @@ public class GlobalLeaderboardScraperTests
     }
 
     [Fact]
+    public async Task ScrapeLeaderboardAsync_EventNotFound_ReturnsCompleteEmptyManifest()
+    {
+        var (scraper, handler) = CreateScraper();
+        handler.EnqueueJsonResponse(
+            HttpStatusCode.NotFound,
+            """{"errorCode":"com.epicgames.events.event_not_found","errorMessage":"Event not found"}""");
+
+        var result = await scraper.ScrapeLeaderboardAsync(
+            "new-song", "Solo_Guitar", "token", "acct");
+
+        Assert.Empty(result.Entries);
+        Assert.True(result.CompletenessManifest?.IsComplete);
+        Assert.Equal(ScopeTerminalBoundaryKind.EpicEmpty, result.CompletenessManifest?.TerminalBoundary);
+        Assert.Equal("success", result.CompletenessManifest?.PageStatuses[0]);
+    }
+
+    [Fact]
+    public async Task FetchBandPageAsync_EventNotFound_ReturnsEmptySuccess()
+    {
+        var (scraper, handler) = CreateScraper();
+        handler.EnqueueJsonResponse(
+            HttpStatusCode.NotFound,
+            """{"errorCode":"com.epicgames.events.event_not_found","errorMessage":"Event not found"}""");
+
+        var result = await scraper.FetchBandPageAsync(
+            "new-song",
+            "Band_Duets",
+            0,
+            "token",
+            "acct",
+            limiter: null,
+            CancellationToken.None);
+
+        Assert.NotNull(result.Page);
+        Assert.Empty(result.Page.Entries);
+        Assert.Equal(0, result.Page.TotalPages);
+        Assert.Equal(GlobalLeaderboardScraper.FetchStatus.Success, result.Status);
+    }
+
+    [Fact]
     public async Task ScrapeLeaderboardAsync_ParseFailure_RetriesAndFails()
     {
         var (scraper, handler) = CreateScraper();

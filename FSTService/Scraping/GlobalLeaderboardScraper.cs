@@ -1022,6 +1022,13 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         OtherFailure,
     }
 
+    private static bool IsMissingLeaderboardEvent(int statusCode, int page, string body) =>
+        statusCode == 404 &&
+        page == 0 &&
+        body.Contains(
+            "com.epicgames.events.event_not_found",
+            StringComparison.Ordinal);
+
     /// <summary>
     /// Fetch and parse a single leaderboard page with automatic retry on
     /// transient failures (429, 5xx, network errors, timeouts) and CDN blocks.
@@ -1150,6 +1157,24 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                     errorBody = body.Length > 200 ? body[..200] : body;
                 }
                 catch { }
+
+                if (IsMissingLeaderboardEvent(statusCode, page, errorBody))
+                {
+                    _log.LogInformation(
+                        "Leaderboard event is not available yet for {Song}/{Instrument}; treating page 0 as a legitimate empty scope.",
+                        songId,
+                        instrument);
+                    return (
+                        new ParsedPage
+                        {
+                            Page = 0,
+                            TotalPages = 0,
+                            Entries = [],
+                            EstimatedBytes = 0,
+                        },
+                        errorBody.Length,
+                        FetchStatus.Success);
+                }
 
                 _log.LogWarning("Leaderboard request failed for {Song}/{Instrument} page {Page}: {StatusCode} {Body}",
                     songId, instrument, page, statusCode, errorBody);
@@ -2569,6 +2594,23 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                     errorBody = body.Length > 200 ? body[..200] : body;
                 }
                 catch { }
+
+                if (IsMissingLeaderboardEvent(statusCode, page, errorBody))
+                {
+                    _log.LogInformation(
+                        "Band leaderboard event is not available yet for {Song}/{BandType}; treating page 0 as a legitimate empty scope.",
+                        songId,
+                        bandType);
+                    return (
+                        new ParsedBandPage
+                        {
+                            Page = 0,
+                            TotalPages = 0,
+                            Entries = [],
+                        },
+                        errorBody.Length,
+                        FetchStatus.Success);
+                }
 
                 _log.LogWarning("Band leaderboard request failed for {Song}/{BandType} page {Page}: {StatusCode} {Body}",
                     songId, bandType, page, statusCode, errorBody);

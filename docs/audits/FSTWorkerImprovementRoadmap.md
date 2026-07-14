@@ -196,6 +196,12 @@ Evidence:
   showed a transport failure followed by a curl fallback `503` that was
   incorrectly returned as a recovered response. Retryable fallback statuses
   (`429`/`5xx`) are now discarded so the normal transient retry loop continues.
+- After two new catalog songs appeared, retry `1259` reached
+  `6,140/6,156` complete solo manifests. All 16 remaining scopes were the eight
+  supported instruments for those songs, and Epic returned JSON
+  `404 com.epicgames.events.event_not_found` because the leaderboard events did
+  not exist yet. Page-zero `event_not_found` is now classified as a legitimate
+  empty scope for solo and band; later-page 404s remain failures.
 
 **Next live A/B instruction:** keep the worker held, run the scrape capacity
 guard and proxy compose guard, deploy the accepted `b01d5c03` WORKER-0A
