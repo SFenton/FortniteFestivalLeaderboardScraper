@@ -76,6 +76,11 @@ retried; only the caller/host cancellation token ends the pass. Controlled
 run-once compose also sets `restart: "no"` so Docker cannot restart a completed
 or failed one-shot worker into a second scrape.
 
+Transport fallback responses are only treated as recovered when they are not
+another CDN block and not retryable `429`/`5xx` status. This prevents a curl
+`503` observed after a transient process/tunnel failure from becoming a final
+scope `HttpFailure`; the original request remains in the bounded retry loop.
+
 ### Fail-closed worker deployment
 
 `Scraper:ExpectedProxyEndpointCount` makes `ProxyPool` reject missing,

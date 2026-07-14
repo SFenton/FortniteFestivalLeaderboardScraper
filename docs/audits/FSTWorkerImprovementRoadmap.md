@@ -191,6 +191,11 @@ Evidence:
   override, Docker's base `unless-stopped` policy restarted the cleanly exiting
   run-once process and began unwanted scrape `1255`; the compose guard now
   rejects any run-once recreate whose resolved restart policy is not `no`.
+- Solo-complete retry `1257` produced `6,122/6,138` complete manifests and
+  zero writer failures. The 16 isolated gaps all ended in `HttpFailure`; logs
+  showed a transport failure followed by a curl fallback `503` that was
+  incorrectly returned as a recovered response. Retryable fallback statuses
+  (`429`/`5xx`) are now discarded so the normal transient retry loop continues.
 
 **Next live A/B instruction:** keep the worker held, run the scrape capacity
 guard and proxy compose guard, deploy the accepted `b01d5c03` WORKER-0A

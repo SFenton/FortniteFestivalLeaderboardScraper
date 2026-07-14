@@ -1057,8 +1057,7 @@ public sealed class ResilientHttpExecutor
         // A configured proxy pool can isolate the failed exit and retry through
         // another proxy. Bypassing that pool with a direct curl process turns CDN
         // HTML into misleading HTTP 200 responses and adds an unnecessary wire send.
-        if (_proxyHealth is IProxyCdnBlockHandler
-            && request.Options.TryGetValue(
+        if (request.Options.TryGetValue(
                 ProxyRequestState.EndpointIndex,
                 out _))
             return null;
@@ -1081,6 +1080,13 @@ public sealed class ResilientHttpExecutor
                 return null;
 
             if (await IsCdnBlockResponseAsync(fallbackResponse, ct))
+            {
+                fallbackResponse.Dispose();
+                return null;
+            }
+
+            var fallbackStatus = (int)fallbackResponse.StatusCode;
+            if (fallbackStatus == 429 || fallbackStatus >= 500)
             {
                 fallbackResponse.Dispose();
                 return null;

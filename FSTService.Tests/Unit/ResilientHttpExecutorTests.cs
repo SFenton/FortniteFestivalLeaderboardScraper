@@ -525,6 +525,28 @@ public sealed class ResilientHttpExecutorTests
     }
 
     [Fact]
+    public async Task SendAsync_EpicTransportFailure_WhenCurlFallbackReturns503_RetriesHttpClient()
+    {
+        var (executor, handler) = CreateExecutor();
+        handler.EnqueueException(new HttpRequestException("injected transport failure"));
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+        executor.CdnBlockFallbackOverride = (_, _, _) =>
+            Task.FromResult<HttpResponseMessage?>(
+                new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                {
+                    Content = new StringContent("try again"),
+                });
+
+        using var response = await executor.SendAsync(
+            () => MakeEpicEventsRequest(),
+            label: "503-transport-fallback-test");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("""{"result":"ok"}""", await response.Content.ReadAsStringAsync());
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
     public void ReportMalformedSuccessResponse_ReportsRoutedProxyCdnBlock()
     {
         var reporter = new LocalCdnBlockReporter(
