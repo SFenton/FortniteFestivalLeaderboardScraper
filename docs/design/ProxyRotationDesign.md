@@ -71,6 +71,11 @@ per-exit concurrency, cooldown, and global 400-RPS accounting. Request and
 response scratch files use `/app/data/curl-transport` on the FST drive and are
 deleted after each request.
 
+Internal curl timeouts are classified as transient transport failures and
+retried; only the caller/host cancellation token ends the pass. Controlled
+run-once compose also sets `restart: "no"` so Docker cannot restart a completed
+or failed one-shot worker into a second scrape.
+
 ### Fail-closed worker deployment
 
 `Scraper:ExpectedProxyEndpointCount` makes `ProxyPool` reject missing,

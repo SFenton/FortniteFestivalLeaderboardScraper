@@ -716,7 +716,7 @@ public sealed class ResilientHttpExecutor
                 _proxyHealth?.ReportFailure(sentRequest, ProxyFailureKind.Transport);
                 continue; // transient — retry indefinitely
             }
-            catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 if (IsCdnBlocked)
                     throw new CdnBlockedException(

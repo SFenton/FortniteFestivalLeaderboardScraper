@@ -71,6 +71,20 @@ if [[ "$ACTION" == "recreate-runonce" && ! -f "$runonce_overlay" ]]; then
     exit 1
 fi
 
+if [[ "$ACTION" == "recreate-runonce" ]]; then
+    runonce_restart="$(
+        cd "$compose_dir"
+        docker compose -f "$base_file" -f "$pia_overlay" -f "$runonce_overlay" \
+            config --format json \
+            | python3 -c 'import json,sys; print((json.load(sys.stdin).get("services", {}).get("fstworker", {}).get("restart") or "").strip())'
+    )"
+    if [[ "$runonce_restart" != "no" ]]; then
+        printf 'ERROR: run-once worker restart policy must resolve to no, found: %s\n' \
+            "${runonce_restart:-<empty>}" >&2
+        exit 1
+    fi
+fi
+
 compose_json="$(
     cd "$compose_dir"
     docker compose -f "$base_file" -f "$pia_overlay" config --format json

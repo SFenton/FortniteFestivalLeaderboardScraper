@@ -101,6 +101,48 @@ public sealed class ResilientHttpExecutorTests
     }
 
     [Fact]
+    public async Task SendAsync_ProxyCurlPrimary_InternalCancellation_Retries()
+    {
+        var handler = new MockHttpMessageHandler();
+        using var http = new HttpClient(handler);
+        var options = new ScraperOptions
+        {
+            ProxyUrls = ["http://gluetun-1:8888"],
+            ContainerNames = ["gluetun-1"],
+            VpnProviders = ["Private Internet Access"],
+            ControlUrls = ["http://gluetun-1:8000"],
+            ProxyUseCurlTransport = true,
+            ProxyCurlTempDirectory = "/app/data/curl-transport",
+        };
+        using var pool = new ProxyPool(
+            options,
+            NullLogger<ProxyPool>.Instance);
+        var executor = new ResilientHttpExecutor(http, _log, pool);
+        var calls = 0;
+        executor.PrimaryCurlTransportOverride = (_, _, _) =>
+        {
+            calls++;
+            if (calls == 1)
+                throw new OperationCanceledException("simulated curl timeout");
+
+            return Task.FromResult<HttpResponseMessage?>(
+                new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""{"result":"ok"}"""),
+                });
+        };
+
+        using var response = await executor.SendAsync(
+            () => MakeEpicEventsRequest(),
+            label: "curl-timeout-retry",
+            maxRetries: 0);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, calls);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
     public async Task SendAsync_BackgroundWaitsForForegroundRegistration_ReportsTrafficTurnState()
     {
         var coordinator = new EpicTrafficCoordinator();

@@ -182,6 +182,15 @@ Evidence:
   candidate therefore uses curl as the primary proxy transport, keeps the same
   lease/rate/concurrency/cooldown accounting, and stores transient bodies only
   under `/app/data/curl-transport` on the FST drive.
+- Curl-primary scrape `1254` sustained about `29` useful requests/s and reached
+  the end of its first network window, but a 30-second curl timeout surfaced as
+  a plain `OperationCanceledException` and canceled the solo pass instead of
+  entering the transient retry loop. The executor now treats all internal
+  cancellations as retryable timeouts while preserving caller cancellation.
+- The production run-once overlay now resolves `restart: "no"`. Without that
+  override, Docker's base `unless-stopped` policy restarted the cleanly exiting
+  run-once process and began unwanted scrape `1255`; the compose guard now
+  rejects any run-once recreate whose resolved restart policy is not `no`.
 
 **Next live A/B instruction:** keep the worker held, run the scrape capacity
 guard and proxy compose guard, deploy the accepted `b01d5c03` WORKER-0A
