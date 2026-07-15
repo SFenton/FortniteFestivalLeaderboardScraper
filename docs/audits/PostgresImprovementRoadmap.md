@@ -685,11 +685,50 @@ move to PG-7 after backup/restore and live-scrape parity.
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/fst-disk-pressure-20260715T1408Z`.
 - The residual owner sweep rejected `ix_cble_trios_team_scope_generation`
   despite its prior zero-scan count: the exact public selected-team lookup
-  plan uses that index. `ix_crh_retention_cutoff_account` remains
-  retention-job-owned. The four smaller zero-owner secondary indexes total
-  only `4,025,819,136` bytes; even dropping all four separately would leave a
-  `1,302,163,456`-byte shortfall before any rollback margin. Further incident
-  index mutation is therefore hard-gated rather than justified by scan counts.
+  plan uses that index. `ix_crh_retention_cutoff_account` was retained at that
+  incident boundary because the existing retention query used it. The four
+  smaller zero-owner secondary indexes total only `4,025,819,136` bytes; even
+  dropping all four separately would leave a `1,302,163,456`-byte shortfall
+  before any rollback margin.
+
+### PG-3 residual rollback-margin recovery - accepted 2026-07-15
+
+- A fresh owner and plan review isolated
+  `public.ix_crh_retention_cutoff_account` as the only single non-constraint
+  object large enough to restore the measured scrape-completion margin without
+  touching table data. It occupied `23,526,973,440` bytes. Composite ranking
+  routes read `composite_rankings`; the latest-history snapshot plan continued
+  to choose the same parallel sequential scan/sort without this index.
+- The 26.98 GB heap is strongly ordered by `snapshot_date`
+  (`pg_stats.correlation=0.96636045`). A concurrent 688,128-byte
+  `ix_crh_retention_cutoff_brin` replacement built in `67.53 s` with no
+  transient scratch requirement. The retained primary key
+  `(account_id, snapshot_date)` covers the correlated newer-row probe.
+- Composite retention batches are now deliberately unordered. That lets the
+  BRIN reject empty cutoff ranges and lets `LIMIT 5000` stop after one bounded
+  batch instead of sorting every eligible row. With the btree removed
+  transactionally, the current 365-day no-row probe completed in `1.50 ms`;
+  a representative eligible cutoff completed in `0.69-0.72 s`, with no temp
+  spill or WAL, versus `0.43 s` through the retired btree.
+- Exact concurrent recreate SQL was persisted before mutation.
+  `DROP INDEX CONCURRENTLY public.ix_crh_retention_cutoff_account` completed
+  in `0.16 s`, reduced database size by exactly `23,526,973,440` bytes, and
+  increased filesystem free space by `23,527,038,976` bytes.
+- Final measured free space was `63,339,065,344` bytes. The exact
+  `45,148,225,536`-byte pre-rank-through-publication guard now passes with
+  `18,190,839,808` bytes of margin; the default guard horizon improved from
+  `1.32` to `2.11` days. Seven-day optional-build/rewrite headroom is still
+  unavailable.
+- All `12/12` public route/history/ranking/export fingerprints matched
+  baseline, post-drop, and repeat. Duets/Trios/Quad history, solo history,
+  composite ranking, and latest-history plans retained their owners; `106`
+  targeted ranking/maintenance tests passed. No active query, ungranted lock,
+  invalid index, vacuum, or index build remained.
+- `fstworker` remains intentionally held. Published scrape `1236` remains
+  authoritative and unfrozen; failed scrape `1261` exposed no published
+  candidate rows. Capacity is now ready for the next single WORKER-0A
+  full-scrape A/B, but this phase did not start it. Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/fst-residual-capacity-20260715T144916Z`.
 
 ## Phase PG-4: Make scrape writes proportional to semantic changes
 

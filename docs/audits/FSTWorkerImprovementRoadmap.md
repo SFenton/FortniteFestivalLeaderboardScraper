@@ -433,14 +433,33 @@ until replay and live shadow parity pass.
   selected-team projection plan; all four smaller zero-owner indexes combined
   still leave about `1.30 GB` short before rollback margin.
 
-**Remaining WORKER-0A promotion gate**
+**Residual capacity recovery - ready 2026-07-15**
 
-- First restore at least the measured pre-rank-through-publication headroom
-  plus rollback margin on the FST drive. Then re-run exactly one full candidate
-  scrape. Require all expected solo/band manifests complete, zero writer
-  failures, zero publication-critical phase failures, exact
-  published-source/physical counts, healthy public routes, and acceptable
-  resource deltas before enabling the three enforcement flags.
+- The composite retention helper was replaced by a 688,128-byte BRIN, and only
+  the `23,526,973,440`-byte non-constraint
+  `ix_crh_retention_cutoff_account` btree was dropped concurrently.
+  Filesystem free space reached `63,339,065,344` bytes.
+- The measured `45,148,225,536`-byte pre-rank-through-publication guard now
+  passes with `18,190,839,808` bytes of margin. `12/12` public
+  route/history/ranking/export fingerprints matched before, after, and on
+  repeat; relevant plans and `106` targeted tests passed.
+- `fstworker` remains intentionally held, published scrape `1236` remains
+  unfrozen and authoritative, and scrape `1261` remains failed closed.
+  Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/fst-residual-capacity-20260715T144916Z`.
+
+**Next WORKER-0A full-scrape A/B instruction**
+
+- Keep the worker held while deploying the pushed residual-capacity commit.
+  Re-run the measured scrape guard and proxy compose guard, then use the
+  approved `--recreate-runonce` WORKER-0A path. Verify Postgres, `/readyz`,
+  festivalweb, and `/api/service-info` before allowing the run.
+- Monitor exactly one complete scrape, post-process, publication, and parity
+  window. Hold the worker again before a second scrape. Require all expected
+  solo/band manifests complete, zero writer failures, zero
+  publication-critical phase failures, exact published-source/physical
+  counts, healthy public routes, and acceptable resource deltas before
+  enabling the three enforcement flags.
 
 ### WORKER-0.5 - Separate solo and band completion
 

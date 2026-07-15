@@ -3428,7 +3428,8 @@ public sealed class MetaDatabase : IMetaDatabase
                       AND crh2.snapshot_date > crh.snapshot_date
                       AND crh2.snapshot_date <= @cutoff
                   )
-                ORDER BY crh.snapshot_date ASC, crh.account_id ASC
+                -- Keep the batch unordered so the cutoff BRIN can reject
+                -- empty ranges and LIMIT can stop after one bounded batch.
                 LIMIT @batchSize
             )
             DELETE FROM composite_rank_history crh

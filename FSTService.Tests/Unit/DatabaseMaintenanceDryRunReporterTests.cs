@@ -152,7 +152,10 @@ public sealed class DatabaseMaintenanceDryRunReporterTests
     {
         var definitions = GetReporterPrivateStaticArray<RetentionHelperIndexDefinition>("RetentionHelperIndexDefinitions");
 
-        Assert.Contains(definitions, definition => definition.Name == "ix_crh_retention_cutoff_account");
+        var compositeRetention = Assert.Single(definitions, definition => definition.Name == "ix_crh_retention_cutoff_brin");
+        Assert.Contains("USING brin", compositeRetention.CreateSql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("pages_per_range = 128", compositeRetention.CreateSql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("autosummarize = on", compositeRetention.CreateSql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(definitions, definition => definition.Name == "ix_btrhp_retention_cutoff_scope_team");
         Assert.Contains(definitions, definition => definition.Name == "ix_btrh_retention_cutoff_scope_team");
         Assert.Contains(definitions, definition => definition.Name == "ix_btrh_latest");
@@ -230,9 +233,9 @@ public sealed class DatabaseMaintenanceDryRunReporterTests
         var method = typeof(DatabaseMaintenanceDryRunReporter).GetMethod("ResolveRetentionHelperIndexDefinition", BindingFlags.NonPublic | BindingFlags.Static);
         Assert.NotNull(method);
 
-        var definition = Assert.IsType<RetentionHelperIndexDefinition>(method.Invoke(null, ["IX_CRH_RETENTION_CUTOFF_ACCOUNT"]));
+        var definition = Assert.IsType<RetentionHelperIndexDefinition>(method.Invoke(null, ["IX_CRH_RETENTION_CUTOFF_BRIN"]));
 
-        Assert.Equal("ix_crh_retention_cutoff_account", definition.Name);
+        Assert.Equal("ix_crh_retention_cutoff_brin", definition.Name);
         Assert.Null(method.Invoke(null, ["all"]));
         Assert.Null(method.Invoke(null, [""]));
     }

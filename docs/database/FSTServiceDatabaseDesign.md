@@ -3,7 +3,7 @@
 **Authoritative runtime:** PostgreSQL 17 in `fst-postgres`  
 **Production compose owner:** `/home/sfenton/Docker/FestivalServiceTracker`  
 **Production data root:** `/mnt/docker-storage/Docker/FestivalServiceTracker/pg-data`  
-**Last live inventory:** 2026-07-15 14:26 UTC
+**Last live inventory:** 2026-07-15 15:03 UTC
 
 This document defines FST PostgreSQL ownership, source-of-truth boundaries,
 publication behavior, retention, index posture, and restore paths. PostgreSQL
@@ -112,6 +112,14 @@ A second one-family decision retired the non-constraint partitioned
 rose from `30,962,761,728` to `39,827,243,008` bytes. Public history retained
 the team/date indexes, and no history rows, primary keys, publication state,
 or route/export output changed.
+
+The residual capacity phase replaced the 23,526,973,440-byte composite
+retention btree with the 688,128-byte
+`ix_crh_retention_cutoff_brin`. Database size fell to
+`3,815,761,122,995` bytes and measured filesystem free space reached
+`63,339,065,344` bytes. The exact scrape-completion guard now has
+`18,190,839,808` bytes of margin. No history rows, constraints, publication
+state, or public response changed.
 
 ## Data ownership and restore class
 
@@ -337,11 +345,12 @@ named owner and bounded retention before cleanup. Zero current rows or zero
    proof.
 6. Date/range partitioning is preferred for future history retention only when
    the public history contract, range manifest, and rehydration path are proven.
-7. `composite_rank_history` intentionally has no `ix_crh_latest` secondary
-   index. The full latest-state snapshot job uses a parallel sequential
-   scan/sort plan at production scale, while the primary key preserves
-   identity and account-bounded date access. `ix_crh_retention_cutoff_account`
-   remains the owned date-first path for bounded retention.
+7. `composite_rank_history` intentionally has neither `ix_crh_latest` nor the
+   former `ix_crh_retention_cutoff_account` btree. The full latest-state
+   snapshot job uses a parallel sequential scan/sort plan at production scale.
+   The primary key preserves identity and account-bounded date access, while
+   `ix_crh_retention_cutoff_brin` rejects empty cutoff ranges for bounded
+   retention.
 8. `band_team_rank_history_latest_v2` intentionally has no
    `ix_btrhlv2_snapshot` secondary family. Current application reads, delta
    joins, and `ON CONFLICT` writes use the partition primary keys; the retired
@@ -393,6 +402,9 @@ cache and band-ranking publication work.
   pressure and uses an advisory lock.
 - Metadata TTL cleanup is bounded by batch count, row count, and command
   timeout. Snapshot rewrite remains disabled by default.
+- Composite rank-history retention batches are intentionally unordered. The
+  BRIN handles cutoff-range rejection, the primary key handles account/date
+  existence probes, and `LIMIT` bounds each delete without a global sort.
 - `tools/postgres-capacity-guard.sh` is required before broad scrape,
   post-process, optional build, or maintenance work. It records free space,
   DB/WAL size, scratch, publication state, locks, and active maintenance.
@@ -408,7 +420,7 @@ cache and band-ranking publication work.
 
 ### Current promotion gate
 
-A full 3.56 TB duplicate restore is not safe with roughly 315 GB free. Full
+A full 3.56 TB duplicate restore is not safe with roughly 63 GB free. Full
 restore promotion remains blocked until same-drive reclaim creates the exact
 source database plus target data/WAL/index/scratch headroom.
 

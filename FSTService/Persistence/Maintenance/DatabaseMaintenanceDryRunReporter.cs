@@ -57,11 +57,11 @@ public sealed class DatabaseMaintenanceDryRunReporter
     private static readonly RetentionHelperIndexDefinition[] RetentionHelperIndexDefinitions =
     [
         new(
-            "ix_crh_retention_cutoff_account",
+            "ix_crh_retention_cutoff_brin",
             "composite_rank_history",
-            ["snapshot_date", "account_id"],
-            "CREATE INDEX CONCURRENTLY IF NOT EXISTS \"ix_crh_retention_cutoff_account\" ON public.\"composite_rank_history\" (\"snapshot_date\", \"account_id\")",
-            "supports bounded composite_rank_history retention batches ordered by cutoff date and account"),
+            ["snapshot_date"],
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS \"ix_crh_retention_cutoff_brin\" ON public.\"composite_rank_history\" USING brin (\"snapshot_date\") WITH (pages_per_range = 128, autosummarize = on)",
+            "supports low-scratch composite_rank_history cutoff pruning; the primary key covers account/date probes"),
         new(
             "ix_btrhp_retention_cutoff_scope_team",
             "band_team_rank_history_points",
