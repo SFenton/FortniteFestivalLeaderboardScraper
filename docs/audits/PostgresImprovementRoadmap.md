@@ -683,6 +683,13 @@ move to PG-7 after backup/restore and live-scrape parity.
   `fstworker` therefore remains held; this incident does not accept
   WORKER-0A or authorize autonomous live scrapes. Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/fst-disk-pressure-20260715T1408Z`.
+- The residual owner sweep rejected `ix_cble_trios_team_scope_generation`
+  despite its prior zero-scan count: the exact public selected-team lookup
+  plan uses that index. `ix_crh_retention_cutoff_account` remains
+  retention-job-owned. The four smaller zero-owner secondary indexes total
+  only `4,025,819,136` bytes; even dropping all four separately would leave a
+  `1,302,163,456`-byte shortfall before any rollback margin. Further incident
+  index mutation is therefore hard-gated rather than justified by scan counts.
 
 ## Phase PG-4: Make scrape writes proportional to semantic changes
 

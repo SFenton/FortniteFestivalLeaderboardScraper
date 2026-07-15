@@ -428,6 +428,10 @@ until replay and live shadow parity pass.
   Postgres are healthy, and WORKER-0A remains unaccepted because no strict-gate
   candidate has completed and published end to end. Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/fst-disk-pressure-20260715T1408Z`.
+- A residual owner sweep found no safe single index that closes the remaining
+  gap. The only sufficiently large low-scan candidate is used by the public
+  selected-team projection plan; all four smaller zero-owner indexes combined
+  still leave about `1.30 GB` short before rollback margin.
 
 **Remaining WORKER-0A promotion gate**
 

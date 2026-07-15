@@ -108,8 +108,15 @@ enough measured headroom for another full scrape/post-process/publish cycle.
 The scrape-`1236` monitor required `45,148,225,536` bytes from the equivalent
 pre-rank boundary through publication; the post-incident filesystem has about
 `39.83 GB` free. `fstworker` must remain held until the remaining roughly
-`5.32 GB` shortfall plus rollback
-margin is restored. Service/web/Postgres operation may continue.
+`5.32 GB` shortfall plus rollback margin is restored.
+Service/web/Postgres operation may continue.
+
+The residual index sweep does not clear this gate. The public selected-team
+query uses the `5,469,274,112`-byte
+`ix_cble_trios_team_scope_generation` index, and composite retention still
+uses `ix_crh_retention_cutoff_account`. Four smaller zero-owner secondary
+indexes total `4,025,819,136` bytes; dropping all four would still leave
+`1,302,163,456` bytes missing before rollback margin.
 
 Destructive cleanup, irreversible migration, drop/truncate/repack/rewrite
 work, or active Postgres data movement may proceed automatically after a
@@ -128,6 +135,7 @@ path, and post-action validation are documented.
 | PG-3 `ix_crh_latest` reclaim | Accepted | After scrape `1236` publish/unfreeze and worker hold, dropped one non-constraint index concurrently in 0.18 s. Reclaimed `20,890,148,864` database bytes with exact route/export/history/ranking/plan parity and tested recreate DDL. |
 | PG-3 `ix_btrhlv2_snapshot` family reclaim | Accepted | During the scrape-`1261` capacity hold, dropped one partitioned non-constraint family in 68.378 ms. Reclaimed `3,277,996,032` database bytes; 12 route/ranking/history/export fingerprints and all three sampled band-history routes matched exactly. |
 | PG-3 `ix_btrhpv2_snapshot` family reclaim | Accepted | As a separate decision, dropped the partitioned points-v2 snapshot lookup family in 129.457 ms. Reclaimed `8,864,440,320` database bytes; retained team/date plans and 12 route/ranking/history/export fingerprints matched exactly. |
+| Residual incident index sweep | Blocked safely | Rejected the sufficiently large Trios current-projection index because the exact public selected-team plan uses it. Smaller zero-owner indexes cannot meet the measured completion boundary even in aggregate, before rollback margin. |
 | Band rank-history retention policy draft | Complete | Semantics-first v2 retention options and parity gates documented on 2026-07-06. |
 | `band_read_*` quarantine parity package | Complete | Reversible, live-scrape A/B parity-gated quarantine package documented on 2026-07-06; no DDL executed. |
 | Phase 8 physical snapshot write skipping | Accepted behind feature flag | Added `SkipUnchangedPhysicalLeaderboardSnapshots` as a rollback-safe, default-off candidate that skips unchanged solo physical snapshot scopes and keeps snapshot state pinned to the prior active snapshot. Production rollout remains gated by live-scrape A/B parity and disk headroom. |
