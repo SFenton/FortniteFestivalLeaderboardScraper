@@ -10308,9 +10308,7 @@ public sealed class MetaDatabase : IMetaDatabase
 
             CREATE TABLE IF NOT EXISTS band_team_rank_history_latest_v2_quad
                 PARTITION OF band_team_rank_history_latest_v2 FOR VALUES IN ('Band_Quad');
-
-            CREATE INDEX IF NOT EXISTS ix_btrhlv2_snapshot
-                ON band_team_rank_history_latest_v2 (snapshot_id, band_type);";
+            ";
         cmd.ExecuteNonQuery();
 
         using var metadataCmd = conn.CreateCommand();

@@ -631,6 +631,47 @@ move to PG-7 after backup/restore and live-scrape parity.
   safely on published `1236`. Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/postgres-capacity-reclaim-20260713T072827Z`.
 
+### PG-3 disk-pressure incident reclaim - accepted 2026-07-15
+
+- Scrape `1261` reached post-process with all `8,208` captured manifests
+  complete, but the FST filesystem had only `26,207,338,496` bytes free. A
+  matched scrape-`1236` monitor showed that the equivalent pre-rank boundary
+  through publication had required `45,148,225,536` bytes, so the worker was
+  stopped before rankings could exhaust the filesystem.
+- The rollback transaction marked `1261` failed at
+  `capacity_before_rankings_publish`, cleared its stale operation and public
+  freeze, retained published scrape `1236`, and proved that `1261` owned zero
+  published-source rows. `fstservice`, `festivalweb`, and Postgres remained
+  healthy with no ungranted locks.
+- Reproducible non-database cleanup removed `652,046,336` bytes of unused
+  Playwright browser cache and `99,295,232` bytes of old test/build scratch.
+  Decision evidence, scrape manifests, rollback SQL, and path data were
+  retained.
+- The next one-family owner decision retired partitioned
+  `public.ix_btrhlv2_snapshot` and its Duets/Trios/Quad child indexes. The
+  family was non-constraint, occupied `3,277,135,872` live index bytes, had no
+  production statement/view/function or repository read owner by
+  `snapshot_id`, and was absent from latest-state delta/write plans, which
+  continued to use the primary keys. The one observed Duets scan was this
+  incident's explicit diagnostic probe.
+- A transactional drop/rollback completed in `3.910 ms`; the committed drop
+  completed in `68.378 ms`. Database size fell by `3,277,996,032` bytes and
+  filesystem free space rose by `3,278,016,512` bytes, from
+  `26,942,255,104` to `30,220,271,616`.
+- Published scrape totals and stable route fingerprints matched. Twelve
+  leaderboard/ranking/history/export responses were byte-exact before,
+  after, and on repeat; all sampled Duets/Trios/Quad history and composite
+  routes matched; owner/history plans retained the same primary/team-date
+  indexes with no temp spill. No invalid indexes or ungranted locks remained.
+- Startup schema no longer recreates the retired family. Two targeted tests
+  prove non-recreation and execute the exact child-concurrent-build,
+  parent-attach, validate, and family-drop rollback sequence.
+- The capacity guard improved from `0.87` to `1.01` projected days, but the
+  measured safe completion boundary is still short by about `14.92 GB`.
+  `fstworker` therefore remains held; this incident does not accept
+  WORKER-0A or authorize autonomous live scrapes. Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/fst-disk-pressure-20260715T1408Z`.
+
 ## Phase PG-4: Make scrape writes proportional to semantic changes
 
 **Decision:** Experimental until live-scrape parity  

@@ -5,8 +5,9 @@ This plan records the approved direction for improving FST Postgres persistence 
 ## Current production state
 
 - Production compose ownership: `/home/sfenton/Docker/FestivalServiceTracker`.
-- `fstservice`, `festivalweb`, `fst-postgres`, and `fstworker` are healthy on
-  the SERVICE-0.1/0.2 `824415e9` images/code path.
+- `fstservice`, `festivalweb`, and `fst-postgres` are healthy.
+  `fstworker` is intentionally held after scrape `1261` failed closed before
+  rankings/publication on measured capacity risk.
 - Scrape `1236` published `6,138` complete scopes and `39,588,650` rows with
   public reads unfrozen before maintenance. Normal scraping was restored as
   scrape `1237`, with reads frozen safely on published `1236`.
@@ -15,6 +16,11 @@ This plan records the approved direction for improving FST Postgres persistence 
   `20,890,148,864` database bytes. Free space rose from `78,549,483,520` to
   `99,439,702,016` bytes; the guard horizon improved from `2.61` to `3.31`
   days. Optional builds and rewrites remain blocked below seven-day headroom.
+- The 2026-07-15 incident reclaimed another `3,277,996,032` database bytes by
+  retiring partitioned `public.ix_btrhlv2_snapshot`, plus `751,341,568` bytes
+  of reproducible non-database cache/scratch. Free space reached about
+  `30.22 GB`, but remains below the measured `45.15 GB` pre-rank-through-
+  publication requirement, so normal live scrapes remain held.
 - Public band-history team/date indexes and
   `ix_crh_retention_cutoff_account` remain because live plans proved their
   route/job ownership.
@@ -95,9 +101,17 @@ Important finding: the logical model indicates most observed rows are unchanged,
 
 ## Immediate blocker
 
-`/mnt/docker-storage` hosts the active Postgres bind mount and has limited free space for another full scrape/post-process/publish cycle. The biggest consumers are physical leaderboard snapshots, band rank-history point tables, band read projections, rank/composite history tables, and their indexes.
+`/mnt/docker-storage` hosts the active Postgres bind mount and does not have
+enough measured headroom for another full scrape/post-process/publish cycle.
+The scrape-`1236` monitor required `45,148,225,536` bytes from the equivalent
+pre-rank boundary through publication; the post-incident filesystem has about
+`30.22 GB` free. `fstworker` must remain held until that shortfall plus rollback
+margin is restored. Service/web/Postgres operation may continue.
 
-Normal scrapes/service operation may proceed. Destructive cleanup, irreversible migration, drop/truncate/repack/rewrite work, or active Postgres data movement may proceed automatically after a live-scrape A/B proves old-vs-new data parity and the exact objects, rollback path, and post-action validation are documented.
+Destructive cleanup, irreversible migration, drop/truncate/repack/rewrite
+work, or active Postgres data movement may proceed automatically after a
+live-scrape A/B proves old-vs-new data parity and the exact objects, rollback
+path, and post-action validation are documented.
 
 ## Task status
 
@@ -109,6 +123,7 @@ Normal scrapes/service operation may proceed. Destructive cleanup, irreversible 
 | Database architecture evaluation | Complete | Read-only code review and production probes completed on 2026-07-06. |
 | History/index owner cards | Complete | Refreshed band v2, composite history, observation, dirty-work, and latest-state owner cards on 2026-07-13. Public team/date and retention indexes were retained from plan/caller proof. |
 | PG-3 `ix_crh_latest` reclaim | Accepted | After scrape `1236` publish/unfreeze and worker hold, dropped one non-constraint index concurrently in 0.18 s. Reclaimed `20,890,148,864` database bytes with exact route/export/history/ranking/plan parity and tested recreate DDL. |
+| PG-3 `ix_btrhlv2_snapshot` family reclaim | Accepted | During the scrape-`1261` capacity hold, dropped one partitioned non-constraint family in 68.378 ms. Reclaimed `3,277,996,032` database bytes; 12 route/ranking/history/export fingerprints and all three sampled band-history routes matched exactly. |
 | Band rank-history retention policy draft | Complete | Semantics-first v2 retention options and parity gates documented on 2026-07-06. |
 | `band_read_*` quarantine parity package | Complete | Reversible, live-scrape A/B parity-gated quarantine package documented on 2026-07-06; no DDL executed. |
 | Phase 8 physical snapshot write skipping | Accepted behind feature flag | Added `SkipUnchangedPhysicalLeaderboardSnapshots` as a rollback-safe, default-off candidate that skips unchanged solo physical snapshot scopes and keeps snapshot state pinned to the prior active snapshot. Production rollout remains gated by live-scrape A/B parity and disk headroom. |
@@ -120,9 +135,9 @@ Normal scrapes/service operation may proceed. Destructive cleanup, irreversible 
 | Worker validation start | Rejected / blocked | Starting `fstworker` with safer defaults caused `fstservice` and `/api/service-info` through `festivalweb` to time out; `fstworker` was stopped immediately and public API/web health recovered. |
 | Worker scraping heal | Complete | Added worker-only startup schema-init skip, rebuilt the image, started `fstworker`, and held a 10-minute full-public-path watchdog while scrape `1219` began. |
 | Emergency `band_read_*` reclaim | Complete | At 44 MB free / 100% disk, stopped `fstworker`, froze public reads to published `1214`, truncated rollback-safe logical shadow tables, quarantined/validated/dropped unused derived `band_read_*` tables, restored about 435 GB free, and restarted `fstworker` as scrape `1222`. |
-| Autonomous scrape rollout | Active operating policy | Scrapes should proceed normally; worker/service/web may be briefly taken down for maintenance and redeployed/recovered as soon as possible. |
+| Autonomous scrape rollout | Capacity-held | Service/web/Postgres remain online, but `fstworker` stays offline until at least the measured `45.15 GB` completion boundary plus rollback margin is available. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
-| Next implementation phase | Capacity-gated | Normal scrapes may proceed, but optional builds, rewrites, repacks, table deletion, and broad data movement remain blocked. Continue one-object owner proof or future-growth reduction; do not treat the accepted 20.89 GB reclaim as seven-day headroom. |
+| Next implementation phase | Capacity-gated | Continue one-object owner proof or future-growth reduction while the worker is held. Optional builds, rewrites, repacks, table deletion, and broad data movement remain blocked; neither accepted index reclaim provides seven-day headroom. |
 
 ## Architecture evaluation evidence (2026-07-06)
 
@@ -342,7 +357,7 @@ P4.1 non-primary index owner cards:
 |---|---:|---|---|---|
 | `ix_btrhpv2_team_date` partition indexes (`band_team_rank_history_points_band_type_ranking_scope_combo_idx*`) | Duets 41 GB / 3 scans; Trios 89 GB / 0; Quad 114 GB / 0 | Public history endpoint filter: `band_type`, `ranking_scope`, `combo_id`, `team_key`, `snapshot_date >= cutoff`, ordered by `snapshot_date DESC`. | Keep for now. It is endpoint-owned even when `idx_scan` is low; Trios/Quad low scans likely reflect recent traffic, not proof of disuse. | Any replacement/drop needs sampled API parity for all band types, matched p50/p95/p99, and rollback DDL to recreate the partitioned indexes. |
 | `ix_btrhpv2_snapshot` partition indexes (`*_snapshot_id_band_type_idx`) | Duets 2,004 MB / 0; Trios 3,164 MB / 0; Quad 3,284 MB / 0 | No current source read path with `WHERE snapshot_id`; v2 parity code reads by `band_type`/`snapshot_date`, and writers store `snapshot_id` from snapshot metadata. | Candidate low-priority drop/replacement proof after endpoint indexes; possible reclaim about 8.4 GB. | Must first prove no restore/manifest/admin path needs snapshot-id lookups and capture exact `CREATE INDEX CONCURRENTLY` rollback DDL. |
-| `ix_btrhlv2_snapshot` partition indexes on latest v2 | Duets 714 MB / 0; Trios 1,140 MB / 0; Quad 1,271 MB / 0 | Latest-state table is a structural delta detector keyed by primary key; no current source read path with `WHERE snapshot_id`. | Candidate low-priority drop proof; possible reclaim about 3.1 GB. | Must preserve latest-state parity checks and write/update conflict behavior; recreate concurrently if needed. |
+| `ix_btrhlv2_snapshot` partition indexes on latest v2 | Duets 714 MB / 0; Trios 1,140 MB / 0; Quad 1,271 MB / 0 | Latest-state table is a structural delta detector keyed by primary key; no current source read path with `WHERE snapshot_id`. | Accepted 2026-07-15; reclaimed `3,277,996,032` database bytes with exact parity. | Child indexes rebuild concurrently, then attach to a metadata-only parent; exact SQL is in the incident evidence. |
 | `ix_btrhsv2_generation` on snapshot metadata | 4,392 kB / 0 | Small generation lookup index on 26,239-row metadata table. | Not a meaningful space target. Leave until a generation-owner review. | Recreate with `CREATE INDEX CONCURRENTLY` if ever dropped. |
 
 P4.1 structural index decisions:
@@ -381,7 +396,9 @@ P4.1 decision:
 
 - Accepted as a proof/design phase.
 - Do not drop the large `ix_btrhpv2_team_date` family from low scans alone; it is confirmed on the public read path.
-- Treat `ix_btrhpv2_snapshot` and `ix_btrhlv2_snapshot` as the safest future history-index proof candidates, but only after live-scrape A/B data parity and rollback DDL.
+- `ix_btrhlv2_snapshot` passed its owner/parity gate and was retired on
+  2026-07-15. Treat `ix_btrhpv2_snapshot` as the next safest history-index
+  proof candidate, still one family per decision with exact rollback DDL.
 - Keep all primary keys and unique constraints.
 - Do not add v2 retention deletion until a manifest, endpoint parity suite, restore path, exact object/date scope, and live-scrape A/B data parity exist.
 - Phase E completed the next safe non-destructive continuation by documenting a reversible `band_read_*` quarantine parity package. Actual quarantine/drop remains live-scrape A/B parity-gated.
@@ -701,6 +718,17 @@ Startup schema no longer recreates the retired index, and exact concurrent
 recreate/drop SQL is covered by targeted tests. The lower-value partitioned
 band v2 snapshot lookup family remains a future one-family candidate rather
 than a second destructive batch in this phase.
+
+Execution result (2026-07-15): accepted for
+`public.ix_btrhlv2_snapshot`. The latest-state delta/read/write plans used only
+the partition primary keys before and transactionally without the family.
+The family drop reclaimed `3,277,996,032` database bytes and
+`3,278,016,512` filesystem bytes. Twelve public
+leaderboard/ranking/history/export fingerprints, sampled history for all three
+band types, composite routes, scrape `1236` totals, and representative plans
+matched exactly. Exact rollback SQL builds the three children concurrently,
+creates the parent `ON ONLY`, and attaches the children. The larger
+`ix_btrhpv2_snapshot` points family remains the next separate decision.
 
 ### Phase S3: physical snapshot retention/source-of-truth package
 

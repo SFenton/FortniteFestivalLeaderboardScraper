@@ -3,7 +3,7 @@
 **Authoritative runtime:** PostgreSQL 17 in `fst-postgres`  
 **Production compose owner:** `/home/sfenton/Docker/FestivalServiceTracker`  
 **Production data root:** `/mnt/docker-storage/Docker/FestivalServiceTracker/pg-data`  
-**Last live inventory:** 2026-07-13 14:00 UTC
+**Last live inventory:** 2026-07-15 14:26 UTC
 
 This document defines FST PostgreSQL ownership, source-of-truth boundaries,
 publication behavior, retention, index posture, and restore paths. PostgreSQL
@@ -96,6 +96,15 @@ After scrape `1236`, PG-3 retired the redundant non-constraint
 rose from `78,549,483,520` to `99,439,702,016` bytes. The exact index DDL is
 retained as rollback evidence; no table rows, constraints, publication state,
 or history data changed.
+
+During the 2026-07-15 disk-pressure incident, scrape `1261` was stopped before
+rankings/publication and failed closed while published scrape `1236` remained
+authoritative. PG-3 then retired the non-constraint partitioned
+`ix_btrhlv2_snapshot` latest-state snapshot lookup family. Database size fell
+from `3,851,429,820,083` to `3,848,151,824,051` bytes and filesystem free space
+rose from `26,942,255,104` to `30,220,271,616` bytes. Latest-state rows,
+primary-key conflict semantics, publication state, and public route/export
+responses remained unchanged.
 
 ## Data ownership and restore class
 
@@ -326,6 +335,11 @@ named owner and bounded retention before cleanup. Zero current rows or zero
    scan/sort plan at production scale, while the primary key preserves
    identity and account-bounded date access. `ix_crh_retention_cutoff_account`
    remains the owned date-first path for bounded retention.
+8. `band_team_rank_history_latest_v2` intentionally has no
+   `ix_btrhlv2_snapshot` secondary family. Current application reads, delta
+   joins, and `ON CONFLICT` writes use the partition primary keys; the retired
+   `snapshot_id` path had no production owner. Rollback rebuilds each child
+   concurrently, creates the metadata-only parent, and attaches the children.
 
 ## Publication and freeze sequence
 
@@ -497,9 +511,10 @@ scope-total, and relation-size deltas for an A/B decision.
 - **PG-2 / SERVICE-2:** bounded published reads, set-based API queries, and
   asynchronous cancellation-aware repositories.
 - **PG-3:** retain public band-history and composite-retention indexes; the
-  redundant `ix_crh_latest` index was retired with exact plan/route/export
-  parity. Member facts, observation-table dual writes, and nullable
-  score-history uniqueness remain explicit owner decisions.
+  redundant `ix_crh_latest` and latest-v2 `ix_btrhlv2_snapshot` family were
+  retired with exact plan/route/export parity. Member facts,
+  observation-table dual writes, and nullable score-history uniqueness remain
+  explicit owner decisions.
 - **PG-4 / WORKER-4:** semantic-change writes, unchanged physical source reuse,
   diff projections/rankings, and one atomic band publication.
 - **PG-5:** latest-state history design, explicit retention, and same-drive

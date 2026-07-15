@@ -408,13 +408,34 @@ until replay and live shadow parity pass.
   Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/worker0a-correctness-20260713T1552Z`.
 
+**Live incident update - held 2026-07-15**
+
+- Incremental candidates `1254` through `1260` all failed closed for curl
+  cancellation, unwanted run-once retry, missing band manifests, isolated HTTP
+  gaps, capacity before band flush, new-song `event_not_found`, or remaining
+  band incompleteness. None replaced published scrape `1236`.
+- Candidate `1261` completed its network manifests and entered
+  `PostScrapeEnrichment`, but was stopped during band current-projection
+  generation `94` before rankings/publication. It was finalized as failed at
+  `capacity_before_rankings_publish`; it has zero published-source rows and
+  public reads remain unfrozen on published `1236`.
+- The hold was required because only `26.2 GB` remained while matched scrape
+  `1236` had consumed about `45.15 GB` from the equivalent pre-rank boundary
+  through publication. Reclaim raised free space to about `30.22 GB`, still
+  about `14.92 GB` below that measured boundary.
+- `fstworker` remains intentionally offline. `fstservice`, `festivalweb`, and
+  Postgres are healthy, and WORKER-0A remains unaccepted because no strict-gate
+  candidate has completed and published end to end. Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/fst-disk-pressure-20260715T1408Z`.
+
 **Remaining WORKER-0A promotion gate**
 
-- Re-run exactly one full candidate scrape after at least one configured PIA
-  exit can return valid Epic leaderboard JSON. Require all expected solo/band
-  manifests complete, zero writer failures, zero publication-critical phase
-  failures, exact published-source/physical counts, healthy public routes, and
-  acceptable resource deltas before enabling the three enforcement flags.
+- First restore at least the measured pre-rank-through-publication headroom
+  plus rollback margin on the FST drive. Then re-run exactly one full candidate
+  scrape. Require all expected solo/band manifests complete, zero writer
+  failures, zero publication-critical phase failures, exact
+  published-source/physical counts, healthy public routes, and acceptable
+  resource deltas before enabling the three enforcement flags.
 
 ### WORKER-0.5 - Separate solo and band completion
 
