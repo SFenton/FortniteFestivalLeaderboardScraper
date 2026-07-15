@@ -421,8 +421,9 @@ until replay and live shadow parity pass.
   public reads remain unfrozen on published `1236`.
 - The hold was required because only `26.2 GB` remained while matched scrape
   `1236` had consumed about `45.15 GB` from the equivalent pre-rank boundary
-  through publication. Reclaim raised free space to about `30.22 GB`, still
-  about `14.92 GB` below that measured boundary.
+  through publication. Two one-family index reclaims plus reproducible cache
+  cleanup raised free space to about `39.83 GB`, still about `5.32 GB` below
+  that measured boundary before rollback margin.
 - `fstworker` remains intentionally offline. `fstservice`, `festivalweb`, and
   Postgres are healthy, and WORKER-0A remains unaccepted because no strict-gate
   candidate has completed and published end to end. Evidence:

@@ -10281,9 +10281,6 @@ public sealed class MetaDatabase : IMetaDatabase
             CREATE TABLE IF NOT EXISTS band_team_rank_history_points_v2_quad
                 PARTITION OF band_team_rank_history_points_v2 FOR VALUES IN ('Band_Quad');
 
-            CREATE INDEX IF NOT EXISTS ix_btrhpv2_snapshot
-                ON band_team_rank_history_points_v2 (snapshot_id, band_type);
-
             CREATE INDEX IF NOT EXISTS ix_btrhpv2_team_date
                 ON band_team_rank_history_points_v2 (band_type, ranking_scope, combo_id, team_key, snapshot_date DESC);
 

@@ -106,6 +106,13 @@ rose from `26,942,255,104` to `30,220,271,616` bytes. Latest-state rows,
 primary-key conflict semantics, publication state, and public route/export
 responses remained unchanged.
 
+A second one-family decision retired the non-constraint partitioned
+`ix_btrhpv2_snapshot` points snapshot lookup family. Database size fell from
+`3,848,151,824,051` to `3,839,287,383,731` bytes and filesystem free space
+rose from `30,962,761,728` to `39,827,243,008` bytes. Public history retained
+the team/date indexes, and no history rows, primary keys, publication state,
+or route/export output changed.
+
 ## Data ownership and restore class
 
 | Class | Meaning | Restore rule |
@@ -340,6 +347,11 @@ named owner and bounded retention before cleanup. Zero current rows or zero
    joins, and `ON CONFLICT` writes use the partition primary keys; the retired
    `snapshot_id` path had no production owner. Rollback rebuilds each child
    concurrently, creates the metadata-only parent, and attaches the children.
+9. `band_team_rank_history_points_v2` intentionally has no
+   `ix_btrhpv2_snapshot` secondary family. Public history/parity reads use the
+   retained team/date indexes, while primary keys retain point identity and
+   conflict behavior. Its exact rollback follows the same concurrent-child,
+   metadata-parent, attach sequence.
 
 ## Publication and freeze sequence
 
@@ -511,10 +523,10 @@ scope-total, and relation-size deltas for an A/B decision.
 - **PG-2 / SERVICE-2:** bounded published reads, set-based API queries, and
   asynchronous cancellation-aware repositories.
 - **PG-3:** retain public band-history and composite-retention indexes; the
-  redundant `ix_crh_latest` and latest-v2 `ix_btrhlv2_snapshot` family were
-  retired with exact plan/route/export parity. Member facts,
-  observation-table dual writes, and nullable score-history uniqueness remain
-  explicit owner decisions.
+  redundant `ix_crh_latest`, latest-v2 `ix_btrhlv2_snapshot`, and points-v2
+  `ix_btrhpv2_snapshot` indexes were retired with exact plan/route/export
+  parity. Member facts, observation-table dual writes, and nullable
+  score-history uniqueness remain explicit owner decisions.
 - **PG-4 / WORKER-4:** semantic-change writes, unchanged physical source reuse,
   diff projections/rankings, and one atomic band publication.
 - **PG-5:** latest-state history design, explicit retention, and same-drive

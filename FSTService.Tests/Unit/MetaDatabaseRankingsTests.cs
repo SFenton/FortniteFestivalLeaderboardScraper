@@ -630,6 +630,114 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
+    public void BandRankHistoryV2Schema_DoesNotRecreateRetiredPointsSnapshotLookupIndexes()
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        _ = Db.GetBandRankHistoryV2Parity("Band_Duets", today);
+
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT
+                to_regclass('public.ix_btrhpv2_snapshot') IS NULL,
+                to_regclass('public.band_team_rank_history_points_v2_duet_snapshot_id_band_type_idx') IS NULL,
+                to_regclass('public.band_team_rank_history_points_v2_trio_snapshot_id_band_type_idx') IS NULL,
+                to_regclass('public.band_team_rank_history_points_v2_quad_snapshot_id_band_type_idx') IS NULL
+            """;
+
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.True(reader.GetBoolean(0));
+        Assert.True(reader.GetBoolean(1));
+        Assert.True(reader.GetBoolean(2));
+        Assert.True(reader.GetBoolean(3));
+    }
+
+    [Fact]
+    public void RetiredBandRankHistoryPointsSnapshotLookupIndexMaintenanceSqlIsValid()
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        _ = Db.GetBandRankHistoryV2Parity("Band_Duets", today);
+
+        using var conn = _fixture.DataSource.OpenConnection();
+        foreach (var statement in new[]
+        {
+            """
+            CREATE INDEX CONCURRENTLY band_team_rank_history_points_v2_duet_snapshot_id_band_type_idx
+                ON public.band_team_rank_history_points_v2_duets USING btree (snapshot_id, band_type)
+            """,
+            """
+            CREATE INDEX CONCURRENTLY band_team_rank_history_points_v2_trio_snapshot_id_band_type_idx
+                ON public.band_team_rank_history_points_v2_trios USING btree (snapshot_id, band_type)
+            """,
+            """
+            CREATE INDEX CONCURRENTLY band_team_rank_history_points_v2_quad_snapshot_id_band_type_idx
+                ON public.band_team_rank_history_points_v2_quad USING btree (snapshot_id, band_type)
+            """,
+            """
+            CREATE INDEX ix_btrhpv2_snapshot
+                ON ONLY public.band_team_rank_history_points_v2 USING btree (snapshot_id, band_type)
+            """,
+            """
+            ALTER INDEX public.ix_btrhpv2_snapshot
+                ATTACH PARTITION public.band_team_rank_history_points_v2_duet_snapshot_id_band_type_idx
+            """,
+            """
+            ALTER INDEX public.ix_btrhpv2_snapshot
+                ATTACH PARTITION public.band_team_rank_history_points_v2_trio_snapshot_id_band_type_idx
+            """,
+            """
+            ALTER INDEX public.ix_btrhpv2_snapshot
+                ATTACH PARTITION public.band_team_rank_history_points_v2_quad_snapshot_id_band_type_idx
+            """,
+        })
+        {
+            using var maintenance = conn.CreateCommand();
+            maintenance.CommandText = statement;
+            maintenance.ExecuteNonQuery();
+        }
+
+        using (var verify = conn.CreateCommand())
+        {
+            verify.CommandText = """
+                SELECT COUNT(*)
+                FROM pg_index
+                WHERE indexrelid IN (
+                    'public.ix_btrhpv2_snapshot'::regclass,
+                    'public.band_team_rank_history_points_v2_duet_snapshot_id_band_type_idx'::regclass,
+                    'public.band_team_rank_history_points_v2_trio_snapshot_id_band_type_idx'::regclass,
+                    'public.band_team_rank_history_points_v2_quad_snapshot_id_band_type_idx'::regclass)
+                  AND indisvalid
+                  AND indisready
+                """;
+
+            Assert.Equal(4L, (long)verify.ExecuteScalar()!);
+        }
+
+        using (var drop = conn.CreateCommand())
+        {
+            drop.CommandText = "DROP INDEX public.ix_btrhpv2_snapshot";
+            drop.ExecuteNonQuery();
+        }
+
+        using var removed = conn.CreateCommand();
+        removed.CommandText = """
+            SELECT
+                to_regclass('public.ix_btrhpv2_snapshot') IS NULL,
+                to_regclass('public.band_team_rank_history_points_v2_duet_snapshot_id_band_type_idx') IS NULL,
+                to_regclass('public.band_team_rank_history_points_v2_trio_snapshot_id_band_type_idx') IS NULL,
+                to_regclass('public.band_team_rank_history_points_v2_quad_snapshot_id_band_type_idx') IS NULL
+            """;
+
+        using var removedReader = removed.ExecuteReader();
+        Assert.True(removedReader.Read());
+        Assert.True(removedReader.GetBoolean(0));
+        Assert.True(removedReader.GetBoolean(1));
+        Assert.True(removedReader.GetBoolean(2));
+        Assert.True(removedReader.GetBoolean(3));
+    }
+
+    [Fact]
     public void RebuildBandTeamRankings_PopulatesGenerationAndRowFingerprints()
     {
         SeedBandRankingsSource();

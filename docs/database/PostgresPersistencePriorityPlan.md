@@ -18,9 +18,11 @@ This plan records the approved direction for improving FST Postgres persistence 
   days. Optional builds and rewrites remain blocked below seven-day headroom.
 - The 2026-07-15 incident reclaimed another `3,277,996,032` database bytes by
   retiring partitioned `public.ix_btrhlv2_snapshot`, plus `751,341,568` bytes
-  of reproducible non-database cache/scratch. Free space reached about
-  `30.22 GB`, but remains below the measured `45.15 GB` pre-rank-through-
-  publication requirement, so normal live scrapes remain held.
+  of reproducible non-database cache/scratch. A separate decision retired
+  `public.ix_btrhpv2_snapshot` for another `8,864,440,320` database bytes.
+  Free space reached about `39.83 GB`, but remains below the measured
+  `45.15 GB` pre-rank-through-publication requirement, so normal live scrapes
+  remain held.
 - Public band-history team/date indexes and
   `ix_crh_retention_cutoff_account` remain because live plans proved their
   route/job ownership.
@@ -105,7 +107,8 @@ Important finding: the logical model indicates most observed rows are unchanged,
 enough measured headroom for another full scrape/post-process/publish cycle.
 The scrape-`1236` monitor required `45,148,225,536` bytes from the equivalent
 pre-rank boundary through publication; the post-incident filesystem has about
-`30.22 GB` free. `fstworker` must remain held until that shortfall plus rollback
+`39.83 GB` free. `fstworker` must remain held until the remaining roughly
+`5.32 GB` shortfall plus rollback
 margin is restored. Service/web/Postgres operation may continue.
 
 Destructive cleanup, irreversible migration, drop/truncate/repack/rewrite
@@ -124,6 +127,7 @@ path, and post-action validation are documented.
 | History/index owner cards | Complete | Refreshed band v2, composite history, observation, dirty-work, and latest-state owner cards on 2026-07-13. Public team/date and retention indexes were retained from plan/caller proof. |
 | PG-3 `ix_crh_latest` reclaim | Accepted | After scrape `1236` publish/unfreeze and worker hold, dropped one non-constraint index concurrently in 0.18 s. Reclaimed `20,890,148,864` database bytes with exact route/export/history/ranking/plan parity and tested recreate DDL. |
 | PG-3 `ix_btrhlv2_snapshot` family reclaim | Accepted | During the scrape-`1261` capacity hold, dropped one partitioned non-constraint family in 68.378 ms. Reclaimed `3,277,996,032` database bytes; 12 route/ranking/history/export fingerprints and all three sampled band-history routes matched exactly. |
+| PG-3 `ix_btrhpv2_snapshot` family reclaim | Accepted | As a separate decision, dropped the partitioned points-v2 snapshot lookup family in 129.457 ms. Reclaimed `8,864,440,320` database bytes; retained team/date plans and 12 route/ranking/history/export fingerprints matched exactly. |
 | Band rank-history retention policy draft | Complete | Semantics-first v2 retention options and parity gates documented on 2026-07-06. |
 | `band_read_*` quarantine parity package | Complete | Reversible, live-scrape A/B parity-gated quarantine package documented on 2026-07-06; no DDL executed. |
 | Phase 8 physical snapshot write skipping | Accepted behind feature flag | Added `SkipUnchangedPhysicalLeaderboardSnapshots` as a rollback-safe, default-off candidate that skips unchanged solo physical snapshot scopes and keeps snapshot state pinned to the prior active snapshot. Production rollout remains gated by live-scrape A/B parity and disk headroom. |
@@ -356,7 +360,7 @@ P4.1 non-primary index owner cards:
 | Index group | Size/scans | Owner and access path | Candidate decision | Rollback/proof gate |
 |---|---:|---|---|---|
 | `ix_btrhpv2_team_date` partition indexes (`band_team_rank_history_points_band_type_ranking_scope_combo_idx*`) | Duets 41 GB / 3 scans; Trios 89 GB / 0; Quad 114 GB / 0 | Public history endpoint filter: `band_type`, `ranking_scope`, `combo_id`, `team_key`, `snapshot_date >= cutoff`, ordered by `snapshot_date DESC`. | Keep for now. It is endpoint-owned even when `idx_scan` is low; Trios/Quad low scans likely reflect recent traffic, not proof of disuse. | Any replacement/drop needs sampled API parity for all band types, matched p50/p95/p99, and rollback DDL to recreate the partitioned indexes. |
-| `ix_btrhpv2_snapshot` partition indexes (`*_snapshot_id_band_type_idx`) | Duets 2,004 MB / 0; Trios 3,164 MB / 0; Quad 3,284 MB / 0 | No current source read path with `WHERE snapshot_id`; v2 parity code reads by `band_type`/`snapshot_date`, and writers store `snapshot_id` from snapshot metadata. | Candidate low-priority drop/replacement proof after endpoint indexes; possible reclaim about 8.4 GB. | Must first prove no restore/manifest/admin path needs snapshot-id lookups and capture exact `CREATE INDEX CONCURRENTLY` rollback DDL. |
+| `ix_btrhpv2_snapshot` partition indexes (`*_snapshot_id_band_type_idx`) | Duets 2,004 MB / 4; Trios 3,164 MB / 4; Quad 3,284 MB / 4 | No current source read path with `WHERE snapshot_id`; v2 parity code reads by `band_type`/`snapshot_date`, and writers store `snapshot_id` from snapshot metadata. The observed scans were prior explicit diagnostic probes. | Accepted 2026-07-15; reclaimed `8,864,440,320` database bytes with exact public/history/plan parity. | Child indexes rebuild concurrently, then attach to a metadata-only parent; exact SQL is in the incident evidence. |
 | `ix_btrhlv2_snapshot` partition indexes on latest v2 | Duets 714 MB / 0; Trios 1,140 MB / 0; Quad 1,271 MB / 0 | Latest-state table is a structural delta detector keyed by primary key; no current source read path with `WHERE snapshot_id`. | Accepted 2026-07-15; reclaimed `3,277,996,032` database bytes with exact parity. | Child indexes rebuild concurrently, then attach to a metadata-only parent; exact SQL is in the incident evidence. |
 | `ix_btrhsv2_generation` on snapshot metadata | 4,392 kB / 0 | Small generation lookup index on 26,239-row metadata table. | Not a meaningful space target. Leave until a generation-owner review. | Recreate with `CREATE INDEX CONCURRENTLY` if ever dropped. |
 
@@ -396,9 +400,9 @@ P4.1 decision:
 
 - Accepted as a proof/design phase.
 - Do not drop the large `ix_btrhpv2_team_date` family from low scans alone; it is confirmed on the public read path.
-- `ix_btrhlv2_snapshot` passed its owner/parity gate and was retired on
-  2026-07-15. Treat `ix_btrhpv2_snapshot` as the next safest history-index
-  proof candidate, still one family per decision with exact rollback DDL.
+- Both v2 `snapshot_id` lookup families passed separate owner/parity gates and
+  were retired on 2026-07-15. Retain the public team/date and all
+  primary/unique indexes.
 - Keep all primary keys and unique constraints.
 - Do not add v2 retention deletion until a manifest, endpoint parity suite, restore path, exact object/date scope, and live-scrape A/B data parity exist.
 - Phase E completed the next safe non-destructive continuation by documenting a reversible `band_read_*` quarantine parity package. Actual quarantine/drop remains live-scrape A/B parity-gated.
@@ -728,7 +732,18 @@ leaderboard/ranking/history/export fingerprints, sampled history for all three
 band types, composite routes, scrape `1236` totals, and representative plans
 matched exactly. Exact rollback SQL builds the three children concurrently,
 creates the parent `ON ONLY`, and attaches the children. The larger
-`ix_btrhpv2_snapshot` points family remains the next separate decision.
+`ix_btrhpv2_snapshot` points family was evaluated only as a later separate
+decision.
+
+Execution result (2026-07-15): accepted for
+`public.ix_btrhpv2_snapshot`. Public history and points parity plans retained
+the same team/date indexes before and after; only an unowned direct
+`snapshot_id` diagnostic used the retired family. The drop reclaimed
+`8,864,440,320` database bytes and `8,864,481,280` filesystem bytes. Twelve
+public leaderboard/ranking/history/export fingerprints, sampled history for
+all three band types, composite routes, and scrape `1236` totals matched
+exactly. Exact rollback SQL builds the three children concurrently, creates
+the parent `ON ONLY`, and attaches the children.
 
 ### Phase S3: physical snapshot retention/source-of-truth package
 

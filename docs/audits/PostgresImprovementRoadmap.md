@@ -658,16 +658,28 @@ move to PG-7 after backup/restore and live-scrape parity.
   completed in `68.378 ms`. Database size fell by `3,277,996,032` bytes and
   filesystem free space rose by `3,278,016,512` bytes, from
   `26,942,255,104` to `30,220,271,616`.
+- A separate second owner decision retired partitioned
+  `public.ix_btrhpv2_snapshot` and its three points-v2 child indexes. Public
+  history and parity reads continued to use the retained team/date family;
+  only an explicitly unowned `snapshot_id` diagnostic used the retired
+  family. Its transactional drop/rollback took `1.422 ms`, and the committed
+  drop took `129.457 ms`.
+- The points-family drop reduced database size by another `8,864,440,320`
+  bytes and increased filesystem free space by `8,864,481,280` bytes, from
+  `30,962,761,728` to `39,827,243,008`. It changed no history rows or
+  constraints.
 - Published scrape totals and stable route fingerprints matched. Twelve
   leaderboard/ranking/history/export responses were byte-exact before,
   after, and on repeat; all sampled Duets/Trios/Quad history and composite
   routes matched; owner/history plans retained the same primary/team-date
   indexes with no temp spill. No invalid indexes or ungranted locks remained.
-- Startup schema no longer recreates the retired family. Two targeted tests
-  prove non-recreation and execute the exact child-concurrent-build,
-  parent-attach, validate, and family-drop rollback sequence.
-- The capacity guard improved from `0.87` to `1.01` projected days, but the
-  measured safe completion boundary is still short by about `14.92 GB`.
+- Startup schema no longer recreates either retired snapshot lookup family.
+  Four targeted tests prove non-recreation and execute each exact
+  child-concurrent-build, parent-attach, validate, and family-drop rollback
+  sequence.
+- The capacity guard improved from `0.87` to `1.32` projected days, but the
+  measured safe completion boundary is still short by about `5.32 GB`, before
+  adding rollback margin.
   `fstworker` therefore remains held; this incident does not accept
   WORKER-0A or authorize autonomous live scrapes. Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/fst-disk-pressure-20260715T1408Z`.
