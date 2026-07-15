@@ -25,6 +25,15 @@ public sealed class SoloPageFetcher : PageFetcherBase<LeaderboardEntry>
     protected override async Task<IParsedPage<LeaderboardEntry>?> ParseResponseAsync(Stream stream, CancellationToken ct) =>
         await GlobalLeaderboardScraper.ParsePageAsync(stream, ct);
 
+    protected override IParsedPage<LeaderboardEntry> CreateEmptyPage(int page) =>
+        new GlobalLeaderboardScraper.ParsedPage
+        {
+            Page = page,
+            TotalPages = 0,
+            Entries = [],
+            EstimatedBytes = 0,
+        };
+
     protected override void ProcessEntries(string songId, string type, IParsedPage<LeaderboardEntry> page)
     {
         // Solo entry processing is handled by the caller's onSongComplete callback,

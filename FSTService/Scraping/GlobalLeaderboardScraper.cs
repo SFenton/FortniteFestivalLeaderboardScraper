@@ -1022,7 +1022,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         OtherFailure,
     }
 
-    private static bool IsMissingLeaderboardEvent(int statusCode, int page, string body) =>
+    internal static bool IsMissingLeaderboardEvent(int statusCode, int page, string body) =>
         statusCode == 404 &&
         page == 0 &&
         body.Contains(

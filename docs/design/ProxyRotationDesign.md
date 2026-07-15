@@ -86,6 +86,10 @@ a legitimate empty solo or band scope. This covers newly cataloged songs whose
 leaderboard event has not been created yet without weakening later-page gap,
 malformed-response, or retry-exhaustion gates.
 
+The shared `PageFetcherBase` applies the same rule used by
+`GlobalLeaderboardScraper`, preventing the independent flat-parallel band
+fetcher from classifying the identical new-song response as an HTTP failure.
+
 ### Fail-closed worker deployment
 
 `Scraper:ExpectedProxyEndpointCount` makes `ProxyPool` reject missing,

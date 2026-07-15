@@ -60,6 +60,9 @@ public abstract class PageFetcherBase<TEntry>
     /// <summary>Parse the HTTP response stream into a typed page.</summary>
     protected abstract Task<IParsedPage<TEntry>?> ParseResponseAsync(Stream stream, CancellationToken ct);
 
+    /// <summary>Create a typed empty page for a legitimate missing page-zero event.</summary>
+    protected abstract IParsedPage<TEntry> CreateEmptyPage(int page);
+
     /// <summary>Validate entries and enqueue them for persistence.</summary>
     protected abstract void ProcessEntries(string songId, string type, IParsedPage<TEntry> page);
 
@@ -230,6 +233,21 @@ public abstract class PageFetcherBase<TEntry>
                     errorBody = body.Length > 200 ? body[..200] : body;
                 }
                 catch { }
+
+                if (GlobalLeaderboardScraper.IsMissingLeaderboardEvent(
+                        statusCode,
+                        page,
+                        errorBody))
+                {
+                    Log.LogInformation(
+                        "Leaderboard event is not available yet for {Song}/{Type}; treating page 0 as a legitimate empty scope.",
+                        songId,
+                        type);
+                    return (
+                        CreateEmptyPage(page),
+                        errorBody.Length,
+                        GlobalLeaderboardScraper.FetchStatus.Success);
+                }
 
                 Log.LogWarning("Leaderboard request failed for {Song}/{Type} page {Page}: {StatusCode} {Body}",
                     songId, type, page, statusCode, errorBody);

@@ -102,6 +102,38 @@ public sealed class BandPageFetcherTests
         Assert.Equal([0], manifest.ReceivedPages);
     }
 
+    [Fact]
+    public async Task EventNotFoundScopeIsCompleteEmpty()
+    {
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueJsonResponse(
+            System.Net.HttpStatusCode.NotFound,
+            """{"errorCode":"com.epicgames.events.event_not_found","errorMessage":"Event not found"}""");
+
+        await using var spool = CreateSpool();
+        using var pool = new SharedDopPool(1, 1, 1, 100, _log);
+        var fetcher = new BandPageFetcher(
+            new ResilientHttpExecutor(new HttpClient(handler), _log),
+            pool,
+            spool,
+            new ScrapeProgressTracker(),
+            _log);
+
+        await fetcher.FetchAllAsync(
+            ["new-song"],
+            ["Band_Duets"],
+            "token",
+            "acct",
+            maxPages: 10,
+            CancellationToken.None);
+
+        var manifest = Assert.Single(fetcher.ScopeManifests).Manifest;
+        Assert.True(manifest.IsComplete);
+        Assert.Equal(ScopeTerminalBoundaryKind.EpicEmpty, manifest.TerminalBoundary);
+        Assert.Equal("success", manifest.PageStatuses[0]);
+        Assert.Equal([0], manifest.ReceivedPages);
+    }
+
     private SpoolWriter<BandLeaderboardEntry> CreateSpool() =>
         new(
             _log,

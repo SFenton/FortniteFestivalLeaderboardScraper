@@ -202,6 +202,12 @@ Evidence:
   `404 com.epicgames.events.event_not_found` because the leaderboard events did
   not exist yet. Page-zero `event_not_found` is now classified as a legitimate
   empty scope for solo and band; later-page 404s remain failures.
+- Retry `1260` proved the solo path (`6,156/6,156`) and completed all
+  `190,111` band pages, but the independent `BandPageFetcher` still used the
+  shared base-class HTTP-failure path and left the same six new-song band
+  scopes incomplete. The shared page fetcher now creates a typed empty page for
+  page-zero `event_not_found`, so both band implementations enforce the same
+  legitimate-empty rule.
 
 **Next live A/B instruction:** keep the worker held, run the scrape capacity
 guard and proxy compose guard, deploy the accepted `b01d5c03` WORKER-0A

@@ -56,6 +56,14 @@ public sealed class BandPageFetcher : PageFetcherBase<BandLeaderboardEntry>
     protected override async Task<IParsedPage<BandLeaderboardEntry>?> ParseResponseAsync(Stream stream, CancellationToken ct) =>
         await GlobalLeaderboardScraper.ParseBandPageAsync(stream, ct);
 
+    protected override IParsedPage<BandLeaderboardEntry> CreateEmptyPage(int page) =>
+        new GlobalLeaderboardScraper.ParsedBandPage
+        {
+            Page = page,
+            TotalPages = 0,
+            Entries = [],
+        };
+
     protected override void ProcessEntries(string songId, string type, IParsedPage<BandLeaderboardEntry> page)
     {
         foreach (var entry in page.Entries)
