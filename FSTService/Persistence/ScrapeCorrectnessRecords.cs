@@ -34,3 +34,23 @@ public sealed record ScrapeFailureSummary(
     string? FailureMessage,
     int BestEffortFailureCount,
     IReadOnlyList<string> BestEffortFailedPhases);
+
+public sealed record ScrapeResumeState(
+    long ScrapeId,
+    DateTime StartedAtUtc,
+    string Status,
+    long? PublishedScrapeId,
+    int ManifestCount,
+    int CompleteManifestCount,
+    int WriterFailureCount,
+    int CriticalPhaseFailureCount,
+    IReadOnlyList<ScrapePhaseOutcomeRecord> PhaseOutcomes)
+{
+    public bool CanResume =>
+        Status == "running"
+        && PublishedScrapeId != ScrapeId
+        && ManifestCount > 0
+        && CompleteManifestCount == ManifestCount
+        && WriterFailureCount == 0
+        && CriticalPhaseFailureCount == 0;
+}

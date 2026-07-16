@@ -298,6 +298,44 @@ public sealed class ScraperWorker : BackgroundService
 
     }
 
+    internal static void ValidateResumeScrape(
+        ScraperOptions options,
+        ScrapePhase resolvedPhases,
+        ScrapeResumeState? state)
+    {
+        var requiredPhases =
+            ScrapePhase.SoloRankings
+            | ScrapePhase.SoloRivals
+            | ScrapePhase.SoloPlayerStats
+            | ScrapePhase.SoloPrecompute
+            | ScrapePhase.SoloFinalize;
+
+        if (!options.RunOnce)
+            throw new InvalidOperationException("Scrape recovery requires run-once mode.");
+        if (resolvedPhases != requiredPhases)
+        {
+            throw new InvalidOperationException(
+                $"Scrape recovery requires exactly the solo leaderboard phases; resolved {ScrapePhaseResolver.Format(resolvedPhases)}.");
+        }
+        if (state is null || state.ScrapeId != options.ResumeScrapeId)
+            throw new InvalidOperationException($"Scrape {options.ResumeScrapeId} does not exist.");
+        if (!state.CanResume)
+        {
+            throw new InvalidOperationException(
+                $"Scrape {state.ScrapeId} cannot resume: status={state.Status}, " +
+                $"manifests={state.CompleteManifestCount}/{state.ManifestCount}, " +
+                $"writerFailures={state.WriterFailureCount}, criticalFailures={state.CriticalPhaseFailureCount}, " +
+                $"published={state.PublishedScrapeId?.ToString() ?? "none"}.");
+        }
+        if (options.ResumeSongsScraped <= 0
+            || options.ResumeTotalEntries <= 0
+            || options.ResumeTotalRequests <= 0
+            || options.ResumeTotalBytes <= 0)
+        {
+            throw new InvalidOperationException("Scrape recovery requires persisted positive scrape metrics.");
+        }
+    }
+
     // ─── Auth helpers ───────────────────────────────────────────
 
     private async Task<bool> EnsureAuthenticatedAsync(CancellationToken ct)
@@ -373,6 +411,12 @@ public sealed class ScraperWorker : BackgroundService
             var resolvedPhases = opts.ResolvedPhases;
             if (resolvedPhases != ScrapePhase.All)
                 _log.LogInformation("Phase-selective mode: {Phases}", ScrapePhaseResolver.Format(resolvedPhases));
+
+            var resumeState = opts.ResumeScrapeId > 0
+                ? _persistence.Meta.GetScrapeResumeState(opts.ResumeScrapeId)
+                : null;
+            if (opts.ResumeScrapeId > 0)
+                ValidateResumeScrape(opts, resolvedPhases, resumeState);
 
             PruneStaleWebRegistrationsIfEligible(opts);
 
@@ -472,7 +516,7 @@ public sealed class ScraperWorker : BackgroundService
             // still need registered IDs, scrape requests, etc.)
             var ctx = result?.Context ?? new ScrapePassContext
             {
-                ScrapeId = result?.ScrapeId ?? 0,
+                ScrapeId = resumeState?.ScrapeId ?? result?.ScrapeId ?? 0,
                 AccessToken = accessToken,
                 CallerAccountId = _tokenManager.AccountId!,
                 RegisteredIds = _persistence.Meta.GetRegisteredAccountIds(),
@@ -487,9 +531,39 @@ public sealed class ScraperWorker : BackgroundService
                     })
                     .ToList(),
                 DegreeOfParallelism = opts.DegreeOfParallelism,
-                EpicReportedOver100Pages = false,
+                EpicReportedOver100Pages = resumeState is not null && opts.ResumeEpicReportedOver100Pages,
                 LeaderboardScrapeCompleted = !anyScrapePhase,
             };
+
+            if (resumeState is not null)
+            {
+                foreach (var outcome in resumeState.PhaseOutcomes)
+                {
+                    ctx.PostScrapeOutcomes.Record(new PostScrapePhaseOutcome(
+                        outcome.Phase,
+                        string.Equals(outcome.Criticality, "publication_critical", StringComparison.Ordinal)
+                            ? PostScrapePhaseCriticality.PublicationCritical
+                            : PostScrapePhaseCriticality.BestEffort,
+                        string.Equals(outcome.Status, "completed", StringComparison.Ordinal),
+                        outcome.ErrorMessage));
+                }
+
+                result = new ScrapePassResult
+                {
+                    Context = ctx,
+                    ScrapeId = resumeState.ScrapeId,
+                    SongsScraped = opts.ResumeSongsScraped,
+                    TotalEntries = opts.ResumeTotalEntries,
+                    TotalRequests = opts.ResumeTotalRequests,
+                    TotalBytes = opts.ResumeTotalBytes,
+                    EpicReportedOver100Pages = opts.ResumeEpicReportedOver100Pages,
+                    ScrapeDuration = DateTime.UtcNow - resumeState.StartedAtUtc,
+                };
+                _log.LogWarning(
+                    "Resuming scrape {ScrapeId} from durable network/writer state with phases {Phases}.",
+                    resumeState.ScrapeId,
+                    ScrapePhaseResolver.Format(resolvedPhases));
+            }
 
             var postScrapePhases = resolvedPhases;
             var skipPostScrapeForIncompleteScrape = anyScrapePhase && result is null;

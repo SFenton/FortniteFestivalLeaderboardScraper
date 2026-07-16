@@ -137,6 +137,17 @@ Phase flags are **not compatible** with one-shot mode flags that bypass the scra
 
 - `--api-only`, `--setup`, `--resolve-only`, `--backfill-only`, `--test`, `--precompute`
 
+### Guarded post-process recovery
+
+An interrupted run-once worker may resume an existing scrape without another
+network scrape by setting `Scraper:ResumeScrapeId` and the persisted scrape
+metrics, then selecting exactly `--solo-leaderboards --once`. Recovery fails
+closed unless the scrape is still `running`, all manifests are complete,
+writer and publication-critical failure counts are zero, the scrape is not
+already published, and all metrics are positive. The resumed pass reuses the
+same scrape ID for rankings, cleanup, source-map validation, and atomic global
+publication; it cannot run scrape or enrichment phases.
+
 ### `--band-scrape` vs `EnableBandScraping`
 
 The `--band-scrape` CLI flag overrides `EnableBandScraping=false` in appsettings, since the CLI intent is explicit. When no phase flags are specified, the `EnableBandScraping` config setting controls whether band phases run in the default full pipeline.

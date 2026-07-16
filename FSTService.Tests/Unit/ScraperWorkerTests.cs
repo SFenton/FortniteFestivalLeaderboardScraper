@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text.Json;
+using FSTService.Persistence;
 using FSTService.Scraping;
 
 namespace FSTService.Tests.Unit;
@@ -192,7 +193,77 @@ public class ScraperWorkerTests : IDisposable
         Assert.False(opts.ApiOnly);
         Assert.False(opts.SetupOnly);
         Assert.False(opts.RunOnce);
+        Assert.Equal(0, opts.ResumeScrapeId);
         Assert.False(opts.ResolveOnly);
         Assert.Null(opts.TestSongQuery);
+    }
+
+    [Fact]
+    public void ValidateResumeScrape_AcceptsCompleteRunningCandidate()
+    {
+        var options = new ScraperOptions
+        {
+            RunOnce = true,
+            ResumeScrapeId = 1263,
+            ResumeSongsScraped = 684,
+            ResumeTotalEntries = 39_696_674,
+            ResumeTotalRequests = 398_376,
+            ResumeTotalBytes = 57_563_653_024,
+        };
+        var state = new ScrapeResumeState(
+            1263,
+            DateTime.UtcNow.AddHours(-12),
+            "running",
+            1236,
+            8208,
+            8208,
+            0,
+            0,
+            []);
+
+        ScraperWorker.ValidateResumeScrape(
+            options,
+            ScrapePhase.SoloRankings
+            | ScrapePhase.SoloRivals
+            | ScrapePhase.SoloPlayerStats
+            | ScrapePhase.SoloPrecompute
+            | ScrapePhase.SoloFinalize,
+            state);
+    }
+
+    [Fact]
+    public void ValidateResumeScrape_RejectsIncompleteCandidate()
+    {
+        var options = new ScraperOptions
+        {
+            RunOnce = true,
+            ResumeScrapeId = 1263,
+            ResumeSongsScraped = 684,
+            ResumeTotalEntries = 39_696_674,
+            ResumeTotalRequests = 398_376,
+            ResumeTotalBytes = 57_563_653_024,
+        };
+        var state = new ScrapeResumeState(
+            1263,
+            DateTime.UtcNow.AddHours(-12),
+            "running",
+            1236,
+            8208,
+            8207,
+            0,
+            0,
+            []);
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            ScraperWorker.ValidateResumeScrape(
+                options,
+                ScrapePhase.SoloRankings
+                | ScrapePhase.SoloRivals
+                | ScrapePhase.SoloPlayerStats
+                | ScrapePhase.SoloPrecompute
+                | ScrapePhase.SoloFinalize,
+                state));
+
+        Assert.Contains("manifests=8207/8208", error.Message);
     }
 }

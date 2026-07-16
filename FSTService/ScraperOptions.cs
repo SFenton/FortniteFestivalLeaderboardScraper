@@ -253,6 +253,20 @@ public sealed class ScraperOptions
     public bool RunOnce { get; set; }
 
     /// <summary>
+    /// Existing running scrape whose completed network/writer state should resume
+    /// through phase-selective post-processing and publication. Recovery requires
+    /// run-once mode, no scrape phases, complete manifests, and zero writer or
+    /// publication-critical failures.
+    /// </summary>
+    public long ResumeScrapeId { get; set; }
+
+    public int ResumeSongsScraped { get; set; }
+    public long ResumeTotalEntries { get; set; }
+    public int ResumeTotalRequests { get; set; }
+    public long ResumeTotalBytes { get; set; }
+    public bool ResumeEpicReportedOver100Pages { get; set; }
+
+    /// <summary>
     /// When true, skip scraping and only run account name resolution
     /// against unresolved IDs already in the meta DB. Then exit.
     /// Set via <c>--resolve-only</c> CLI argument.

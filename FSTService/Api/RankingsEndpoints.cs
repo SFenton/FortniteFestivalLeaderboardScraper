@@ -925,6 +925,16 @@ public static partial class ApiEndpoints
             var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
             if (frozenMiss is not null) return frozenMiss;
 
+            if (!metaDb.IsBandCurrentProjectionGloballyPublished())
+            {
+                httpContext.Response.Headers.CacheControl = "no-store";
+                httpContext.Response.Headers["Retry-After"] = "30";
+                return Results.Problem(
+                    title: "Published band song data unavailable",
+                    detail: "The band song projection has not been promoted with the published scrape yet. Retry shortly.",
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+
             var extremes = metaDb.GetBandSongPerformanceExtremes(
                 bandType,
                 teamKey,
@@ -975,6 +985,16 @@ public static partial class ApiEndpoints
 
             var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
             if (frozenMiss is not null) return frozenMiss;
+
+            if (!metaDb.IsBandCurrentProjectionGloballyPublished())
+            {
+                httpContext.Response.Headers.CacheControl = "no-store";
+                httpContext.Response.Headers["Retry-After"] = "30";
+                return Results.Problem(
+                    title: "Published band song data unavailable",
+                    detail: "The band song projection has not been promoted with the published scrape yet. Retry shortly.",
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
 
             var entries = metaDb.GetBandSongPerformances(bandType, teamKey, comboValidation.ComboId);
 

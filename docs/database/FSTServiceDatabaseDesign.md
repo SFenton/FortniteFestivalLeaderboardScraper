@@ -247,8 +247,13 @@ Band best/worst-song public reads use the optional
 When that projection is stale or disabled, extrema are derived from
 `current_band_leaderboard_entries` rows joined to each scope's
 `published_generation`, using the same ordering as the `/song-rows` response.
-The public endpoint returns `503` when no published projection exists instead
-of reading candidate `band_entries`; live current-state extrema require the
+`scrape_publication_state.band_projection_generation` is stamped in the same
+transaction as the global published scrape. Both public band-song endpoints
+return `503` while that generation differs from
+`band_current_projection_state.current_generation`, preventing an internally
+published projection from escaping before global publication. The extrema
+endpoint also returns `503` when no published projection exists instead of
+reading candidate `band_entries`; live current-state extrema require the
 explicit `BandSongPerformanceReadMode.CurrentState` selector.
 
 PG-1 does not enable physical snapshot write skipping or change max-page,

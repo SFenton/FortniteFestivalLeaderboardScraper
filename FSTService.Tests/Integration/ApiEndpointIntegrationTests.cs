@@ -5705,8 +5705,23 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var initial = await projectionBuilder.RefreshScopesAsync(
             scopes,
             new BandCurrentProjectionRebuildOptions { SkipUnchangedScopes = false });
+        var initialGeneration = Assert.Single(initial.Scopes.Select(static result => result.Generation).Distinct());
         Assert.True(initial.PublishResult.Published);
         Assert.Equal(scopes.Length, initial.PublishResult.PublishedScopes);
+        using (var conn = dataSource.OpenConnection())
+        using (var publish = conn.CreateCommand())
+        {
+            publish.CommandText = """
+                INSERT INTO scrape_publication_state (
+                    id, band_projection_generation, updated_at)
+                VALUES (TRUE, @generation, now())
+                ON CONFLICT (id) DO UPDATE SET
+                    band_projection_generation = EXCLUDED.band_projection_generation,
+                    updated_at = EXCLUDED.updated_at
+                """;
+            publish.Parameters.AddWithValue("generation", initialGeneration);
+            publish.ExecuteNonQuery();
+        }
 
         var encodedTeam = Uri.EscapeDataString(targetTeam);
         var encodedCombo = Uri.EscapeDataString(comboId);
@@ -5802,6 +5817,28 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             Assert.Equal(scopes.Length, reader.GetInt32(0));
             Assert.Equal(1, reader.GetInt32(1));
             Assert.Equal(successfulGeneration, reader.GetInt64(2));
+        }
+
+        using (var unavailable = await client.GetAsync(overallSongsUrl))
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, unavailable.StatusCode);
+        using (var unavailable = await client.GetAsync(overallRowsUrl))
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, unavailable.StatusCode);
+        using (var unavailable = await client.GetAsync(comboSongsUrl))
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, unavailable.StatusCode);
+        using (var unavailable = await client.GetAsync(comboRowsUrl))
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, unavailable.StatusCode);
+
+        using (var conn = dataSource.OpenConnection())
+        using (var publish = conn.CreateCommand())
+        {
+            publish.CommandText = """
+                UPDATE scrape_publication_state
+                SET band_projection_generation = @generation,
+                    updated_at = now()
+                WHERE id = TRUE
+                """;
+            publish.Parameters.AddWithValue("generation", successfulGeneration);
+            publish.ExecuteNonQuery();
         }
 
         var publishedOverallSongs = await GetRequiredBodyAsync(client, overallSongsUrl);

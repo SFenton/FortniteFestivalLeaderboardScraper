@@ -15,6 +15,7 @@ public interface IMetaDatabase : IDisposable
     void FailScrapeRun(long scrapeId, string phase, string message);
     void RecordScrapeWriterFailures(long scrapeId, IReadOnlyList<WriterDrainResult> results);
     void RecordScrapePhaseOutcome(ScrapePhaseOutcomeRecord outcome);
+    ScrapeResumeState? GetScrapeResumeState(long scrapeId);
     ScrapeRunInfo? GetLastCompletedScrapeRun();
     ScrapeRunInfo? GetPublishedScrapeRun();
     void PublishScrapeRun(
@@ -23,6 +24,7 @@ public interface IMetaDatabase : IDisposable
         int? expectedPublishedScopeCount = null);
     void SetPublicReadFreeze(bool frozen, long? scrapeId = null, string? reason = null);
     PublicReadFreezeState GetPublicReadFreezeState();
+    bool IsBandCurrentProjectionGloballyPublished();
     bool ShouldShowLeaderboardEntryTotals();
     void RecordScrapePhaseTiming(ScrapePhaseTimingRecord timing);
 

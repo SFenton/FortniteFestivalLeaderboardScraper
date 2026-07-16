@@ -210,6 +210,93 @@ public sealed class MetaDatabase : IMetaDatabase
         cmd.ExecuteNonQuery();
     }
 
+    public ScrapeResumeState? GetScrapeResumeState(long scrapeId)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT
+                scrape.id,
+                scrape.started_at,
+                scrape.status,
+                publication.published_scrape_id,
+                (SELECT COUNT(*)::int FROM leaderboard_scope_manifests WHERE scrape_id = scrape.id),
+                (SELECT COUNT(*)::int FROM leaderboard_scope_manifests WHERE scrape_id = scrape.id AND is_complete),
+                (SELECT COUNT(*)::int FROM scrape_writer_failures WHERE scrape_id = scrape.id),
+                (
+                    SELECT COUNT(*)::int
+                    FROM scrape_phase_outcomes
+                    WHERE scrape_id = scrape.id
+                      AND criticality = 'publication_critical'
+                      AND status = 'failed'
+                )
+            FROM scrape_log scrape
+            LEFT JOIN scrape_publication_state publication ON publication.id = TRUE
+            WHERE scrape.id = @scrapeId
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+
+        long id;
+        DateTime startedAtUtc;
+        string status;
+        long? publishedScrapeId;
+        int manifestCount;
+        int completeManifestCount;
+        int writerFailureCount;
+        int criticalPhaseFailureCount;
+        using (var reader = cmd.ExecuteReader())
+        {
+            if (!reader.Read())
+                return null;
+
+            id = Convert.ToInt64(reader.GetValue(0));
+            startedAtUtc = reader.GetDateTime(1);
+            status = reader.GetString(2);
+            publishedScrapeId = reader.IsDBNull(3) ? null : Convert.ToInt64(reader.GetValue(3));
+            manifestCount = reader.GetInt32(4);
+            completeManifestCount = reader.GetInt32(5);
+            writerFailureCount = reader.GetInt32(6);
+            criticalPhaseFailureCount = reader.GetInt32(7);
+        }
+
+        using var outcomesCmd = conn.CreateCommand();
+        outcomesCmd.CommandText = """
+            SELECT scrape_id, phase, criticality, status, started_at,
+                   completed_at, duration_ms, error_message
+            FROM scrape_phase_outcomes
+            WHERE scrape_id = @scrapeId
+            ORDER BY started_at, phase
+            """;
+        outcomesCmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        var outcomes = new List<ScrapePhaseOutcomeRecord>();
+        using (var reader = outcomesCmd.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                outcomes.Add(new ScrapePhaseOutcomeRecord(
+                    reader.GetInt64(0),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.GetString(3),
+                    reader.GetDateTime(4),
+                    reader.GetDateTime(5),
+                    reader.GetInt64(6),
+                    reader.IsDBNull(7) ? null : reader.GetString(7)));
+            }
+        }
+
+        return new ScrapeResumeState(
+            id,
+            startedAtUtc,
+            status,
+            publishedScrapeId,
+            manifestCount,
+            completeManifestCount,
+            writerFailureCount,
+            criticalPhaseFailureCount,
+            outcomes);
+    }
+
     public ScrapeRunInfo? GetLastCompletedScrapeRun()
     {
         using var conn = _ds.OpenConnection();
@@ -395,11 +482,17 @@ public sealed class MetaDatabase : IMetaDatabase
         {
             publish.Transaction = tx;
             publish.CommandText = """
-                INSERT INTO scrape_publication_state (id, published_scrape_id, published_at, updated_at)
-                VALUES (TRUE, @scrapeId, @now, @now)
+                INSERT INTO scrape_publication_state (
+                    id, published_scrape_id, published_at,
+                    band_projection_generation, updated_at)
+                VALUES (
+                    TRUE, @scrapeId, @now,
+                    (SELECT current_generation FROM band_current_projection_state WHERE id = TRUE),
+                    @now)
                 ON CONFLICT (id) DO UPDATE SET
                     published_scrape_id = EXCLUDED.published_scrape_id,
                     published_at = EXCLUDED.published_at,
+                    band_projection_generation = EXCLUDED.band_projection_generation,
                     public_reads_frozen = FALSE,
                     public_reads_frozen_at = NULL,
                     public_reads_frozen_scrape_id = NULL,
@@ -489,6 +582,28 @@ public sealed class MetaDatabase : IMetaDatabase
         }
     }
 
+    public bool IsBandCurrentProjectionGloballyPublished()
+    {
+        try
+        {
+            using var conn = _ds.OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT publication.band_projection_generation IS NOT NULL
+                   AND publication.band_projection_generation = projection.current_generation
+                FROM scrape_publication_state publication
+                CROSS JOIN band_current_projection_state projection
+                WHERE publication.id = TRUE
+                  AND projection.id = TRUE
+                """;
+            return cmd.ExecuteScalar() is bool isPublished && isPublished;
+        }
+        catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn)
+        {
+            return false;
+        }
+    }
+
     private static void EnsureScrapePublicationStateTable(NpgsqlConnection conn)
     {
         using (var probe = conn.CreateCommand())
@@ -496,7 +611,7 @@ public sealed class MetaDatabase : IMetaDatabase
             probe.CommandText = """
                 SELECT to_regclass('public.scrape_publication_state') IS NOT NULL
                    AND (
-                       SELECT COUNT(*) = 4
+                       SELECT COUNT(*) = 5
                        FROM information_schema.columns
                        WHERE table_schema = 'public'
                          AND table_name = 'scrape_publication_state'
@@ -504,7 +619,8 @@ public sealed class MetaDatabase : IMetaDatabase
                              'public_reads_frozen',
                              'public_reads_frozen_at',
                              'public_reads_frozen_scrape_id',
-                             'public_reads_frozen_reason')
+                             'public_reads_frozen_reason',
+                             'band_projection_generation')
                    )
                 """;
             if (Convert.ToBoolean(probe.ExecuteScalar()))
@@ -530,6 +646,7 @@ public sealed class MetaDatabase : IMetaDatabase
                 public_reads_frozen_at TIMESTAMPTZ,
                 public_reads_frozen_scrape_id INTEGER REFERENCES scrape_log(id),
                 public_reads_frozen_reason TEXT,
+                band_projection_generation BIGINT,
                 updated_at          TIMESTAMPTZ NOT NULL
             )
             """;
@@ -542,6 +659,7 @@ public sealed class MetaDatabase : IMetaDatabase
             ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS public_reads_frozen_at TIMESTAMPTZ;
             ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS public_reads_frozen_scrape_id INTEGER REFERENCES scrape_log(id);
             ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS public_reads_frozen_reason TEXT;
+            ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS band_projection_generation BIGINT;
             """;
         alter.ExecuteNonQuery();
         tx.Commit();

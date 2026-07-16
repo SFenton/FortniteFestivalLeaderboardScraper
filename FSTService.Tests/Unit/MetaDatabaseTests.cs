@@ -42,6 +42,49 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public async Task PublishScrapeRun_AtomicallyStampsBandProjectionGeneration()
+    {
+        var projection = new BandCurrentProjectionBuilder(
+            DataSource,
+            Substitute.For<ILogger<BandCurrentProjectionBuilder>>());
+        await projection.EnsureSchemaAsync();
+        using (var conn = DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                INSERT INTO band_current_projection_state (
+                    id, current_generation, row_count, scope_count,
+                    failed_scope_count, updated_at)
+                VALUES (TRUE, 42, 0, 0, 0, now())
+                ON CONFLICT (id) DO UPDATE SET
+                    current_generation = EXCLUDED.current_generation,
+                    updated_at = EXCLUDED.updated_at
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        var scrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(scrapeId, promoteCachedResponses: false);
+
+        Assert.True(Db.IsBandCurrentProjectionGloballyPublished());
+
+        using (var conn = DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                UPDATE band_current_projection_state
+                SET current_generation = 43,
+                    updated_at = now()
+                WHERE id = TRUE
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        Assert.False(Db.IsBandCurrentProjectionGloballyPublished());
+    }
+
+    [Fact]
     public void FailedCandidateRemainsVisibleAndCannotReplacePublishedScrape()
     {
         var publishedId = Db.StartScrapeRun();
