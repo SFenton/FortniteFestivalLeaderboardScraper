@@ -448,18 +448,56 @@ until replay and live shadow parity pass.
   Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/fst-residual-capacity-20260715T144916Z`.
 
-**Next WORKER-0A full-scrape A/B instruction**
+**Final WORKER-0A live A/B - rejected and capacity-hard-blocked 2026-07-16**
 
-- Keep the worker held while deploying the pushed residual-capacity commit.
-  Re-run the measured scrape guard and proxy compose guard, then use the
-  approved `--recreate-runonce` WORKER-0A path. Verify Postgres, `/readyz`,
-  festivalweb, and `/api/service-info` before allowing the run.
-- Monitor exactly one complete scrape, post-process, publication, and parity
-  window. Hold the worker again before a second scrape. Require all expected
-  solo/band manifests complete, zero writer failures, zero
-  publication-critical phase failures, exact published-source/physical
-  counts, healthy public routes, and acceptable resource deltas before
-  enabling the three enforcement flags.
+- The measured scrape guard passed immediately before start with
+  `63,365,509,120` bytes free, `18,217,283,584` bytes above the
+  `45,148,225,536`-byte requirement. The guarded candidate used image
+  `fstservice:worker0a-caab3c3f` from pushed commit `caab3c3f`, restart policy
+  `no`, all three enforcement flags enabled, the canonical 30-service PIA
+  overlay, 25/25 healthy unique effective exits, 400 aggregate RPS, and no
+  AirVPN fallback.
+- Scrape `1262` completed all `8,208/8,208` expected manifests with zero
+  incomplete scopes, parse failures, retry exhaustion, writer failures, or
+  publication-critical phase failures. Solo contributed `6,156` manifests;
+  band contributed `2,052`. The combined manifest contained `588,454` pages
+  and `58,675,997` reported entries. Band fetched `190,144` pages and
+  `18,987,470` entries.
+- Writer drain completed and deleted its `9,223,693,833`-byte same-drive spool.
+  The exact post-writer guard passed at `54,284,406,784` bytes free. Three
+  five-minute enrichment timeouts remained correctly classified as
+  best-effort: registered-user refresh, registered-player band discovery, and
+  registered-band targeted processing.
+- The run was stopped during band current-projection generation `95`
+  publication after `12,972` ready scopes and `21,967,889` projection rows.
+  Free space had fallen to `30,992,838,656` bytes. Rankings and global
+  publication had not run, so candidate `1262` owns zero published-source
+  rows and cannot satisfy WORKER-0A promotion.
+- The guarded window ran `37,434.590 s` before the stop. Network plus writer
+  drain took `22,326.583 s`; solo network took `12,893.7 s` and band fetch
+  `6,031.2 s`. The candidate added `26,778,927,104` database bytes and reduced
+  filesystem free space by `32,087,322,624` bytes. Peak worker/Postgres memory
+  was `3.71/15.21 GiB`; `/readyz` and festivalweb stayed HTTP `200` for all
+  `604` captured one-minute ticks.
+- Rollback marked `1262` failed at
+  `capacity_during_band_projection_publish`, cleared stale worker/freeze
+  state, retained published `1236`, and restored the held worker container to
+  `fstservice:worker0a-d744aed9`. Published mapping remains exactly `6,138`
+  complete scopes and `39,588,650` rows.
+- Post-rollback route/export/history/ranking parity was exact for `12/13`
+  normalized surfaces. `/api/rankings/bands/.../songs` differed only in 61
+  rank, population, and percentile scalar values because that endpoint falls
+  back to live `band_entries` when the optional band-song ranking projection
+  is stale. No scores, song IDs, exports, histories, leaderboards, or ranking
+  pages changed. This live-fallback contract and insufficient capacity both
+  block promotion.
+- Final measured free space is `31,264,702,464` bytes, leaving a
+  `13,883,523,072`-byte shortfall. No second scrape, destructive cleanup,
+  alternate-drive work, rate increase, or provider fallback is authorized.
+  `fstworker` remains held. WORKER-0.5 and WORKER-0.6 remain pending behind the
+  unresolved WORKER-0A publication/capacity gate.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/worker0a-final-live-ab-20260715T151317Z`.
 
 ### WORKER-0.5 - Separate solo and band completion
 

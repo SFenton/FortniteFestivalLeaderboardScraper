@@ -730,6 +730,32 @@ move to PG-7 after backup/restore and live-scrape parity.
   full-scrape A/B, but this phase did not start it. Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/fst-residual-capacity-20260715T144916Z`.
 
+### PG-3 final WORKER-0A capacity A/B - rejected 2026-07-16
+
+- The prestart measured guard passed at `63,365,509,120` free bytes, and the
+  exact post-writer guard passed at `54,284,406,784` bytes after all
+  `8,208/8,208` manifests and band writer drain completed.
+- Candidate `1262` then grew the database by `26,778,927,104` bytes and reduced
+  filesystem free space by `32,087,322,624` bytes before rankings or global
+  publication. The stop occurred during band current-projection generation
+  `95` publication with `12,972` ready scopes / `21,967,889` rows and
+  `30,992,838,656` bytes free.
+- Rollback marked the scrape failed, retained published scrape `1236`, proved
+  zero candidate published-source rows, and left no active query or ungranted
+  lock. The complete manifest/writer/phase ledgers and partial generation
+  `94`/`95` evidence remain intact; no destructive cleanup was performed.
+- Final measured free space is `31,264,702,464` bytes. The
+  `45,148,225,536`-byte guard now blocks another scrape with an exact
+  `13,883,523,072`-byte shortfall. Default seven-day optional-build/rewrite
+  headroom remains unavailable.
+- `12/13` normalized public route/export/history/ranking fingerprints matched
+  rollback baseline. The sole mismatch was the live-fallback band best/worst
+  songs route; published mappings stayed exactly `6,138` scopes /
+  `39,588,650` rows. WORKER-0A is rejected, not promoted, and the worker
+  remains held.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/worker0a-final-live-ab-20260715T151317Z`.
+
 ## Phase PG-4: Make scrape writes proportional to semantic changes
 
 **Decision:** Experimental until live-scrape parity  

@@ -6,10 +6,9 @@ This plan records the approved direction for improving FST Postgres persistence 
 
 - Production compose ownership: `/home/sfenton/Docker/FestivalServiceTracker`.
 - `fstservice`, `festivalweb`, and `fst-postgres` are healthy.
-  `fstworker` is intentionally held after scrape `1261` failed closed before
-  rankings/publication on measured capacity risk. The measured capacity gate
-  now passes, but the worker remains held for the next controlled WORKER-0A
-  full-scrape A/B.
+  `fstworker` is intentionally held after final candidate `1262` failed closed
+  during band current-projection generation `95` publication. The final
+  measured capacity gate blocks another scrape.
 - Scrape `1236` published `6,138` complete scopes and `39,588,650` rows with
   public reads unfrozen and remains authoritative.
 - Scrapes should proceed normally. `fstworker`, `fstservice`, and `festivalweb` may be restarted or temporarily taken down for maintenance, but must be redeployed/recovered as soon as possible to preserve the user experience.
@@ -22,11 +21,15 @@ This plan records the approved direction for improving FST Postgres persistence 
   of reproducible non-database cache/scratch. A separate decision retired
   `public.ix_btrhpv2_snapshot` for another `8,864,440,320` database bytes.
   Free space initially reached about `39.83 GB`.
-- The residual phase then replaced the `23,526,973,440`-byte
+- The residual phase replaced the `23,526,973,440`-byte
   `ix_crh_retention_cutoff_account` btree with the 688,128-byte
   `ix_crh_retention_cutoff_brin`. Free space reached `63,339,065,344` bytes,
   and the measured `45,148,225,536`-byte scrape-completion guard passes with
   `18,190,839,808` bytes of margin.
+- Final WORKER-0A candidate `1262` consumed that recovered headroom before
+  rankings/publication. It left `31,264,702,464` bytes free and a measured
+  `13,883,523,072`-byte shortfall. Published `1236` remains authoritative and
+  unfrozen; `1262` owns zero published-source rows.
 - Public band-history team/date indexes remain because live plans proved their
   route ownership. Composite retention now uses BRIN cutoff rejection plus the
   primary key for account/date probes.
@@ -108,17 +111,17 @@ Important finding: the logical model indicates most observed rows are unchanged,
 ## Capacity boundary and remaining alert
 
 `/mnt/docker-storage` hosts the active Postgres bind mount and now has
-`63,339,065,344` bytes free. The scrape-`1236` monitor required
+`31,264,702,464` bytes free. The scrape-`1236` monitor requires
 `45,148,225,536` bytes from the equivalent pre-rank boundary through
-publication, so the measured gate now passes with `18,190,839,808` bytes of
-margin. The default guard horizon is still only `2.11` days, below the
+publication, so the measured gate blocks another scrape by
+`13,883,523,072` bytes. The default guard horizon is `1.04` days, below the
 seven-day optional-build/rewrite threshold.
 
-`fstworker` remains held only to preserve the single-candidate WORKER-0A
-boundary. The next phase must re-run the measured scrape guard and proxy guard,
-deploy the pushed candidate, start exactly one `--recreate-runonce` scrape,
-monitor through publication/parity, and hold the worker again before a second
-scrape.
+`fstworker` remains held after the single final WORKER-0A candidate was
+rejected. Candidate `1262` proved complete manifests and successful writers,
+but capacity stopped it before rankings/publication and one live-fallback band
+route missed exact rollback parity. No additional scrape is authorized from
+the current headroom.
 
 Destructive cleanup, irreversible migration, drop/truncate/repack/rewrite
 work, or active Postgres data movement may proceed automatically after a
@@ -150,9 +153,9 @@ path, and post-action validation are documented.
 | Worker validation start | Rejected / blocked | Starting `fstworker` with safer defaults caused `fstservice` and `/api/service-info` through `festivalweb` to time out; `fstworker` was stopped immediately and public API/web health recovered. |
 | Worker scraping heal | Complete | Added worker-only startup schema-init skip, rebuilt the image, started `fstworker`, and held a 10-minute full-public-path watchdog while scrape `1219` began. |
 | Emergency `band_read_*` reclaim | Complete | At 44 MB free / 100% disk, stopped `fstworker`, froze public reads to published `1214`, truncated rollback-safe logical shadow tables, quarantined/validated/dropped unused derived `band_read_*` tables, restored about 435 GB free, and restarted `fstworker` as scrape `1222`. |
-| Autonomous scrape rollout | Capacity-ready / worker-held | Service/web/Postgres remain online, the measured completion guard passes, and `fstworker` stays offline only for the next controlled single-scrape WORKER-0A A/B. |
+| Autonomous scrape rollout | Rejected / capacity-blocked | Candidate `1262` completed `8,208/8,208` manifests and zero writer/critical failures, but stopped during band projection publication at `30,992,838,656` bytes free. Final measured free space is `31,264,702,464`; published `1236` remains safe and the worker is held. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
-| Next implementation phase | WORKER-0A candidate ready | Re-run measured capacity/proxy guards, deploy the pushed candidate, execute exactly one `--recreate-runonce` full-scrape A/B, and hold before a second scrape. Optional builds, rewrites, repacks, table deletion, and broad data movement remain blocked below seven-day headroom. |
+| Next implementation phase | WORKER-0A hard-blocked | No second scrape is authorized. The measured scrape gate is short by `13,883,523,072` bytes, and the live-fallback band best/worst songs route also lacks exact failed-candidate rollback parity. Optional builds, rewrites, repacks, table deletion, and broad data movement remain blocked. |
 
 ## Architecture evaluation evidence (2026-07-06)
 

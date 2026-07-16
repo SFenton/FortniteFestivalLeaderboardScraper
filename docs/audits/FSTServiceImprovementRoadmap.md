@@ -346,6 +346,24 @@ and old cache artifacts.
   blocks/timeouts and no complete candidate scrape could begin. The status/API
   code remains committed behind worker enforcement flags for the next valid
   provider window.
+- The final guarded retry `1262` later proved service availability throughout
+  a complete network and writer window: all `604` captured one-minute checks
+  kept `/readyz` and festivalweb HTTP `200`, while `8,208/8,208` manifests,
+  zero writer failures, and zero critical-phase failures were recorded.
+- Exact rollback parity passed for `12/13` normalized public surfaces. The
+  remaining `/api/rankings/bands/{bandType}/{teamKey}/songs` response changed
+  only rank, population, and percentile values because
+  `GetBandSongPerformanceExtremes` falls back to live `band_entries` when the
+  optional band-song ranking projection is stale. Other band routes already
+  retained published-generation parity. This endpoint-specific published-read
+  gap is now a hard correctness gate; no broad data rewrite or semantic
+  weakening was used to mask it.
+- Candidate `1262` was rejected before rankings/publication on capacity and
+  finalized failed. Production remains on
+  `fstservice:service02-824415e9`/`festivalweb:service02-824415e9`, published
+  `1236` is unfrozen, and the worker is held on its validated rollback image.
+  Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/worker0a-final-live-ab-20260715T151317Z`.
 
 ### SERVICE-0.3 - Protect or remove token-backed diagnostics
 
