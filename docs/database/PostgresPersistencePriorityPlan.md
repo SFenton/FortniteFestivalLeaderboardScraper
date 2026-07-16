@@ -6,9 +6,10 @@ This plan records the approved direction for improving FST Postgres persistence 
 
 - Production compose ownership: `/home/sfenton/Docker/FestivalServiceTracker`.
 - `fstservice`, `festivalweb`, and `fst-postgres` are healthy.
-  `fstworker` is intentionally held after final candidate `1262` failed closed
-  during band current-projection generation `95` publication. The final
-  measured capacity gate blocks another scrape.
+  `fstworker` is intentionally held on
+  `fstservice:post1262-capacity-7050ee93` with run-once scheduling and restart
+  disabled. The measured capacity gate now passes; the parent-owned band
+  best/worst songs parity gap still blocks another live A/B.
 - Scrape `1236` published `6,138` complete scopes and `39,588,650` rows with
   public reads unfrozen and remains authoritative.
 - Scrapes should proceed normally. `fstworker`, `fstservice`, and `festivalweb` may be restarted or temporarily taken down for maintenance, but must be redeployed/recovered as soon as possible to preserve the user experience.
@@ -30,6 +31,12 @@ This plan records the approved direction for improving FST Postgres persistence 
   rankings/publication. It left `31,264,702,464` bytes free and a measured
   `13,883,523,072`-byte shortfall. Published `1236` remains authoritative and
   unfrozen; `1262` owns zero published-source rows.
+- The post-`1262` residual phase retired only the non-constraint
+  `ix_rh_latest` partitioned family after replacing its ranking latest-row
+  query with a primary-key group/max join. The drop reclaimed exactly
+  `45,547,339,776` database bytes; final measured free space is
+  `76,804,927,488` bytes, `31,656,701,952` bytes above the
+  `45,148,225,536`-byte scrape boundary.
 - Public band-history team/date indexes remain because live plans proved their
   route ownership. Composite retention now uses BRIN cutoff rejection plus the
   primary key for account/date probes.
@@ -106,22 +113,26 @@ Full-scale scrape `1218` produced useful metrics but failed before publish becau
 | New | 31,562 | 0.08% |
 | Current upserts / versions opened | 12,207,532 | 31.00% |
 
-Important finding: the logical model indicates most observed rows are unchanged, so physical write skipping is likely valuable. Phase 7 itself is blocked/rejected as a deployable eval outcome until storage headroom is solved.
+Important finding: the logical model indicates most observed rows are unchanged,
+so physical write skipping is likely valuable. The immediate measured scrape
+headroom is now restored; promotion still requires its own complete live parity
+window.
 
 ## Capacity boundary and remaining alert
 
 `/mnt/docker-storage` hosts the active Postgres bind mount and now has
-`31,264,702,464` bytes free. The scrape-`1236` monitor requires
+`76,804,927,488` bytes free. The scrape-`1236` monitor requires
 `45,148,225,536` bytes from the equivalent pre-rank boundary through
-publication, so the measured gate blocks another scrape by
-`13,883,523,072` bytes. The default guard horizon is `1.04` days, below the
-seven-day optional-build/rewrite threshold.
+publication, so the measured gate passes with `31,656,701,952` bytes of
+margin. The default guard horizon is `2.55` days, still below the seven-day
+optional-build/rewrite threshold.
 
 `fstworker` remains held after the single final WORKER-0A candidate was
 rejected. Candidate `1262` proved complete manifests and successful writers,
 but capacity stopped it before rankings/publication and one live-fallback band
-route missed exact rollback parity. No additional scrape is authorized from
-the current headroom.
+route missed exact rollback parity. Capacity is no longer the blocker; no
+additional scrape is authorized until the parent-owned route parity gate is
+cleared.
 
 Destructive cleanup, irreversible migration, drop/truncate/repack/rewrite
 work, or active Postgres data movement may proceed automatically after a
@@ -142,6 +153,7 @@ path, and post-action validation are documented.
 | PG-3 `ix_btrhpv2_snapshot` family reclaim | Accepted | As a separate decision, dropped the partitioned points-v2 snapshot lookup family in 129.457 ms. Reclaimed `8,864,440,320` database bytes; retained team/date plans and 12 route/ranking/history/export fingerprints matched exactly. |
 | Residual incident index sweep | Superseded by deeper owner proof | Rejected the sufficiently large Trios current-projection index because the exact public selected-team plan uses it. A later retention-query redesign made the composite retention btree safely replaceable. |
 | PG-3 composite retention btree reclaim | Accepted | Built a 688,128-byte BRIN replacement, removed the global retention sort, and dropped only `ix_crh_retention_cutoff_account` concurrently in 0.16 s. Reclaimed `23,526,973,440` database bytes; final free space is `63,339,065,344` bytes with `18,190,839,808` bytes above the measured scrape boundary. `12/12` fingerprints and `106` targeted tests passed. |
+| PG-3 post-`1262` rank-history index reclaim | Accepted | Replaced latest-row distinct/sort with a primary-key group/max join, then dropped only non-constraint `ix_rh_latest` in 0.30 s. Reclaimed `45,547,339,776` database bytes; final measured free space is `76,804,927,488` with `31,656,701,952` bytes above the scrape boundary. `12/12` fingerprints and `68` targeted tests passed. |
 | Band rank-history retention policy draft | Complete | Semantics-first v2 retention options and parity gates documented on 2026-07-06. |
 | `band_read_*` quarantine parity package | Complete | Reversible, live-scrape A/B parity-gated quarantine package documented on 2026-07-06; no DDL executed. |
 | Phase 8 physical snapshot write skipping | Accepted behind feature flag | Added `SkipUnchangedPhysicalLeaderboardSnapshots` as a rollback-safe, default-off candidate that skips unchanged solo physical snapshot scopes and keeps snapshot state pinned to the prior active snapshot. Production rollout remains gated by live-scrape A/B parity and disk headroom. |
@@ -153,9 +165,9 @@ path, and post-action validation are documented.
 | Worker validation start | Rejected / blocked | Starting `fstworker` with safer defaults caused `fstservice` and `/api/service-info` through `festivalweb` to time out; `fstworker` was stopped immediately and public API/web health recovered. |
 | Worker scraping heal | Complete | Added worker-only startup schema-init skip, rebuilt the image, started `fstworker`, and held a 10-minute full-public-path watchdog while scrape `1219` began. |
 | Emergency `band_read_*` reclaim | Complete | At 44 MB free / 100% disk, stopped `fstworker`, froze public reads to published `1214`, truncated rollback-safe logical shadow tables, quarantined/validated/dropped unused derived `band_read_*` tables, restored about 435 GB free, and restarted `fstworker` as scrape `1222`. |
-| Autonomous scrape rollout | Rejected / capacity-blocked | Candidate `1262` completed `8,208/8,208` manifests and zero writer/critical failures, but stopped during band projection publication at `30,992,838,656` bytes free. Final measured free space is `31,264,702,464`; published `1236` remains safe and the worker is held. |
+| Autonomous scrape rollout | Rejected / parity-blocked after capacity repair | Candidate `1262` completed `8,208/8,208` manifests and zero writer/critical failures, but stopped during band projection publication at `30,992,838,656` bytes free. Capacity now passes after the `ix_rh_latest` reclaim; published `1236` remains safe and the worker is held for the unresolved band best/worst songs parity gate. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
-| Next implementation phase | WORKER-0A hard-blocked | No second scrape is authorized. The measured scrape gate is short by `13,883,523,072` bytes, and the live-fallback band best/worst songs route also lacks exact failed-candidate rollback parity. Optional builds, rewrites, repacks, table deletion, and broad data movement remain blocked. |
+| Next implementation phase | WORKER-0A parity-blocked | The measured scrape gate passes with `31,656,701,952` bytes of margin and the held worker contains the primary-key rank-history query. No second scrape is authorized until the parent-owned live-fallback band best/worst songs route has exact failed-candidate rollback parity. Optional builds, rewrites, repacks, table deletion, and broad data movement remain blocked. |
 
 ## Architecture evaluation evidence (2026-07-06)
 

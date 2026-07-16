@@ -489,15 +489,33 @@ until replay and live shadow parity pass.
   rank, population, and percentile scalar values because that endpoint falls
   back to live `band_entries` when the optional band-song ranking projection
   is stale. No scores, song IDs, exports, histories, leaderboards, or ranking
-  pages changed. This live-fallback contract and insufficient capacity both
-  block promotion.
+  pages changed. At the `1262` decision, this live-fallback contract and
+  insufficient capacity both blocked promotion.
 - Final measured free space is `31,264,702,464` bytes, leaving a
   `13,883,523,072`-byte shortfall. No second scrape, destructive cleanup,
   alternate-drive work, rate increase, or provider fallback is authorized.
-  `fstworker` remains held. WORKER-0.5 and WORKER-0.6 remain pending behind the
-  unresolved WORKER-0A publication/capacity gate.
+  `fstworker` remained held. WORKER-0.5 and WORKER-0.6 remained pending behind
+  the then-unresolved WORKER-0A publication/capacity gate.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/worker0a-final-live-ab-20260715T151317Z`.
+
+**Post-1262 capacity recovery - accepted; worker still held 2026-07-16**
+
+- The non-constraint `ix_rh_latest` partitioned family was retired after
+  `SnapshotRankHistory` moved to a primary-key group/max latest-row plan.
+  Exactly `45,547,339,776` database bytes were reclaimed in `0.30 s`.
+- Final measured free space is `76,804,927,488` bytes. The
+  `45,148,225,536`-byte scrape guard passes with `31,656,701,952` bytes of
+  margin. `12/12` route/export/history/ranking fingerprints matched baseline,
+  post-drop, and repeat, and `68/68` targeted tests passed.
+- The worker was recreated but not started on
+  `fstservice:post1262-capacity-7050ee93`; run-once remains true, restart is
+  `no`, and container state is `created`.
+- Capacity no longer blocks the next A/B. The worker remains held because the
+  parent-owned live-fallback band best/worst songs parity gap still blocks an
+  overall WORKER-0A promotion attempt.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post1262-capacity-recovery-20260716T021005Z`.
 
 ### WORKER-0.5 - Separate solo and band completion
 

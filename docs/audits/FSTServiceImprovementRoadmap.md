@@ -359,11 +359,22 @@ and old cache artifacts.
   gap is now a hard correctness gate; no broad data rewrite or semantic
   weakening was used to mask it.
 - Candidate `1262` was rejected before rankings/publication on capacity and
-  finalized failed. Production remains on
+  finalized failed. At that decision, production remained on
   `fstservice:service02-824415e9`/`festivalweb:service02-824415e9`, published
-  `1236` is unfrozen, and the worker is held on its validated rollback image.
+  `1236` was unfrozen, and the worker was held on its validated rollback image.
   Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/worker0a-final-live-ab-20260715T151317Z`.
+- The post-`1262` capacity phase reclaimed `45,547,339,776` database bytes by
+  retiring non-constraint `ix_rh_latest` after moving its ranking latest-row
+  owner to the primary key. Final free space is `76,804,927,488`, and the
+  measured scrape gate passes with `31,656,701,952` bytes of margin.
+- Service/web/Postgres remained healthy through all `90` reclaim monitor
+  samples, and `12/12` public fingerprints matched before, after, and on
+  repeat. The worker remains held on
+  `fstservice:post1262-capacity-7050ee93`; only the parent-owned band
+  best/worst songs published-read parity gap still blocks the next live A/B.
+  Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post1262-capacity-recovery-20260716T021005Z`.
 
 ### SERVICE-0.3 - Protect or remove token-backed diagnostics
 

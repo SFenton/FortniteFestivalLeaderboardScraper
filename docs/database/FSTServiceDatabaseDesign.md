@@ -3,7 +3,7 @@
 **Authoritative runtime:** PostgreSQL 17 in `fst-postgres`  
 **Production compose owner:** `/home/sfenton/Docker/FestivalServiceTracker`  
 **Production data root:** `/mnt/docker-storage/Docker/FestivalServiceTracker/pg-data`  
-**Last live inventory:** 2026-07-15 15:03 UTC
+**Last live inventory:** 2026-07-16 02:40 UTC
 
 This document defines FST PostgreSQL ownership, source-of-truth boundaries,
 publication behavior, retention, index posture, and restore paths. PostgreSQL
@@ -120,6 +120,17 @@ retention btree with the 688,128-byte
 `63,339,065,344` bytes. The exact scrape-completion guard now has
 `18,190,839,808` bytes of margin. No history rows, constraints, publication
 state, or public response changed.
+
+After rejected scrape `1262`, PG-3 retired the non-constraint partitioned
+`ix_rh_latest` family from solo rank history. `SnapshotRankHistory` now finds
+each account's latest date through the retained primary key, reducing the
+no-index full-plan cost from `8,314,062.24` to `1,212,279.07`. Database size
+fell from `3,842,540,050,099` to `3,796,992,710,323` bytes and measured
+filesystem free space reached `76,804,927,488` bytes, leaving
+`31,656,701,952` bytes above the scrape-completion boundary. Exact recreate
+DDL builds nine child indexes concurrently and attaches them to a partitioned
+parent. No history row, constraint, publication state, route, export, or
+retention result changed.
 
 ## Data ownership and restore class
 
@@ -420,7 +431,7 @@ cache and band-ranking publication work.
 
 ### Current promotion gate
 
-A full 3.56 TB duplicate restore is not safe with roughly 63 GB free. Full
+A full 3.56 TB duplicate restore is not safe with roughly 76.8 GB free. Full
 restore promotion remains blocked until same-drive reclaim creates the exact
 source database plus target data/WAL/index/scratch headroom.
 
@@ -537,8 +548,10 @@ scope-total, and relation-size deltas for an A/B decision.
 - **PG-3:** retain public band-history and composite-retention indexes; the
   redundant `ix_crh_latest`, latest-v2 `ix_btrhlv2_snapshot`, and points-v2
   `ix_btrhpv2_snapshot` indexes were retired with exact plan/route/export
-  parity. Member facts, observation-table dual writes, and nullable
-  score-history uniqueness remain explicit owner decisions.
+  parity. The solo `ix_rh_latest` family was also retired after its ranking
+  latest-row owner moved to a primary-key group/max plan. Member facts,
+  observation-table dual writes, and nullable score-history uniqueness remain
+  explicit owner decisions.
 - **PG-4 / WORKER-4:** semantic-change writes, unchanged physical source reuse,
   diff projections/rankings, and one atomic band publication.
 - **PG-5:** latest-state history design, explicit retention, and same-drive

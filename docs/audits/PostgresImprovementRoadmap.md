@@ -756,6 +756,58 @@ move to PG-7 after backup/restore and live-scrape parity.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/worker0a-final-live-ab-20260715T151317Z`.
 
+### PG-3 post-scrape-1262 residual capacity recovery - accepted 2026-07-16
+
+- The terminal preflight found `31,261,032,448` bytes free, no active scrape,
+  vacuum, index build, rewrite, long query, or ungranted lock, and an exact
+  `13,887,193,088`-byte measured scrape shortfall. Published scrape `1236`
+  remained authoritative and unfrozen while the worker stayed held.
+- Docker images and `56.22 GB` of reclaimable build cache were rejected as a
+  capacity action because Docker root is `/mnt/storage/docker-data`, not the
+  required `/mnt/docker-storage` FST filesystem. Same-drive path data and
+  accepted evidence were preserved; the remaining reproducible same-drive
+  artifacts were far too small to clear the gate.
+- Current plans retained the `261,790,859,264`-byte band-history team/date
+  family: Duets/Trios/Quad history reads used it in `0.160-0.213 ms`. The
+  `18,807,029,760`-byte band current-projection generation/rank family was
+  rejected because removing it transactionally raised warm top-page SQL from
+  `0.037` to `2.948 ms` and deep-page SQL from `3.801` to `4.565 ms`.
+- The accepted object was partitioned non-constraint family
+  `public.ix_rh_latest`: one zero-byte parent plus nine physical child indexes,
+  exactly `45,547,339,776` bytes, with no primary, unique, or foreign-key
+  ownership. The retained `rank_history` primary-key family covers account
+  history and latest-row lookups.
+- `SnapshotRankHistory` now resolves each account's latest date with a
+  primary-key-backed `MAX(snapshot_date)` group and join. Without
+  `ix_rh_latest`, the full latest-row plan cost fell from `8,314,062.24` for
+  the old distinct/sort path to `1,212,279.07`; a matched bounded median
+  improved from `23.343` to `18.312 ms`. Warm public rank-history SQL improved
+  from `0.312` to `0.141 ms` in the transactional proof.
+- Exact rollback was persisted and tested before mutation: build all nine
+  child indexes concurrently, create the empty partitioned parent, then attach
+  each child. PostgreSQL cannot drop a partitioned index concurrently, so the
+  guarded parent-family drop used a five-second lock timeout and completed in
+  `0.30 s`.
+- Database size fell from `3,842,540,050,099` to `3,796,992,710,323` bytes.
+  Filesystem free space rose from `31,261,003,776` to `76,808,527,872` bytes,
+  a `45,547,524,096`-byte gain. The final measured scrape guard passed at
+  `76,804,927,488` bytes free with `31,656,701,952` bytes of margin.
+- All `12/12` route/export/history/ranking fingerprints matched baseline,
+  post-drop, and repeat. Rank-history route, latest-row, current and eligible
+  retention fingerprints were exact; `68/68` targeted schema/ranking tests
+  passed. Final route/latest-row medians were `0.291/18.285 ms`, all retained
+  band-history and composite-retention plans kept their owners, and no invalid
+  index, active query, ungranted lock, vacuum, or index build remained.
+- Pushed commit `7050ee93` removes startup recreation and contains the
+  primary-key latest-row query. The worker was recreated but not started on
+  `fstservice:post1262-capacity-7050ee93`, with `RunOnce=true`, restart policy
+  `no`, and state `created`.
+- Capacity is ready for another full scrape plus rollback margin. Overall
+  WORKER-0A live A/B remains held because the parent-owned band best/worst
+  songs published-read parity gap is still unresolved; this capacity phase did
+  not run a scrape. Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post1262-capacity-recovery-20260716T021005Z`.
+
 ## Phase PG-4: Make scrape writes proportional to semantic changes
 
 **Decision:** Experimental until live-scrape parity  
