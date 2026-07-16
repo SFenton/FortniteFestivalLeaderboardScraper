@@ -3644,6 +3644,69 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         RefreshBandSearchProjectionForSeededTeam(conn, bandType, teamKey, now);
     }
 
+    private static BandLeaderboardEntry CreateBandEntry(string teamKey, string instrumentCombo, int score) => new()
+    {
+        TeamKey = teamKey,
+        TeamMembers = teamKey.Split(':'),
+        InstrumentCombo = instrumentCombo,
+        Score = score,
+        Accuracy = 950_000,
+        IsFullCombo = false,
+        Stars = 5,
+        Difficulty = 3,
+        Season = 1,
+        Rank = 1,
+        Percentile = 0.5,
+        Source = "test",
+    };
+
+    private static async Task<(string Raw, JsonElement Json)> GetRequiredBodyAsync(HttpClient client, string path)
+    {
+        using var response = await client.GetAsync(path);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var raw = await response.Content.ReadAsStringAsync();
+        using var document = JsonDocument.Parse(raw);
+        return (raw, document.RootElement.Clone());
+    }
+
+    private static void AssertBandSongExtremesMatchRows(
+        (string Raw, JsonElement Json) songs,
+        (string Raw, JsonElement Json) rows)
+    {
+        var limit = songs.Json.GetProperty("limit").GetInt32();
+        var performances = rows.Json.GetProperty("entries").EnumerateArray().ToArray();
+        var expectedBest = performances
+            .OrderBy(static performance => performance.GetProperty("percentile").GetDouble())
+            .ThenBy(static performance => performance.GetProperty("rank").GetInt32())
+            .ThenByDescending(static performance => performance.GetProperty("score").GetInt32())
+            .ThenBy(static performance => performance.GetProperty("songId").GetString(), StringComparer.Ordinal)
+            .Take(limit)
+            .Select(static performance => performance.GetRawText())
+            .ToArray();
+        var expectedWorst = performances.Length > limit
+            ? performances
+                .OrderByDescending(static performance => performance.GetProperty("percentile").GetDouble())
+                .ThenByDescending(static performance => performance.GetProperty("rank").GetInt32())
+                .ThenBy(static performance => performance.GetProperty("score").GetInt32())
+                .ThenBy(static performance => performance.GetProperty("songId").GetString(), StringComparer.Ordinal)
+                .Take(limit)
+                .Select(static performance => performance.GetRawText())
+                .ToArray()
+            : [];
+
+        var actualBest = songs.Json.GetProperty("best")
+            .EnumerateArray()
+            .Select(static performance => performance.GetRawText())
+            .ToArray();
+        var actualWorst = songs.Json.GetProperty("worst")
+            .EnumerateArray()
+            .Select(static performance => performance.GetRawText())
+            .ToArray();
+
+        Assert.Equal(expectedBest, actualBest);
+        Assert.Equal(expectedWorst, actualWorst);
+    }
+
     private static void RefreshBandSearchProjectionForSeededTeam(
         NpgsqlConnection conn,
         string bandType,
@@ -5572,6 +5635,184 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(comboId, json.GetProperty("comboId").GetString());
         Assert.Equal(2, json.GetProperty("totalAccounts").GetInt32());
+    }
+
+    [Fact]
+    public async Task Rankings_BandSongs_ReturnsUnavailableWhenPublishedProjectionIsMissing()
+    {
+        using var factory = _factory.WithWebHostBuilder(_ => { });
+        using var client = factory.CreateClient();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+            var persistence = new BandLeaderboardPersistence(
+                dataSource,
+                Substitute.For<ILogger<BandLeaderboardPersistence>>());
+            persistence.UpsertBandEntries(
+                "missing_projection_song",
+                "Band_Duets",
+                [CreateBandEntry("missing:projection", "0:1", 999_999)]);
+        }
+
+        var response = await client.GetAsync("/api/rankings/bands/Band_Duets/missing%3Aprojection/songs?limit=20");
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
+        Assert.Equal("30", Assert.Single(response.Headers.GetValues("Retry-After")));
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("Published band song data unavailable", json.GetProperty("title").GetString());
+    }
+
+    [Fact]
+    public async Task Rankings_BandSongs_FailedCandidateStaysExactAndSuccessfulPublishAdvancesAtomically()
+    {
+        using var factory = _factory.WithWebHostBuilder(_ => { });
+        using var client = factory.CreateClient();
+        using var scope = factory.Services.CreateScope();
+        var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+        var projectionBuilder = scope.ServiceProvider.GetRequiredService<BandCurrentProjectionBuilder>();
+        await projectionBuilder.EnsureSchemaAsync();
+
+        const string bandType = "Band_Duets";
+        const string comboId = "Solo_Guitar+Solo_Bass";
+        const string targetTeam = "bandIsolationA:bandIsolationB";
+        const string competitorTeam = "bandIsolationC:bandIsolationD";
+        const string thirdTeam = "bandIsolationE:bandIsolationF";
+        const string firstSong = "band_isolation_song_1";
+        const string secondSong = "band_isolation_song_2";
+        var bandPersistence = new BandLeaderboardPersistence(
+            dataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+
+        bandPersistence.UpsertBandEntries(firstSong, bandType,
+        [
+            CreateBandEntry(targetTeam, "0:1", 900),
+            CreateBandEntry(competitorTeam, "0:1", 1_000),
+        ]);
+        bandPersistence.UpsertBandEntries(secondSong, bandType,
+        [
+            CreateBandEntry(targetTeam, "0:1", 1_200),
+            CreateBandEntry(competitorTeam, "0:1", 800),
+        ]);
+
+        var scopes = new[]
+        {
+            new BandCurrentProjectionScopeKey(firstSong, bandType, "overall", string.Empty),
+            new BandCurrentProjectionScopeKey(secondSong, bandType, "overall", string.Empty),
+            new BandCurrentProjectionScopeKey(firstSong, bandType, "combo", comboId),
+            new BandCurrentProjectionScopeKey(secondSong, bandType, "combo", comboId),
+        };
+        var initial = await projectionBuilder.RefreshScopesAsync(
+            scopes,
+            new BandCurrentProjectionRebuildOptions { SkipUnchangedScopes = false });
+        Assert.True(initial.PublishResult.Published);
+        Assert.Equal(scopes.Length, initial.PublishResult.PublishedScopes);
+
+        var encodedTeam = Uri.EscapeDataString(targetTeam);
+        var encodedCombo = Uri.EscapeDataString(comboId);
+        var overallSongsUrl = $"/api/rankings/bands/{bandType}/{encodedTeam}/songs?limit=1";
+        var overallRowsUrl = $"/api/rankings/bands/{bandType}/{encodedTeam}/song-rows";
+        var comboSongsUrl = $"{overallSongsUrl}&combo={encodedCombo}";
+        var comboRowsUrl = $"{overallRowsUrl}?combo={encodedCombo}";
+
+        var baselineOverallSongs = await GetRequiredBodyAsync(client, overallSongsUrl);
+        var baselineOverallRows = await GetRequiredBodyAsync(client, overallRowsUrl);
+        var baselineComboSongs = await GetRequiredBodyAsync(client, comboSongsUrl);
+        var baselineComboRows = await GetRequiredBodyAsync(client, comboRowsUrl);
+        AssertBandSongExtremesMatchRows(baselineOverallSongs, baselineOverallRows);
+        AssertBandSongExtremesMatchRows(baselineComboSongs, baselineComboRows);
+
+        using (var conn = dataSource.OpenConnection())
+        using (var mutate = conn.CreateCommand())
+        {
+            mutate.CommandText = """
+                UPDATE band_entries
+                SET score = CASE song_id
+                    WHEN @firstSong THEN 2_000
+                    WHEN @secondSong THEN 100
+                    ELSE score
+                END,
+                last_updated_at = now()
+                WHERE band_type = @bandType
+                  AND team_key = @targetTeam
+                  AND song_id = ANY(@songIds)
+                """;
+            mutate.Parameters.AddWithValue("firstSong", firstSong);
+            mutate.Parameters.AddWithValue("secondSong", secondSong);
+            mutate.Parameters.AddWithValue("bandType", bandType);
+            mutate.Parameters.AddWithValue("targetTeam", targetTeam);
+            mutate.Parameters.AddWithValue("songIds", new[] { firstSong, secondSong });
+            mutate.ExecuteNonQuery();
+        }
+        bandPersistence.UpsertBandEntries(firstSong, bandType, [CreateBandEntry(thirdTeam, "0:1", 1_500)]);
+        bandPersistence.UpsertBandEntries(secondSong, bandType, [CreateBandEntry(thirdTeam, "0:1", 1_500)]);
+
+        var failedCandidate = await projectionBuilder.RefreshScopesAsync(
+            scopes,
+            new BandCurrentProjectionRebuildOptions
+            {
+                PublishOnSuccess = false,
+                SkipUnchangedScopes = false,
+            });
+        var failedGeneration = Assert.Single(failedCandidate.Scopes.Select(static result => result.Generation).Distinct());
+        using (var conn = dataSource.OpenConnection())
+        using (var fail = conn.CreateCommand())
+        {
+            fail.CommandText = """
+                UPDATE band_current_projection_scope
+                SET status = 'failed',
+                    updated_at = now()
+                WHERE projection_generation = @generation
+                  AND song_id = ANY(@songIds)
+                """;
+            fail.Parameters.AddWithValue("generation", failedGeneration);
+            fail.Parameters.AddWithValue("songIds", new[] { firstSong, secondSong });
+            fail.ExecuteNonQuery();
+        }
+
+        var failedPublish = await projectionBuilder.TryPublishGenerationAsync(failedGeneration, scopes);
+        Assert.False(failedPublish.Published);
+        Assert.Equal(baselineOverallSongs.Raw, (await GetRequiredBodyAsync(client, overallSongsUrl)).Raw);
+        Assert.Equal(baselineOverallRows.Raw, (await GetRequiredBodyAsync(client, overallRowsUrl)).Raw);
+        Assert.Equal(baselineComboSongs.Raw, (await GetRequiredBodyAsync(client, comboSongsUrl)).Raw);
+        Assert.Equal(baselineComboRows.Raw, (await GetRequiredBodyAsync(client, comboRowsUrl)).Raw);
+
+        var successfulCandidate = await projectionBuilder.RefreshScopesAsync(
+            scopes,
+            new BandCurrentProjectionRebuildOptions { SkipUnchangedScopes = false });
+        var successfulGeneration = Assert.Single(successfulCandidate.Scopes.Select(static result => result.Generation).Distinct());
+        Assert.True(successfulCandidate.PublishResult.Published);
+        Assert.Equal(scopes.Length, successfulCandidate.PublishResult.PublishedScopes);
+
+        using (var conn = dataSource.OpenConnection())
+        using (var verify = conn.CreateCommand())
+        {
+            verify.CommandText = """
+                SELECT COUNT(*)::INT,
+                       COUNT(DISTINCT published_generation)::INT,
+                       MIN(published_generation)
+                FROM band_current_projection_scope
+                WHERE song_id = ANY(@songIds)
+                  AND band_type = @bandType
+                """;
+            verify.Parameters.AddWithValue("songIds", new[] { firstSong, secondSong });
+            verify.Parameters.AddWithValue("bandType", bandType);
+            using var reader = verify.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.Equal(scopes.Length, reader.GetInt32(0));
+            Assert.Equal(1, reader.GetInt32(1));
+            Assert.Equal(successfulGeneration, reader.GetInt64(2));
+        }
+
+        var publishedOverallSongs = await GetRequiredBodyAsync(client, overallSongsUrl);
+        var publishedOverallRows = await GetRequiredBodyAsync(client, overallRowsUrl);
+        var publishedComboSongs = await GetRequiredBodyAsync(client, comboSongsUrl);
+        var publishedComboRows = await GetRequiredBodyAsync(client, comboRowsUrl);
+
+        Assert.NotEqual(baselineOverallSongs.Raw, publishedOverallSongs.Raw);
+        Assert.NotEqual(baselineComboSongs.Raw, publishedComboSongs.Raw);
+        AssertBandSongExtremesMatchRows(publishedOverallSongs, publishedOverallRows);
+        AssertBandSongExtremesMatchRows(publishedComboSongs, publishedComboRows);
     }
 
     [Fact]

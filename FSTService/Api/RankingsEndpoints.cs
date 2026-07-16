@@ -925,7 +925,21 @@ public static partial class ApiEndpoints
             var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
             if (frozenMiss is not null) return frozenMiss;
 
-            var (best, worst) = metaDb.GetBandSongPerformanceExtremes(bandType, teamKey, comboValidation.ComboId, effectiveLimit);
+            var extremes = metaDb.GetBandSongPerformanceExtremes(
+                bandType,
+                teamKey,
+                comboValidation.ComboId,
+                effectiveLimit,
+                BandSongPerformanceReadMode.Published);
+            if (!extremes.IsAvailable)
+            {
+                httpContext.Response.Headers.CacheControl = "no-store";
+                httpContext.Response.Headers["Retry-After"] = "30";
+                return Results.Problem(
+                    title: "Published band song data unavailable",
+                    detail: "A stable published band song projection is not available for this request yet. Retry shortly.",
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
 
             return Results.Ok(new
             {
@@ -933,8 +947,8 @@ public static partial class ApiEndpoints
                 teamKey,
                 comboId = comboValidation.ComboId,
                 limit = effectiveLimit,
-                best,
-                worst,
+                extremes.Best,
+                extremes.Worst,
             });
         })
         .WithTags("Rankings")

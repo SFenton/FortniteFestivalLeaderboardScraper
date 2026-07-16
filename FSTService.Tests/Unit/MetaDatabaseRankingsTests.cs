@@ -33,6 +33,23 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         };
     }
 
+    private static string[] BandSongFingerprints(IEnumerable<BandSongPerformanceDto> performances) =>
+        performances
+            .Select(static performance => string.Join(
+                '|',
+                performance.SongId,
+                performance.ComboId,
+                performance.Rank,
+                performance.TotalEntries,
+                performance.Percentile.ToString("R", CultureInfo.InvariantCulture),
+                performance.Score,
+                performance.Accuracy,
+                performance.IsFullCombo,
+                performance.Stars,
+                performance.Season,
+                performance.EndTime))
+            .ToArray();
+
     private void SeedBandRankingsSource()
     {
         SeedBandRankingsSource(_fixture);
@@ -1645,8 +1662,14 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     {
         SeedBandRankingsSource();
 
-        var (best, worst) = Db.GetBandSongPerformanceExtremes("Band_Duets", "p1:p2", limit: 1);
+        var extremes = Db.GetBandSongPerformanceExtremes(
+            "Band_Duets",
+            "p1:p2",
+            limit: 1,
+            readMode: BandSongPerformanceReadMode.CurrentState);
+        var (best, worst) = extremes;
 
+        Assert.True(extremes.IsAvailable);
         var bestSong = Assert.Single(best);
         var worstSong = Assert.Single(worst);
         Assert.Equal("song_0", bestSong.SongId);
@@ -1723,7 +1746,9 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         Db.RebuildBandSongTeamRankings("Band_Duets");
         DeleteBandEntries("Band_Duets");
 
-        var (best, worst) = Db.GetBandSongPerformanceExtremes("Band_Duets", "p1:p2", limit: 1);
+        var extremes = Db.GetBandSongPerformanceExtremes("Band_Duets", "p1:p2", limit: 1);
+        var (best, worst) = extremes;
+        Assert.True(extremes.IsAvailable);
         var bestSong = Assert.Single(best);
         var worstSong = Assert.Single(worst);
         Assert.Equal("song_0", bestSong.SongId);
@@ -1737,17 +1762,78 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
-    public void GetBandSongPerformanceExtremes_IgnoresStaleCurrentProjectionAfterCurrentRankingsAdvance()
+    public void GetBandSongPerformanceExtremes_UsesPublishedProjectionWhenDerivedRowsAreStaleAndLiveRowsMutate()
     {
         SeedBandRankingsSource();
         Db.RebuildBandSongTeamRankings("Band_Duets");
+        RebuildCurrentBandProjectionScope("song_0", "Band_Duets", "overall", string.Empty);
+        RebuildCurrentBandProjectionScope("song_1", "Band_Duets", "overall", string.Empty);
+
+        var baseline = Db.GetBandSongPerformanceExtremes("Band_Duets", "p1:p2", limit: 1);
+        var publishedRows = Db.GetBandSongPerformances("Band_Duets", "p1:p2");
+
         MakeCurrentBandSongRankingRowsStale("Band_Duets", "p1:p2", bogusScore: 999_999);
+        UpdateBandEntryScore("song_0", "Band_Duets", "p1:p2", 1);
+        UpdateBandEntryScore("song_1", "Band_Duets", "p1:p2", 999_999);
         Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
 
-        var (best, worst) = Db.GetBandSongPerformanceExtremes("Band_Duets", "p1:p2", limit: 1);
+        var actual = Db.GetBandSongPerformanceExtremes("Band_Duets", "p1:p2", limit: 1);
+        var songRows = Db.GetBandSongPerformances("Band_Duets", "p1:p2");
 
-        Assert.NotEqual(999_999, Assert.Single(best).Score);
-        Assert.NotEqual(999_999, Assert.Single(worst).Score);
+        Assert.True(actual.IsAvailable);
+        Assert.Equal(BandSongFingerprints(baseline.Best), BandSongFingerprints(actual.Best));
+        Assert.Equal(BandSongFingerprints(baseline.Worst), BandSongFingerprints(actual.Worst));
+        Assert.Equal(BandSongFingerprints(publishedRows), BandSongFingerprints(songRows));
+        Assert.Equal(BandSongFingerprints([songRows[0]]), BandSongFingerprints(actual.Best));
+        Assert.Equal(BandSongFingerprints([songRows[^1]]), BandSongFingerprints(actual.Worst));
+        Assert.DoesNotContain(actual.Best.Concat(actual.Worst), performance => performance.Score == 999_999);
+    }
+
+    [Theory]
+    [InlineData(null, "overall", "")]
+    [InlineData("Solo_Guitar+Solo_Bass", "combo", "Solo_Guitar+Solo_Bass")]
+    public void GetBandSongPerformanceExtremes_IgnoresUnpublishedCandidateGeneration(
+        string? comboId,
+        string rankingScope,
+        string scopeComboId)
+    {
+        SeedBandRankingsSource();
+        RebuildCurrentBandProjectionScope("song_0", "Band_Duets", rankingScope, scopeComboId);
+        RebuildCurrentBandProjectionScope("song_1", "Band_Duets", rankingScope, scopeComboId);
+        var baseline = Db.GetBandSongPerformanceExtremes("Band_Duets", "p1:p2", comboId, limit: 1);
+
+        UpdateBandEntryScore("song_0", "Band_Duets", "p1:p2", 1);
+        UpdateBandEntryScore("song_1", "Band_Duets", "p1:p2", 999_999);
+        RebuildCurrentBandProjectionScope("song_0", "Band_Duets", rankingScope, scopeComboId, publishOnSuccess: false);
+        RebuildCurrentBandProjectionScope("song_1", "Band_Duets", rankingScope, scopeComboId, publishOnSuccess: false);
+
+        var actual = Db.GetBandSongPerformanceExtremes("Band_Duets", "p1:p2", comboId, limit: 1);
+
+        Assert.True(baseline.IsAvailable);
+        Assert.True(actual.IsAvailable);
+        Assert.Equal(BandSongFingerprints(baseline.Best), BandSongFingerprints(actual.Best));
+        Assert.Equal(BandSongFingerprints(baseline.Worst), BandSongFingerprints(actual.Worst));
+        Assert.DoesNotContain(actual.Best.Concat(actual.Worst), performance => performance.Score == 999_999);
+    }
+
+    [Fact]
+    public void GetBandSongPerformanceExtremes_MissingPublishedProjectionFailsClosed()
+    {
+        SeedBandRankingsSource();
+
+        var published = Db.GetBandSongPerformanceExtremes("Band_Duets", "p1:p2", limit: 1);
+        var current = Db.GetBandSongPerformanceExtremes(
+            "Band_Duets",
+            "p1:p2",
+            limit: 1,
+            readMode: BandSongPerformanceReadMode.CurrentState);
+
+        Assert.False(published.IsAvailable);
+        Assert.Empty(published.Best);
+        Assert.Empty(published.Worst);
+        Assert.True(current.IsAvailable);
+        Assert.NotEmpty(current.Best);
+        Assert.NotEmpty(current.Worst);
     }
 
     [Fact]

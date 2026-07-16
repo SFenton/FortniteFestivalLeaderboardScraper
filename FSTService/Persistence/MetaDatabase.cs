@@ -8134,33 +8134,68 @@ public sealed class MetaDatabase : IMetaDatabase
 
     public List<BandSongPerformanceDto> GetBandSongPerformances(string bandType, string teamKey, string? comboId = null)
     {
+        if (TryGetPublishedBandSongPerformances(bandType, teamKey, comboId, out var performances))
+            return performances;
+
+        return GetBandSongPerformancesLive(bandType, teamKey, comboId);
+    }
+
+    private bool TryGetPublishedBandSongPerformances(
+        string bandType,
+        string teamKey,
+        string? comboId,
+        out List<BandSongPerformanceDto> performances)
+    {
         if (TryGetBandSongPerformancesFromCurrentBandSongRanking(bandType, teamKey, comboId, out var currentBandSongPerformances))
         {
             if (currentBandSongPerformances.Count > 0)
-                return currentBandSongPerformances;
+            {
+                performances = currentBandSongPerformances;
+                return true;
+            }
 
             if (TryGetBandSongPerformancesFromCurrentProjection(bandType, teamKey, comboId, out var currentPerformances)
                 && currentPerformances.Count > 0)
-                return currentPerformances;
+            {
+                performances = currentPerformances;
+                return true;
+            }
 
-            return currentBandSongPerformances;
+            performances = currentBandSongPerformances;
+            return true;
         }
 
         if (TryGetBandSongPerformancesFromLegacyBandSongRanking(bandType, teamKey, comboId, out var legacyPerformances))
         {
             if (legacyPerformances.Count > 0)
-                return legacyPerformances;
+            {
+                performances = legacyPerformances;
+                return true;
+            }
 
             if (TryGetBandSongPerformancesFromCurrentProjection(bandType, teamKey, comboId, out var currentPerformances)
                 && currentPerformances.Count > 0)
-                return currentPerformances;
+            {
+                performances = currentPerformances;
+                return true;
+            }
 
-            return legacyPerformances;
+            performances = legacyPerformances;
+            return true;
         }
 
         if (TryGetBandSongPerformancesFromCurrentProjection(bandType, teamKey, comboId, out var projectedPerformances))
-            return projectedPerformances;
+        {
+            performances = projectedPerformances;
+            return true;
+        }
 
+        performances = [];
+        return false;
+    }
+
+    private List<BandSongPerformanceDto> GetBandSongPerformancesLive(string bandType, string teamKey, string? comboId)
+    {
         var rankingScope = string.IsNullOrWhiteSpace(comboId) ? "overall" : "combo";
         var normalizedComboId = comboId ?? string.Empty;
 
@@ -8438,185 +8473,55 @@ public sealed class MetaDatabase : IMetaDatabase
         return true;
     }
 
-    public (List<BandSongPerformanceDto> Best, List<BandSongPerformanceDto> Worst) GetBandSongPerformanceExtremes(string bandType, string teamKey, string? comboId = null, int limit = 5)
+    public BandSongPerformanceExtremesResult GetBandSongPerformanceExtremes(
+        string bandType,
+        string teamKey,
+        string? comboId = null,
+        int limit = 5,
+        BandSongPerformanceReadMode readMode = BandSongPerformanceReadMode.Published)
     {
-        if (TryGetBandSongPerformanceExtremesFromCurrentBandSongRanking(bandType, teamKey, comboId, limit, out var extremes))
-            return extremes;
+        if (TryGetPublishedBandSongPerformances(bandType, teamKey, comboId, out var performances))
+            return CreateBandSongPerformanceExtremes(performances, limit);
 
-        if (TryGetBandSongPerformanceExtremesFromLegacyBandSongRanking(bandType, teamKey, comboId, limit, out extremes))
-            return extremes;
+        if (readMode == BandSongPerformanceReadMode.CurrentState)
+        {
+            _log.LogInformation(
+                "Published band song projections are unavailable for band_type={BandType}, combo_id={ComboId}; explicitly reading current live state.",
+                bandType,
+                comboId ?? string.Empty);
+            return CreateBandSongPerformanceExtremes(GetBandSongPerformancesLive(bandType, teamKey, comboId), limit);
+        }
 
-        _log.LogInformation(
-            "Band song team ranking projection is unavailable for band_type={BandType}, combo_id={ComboId}; falling back to live computation.",
+        _log.LogWarning(
+            "Published band song projections are unavailable for band_type={BandType}, combo_id={ComboId}; public read failed closed.",
             bandType,
             comboId ?? string.Empty);
-
-        return GetBandSongPerformanceExtremesLive(bandType, teamKey, comboId, limit);
+        return new BandSongPerformanceExtremesResult(false, [], []);
     }
 
-    private bool TryGetBandSongPerformanceExtremesFromCurrentBandSongRanking(
-        string bandType,
-        string teamKey,
-        string? comboId,
-        int limit,
-        out (List<BandSongPerformanceDto> Best, List<BandSongPerformanceDto> Worst) extremes) =>
-        TryGetBandSongPerformanceExtremesFromBandSongRankingTable(
-            BandRankingStorageNames.GetCurrentBandSongRankingTable(bandType),
-            bandType,
-            teamKey,
-            comboId,
-            limit,
-            out extremes);
-
-    private bool TryGetBandSongPerformanceExtremesFromLegacyBandSongRanking(
-        string bandType,
-        string teamKey,
-        string? comboId,
-        int limit,
-        out (List<BandSongPerformanceDto> Best, List<BandSongPerformanceDto> Worst) extremes) =>
-        TryGetBandSongPerformanceExtremesFromBandSongRankingTable(
-            LegacyBandSongTeamRankingsTable,
-            bandType,
-            teamKey,
-            comboId,
-            limit,
-            out extremes);
-
-    private bool TryGetBandSongPerformanceExtremesFromBandSongRankingTable(
-        string tableName,
-        string bandType,
-        string teamKey,
-        string? comboId,
-        int limit,
-        out (List<BandSongPerformanceDto> Best, List<BandSongPerformanceDto> Worst) extremes)
+    private static BandSongPerformanceExtremesResult CreateBandSongPerformanceExtremes(
+        IReadOnlyCollection<BandSongPerformanceDto> performances,
+        int limit)
     {
-        var rankingScope = string.IsNullOrWhiteSpace(comboId) ? "overall" : "combo";
-        var normalizedComboId = comboId ?? string.Empty;
         var effectiveLimit = Math.Clamp(limit, 1, 20);
+        var best = performances
+            .OrderBy(static performance => performance.Percentile)
+            .ThenBy(static performance => performance.Rank)
+            .ThenByDescending(static performance => performance.Score)
+            .ThenBy(static performance => performance.SongId, StringComparer.Ordinal)
+            .Take(effectiveLimit)
+            .ToList();
+        var worst = performances.Count > effectiveLimit
+            ? performances
+                .OrderByDescending(static performance => performance.Percentile)
+                .ThenByDescending(static performance => performance.Rank)
+                .ThenBy(static performance => performance.Score)
+                .ThenBy(static performance => performance.SongId, StringComparer.Ordinal)
+                .Take(effectiveLimit)
+                .ToList()
+            : [];
 
-        var best = new List<BandSongPerformanceDto>();
-        var worst = new List<BandSongPerformanceDto>();
-        extremes = (best, worst);
-
-        using var conn = _ds.OpenConnection();
-
-        if (!TableExists(conn, null, tableName))
-            return false;
-
-        if (!IsBandSongRankingTableFreshForCurrentRankings(conn, tableName, bandType))
-            return false;
-
-        var quotedTable = BandRankingStorageNames.QuoteIdentifier(tableName);
-
-        using (var scopeCmd = conn.CreateCommand())
-        {
-            scopeCmd.CommandText = $@"
-                SELECT EXISTS (
-                    SELECT 1
-                    FROM {quotedTable}
-                    WHERE band_type = @bandType
-                      AND ranking_scope = @scope
-                      AND scope_combo_id = @comboId
-                );";
-            scopeCmd.Parameters.AddWithValue("bandType", bandType);
-            scopeCmd.Parameters.AddWithValue("scope", rankingScope);
-            scopeCmd.Parameters.AddWithValue("comboId", normalizedComboId);
-            if (scopeCmd.ExecuteScalar() is not bool hasScopeRows || !hasScopeRows)
-                return false;
-        }
-
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = $@"
-            WITH TeamRows AS MATERIALIZED (
-                SELECT
-                    song_id,
-                    NULLIF(entry_combo_id, '') AS combo_id,
-                    rank AS effective_rank,
-                    total_entries,
-                    percentile,
-                    score,
-                    accuracy,
-                    is_full_combo,
-                    stars,
-                    season,
-                    end_time
-                                FROM {quotedTable}
-                WHERE band_type = @bandType
-                  AND ranking_scope = @scope
-                  AND scope_combo_id = @comboId
-                  AND team_key = @teamKey
-            ),
-            TeamPerformanceCount AS (
-                SELECT COUNT(*)::INT AS total FROM TeamRows
-            )
-            SELECT *
-            FROM (
-                SELECT *
-                FROM (
-                    SELECT
-                        0 AS bucket_order,
-                        song_id,
-                        combo_id,
-                        effective_rank,
-                        total_entries,
-                        percentile,
-                        score,
-                        accuracy,
-                        is_full_combo,
-                        stars,
-                        season,
-                        end_time
-                    FROM TeamRows
-                    ORDER BY percentile ASC, effective_rank ASC, score DESC, song_id ASC
-                    LIMIT @limit
-                ) best
-                UNION ALL
-                SELECT *
-                FROM (
-                    SELECT
-                        1 AS bucket_order,
-                        song_id,
-                        combo_id,
-                        effective_rank,
-                        total_entries,
-                        percentile,
-                        score,
-                        accuracy,
-                        is_full_combo,
-                        stars,
-                        season,
-                        end_time
-                    FROM TeamRows
-                    WHERE (SELECT total FROM TeamPerformanceCount) > @limit
-                    ORDER BY percentile DESC, effective_rank DESC, score ASC, song_id ASC
-                    LIMIT @limit
-                ) worst
-            ) combined
-            ORDER BY bucket_order,
-                CASE WHEN bucket_order = 0 THEN percentile END ASC,
-                CASE WHEN bucket_order = 0 THEN effective_rank END ASC,
-                CASE WHEN bucket_order = 0 THEN score END DESC,
-                CASE WHEN bucket_order = 1 THEN percentile END DESC,
-                CASE WHEN bucket_order = 1 THEN effective_rank END DESC,
-                CASE WHEN bucket_order = 1 THEN score END ASC,
-                song_id ASC;";
-        cmd.Parameters.AddWithValue("bandType", bandType);
-        cmd.Parameters.AddWithValue("scope", rankingScope);
-        cmd.Parameters.AddWithValue("comboId", normalizedComboId);
-        cmd.Parameters.AddWithValue("teamKey", teamKey);
-        cmd.Parameters.AddWithValue("limit", effectiveLimit);
-
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-        {
-            var performance = ReadBandSongPerformance(reader, offset: 1);
-            if (reader.GetInt32(0) == 0)
-                best.Add(performance);
-            else
-                worst.Add(performance);
-        }
-
-        return true;
+        return new BandSongPerformanceExtremesResult(true, best, worst);
     }
 
     private bool IsBandSongRankingTableFreshForCurrentRankings(NpgsqlConnection conn, string tableName, string bandType)
@@ -8641,158 +8546,6 @@ public sealed class MetaDatabase : IMetaDatabase
             FROM freshness;";
         cmd.Parameters.AddWithValue("bandType", bandType);
         return Convert.ToBoolean(cmd.ExecuteScalar());
-    }
-
-    private (List<BandSongPerformanceDto> Best, List<BandSongPerformanceDto> Worst) GetBandSongPerformanceExtremesLive(string bandType, string teamKey, string? comboId = null, int limit = 5)
-    {
-        var rankingScope = string.IsNullOrWhiteSpace(comboId) ? "overall" : "combo";
-        var normalizedComboId = comboId ?? string.Empty;
-        var effectiveLimit = Math.Clamp(limit, 1, 20);
-
-        using var conn = _ds.OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = $@"
-            WITH TargetSongs AS (
-                SELECT DISTINCT be.song_id
-                FROM band_entries be
-                WHERE be.band_type = @bandType
-                  AND be.team_key = @teamKey
-                  AND NOT be.is_over_threshold
-                  AND (@scope = 'overall' OR {BandSongComboIdExpression} = @comboId)
-            ),
-            NormalizedEntries AS (
-                SELECT
-                    be.song_id,
-                    be.team_key,
-                    be.score,
-                    be.accuracy,
-                    be.is_full_combo,
-                    be.stars,
-                    be.season,
-                    COALESCE(be.end_time, '') AS end_time,
-                    {BandSongComboIdExpression} AS combo_id
-                FROM band_entries be
-                INNER JOIN TargetSongs ts ON ts.song_id = be.song_id
-                WHERE be.band_type = @bandType
-                  AND NOT be.is_over_threshold
-            ),
-            ScopedEntries AS (
-                SELECT *
-                FROM NormalizedEntries
-                WHERE @scope = 'overall' OR combo_id = @comboId
-            ),
-            ChosenEntries AS (
-                SELECT *
-                FROM (
-                    SELECT
-                        se.*,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY se.song_id, se.team_key
-                            ORDER BY se.score DESC, se.end_time ASC, se.combo_id ASC, se.team_key ASC
-                        ) AS choice_rank
-                    FROM ScopedEntries se
-                ) ranked
-                WHERE @scope = 'combo' OR choice_rank = 1
-            ),
-            RankedEntries AS (
-                SELECT
-                    ce.*,
-                    (COUNT(*) OVER (PARTITION BY ce.song_id))::INT AS total_entries,
-                    (ROW_NUMBER() OVER (
-                        PARTITION BY ce.song_id
-                        ORDER BY ce.score DESC, ce.end_time ASC, ce.team_key ASC
-                    ))::INT AS effective_rank
-                FROM ChosenEntries ce
-            ),
-            TeamPerformances AS MATERIALIZED (
-                SELECT
-                    song_id,
-                    NULLIF(combo_id, '') AS combo_id,
-                    effective_rank,
-                    total_entries,
-                    (effective_rank::DOUBLE PRECISION / NULLIF(total_entries, 0)) * 100.0 AS percentile,
-                    score,
-                    accuracy,
-                    is_full_combo,
-                    stars,
-                    season,
-                    NULLIF(end_time, '') AS end_time
-                FROM RankedEntries
-                WHERE team_key = @teamKey
-            ),
-            TeamPerformanceCount AS (
-                SELECT count(*)::INT AS total FROM TeamPerformances
-            )
-            SELECT *
-            FROM (
-                SELECT *
-                FROM (
-                    SELECT
-                        0 AS bucket_order,
-                        song_id,
-                        combo_id,
-                        effective_rank,
-                        total_entries,
-                        percentile,
-                        score,
-                        accuracy,
-                        is_full_combo,
-                        stars,
-                        season,
-                        end_time
-                    FROM TeamPerformances
-                    ORDER BY percentile ASC, effective_rank ASC, score DESC, song_id ASC
-                    LIMIT @limit
-                ) best
-                UNION ALL
-                SELECT *
-                FROM (
-                    SELECT
-                        1 AS bucket_order,
-                        song_id,
-                        combo_id,
-                        effective_rank,
-                        total_entries,
-                        percentile,
-                        score,
-                        accuracy,
-                        is_full_combo,
-                        stars,
-                        season,
-                        end_time
-                    FROM TeamPerformances
-                    WHERE (SELECT total FROM TeamPerformanceCount) > @limit
-                    ORDER BY percentile DESC, effective_rank DESC, score ASC, song_id ASC
-                    LIMIT @limit
-                ) worst
-            ) combined
-            ORDER BY bucket_order,
-                CASE WHEN bucket_order = 0 THEN percentile END ASC,
-                CASE WHEN bucket_order = 0 THEN effective_rank END ASC,
-                CASE WHEN bucket_order = 0 THEN score END DESC,
-                CASE WHEN bucket_order = 1 THEN percentile END DESC,
-                CASE WHEN bucket_order = 1 THEN effective_rank END DESC,
-                CASE WHEN bucket_order = 1 THEN score END ASC,
-                song_id ASC;";
-        cmd.Parameters.AddWithValue("bandType", bandType);
-        cmd.Parameters.AddWithValue("scope", rankingScope);
-        cmd.Parameters.AddWithValue("comboId", normalizedComboId);
-        cmd.Parameters.AddWithValue("teamKey", teamKey);
-        cmd.Parameters.AddWithValue("limit", effectiveLimit);
-
-        var best = new List<BandSongPerformanceDto>();
-        var worst = new List<BandSongPerformanceDto>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-        {
-            var performance = ReadBandSongPerformance(reader, offset: 1);
-            if (reader.GetInt32(0) == 0)
-                best.Add(performance);
-            else
-                worst.Add(performance);
-        }
-
-        return (best, worst);
     }
 
     private static BandSongPerformanceDto ReadBandSongPerformance(NpgsqlDataReader reader, int offset = 0) => new()

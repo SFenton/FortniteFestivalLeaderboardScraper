@@ -890,6 +890,26 @@ public sealed class BandSongPerformanceDto
     public string? EndTime { get; init; }
 }
 
+public enum BandSongPerformanceReadMode
+{
+    Published,
+    CurrentState,
+}
+
+public sealed record BandSongPerformanceExtremesResult(
+    bool IsAvailable,
+    List<BandSongPerformanceDto> Best,
+    List<BandSongPerformanceDto> Worst)
+{
+    public void Deconstruct(
+        out List<BandSongPerformanceDto> best,
+        out List<BandSongPerformanceDto> worst)
+    {
+        best = Best;
+        worst = Worst;
+    }
+}
+
 public sealed record BandSongTeamRankingRebuildMetrics(
     string BandType,
     int RowCount,

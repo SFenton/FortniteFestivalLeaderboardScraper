@@ -242,6 +242,15 @@ the indexed durable `band_members` membership set before applying the
 published-generation join. This preserves solo and band export contents while
 avoiding an unbounded cold scan of `current_band_leaderboard_entries`.
 
+Band best/worst-song public reads use the optional
+`band_song_team_rankings_current_band_*` projection only while it is fresh.
+When that projection is stale or disabled, extrema are derived from
+`current_band_leaderboard_entries` rows joined to each scope's
+`published_generation`, using the same ordering as the `/song-rows` response.
+The public endpoint returns `503` when no published projection exists instead
+of reading candidate `band_entries`; live current-state extrema require the
+explicit `BandSongPerformanceReadMode.CurrentState` selector.
+
 PG-1 does not enable physical snapshot write skipping or change max-page,
 deep-scrape, retry, or Epic request policy. WORKER-0A extends scope
 completeness with a per-scrape manifest containing the expected and received
@@ -309,7 +318,7 @@ Band-partitioned source/current families use `Band_Duets`, `Band_Trios`, and
 | `band_team_rankings_published_band_*` | Derived published ranking projection | Publication transaction | Public ranking source and rollback target |
 | `band_team_ranking_stats_current_band_*`, `band_team_ranking_stats_published_band_*` | Derived stats projection | Ranking rebuild/publication | Must promote with ranking rows |
 | `band_team_ranking_generation` | Publication/audit metadata | Ranking pipeline | Tracks durable generation and source scrape |
-| `band_song_team_rankings`, `band_song_team_rankings_current_band_*`, `band_song_team_ranking_state` | Derived song/team ranking projection | Ranking pipeline | Optional rebuild currently defaults off; stale fallback is explicit |
+| `band_song_team_rankings`, `band_song_team_rankings_current_band_*`, `band_song_team_ranking_state` | Derived song/team ranking projection | Ranking pipeline | Optional rebuild currently defaults off; stale public extrema fall back only to the published current-band projection |
 | `band_team_rank_history`, `band_team_rank_history_points`, `band_team_rank_history_latest`, `band_team_ranking_stats_history` | Legacy durable history/latest | `MetaDatabase`, history API | Retain until v2/read-source parity and restore prove removal |
 | `band_team_rank_history_points_v2` partitions | Durable compact public history | History worker through `MetaDatabase` | About 799 GiB; archive/prune only by exact range manifest |
 | `band_team_rank_history_latest_v2` partitions | Derived latest delta state | History worker | Rebuildable from retained history/current generation if proven |
