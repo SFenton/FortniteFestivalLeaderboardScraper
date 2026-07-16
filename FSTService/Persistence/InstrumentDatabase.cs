@@ -2128,17 +2128,48 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         using (var c = conn.CreateCommand())
         {
             c.Transaction = tx;
-            c.CommandText = @"
-                CREATE TEMP TABLE _latest_ranks ON COMMIT DROP AS
-                SELECT DISTINCT ON (account_id)
-                    account_id, adjusted_skill_rank, weighted_rank, fc_rate_rank,
-                    total_score_rank, max_score_percent_rank,
-                    adjusted_skill_rating, weighted_rating, fc_rate, total_score,
-                    max_score_percent, songs_played, coverage, full_combo_count,
-                    raw_max_score_percent, raw_weighted_rating, raw_skill_rating
-                FROM rank_history
-                WHERE instrument = @instrument
-                ORDER BY account_id, snapshot_date DESC";
+            c.CommandText = _rankHistoryHasPrimaryKey.Value
+                ? @"
+                    CREATE TEMP TABLE _latest_ranks ON COMMIT DROP AS
+                    SELECT
+                        history.account_id,
+                        history.adjusted_skill_rank,
+                        history.weighted_rank,
+                        history.fc_rate_rank,
+                        history.total_score_rank,
+                        history.max_score_percent_rank,
+                        history.adjusted_skill_rating,
+                        history.weighted_rating,
+                        history.fc_rate,
+                        history.total_score,
+                        history.max_score_percent,
+                        history.songs_played,
+                        history.coverage,
+                        history.full_combo_count,
+                        history.raw_max_score_percent,
+                        history.raw_weighted_rating,
+                        history.raw_skill_rating
+                    FROM rank_history history
+                    JOIN (
+                        SELECT account_id, MAX(snapshot_date) AS snapshot_date
+                        FROM rank_history
+                        WHERE instrument = @instrument
+                        GROUP BY account_id
+                    ) latest
+                      ON latest.account_id = history.account_id
+                     AND latest.snapshot_date = history.snapshot_date
+                    WHERE history.instrument = @instrument"
+                : @"
+                    CREATE TEMP TABLE _latest_ranks ON COMMIT DROP AS
+                    SELECT DISTINCT ON (account_id)
+                        account_id, adjusted_skill_rank, weighted_rank, fc_rate_rank,
+                        total_score_rank, max_score_percent_rank,
+                        adjusted_skill_rating, weighted_rating, fc_rate, total_score,
+                        max_score_percent, songs_played, coverage, full_combo_count,
+                        raw_max_score_percent, raw_weighted_rating, raw_skill_rating
+                    FROM rank_history
+                    WHERE instrument = @instrument
+                    ORDER BY account_id, snapshot_date DESC";
             c.Parameters.AddWithValue("instrument", Instrument);
             c.ExecuteNonQuery();
         }

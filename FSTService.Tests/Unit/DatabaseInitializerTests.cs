@@ -221,6 +221,148 @@ public class DatabaseInitializerTests : IDisposable
         Assert.True((bool)verify.ExecuteScalar()!);
     }
 
+    [Fact]
+    public async Task EnsureSchemaAsync_does_not_recreate_retired_rank_history_latest_index()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT to_regclass('public.ix_rh_latest') IS NULL";
+
+        Assert.True((bool)cmd.ExecuteScalar()!);
+    }
+
+    [Fact]
+    public async Task Retired_rank_history_latest_index_family_maintenance_sql_is_valid()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        foreach (var statement in new[]
+        {
+            """
+            CREATE INDEX CONCURRENTLY rank_history_solo_guitar_instrument_account_id_snapshot_dat_idx
+                ON public.rank_history_solo_guitar USING btree (instrument, account_id, snapshot_date DESC)
+            """,
+            """
+            CREATE INDEX CONCURRENTLY rank_history_solo_bass_instrument_account_id_snapshot_date_idx
+                ON public.rank_history_solo_bass USING btree (instrument, account_id, snapshot_date DESC)
+            """,
+            """
+            CREATE INDEX CONCURRENTLY rank_history_solo_drums_instrument_account_id_snapshot_date_idx
+                ON public.rank_history_solo_drums USING btree (instrument, account_id, snapshot_date DESC)
+            """,
+            """
+            CREATE INDEX CONCURRENTLY rank_history_solo_vocals_instrument_account_id_snapshot_dat_idx
+                ON public.rank_history_solo_vocals USING btree (instrument, account_id, snapshot_date DESC)
+            """,
+            """
+            CREATE INDEX CONCURRENTLY rank_history_pro_guitar_instrument_account_id_snapshot_date_idx
+                ON public.rank_history_pro_guitar USING btree (instrument, account_id, snapshot_date DESC)
+            """,
+            """
+            CREATE INDEX CONCURRENTLY rank_history_pro_bass_instrument_account_id_snapshot_date_idx
+                ON public.rank_history_pro_bass USING btree (instrument, account_id, snapshot_date DESC)
+            """,
+            """
+            CREATE INDEX CONCURRENTLY rank_history_pro_vocals_instrument_account_id_snapshot_date_idx
+                ON public.rank_history_pro_vocals USING btree (instrument, account_id, snapshot_date DESC)
+            """,
+            """
+            CREATE INDEX CONCURRENTLY rank_history_pro_cymbals_instrument_account_id_snapshot_dat_idx
+                ON public.rank_history_pro_cymbals USING btree (instrument, account_id, snapshot_date DESC)
+            """,
+            """
+            CREATE INDEX CONCURRENTLY rank_history_pro_drums_instrument_account_id_snapshot_date_idx
+                ON public.rank_history_pro_drums USING btree (instrument, account_id, snapshot_date DESC)
+            """,
+            """
+            CREATE INDEX ix_rh_latest
+                ON ONLY public.rank_history USING btree (instrument, account_id, snapshot_date DESC)
+            """,
+            """
+            ALTER INDEX public.ix_rh_latest
+                ATTACH PARTITION public.rank_history_solo_guitar_instrument_account_id_snapshot_dat_idx
+            """,
+            """
+            ALTER INDEX public.ix_rh_latest
+                ATTACH PARTITION public.rank_history_solo_bass_instrument_account_id_snapshot_date_idx
+            """,
+            """
+            ALTER INDEX public.ix_rh_latest
+                ATTACH PARTITION public.rank_history_solo_drums_instrument_account_id_snapshot_date_idx
+            """,
+            """
+            ALTER INDEX public.ix_rh_latest
+                ATTACH PARTITION public.rank_history_solo_vocals_instrument_account_id_snapshot_dat_idx
+            """,
+            """
+            ALTER INDEX public.ix_rh_latest
+                ATTACH PARTITION public.rank_history_pro_guitar_instrument_account_id_snapshot_date_idx
+            """,
+            """
+            ALTER INDEX public.ix_rh_latest
+                ATTACH PARTITION public.rank_history_pro_bass_instrument_account_id_snapshot_date_idx
+            """,
+            """
+            ALTER INDEX public.ix_rh_latest
+                ATTACH PARTITION public.rank_history_pro_vocals_instrument_account_id_snapshot_date_idx
+            """,
+            """
+            ALTER INDEX public.ix_rh_latest
+                ATTACH PARTITION public.rank_history_pro_cymbals_instrument_account_id_snapshot_dat_idx
+            """,
+            """
+            ALTER INDEX public.ix_rh_latest
+                ATTACH PARTITION public.rank_history_pro_drums_instrument_account_id_snapshot_date_idx
+            """,
+        })
+        {
+            using var maintenance = conn.CreateCommand();
+            maintenance.CommandText = statement;
+            maintenance.ExecuteNonQuery();
+        }
+
+        using (var verify = conn.CreateCommand())
+        {
+            verify.CommandText = """
+                SELECT COUNT(*)
+                FROM pg_index
+                WHERE (
+                    indexrelid = 'public.ix_rh_latest'::regclass
+                    OR indexrelid IN (
+                        SELECT inhrelid
+                        FROM pg_inherits
+                        WHERE inhparent = 'public.ix_rh_latest'::regclass)
+                )
+                  AND indisvalid
+                  AND indisready
+                """;
+
+            Assert.Equal(10L, (long)verify.ExecuteScalar()!);
+        }
+
+        using (var drop = conn.CreateCommand())
+        {
+            drop.CommandText = "DROP INDEX public.ix_rh_latest";
+            drop.ExecuteNonQuery();
+        }
+
+        using var removed = conn.CreateCommand();
+        removed.CommandText = """
+            SELECT
+                to_regclass('public.ix_rh_latest') IS NULL,
+                to_regclass('public.rank_history_solo_guitar_instrument_account_id_snapshot_dat_idx') IS NULL,
+                to_regclass('public.rank_history_pro_bass_instrument_account_id_snapshot_date_idx') IS NULL
+            """;
+        using var removedReader = removed.ExecuteReader();
+        Assert.True(removedReader.Read());
+        Assert.True(removedReader.GetBoolean(0));
+        Assert.True(removedReader.GetBoolean(1));
+        Assert.True(removedReader.GetBoolean(2));
+    }
+
     private sealed class NoOpHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(

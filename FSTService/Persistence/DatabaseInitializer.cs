@@ -581,10 +581,6 @@ public static class DatabaseInitializer
         CREATE TABLE IF NOT EXISTS rank_history_pro_cymbals    PARTITION OF rank_history FOR VALUES IN ('Solo_PeripheralCymbals');
         CREATE TABLE IF NOT EXISTS rank_history_pro_drums      PARTITION OF rank_history FOR VALUES IN ('Solo_PeripheralDrums');
 
-        -- Efficient change-detection: latest snapshot per (instrument, account)
-        CREATE INDEX IF NOT EXISTS ix_rh_latest
-            ON rank_history (instrument, account_id, snapshot_date DESC);
-
         CREATE TABLE IF NOT EXISTS rank_history_snapshot_stats (
             instrument              TEXT        NOT NULL,
             snapshot_date           DATE        NOT NULL,
