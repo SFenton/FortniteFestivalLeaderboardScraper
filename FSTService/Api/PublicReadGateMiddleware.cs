@@ -25,6 +25,17 @@ public sealed class PublicReadGateMiddleware
                 context.Response.Headers["X-FST-Public-Read-Freeze-Reason"] = state.Reason;
         }
 
+        if (gate.RequiresCachedReads && RequiresPublishedData(context.Request))
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            context.Response.Headers["Retry-After"] = "30";
+            await Results.Problem(
+                title: "Published data unavailable",
+                detail: "A failed candidate changed unversioned derived data. This route is held until a stable published response is available.",
+                statusCode: StatusCodes.Status503ServiceUnavailable).ExecuteAsync(context);
+            return;
+        }
+
         await _next(context);
     }
 
@@ -42,8 +53,36 @@ public sealed class PublicReadGateMiddleware
         if (string.IsNullOrEmpty(path))
             return false;
 
-        return IsRankDerivedNotificationRoute(path)
+        if (path.EndsWith("/track", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith("/sync-status", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (path.EndsWith("/notifications", StringComparison.OrdinalIgnoreCase))
+            return IsRankDerivedNotificationRoute(path);
+
+        if (IsPublishedSoloLeaderboardPath(path))
+            return false;
+
+        return path.StartsWith("/api/leaderboard/", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/leaderboard-rank-offsets/", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/rankings/", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/player/", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/bands/", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/songs/", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/firstseen", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/status", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/leaderboard-population", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsPublishedSoloLeaderboardPath(string path)
+    {
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.Length == 4
+            && string.Equals(segments[0], "api", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(segments[1], "leaderboard", StringComparison.OrdinalIgnoreCase)
+            && segments[3].StartsWith("Solo_", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsRankDerivedNotificationRoute(string path)

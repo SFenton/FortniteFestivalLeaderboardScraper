@@ -32,6 +32,18 @@ public sealed class PublicApiResponseCacheMiddleware
             }
 
             context.Response.Headers["X-FST-Public-Cache"] = "miss";
+            if (gate.RequiresCachedReads &&
+                PublicReadGateMiddleware.RequiresPublishedData(context.Request))
+            {
+                context.Response.Headers.CacheControl = "no-store";
+                context.Response.Headers["Retry-After"] = "30";
+                await Results.Problem(
+                    title: "Published data unavailable",
+                    detail: "A failed candidate changed unversioned derived data. This route is held until a stable published response is available.",
+                    statusCode: StatusCodes.Status503ServiceUnavailable).ExecuteAsync(context);
+                return;
+            }
+
             await _next(context);
             return;
         }

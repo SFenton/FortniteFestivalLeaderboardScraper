@@ -24,6 +24,7 @@ public interface IMetaDatabase : IDisposable
         int? expectedPublishedScopeCount = null);
     void SetPublicReadFreeze(bool frozen, long? scrapeId = null, string? reason = null);
     PublicReadFreezeState GetPublicReadFreezeState();
+    PublicReadFreezeState GetFailedCandidateReadIsolationState();
     bool IsBandCurrentProjectionGloballyPublished();
     bool ShouldShowLeaderboardEntryTotals();
     void RecordScrapePhaseTiming(ScrapePhaseTimingRecord timing);

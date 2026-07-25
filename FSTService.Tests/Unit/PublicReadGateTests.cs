@@ -72,6 +72,33 @@ public class PublicReadGateTests
     }
 
     [Fact]
+    public void MetaDatabase_FailedCandidateReadIsolation_PersistsUntilLaterPublication()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var metaDb = fixture.Db;
+        var publishedId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(publishedId, 1, 1, 1, 1);
+        metaDb.PublishScrapeRun(publishedId, promoteCachedResponses: false);
+
+        var failedId = metaDb.StartScrapeRun();
+        metaDb.FailScrapeRun(
+            failedId,
+            MetaDatabase.FailedCandidateReadIsolationFailurePhase,
+            "derived state changed before the candidate was abandoned");
+
+        var isolation = metaDb.GetFailedCandidateReadIsolationState();
+        Assert.True(isolation.IsFrozen);
+        Assert.Equal(failedId, isolation.ScrapeId);
+        Assert.Equal(MetaDatabase.FailedCandidateReadIsolationReason, isolation.Reason);
+
+        var nextPublishedId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(nextPublishedId, 1, 1, 1, 1);
+        metaDb.PublishScrapeRun(nextPublishedId, promoteCachedResponses: false);
+
+        Assert.False(metaDb.GetFailedCandidateReadIsolationState().IsFrozen);
+    }
+
+    [Fact]
     public void ResponseCache_AllowsCacheMissesDuringPublicReadFreeze()
     {
         var metaDb = Substitute.For<IMetaDatabase>();
@@ -99,6 +126,22 @@ public class PublicReadGateTests
     }
 
     [Fact]
+    public void ResponseCache_RequiresCachedReadsForFailedCandidateIsolation()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(PublicReadFreezeState.NotFrozen);
+        metaDb.GetFailedCandidateReadIsolationState().Returns(
+            new PublicReadFreezeState(true, DateTime.UtcNow, 1263, MetaDatabase.FailedCandidateReadIsolationReason));
+        var gate = new PublicReadGateService(metaDb, NullLogger<PublicReadGateService>.Instance);
+
+        using var cache = new ResponseCacheService(TimeSpan.FromMinutes(5), gate);
+
+        Assert.True(cache.IsFrozen);
+        Assert.True(cache.RequiresCachedReads);
+        Assert.NotNull(CacheHelper.ServeUnavailableIfFrozen(new DefaultHttpContext(), cache));
+    }
+
+    [Fact]
     public void PublicReadGate_CachesUntilInvalidated()
     {
         var metaDb = Substitute.For<IMetaDatabase>();
@@ -116,19 +159,33 @@ public class PublicReadGateTests
         metaDb.Received(2).GetPublicReadFreezeState();
     }
 
+    [Fact]
+    public void PublicReadGate_FailsDerivedReadsClosedWhenSafetyStateCannotBeRead()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(_ => throw new InvalidOperationException("database unavailable"));
+        var gate = new PublicReadGateService(metaDb, NullLogger<PublicReadGateService>.Instance);
+
+        Assert.True(gate.IsFrozen);
+        Assert.True(gate.RequiresCachedReads);
+        Assert.Equal("read-safety-state-unavailable", gate.GetState().Reason);
+    }
+
     [Theory]
     [InlineData("/api/player/account/notifications", false)]
     [InlineData("/api/rankings/bands/Band_Duets/team/notifications", true)]
     [InlineData("/api/bands/band-id/notifications", true)]
-    [InlineData("/api/player/account/export", false)]
-    [InlineData("/api/bands/Band_Duets/team/export", false)]
+    [InlineData("/api/player/account/export", true)]
+    [InlineData("/api/bands/Band_Duets/team/export", true)]
     [InlineData("/api/leaderboard-population", true)]
-    [InlineData("/api/rankings/Solo_Guitar", false)]
+    [InlineData("/api/rankings/Solo_Guitar", true)]
     [InlineData("/api/leaderboard/song/Solo_Guitar", false)]
-    [InlineData("/api/player/account/stats", false)]
-    [InlineData("/api/bands/search", false)]
+    [InlineData("/api/leaderboard/song/bands/all", true)]
+    [InlineData("/api/player/account/stats", true)]
+    [InlineData("/api/bands/search", true)]
     [InlineData("/api/songs", false)]
-    [InlineData("/api/status", false)]
+    [InlineData("/api/songs/member-score-filter", true)]
+    [InlineData("/api/status", true)]
     [InlineData("/api/progress", false)]
     [InlineData("/api/player/account/track", false)]
     [InlineData("/api/player/account/sync-status", false)]
@@ -213,6 +270,63 @@ public class PublicReadGateTests
         Assert.Equal(StatusCodes.Status204NoContent, context.Response.StatusCode);
         Assert.Equal("published", context.Response.Headers["X-FST-Public-Read-Mode"]);
         Assert.Equal("publish", context.Response.Headers["X-FST-Public-Read-Freeze-Reason"]);
+    }
+
+    [Fact]
+    public async Task PublicReadGateMiddleware_FailsClosedForUncachedFailedCandidateDerivedRoute()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(PublicReadFreezeState.NotFrozen);
+        metaDb.GetFailedCandidateReadIsolationState().Returns(
+            new PublicReadFreezeState(true, DateTime.UtcNow, 1263, MetaDatabase.FailedCandidateReadIsolationReason));
+        var gate = new PublicReadGateService(metaDb, NullLogger<PublicReadGateService>.Instance);
+        var nextCalled = false;
+        var middleware = new PublicReadGateMiddleware(context =>
+        {
+            nextCalled = true;
+            return Task.CompletedTask;
+        });
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/player/account/export";
+        context.RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context, gate);
+
+        Assert.False(nextCalled);
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, context.Response.StatusCode);
+        Assert.Equal("published", context.Response.Headers["X-FST-Public-Read-Mode"]);
+        Assert.Equal(
+            MetaDatabase.FailedCandidateReadIsolationReason,
+            context.Response.Headers["X-FST-Public-Read-Freeze-Reason"]);
+    }
+
+    [Fact]
+    public async Task PublicReadGateMiddleware_AllowsMappedSoloLeaderboardDuringFailedCandidateIsolation()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(PublicReadFreezeState.NotFrozen);
+        metaDb.GetFailedCandidateReadIsolationState().Returns(
+            new PublicReadFreezeState(true, DateTime.UtcNow, 1263, MetaDatabase.FailedCandidateReadIsolationReason));
+        var gate = new PublicReadGateService(metaDb, NullLogger<PublicReadGateService>.Instance);
+        var nextCalled = false;
+        var middleware = new PublicReadGateMiddleware(context =>
+        {
+            nextCalled = true;
+            context.Response.StatusCode = StatusCodes.Status204NoContent;
+            return Task.CompletedTask;
+        });
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/leaderboard/song-1/Solo_Guitar";
+        context.RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context, gate);
+
+        Assert.True(nextCalled);
+        Assert.Equal(StatusCodes.Status204NoContent, context.Response.StatusCode);
     }
 
     [Theory]
@@ -370,5 +484,33 @@ public class PublicReadGateTests
         Assert.Equal("miss", context.Response.Headers["X-FST-Public-Cache"]);
         Assert.Equal("{\"computed\":true}", await reader.ReadToEndAsync());
         metaDb.DidNotReceive().BulkSetCachedResponses(Arg.Any<IEnumerable<(string Key, byte[] Json, string ETag)>>());
+    }
+
+    [Fact]
+    public async Task PublicApiResponseCacheMiddleware_FailsClosedOnFailedCandidateCacheMiss()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(PublicReadFreezeState.NotFrozen);
+        metaDb.GetFailedCandidateReadIsolationState().Returns(
+            new PublicReadFreezeState(true, DateTime.UtcNow, 1263, MetaDatabase.FailedCandidateReadIsolationReason));
+        metaDb.GetCachedResponse(Arg.Any<string>()).Returns(((byte[] Json, string ETag)?)null);
+        var gate = new PublicReadGateService(metaDb, NullLogger<PublicReadGateService>.Instance);
+        var nextCalled = false;
+        var middleware = new PublicApiResponseCacheMiddleware(context =>
+        {
+            nextCalled = true;
+            return Task.CompletedTask;
+        }, NullLogger<PublicApiResponseCacheMiddleware>.Instance);
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/rankings/Solo_Guitar/account-1";
+        context.RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context, metaDb, gate);
+
+        Assert.False(nextCalled);
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, context.Response.StatusCode);
+        Assert.Equal("miss", context.Response.Headers["X-FST-Public-Cache"]);
     }
 }

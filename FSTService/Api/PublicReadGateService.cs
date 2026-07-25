@@ -9,6 +9,7 @@ public sealed class PublicReadGateService
     private readonly ILogger<PublicReadGateService> _log;
     private readonly object _lock = new();
     private PublicReadFreezeState _cachedState = PublicReadFreezeState.NotFrozen;
+    private bool _cachedRequiresCachedReads;
     private DateTime _cachedAtUtc = DateTime.MinValue;
 
     public PublicReadGateService(IMetaDatabase metaDb, ILogger<PublicReadGateService> log)
@@ -19,9 +20,17 @@ public sealed class PublicReadGateService
 
     public bool IsFrozen => GetState().IsFrozen;
 
-    // Public-read freezes keep cache entries fresh and mark responses as published-mode,
-    // but public GET/export endpoints must remain available on cold cache misses.
-    public bool RequiresCachedReads => false;
+    // Normal scrape freezes allow published-resolver cold misses. A failed candidate
+    // that changed unversioned derived data requires cached or explicitly mapped reads.
+    public bool RequiresCachedReads
+    {
+        get
+        {
+            _ = GetState();
+            lock (_lock)
+                return _cachedRequiresCachedReads;
+        }
+    }
 
     public PublicReadFreezeState GetState()
     {
@@ -33,12 +42,22 @@ public sealed class PublicReadGateService
 
             try
             {
-                _cachedState = _metaDb.GetPublicReadFreezeState();
+                var freezeState = _metaDb.GetPublicReadFreezeState();
+                var failedCandidateIsolation =
+                    _metaDb.GetFailedCandidateReadIsolationState()
+                    ?? PublicReadFreezeState.NotFrozen;
+                _cachedRequiresCachedReads = failedCandidateIsolation.IsFrozen;
+                _cachedState = freezeState.IsFrozen ? freezeState : failedCandidateIsolation;
             }
             catch (Exception ex)
             {
-                _log.LogWarning(ex, "Unable to read public-read freeze state; allowing request to continue.");
-                _cachedState = PublicReadFreezeState.NotFrozen;
+                _log.LogWarning(ex, "Unable to read public-read safety state; failing derived reads closed.");
+                _cachedState = new PublicReadFreezeState(
+                    true,
+                    now,
+                    null,
+                    "read-safety-state-unavailable");
+                _cachedRequiresCachedReads = true;
             }
 
             _cachedAtUtc = now;
@@ -49,6 +68,9 @@ public sealed class PublicReadGateService
     public void Invalidate()
     {
         lock (_lock)
+        {
             _cachedAtUtc = DateTime.MinValue;
+            _cachedRequiresCachedReads = false;
+        }
     }
 }

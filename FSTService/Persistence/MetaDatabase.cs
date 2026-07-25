@@ -24,6 +24,8 @@ public sealed class MetaDatabase : IMetaDatabase
     internal const string WebBandTrackerDeviceId = "web-band-tracker";
     internal const string LegacyLeaderboardStagingTable = "leaderboard_staging";
     internal const string LeaderboardStagingTable = "leaderboard_staging_v2";
+    internal const string FailedCandidateReadIsolationFailurePhase = "capacity_watchdog_abandoned";
+    internal const string FailedCandidateReadIsolationReason = "failed-candidate";
     private const string LeaderboardStagingReadColumns = "scrape_id, song_id, instrument, page_num, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, staged_at";
 
     public MetaDatabase(NpgsqlDataSource dataSource, ILogger<MetaDatabase> log, BandRankHistoryOptions? bandRankHistoryOptions = null)
@@ -575,6 +577,45 @@ public sealed class MetaDatabase : IMetaDatabase
                 r.IsDBNull(1) ? null : r.GetDateTime(1),
                 r.IsDBNull(2) ? null : r.GetInt32(2),
                 r.IsDBNull(3) ? null : r.GetString(3));
+        }
+        catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn)
+        {
+            return PublicReadFreezeState.NotFrozen;
+        }
+    }
+
+    public PublicReadFreezeState GetFailedCandidateReadIsolationState()
+    {
+        try
+        {
+            using var conn = _ds.OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                WITH publication AS (
+                    SELECT published_scrape_id
+                    FROM scrape_publication_state
+                    WHERE id = TRUE
+                )
+                SELECT scrape.failed_at, scrape.id
+                FROM scrape_log scrape
+                CROSS JOIN publication
+                WHERE scrape.id > COALESCE(publication.published_scrape_id, 0)
+                  AND scrape.status = 'failed'
+                  AND scrape.failure_phase = @failurePhase
+                ORDER BY scrape.id DESC
+                LIMIT 1
+                """;
+            cmd.Parameters.AddWithValue("failurePhase", FailedCandidateReadIsolationFailurePhase);
+
+            using var reader = cmd.ExecuteReader();
+            if (!reader.Read())
+                return PublicReadFreezeState.NotFrozen;
+
+            return new PublicReadFreezeState(
+                true,
+                reader.IsDBNull(0) ? null : reader.GetDateTime(0),
+                reader.GetInt64(1),
+                FailedCandidateReadIsolationReason);
         }
         catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn)
         {
