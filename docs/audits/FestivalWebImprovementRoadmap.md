@@ -475,6 +475,74 @@ Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/web-3.2-shell-lazy-20260725T205821Z/`
 
+### WEB-3.3 Manual asset waterfall optimization
+
+**Decision:** Accepted and deployed.
+
+- The Manual contains `12` top-level sections, `36` subsections, and `48`
+  carousels. The baseline shipped `144` PNG captures totaling `59,985,540`
+  bytes; its `48` mobile-first images totaled `9,508,688` bytes and decoded to
+  `63,198,720` RGBA bytes. Cold-cache browser interception exposed the full
+  eager/repeated waterfall at up to `144` requests and `28,569,264` transferred
+  bytes, with `47/48` loaded images outside the viewport.
+- Each carousel now keeps a stable shell in document order but mounts its
+  image, controls, and state only after remaining within a `400 px`
+  near-viewport margin. A short dwell prevents fast/smooth scrolling from
+  mounting transient sections. Quick-link intent mounts the destination
+  carousel immediately and suppresses intermediate observations, so jumping
+  to Settings requests only the destination and adjacent near assets rather
+  than the intervening Manual.
+- Mounted carousels remain mounted, preserving selected viewport, swipe,
+  previous/next buttons, translated labels/alt text, deep-link geometry, and
+  responsive behavior. The visible first carousel stays eager; later near
+  carousels use native lazy loading and asynchronous decode. Explicit source
+  dimensions keep the existing `16:10` frame stable.
+- The asset pipeline generates `376` content-addressed WebP variants totaling
+  `16,433,530` bytes from `141` canonical PNG fallbacks. Mobile captures use
+  `240/390w`, compact captures `480/768/1024w`, and wide captures
+  `480/800/1440w`. Sample fidelity measured SSIM
+  `0.993201-0.998104` and PSNR `46.49-51.74 dB`.
+- Three byte-identical `song-detail-cards` PNGs now alias
+  `song-detail-overview`, removing `647,323` source bytes. The duplicate
+  maskable PWA icon now uses the existing `512 px` icon, removing another
+  `121,965` bytes. Nginx preserves all old URLs through internal aliases and
+  now serves WebP/AVIF with immutable caching, so deployed or installed stale
+  clients keep working.
+- Matched p95 desktop/mobile image transfer moved
+  `28,569,264 -> 133,482/72,818` bytes (`-99.53%/-99.75%`), requests
+  `144 -> 4`, decoded pixels `63,198,720 -> 1,082,000/172,800`
+  (`-98.29%/-99.73%`), and DOM elements `1,403/1,202 -> 998/797`
+  (`-28.87%/-33.69%`). Heap moved `16.1 -> 15.2/11.2 MB`.
+- Desktop heading/first-image p95 improved `898.8/910.9 ->
+  892.6/906.3 ms`; mobile moved `864.7/874.9 -> 875.1/883.7 ms`
+  (`+1.20%/+1.01%`). Carousel-ready p95 improved
+  `32.23 -> 7.75 ms` desktop and `29.79 -> 10.07 ms` mobile. CLS was
+  unchanged. Final slow-4G-style initial image transfer was `75,334` bytes
+  desktop and `40,358` mobile.
+- Focused Vitest passed `17/17`; the applicable desktop/mobile Playwright
+  scenarios passed `2/2`. TypeScript, ESLint (`0` errors; repository baseline
+  warnings only), Stylelint, encoding, production build, license checks,
+  generated-asset checks, bundle budgets, and tightened Manual route budgets
+  passed. Final route captures had `14` requests, `0` long tasks, `0` console
+  errors, and `0` server errors.
+- Production runs `festivalweb:web33-b1ca6606`
+  (`sha256:1aa147afdbbf54ad09abbe1e7ec54b4e0a333c9b5fed62e8337162055b91b5cb`).
+  FestivalWeb, FSTService, and PostgreSQL are healthy; published scrape `1236`
+  remains unfrozen and the worker remains offline. The App Manual feature flag
+  remains fail-closed; browser validation enabled only the response in its
+  isolated context.
+- A live WEB-3.3 tab survived the final deployment: the missing old chunk set
+  the stale-reload marker, reloaded `index-D9N8vVJj.js`, preserved
+  `#/manual`, and had zero page errors. The one console error was the expected
+  missing old chunk that triggered recovery. Rollback is
+  `festivalweb:web32-6c9c4040`.
+- Implementation commits `b08b9150`, `bc71da99`, and `b1ca6606` are pushed.
+  WEB-4.1 is the next web roadmap task.
+
+Evidence:
+
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/web-3.3-manual-waterfall-20260725T221635Z/`
+
 Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/web-0.2/`
@@ -934,11 +1002,21 @@ decomposition remain owned by their existing tasks.
 
 ### WEB-3.3 - Fix Manual asset waterfall
 
+**Decision:** Accepted and deployed on 2026-07-25.
+
+**Next dependency:** WEB-4.1 can replace route-specific FAB assembly with a
+registry. Manual quick links now avoid loading intermediate sections during
+their smooth scroll.
+
 **Evidence**
 
-- `ManualPage.tsx:262-300,351-390` mounts all sections/carousels and their first
-  images.
-- The first 48 mobile screenshots total about 9.07 MiB.
+- Initial image transfer is `133,482` bytes desktop and `72,818` mobile at
+  p95, below the `1 MiB` gate.
+- Only the visible and adjacent near carousel images load initially. Quick-link
+  navigation mounts the target and adjacent near assets without loading the
+  intervening Manual.
+- Responsive content-addressed WebP sources retain canonical PNG fallbacks,
+  explicit dimensions, translated alt text, and stale-client URL aliases.
 
 **Work**
 
@@ -948,7 +1026,9 @@ decomposition remain owned by their existing tasks.
 
 **Acceptance**
 
-- Initial Manual navigation transfers less than 1 MiB of images.
+- Initial Manual navigation transfers less than `1 MiB` of images, with zero
+  browser errors, unchanged CLS, and ready/interaction p95 within the `10%`
+  regression gate.
 
 ## Phase WEB-4: Decompose shell, contexts, and large components
 
