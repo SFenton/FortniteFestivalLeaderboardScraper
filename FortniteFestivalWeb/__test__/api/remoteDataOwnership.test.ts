@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import {
   leaderboardCache,
   songDetailCache,
@@ -124,6 +124,36 @@ describe('remote data ownership', () => {
 
     await vi.advanceTimersByTimeAsync(REMOTE_DATA_GC_TIME_MS + 1);
     expect(client.getQueryData(key)).toBeUndefined();
+    client.clear();
+  });
+
+  it('keeps a fail-closed error in React Query without refetching on every remount', async () => {
+    const client = createClient();
+    const queryFn = vi.fn(async () => {
+      throw new Error('API 503: Service Unavailable');
+    });
+    const options = {
+      queryKey: queryKeys.rivalsList('profile-a', 'Solo_Guitar'),
+      queryFn,
+      ...remoteDataQueryPolicy,
+    };
+    const firstObserver = new QueryObserver(client, options);
+    let unsubscribeFirst = () => {};
+    await new Promise<void>(resolve => {
+      unsubscribeFirst = firstObserver.subscribe(result => {
+        if (result.isError) resolve();
+      });
+    });
+    unsubscribeFirst();
+    expect(queryFn).toHaveBeenCalledTimes(1);
+
+    const secondObserver = new QueryObserver(client, options);
+    const unsubscribeSecond = secondObserver.subscribe(() => {});
+    await Promise.resolve();
+    expect(secondObserver.getCurrentResult().isError).toBe(true);
+    expect(queryFn).toHaveBeenCalledTimes(1);
+
+    unsubscribeSecond();
     client.clear();
   });
 

@@ -9,6 +9,7 @@ export const remoteDataQueryPolicy = {
   staleTime: REMOTE_DATA_STALE_TIME_MS,
   gcTime: REMOTE_DATA_GC_TIME_MS,
   retry: false,
+  retryOnMount: false,
   refetchOnWindowFocus: false,
 } as const;
 
