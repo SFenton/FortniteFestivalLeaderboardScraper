@@ -375,6 +375,30 @@ and old cache artifacts.
   best/worst songs published-read parity gap still blocks the next live A/B.
   Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post1262-capacity-recovery-20260716T021005Z`.
+- Scrape `1263` later reached rankings after a complete strict network/writer
+  pass. The capacity watchdog stopped its recovery worker at
+  `14,871,388,160` free bytes; Docker exit `137` was not an OOM, and the
+  forced stop left the scrape/freeze/worker ledgers stale until the
+  2026-07-25 incident transaction marked it failed and restored published
+  `1236`.
+- Unfreezing exposed a second correctness boundary: current player ranking,
+  rank-history, and export fingerprints contained failed-candidate derived
+  writes even though mapped solo leaderboard and published band ranking
+  fingerprints remained exact. Commits `03edc85b` and `633e7583` therefore
+  add a durable failed-candidate isolation marker. With the database ledger
+  unfrozen, mapped solo leaderboards remain available; unversioned derived
+  cache misses and exports fail closed until a later successful publication
+  advances beyond the abandoned candidate.
+- Production now runs
+  `fstservice:failed-candidate-isolation-633e7583`. `/readyz`, festivalweb,
+  PostgreSQL, `/api/service-info`, and the mapped published leaderboard are
+  healthy. `/api/service-info` reports `1263` failed, worker offline, and
+  `publicReadsFrozen=false`; isolated routes carry published-read headers or
+  return stable `503`. Focused publication/status/band tests pass `68/68`;
+  the full service run passed `2,058/2,063`, with four deterministic unrelated
+  baseline failures and one load-sensitive failure that passed alone.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/stale-scrape-1263-recovery-20260725T153938Z`.
 
 ### SERVICE-0.3 - Protect or remove token-backed diagnostics
 

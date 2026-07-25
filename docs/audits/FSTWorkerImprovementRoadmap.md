@@ -517,6 +517,38 @@ until replay and live shadow parity pass.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post1262-capacity-recovery-20260716T021005Z`.
 
+**Scrape 1263 stale-state recovery - publication safe, capacity hard-blocked
+2026-07-25**
+
+- Scrape `1263` completed `8,208/8,208` manifests with zero writer or
+  publication-critical failures, then resumed selected post-process phases.
+  The disk watchdog stopped the worker during rank-history snapshots when free
+  space fell to `14,871,388,160` bytes. Docker reported exit `137` with
+  `OOMKilled=false`; the stop grace period expired before failure, unfreeze,
+  and offline-ledger finalization completed.
+- A guarded transaction marked `1263` failed at
+  `capacity_watchdog_abandoned`, preserved published `1236`, proved that
+  `1263` owns zero published-source rows, cleared the database freeze, and
+  reconciled the worker to offline with no current operation. Exact reverse
+  SQL was transactionally restored and reapplied before the recovery was
+  accepted.
+- Service image `fstservice:failed-candidate-isolation-633e7583` contains
+  `7558387f`, `21bd5f56`, and the failed-candidate derived-read isolation
+  repair. The publication ledger is unfrozen on `1236`; mapped solo
+  leaderboards remain byte-exact HTTP `200`, while unversioned
+  ranking/history/export and band-song cache misses return stable HTTP `503`
+  instead of exposing `1263`. No live `band_entries` fallback was observed.
+- Final free space is `31,385,374,720` bytes. The measured
+  `45,148,225,536`-byte scrape gate is short by `13,762,850,816` bytes.
+  Same-drive spool/curl scratch is empty, retained evidence/path data cannot
+  close the gap, the reclaim guard blocks below the emergency window, and
+  every sufficiently large remaining index has a proven production owner.
+- Recreating `pia-gluetun-8` restored the worker compose guard to `25/25`
+  healthy unique PIA exits. Capacity is the remaining hard gate; `fstworker`
+  stays exited with restart `no`, and no WORKER-0A run may resume.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/stale-scrape-1263-recovery-20260725T153938Z`.
+
 ### WORKER-0.5 - Separate solo and band completion
 
 A band timeout must not mark `LeaderboardScrapeCompleted=true`. A task still

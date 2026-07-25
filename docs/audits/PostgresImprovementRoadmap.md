@@ -808,6 +808,47 @@ move to PG-7 after backup/restore and live-scrape parity.
   not run a scrape. Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post1262-capacity-recovery-20260716T021005Z`.
 
+### PG-3 scrape-1263 stale recovery and renewed capacity hold - mixed 2026-07-25
+
+- Scrape `1263` completed all `8,208` expected manifests and entered
+  rankings. Its recovery worker was stopped by the disk watchdog at
+  `14,871,388,160` free bytes during rank-history snapshots. The container
+  exited `137` after its stop grace period, with `OOMKilled=false`, leaving
+  `scrape_log`, the public freeze, and worker operation state stale.
+- Read-only preflight found no worker-owned query, long transaction, ungranted
+  lock, advisory lock, vacuum, index build, rewrite, or published-source row
+  for `1263`. A five-second-lock-timeout transaction marked it failed at
+  `capacity_watchdog_abandoned`, retained published `1236`, unfroze the
+  publication ledger, and marked the worker offline. Exact rollback SQL was
+  dry-run, restored byte-identical pre-state rows, and was then validated by a
+  rollback/reapply transaction.
+- The unfrozen parity probe proved mapped solo leaderboard, composite, and
+  published band ranking/history samples still matched the pre-candidate
+  baseline, but player ranking, rank history, and exports contained
+  unversioned `1263` derived writes. Service commits `03edc85b` and
+  `633e7583` now make those cache misses/exports fail closed while preserving
+  exact mapped solo leaderboard reads. Band-song routes remain stable `503`
+  because global band generation `96` was never published; no candidate
+  `band_entries` fallback occurs.
+- Final filesystem free space is `31,385,374,720` bytes against the measured
+  `45,148,225,536`-byte full-scrape boundary, a
+  `13,762,850,816`-byte shortfall before rollback margin. The scrape and
+  reclaim guards both block. Same-drive spool/curl scratch is empty; retained
+  path/evidence data cannot close the gap; there are no invalid or large
+  abandoned build relations.
+- Current owner cards retain every large candidate:
+  `ix_btrhpv2_team_date` owns public band history,
+  `ix_les_snapshot_song_score` owns published leaderboard reads,
+  `ix_cble_scope_generation_rank` has `1,250,396` scans and a previously
+  measured hot-page regression without it, and
+  `ix_bms_type_team_combo_account_instrument` has `5,502,193` scans.
+  No safe single non-constraint index can close the gate.
+- The worker compose guard passes after `pia-gluetun-8` recreation with
+  `25/25` healthy unique exits. Capacity remains the exact hard gate and the
+  worker stays held.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/stale-scrape-1263-recovery-20260725T153938Z`.
+
 ## Phase PG-4: Make scrape writes proportional to semantic changes
 
 **Decision:** Experimental until live-scrape parity  

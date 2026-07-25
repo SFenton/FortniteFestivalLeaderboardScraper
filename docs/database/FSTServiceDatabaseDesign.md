@@ -405,6 +405,19 @@ named owner and bounded retention before cleanup. Zero current rows or zero
    step leaves the prior published generation active and explicitly unfreezes
    it after the failed pass is finalized.
 
+If a capacity watchdog must stop a worker after unversioned derived tables
+have changed, finalize the scrape with
+`failure_phase='capacity_watchdog_abandoned'`. The publication ledger may then
+be unfrozen on the prior published scrape after active-query/lock/maintenance
+proof, but the service treats that durable failure marker as a separate
+published-read isolation state. Persistent published cache hits and explicitly
+mapped solo leaderboard reads remain available; unversioned derived cache
+misses and exports return `503` until a later successful publication advances
+past the abandoned scrape. This prevents ranking, history, export, band-song,
+or fallback reads from exposing the failed candidate while keeping
+`scrape_publication_state.public_reads_frozen=false` and service status
+truthful.
+
 `/api/service-info` reads latest scrape, published scrape, publication/freeze,
 and worker operation state in one PostgreSQL statement. It exposes active and
 published scrape IDs, freeze reason/ID, network/post-process/publication
