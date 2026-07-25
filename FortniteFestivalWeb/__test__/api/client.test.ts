@@ -37,6 +37,35 @@ describe('api/client', () => {
     });
   });
 
+  describe('getServiceInfo', () => {
+    it('uses an abortable no-store reachability request without profile headers', async () => {
+      localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'tracked-1', displayName: 'Tracked' }));
+      const data = { currentUpdate: { status: 'failed' }, workerStatus: { status: 'offline' } };
+      const controller = new AbortController();
+      mockFetchOk(data);
+
+      const result = await api.getServiceInfo(controller.signal);
+
+      expect(result).toEqual(data);
+      expect(global.fetch).toHaveBeenCalledWith('/api/service-info', {
+        cache: 'no-store',
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+      });
+    });
+
+    it('propagates malformed JSON as an availability failure', async () => {
+      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: () => Promise.reject(new SyntaxError('Unexpected token')),
+      });
+
+      await expect(api.getServiceInfo()).rejects.toThrow(SyntaxError);
+    });
+  });
+
   describe('refreshAccountNames', () => {
     it('posts account IDs to the silent refresh endpoint', async () => {
       const data = { changed: 0, unchanged: 2, failed: 0, missing: 0, names: {}, changedAccountIds: [] };

@@ -6,6 +6,10 @@ describe('queryKeys', () => {
     expect(queryKeys.features()).toEqual(['features']);
   });
 
+  it('serviceInfo() returns a profile-independent key', () => {
+    expect(queryKeys.serviceInfo()).toEqual(['serviceInfo']);
+  });
+
   it('songs() returns ["songs"]', () => {
     expect(queryKeys.songs()).toEqual(['songs']);
   });

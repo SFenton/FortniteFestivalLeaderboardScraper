@@ -46,12 +46,13 @@ import PageHeader from '../../components/common/PageHeader';
 import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
 import { useContainerWidth } from '../../hooks/ui/useContainerWidth';
 import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
+import { useServiceInfo } from '../../hooks/data/useServiceInfo';
 import { IoBagHandle, IoChevronForward, IoCompass, IoDocumentText, IoDownload, IoInformationCircle, IoList, IoMusicalNotes, IoPersonCircle, IoServer, IoSettings, IoSparkles, IoTrash } from 'react-icons/io5';
 import { Routes as AppRoutes } from '../../routes';
 
 import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVersions';
 
-const SERVICE_INFO_POLL_MS = 5_000;
+const PROFILE_SYNC_STATUS_POLL_MS = 5_000;
 const SERVICE_INFO_INLINE_KEY_MIN_WIDTH = 300;
 const SETTINGS_ACTION_BUTTON_WIDTH = 212;
 const QUICK_LINK_GLYPH_ICON_SIZE = 20;
@@ -517,8 +518,9 @@ export default function SettingsPage() {
   const rivalsReplay = useFirstRunReplay('rivals');
   const shopReplay = useFirstRunReplay('shop');
   const [serviceVersion, setServiceVersion] = useState<string | null>(null);
-  const [serviceInfo, setServiceInfo] = useState<ServiceInfoResponse | null>(null);
-  const [serviceInfoLoadFailed, setServiceInfoLoadFailed] = useState(false);
+  const serviceInfoQuery = useServiceInfo('settings');
+  const serviceInfo = serviceInfoQuery.data ?? null;
+  const serviceInfoLoadFailed = serviceInfoQuery.isError;
   const [trackedPlayerSyncStatus, setTrackedPlayerSyncStatus] = useState<SyncStatusResponse | null>(null);
   const [selectedBandSyncStatus, setSelectedBandSyncStatus] = useState<BandSyncStatusResponse | null>(null);
   const [selectedProfileSyncLoadFailed, setSelectedProfileSyncLoadFailed] = useState(false);
@@ -544,33 +546,6 @@ export default function SettingsPage() {
       .then(data => { if (!cancelled) setServiceVersion(data.version); })
       .catch(() => { /* service unreachable */ });
     return () => { cancelled = true; };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-
-    const loadServiceInfo = async () => {
-      try {
-        const data = await api.getServiceInfo();
-        if (cancelled) return;
-        setServiceInfo(data);
-        setServiceInfoLoadFailed(false);
-      } catch {
-        if (!cancelled) setServiceInfoLoadFailed(true);
-      } finally {
-        if (!cancelled) {
-          timer = setTimeout(loadServiceInfo, SERVICE_INFO_POLL_MS);
-        }
-      }
-    };
-
-    void loadServiceInfo();
-
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
   }, []);
 
   useEffect(() => {
@@ -607,7 +582,7 @@ export default function SettingsPage() {
         if (!cancelled) setSelectedProfileSyncLoadFailed(true);
       } finally {
         if (!cancelled) {
-          timer = setTimeout(loadSelectedProfileSyncStatus, SERVICE_INFO_POLL_MS);
+          timer = setTimeout(loadSelectedProfileSyncStatus, PROFILE_SYNC_STATUS_POLL_MS);
         }
       }
     };

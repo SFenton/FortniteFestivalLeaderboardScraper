@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { queryKeys } from '../../../src/api/queryKeys';
 import { SettingsProvider } from '../../../src/contexts/SettingsContext';
 import { FirstRunProvider } from '../../../src/contexts/FirstRunContext';
 import { PageQuickLinksProvider, usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
@@ -957,6 +958,20 @@ describe('SettingsPage', () => {
     expect(within(screen.getByTestId('settings-service-info-row-update-overall-progress')).getByText('N/A')).toBeDefined();
     expect(within(screen.getByTestId('settings-service-info-row-update-eta')).getByText('N/A')).toBeDefined();
     expect(within(screen.getByTestId('settings-service-info-row-next-scheduled-update')).getByText(new Date(defaultServiceInfo.nextScheduledUpdateAt).toLocaleString())).toBeDefined();
+  });
+
+  it('reuses fresh shared service-info cache without issuing a page-owned request', async () => {
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(queryKeys.serviceInfo(), defaultServiceInfo);
+
+    renderSettings({ queryClient });
+
+    await waitFor(() => {
+      expect(within(screen.getByTestId('settings-service-info-row-worker-status')).getByText('Online')).toBeDefined();
+    });
+    const serviceInfoCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+      .filter(([url]) => typeof url === 'string' && url.includes('/api/service-info'));
+    expect(serviceInfoCalls).toHaveLength(0);
   });
 
   it('renders purple arc spinners on Status and Step rows when update is in progress', async () => {

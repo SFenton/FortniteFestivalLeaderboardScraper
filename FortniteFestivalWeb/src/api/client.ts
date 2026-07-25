@@ -320,8 +320,19 @@ export const api = {
   getBandNotificationsById: (bandId: string, limit = 50, options?: ApiRequestOptions) =>
     get<ImprovementNotificationsEnvelope>(`/api/bands/${encodeURIComponent(bandId)}/notifications?limit=${limit}`, options),
 
-  getServiceInfo: () =>
-    get<ServiceInfoResponse>('/api/service-info'),
+  getServiceInfo: async (signal?: AbortSignal): Promise<ServiceInfoResponse> => {
+    const init: RequestInit = {
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    };
+    if (signal) init.signal = signal;
+
+    const res = await fetch(`${BASE}/api/service-info`, init);
+    if (!res.ok) {
+      throw new Error(`API ${res.status}: ${res.statusText}`);
+    }
+    return res.json() as Promise<ServiceInfoResponse>;
+  },
 
   getPlayerHistory: (accountId: string, songId?: string, instrument?: string) => {
     const params = new URLSearchParams();

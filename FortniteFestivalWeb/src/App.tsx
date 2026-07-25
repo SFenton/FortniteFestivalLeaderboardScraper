@@ -155,8 +155,6 @@ import {
   writeAppliedBandFilter,
 } from './state/bandFilter';
 import { writeSelectedProfile } from './state/selectedProfile';
-import { QueryClientProvider } from '@tanstack/react-query';
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { queryClient } from './api/queryClient';
 import { Routes as AppRoutes, RoutePatterns } from './routes';
 import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext';
@@ -167,7 +165,6 @@ import anim from './styles/animations.module.css';
 
 const consumedPreserveShellScrollKeys = new Set<string>();
 const LEADERBOARD_INSTRUMENT_ACTION_ICON_SIZE = 32;
-const showReactQueryDevtools = import.meta.env.DEV && import.meta.env.MODE !== 'e2e';
 const NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-open';
 const EMPTY_NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-empty';
 const MOCK_NOTIFICATION_SOURCE_VERSION = 'mock-source-2026-05-09';
@@ -202,7 +199,6 @@ export { getProfileClickDestination, getStatisticsNavigationPath } from './utils
 
 export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
     <FeatureFlagsProvider>
     <SettingsProvider>
       <FestivalProvider>
@@ -226,8 +222,6 @@ export default function App() {
       </FestivalProvider>
     </SettingsProvider>
     </FeatureFlagsProvider>
-    {showReactQueryDevtools && <ReactQueryDevtools initialIsOpen={false} />}
-    </QueryClientProvider>
   );
 }
 

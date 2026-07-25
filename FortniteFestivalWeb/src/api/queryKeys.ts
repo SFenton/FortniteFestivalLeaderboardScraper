@@ -5,6 +5,7 @@
  */
 export const queryKeys = {
   features: () => ['features'] as const,
+  serviceInfo: () => ['serviceInfo'] as const,
   songs: () => ['songs'] as const,
   player: (accountId: string, songId?: string, instruments?: string[], leeway?: number) =>
     ['player', accountId, { songId, instruments, leeway }] as const,

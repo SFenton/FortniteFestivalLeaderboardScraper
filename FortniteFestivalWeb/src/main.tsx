@@ -1,6 +1,9 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import App from './App';
+import { queryClient } from './api/queryClient';
 import PwaIconCapture from './components/icons/PwaIconCapture';
 import BackendAvailabilityGate from './components/maintenance/BackendAvailabilityGate';
 import ModalAccessibilityFixture from './diagnostics/ModalAccessibilityFixture';
@@ -18,11 +21,15 @@ const Root = searchParams.has('pwaIconCapture')
   : searchParams.has('modalA11yFixture')
     ? ModalAccessibilityFixture
     : App;
+const showReactQueryDevtools = import.meta.env.DEV && import.meta.env.MODE !== 'e2e';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <BackendAvailabilityGate>
-      <Root />
-    </BackendAvailabilityGate>
+    <QueryClientProvider client={queryClient}>
+      <BackendAvailabilityGate>
+        <Root />
+      </BackendAvailabilityGate>
+      {showReactQueryDevtools && <ReactQueryDevtools initialIsOpen={false} />}
+    </QueryClientProvider>
   </StrictMode>,
 );
