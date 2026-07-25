@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import { useFestival } from '../../contexts/FestivalContext';
 import { useSettings } from '../../contexts/SettingsContext';
-import { type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry, type PlayerScore, type ServerScoreHistoryEntry as ScoreHistoryEntry, type RankTier, type PopulationTierData } from '@festival/core/api/serverTypes';
+import { type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry, type PlayerScore, type ServerScoreHistoryEntry as ScoreHistoryEntry, type RankTier, type PopulationTierData } from '@festival/core/api';
 
 /**
  * Binary search for the last entry where `entry.leeway <= target`.

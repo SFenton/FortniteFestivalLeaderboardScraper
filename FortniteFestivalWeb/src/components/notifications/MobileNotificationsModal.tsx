@@ -8,7 +8,7 @@ import {
   Opacity, FADE_DURATION, DEMO_SWAP_INTERVAL_MS,
   flexColumn, flexRow, border, padding,
 } from '@festival/theme';
-import { SERVER_INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import { SERVER_INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey } from '@festival/core/api';
 import { isExperimentalRankingMetric } from '../../pages/leaderboards/helpers/rankingHelpers';
 import { InstrumentIcon } from '../display/InstrumentIcons';
 import MarqueeText from '../common/MarqueeText';

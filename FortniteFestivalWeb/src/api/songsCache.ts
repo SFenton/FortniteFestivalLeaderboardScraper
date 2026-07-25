@@ -1,4 +1,4 @@
-import type { ServerSong, SongsResponse } from '@festival/core/api/serverTypes';
+import type { ServerSong, SongsResponse } from '@festival/core/api';
 
 export const SONGS_CACHE_KEY = 'fst_songs_cache';
 export const SONGS_CACHE_VERSION = 3;

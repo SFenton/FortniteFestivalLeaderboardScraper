@@ -1,6 +1,6 @@
 import type { AppSettings } from '../../../contexts/SettingsContext';
-import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
-import { comboIdFromInstruments, isWithinGroupComboId } from '@festival/core/combos';
+import type { ServerInstrumentKey } from '@festival/core/api';
+import { comboIdFromInstruments, isWithinGroupComboId } from '@festival/core/config';
 
 export const PRO_DRUMS_RIVAL_SCOPE = 'pro_drums';
 

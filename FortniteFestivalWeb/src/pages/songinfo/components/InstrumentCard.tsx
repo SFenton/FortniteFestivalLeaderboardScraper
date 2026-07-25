@@ -1,12 +1,12 @@
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type AnimationEventHandler, type CSSProperties, type MouseEventHandler, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { InstrumentHeaderSize } from '@festival/core';
+import { InstrumentHeaderSize } from '@festival/core/runtime';
 import InstrumentHeader from '../../../components/display/InstrumentHeader';
 import { LeaderboardEntry } from '../../leaderboard/global/components/LeaderboardEntry';
 import { computeRankWidth } from '../../leaderboards/helpers/rankingHelpers';
 import { leaderboardCache } from '../../../api/pageCache';
-import { type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry as LeaderboardEntryType, type PlayerScore, type SelectedMemberSongScore } from '@festival/core/api/serverTypes';
+import { type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry as LeaderboardEntryType, type PlayerScore, type SelectedMemberSongScore } from '@festival/core/api';
 import InstrumentEmptyState from '../../player/sections/InstrumentEmptyState';
 import { Colors, Font, Gap, Radius, Layout, Display, Align, Overflow, Cursor, Opacity, CssValue, FAST_FADE_MS, TRANSITION_MS, STAGGER_ENTRY_OFFSET, STAGGER_ROW_MS, frostedCard, flexColumn, flexRow, transition, padding, border, Border } from '@festival/theme';
 import { CssProp } from '@festival/theme';

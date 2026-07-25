@@ -1,4 +1,4 @@
-import type { PlayerBandEntry, PlayerBandType, ServerInstrumentKey, SongBandLeaderboardEntry } from '@festival/core/api/serverTypes';
+import type { PlayerBandEntry, PlayerBandType, ServerInstrumentKey, SongBandLeaderboardEntry } from '@festival/core/api';
 import { resolveBandComboDisplayedMembers } from './bandComboMemberDisplay';
 
 export const SONG_BAND_TYPES: PlayerBandType[] = ['Band_Duets', 'Band_Trios', 'Band_Quad'];

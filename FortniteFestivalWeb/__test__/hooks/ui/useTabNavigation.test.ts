@@ -4,7 +4,7 @@ import React from 'react';
 import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { useTabNavigation, inferTab, TAB_ROOTS } from '../../../src/hooks/ui/useTabNavigation';
 import { createTapDiagnostics } from '../../../src/diagnostics/tapDiagnostics';
-import { TabKey } from '@festival/core';
+import { TabKey } from '@festival/core/runtime';
 
 function wrapper(route = '/songs') {
   return ({ children }: { children: React.ReactNode }) =>

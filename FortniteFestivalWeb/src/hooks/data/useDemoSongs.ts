@@ -9,11 +9,11 @@
  */
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { FADE_DURATION, DEMO_SWAP_INTERVAL_MS, STAGGER_INTERVAL, Layout } from '@festival/theme';
-import type { SongDisplay as DemoSong } from '@festival/core/api/serverTypes';
+import type { SongDisplay as DemoSong } from '@festival/core/api';
 import { useFestival } from '../../contexts/FestivalContext';
 import { useSlideHeight } from '../../firstRun/SlideHeightContext';
 
-export type { SongDisplay as DemoSong } from '@festival/core/api/serverTypes';
+export type { SongDisplay as DemoSong } from '@festival/core/api';
 
 /** Re-export for consumers that need the fade timing. */
 export const FADE_MS = FADE_DURATION;

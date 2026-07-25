@@ -8,8 +8,8 @@ import {
 } from '../../src/utils/suggestionsFilter';
 import type { SuggestionsFilterDraft } from '../../src/pages/suggestions/modals/SuggestionsFilterModal';
 import type { AppSettings } from '../../src/contexts/SettingsContext';
-import type { SuggestionCategory } from '@festival/core/suggestions/types';
-import { globalKeyFor } from '@festival/core/suggestions/suggestionFilterConfig';
+import type { SuggestionCategory } from '@festival/core/types';
+import { globalKeyFor } from '@festival/core/suggestions';
 
 function mockFilterDraft(overrides: Partial<SuggestionsFilterDraft> = {}): SuggestionsFilterDraft {
   return {

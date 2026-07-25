@@ -6,7 +6,7 @@
 import { useState, useEffect, useRef, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IoMusicalNotes, IoSparkles, IoStatsChart, IoSettings } from 'react-icons/io5';
-import { TabKey } from '@festival/core';
+import { TabKey } from '@festival/core/runtime';
 import {
   Colors, Font, Weight, Gap, Layout, ZIndex, Radius, Border,
   Display, Align, Justify, Position, Cursor, CssValue, CssProp,

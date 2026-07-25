@@ -7,7 +7,7 @@ import {
   type BandConfiguration,
   type PlayerBandMember,
   type ServerInstrumentKey,
-} from '@festival/core/api/serverTypes';
+} from '@festival/core/api';
 import { Colors, Font, Weight } from '@festival/theme';
 import { api } from '../../../api/client';
 import { queryKeys } from '../../../api/queryKeys';

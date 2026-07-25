@@ -1,6 +1,6 @@
 import { createElement, useCallback } from 'react';
 import type { FirstRunSlideDef } from '../../../../firstRun/types';
-import type { RankingMetric } from '@festival/core/api/serverTypes';
+import type { RankingMetric } from '@festival/core/api';
 import MetricInfoSlide from './MetricInfoSlide';
 import SongDemoSlide from './SongDemoSlide';
 import FcRateHowDemo from './FcRateHowDemo';

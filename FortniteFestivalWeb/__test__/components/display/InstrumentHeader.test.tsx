@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 import React from 'react';
 import InstrumentHeader from '../../../src/components/display/InstrumentHeader';
-import { InstrumentHeaderSize } from '@festival/core';
+import { InstrumentHeaderSize } from '@festival/core/runtime';
 
 
 describe('InstrumentHeader', () => {

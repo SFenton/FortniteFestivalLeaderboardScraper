@@ -12,8 +12,8 @@ import {
   ResponsiveContainer,
   CartesianGrid,
 } from 'recharts';
-import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, type ServerInstrumentKey as InstrumentKey, serverInstrumentLabel as instrumentLabel, type ServerScoreHistoryEntry as ScoreHistoryEntry, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
-import { ACCURACY_SCALE } from '@festival/core';
+import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, type ServerInstrumentKey as InstrumentKey, serverInstrumentLabel as instrumentLabel, type ServerScoreHistoryEntry as ScoreHistoryEntry, DEFAULT_INSTRUMENT } from '@festival/core/api';
+import { ACCURACY_SCALE } from '@festival/core/runtime';
 import GraphCard from '../../../../components/common/GraphCard';
 import { PressableChartPath } from '../../../../components/common/PressableChartPath';
 import { LeaderboardEntry } from '../../../leaderboard/global/components/LeaderboardEntry';

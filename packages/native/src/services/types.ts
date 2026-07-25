@@ -1,5 +1,5 @@
-import type {LeaderboardData, Song} from '@festival/core';
-import type {Settings} from '@festival/core';
+import type { LeaderboardData, Song } from '@festival/core/types';
+import type { Settings } from '@festival/core/types';
 
 export type HttpResponse = {
   ok: boolean;

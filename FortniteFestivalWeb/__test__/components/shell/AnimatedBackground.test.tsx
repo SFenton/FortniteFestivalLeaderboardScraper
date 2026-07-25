@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, act } from '@testing-library/react';
 import { AnimatedBackground } from '../../../src/components/shell/AnimatedBackground';
-import type { ServerSong as Song } from '@festival/core/api/serverTypes';
+import type { ServerSong as Song } from '@festival/core/api';
 
 // Minimal song factory
 function makeSong(id: string, albumArt?: string): Song {

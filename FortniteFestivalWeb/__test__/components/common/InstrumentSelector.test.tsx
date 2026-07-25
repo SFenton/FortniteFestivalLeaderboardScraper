@@ -3,8 +3,8 @@ import { render, fireEvent } from '@testing-library/react';
 import React from 'react';
 import { InstrumentSelector } from '../../../src/components/common/InstrumentSelector';
 import type { InstrumentSelectorItem } from '../../../src/components/common/InstrumentSelector';
-import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
-import type { InstrumentKey } from '@festival/core/instruments';
+import type { ServerInstrumentKey } from '@festival/core/api';
+import type { InstrumentKey } from '@festival/core/types';
 
 
 const instruments: InstrumentSelectorItem[] = [

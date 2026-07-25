@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useRef, useMemo, type ReactNode } from 'react';
-import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { ServerInstrumentKey } from '@festival/core/api';
 
 type SongsFabActions = {
   openSort: () => void;

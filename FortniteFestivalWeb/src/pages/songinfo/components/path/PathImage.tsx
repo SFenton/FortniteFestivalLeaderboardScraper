@@ -4,9 +4,9 @@
  */
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ImagePhase, type Difficulty } from '@festival/core';
+import { ImagePhase, type Difficulty } from '@festival/core/runtime';
 import { Colors, Font, Gap, TRANSITION_MS, MIN_SPINNER_MS } from '@festival/theme';
-import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import { useScrollMask } from '../../../../hooks/ui/useScrollMask';
 import { ZoomableImage } from './ZoomableImage';
 import ArcSpinner from '../../../../components/common/ArcSpinner';

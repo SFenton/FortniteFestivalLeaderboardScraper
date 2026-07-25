@@ -1,4 +1,4 @@
-import type { BandConfiguration, PlayerBandMember, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { BandConfiguration, PlayerBandMember, ServerInstrumentKey } from '@festival/core/api';
 
 export function resolveBandComboDisplayedMembers(
   members: readonly PlayerBandMember[],

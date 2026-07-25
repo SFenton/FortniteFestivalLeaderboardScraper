@@ -1,7 +1,7 @@
 import type {
   LeaderboardEntry,
   SongBandLeaderboardEntry,
-} from '@festival/core/api/serverTypes';
+} from '@festival/core/api';
 
 export type InstrumentData = {
   entries: LeaderboardEntry[];

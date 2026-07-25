@@ -14,8 +14,8 @@ import {
   type ServerInstrumentKey as InstrumentKey,
   type LeaderboardEntry as LeaderboardEntryType,
   serverInstrumentLabel,
-} from '@festival/core/api/serverTypes';
-import { LoadPhase } from '@festival/core';
+} from '@festival/core/api';
+import { LoadPhase } from '@festival/core/runtime';
 import SongInfoHeader from '../../../components/songs/headers/SongInfoHeader';
 import { LeaderboardEntry } from './components/LeaderboardEntry';
 import { PaginatedLeaderboard } from '../../../components/leaderboard/PaginatedLeaderboard';

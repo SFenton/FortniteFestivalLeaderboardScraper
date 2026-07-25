@@ -13,7 +13,7 @@ import {
   BoxSizing, Overflow, flexRow, flexCenter, opaqueGlass, purpleGlass, padding,
 } from '@festival/theme';
 import type { CSSProperties } from 'react';
-import { type ServerSong as Song, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import { type ServerSong as Song, type ServerInstrumentKey } from '@festival/core/api';
 import { InstrumentIcon } from '../../display/InstrumentIcons';
 import BackgroundImage from '../../page/BackgroundImage';
 import PageHeader from '../../common/PageHeader';

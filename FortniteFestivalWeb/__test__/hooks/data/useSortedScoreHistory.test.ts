@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useSortedScoreHistory } from '../../../src/hooks/data/useSortedScoreHistory';
-import { PlayerScoreSortMode } from '@festival/core';
-import type { ServerScoreHistoryEntry } from '@festival/core/api/serverTypes';
+import { PlayerScoreSortMode } from '@festival/core/runtime';
+import type { ServerScoreHistoryEntry } from '@festival/core/api';
 
 function entry(overrides: Partial<ServerScoreHistoryEntry> = {}): ServerScoreHistoryEntry {
   return {

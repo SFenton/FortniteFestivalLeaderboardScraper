@@ -7,7 +7,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { TestProviders } from '../../../helpers/TestProviders';
 import { stubResizeObserver } from '../../../helpers/browserStubs';
 import InstrumentCard from '../../../../src/pages/songinfo/components/InstrumentCard';
-import type { LeaderboardEntry, PlayerScore, SelectedMemberSongScore, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { LeaderboardEntry, PlayerScore, SelectedMemberSongScore, ServerInstrumentKey } from '@festival/core/api';
 
 let mockMeasuredCardWidth = 0;
 vi.mock('../../../../src/hooks/ui/useContainerWidth', () => ({

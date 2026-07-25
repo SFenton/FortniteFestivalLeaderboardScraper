@@ -1,4 +1,4 @@
-import type { RivalSongComparison } from '@festival/core/api/serverTypes';
+import type { RivalSongComparison } from '@festival/core/api';
 
 export type RivalCategorySentiment = 'positive' | 'negative' | 'neutral';
 

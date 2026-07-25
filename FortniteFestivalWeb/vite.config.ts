@@ -2,6 +2,7 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import { readFileSync } from 'fs';
+import { sharedPackageBoundaryPlugin } from './scripts/shared-package-boundary-plugin.mjs';
 
 const pkg = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8'));
 const corePkg = JSON.parse(readFileSync(path.resolve(__dirname, '../packages/core/package.json'), 'utf-8'));
@@ -13,7 +14,13 @@ export default defineConfig(({ mode }) => {
 
   return {
     base: '/',
-    plugins: [react()],
+    plugins: [
+      react(),
+      sharedPackageBoundaryPlugin({
+        webRoot: __dirname,
+        graphOutput: env.FST_BUNDLE_GRAPH_OUT,
+      }),
+    ],
     define: {
       __APP_VERSION__: JSON.stringify(pkg.version),
       __CORE_VERSION__: JSON.stringify(corePkg.version),
@@ -21,7 +28,6 @@ export default defineConfig(({ mode }) => {
     },
     resolve: {
       alias: {
-        '@festival/core': path.resolve(__dirname, '../packages/core/src'),
         '@festival/theme': path.resolve(__dirname, '../packages/theme/src'),
         '@festival/ui-utils': path.resolve(__dirname, '../packages/ui-utils/src'),
         'react-native': path.resolve(__dirname, 'src/stubs/react-native.ts'),

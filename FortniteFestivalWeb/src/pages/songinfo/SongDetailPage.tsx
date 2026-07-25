@@ -15,7 +15,7 @@ import {
   type PlayerBandType,
   type SelectedMemberSongScore,
   type ServerInstrumentKey as InstrumentKey,
-} from '@festival/core/api/serverTypes';
+} from '@festival/core/api';
 import { Gap, Colors, Font, Layout, MaxWidth, Position, ZIndex, Display, Overflow, CssValue, PointerEvents, flexCenter, flexColumn, GridTemplate, SPINNER_FADE_MS, FADE_DURATION } from '@festival/theme';
 import ArcSpinner from '../../components/common/ArcSpinner';
 import Page, { PageBackground } from '../Page';
@@ -33,7 +33,7 @@ import { useScoreFilter } from '../../hooks/data/useScoreFilter';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
 import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { useShopState } from '../../hooks/data/useShopState';
-import { LoadPhase } from '@festival/core';
+import { LoadPhase } from '@festival/core/runtime';
 import PathsModal from './components/path/PathsModal';
 import EmptyState from '../../components/common/EmptyState';
 import CollapsePresence from '../../components/common/CollapsePresence';

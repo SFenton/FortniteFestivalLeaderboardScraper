@@ -1,6 +1,6 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import type { AccountRankingDto, AccountRankingEntry, RankingMetric, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { AccountRankingDto, AccountRankingEntry, RankingMetric, ServerInstrumentKey } from '@festival/core/api';
 import RankingCard from '../../../../src/pages/leaderboards/components/RankingCard';
 import { computeRankWidth } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
 import { TestProviders } from '../../../helpers/TestProviders';

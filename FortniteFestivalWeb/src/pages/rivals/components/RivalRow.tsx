@@ -1,6 +1,6 @@
 import { memo, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { RivalSummary } from '@festival/core/api/serverTypes';
+import type { RivalSummary } from '@festival/core/api';
 import { Colors, Font, Weight, Gap, Radius, Display, Align, Justify, Position, Cursor, Overflow, WhiteSpace, Border, frostedCard, flexRow, truncate, padding, border } from '@festival/theme';
 import CardPressable from '../../../components/common/CardPressable';
 import s from '../../../styles/rivals.module.css';

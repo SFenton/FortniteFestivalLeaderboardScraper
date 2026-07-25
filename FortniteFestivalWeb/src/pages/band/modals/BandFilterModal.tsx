@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import type { PlayerBandListGroup } from '@festival/core/api/serverTypes';
+import type { PlayerBandListGroup } from '@festival/core/api';
 import Modal from '../../../components/modals/Modal';
 import ConfirmAlert from '../../../components/modals/ConfirmAlert';
 import { ModalSection } from '../../../components/modals/components/ModalSection';

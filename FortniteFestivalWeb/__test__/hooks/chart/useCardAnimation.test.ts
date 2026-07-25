@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { CardPhase } from '@festival/core';
+import { CardPhase } from '@festival/core/runtime';
 import type { ChartPoint } from '../../../src/hooks/chart/useChartData';
 import { useCardAnimation } from '../../../src/hooks/chart/useCardAnimation';
 

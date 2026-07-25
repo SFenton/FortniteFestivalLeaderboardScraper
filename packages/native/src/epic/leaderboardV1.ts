@@ -1,5 +1,5 @@
-import type {V1LeaderboardEntry, V1LeaderboardPage} from '@festival/core';
-import {ScoreTracker} from '@festival/core';
+import type { V1LeaderboardEntry, V1LeaderboardPage } from '@festival/core/types';
+import { ScoreTracker } from '@festival/core/runtime';
 
 export const buildV1LeaderboardUrl = (params: {
   songId: string;

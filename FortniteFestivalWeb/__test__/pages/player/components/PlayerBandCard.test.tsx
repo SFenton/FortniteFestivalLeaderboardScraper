@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import type { PlayerBandEntry } from '@festival/core/api/serverTypes';
+import type { PlayerBandEntry } from '@festival/core/api';
 import PlayerBandCard, {
   estimatePlayerBandCardHeight,
   resolveBandMemberInstrumentLayout,

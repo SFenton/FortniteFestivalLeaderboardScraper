@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, fireEvent } from '@testing-library/react';
-import { ACCURACY_SCALE } from '@festival/core';
-import type { ServerInstrumentKey as InstrumentKey, PlayerScore } from '@festival/core/api/serverTypes';
+import { ACCURACY_SCALE } from '@festival/core/runtime';
+import type { ServerInstrumentKey as InstrumentKey, PlayerScore } from '@festival/core/api';
 import { computeInstrumentStats } from '../../../../src/pages/player/helpers/playerStats';
 import {
   buildInstrumentStatsItems,

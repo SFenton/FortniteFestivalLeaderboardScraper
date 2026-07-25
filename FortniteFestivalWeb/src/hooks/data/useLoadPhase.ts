@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { LoadPhase } from '@festival/core';
+import { LoadPhase } from '@festival/core/runtime';
 import { SPINNER_FADE_MS, CONTENT_OUT_MS } from '@festival/theme';
 
 export type { LoadPhase };

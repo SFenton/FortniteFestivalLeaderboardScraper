@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { PERCENTILE_THRESHOLDS } from '@festival/core';
+import { PERCENTILE_THRESHOLDS } from '@festival/core/config';
 import { ToggleRow } from '../../../../../components/common/ToggleRow';
 import { BulkActions } from '../../../../../components/modals/components/BulkActions';
 

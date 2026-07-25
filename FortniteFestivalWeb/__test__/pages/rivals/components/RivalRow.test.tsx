@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import RivalRow from '../../../../src/pages/rivals/components/RivalRow';
-import type { RivalSummary } from '@festival/core/api/serverTypes';
+import type { RivalSummary } from '@festival/core/api';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string, opts?: Record<string, unknown>) => {

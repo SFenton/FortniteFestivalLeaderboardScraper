@@ -1,6 +1,6 @@
 import { memo, useMemo } from 'react';
-import { InstrumentHeaderSize } from '@festival/core';
-import { serverInstrumentLabel as instrumentLabel, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import { InstrumentHeaderSize } from '@festival/core/runtime';
+import { serverInstrumentLabel as instrumentLabel, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import { InstrumentSize, IconSize, Gap, Font, Weight, Colors, Display, Align, flexColumn } from '@festival/theme';
 import { InstrumentIcon } from './InstrumentIcons';
 

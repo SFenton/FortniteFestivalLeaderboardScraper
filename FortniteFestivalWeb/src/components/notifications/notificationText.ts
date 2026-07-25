@@ -1,5 +1,5 @@
 import type { TFunction } from 'i18next';
-import { SERVER_INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import { SERVER_INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey } from '@festival/core/api';
 
 export type NotificationTextEvent = {
   eventKind: string;

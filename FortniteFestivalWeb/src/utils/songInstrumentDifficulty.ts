@@ -4,7 +4,7 @@ import {
   serverSongSupportsInstrument,
   type ServerInstrumentKey as InstrumentKey,
   type ServerSong as Song,
-} from '@festival/core/api/serverTypes';
+} from '@festival/core/api';
 
 export const SONG_INSTRUMENT_DIFFICULTY_KEY = SERVER_SONG_DIFFICULTY_KEYS;
 

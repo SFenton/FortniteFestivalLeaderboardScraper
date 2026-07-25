@@ -1,4 +1,4 @@
-import type { RankHistoryEntry, RankHistoryDeltaEntry } from '@festival/core/api/serverTypes';
+import type { RankHistoryEntry, RankHistoryDeltaEntry } from '@festival/core/api';
 
 const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 

@@ -11,7 +11,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { queryKeys } from '../api/queryKeys';
 import { useSyncStatus, type SyncPhase } from '../hooks/data/useSyncStatus';
-import type { PlayerResponse } from '@festival/core/api/serverTypes';
+import type { PlayerResponse } from '@festival/core/api';
 
 const DISMISSED_STORAGE_KEY = 'fst:syncBannerDismissed';
 

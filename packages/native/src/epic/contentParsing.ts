@@ -1,4 +1,4 @@
-import type {Song} from '@festival/core';
+import type { Song } from '@festival/core/types';
 
 // Matches the C# logic: iterate root object properties; treat each object value as a Song-like payload.
 export const parseSongCatalog = (content: string | null | undefined): Song[] => {

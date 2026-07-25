@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import FilterModal, { type FilterDraft } from '../../../../src/pages/songs/modals/FilterModal';
-import { INSTRUMENT_KEYS } from '@festival/core/api/serverTypes';
+import { INSTRUMENT_KEYS } from '@festival/core/api';
 import { defaultSongFilters } from '../../../../src/utils/songSettings';
 import { TRANSITION_MS } from '@festival/theme';
 import { TestProviders } from '../../../helpers/TestProviders';

@@ -32,7 +32,7 @@ import { goldFill, goldOutline, goldOutlineSkew, frostedCard, frostedCardLight }
 import i18n from '../src/i18n/index';
 
 // models
-import * as models from '@festival/core/api/serverTypes';
+import * as models from '@festival/core/api';
 
 describe('barrel re-exports', () => {
   it('hook barrels export functions', () => {

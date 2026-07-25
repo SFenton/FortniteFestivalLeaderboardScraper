@@ -4,7 +4,7 @@
  * with specific filter presets.
  */
 import type { SongSettings, SongFilters } from '../../../utils/songSettings';
-import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 
 export const PERCENTILE_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100] as const;
 

@@ -11,8 +11,8 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import type { BandRankingMetric, BandType, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
-import { formatLeaderboardPercentile, formatRatingValue, rankColor } from '@festival/core';
+import type { BandRankingMetric, BandType, ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
+import { formatLeaderboardPercentile, formatRatingValue, rankColor } from '@festival/core/app/formatters';
 import {
   border,
   CHART_ANIM_DURATION,

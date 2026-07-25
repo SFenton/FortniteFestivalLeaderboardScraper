@@ -11,8 +11,8 @@ import {
   computeInstrumentStats,
   resolveInstrumentRanks,
 } from '../../../player/helpers/playerStats';
-import { comboIdFromInstruments } from '@festival/core';
-import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey as InstrumentKey, type PlayerResponse, type ServerSong as Song } from '@festival/core/api/serverTypes';
+import { comboIdFromInstruments } from '@festival/core/config';
+import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey as InstrumentKey, type PlayerResponse, type ServerSong as Song } from '@festival/core/api';
 import { Align, Display, Gap, IconSize, Justify, Layout, Overflow, Radius, TRANSITION_MS, FADE_DURATION, frostedCard, transition, transitions, STAGGER_ENTRY_OFFSET, QUERY_NARROW_GRID } from '@festival/theme';
 import { playerPageStyles as pps } from '../../../../components/player/playerPageStyles';
 import { SelectProfilePill } from '../../../../components/player/SelectProfilePill';
@@ -46,7 +46,7 @@ import { buildPlayerBandsItems, EMPTY_PLAYER_BANDS } from '../../../player/compo
 import type { PlayerItem } from '../../../player/helpers/playerPageTypes';
 import type { SyncPhase } from '../../../../hooks/data/useSyncStatus';
 import { Routes } from '../../../../routes';
-import type { AccountRankingEntry, RankingMetric, InstrumentRankEntry, AccountRankingDto, PlayerStatsResponse, SoloFamilyScopeId } from '@festival/core/api/serverTypes';
+import type { AccountRankingEntry, RankingMetric, InstrumentRankEntry, AccountRankingDto, PlayerStatsResponse, SoloFamilyScopeId } from '@festival/core/api';
 import { InstrumentIcon } from '../../../../components/display/InstrumentIcons';
 import type { PageQuickLinksConfig } from '../../../../components/page/PageQuickLinks';
 import { createPreserveShellScrollState } from '../../../../utils/quietNavigation';

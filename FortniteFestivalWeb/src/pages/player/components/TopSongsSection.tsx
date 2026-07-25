@@ -2,7 +2,7 @@
  * Top/bottom songs per instrument section.
  * Returns Item[] for ONE instrument (top 5 + optional bottom 5).
  */
-import { type ServerInstrumentKey as InstrumentKey, type ServerSong as Song, type PlayerScore, serverInstrumentLabel as instrumentLabel } from '@festival/core/api/serverTypes';
+import { type ServerInstrumentKey as InstrumentKey, type ServerSong as Song, type PlayerScore, serverInstrumentLabel as instrumentLabel } from '@festival/core/api';
 import { Layout, Gap, flexColumn } from '@festival/theme';
 import type { CSSProperties } from 'react';
 import PlayerSectionHeading from '../sections/PlayerSectionHeading';

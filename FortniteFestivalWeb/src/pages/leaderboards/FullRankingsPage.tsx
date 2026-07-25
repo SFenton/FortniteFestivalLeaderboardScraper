@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useMemo, useRef, type CSSProperties }
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router-dom';
 import { IoOptions } from 'react-icons/io5';
-import { instrumentsFromComboId } from '@festival/core/combos';
+import { instrumentsFromComboId } from '@festival/core/config';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import { useQuery } from '@tanstack/react-query';
@@ -31,9 +31,10 @@ import type {
   AccountRankingEntry,
   BandRankingDto,
   SelectedMemberRankingsResponse,
-} from '@festival/core/api/serverTypes';
-import { InstrumentHeaderSize, rankColor } from '@festival/core';
-import { serverInstrumentLabel, DEFAULT_INSTRUMENT, SOLO_FAMILY_SCOPE_IDS, soloFamilyScopeLabel } from '@festival/core/api/serverTypes';
+} from '@festival/core/api';
+import { InstrumentHeaderSize } from '@festival/core/runtime';
+import { rankColor } from '@festival/core/app/formatters';
+import { serverInstrumentLabel, DEFAULT_INSTRUMENT, SOLO_FAMILY_SCOPE_IDS, soloFamilyScopeLabel } from '@festival/core/api';
 import { LEADERBOARD_PAGE_SIZE, getRankForMetric, formatRating, getRatingForMetric, getSongsLabel, computeRankWidth, computePillMinWidth, formatBayesianRatingDisplay, formatRankingValueDisplay, getRatingPillTier, usesPercentileValueDisplay } from './helpers/rankingHelpers';
 import { coerceBandRankingMetric, formatBandTeamName, getBandBayesianRatingForMetric, getBandRankForMetric, getBandRatingForMetric, getBandSongsLabel, getEnabledBandRankingMetrics } from './helpers/bandRankingHelpers';
 import { loadLeaderboardRankBy, saveLeaderboardRankBy } from '../../utils/leaderboardSettings';

@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import type { PlayerBandsResponse } from '@festival/core/api/serverTypes';
+import type { PlayerBandsResponse } from '@festival/core/api';
 import { Link } from 'react-router-dom';
 import { IoChevronForward } from 'react-icons/io5';
 import { Colors, Font, Gap, InstrumentSize, Layout, Radius, Weight, frostedCard, flexColumn, flexRow } from '@festival/theme';

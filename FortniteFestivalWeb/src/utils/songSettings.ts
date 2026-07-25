@@ -3,8 +3,8 @@
  * These parallel the @festival/core songListConfig types but use the
  * ServerInstrumentKey from the web models layer.
  */
-import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
-import { INSTRUMENT_KEYS } from '@festival/core/api/serverTypes';
+import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
+import { INSTRUMENT_KEYS } from '@festival/core/api';
 
 /* ── Sort ── */
 

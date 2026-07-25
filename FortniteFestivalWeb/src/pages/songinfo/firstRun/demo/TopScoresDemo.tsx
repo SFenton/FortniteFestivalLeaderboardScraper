@@ -1,6 +1,6 @@
 import { useMemo, useRef, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { InstrumentHeaderSize } from '@festival/core';
+import { InstrumentHeaderSize } from '@festival/core/runtime';
 import { STAGGER_INTERVAL, frostedCard, Radius, Font, Gap, Weight, Display, Align, Justify, CssValue, PointerEvents, Layout, Colors, Position, Overflow, flexColumn, padding } from '@festival/theme';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { useContainerWidth } from '../../../../hooks/ui/useContainerWidth';

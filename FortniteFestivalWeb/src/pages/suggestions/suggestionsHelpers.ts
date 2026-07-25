@@ -3,9 +3,9 @@
  */
 import type { SuggestionsFilterDraft } from './modals/SuggestionsFilterModal';
 import { defaultSuggestionsFilterDraft } from './modals/SuggestionsFilterModal';
-import { globalKeyFor, getCategoryTypeId, getCategoryInstrument, perInstrumentKeyFor } from '@festival/core/suggestions/suggestionFilterConfig';
+import { globalKeyFor, getCategoryTypeId, getCategoryInstrument, perInstrumentKeyFor } from '@festival/core/suggestions';
 import type { AppSettings } from '../../contexts/SettingsContext';
-import type { SuggestionCategory } from '@festival/core/suggestions/types';
+import type { SuggestionCategory } from '@festival/core/types';
 import { estimateVisibleCount } from '@festival/ui-utils';
 import i18next from 'i18next';
 

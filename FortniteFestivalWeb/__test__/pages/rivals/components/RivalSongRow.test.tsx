@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import RivalSongRow, { formatRankDelta } from '../../../../src/pages/rivals/components/RivalSongRow';
-import type { RivalSongComparison } from '@festival/core/api/serverTypes';
+import type { RivalSongComparison } from '@festival/core/api';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => {

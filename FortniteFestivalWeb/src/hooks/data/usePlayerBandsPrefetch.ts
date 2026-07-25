@@ -1,7 +1,7 @@
 /* eslint-disable no-magic-numbers -- prefetch timing constants mirror the app's query cache defaults. */
 import { useEffect } from 'react';
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
-import type { PlayerBandListGroup } from '@festival/core/api/serverTypes';
+import type { PlayerBandListGroup } from '@festival/core/api';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 

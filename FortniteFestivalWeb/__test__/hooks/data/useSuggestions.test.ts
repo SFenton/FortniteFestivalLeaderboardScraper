@@ -5,7 +5,7 @@ const mockGetNext = vi.fn().mockReturnValue([]);
 const mockSetSource = vi.fn();
 const mockResetForEndless = vi.fn();
 
-vi.mock('@festival/core/suggestions/suggestionGenerator', () => {
+vi.mock('@festival/core/suggestions', () => {
   return {
     SuggestionGenerator: class {
       setSource = mockSetSource;

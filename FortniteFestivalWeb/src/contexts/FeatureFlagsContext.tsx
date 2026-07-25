@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { FeatureFlagsResponse } from '@festival/core/api/serverTypes';
+import type { FeatureFlagsResponse } from '@festival/core/api';
 import { api } from '../api/client';
 import { queryKeys } from '../api/queryKeys';
 

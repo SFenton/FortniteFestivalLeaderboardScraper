@@ -5,7 +5,7 @@
  * closing: Open → Fading → Shrinking → Closed.
  */
 import { useState, useEffect, useRef } from 'react';
-import { CardPhase } from '@festival/core';
+import { CardPhase } from '@festival/core/runtime';
 
 export function useCardAnimation<T>(selectedPoint: T | null) {
   const [displayedPoint, setDisplayedPoint] = useState<T | null>(null);

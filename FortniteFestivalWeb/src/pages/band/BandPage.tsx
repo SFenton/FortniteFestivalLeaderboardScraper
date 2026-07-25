@@ -3,8 +3,8 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'reac
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { IoChevronForward, IoList, IoMusicalNotes, IoPeople, IoStatsChart, IoTrophy } from 'react-icons/io5';
-import { DEFAULT_INSTRUMENT, type BandDetailResponse, type BandRankingDto, type BandRankingMetric, type BandType, type PlayerBandEntry, type PlayerBandMember, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
-import { ACCURACY_SCALE, LoadPhase } from '@festival/core';
+import { DEFAULT_INSTRUMENT, type BandDetailResponse, type BandRankingDto, type BandRankingMetric, type BandType, type PlayerBandEntry, type PlayerBandMember, type ServerInstrumentKey } from '@festival/core/api';
+import { ACCURACY_SCALE, LoadPhase } from '@festival/core/runtime';
 import { Colors, Font, Gap, GridTemplate, IconSize, Layout, Radius, TRANSITION_MS, Weight, flexColumn, flexRow, frostedCard, transition, transitions } from '@festival/theme';
 import { api, type ApiRequestOptions } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';

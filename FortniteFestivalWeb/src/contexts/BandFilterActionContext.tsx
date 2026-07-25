@@ -1,5 +1,5 @@
 import { createContext, useContext, type ReactNode } from 'react';
-import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { ServerInstrumentKey } from '@festival/core/api';
 import type { AppliedBandComboFilter, BandInstrumentFilterApplyPayload, BandInstrumentFilterAssignment } from '../types/bandFilter';
 
 export type BandFilterActionContextValue = {

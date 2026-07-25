@@ -1,5 +1,5 @@
-import type { RankingMetric, AccountRankingEntry, CompositeRankingEntry } from '@festival/core/api/serverTypes';
-import { formatPercentileTopExact, formatRatingValue } from '@festival/core';
+import type { RankingMetric, AccountRankingEntry, CompositeRankingEntry } from '@festival/core/api';
+import { formatPercentileTopExact, formatRatingValue } from '@festival/core/app/formatters';
 import { Layout } from '@festival/theme';
 
 export const LEADERBOARD_PAGE_SIZE = 25;

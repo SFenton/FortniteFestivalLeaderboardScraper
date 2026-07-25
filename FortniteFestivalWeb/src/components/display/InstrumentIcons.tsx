@@ -3,8 +3,8 @@
  * Assets are served from /instruments/ in the public folder.
  */
 import { memo, useMemo } from 'react';
-import type { InstrumentKey } from '@festival/core/instruments';
-import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { InstrumentKey } from '@festival/core/types';
+import type { ServerInstrumentKey } from '@festival/core/api';
 import { Colors, ObjectFit } from '@festival/theme';
 
 type AnyInstrumentKey = InstrumentKey | ServerInstrumentKey;

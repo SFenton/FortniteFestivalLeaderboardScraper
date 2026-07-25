@@ -1,6 +1,6 @@
 import { memo, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { RivalSongComparison, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { RivalSongComparison, ServerInstrumentKey } from '@festival/core/api';
 import { Colors, Font, Weight, Gap, Radius, Layout, Border, Display, Align, Justify, Position, Cursor, Overflow, TextAlign, TextTransform, FontVariant, ObjectFit, frostedCard, flexColumn, flexRow, truncate, padding, border, transition } from '@festival/theme';
 import { CssProp } from '@festival/theme';
 import { InstrumentIcon } from '../../../components/display/InstrumentIcons';

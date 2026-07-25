@@ -1,5 +1,5 @@
 import { memo, useMemo, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import { formatPercentileBucket } from '@festival/core';
+import { formatPercentileBucket } from '@festival/core/app/formatters';
 import { Gap, Radius, Layout, TextAlign, CssValue, FAST_FADE_MS, transition, padding, frostedCard, flexRow, flexColumn, Display, Align, Justify } from '@festival/theme';
 import { CssProp } from '@festival/theme';
 import SongInfo from '../../../components/songs/metadata/SongInfo';

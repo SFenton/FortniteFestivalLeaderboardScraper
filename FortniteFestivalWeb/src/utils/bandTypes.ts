@@ -1,4 +1,4 @@
-import type { BandType } from '@festival/core/api/serverTypes';
+import type { BandType } from '@festival/core/api';
 
 export const BAND_TYPES: BandType[] = ['Band_Duets', 'Band_Trios', 'Band_Quad'];
 

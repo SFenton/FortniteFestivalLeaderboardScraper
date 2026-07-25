@@ -7,7 +7,7 @@ import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
 import fx from '../../../styles/effects.module.css';
 import { paddingWithSafeAreaBottom } from '../../../utils/safeAreaStyles';
 import { getStatisticsNavigationPath } from '../../../utils/profileNavigation';
-import { TabKey } from '@festival/core';
+import { TabKey } from '@festival/core/runtime';
 import {
   Colors, Font, Weight, Gap, ZIndex, Layout,
   Display, Align, Justify, Position, Cursor, CssValue, CssProp, BoxSizing,

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useShopWebSocket } from '../../../src/hooks/data/useShopWebSocket';
-import type { WsNotificationMessage } from '@festival/core/api/serverTypes';
+import type { WsNotificationMessage } from '@festival/core/api';
 
 const mockAppWebSocket = vi.hoisted(() => ({
   connected: true,

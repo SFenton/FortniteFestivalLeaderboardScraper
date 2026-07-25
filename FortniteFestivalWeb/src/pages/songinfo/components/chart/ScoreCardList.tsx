@@ -3,7 +3,7 @@
  * Extracted from ScoreHistoryChart for readability.
  */
 import { memo } from 'react';
-import { ACCURACY_SCALE } from '@festival/core';
+import { ACCURACY_SCALE } from '@festival/core/runtime';
 import { Colors, Gap, Radius, Font, Size, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, frostedCard, padding, border, transition } from '@festival/theme';
 import { LeaderboardEntry } from '../../../leaderboard/global/components/LeaderboardEntry';
 import { useMediaQuery } from '../../../../hooks/ui/useMediaQuery';

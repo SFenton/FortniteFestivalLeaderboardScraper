@@ -9,7 +9,7 @@ import { createTestQueryClient, TestProviders } from '../../helpers/TestProvider
 import type { QueryClient } from '@tanstack/react-query';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../helpers/browserStubs';
 import { songDetailCache } from '../../../src/api/pageCache';
-import type { PlayerBandType } from '@festival/core/api/serverTypes';
+import type { PlayerBandType } from '@festival/core/api';
 import { SONG_BAND_TYPES } from '../../../src/utils/songBandLeaderboards';
 import { LEGACY_TRACKED_PLAYER_STORAGE_KEY, SELECTED_PROFILE_STORAGE_KEY } from '../../../src/state/selectedProfile';
 import { expectCancellableCall } from '../../helpers/requestAssertions';

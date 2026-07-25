@@ -2,8 +2,8 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
-import { type ServerInstrumentKey as InstrumentKey, type ServerScoreHistoryEntry as ScoreHistoryEntry } from '@festival/core/api/serverTypes';
-import { ACCURACY_SCALE } from '@festival/core';
+import { type ServerInstrumentKey as InstrumentKey, type ServerScoreHistoryEntry as ScoreHistoryEntry } from '@festival/core/api';
+import { ACCURACY_SCALE } from '@festival/core/runtime';
 
 export type ChartPoint = {
   date: string;

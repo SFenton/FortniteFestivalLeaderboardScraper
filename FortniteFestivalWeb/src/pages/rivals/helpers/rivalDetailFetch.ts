@@ -1,4 +1,4 @@
-import type { RivalDetailResponse, RivalSongComparison } from '@festival/core/api/serverTypes';
+import type { RivalDetailResponse, RivalSongComparison } from '@festival/core/api';
 import { api, type ApiRequestOptions } from '../../../api/client';
 
 export async function fetchCombinedRivalDetail(

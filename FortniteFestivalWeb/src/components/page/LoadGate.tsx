@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode, type CSSProperties } from 'react';
-import { LoadPhase } from '@festival/core';
+import { LoadPhase } from '@festival/core/runtime';
 import { ZIndex, Layout, PointerEvents, SPINNER_FADE_MS, flexCenter, fixedFill } from '@festival/theme';
 import ArcSpinner from '../common/ArcSpinner';
 

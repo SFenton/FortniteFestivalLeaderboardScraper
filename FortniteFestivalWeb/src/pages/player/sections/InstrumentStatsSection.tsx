@@ -2,16 +2,16 @@
  * Per-instrument statistics section — stat cards + percentile table.
  * Returns Item[] for ONE instrument.
  */
-import { ACCURACY_SCALE } from '@festival/core';
-import { InstrumentHeaderSize } from '@festival/core';
-import { type ServerInstrumentKey as InstrumentKey, serverInstrumentLabel } from '@festival/core/api/serverTypes';
+import { ACCURACY_SCALE } from '@festival/core/runtime';
+import { InstrumentHeaderSize } from '@festival/core/runtime';
+import { type ServerInstrumentKey as InstrumentKey, serverInstrumentLabel } from '@festival/core/api';
 import { Colors, Gap, Overflow, Radius, frostedCardSurface } from '@festival/theme';
 import { type InstrumentStats, formatClamped, formatClamped2, accuracyColor } from '../helpers/playerStats';
 import StatBox from '../../../components/player/StatBox';
 import { cleanFilters, buildStarFilter, buildPercentileFilter } from '../helpers/playerFilterHelpers';
 import { instCardHeaderStyle } from './PlayerSectionHeading';
 import type { PlayerItem, NavigateToSongs, NavigateToSongDetail } from '../helpers/playerPageTypes';
-import type { AccountRankingEntry, RankingMetric, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { AccountRankingEntry, RankingMetric, ServerInstrumentKey } from '@festival/core/api';
 import { getRankForMetric, DEFAULT_METRICS, EXPERIMENTAL_METRICS } from '../../leaderboards/helpers/rankingHelpers';
 import InstrumentHeader from '../../../components/display/InstrumentHeader';
 import RankHistoryChart from '../../leaderboards/components/RankHistoryChart';

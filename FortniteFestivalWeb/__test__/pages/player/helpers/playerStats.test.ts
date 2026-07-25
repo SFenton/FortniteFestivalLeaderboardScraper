@@ -7,9 +7,9 @@ import {
   formatClamped2,
   resolveInstrumentRanks,
 } from '../../../../src/pages/player/helpers/playerStats';
-import type { PlayerScore } from '@festival/core/api/serverTypes';
-import type { InstrumentRankEntry } from '@festival/core/api/serverTypes';
-import { ACCURACY_SCALE } from '@festival/core';
+import type { PlayerScore } from '@festival/core/api';
+import type { InstrumentRankEntry } from '@festival/core/api';
+import { ACCURACY_SCALE } from '@festival/core/runtime';
 
 
 const makeScore = (overrides: Partial<PlayerScore> = {}): PlayerScore => ({

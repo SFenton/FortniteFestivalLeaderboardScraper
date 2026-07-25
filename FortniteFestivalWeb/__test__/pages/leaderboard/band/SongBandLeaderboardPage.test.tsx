@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import type { ReactNode } from 'react';
-import type { SongBandLeaderboardResponse } from '@festival/core/api/serverTypes';
+import type { SongBandLeaderboardResponse } from '@festival/core/api';
 import SongBandLeaderboardPage from '../../../../src/pages/leaderboard/band/SongBandLeaderboardPage';
 import { BandFilterActionProvider } from '../../../../src/contexts/BandFilterActionContext';
 import { FeatureFlagsProvider } from '../../../../src/contexts/FeatureFlagsContext';

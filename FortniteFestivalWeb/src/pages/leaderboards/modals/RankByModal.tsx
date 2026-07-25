@@ -6,7 +6,7 @@ import { RadioRow } from '../../../components/common/RadioRow';
 import FirstRunCarousel from '../../../components/firstRun/FirstRunCarousel';
 import { getEnabledRankingMetrics, isExperimentalRankingMetric } from '../helpers/rankingHelpers';
 import { getMetricInfoSlides } from '../firstRun/metricInfo';
-import type { RankingMetric } from '@festival/core/api/serverTypes';
+import type { RankingMetric } from '@festival/core/api';
 
 type RankByModalProps = {
   visible: boolean;

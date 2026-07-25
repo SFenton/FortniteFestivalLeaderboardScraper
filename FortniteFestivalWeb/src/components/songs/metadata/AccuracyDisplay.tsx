@@ -1,5 +1,6 @@
 import { memo, useMemo, type CSSProperties } from 'react';
-import { accuracyBgColor, ACCURACY_SCALE } from '@festival/core';
+import { accuracyBgColor } from '@festival/core/app/formatters';
+import { ACCURACY_SCALE } from '@festival/core/runtime';
 import { Colors, MetadataSize, Weight, goldOutlineSkew, Display, TextAlign, BoxSizing, CssValue, border, padding } from '@festival/theme';
 import { Border, Gap, Radius } from '@festival/theme';
 import { formatAccuracyText } from '../../../utils/formatters';

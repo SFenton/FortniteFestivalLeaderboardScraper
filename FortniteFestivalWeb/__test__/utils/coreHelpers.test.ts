@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { Keys } from '@festival/core';
-import { MAX_DISPLAY_STARS, GOLD_STARS_THRESHOLD, displayStarCount } from '@festival/core';
-import { PercentileTier, PERCENTILE_THRESHOLDS } from '@festival/core';
+import { Keys } from '@festival/core/runtime';
+import { MAX_DISPLAY_STARS, GOLD_STARS_THRESHOLD, displayStarCount } from '@festival/core/config';
+import { PercentileTier } from '@festival/core/runtime';
+import { PERCENTILE_THRESHOLDS } from '@festival/core/config';
 
 describe('Keys', () => {
   it('has expected key constants', () => {

@@ -1,4 +1,4 @@
-import type { BandConfiguration, PlayerBandType, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { BandConfiguration, PlayerBandType, ServerInstrumentKey } from '@festival/core/api';
 
 export type BandInstrumentFilterAssignment = {
   accountId: string;

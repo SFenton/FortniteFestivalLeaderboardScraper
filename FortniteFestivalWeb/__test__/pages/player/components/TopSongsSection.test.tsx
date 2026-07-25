@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render } from '@testing-library/react';
-import type { ServerInstrumentKey as InstrumentKey, ServerSong as Song, PlayerScore } from '@festival/core/api/serverTypes';
+import type { ServerInstrumentKey as InstrumentKey, ServerSong as Song, PlayerScore } from '@festival/core/api';
 import { Gap, Layout } from '@festival/theme';
 import { buildTopSongsItems, PLAYER_SONG_ROW_TWO_ROW_ESTIMATE } from '../../../../src/pages/player/components/TopSongsSection';
 

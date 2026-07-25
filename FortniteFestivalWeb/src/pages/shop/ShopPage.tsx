@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useMemo, useEffect, useLayoutEffect } fr
 import { useTranslation } from 'react-i18next';
 import { useNavigationType, useLocation } from 'react-router-dom';
 import { IoGrid, IoList } from 'react-icons/io5';
-import { LoadPhase } from '@festival/core';
+import { LoadPhase } from '@festival/core/runtime';
 import { useShopState } from '../../hooks/data/useShopState';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
@@ -16,7 +16,7 @@ import { staggerDelay as calcStagger, estimateVisibleCount, IS_PAGE_RELOAD } fro
 import { useStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import { SongRow } from '../songs/components/SongRow';
 import { visibleInstruments } from '../../contexts/SettingsContext';
-import { DEFAULT_INSTRUMENT, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import { DEFAULT_INSTRUMENT, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import { loadSongSettings } from '../../utils/songSettings';
 import { clearScrollCache } from '../../hooks/ui/useScrollRestore';
 import ShopCard from './components/ShopCard';

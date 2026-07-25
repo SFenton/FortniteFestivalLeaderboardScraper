@@ -1,7 +1,7 @@
 import { memo, useMemo, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { IoChevronForward } from 'react-icons/io5';
-import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import {
   Colors, Font, Weight, Gap, InstrumentSize, WordBreak,
   flexRow, flexColumn,

@@ -7,8 +7,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Size, Layout, Gap } from '@festival/theme';
-import { SERVER_INSTRUMENT_LABELS, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
-import type { InstrumentKey } from '@festival/core/instruments';
+import { SERVER_INSTRUMENT_LABELS, type ServerInstrumentKey } from '@festival/core/api';
+import type { InstrumentKey } from '@festival/core/types';
 import { InstrumentIcon } from '../display/InstrumentIcons';
 import { usePressAction } from '../../hooks/ui/usePressAction';
 import { filterStyles } from '../../pages/songs/modals/filterStyles';

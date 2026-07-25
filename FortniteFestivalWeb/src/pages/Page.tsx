@@ -28,7 +28,7 @@ import { useRegisterFirstRun } from '../hooks/ui/useRegisterFirstRun';
 import { useFirstRun } from '../hooks/ui/useFirstRun';
 import FirstRunCarousel from '../components/firstRun/FirstRunCarousel';
 import type { FirstRunSlideDef, FirstRunGateContext } from '../firstRun/types';
-import { LoadPhase } from '@festival/core';
+import { LoadPhase } from '@festival/core/runtime';
 import ArcSpinner from '../components/common/ArcSpinner';
 import { PageQuickLinksRail, PageQuickLinksModal, type PageQuickLinksConfig } from '../components/page/PageQuickLinks';
 

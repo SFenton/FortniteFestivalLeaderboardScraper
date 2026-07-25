@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { BandSongPerformance, ServerSong } from '@festival/core/api/serverTypes';
+import type { BandSongPerformance, ServerSong } from '@festival/core/api';
 import { buildBandSuggestionSource } from '../../../src/pages/suggestions/bandSuggestions';
 
 const songs: ServerSong[] = [

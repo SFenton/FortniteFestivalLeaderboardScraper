@@ -1,6 +1,6 @@
 import { Size } from '@festival/theme';
 import { InstrumentIcon } from '../../display/InstrumentIcons';
-import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { ServerInstrumentKey } from '@festival/core/api';
 
 const ICON_SIZE = Size.iconSm;
 const ROW_STYLE = {

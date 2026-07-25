@@ -1,4 +1,4 @@
-import type { BandRankingEntry, BandRankingMetric, BandTeamMember, RankingMetric } from '@festival/core/api/serverTypes';
+import type { BandRankingEntry, BandRankingMetric, BandTeamMember, RankingMetric } from '@festival/core/api';
 import { coerceRankingMetric, DEFAULT_METRICS } from './rankingHelpers';
 
 export const BAND_EXPERIMENTAL_METRICS: BandRankingMetric[] = ['adjusted', 'weighted', 'fcrate'];

@@ -54,8 +54,8 @@ import type {
   CompositeNeighborhoodResponse,
   LeaderboardRivalsListResponse,
   RankHistoryResponse,
-} from '@festival/core/api/serverTypes';
-import { expandWirePlayerResponse, expandWireSongsResponse, expandWireStatsResponse } from '@festival/core/api/serverTypes';
+} from '@festival/core/api';
+import { expandWirePlayerResponse, expandWireSongsResponse, expandWireStatsResponse } from '@festival/core/api';
 import { readSelectedProfile } from '../state/selectedProfile';
 import {
   isSongsResponse,

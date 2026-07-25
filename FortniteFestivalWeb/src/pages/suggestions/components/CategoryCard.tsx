@@ -4,11 +4,11 @@
 import { memo, useMemo, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { InstrumentKeys, type InstrumentKey } from '@festival/core/instruments';
-import type { BandType } from '@festival/core/api/serverTypes';
-import type { LeaderboardData } from '@festival/core/models';
-import type { SuggestionCategory, SuggestionSongItem } from '@festival/core/suggestions/types';
-import { ACCURACY_SCALE } from '@festival/core';
+import { InstrumentKeys, type InstrumentKey } from '@festival/core/config';
+import type { BandType } from '@festival/core/api';
+import type { LeaderboardData } from '@festival/core/types';
+import type { SuggestionCategory, SuggestionSongItem } from '@festival/core/types';
+import { ACCURACY_SCALE } from '@festival/core/runtime';
 import { InstrumentIcon, getInstrumentStatusVisual } from '../../../components/display/InstrumentIcons';
 import AccuracyDisplay from '../../../components/songs/metadata/AccuracyDisplay';
 import SongInfo from '../../../components/songs/metadata/SongInfo';

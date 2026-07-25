@@ -1,6 +1,6 @@
-import { ScoreTracker } from '@festival/core/models';
-import type { LeaderboardData, Song as CoreSong } from '@festival/core/models';
-import type { BandSongPerformance, BandType, ServerSong } from '@festival/core/api/serverTypes';
+import { ScoreTracker } from '@festival/core/runtime';
+import type { LeaderboardData, Song as CoreSong } from '@festival/core/types';
+import type { BandSongPerformance, BandType, ServerSong } from '@festival/core/api';
 import { serverSongToCore } from '../../utils/suggestionAdapter';
 
 const BAND_TRACKER_KEY = 'guitar';

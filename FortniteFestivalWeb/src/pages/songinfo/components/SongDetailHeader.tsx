@@ -14,7 +14,7 @@ import {
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 import { useShopState } from '../../../hooks/data/useShopState';
 import PressableButton from '../../../components/common/PressableButton';
-import type { ServerSong as Song } from '@festival/core/api/serverTypes';
+import type { ServerSong as Song } from '@festival/core/api';
 import anim from '../../../styles/animations.module.css';
 
 export interface SongDetailHeaderProps {

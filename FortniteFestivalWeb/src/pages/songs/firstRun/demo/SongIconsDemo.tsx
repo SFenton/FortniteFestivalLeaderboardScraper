@@ -3,7 +3,7 @@
  * Auto-fits rows, rotates one every 5 s with fade-out/in.
  */
 import { useMemo, useRef } from 'react';
-import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import { InstrumentChip } from '../../../../components/display/InstrumentChip';
 import SongInfo from '../../../../components/songs/metadata/SongInfo';
 import { useIsMobileChrome } from '../../../../hooks/ui/useIsMobile';

@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
-import type { RankHistoryEntry, RankingMetric, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import type { RankHistoryEntry, RankingMetric, ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import { fillRankHistoryGaps, mergeRankHistoryWithDeltas, parseSnapshotDate } from '../../utils/fillRankHistoryGaps';
 
 export type RankHistoryChartPoint = {

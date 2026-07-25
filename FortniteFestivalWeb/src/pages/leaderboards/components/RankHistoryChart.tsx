@@ -11,9 +11,9 @@ import {
   ResponsiveContainer,
   CartesianGrid,
 } from 'recharts';
-import type { ServerInstrumentKey as InstrumentKey, RankingMetric } from '@festival/core/api/serverTypes';
-import { serverInstrumentLabel as instrumentLabel } from '@festival/core/api/serverTypes';
-import { formatLeaderboardPercentile, formatRatingValue, rankColor } from '@festival/core';
+import type { ServerInstrumentKey as InstrumentKey, RankingMetric } from '@festival/core/api';
+import { serverInstrumentLabel as instrumentLabel } from '@festival/core/api';
+import { formatLeaderboardPercentile, formatRatingValue, rankColor } from '@festival/core/app/formatters';
 import GraphCard from '../../../components/common/GraphCard';
 import { PressableChartPath } from '../../../components/common/PressableChartPath';
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';

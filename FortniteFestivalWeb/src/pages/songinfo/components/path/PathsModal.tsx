@@ -11,7 +11,7 @@ import {
   visibleInstruments,
   visiblePathInstruments,
 } from '../../../../contexts/SettingsContext';
-import { INSTRUMENT_LABELS, DEFAULT_INSTRUMENT, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import { INSTRUMENT_LABELS, DEFAULT_INSTRUMENT, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import { InstrumentIcon } from '../../../../components/display/InstrumentIcons';
 import { InstrumentSelector, type InstrumentSelectorItem } from '../../../../components/common/InstrumentSelector';
 import ArcSpinner from '../../../../components/common/ArcSpinner';

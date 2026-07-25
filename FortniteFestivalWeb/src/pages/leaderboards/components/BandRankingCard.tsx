@@ -1,7 +1,7 @@
 import { memo, useMemo, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import type { BandConfiguration, BandRankingEntry, BandRankingMetric, BandType, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { BandConfiguration, BandRankingEntry, BandRankingMetric, BandType, ServerInstrumentKey } from '@festival/core/api';
 import { staggerDelay } from '@festival/ui-utils';
 import { Border, Colors, Font, Weight, Gap, Radius, Layout, Display, Align, Overflow, Cursor, CssProp, FAST_FADE_MS, STAGGER_INTERVAL, FADE_DURATION, border, frostedCard, flexColumn, flexRow, transition } from '@festival/theme';
 import { Routes } from '../../../routes';

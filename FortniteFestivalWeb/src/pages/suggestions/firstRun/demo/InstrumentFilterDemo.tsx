@@ -8,7 +8,7 @@ import { InstrumentSelector, type InstrumentSelectorItem } from '../../../../com
 import { ToggleRow } from '../../../../components/common/ToggleRow';
 import FadeIn from '../../../../components/page/FadeIn';
 import { useSettings, visibleInstruments } from '../../../../contexts/SettingsContext';
-import { SUGGESTION_TYPES } from '@festival/core/suggestions/suggestionFilterConfig';
+import { SUGGESTION_TYPES } from '@festival/core/suggestions';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { Layout, TRANSITION_MS } from '@festival/theme';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';

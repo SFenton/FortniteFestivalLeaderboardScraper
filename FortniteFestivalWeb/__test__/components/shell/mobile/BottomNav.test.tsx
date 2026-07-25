@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { TabKey } from '@festival/core';
+import { TabKey } from '@festival/core/runtime';
 import { Layout } from '@festival/theme';
 
 vi.mock('../../../../src/contexts/FeatureFlagsContext', () => ({

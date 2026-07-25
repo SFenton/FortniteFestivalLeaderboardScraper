@@ -1,4 +1,4 @@
-import type { BandType } from '@festival/core/api/serverTypes';
+import type { BandType } from '@festival/core/api';
 import { resetSongSettingsForDeselect } from '../utils/songSettings';
 
 export const SELECTED_PROFILE_STORAGE_KEY = 'fst:selectedProfile';

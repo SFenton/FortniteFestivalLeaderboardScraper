@@ -1,4 +1,4 @@
-import type { RankingMetric, PlayerBandType, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { RankingMetric, PlayerBandType, ServerInstrumentKey } from '@festival/core/api';
 import { Routes } from '../../routes';
 import type { SelectedBandMemberProfile, SelectedBandProfile } from '../../state/selectedProfile';
 import type { AppliedBandComboFilter, BandInstrumentFilterAssignment } from '../../types/bandFilter';

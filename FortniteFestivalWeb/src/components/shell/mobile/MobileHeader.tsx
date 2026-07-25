@@ -7,7 +7,7 @@ import HeaderActions, { type HeaderActionProfileType, type HeaderNotificationVis
 import BackLink from './BackLink';
 import MarqueeText from '../../common/MarqueeText';
 import { usePressAction } from '../../../hooks/ui/usePressAction';
-import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import {
   Colors, Font, Weight, Gap, Layout, MaxWidth, ZIndex, InstrumentSize, IconSize,
   Display, Align, Justify, Position, WhiteSpace, BoxSizing, CssValue,

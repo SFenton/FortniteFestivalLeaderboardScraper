@@ -1,11 +1,11 @@
 import { memo, useCallback, useMemo, useRef, type AnimationEventHandler, type CSSProperties, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { InstrumentHeaderSize } from '@festival/core';
+import { InstrumentHeaderSize } from '@festival/core/runtime';
 import InstrumentHeader from '../../../components/display/InstrumentHeader';
 import CardPressable from '../../../components/common/CardPressable';
 import { COMPACT_PERCENTILE_ROW_HEIGHT, RankingEntry } from './RankingEntry';
-import type { ServerInstrumentKey as InstrumentKey, AccountRankingEntry, AccountRankingDto, RankingMetric } from '@festival/core/api/serverTypes';
+import type { ServerInstrumentKey as InstrumentKey, AccountRankingEntry, AccountRankingDto, RankingMetric } from '@festival/core/api';
 import InstrumentEmptyState from '../../player/sections/InstrumentEmptyState';
 import { Routes } from '../../../routes';
 import { parseApiError } from '../../../utils/apiError';
@@ -13,7 +13,7 @@ import { getRankForMetric, formatRating, getRatingForMetric, getBayesianRatingFo
 import { useContainerWidth } from '../../../hooks/ui/useContainerWidth';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 import { useNavLinkPress } from '../../../hooks/navigation/useNavLinkPress';
-import { rankColor } from '@festival/core';
+import { rankColor } from '@festival/core/app/formatters';
 import { staggerDelay } from '@festival/ui-utils';
 import {
   Colors, Font, Weight, Gap, Radius, Layout,

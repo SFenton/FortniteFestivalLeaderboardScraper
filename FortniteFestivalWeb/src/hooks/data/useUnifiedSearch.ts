@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { DEBOUNCE_MS } from '@festival/theme';
-import type { AccountSearchResult, BandSearchResult, ServerSong } from '@festival/core/api/serverTypes';
+import type { AccountSearchResult, BandSearchResult, ServerSong } from '@festival/core/api';
 import { api } from '../../api/client';
 import { useFestival } from '../../contexts/FestivalContext';
 import type { SearchTarget } from '../../types/search';

@@ -5,7 +5,7 @@ import { useSelectedProfile } from '../../../hooks/data/useSelectedProfile';
 import { getPlayerProfileRoute } from '../../../utils/profileNavigation';
 import SearchBar, { type SearchBarRef } from '../../common/SearchBar';
 import PressableButton from '../../common/PressableButton';
-import type { AccountSearchResult } from '@festival/core/api/serverTypes';
+import type { AccountSearchResult } from '@festival/core/api';
 import {
   Colors, Font, Gap, Radius, Layout, ZIndex,
   Display, Position, TextAlign, Cursor, Overflow, BoxSizing,

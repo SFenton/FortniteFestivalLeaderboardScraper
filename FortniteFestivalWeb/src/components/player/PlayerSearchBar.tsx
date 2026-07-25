@@ -11,7 +11,7 @@ import { useFadeSpinner } from '../../hooks/ui/useFadeSpinner';
 import SearchBar from '../common/SearchBar';
 import PressableButton from '../common/PressableButton';
 import ArcSpinner, { SpinnerSize } from '../common/ArcSpinner';
-import { type AccountSearchResult } from '@festival/core/api/serverTypes';
+import { type AccountSearchResult } from '@festival/core/api';
 import {
   Colors, Font, Gap, Radius, ZIndex, Layout,
   Display, Position, TextAlign, Cursor, Overflow, Align, Justify, PointerEvents, CssValue,

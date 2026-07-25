@@ -4,7 +4,7 @@
  * messages to registered listeners by type.
  */
 import { useEffect, useCallback, useState } from 'react';
-import type { WsNotificationMessage } from '@festival/core/api/serverTypes';
+import type { WsNotificationMessage } from '@festival/core/api';
 
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;

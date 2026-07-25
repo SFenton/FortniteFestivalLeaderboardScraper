@@ -1,7 +1,7 @@
 /**
  * Shared types for the player page item-building pattern.
  */
-import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import type { SongSettings } from '../../../utils/songSettings';
 
 /** A single item in the staggered grid. */

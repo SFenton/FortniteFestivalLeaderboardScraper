@@ -7,8 +7,8 @@
  */
 import { memo, useMemo, useRef, useState, useCallback, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CardPhase, ListPhase } from '@festival/core';
-import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import { CardPhase, ListPhase } from '@festival/core/runtime';
+import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import { InstrumentSelector, type InstrumentSelectorItem } from './InstrumentSelector';
 import { useChartDimensions } from '../../hooks/chart/useChartDimensions';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';

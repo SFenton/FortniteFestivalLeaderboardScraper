@@ -1,6 +1,6 @@
 import { useMemo, type CSSProperties } from 'react';
-import { ACCURACY_SCALE } from '@festival/core';
-import type { PlayerBandMember, SongBandLeaderboardEntry } from '@festival/core/api/serverTypes';
+import { ACCURACY_SCALE } from '@festival/core/runtime';
+import type { PlayerBandMember, SongBandLeaderboardEntry } from '@festival/core/api';
 import { Align, Colors, Display, Font, FontVariant, Gap, Justify, MetadataSize, StarSize, TextAlign } from '@festival/theme';
 import SeasonPill from '../songs/metadata/SeasonPill';
 import ScorePill from '../songs/metadata/ScorePill';

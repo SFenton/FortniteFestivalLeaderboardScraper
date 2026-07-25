@@ -3,8 +3,8 @@
  * Extracted from PlayerHistoryPage for testability.
  */
 import { useMemo } from 'react';
-import { PlayerScoreSortMode } from '@festival/core';
-import { type ServerScoreHistoryEntry as ScoreHistoryEntry } from '@festival/core/api/serverTypes';
+import { PlayerScoreSortMode } from '@festival/core/runtime';
+import { type ServerScoreHistoryEntry as ScoreHistoryEntry } from '@festival/core/api';
 
 export function useSortedScoreHistory(
   filteredHistory: ScoreHistoryEntry[],

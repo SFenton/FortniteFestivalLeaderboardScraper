@@ -6,9 +6,9 @@ import { Accordion } from '../../../components/common/Accordion';
 import ConfirmAlert from '../../../components/modals/ConfirmAlert';
 import { InstrumentSelector, type InstrumentSelectorItem } from '../../../components/common/InstrumentSelector';
 import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
-import type { InstrumentKey } from '@festival/core/instruments';
-import { InstrumentKeys } from '@festival/core/instruments';
-import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { InstrumentKey } from '@festival/core/types';
+import { InstrumentKeys } from '@festival/core/config';
+import type { ServerInstrumentKey } from '@festival/core/api';
 import { useModalDraft } from '../../../hooks/ui/useModalDraft';
 import type { SelectedBandProfile } from '../../../hooks/data/useSelectedProfile';
 import type { BandInstrumentFilterApplyPayload, BandInstrumentFilterAssignment } from '../../../types/bandFilter';
@@ -22,8 +22,8 @@ import {
   SUGGESTION_TYPES,
   globalKeyFor,
   perInstrumentKeyFor,
-} from '@festival/core/suggestions/suggestionFilterConfig';
-import type { SuggestionTypeId } from '@festival/core/suggestions/suggestionFilterConfig';
+} from '@festival/core/suggestions';
+import type { SuggestionTypeId } from '@festival/core/types';
 import { Size } from '@festival/theme';
 import { filterStyles } from '../../songs/modals/filterStyles';
 import { useTranslation } from 'react-i18next';

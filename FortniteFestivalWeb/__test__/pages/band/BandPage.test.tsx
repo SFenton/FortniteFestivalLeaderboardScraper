@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vite
 import { render, screen, act, fireEvent, waitFor, within } from '@testing-library/react';
 import { Route, Routes, useLocation } from 'react-router-dom';
 import type { QueryClient } from '@tanstack/react-query';
-import { ACCURACY_SCALE } from '@festival/core';
+import { ACCURACY_SCALE } from '@festival/core/runtime';
 import { Colors, GridTemplate } from '@festival/theme';
-import { DEFAULT_INSTRUMENT, type BandConfiguration, type BandDetailResponse } from '@festival/core/api/serverTypes';
+import { DEFAULT_INSTRUMENT, type BandConfiguration, type BandDetailResponse } from '@festival/core/api';
 import { queryKeys } from '../../../src/api/queryKeys';
 import { createTestQueryClient, TestProviders } from '../../helpers/TestProviders';
 import { stubElementDimensions, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';

@@ -1,5 +1,5 @@
 import { memo, useMemo } from 'react';
-import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { ServerInstrumentKey } from '@festival/core/api';
 import { InstrumentSize, Gap, CssValue, Display, Align, Justify, BorderStyle } from '@festival/theme';
 import { InstrumentIcon, getInstrumentStatusVisual } from './InstrumentIcons';
 

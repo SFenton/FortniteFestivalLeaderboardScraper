@@ -1,5 +1,5 @@
-import { comboIdFromInstruments, instrumentsFromComboId, isWithinGroupComboId } from '@festival/core/combos';
-import { serverInstrumentLabel, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import { comboIdFromInstruments, instrumentsFromComboId, isWithinGroupComboId } from '@festival/core/config';
+import { serverInstrumentLabel, type ServerInstrumentKey } from '@festival/core/api';
 
 export type RankingScopeFamily = 'og-band' | 'pro-strings' | 'peripherals';
 

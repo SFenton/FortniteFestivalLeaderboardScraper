@@ -15,7 +15,7 @@ import { stubMatchMedia, stubScrollTo, stubResizeObserver, stubElementDimensions
 import { ScrollContainerProvider, useScrollContainer, useHeaderPortalRef, useQuickLinksRailPortalRef } from '../../../../../src/contexts/ScrollContainerContext';
 import { DEFAULT_QUICK_LINK_SCROLL_OFFSET } from '../../../../../src/hooks/ui/usePageQuickLinks';
 import PlayerContentBase from '../../../../../src/pages/leaderboard/player/components/PlayerContent';
-import { SyncPhase } from '@festival/core';
+import { SyncPhase } from '@festival/core/runtime';
 
 const PlayerContent = PlayerContentBase as unknown as (props: any) => React.JSX.Element;
 

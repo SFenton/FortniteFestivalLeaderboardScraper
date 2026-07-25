@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { categorizeRivalSongs } from '../../../src/pages/rivals/helpers/rivalCategories';
-import type { RivalSongComparison } from '@festival/core/api/serverTypes';
+import type { RivalSongComparison } from '@festival/core/api';
 
 function makeSong(overrides: Partial<RivalSongComparison> = {}): RivalSongComparison {
   return {

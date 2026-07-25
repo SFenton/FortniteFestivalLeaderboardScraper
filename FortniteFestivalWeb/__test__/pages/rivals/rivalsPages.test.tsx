@@ -14,7 +14,7 @@ import { TestProviders } from '../../helpers/TestProviders';
 import { usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
 import { useSettings, type AppSettings } from '../../../src/contexts/SettingsContext';
 import { useTrackedPlayer } from '../../../src/hooks/data/useTrackedPlayer';
-import type { RivalSongComparison, RivalsListResponse, RivalDetailResponse, LeaderboardRivalsListResponse } from '@festival/core/api/serverTypes';
+import type { RivalSongComparison, RivalsListResponse, RivalDetailResponse, LeaderboardRivalsListResponse } from '@festival/core/api';
 import { expectCancellableCall, expectNoCancellableCall } from '../../helpers/requestAssertions';
 
 /* ── API mock ── */

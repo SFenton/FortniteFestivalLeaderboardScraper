@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { Radius, frostedCard, Gap } from '@festival/theme';
 import { buildInstrumentStatsItems } from '../../sections/InstrumentStatsSection';
 import { computeInstrumentStats } from '../../helpers/playerStats';
-import type { PlayerScore } from '@festival/core/api/serverTypes';
+import type { PlayerScore } from '@festival/core/api';
 import FadeIn from '../../../../components/page/FadeIn';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { useIsMobileChrome } from '../../../../hooks/ui/useIsMobile';

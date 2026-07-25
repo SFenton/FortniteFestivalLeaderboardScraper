@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { SERVER_INSTRUMENT_KEYS, type PlayerBandType, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import { SERVER_INSTRUMENT_KEYS, type PlayerBandType, type ServerInstrumentKey } from '@festival/core/api';
 import { Border, Colors, Font, Gap, Radius, border, padding } from '@festival/theme';
 import Modal from '../../../components/modals/Modal';
 import ConfirmAlert from '../../../components/modals/ConfirmAlert';

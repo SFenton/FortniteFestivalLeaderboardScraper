@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties } from 'react';
 import { Colors, Overflow, PointerEvents, fixedFill, absoluteFill } from '@festival/theme';
-import { type ServerSong as Song } from '@festival/core/api/serverTypes';
+import { type ServerSong as Song } from '@festival/core/api';
 import { SAFE_AREA_BOTTOM_RAW_VAR, SAFE_AREA_TOP_RAW_VAR } from '../../utils/safeAreaStyles';
 
 const BG_DURATION = 1000;

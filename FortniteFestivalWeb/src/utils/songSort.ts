@@ -1,4 +1,4 @@
-import type { PlayerScore } from '@festival/core/api/serverTypes';
+import type { PlayerScore } from '@festival/core/api';
 import type { SongSortMode } from './songSettings';
 
 /** Compare two PlayerScores by a given sort mode; undefined scores sort last. */

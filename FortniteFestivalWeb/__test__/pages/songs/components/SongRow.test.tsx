@@ -5,7 +5,7 @@ import type { ComponentProps } from 'react';
 import { SongRow, compareByMode } from '../../../../src/pages/songs/components/SongRow';
 import { resolvePillFitsTopRow } from '../../../../src/pages/songs/layoutMode';
 import anim from '../../../../src/styles/animations.module.css';
-import type { ServerSong as Song, PlayerScore, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import type { ServerSong as Song, PlayerScore, ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 
 import type { SongSortMode } from '../../../../src/utils/songSettings';
 
@@ -19,7 +19,7 @@ vi.mock('../../../../src/components/display/InstrumentIcons', () => ({
   }),
 }));
 
-vi.mock('@festival/core', async (importOriginal) => {
+vi.mock('@festival/core/app/formatters', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
     ...actual,

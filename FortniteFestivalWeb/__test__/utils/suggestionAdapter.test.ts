@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { serverSongToCore, buildScoresIndex } from '../../src/utils/suggestionAdapter';
-import type { ServerSong, PlayerScore } from '@festival/core/api/serverTypes';
+import type { ServerSong, PlayerScore } from '@festival/core/api';
 
 const mockSong: ServerSong = {
   songId: 's1',

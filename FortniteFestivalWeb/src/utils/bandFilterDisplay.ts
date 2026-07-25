@@ -1,4 +1,4 @@
-import { serverInstrumentLabel, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import { serverInstrumentLabel, type ServerInstrumentKey } from '@festival/core/api';
 
 export function getBandFilterActionLabel(selectedInstruments: readonly ServerInstrumentKey[], emptyLabel: string): string {
   if (selectedInstruments.length === 0) return emptyLabel;

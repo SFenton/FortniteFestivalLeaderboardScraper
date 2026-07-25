@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { api } from '../../api/client';
-import { type SyncStatusResponse, type SyncProgressMessage, type WsNotificationMessage } from '@festival/core/api/serverTypes';
-import { SyncPhase, BackfillStatus } from '@festival/core';
+import { type SyncStatusResponse, type SyncProgressMessage, type WsNotificationMessage } from '@festival/core/api';
+import { SyncPhase, BackfillStatus } from '@festival/core/runtime';
 import { useAppWebSocket } from './useAppWebSocket';
 export type { SyncPhase };
 

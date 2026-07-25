@@ -1,7 +1,7 @@
-import { Keys } from '@festival/core';
+import { Keys } from '@festival/core/runtime';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { api } from '../../api/client';
-import { type AccountSearchResult } from '@festival/core/api/serverTypes';
+import { type AccountSearchResult } from '@festival/core/api';
 import { DEBOUNCE_MS } from '@festival/theme';
 
 export interface AccountSearchState {

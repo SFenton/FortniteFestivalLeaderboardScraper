@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { SongsToolbar } from '../../../../src/pages/songs/components/SongsToolbar';
-import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { ServerInstrumentKey } from '@festival/core/api';
 
 describe('SongsToolbar', () => {
   const defaults = {

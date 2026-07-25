@@ -21,8 +21,8 @@ import type {
   ComboRankingEntry,
   RivalSummary,
   ServerInstrumentKey,
-} from '@festival/core/api/serverTypes';
-import { InstrumentHeaderSize, LoadPhase } from '@festival/core';
+} from '@festival/core/api';
+import { InstrumentHeaderSize, LoadPhase } from '@festival/core/runtime';
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
 import EmptyState from '../../components/common/EmptyState';

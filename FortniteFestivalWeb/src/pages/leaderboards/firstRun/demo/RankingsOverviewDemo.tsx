@@ -7,7 +7,7 @@ import InstrumentHeader from '../../../../components/display/InstrumentHeader';
 import FadeIn from '../../../../components/page/FadeIn';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { DEMO_RANKINGS } from '../../../../firstRun/demoData';
-import { InstrumentHeaderSize } from '@festival/core';
+import { InstrumentHeaderSize } from '@festival/core/runtime';
 import {
   Font, Gap, Radius, Layout, Display, Align,
   CssValue, PointerEvents, frostedCard, flexColumn, padding,

@@ -6,7 +6,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ServerSong as Song, SongsResponse } from '@festival/core/api/serverTypes';
+import type { ServerSong as Song, SongsResponse } from '@festival/core/api';
 import { api } from '../api/client';
 import { queryKeys } from '../api/queryKeys';
 import { readSongsCache } from '../api/songsCache';

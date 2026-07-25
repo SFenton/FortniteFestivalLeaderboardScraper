@@ -4,7 +4,7 @@
  */
 import { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { SuggestionCategory, SuggestionSongItem } from '@festival/core/suggestions/types';
+import type { SuggestionCategory, SuggestionSongItem } from '@festival/core/types';
 import { CategoryCard } from '../../components/CategoryCard';
 import { useFestival } from '../../../../contexts/FestivalContext';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';

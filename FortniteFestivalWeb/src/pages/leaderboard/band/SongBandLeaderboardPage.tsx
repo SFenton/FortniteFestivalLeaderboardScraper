@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useState, type AnimationEvent, type CS
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { LoadPhase } from '@festival/core';
-import type { ServerInstrumentKey, SongBandLeaderboardEntry } from '@festival/core/api/serverTypes';
+import { LoadPhase } from '@festival/core/runtime';
+import type { ServerInstrumentKey, SongBandLeaderboardEntry } from '@festival/core/api';
 import { Border, Colors, Display, Gap, border, flexColumn } from '@festival/theme';
 import { api } from '../../../api/client';
 import { queryKeys } from '../../../api/queryKeys';

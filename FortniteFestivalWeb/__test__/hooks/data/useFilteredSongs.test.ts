@@ -3,7 +3,7 @@ import { renderHook } from '@testing-library/react';
 import { useFilteredSongs } from '../../../src/hooks/data/useFilteredSongs';
 import { compareByMode } from '../../../src/pages/songs/components/SongRow';
 import { defaultSongFilters } from '../../../src/utils/songSettings';
-import type { ServerSong as Song, PlayerScore, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import type { ServerSong as Song, PlayerScore, ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 
 function song(id: string, title: string, artist: string, year?: number, maxScores?: Partial<Record<InstrumentKey, number>>): Song {
   return {

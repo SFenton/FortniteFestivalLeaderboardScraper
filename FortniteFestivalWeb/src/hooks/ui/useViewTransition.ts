@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { LoadPhase } from '@festival/core';
+import { LoadPhase } from '@festival/core/runtime';
 import { SPINNER_FADE_MS } from '@festival/theme';
 
 export interface ViewTransitionOptions {

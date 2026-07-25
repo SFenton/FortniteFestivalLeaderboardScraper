@@ -4,7 +4,7 @@ import { Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { stubElementDimensions, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
 import { TestProviders } from '../../helpers/TestProviders';
 import { computeRankWidth } from '../../../src/pages/leaderboards/helpers/rankingHelpers';
-import type { ComboPageResponse, RankingsPageResponse, RivalsListResponse } from '@festival/core/api/serverTypes';
+import type { ComboPageResponse, RankingsPageResponse, RivalsListResponse } from '@festival/core/api';
 import { contentHash } from '../../../src/firstRun/types';
 import { competeSlides } from '../../../src/pages/compete/firstRun';
 import { usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';

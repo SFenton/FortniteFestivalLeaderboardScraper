@@ -15,7 +15,7 @@ import {
   SUGGESTIONS_FILTER_STORAGE_VERSION,
 } from '../../../src/pages/suggestions/suggestionsHelpers';
 import { defaultSuggestionsFilterDraft } from '../../../src/pages/suggestions/modals/SuggestionsFilterModal';
-import type { SuggestionCategory } from '@festival/core/suggestions/types';
+import type { SuggestionCategory } from '@festival/core/types';
 
 beforeEach(() => { localStorage.clear(); });
 

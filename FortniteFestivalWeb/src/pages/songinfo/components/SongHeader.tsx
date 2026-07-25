@@ -7,7 +7,7 @@ import {
   Gap, IconSize, Justify, Layout, ObjectFit, Radius, TRANSITION_MS, EASE_SMOOTH, Weight,
   border, flexRow, frostedCard, padding, transition,
 } from '@festival/theme';
-import { type ServerSong as Song } from '@festival/core/api/serverTypes';
+import { type ServerSong as Song } from '@festival/core/api';
 import PressableButton from '../../../components/common/PressableButton';
 
 export interface SongHeaderProps {

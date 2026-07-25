@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { LEADERBOARD_PAGE_SIZE, computePillMinWidth, computeRankAxisWidth, computeRankWidth, formatBayesianRatingDisplay, formatRankLabel, formatRating, formatRankingValueDisplay, getBayesianRatingForMetric, getLeaderboardPageForRank, getRatingForMetric, getRatingPillTier, getSongsLabel } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
-import type { AccountRankingEntry } from '@festival/core/api/serverTypes';
-import type { RankingMetric } from '@festival/core/api/serverTypes';
+import type { AccountRankingEntry } from '@festival/core/api';
+import type { RankingMetric } from '@festival/core/api';
 import { Layout } from '@festival/theme';
 
 describe('computeRankWidth', () => {

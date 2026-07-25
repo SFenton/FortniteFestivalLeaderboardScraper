@@ -1,4 +1,4 @@
-import type { ServerSong as Song } from '@festival/core/api/serverTypes';
+import type { ServerSong as Song } from '@festival/core/api';
 
 const DIACRITIC_RE = /[\u0300-\u036f]/g;
 const APOSTROPHE_RE = /['‘’`´]/g;

@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { SuggestionGenerator } from '@festival/core/suggestions/suggestionGenerator';
-import type { SuggestionCategory } from '@festival/core/suggestions/types';
-import type { Song as CoreSong, LeaderboardData } from '@festival/core/models';
+import { SuggestionGenerator } from '@festival/core/suggestions';
+import type { SuggestionCategory } from '@festival/core/types';
+import type { Song as CoreSong, LeaderboardData } from '@festival/core/types';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { api } from '../../api/client';
 import { buildRivalDataIndexFromRivalsAll } from '../../utils/suggestionAdapter';

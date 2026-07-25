@@ -1,6 +1,6 @@
-import type {LeaderboardData, ScoreHistoryEntry, Song} from '@festival/core';
+import type { LeaderboardData, ScoreHistoryEntry, Song } from '@festival/core/types';
 import {savePretty} from '../../io/jsonSerializer';
-import type {FestivalPersistence} from '@festival/core';
+import type { FestivalPersistence } from '@festival/core/types';
 import type {FileStore} from './fileStore.types';
 
 export class FileJsonFestivalPersistence implements FestivalPersistence {

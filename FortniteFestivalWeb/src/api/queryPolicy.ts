@@ -1,5 +1,5 @@
 import { keepPreviousData, type QueryClient } from '@tanstack/react-query';
-import type { AllLeaderboardsResponse, LeaderboardResponse } from '@festival/core/api/serverTypes';
+import type { AllLeaderboardsResponse, LeaderboardResponse } from '@festival/core/api';
 import { queryKeys } from './queryKeys';
 
 export const REMOTE_DATA_STALE_TIME_MS = 5 * 60_000;

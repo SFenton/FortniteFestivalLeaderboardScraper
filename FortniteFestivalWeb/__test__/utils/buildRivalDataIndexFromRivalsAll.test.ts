@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildRivalDataIndexFromRivalsAll } from '../../src/utils/suggestionAdapter';
-import type { RivalsAllResponse } from '@festival/core/api/serverTypes';
+import type { RivalsAllResponse } from '@festival/core/api';
 
 describe('buildRivalDataIndexFromRivalsAll', () => {
   const response: RivalsAllResponse = {

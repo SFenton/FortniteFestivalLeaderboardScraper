@@ -1,7 +1,7 @@
 import { memo, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { InstrumentHeaderSize } from '@festival/core';
-import type { ServerSong, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import { InstrumentHeaderSize } from '@festival/core/runtime';
+import type { ServerSong, ServerInstrumentKey } from '@festival/core/api';
 import { Gap, Radius, frostedCard } from '@festival/theme';
 import InstrumentHeader from '../../../components/display/InstrumentHeader';
 import DifficultyBars from '../../../components/songs/metadata/DifficultyBars';

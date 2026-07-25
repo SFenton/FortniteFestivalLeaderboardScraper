@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { ListPhase } from '@festival/core';
+import { ListPhase } from '@festival/core/runtime';
 import type { ChartPoint } from '../../../src/hooks/chart/useChartData';
 import { useListAnimation } from '../../../src/hooks/chart/useListAnimation';
 

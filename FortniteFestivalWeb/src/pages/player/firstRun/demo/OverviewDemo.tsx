@@ -6,7 +6,7 @@ import { type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Radius, frostedCard, Gap, Overflow, PointerEvents, CssValue, GridTemplate } from '@festival/theme';
 import { buildOverallSummaryItems, type OverallStats } from '../../sections/OverallSummarySection';
-import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS } from '@festival/core/api/serverTypes';
+import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS } from '@festival/core/api';
 import FadeIn from '../../../../components/page/FadeIn';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { useIsMobileChrome } from '../../../../hooks/ui/useIsMobile';

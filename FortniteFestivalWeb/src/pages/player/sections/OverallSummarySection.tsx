@@ -2,8 +2,8 @@
  * Overall summary stat boxes — the first section on the player page.
  * Returns Item[] for: songs played, full combos, gold stars, avg accuracy, best rank.
  */
-import { ACCURACY_SCALE } from '@festival/core';
-import { SOLO_FAMILY_SCOPE_LABELS, type ServerInstrumentKey as InstrumentKey, type RankingMetric, type SoloFamilyRanksByScope, type SoloFamilyScopeId } from '@festival/core/api/serverTypes';
+import { ACCURACY_SCALE } from '@festival/core/runtime';
+import { SOLO_FAMILY_SCOPE_LABELS, type ServerInstrumentKey as InstrumentKey, type RankingMetric, type SoloFamilyRanksByScope, type SoloFamilyScopeId } from '@festival/core/api';
 import { Colors } from '@festival/theme';
 import { formatClamped, accuracyColor } from '../helpers/playerStats';
 import StatBox from '../../../components/player/StatBox';

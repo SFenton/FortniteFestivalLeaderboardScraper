@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
-import { INSTRUMENT_LABELS } from '@festival/core/api/serverTypes';
+import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
+import { INSTRUMENT_LABELS } from '@festival/core/api';
 import { InstrumentSelector, type InstrumentSelectorItem } from '../../../../components/common/InstrumentSelector';
 import { ToggleRow } from '../../../../components/common/ToggleRow';
 import FadeIn from '../../../../components/page/FadeIn';

@@ -1,5 +1,5 @@
-import type {Settings} from '@festival/core';
-import {defaultSettings} from '@festival/core';
+import type { Settings } from '@festival/core/types';
+import { defaultSettings } from '@festival/core/config';
 import {savePretty} from '../../io/jsonSerializer';
 import type {FileStore} from './fileStore.types';
 

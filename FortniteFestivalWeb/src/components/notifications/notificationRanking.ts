@@ -1,4 +1,4 @@
-import type { RankingMetric } from '@festival/core/api/serverTypes';
+import type { RankingMetric } from '@festival/core/api';
 
 export type NotificationRankingMetricInput = {
   eventKind?: string | null;

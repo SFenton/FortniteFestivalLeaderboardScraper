@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { QueryClient } from '@tanstack/react-query';
-import type { AccountNameRefreshResponse } from '@festival/core/api/serverTypes';
+import type { AccountNameRefreshResponse } from '@festival/core/api';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import {

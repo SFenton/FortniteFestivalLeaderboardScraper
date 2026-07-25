@@ -4,7 +4,7 @@
  */
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate, useNavigationType } from 'react-router-dom';
-import { TabKey } from '@festival/core';
+import { TabKey } from '@festival/core/runtime';
 import { markTapDiagnosticsAction } from '../../diagnostics/tapDiagnostics';
 export type { TabKey };
 

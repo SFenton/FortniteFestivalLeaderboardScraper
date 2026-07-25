@@ -2,7 +2,7 @@ import { useMemo, type AnimationEvent, type CSSProperties } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import type { BandSongPerformance, BandType } from '@festival/core/api/serverTypes';
+import type { BandSongPerformance, BandType } from '@festival/core/api';
 import { Colors, Font, Gap, Radius, flexColumn, frostedCard } from '@festival/theme';
 import { api } from '../../../api/client';
 import { queryKeys } from '../../../api/queryKeys';

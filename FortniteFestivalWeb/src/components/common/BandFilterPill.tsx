@@ -1,7 +1,7 @@
 import { useMemo, type CSSProperties } from 'react';
 import { IoFunnel } from 'react-icons/io5';
 import { useTranslation } from 'react-i18next';
-import type { PlayerBandType, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { PlayerBandType, ServerInstrumentKey } from '@festival/core/api';
 import {
   Align,
   Colors,

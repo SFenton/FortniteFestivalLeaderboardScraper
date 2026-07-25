@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import type { ComponentProps } from 'react';
-import { SyncPhase } from '@festival/core';
+import { SyncPhase } from '@festival/core/runtime';
 import SyncBanner from '../../../src/components/page/SyncBanner';
 import { TestProviders } from '../../helpers/TestProviders';
 

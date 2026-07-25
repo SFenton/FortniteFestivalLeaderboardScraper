@@ -2,11 +2,11 @@
  * Converts FSTService API types to the core-package Song / LeaderboardData
  * shapes expected by SuggestionGenerator.
  */
-import { ScoreTracker } from '@festival/core/models';
-import type { Song as CoreSong, LeaderboardData } from '@festival/core/models';
-import type { InstrumentKey } from '@festival/core/instruments';
-import type { ServerSong, PlayerScore, ServerInstrumentKey, RivalSuggestionsResponse, RivalsAllResponse } from '@festival/core/api/serverTypes';
-import type { RivalDataIndex, RivalInfo, RivalSongMatch } from '@festival/core/suggestions/types';
+import { ScoreTracker } from '@festival/core/runtime';
+import type { Song as CoreSong, LeaderboardData } from '@festival/core/types';
+import type { InstrumentKey } from '@festival/core/types';
+import type { ServerSong, PlayerScore, ServerInstrumentKey, RivalSuggestionsResponse, RivalsAllResponse } from '@festival/core/api';
+import type { RivalDataIndex, RivalInfo, RivalSongMatch } from '@festival/core/types';
 
 const SERVER_TO_CORE_INSTRUMENT: Record<ServerInstrumentKey, InstrumentKey> = {
   Solo_Guitar: 'guitar',

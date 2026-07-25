@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { ShopResponse, ShopSong } from '@festival/core/api/serverTypes';
+import type { ShopResponse, ShopSong } from '@festival/core/api';
 import { useFestival } from './FestivalContext';
 import { useShopWebSocket, type ShopState } from '../hooks/data/useShopWebSocket';
 import { api } from '../api/client';

@@ -1,4 +1,4 @@
-import type { RankingMetric } from '@festival/core/api/serverTypes';
+import type { RankingMetric } from '@festival/core/api';
 import { RANKING_METRICS } from '../pages/leaderboards/helpers/rankingHelpers';
 
 const STORAGE_KEY = 'fst:leaderboardSettings';

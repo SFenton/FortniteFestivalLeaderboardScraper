@@ -2,8 +2,8 @@
  * Pure computation functions for PlayerPage statistics.
  * Extracted for readability and potential reuse.
  */
-import { formatPercentileBucket, accuracyColor } from '@festival/core';
-import type { PlayerScore, ServerInstrumentKey as InstrumentKey, PlayerStatsTier, PlayerStatsInstrument, InstrumentRankEntry, InstrumentRankBase } from '@festival/core/api/serverTypes';
+import { formatPercentileBucket, accuracyColor } from '@festival/core/app/formatters';
+import type { PlayerScore, ServerInstrumentKey as InstrumentKey, PlayerStatsTier, PlayerStatsInstrument, InstrumentRankEntry, InstrumentRankBase } from '@festival/core/api';
 
 export { accuracyColor };
 

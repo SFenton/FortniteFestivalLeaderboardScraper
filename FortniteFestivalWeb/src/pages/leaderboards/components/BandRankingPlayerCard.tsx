@@ -1,8 +1,8 @@
 import { type AnimationEventHandler, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { BandConfiguration, BandRankingEntry, BandRankingMetric, BandType, PlayerBandEntry, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { BandConfiguration, BandRankingEntry, BandRankingMetric, BandType, PlayerBandEntry, ServerInstrumentKey } from '@festival/core/api';
 import { Gap } from '@festival/theme';
-import { rankColor } from '@festival/core';
+import { rankColor } from '@festival/core/app/formatters';
 import PlayerBandCard, { formatPlayerBandNames } from '../../player/components/PlayerBandCard';
 import { formatBayesianRatingDisplay, formatRankingValueDisplay, formatRating, getRatingPillTier, usesPercentileValueDisplay } from '../helpers/rankingHelpers';
 import { getBandBayesianRatingForMetric, getBandRankForMetric, getBandRatingForMetric, getBandSongsLabel } from '../helpers/bandRankingHelpers';

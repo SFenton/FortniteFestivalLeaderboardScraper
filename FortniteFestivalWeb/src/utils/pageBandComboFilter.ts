@@ -1,11 +1,11 @@
-import { instrumentsFromComboId } from '@festival/core';
+import { instrumentsFromComboId } from '@festival/core/config';
 import {
   SERVER_INSTRUMENT_KEYS,
   serverInstrumentLabel,
   type BandComboCatalogEntry,
   type PlayerBandType,
   type ServerInstrumentKey,
-} from '@festival/core/api/serverTypes';
+} from '@festival/core/api';
 import type { AppliedBandComboFilter } from '../types/bandFilter';
 
 export const PAGE_BAND_COMBO_ALL_VALUE = 'all';

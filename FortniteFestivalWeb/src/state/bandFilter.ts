@@ -3,7 +3,7 @@ import {
   type BandConfiguration,
   type PlayerBandType,
   type ServerInstrumentKey,
-} from '@festival/core/api/serverTypes';
+} from '@festival/core/api';
 import type { AppliedBandComboFilter, BandInstrumentFilterAssignment } from '../types/bandFilter';
 import type { SelectedProfile } from './selectedProfile';
 

@@ -3,8 +3,8 @@
  * Falls back to a single visible rival card per instrument when space is tight.
  */
 import { useState, useEffect, useCallback, useRef, useMemo, type CSSProperties } from 'react';
-import type { RivalSummary, ServerInstrumentKey } from '@festival/core/api/serverTypes';
-import { InstrumentHeaderSize } from '@festival/core';
+import type { RivalSummary, ServerInstrumentKey } from '@festival/core/api';
+import { InstrumentHeaderSize } from '@festival/core/runtime';
 import {
   Gap, Opacity, CssValue, PointerEvents, flexColumn,
   FADE_DURATION, DEMO_SWAP_INTERVAL_MS,

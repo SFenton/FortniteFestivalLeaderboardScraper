@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { ShopSong } from '@festival/core/api/serverTypes';
+import type { ShopSong } from '@festival/core/api';
 
 // Mock shop songs map for WS
 const mockShopSongsMap = vi.hoisted(() => new Map<string, ShopSong>([

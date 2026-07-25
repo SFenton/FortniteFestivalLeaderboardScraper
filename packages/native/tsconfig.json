@@ -9,6 +9,7 @@
     "noEmit": true,
     "paths": {
       "@festival/core": ["../core/src/index.ts"],
+      "@festival/core/*": ["../core/src/*"],
       "@festival/auth": ["../auth/src/index.ts"]
     }
   },

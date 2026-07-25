@@ -15,7 +15,7 @@ import DifficultyBars from '../../../../components/songs/metadata/DifficultyBars
 import { useContainerWidth } from '../../../../hooks/ui/useContainerWidth';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
 import { DEMO_SWAP_INTERVAL_MS, Layout, Gap, CssValue, Size, StarSize, flexColumn } from '@festival/theme';
-import type { SongDisplay as DemoSong } from '@festival/core/api/serverTypes';
+import type { SongDisplay as DemoSong } from '@festival/core/api';
 import { useDemoSongs, FADE_MS, shuffle } from '../../../../hooks/data/useDemoSongs';
 import { DemoSongRow } from './DemoSongRow';
 import { scoreMeta, metadataWrap, mobileTopRow, detailStrip } from '../../../../styles/songRowStyles';

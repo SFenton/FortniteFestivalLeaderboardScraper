@@ -4,7 +4,7 @@
  */
 import { useState, useCallback } from 'react';
 import { ToggleRow } from '../../../../components/common/ToggleRow';
-import { SUGGESTION_TYPES } from '@festival/core/suggestions/suggestionFilterConfig';
+import { SUGGESTION_TYPES } from '@festival/core/suggestions';
 import { Layout } from '@festival/theme';
 import FadeIn from '../../../../components/page/FadeIn';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';

@@ -3,7 +3,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import MetricInfoSlide from '../../../../src/pages/leaderboards/firstRun/metricInfo/MetricInfoSlide';
 import { getMetricInfoSlides } from '../../../../src/pages/leaderboards/firstRun/metricInfo';
 import { SlideHeightContext } from '../../../../src/firstRun/SlideHeightContext';
-import type { RankingMetric } from '@festival/core/api/serverTypes';
+import type { RankingMetric } from '@festival/core/api';
 
 const mockUseIsMobile = vi.hoisted(() => vi.fn(() => false));
 

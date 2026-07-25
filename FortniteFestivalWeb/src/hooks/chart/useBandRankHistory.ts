@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { BandRankHistoryEntry, BandRankingMetric, BandType, RankHistoryEntry } from '@festival/core/api/serverTypes';
+import type { BandRankHistoryEntry, BandRankingMetric, BandType, RankHistoryEntry } from '@festival/core/api';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import { fillRankHistoryGaps, parseSnapshotDate } from '../../utils/fillRankHistoryGaps';

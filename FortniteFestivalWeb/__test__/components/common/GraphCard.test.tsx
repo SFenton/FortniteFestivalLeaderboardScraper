@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import GraphCard from '../../../src/components/common/GraphCard';
 
 const mockUseChartDimensions = vi.hoisted(() => vi.fn());

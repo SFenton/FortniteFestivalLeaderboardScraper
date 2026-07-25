@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
-import type { PlayerBandsResponse } from '@festival/core/api/serverTypes';
+import type { PlayerBandsResponse } from '@festival/core/api';
 import { Layout } from '@festival/theme';
 import { buildPlayerBandsItems } from '../../../../src/pages/player/components/PlayerBandsSection';
 

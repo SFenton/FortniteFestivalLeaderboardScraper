@@ -6,7 +6,7 @@ import ArcSpinner from '../common/ArcSpinner';
 import { staggerDelay } from '@festival/ui-utils';
 import { Gap, Layout, PointerEvents, STAGGER_INTERVAL, FADE_DURATION, SPINNER_FADE_MS } from '@festival/theme';
 import { useIsWideDesktop } from '../../hooks/ui/useIsMobile';
-import { LoadPhase } from '@festival/core';
+import { LoadPhase } from '@festival/core/runtime';
 import { useNavLinkPress } from '../../hooks/navigation/useNavLinkPress';
 import { plbStyles as s, fixedFooterWide } from './paginatedLeaderboardStyles';
 import { FixedLeaderboardPagination, getFixedPlayerFooterStyle, useLeaderboardFooterScrollMargin, type FixedLeaderboardFooterPlacement } from './LeaderboardPaginationFooter';

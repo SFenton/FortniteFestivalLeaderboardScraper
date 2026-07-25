@@ -3,7 +3,7 @@
  * Alternates between swapping all "Above You" and all "Below You" rows.
  */
 import { useState, useEffect, useCallback, useRef, useMemo, type CSSProperties } from 'react';
-import type { RivalSummary } from '@festival/core/api/serverTypes';
+import type { RivalSummary } from '@festival/core/api';
 import RivalRow from '../../components/RivalRow';
 import FadeIn from '../../../../components/page/FadeIn';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';

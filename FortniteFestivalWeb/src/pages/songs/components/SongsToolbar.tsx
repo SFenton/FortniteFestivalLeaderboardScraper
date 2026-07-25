@@ -6,7 +6,7 @@ import { useState, useEffect, useRef, useMemo, type CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next';
 import { IoSwapVerticalSharp, IoFunnel } from 'react-icons/io5';
 import { Colors, Font, Gap, Radius, Size, FAST_FADE_MS, frostedCard, flexRow, flexCenter, Display, Align, Justify, Cursor, BoxSizing, Overflow, CssValue, transition, transitions } from '@festival/theme';
-import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
 import SearchBar from '../../../components/common/SearchBar';
 import { ActionPill } from '../../../components/common/ActionPill';

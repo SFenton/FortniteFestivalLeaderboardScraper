@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { LoadPhase } from '@festival/core';
-import { DEFAULT_INSTRUMENT, type AccountSearchResult, type BandSearchResult, type PlayerBandEntry, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import { LoadPhase } from '@festival/core/runtime';
+import { DEFAULT_INSTRUMENT, type AccountSearchResult, type BandSearchResult, type PlayerBandEntry, type ServerInstrumentKey } from '@festival/core/api';
 import { staggerDelay } from '@festival/ui-utils';
 import SearchBar, { type SearchBarRef } from '../common/SearchBar';
 import ArcSpinner, { SpinnerSize } from '../common/ArcSpinner';

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { PlayerScoreSortMode } from '@festival/core';
+import { PlayerScoreSortMode } from '@festival/core/runtime';
 
 const mockApi = vi.hoisted(() => ({
   getSongs: vi.fn().mockResolvedValue({ songs: [], count: 0, currentSeason: 5 }),
@@ -111,7 +111,7 @@ describe('ChangelogModal', () => {
 
 // ---- PathImage.tsx ----
 import { PathImage } from '../../../src/pages/songinfo/components/path/PathImage';
-import { Difficulty } from '@festival/core';
+import { Difficulty } from '@festival/core/runtime';
 
 describe('PathImage', () => {
   it('renders without crashing', () => {

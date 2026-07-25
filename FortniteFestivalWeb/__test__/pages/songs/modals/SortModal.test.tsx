@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import SortModal, { type SortDraft, type MetadataVisibility } from '../../../../src/pages/songs/modals/SortModal';
-import { INSTRUMENT_KEYS, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import { INSTRUMENT_KEYS, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import { DEFAULT_METADATA_ORDER } from '../../../../src/utils/songSettings';
 import { TRANSITION_MS } from '@festival/theme';
 import { TestProviders } from '../../../helpers/TestProviders';

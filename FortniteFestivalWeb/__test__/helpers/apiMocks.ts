@@ -23,7 +23,7 @@ import type {
   SyncStatusResponse,
   TrackPlayerResponse,
   AccountSearchResponse,
-} from '@festival/core/api/serverTypes';
+} from '@festival/core/api';
 
 /* ── Fixture Data ── */
 

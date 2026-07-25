@@ -6,7 +6,7 @@
  * shop is empty or hasn't loaded yet.
  */
 import { useMemo } from 'react';
-import type { ServerSong as Song } from '@festival/core/api/serverTypes';
+import type { ServerSong as Song } from '@festival/core/api';
 import { useShop } from '../../contexts/ShopContext';
 import { useFestival } from '../../contexts/FestivalContext';
 import { shuffle } from './useDemoSongs';

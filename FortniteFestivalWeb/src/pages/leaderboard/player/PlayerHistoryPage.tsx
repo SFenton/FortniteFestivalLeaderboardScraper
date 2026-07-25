@@ -13,7 +13,7 @@ import { api } from '../../../api/client';
 import {
   type ServerInstrumentKey as InstrumentKey,
   type ServerScoreHistoryEntry as ScoreHistoryEntry,
-} from '@festival/core/api/serverTypes';
+} from '@festival/core/api';
 import SongInfoHeader from '../../../components/songs/headers/SongInfoHeader';
 import { useNavigateToSongDetail } from '../../../hooks/navigation/useNavigateToSongDetail';
 import { LeaderboardEntry } from '../global/components/LeaderboardEntry';
@@ -31,8 +31,8 @@ import { staggerDelay, estimateVisibleCount } from '@festival/ui-utils';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 import { useScoreFilter } from '../../../hooks/data/useScoreFilter';
 import { useSortedScoreHistory } from '../../../hooks/data/useSortedScoreHistory';
-import { PlayerScoreSortMode as CoreSortMode } from '@festival/core';
-import { LoadPhase } from '@festival/core';
+import { PlayerScoreSortMode as CoreSortMode } from '@festival/core/runtime';
+import { LoadPhase } from '@festival/core/runtime';
 import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
 import { useLoadPhase } from '../../../hooks/data/useLoadPhase';
 import { useSetPageReady } from '../../../contexts/PageReadyContext';

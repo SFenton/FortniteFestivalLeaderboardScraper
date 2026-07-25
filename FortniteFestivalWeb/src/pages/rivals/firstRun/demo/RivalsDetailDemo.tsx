@@ -4,7 +4,7 @@
  * Rank data alternates evenly between player-winning and player-losing.
  */
 import { useState, useEffect, useRef, useMemo, type CSSProperties } from 'react';
-import type { RivalSongComparison } from '@festival/core/api/serverTypes';
+import type { RivalSongComparison } from '@festival/core/api';
 import RivalSongRow from '../../components/RivalSongRow';
 import FadeIn from '../../../../components/page/FadeIn';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';

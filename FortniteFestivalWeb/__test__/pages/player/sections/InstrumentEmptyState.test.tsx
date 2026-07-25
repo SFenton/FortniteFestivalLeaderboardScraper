@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
-import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import InstrumentEmptyState from '../../../../src/pages/player/sections/InstrumentEmptyState';
 
 const t = (key: string, opts?: Record<string, unknown>) => {

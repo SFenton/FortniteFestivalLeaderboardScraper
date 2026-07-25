@@ -8,8 +8,8 @@ import {
   fullCombosUpdater,
   type OverallStats,
 } from '../../../../src/pages/player/sections/OverallSummarySection';
-import { ACCURACY_SCALE } from '@festival/core';
-import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import { ACCURACY_SCALE } from '@festival/core/runtime';
+import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 
 vi.mock('../../../../src/components/player/StatBox', () => ({
   default: ({ label, value, onClick }: any) => (

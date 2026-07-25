@@ -10,8 +10,8 @@ import {
   SUGGESTION_TYPES,
   globalKeyFor,
   perInstrumentKeyFor,
-} from '@festival/core/suggestions/suggestionFilterConfig';
-import { InstrumentKeys } from '@festival/core/instruments';
+} from '@festival/core/suggestions';
+import { InstrumentKeys } from '@festival/core/config';
 import { TRANSITION_MS } from '@festival/theme';
 import { TestProviders } from '../../../helpers/TestProviders';
 import type { SelectedBandProfile } from '../../../../src/hooks/data/useSelectedProfile';

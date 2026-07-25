@@ -2,7 +2,7 @@
  * Static mock data shared across first-run demo components.
  * Uses hardcoded values so demos render without API calls or auth.
  */
-import type { RivalSummary } from '@festival/core/api/serverTypes';
+import type { RivalSummary } from '@festival/core/api';
 
 /* â”€â”€ Leaderboard entries â”€â”€ */
 

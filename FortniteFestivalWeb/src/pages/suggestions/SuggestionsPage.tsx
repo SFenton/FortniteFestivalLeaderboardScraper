@@ -14,8 +14,8 @@ import SuggestionsFilterModal from './modals/SuggestionsFilterModal';
 import type { SuggestionsFilterDraft } from './modals/SuggestionsFilterModal';
 import { defaultSuggestionsFilterDraft, isSuggestionsFilterActive } from './modals/SuggestionsFilterModal';
 import { buildBandSuggestionSource } from './bandSuggestions';
-import { shouldShowCategory, filterCategoryForInstruments } from '@festival/core/instrumentFilters';
-import type { SuggestionCategory } from '@festival/core/suggestions/types';
+import { shouldShowCategory, filterCategoryForInstruments } from '@festival/core/config';
+import type { SuggestionCategory } from '@festival/core/types';
 import { useSettings } from '../../contexts/SettingsContext';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
@@ -27,7 +27,7 @@ import {
   fixedFill, flexCenter, padding,
   FADE_DURATION, SCROLL_PREFETCH_PX,
 } from '@festival/theme';
-import { LoadPhase } from '@festival/core';
+import { LoadPhase } from '@festival/core/runtime';
 import Page from '../Page';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { clearScrollCache } from '../../hooks/ui/useScrollRestore';

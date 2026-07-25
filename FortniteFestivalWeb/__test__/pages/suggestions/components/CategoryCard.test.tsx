@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { CategoryCard, SongRow } from '../../../../src/pages/suggestions/components/CategoryCard';
-import type { SuggestionCategory, SuggestionSongItem } from '@festival/core/suggestions/types';
-import type { LeaderboardData } from '@festival/core/models';
+import type { SuggestionCategory, SuggestionSongItem } from '@festival/core/types';
+import type { LeaderboardData } from '@festival/core/types';
 
 // Mock InstrumentIcons
 vi.mock('../../../../src/components/display/InstrumentIcons', () => ({

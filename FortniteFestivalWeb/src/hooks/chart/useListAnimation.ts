@@ -4,7 +4,7 @@
  * On instrument change, the old list fades out, height animates, then new list fades in.
  */
 import { useState, useEffect, useRef } from 'react';
-import { ListPhase } from '@festival/core';
+import { ListPhase } from '@festival/core/runtime';
 import { Size, Gap } from '@festival/theme';
 
 const CARD_HEIGHT = Size.iconXl;

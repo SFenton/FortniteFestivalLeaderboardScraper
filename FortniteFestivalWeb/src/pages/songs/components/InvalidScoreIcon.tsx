@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { IoAlertCircleOutline, IoWarning } from 'react-icons/io5';
-import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import { Colors, InstrumentSize, GeneralSize, Cursor, flexCenter } from '@festival/theme';
 import ConfirmAlert from '../../../components/modals/ConfirmAlert';
 import { usePressAction } from '../../../hooks/ui/usePressAction';

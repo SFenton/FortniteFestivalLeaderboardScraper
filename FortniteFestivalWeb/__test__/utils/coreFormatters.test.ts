@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { accuracyColor, calculateScoreWidth } from '@festival/core';
+import { accuracyColor, calculateScoreWidth } from '@festival/core/app/formatters';
 
 describe('accuracyColor', () => {
   it('returns red at 0%', () => {

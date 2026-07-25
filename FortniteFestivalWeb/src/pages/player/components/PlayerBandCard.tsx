@@ -1,7 +1,7 @@
 import { useRef, type AnimationEventHandler, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { IoChevronForward } from 'react-icons/io5';
-import type { PlayerBandEntry, PlayerBandMember } from '@festival/core/api/serverTypes';
+import type { PlayerBandEntry, PlayerBandMember } from '@festival/core/api';
 import { Colors, CssProp, FAST_FADE_MS, Font, Gap, Radius, Weight, flexColumn, flexRow, frostedCard, transition } from '@festival/theme';
 import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
 import CardPressable from '../../../components/common/CardPressable';

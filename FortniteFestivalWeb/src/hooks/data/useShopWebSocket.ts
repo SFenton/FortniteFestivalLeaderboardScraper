@@ -9,7 +9,7 @@ import type {
   ShopChangedMessage,
   ShopSnapshotMessage,
   ShopSong,
-} from '@festival/core/api/serverTypes';
+} from '@festival/core/api';
 import { expandAlbumArt } from '../../api/client';
 import { useAppWebSocket } from './useAppWebSocket';
 
