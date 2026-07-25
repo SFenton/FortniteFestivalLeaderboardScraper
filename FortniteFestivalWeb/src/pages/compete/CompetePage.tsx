@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, type AnimationEventHandler, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useMemo, useRef, type AnimationEventHandler, type CSSProperties, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQueries } from '@tanstack/react-query';
 import { IoChevronForward, IoCompass, IoPeople, IoTrophy } from 'react-icons/io5';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
+import { remoteDataQueryPolicy } from '../../api/queryPolicy';
 import { rankingsCache } from '../../api/pageCache';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
@@ -81,9 +82,6 @@ type CompeteScopeViewModel = {
   rivalsError: unknown;
 };
 
-let _cachedCompeteViewKey: string | null = null;
-let _cachedCompeteSections: CompeteScopeViewModel[] = [];
-
 export default function CompetePage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -107,10 +105,12 @@ export default function CompetePage() {
         ? {
             queryKey: queryKeys.comboRankings(scope.comboId, 'totalscore', 1, 10),
             queryFn: () => api.getComboRankings(scope.comboId, 'totalscore', 1, 10),
+            ...remoteDataQueryPolicy,
           }
         : {
             queryKey: queryKeys.rankings(scope.instrument, 'totalscore', 1, 10),
             queryFn: () => api.getRankings(scope.instrument, 'totalscore', 1, 10),
+            ...remoteDataQueryPolicy,
           }
     )),
   });
@@ -122,10 +122,12 @@ export default function CompetePage() {
             ? {
                 queryKey: queryKeys.playerComboRanking(accountId, scope.comboId, 'totalscore'),
                 queryFn: () => api.getPlayerComboRanking(accountId, scope.comboId, 'totalscore'),
+                ...remoteDataQueryPolicy,
               }
             : {
                 queryKey: queryKeys.playerRanking(scope.instrument, accountId, 'totalscore'),
                 queryFn: () => api.getPlayerRanking(scope.instrument, accountId, 'totalscore'),
+                ...remoteDataQueryPolicy,
               }
         ))
       : [],
@@ -136,6 +138,7 @@ export default function CompetePage() {
       ? scopes.map((scope) => ({
           queryKey: queryKeys.rivalsList(accountId, scope.queryValue),
           queryFn: () => api.getRivalsList(accountId, scope.queryValue),
+          ...remoteDataQueryPolicy,
         }))
       : [],
   });
@@ -174,12 +177,19 @@ export default function CompetePage() {
   const leaderboardReady = leaderboardQueries.every((query) => !query.isLoading);
   const rivalsReady = !accountId || rivalsQueries.every((query) => !query.isLoading);
   const liveReady = (leaderboardReady && rivalsReady) || allLeaderboardsErrored;
-  const hasCachedData = competeViewKey === _cachedCompeteViewKey && _cachedCompeteSections.length > 0;
-  const scopeSections = hasCachedData && !liveReady
-    ? _cachedCompeteSections
-    : liveScopeSections;
+  const mountedWithDataRef = useRef(
+    scopes.length > 0
+      && leaderboardQueries.every(query => query.data !== undefined)
+      && (!accountId || (
+        playerQueries.every(query => query.data !== undefined)
+        && rivalsQueries.every(query => query.data !== undefined)
+      )),
+  );
+  const initialCompeteViewKeyRef = useRef(competeViewKey);
+  const hasCachedData = initialCompeteViewKeyRef.current === competeViewKey && mountedWithDataRef.current;
+  const scopeSections = liveScopeSections;
 
-  const isReady = hasCachedData || liveReady;
+  const isReady = liveReady;
   const hasError = allLeaderboardsErrored;
   const { phase, shouldStagger } = usePageTransition(`compete:${competeViewKey}`, isReady, hasCachedData);
   useSetPageReady(phase === LoadPhase.ContentIn);
@@ -205,15 +215,6 @@ export default function CompetePage() {
     () => ({ hasPlayer: !!player, experimentalRanksEnabled: true }),
     [player],
   );
-
-  useEffect(() => {
-    if (!liveReady || allLeaderboardsErrored) {
-      return;
-    }
-
-    _cachedCompeteViewKey = competeViewKey;
-    _cachedCompeteSections = liveScopeSections;
-  }, [allLeaderboardsErrored, competeViewKey, liveReady, liveScopeSections]);
 
   const navigateToLeaderboards = (scope: RankingScope) => {
     const navTarget = scope.kind === 'combo'

@@ -7,29 +7,60 @@ export const queryKeys = {
   features: () => ['features'] as const,
   serviceInfo: () => ['serviceInfo'] as const,
   songs: () => ['songs'] as const,
+  playerScope: (accountId: string) => ['player', accountId] as const,
   player: (accountId: string, songId?: string, instruments?: string[], leeway?: number) =>
-    ['player', accountId, { songId, instruments, leeway }] as const,
+    [...queryKeys.playerScope(accountId), { songId, instruments, leeway }] as const,
   playerHistory: (accountId: string, songId?: string, instrument?: string) =>
     ['playerHistory', accountId, { songId, instrument }] as const,
   syncStatus: (accountId: string) => ['syncStatus', accountId] as const,
+  leaderboardRoot: () => ['leaderboard'] as const,
+  leaderboardScope: (songId: string, instrument: string) =>
+    [...queryKeys.leaderboardRoot(), songId, instrument] as const,
   leaderboard: (songId: string, instrument: string, top: number, offset: number, leeway?: number) =>
-    ['leaderboard', songId, instrument, { top, offset, leeway }] as const,
+    [...queryKeys.leaderboardScope(songId, instrument), { top, offset, leeway }] as const,
+  allLeaderboardsRoot: () => ['allLeaderboards'] as const,
+  allLeaderboardsScope: (songId: string) =>
+    [...queryKeys.allLeaderboardsRoot(), songId] as const,
   allLeaderboards: (songId: string, top: number, leeway?: number) =>
-    ['allLeaderboards', songId, { top, leeway }] as const,
+    [...queryKeys.allLeaderboardsScope(songId), { top, leeway }] as const,
   memberScoreFilter: (hasAccountIds: readonly string[], missingAccountIds: readonly string[], instruments: readonly string[], leeway?: number) =>
     ['memberScoreFilter', { hasAccountIds, missingAccountIds, instruments, leeway }] as const,
+  selectedMemberSongScoresScope: (songId: string) =>
+    ['selectedMemberSongScores', songId] as const,
   selectedMemberSongScores: (songId: string, accountIds: readonly string[], instruments?: readonly string[], leeway?: number) =>
-    ['selectedMemberSongScores', songId, { accountIds, instruments, leeway }] as const,
+    [...queryKeys.selectedMemberSongScoresScope(songId), { accountIds, instruments, leeway }] as const,
+  songBandLeaderboardsScope: (songId: string) =>
+    ['songBandLeaderboard', songId] as const,
   songBandLeaderboard: (songId: string, bandType: string, top: number, offset: number, selectedAccountId?: string, selectedTeamKey?: string, comboId?: string) =>
-    ['songBandLeaderboard', songId, bandType, { top, offset, selectedAccountId, selectedTeamKey, comboId }] as const,
+    [...queryKeys.songBandLeaderboardsScope(songId), bandType, { top, offset, selectedAccountId, selectedTeamKey, comboId }] as const,
+  allSongBandLeaderboardsScope: (songId: string) =>
+    ['allSongBandLeaderboards', songId] as const,
   allSongBandLeaderboards: (songId: string, top: number, selectedAccountId?: string, selectedBandType?: string, selectedTeamKey?: string, comboId?: string) =>
-    ['allSongBandLeaderboards', songId, { top, selectedAccountId, selectedBandType, selectedTeamKey, comboId }] as const,
+    [...queryKeys.allSongBandLeaderboardsScope(songId), { top, selectedAccountId, selectedBandType, selectedTeamKey, comboId }] as const,
   playerStats: (accountId: string) => ['playerStats', accountId] as const,
   version: () => ['version'] as const,
-  rivalsOverview: (accountId: string) => ['rivalsOverview', accountId] as const,
-  rivalsList: (accountId: string, combo: string) => ['rivalsList', accountId, combo] as const,
-  rivalDetail: (accountId: string, combo: string, rivalId: string) =>
-    ['rivalDetail', accountId, combo, rivalId] as const,
+  rivalsScope: (accountId: string) => ['rivals', accountId] as const,
+  rivalsOverview: (accountId: string) =>
+    [...queryKeys.rivalsScope(accountId), 'overview'] as const,
+  rivalsList: (accountId: string, combo: string) =>
+    [...queryKeys.rivalsScope(accountId), 'list', combo] as const,
+  leaderboardRivals: (accountId: string, instrument: string, rankBy: string) =>
+    [...queryKeys.rivalsScope(accountId), 'leaderboard', instrument, { rankBy }] as const,
+  rivalDetail: (
+    accountId: string,
+    rivalId: string,
+    scope: {
+      source: 'song' | 'leaderboard';
+      scopes?: readonly string[];
+      instrument?: string;
+      rankBy?: string;
+      allowLiveFallback?: boolean;
+    },
+  ) =>
+    [...queryKeys.rivalsScope(accountId), 'detail', rivalId, {
+      ...scope,
+      scopes: scope.scopes ? [...scope.scopes].sort() : undefined,
+    }] as const,
   rankings: (instrument: string, rankBy?: string, page?: number, pageSize?: number) =>
     ['rankings', instrument, { rankBy, page, pageSize }] as const,
   playerRanking: (instrument: string, accountId: string, rankBy?: string) =>

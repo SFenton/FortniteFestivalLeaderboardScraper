@@ -1,41 +1,8 @@
-/**
- * Page-level UI state caches (scroll positions, animation data).
- * These are NOT data caches — React Query handles API data caching.
- * They exist so that returning to a page via back-navigation can
- * restore scroll position and skip stagger animations.
- */
-
-import type { ServerInstrumentKey as InstrumentKey, LeaderboardEntry, ServerScoreHistoryEntry as ScoreHistoryEntry, PlayerBandType, SongBandLeaderboardEntry } from '@festival/core/api/serverTypes';
+/** Navigation-only state retained across route unmounts. */
 
 /* ── SongDetailPage cache ── */
 
-export type InstrumentData = {
-  entries: LeaderboardEntry[];
-  loading: boolean;
-  error: string | null;
-  /** Total entries reported by Epic for this instrument's leaderboard. */
-  totalEntries?: number;
-  /** Number of entries tracked locally by FST for this instrument's leaderboard. */
-  localEntries?: number;
-};
-
-export type SongBandData = {
-  entries: SongBandLeaderboardEntry[];
-  selectedPlayerEntry?: SongBandLeaderboardEntry | null;
-  selectedBandEntry?: SongBandLeaderboardEntry | null;
-  loading: boolean;
-  error: string | null;
-  totalEntries?: number;
-  localEntries?: number;
-};
-
 export type SongDetailCache = {
-  instrumentData: Record<InstrumentKey, InstrumentData>;
-  bandData?: Record<PlayerBandType, SongBandData>;
-  showLeaderboardEntryTotals?: boolean;
-  scoreHistory: ScoreHistoryEntry[];
-  scoreHistoryAccountId: string | undefined;
-  bandSelectionKey: string | undefined;
   scrollTop: number;
 };
 export const songDetailCache = new Map<string, SongDetailCache>();
@@ -47,10 +14,6 @@ export function clearSongDetailCache() {
 /* ── LeaderboardPage cache ── */
 
 export type LeaderboardCache = {
-  entries: LeaderboardEntry[];
-  showLeaderboardEntryTotals?: boolean;
-  totalEntries: number;
-  localEntries: number;
   page: number;
   scrollTop: number;
 };

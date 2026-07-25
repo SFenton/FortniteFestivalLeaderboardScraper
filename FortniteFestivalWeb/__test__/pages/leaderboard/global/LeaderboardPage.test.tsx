@@ -3,7 +3,8 @@ import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
 import { Routes, Route } from 'react-router-dom';
 import LeaderboardPage, { clearLeaderboardCache } from '../../../../src/pages/leaderboard/global/LeaderboardPage';
 import { computeRankWidth } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
-import { TestProviders } from '../../../helpers/TestProviders';
+import { createTestQueryClient, TestProviders } from '../../../helpers/TestProviders';
+import type { QueryClient } from '@tanstack/react-query';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubMatchMedia } from '../../../helpers/browserStubs';
 
 const defaultEntries = [
@@ -137,9 +138,9 @@ beforeEach(() => {
   resetMocks();
 });
 
-function renderLeaderboard(route = '/songs/song-1/Solo_Guitar', accountId?: string) {
+function renderLeaderboard(route = '/songs/song-1/Solo_Guitar', accountId?: string, queryClient?: QueryClient) {
   return render(
-    <TestProviders route={route} accountId={accountId}>
+    <TestProviders route={route} accountId={accountId} queryClient={queryClient}>
       <Routes>
         <Route path="/songs/:songId/:instrument" element={<LeaderboardPage />} />
       </Routes>
@@ -367,24 +368,26 @@ describe('LeaderboardPage', () => {
   });
 
   it('uses cached data on second render', async () => {
-    const { unmount } = renderLeaderboard();
+    const queryClient = createTestQueryClient();
+    const { unmount } = renderLeaderboard('/songs/song-1/Solo_Guitar', undefined, queryClient);
     await waitFor(() => { expect(screen.getByText('Player One')).toBeDefined(); });
     unmount();
 
     // Second render should use cache, not refetch
-    renderLeaderboard();
+    renderLeaderboard('/songs/song-1/Solo_Guitar', undefined, queryClient);
     expect(screen.getByText('Player One')).toBeDefined();
     // getLeaderboard should have been called only once (first render)
     expect(mockApi.getLeaderboard).toHaveBeenCalledTimes(1);
   });
 
   it('preserves the header entry-count visibility decision from cache', async () => {
+    const queryClient = createTestQueryClient();
     mockApi.getLeaderboard.mockResolvedValue({
       songId: 'song-1', instrument: 'Solo_Guitar', count: 5, totalEntries: 50, localEntries: 50,
       showLeaderboardEntryTotals: true,
       entries: defaultEntries,
     });
-    const { unmount } = renderLeaderboard();
+    const { unmount } = renderLeaderboard('/songs/song-1/Solo_Guitar', undefined, queryClient);
     await screen.findByText('Player One');
     expect(screen.getByText('50 Lead entries')).toBeDefined();
     unmount();
@@ -395,7 +398,7 @@ describe('LeaderboardPage', () => {
       entries: defaultEntries,
     });
 
-    renderLeaderboard();
+    renderLeaderboard('/songs/song-1/Solo_Guitar', undefined, queryClient);
 
     expect(screen.getByText('Player One')).toBeDefined();
     expect(screen.getByText('50 Lead entries')).toBeDefined();
@@ -690,7 +693,7 @@ describe('LeaderboardPage — coverage: player footer with tracked score', () =>
     expect(footerButton).not.toHaveClass('fab-player-footer');
     expect(footerButton?.parentElement?.style.bottom).toContain('84px');
     const pagination = await screen.findByTestId('leaderboard-fixed-pagination');
-    expect(pagination.style.bottom).toContain('136px');
+    expect(pagination.style.bottom).toContain('144px');
   });
 
   it('does not reserve the mobile player footer position when the tracked player has no score for the instrument', async () => {
@@ -854,15 +857,19 @@ describe('LeaderboardPage — selected band footer', () => {
 
     renderLeaderboard();
 
-    const footerName = await screen.findByText('Alpha + Beta');
-    const footerLink = footerName.closest('a');
+    const footerName = (await screen.findAllByText('Alpha + Beta')).find(element =>
+      element.closest('a')?.getAttribute('href') === '/statistics'
+        && element.closest('a')?.parentElement?.style.bottom.includes('84px'),
+    );
+    expect(footerName).toBeTruthy();
+    const footerLink = footerName!.closest('a');
 
     expect(footerLink).toBeTruthy();
     expect(footerLink).not.toHaveClass('fab-player-footer');
     expect(footerLink?.parentElement?.style.bottom).toContain('84px');
   });
 
-  it('links the selected band footer to the band route', async () => {
+  it('links the selected band footer to the selected profile statistics route', async () => {
     selectBandProfile();
     mockApi.getSongBandLeaderboard.mockResolvedValue({
       songId: 'song-1',
@@ -877,11 +884,13 @@ describe('LeaderboardPage — selected band footer', () => {
 
     renderLeaderboard();
 
-    const footerName = await screen.findByText('Alpha + Beta');
-    const link = footerName.closest('a');
-    expect(link?.getAttribute('href')).toContain('/bands/band-selected-1');
-    expect(link?.getAttribute('href')).toContain('bandType=Band_Duets');
-    expect(link?.getAttribute('href')).toContain('teamKey=band-a%3Aband-b');
+    const footerName = (await screen.findAllByText('Alpha + Beta')).find(element =>
+      element.closest('a')?.getAttribute('href') === '/statistics'
+        && element.closest('a')?.parentElement?.style.bottom.includes('96px'),
+    );
+    expect(footerName).toBeTruthy();
+    const link = footerName!.closest('a');
+    expect(link?.getAttribute('href')).toBe('/statistics');
   });
 
   it('does not render the solo footer while a band is selected', async () => {

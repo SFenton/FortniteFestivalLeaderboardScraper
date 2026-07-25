@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useState, useRef, useMemo, useCallback, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useSearchParams, useNavigationType, useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { IoPeople, IoStatsChart, IoTimerOutline } from 'react-icons/io5';
 import { useFestival } from '../../contexts/FestivalContext';
 import { useSelectedProfile, type SelectedProfile } from '../../hooks/data/useSelectedProfile';
@@ -14,7 +15,6 @@ import {
   type PlayerBandType,
   type SelectedMemberSongScore,
   type ServerInstrumentKey as InstrumentKey,
-  type ServerScoreHistoryEntry as ScoreHistoryEntry,
 } from '@festival/core/api/serverTypes';
 import { Gap, Colors, Font, Layout, MaxWidth, Position, ZIndex, Display, Overflow, CssValue, PointerEvents, flexCenter, flexColumn, GridTemplate, SPINNER_FADE_MS, FADE_DURATION } from '@festival/theme';
 import ArcSpinner from '../../components/common/ArcSpinner';
@@ -46,7 +46,12 @@ import { songInfoSlides } from './firstRun';
 import { SONG_BAND_TYPES, songBandTypeLabel } from '../../utils/songBandLeaderboards';
 
 import { songDetailCache } from '../../api/pageCache';
-import type { InstrumentData, SongBandData } from '../../api/pageCache';
+import { queryKeys } from '../../api/queryKeys';
+import {
+  keepPreviousSongLeaderboards,
+  remoteDataQueryPolicy,
+} from '../../api/queryPolicy';
+import type { InstrumentData, SongBandData } from './songDetailTypes';
 export { clearSongDetailCache } from '../../api/pageCache';
 
 const QUICK_LINK_GLYPH_ICON_SIZE = 20;
@@ -63,19 +68,17 @@ function songDetailBandQuickLinkId(bandType: PlayerBandType): string {
   return `band-${bandType}`;
 }
 
-function createSongBandData(loading: boolean): Record<PlayerBandType, SongBandData> {
+function createSongBandData(loading: boolean, error: string | null = null): Record<PlayerBandType, SongBandData> {
   const data = {} as Record<PlayerBandType, SongBandData>;
   for (const bandType of SONG_BAND_TYPES) {
-    data[bandType] = { entries: [], loading, error: null };
+    data[bandType] = { entries: [], loading, error };
   }
   return data;
 }
 
-function getBandSelectionKey(selectedAccountId: string | undefined, bandType: PlayerBandType | undefined, teamKey: string | undefined, comboId: string | undefined): string | undefined {
-  const normalizedSelectedAccountId = normalizeAccountId(selectedAccountId);
-  if (normalizedSelectedAccountId) return `player:${normalizedSelectedAccountId}`;
-  if (!bandType || !teamKey) return undefined;
-  return `band:${bandType}:${teamKey}:${comboId ?? 'all'}`;
+function queryErrorMessage(error: unknown): string | null {
+  if (!error) return null;
+  return error instanceof Error ? error.message : 'Error';
 }
 
 type SelectedBandMember = {
@@ -132,7 +135,6 @@ export default function SongDetailPage() {
   const selectedBandMemberAccountIds = useMemo(() => selectedBandMembers.map(member => member.accountId), [selectedBandMembers]);
   const appliedBandComboFilter = useAppliedBandComboFilter();
   const activeBandComboId = appliedBandComboFilter && appliedBandComboFilter.bandType === selectedBandType ? appliedBandComboFilter.comboId : undefined;
-  const bandSelectionKey = getBandSelectionKey(selectedAccountId, selectedBandType, selectedTeamKey, activeBandComboId);
   const { settings } = useSettings();
   const song = songs.find((s) => s.songId === songId);
   const configuredInstruments = visibleInstruments(settings);
@@ -140,8 +142,6 @@ export default function SongDetailPage() {
     () => song ? configuredInstruments.filter((instrument) => serverSongSupportsInstrument(song, instrument)) : configuredInstruments,
     [configuredInstruments, song],
   );
-  const activeInstrumentKey = useMemo(() => activeInstruments.join(','), [activeInstruments]);
-  const selectedBandMemberKey = useMemo(() => selectedBandMemberAccountIds.join(','), [selectedBandMemberAccountIds]);
   const promotedSongBandType = useMemo(
     () => selectedBandType && SONG_BAND_TYPES.includes(selectedBandType) ? selectedBandType : undefined,
     [selectedBandType],
@@ -175,32 +175,128 @@ export default function SongDetailPage() {
   const navType = useNavigationType();
   const location = useLocation();
   const cached = songId ? songDetailCache.get(songId) : undefined;
-  const hasCachedScoreHistory = cached && cached.scoreHistoryAccountId === selectedAccountId;
-  const hasCachedBandData = !!cached?.bandData && cached.bandSelectionKey === bandSelectionKey;
+  const scoreHistoryQuery = useQuery({
+    queryKey: queryKeys.playerHistory(selectedAccountId ?? '', songId),
+    queryFn: () => api.getPlayerHistory(selectedAccountId!, songId).then(response => response.history),
+    enabled: !!selectedAccountId && !!songId,
+    ...remoteDataQueryPolicy,
+  });
+  const leaderboardsQuery = useQuery({
+    queryKey: queryKeys.allLeaderboards(songId ?? '', 10, leewayParam),
+    queryFn: () => api.getAllLeaderboards(songId!, 10, leewayParam),
+    enabled: !!songId,
+    placeholderData: keepPreviousSongLeaderboards(songId ?? ''),
+    ...remoteDataQueryPolicy,
+  });
+  const selectedMemberScoresQuery = useQuery({
+    queryKey: queryKeys.selectedMemberSongScores(
+      songId ?? '',
+      selectedBandMemberAccountIds,
+      activeInstruments,
+      leewayParam,
+    ),
+    queryFn: () => api.getSelectedMemberSongScores(
+      songId!,
+      [...selectedBandMemberAccountIds],
+      [...activeInstruments],
+      leewayParam,
+    ),
+    enabled: !!songId && selectedBandMemberAccountIds.length > 0 && activeInstruments.length > 0,
+    ...remoteDataQueryPolicy,
+  });
+  const bandLeaderboardsQuery = useQuery({
+    queryKey: queryKeys.allSongBandLeaderboards(
+      songId ?? '',
+      10,
+      selectedAccountId,
+      selectedBandType,
+      selectedTeamKey,
+      activeBandComboId,
+    ),
+    queryFn: () => api.getAllSongBandLeaderboards(
+      songId!,
+      10,
+      selectedAccountId,
+      selectedBandType,
+      selectedTeamKey,
+      activeBandComboId,
+    ),
+    enabled: !!songId,
+    ...remoteDataQueryPolicy,
+  });
 
-  const [scoreHistory, setScoreHistory] = useState<ScoreHistoryEntry[]>(hasCachedScoreHistory ? cached.scoreHistory : []);
-  const [scoreHistoryReady, setScoreHistoryReady] = useState(!!hasCachedScoreHistory);
-  const [instrumentData, setInstrumentData] = useState<Record<InstrumentKey, InstrumentData>>(
-    () => cached
-      ? cached.instrumentData
-      : Object.fromEntries(
-          INSTRUMENT_KEYS.map((k) => [k, { entries: [], loading: true, error: null }]),
-        ) as unknown as Record<InstrumentKey, InstrumentData>,
-  );
-  const [bandData, setBandData] = useState<Record<PlayerBandType, SongBandData>>(
-    () => hasCachedBandData && cached?.bandData ? cached.bandData : createSongBandData(true),
-  );
-  const [showLeaderboardEntryTotals, setShowLeaderboardEntryTotals] = useState(
-    () => cached?.showLeaderboardEntryTotals === true,
-  );
-  const [selectedMemberScores, setSelectedMemberScores] = useState<SelectedMemberSongScore[]>([]);
-  const [selectedMemberScoresReady, setSelectedMemberScoresReady] = useState(selectedBandMemberAccountIds.length === 0);
+  const scoreHistory = scoreHistoryQuery.data ?? [];
+  const scoreHistoryReady = !selectedAccountId || !scoreHistoryQuery.isPending;
+  const instrumentData = useMemo<Record<InstrumentKey, InstrumentData>>(() => {
+    const error = queryErrorMessage(leaderboardsQuery.error);
+    const nextData = Object.fromEntries(
+      INSTRUMENT_KEYS.map((key) => [key, {
+        entries: [],
+        loading: leaderboardsQuery.isPending,
+        error,
+      }]),
+    ) as unknown as Record<InstrumentKey, InstrumentData>;
 
-  // Track whether the component mounted with cached data so effects can skip the initial fetch.
-  // After the first render cycle, clear the flag so future prop changes (e.g. player swap) refetch.
-  // This must be declared AFTER the fetch effects so it runs last in the effect order.
-  // The cache is only fully valid when player-specific score history also matches (or no player is selected).
-  const mountedWithCacheRef = useRef(!!cached && (!player || !!hasCachedScoreHistory) && hasCachedBandData);
+    for (const instrument of leaderboardsQuery.data?.instruments ?? []) {
+      const key = instrument.instrument as InstrumentKey;
+      if (key in nextData) {
+        nextData[key] = {
+          entries: instrument.entries,
+          loading: false,
+          error: null,
+          totalEntries: instrument.totalEntries,
+          localEntries: instrument.localEntries,
+        };
+      }
+    }
+    return nextData;
+  }, [leaderboardsQuery.data, leaderboardsQuery.error, leaderboardsQuery.isPending]);
+  const bandData = useMemo<Record<PlayerBandType, SongBandData>>(() => {
+    const error = queryErrorMessage(bandLeaderboardsQuery.error);
+    const nextData = createSongBandData(bandLeaderboardsQuery.isPending, error);
+    for (const band of bandLeaderboardsQuery.data?.bands ?? []) {
+      const bandType = band.bandType as PlayerBandType;
+      if (bandType in nextData) {
+        nextData[bandType] = {
+          entries: band.entries,
+          selectedPlayerEntry: band.selectedPlayerEntry ?? null,
+          selectedBandEntry: band.selectedBandEntry ?? null,
+          loading: false,
+          error: null,
+          totalEntries: band.totalEntries,
+          localEntries: band.localEntries,
+        };
+      }
+    }
+    return nextData;
+  }, [bandLeaderboardsQuery.data, bandLeaderboardsQuery.error, bandLeaderboardsQuery.isPending]);
+  const showLeaderboardEntryTotals = leaderboardsQuery.data?.showLeaderboardEntryTotals === true
+    || bandLeaderboardsQuery.data?.showLeaderboardEntryTotals === true;
+  const selectedMemberScores: SelectedMemberSongScore[] = selectedMemberScoresQuery.data?.scores ?? [];
+  const selectedMemberScoresReady = selectedBandMemberAccountIds.length === 0
+    || activeInstruments.length === 0
+    || !selectedMemberScoresQuery.isPending;
+  const mountedWithRemoteDataRef = useRef(
+    !!leaderboardsQuery.data
+      && (!selectedAccountId || !!scoreHistoryQuery.data)
+      && !!bandLeaderboardsQuery.data
+      && (
+        selectedBandMemberAccountIds.length === 0
+        || activeInstruments.length === 0
+        || !!selectedMemberScoresQuery.data
+      ),
+  );
+  const remoteScopeKey = [
+    songId ?? '',
+    leewayParam ?? '',
+    selectedAccountId ?? '',
+    selectedBandType ?? '',
+    selectedTeamKey ?? '',
+    activeBandComboId ?? '',
+    selectedBandMemberAccountIds.join(','),
+    activeInstruments.join(','),
+  ].join(':');
+  const initialRemoteScopeKeyRef = useRef(remoteScopeKey);
   const openPaths = useCallback(() => {
     if (canViewPaths) {
       setPathsOpen(true);
@@ -224,148 +320,16 @@ export default function SongDetailPage() {
   const shopUrl = song ? getShopUrl(song.songId) : undefined;
   const showShop = isShopVisible && !!shopUrl;
 
-  /* v8 ignore start — async data fetch effects with cancellation */
-  // Fetch score history
-  useEffect(() => {
-    if (mountedWithCacheRef.current) return;
-    if (!player || !songId) {
-      setScoreHistory([]);
-      setScoreHistoryReady(true);
-      return;
-    }
-    if (!hasCachedScoreHistory) setScoreHistoryReady(false);
-    let cancelled = false;
-    api.getPlayerHistory(player.accountId, songId).then((res) => {
-      if (!cancelled) setScoreHistory(res.history);
-    }).catch(() => {
-      if (!cancelled) setScoreHistory([]);
-    }).finally(() => {
-      if (!cancelled) setScoreHistoryReady(true);
-    });
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- hasCachedScoreHistory checked via ref
-  }, [player, songId]);
-
-  // Fetch all instrument leaderboards in a single request
-  useEffect(() => {
-    if (mountedWithCacheRef.current) return;
-    if (!songId) return;
-    let cancelled = false;
-    if (!cached) {
-      setInstrumentData(
-        Object.fromEntries(
-          INSTRUMENT_KEYS.map((k) => [k, { entries: [], loading: true, error: null }]),
-        ) as unknown as Record<InstrumentKey, InstrumentData>,
-      );
-    }
-    api.getAllLeaderboards(songId, 10, leewayParam).then((res) => {
-      if (cancelled) return;
-      if (typeof res.showLeaderboardEntryTotals === 'boolean') {
-        setShowLeaderboardEntryTotals(res.showLeaderboardEntryTotals);
-      }
-      const newData = Object.fromEntries(
-        INSTRUMENT_KEYS.map((k) => [k, { entries: [], loading: false, error: null }]),
-      ) as unknown as Record<InstrumentKey, InstrumentData>;
-      for (const inst of res.instruments) {
-        const key = inst.instrument as InstrumentKey;
-        if (key in newData) {
-          newData[key] = {
-            entries: inst.entries,
-            loading: false,
-            error: null,
-            totalEntries: inst.totalEntries,
-            localEntries: inst.localEntries,
-          };
-        }
-      }
-      setInstrumentData(newData);
-    }).catch((e) => {
-      if (cancelled) return;
-      const errMsg = e instanceof Error ? e.message : 'Error';
-      setInstrumentData(
-        Object.fromEntries(
-          INSTRUMENT_KEYS.map((k) => [k, { entries: [], loading: false, error: errMsg }]),
-        ) as unknown as Record<InstrumentKey, InstrumentData>,
-      );
-    });
-    return () => { cancelled = true; };
-  }, [songId, leewayParam]);
-
-  useEffect(() => {
-    if (!songId || selectedBandMemberAccountIds.length === 0 || activeInstruments.length === 0) {
-      setSelectedMemberScores([]);
-      setSelectedMemberScoresReady(true);
-      return;
-    }
-
-    let cancelled = false;
-    setSelectedMemberScoresReady(false);
-    api.getSelectedMemberSongScores(songId, selectedBandMemberAccountIds, activeInstruments, leewayParam).then((res) => {
-      if (!cancelled) setSelectedMemberScores(res.scores);
-    }).catch(() => {
-      if (!cancelled) setSelectedMemberScores([]);
-    }).finally(() => {
-      if (!cancelled) setSelectedMemberScoresReady(true);
-    });
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- stable keys intentionally drive array-valued fetch inputs
-  }, [activeInstrumentKey, leewayParam, selectedBandMemberKey, songId]);
-
-  // Fetch generic band leaderboards in a single request.
-  useEffect(() => {
-    if (mountedWithCacheRef.current) return;
-    if (!songId) {
-      setBandData(createSongBandData(false));
-      return;
-    }
-    let cancelled = false;
-    if (!hasCachedBandData) {
-      setBandData(createSongBandData(true));
-    }
-    api.getAllSongBandLeaderboards(songId, 10, selectedAccountId, selectedBandType, selectedTeamKey, activeBandComboId).then((res) => {
-      if (cancelled) return;
-      if (typeof res.showLeaderboardEntryTotals === 'boolean') {
-        setShowLeaderboardEntryTotals(res.showLeaderboardEntryTotals);
-      }
-      const nextData = createSongBandData(false);
-      for (const band of res.bands) {
-        const bandType = band.bandType as PlayerBandType;
-        if (bandType in nextData) {
-          nextData[bandType] = {
-            entries: band.entries,
-            selectedPlayerEntry: band.selectedPlayerEntry ?? null,
-            selectedBandEntry: band.selectedBandEntry ?? null,
-            loading: false,
-            error: null,
-            totalEntries: band.totalEntries,
-            localEntries: band.localEntries,
-          };
-        }
-      }
-      setBandData(nextData);
-    }).catch((e) => {
-      if (cancelled) return;
-      const errMsg = e instanceof Error ? e.message : 'Error';
-      const nextData = createSongBandData(false);
-      for (const bandType of SONG_BAND_TYPES) {
-        nextData[bandType] = { entries: [], loading: false, error: errMsg };
-      }
-      setBandData(nextData);
-    });
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- cache presence is intentionally frozen at mount
-  }, [activeBandComboId, songId, selectedAccountId, selectedBandType, selectedTeamKey]);
-  /* v8 ignore stop */
-
-  // Clear the cache-skip flag after all fetch effects have had a chance to check it.
-  // Must be declared AFTER the fetch effects so React runs it last in the effect order.
-  useEffect(() => { mountedWithCacheRef.current = false; }, []);
-
   // No player means no player-specific data to wait for
   const playerDataReady = !player || scoreHistoryReady;
   const instrumentsReady = activeInstruments.every((k) => !instrumentData[k].loading);
   const bandsReady = SONG_BAND_TYPES.every((bandType) => !bandData[bandType].loading);
   const allReady = playerDataReady && instrumentsReady && bandsReady && selectedMemberScoresReady;
+  const hasShownRemoteDataRef = useRef(mountedWithRemoteDataRef.current);
+  useEffect(() => {
+    if (allReady) hasShownRemoteDataRef.current = true;
+  }, [allReady]);
+  const transitionReady = allReady || hasShownRemoteDataRef.current;
 
   // Apply invalid score filtering
   const filteredScoreHistory = useMemo(() => {
@@ -444,12 +408,14 @@ export default function SongDetailPage() {
 
   // Transition: spinner fade-out → staggered content fade-in
   // phase: 'loading' | 'spinnerOut' | 'contentIn'
-  const allCached = !!cached && (!player || hasCachedScoreHistory) && hasCachedBandData;
+  const allCached = initialRemoteScopeKeyRef.current === remoteScopeKey
+    && !!cached
+    && mountedWithRemoteDataRef.current;
   // Skip animations when all data is already cached (return visit, layout remount, etc.).
   // Frozen at mount time — the cache getting written mid-lifecycle should not flip this.
   const skipAnimRef = useRef(allCached);
   const skipAnim = skipAnimRef.current;
-  const { phase } = useLoadPhase(allReady, { skipAnimation: allCached });
+  const { phase } = useLoadPhase(transitionReady, { skipAnimation: allCached });
   useSetPageReady(phase === LoadPhase.ContentIn);
   const { forDelay: stagger, clearAnim } = useStagger(!skipAnim);
   const hasFab = useIsMobile();
@@ -487,21 +453,13 @@ export default function SongDetailPage() {
     userScrolledRef.current = false;
   }, [songId, defaultInstrument]);
 
-  // Update cache when data is ready
-  /* v8 ignore start — cache update side effect */
+  // Ensure a navigation entry exists once the page is ready.
   useEffect(() => {
     if (!songId || !allReady) return;
     songDetailCache.set(songId, {
-      instrumentData,
-      bandData,
-      scoreHistory,
-      scoreHistoryAccountId: player?.accountId,
-      bandSelectionKey,
-      showLeaderboardEntryTotals,
       scrollTop: scrollContainerRef.current?.scrollTop ?? 0,
     });
-  }, [allReady, songId, instrumentData, bandData, scoreHistory, player?.accountId, bandSelectionKey, showLeaderboardEntryTotals]);
-  /* v8 ignore stop */
+  }, [allReady, songId, scrollContainerRef]);
 
   // Restore scroll position when returning from cache (not on fresh PUSH navigations)
   useLayoutEffect(() => {

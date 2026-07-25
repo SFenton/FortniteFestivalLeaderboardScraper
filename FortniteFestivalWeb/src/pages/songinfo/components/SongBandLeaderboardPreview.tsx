@@ -1,7 +1,7 @@
 import { useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { PlayerBandType, SongBandLeaderboardEntry } from '@festival/core/api/serverTypes';
-import type { SongBandData } from '../../../api/pageCache';
+import type { SongBandData } from '../songDetailTypes';
 import { Align, Border, Colors, Display, Font, Gap, Justify, Layout, Opacity, Radius, STAGGER_ENTRY_OFFSET, STAGGER_ROW_MS, TRANSITION_MS, Weight, border, flexColumn, flexRow, frostedCard, padding } from '@festival/theme';
 import PlayerBandCard, { formatPlayerBandNames } from '../../player/components/PlayerBandCard';
 import InstrumentEmptyState from '../../player/sections/InstrumentEmptyState';

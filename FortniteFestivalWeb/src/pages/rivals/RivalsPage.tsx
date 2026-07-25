@@ -1,7 +1,10 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useQueries, useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
+import { queryKeys } from '../../api/queryKeys';
+import { remoteDataQueryPolicy } from '../../api/queryPolicy';
 import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
@@ -38,12 +41,6 @@ import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useModalState } from '../../hooks/ui/useModalState';
 import RankByModal from '../leaderboards/modals/RankByModal';
 import { coerceRankingMetric } from '../leaderboards/helpers/rankingHelpers';
-
-// Module-level data cache so back-navigation has instant data
-let _cachedInstrumentRivals: InstrumentRivals[] = [];
-let _cachedComboRivals: RivalsListResponse | null = null;
-let _cachedComputedAt: string | null = null;
-let _cachedRivalsKey: string | null = null;
 
 type InstrumentRivals = {
   instrument: ServerInstrumentKey;
@@ -120,14 +117,42 @@ export default function RivalsPage() {
     [combo, t],
   );
 
-  // Data state: initialize from cache when returning to same account
-  const hasCachedData = rivalsScopeKey === _cachedRivalsKey && _cachedInstrumentRivals.length > 0;
-
-  const [instrumentRivals, setInstrumentRivals] = useState<InstrumentRivals[]>(hasCachedData ? _cachedInstrumentRivals : []);
-  const [comboRivals, setComboRivals] = useState<RivalsListResponse | null>(hasCachedData ? _cachedComboRivals : null);
-  const [comboLoading, setComboLoading] = useState(false);
-  const [computedAt, setComputedAt] = useState<string | null>(hasCachedData ? _cachedComputedAt : null);
-  const [, setPlayerName] = useState<string | null>(null);
+  const instrumentQueries = useQueries({
+    queries: activeInstruments.map(instrument => ({
+      queryKey: queryKeys.rivalsList(accountId ?? '', instrument),
+      queryFn: () => api.getRivalsList(accountId!, instrument),
+      enabled: !!accountId,
+      ...remoteDataQueryPolicy,
+    })),
+  });
+  const comboQuery = useQuery({
+    queryKey: queryKeys.rivalsList(accountId ?? '', combo ?? ''),
+    queryFn: () => api.getRivalsList(accountId!, combo!),
+    enabled: !!accountId && !!combo,
+    ...remoteDataQueryPolicy,
+  });
+  const instrumentRivals = useMemo<InstrumentRivals[]>(() => (
+    activeInstruments.map((instrument, index) => {
+      const query = instrumentQueries[index];
+      return {
+        instrument,
+        data: query?.data ?? null,
+        loading: query?.isPending ?? true,
+        error: query?.error
+          ? (query.error instanceof Error ? query.error.message : 'Error')
+          : null,
+      };
+    })
+  ), [activeInstruments, instrumentQueries]);
+  const comboRivals: RivalsListResponse | null = comboQuery.data ?? null;
+  const comboLoading = !!combo && comboQuery.isPending;
+  const mountedWithDataRef = useRef(
+    !!accountId
+      && activeInstruments.every((_, index) => instrumentQueries[index]?.data !== undefined)
+      && (!combo || comboQuery.data !== undefined),
+  );
+  const initialRivalsScopeRef = useRef(rivalsScopeKey);
+  const hasCachedData = initialRivalsScopeRef.current === rivalsScopeKey && mountedWithDataRef.current;
   const [leaderboardQuickLinkItems, setLeaderboardQuickLinkItems] = useState<LeaderboardRivalQuickLink[]>([]);
   const [leaderboardRailRevealDelayMs, setLeaderboardRailRevealDelayMs] = useState(0);
 
@@ -146,109 +171,9 @@ export default function RivalsPage() {
   }, [fabSearch, activeTab]);
   /* v8 ignore stop */
 
-  // Resolve player display name
-  /* v8 ignore start — async data fetch */
-  useEffect(() => {
-    if (!accountId) return;
-    if (player?.accountId === accountId) {
-      setPlayerName(player.displayName);
-      return;
-    }
-    let cancelled = false;
-    api.getPlayer(accountId).then(res => {
-      if (!cancelled) setPlayerName(res.displayName);
-    }).catch(() => { /* ignored */ });
-    return () => { cancelled = true; };
-  }, [accountId, player]);
-  /* v8 ignore stop */
-
-  // Fetch overview for computedAt timestamp
-  /* v8 ignore start — async data fetch */
-  useEffect(() => {
-    if (!accountId || hasCachedData) return;
-    let cancelled = false;
-    api.getRivalsOverview(accountId).then(res => {
-      if (!cancelled) setComputedAt(res.computedAt);
-    }).catch(() => { /* ignored */ });
-    return () => { cancelled = true; };
-  }, [accountId]);
-  /* v8 ignore stop */
-
-  // Fetch per-instrument rivals
-  /* v8 ignore start — async data fetch */
-  useEffect(() => {
-    if (!accountId) return;
-    // Skip re-fetch on back-nav when cached data exists
-    if (hasCachedData) return;
-    let cancelled = false;
-
-    const entries: InstrumentRivals[] = activeInstruments.map(inst => ({
-      instrument: inst,
-      data: null,
-      loading: true,
-      error: null,
-    }));
-    setInstrumentRivals(entries);
-
-    activeInstruments.forEach((inst, idx) => {
-      api.getRivalsList(accountId, inst).then(res => {
-        if (cancelled) return;
-        setInstrumentRivals(prev => {
-          const next = [...prev];
-          next[idx] = { instrument: inst, data: res, loading: false, error: null };
-          return next;
-        });
-      }).catch(err => {
-        if (cancelled) return;
-        setInstrumentRivals(prev => {
-          const next = [...prev];
-          next[idx] = { instrument: inst, data: null, loading: false, error: err instanceof Error ? err.message : 'Error' };
-          return next;
-        });
-      });
-    });
-
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- activeInstruments derived from settings
-  }, [accountId, settings.showLead, settings.showBass, settings.showDrums, settings.showVocals, settings.showProLead, settings.showProBass, settings.showPeripheralVocals, settings.showPeripheralCymbals, settings.showPeripheralDrums]);
-  /* v8 ignore stop */
-
-  // Fetch combo rivals
-  /* v8 ignore start — async data fetch */
-  useEffect(() => {
-    if (!accountId || !combo) {
-      setComboRivals(null);
-      setComboLoading(false);
-      return;
-    }
-    // Skip re-fetch on back-nav when cached data exists
-    if (hasCachedData) return;
-    let cancelled = false;
-    setComboLoading(true);
-
-    api.getRivalsList(accountId, combo).then(res => {
-      if (!cancelled) { setComboRivals(res); setComboLoading(false); }
-    }).catch(() => {
-      if (!cancelled) {
-        setComboLoading(false);
-      }
-    });
-    return () => { cancelled = true; };
-  }, [accountId, combo]);
-  /* v8 ignore stop */
-
-  const allInstrumentsReady = instrumentRivals.length > 0 && instrumentRivals.every(r => !r.loading);
+  const allInstrumentsReady = activeInstruments.length === 0 || instrumentRivals.every(r => !r.loading);
   const comboReady = !combo || !comboLoading;
   const allReady = allInstrumentsReady && comboReady;
-
-  // Persist data to module-level cache for instant back-nav
-  useEffect(() => {
-    if (!allReady || !accountId) return;
-    _cachedRivalsKey = rivalsScopeKey;
-    _cachedInstrumentRivals = instrumentRivals;
-    _cachedComboRivals = comboRivals;
-    _cachedComputedAt = computedAt;
-  }, [allReady, accountId, instrumentRivals, comboRivals, computedAt]);
 
   // Common rivals: rivals that appear in ALL loaded instrument lists (2+ instruments)
   /* v8 ignore start -- common rivals intersection logic */

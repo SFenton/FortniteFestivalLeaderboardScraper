@@ -131,7 +131,6 @@ import { useNotificationFreshnessState } from './components/notifications/notifi
 import { notificationFeedKeyForProfile, useNotificationSeenState } from './components/notifications/notificationSeenState';
 import { NotificationFeedWebSocketBridge, useProfileNotificationsFeed } from './components/notifications/useProfileNotificationsFeed';
 import type { SearchTarget } from './types/search';
-import { clearSongDetailCache, clearLeaderboardCache, clearPlayerPageCache } from './api/pageCache';
 import { IS_IOS, IS_ANDROID, IS_PWA, IS_PAGE_RELOAD } from '@festival/ui-utils';
 import ChangelogModal from './components/modals/ChangelogModal';
 import ConfirmAlert from './components/modals/ConfirmAlert';
@@ -156,6 +155,7 @@ import {
 } from './state/bandFilter';
 import { writeSelectedProfile } from './state/selectedProfile';
 import { queryClient } from './api/queryClient';
+import { invalidateLeaderboardData } from './api/queryPolicy';
 import { Routes as AppRoutes, RoutePatterns } from './routes';
 import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext';
 import { ScrollContainerProvider, useShellRefs, useScrollContainer, HEADER_PORTAL_HEIGHT_VAR } from './contexts/ScrollContainerContext';
@@ -593,21 +593,17 @@ function AppShell() {
   // Track whether the back button has already appeared in the current detail stack.
   const backShownRef = useRef(false);
 
-  // Clear page caches when score filter settings change so pages restagger
+  // Invalidate server-filtered leaderboard data without discarding navigation state.
   const filterRef = useRef({ e: settings.filterInvalidScores, l: settings.filterInvalidScoresLeeway });
   /* v8 ignore start — deep AppInner: filter change cache invalidation */
   useEffect(() => {
     const prev = filterRef.current;
     if (prev.e !== settings.filterInvalidScores || prev.l !== settings.filterInvalidScoresLeeway) {
       filterRef.current = { e: settings.filterInvalidScores, l: settings.filterInvalidScoresLeeway };
-      clearSongDetailCache();
-      clearLeaderboardCache();
-      clearPlayerPageCache();
       // Invalidate leaderboard queries (server-side filtering required).
       // Player queries are NOT invalidated — the precomputed response includes
       // minLeeway + validScores, so the client handles all leeway values locally.
-      queryClient.invalidateQueries({ queryKey: ['leaderboard'] });
-      queryClient.invalidateQueries({ queryKey: ['allLeaderboards'] });
+      void invalidateLeaderboardData(queryClient);
       /* v8 ignore stop */
     }
   }, [settings.filterInvalidScores, settings.filterInvalidScoresLeeway]);

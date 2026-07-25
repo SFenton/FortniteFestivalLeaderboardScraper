@@ -213,27 +213,23 @@ function normalizeDisplayName<T extends { displayName: string }>(data: T): T {
   return data;
 }
 
-// ── Generic ETag cache (in-memory, per-URL) ─────────────────
+// Shop remains a separate owner until WEB-2.3 moves it into React Query.
+let shopEtagCache: { data: ShopResponse; etag: string } | null = null;
 
-const etagCache = new Map<string, { data: unknown; etag: string }>();
-
-async function getWithETag<T>(path: string, options?: ApiRequestOptions): Promise<T> {
-  const url = `${BASE}${path}`;
-  const cached = etagCache.get(url);
+async function getShopWithETag(): Promise<ShopResponse> {
+  const url = `${BASE}/api/shop`;
   const headers: Record<string, string> = {};
-  if (cached?.etag) headers['If-None-Match'] = cached.etag;
+  if (shopEtagCache?.etag) headers['If-None-Match'] = shopEtagCache.etag;
 
   const init: RequestInit = { headers: withSelectedProfileHeaders(headers) };
-  if (options?.signal) init.signal = options.signal;
-
   const res = await fetch(url, init);
 
-  if (res.status === 304 && cached) return cached.data as T;
+  if (res.status === 304 && shopEtagCache) return shopEtagCache.data;
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
 
-  const data = await res.json() as T;
+  const data = await res.json() as ShopResponse;
   const etag = res.headers.get('etag');
-  if (etag) etagCache.set(url, { data, etag });
+  if (etag) shopEtagCache = { data, etag };
   return data;
 }
 
@@ -262,7 +258,7 @@ export const api = {
   },
 
   getShop: async (): Promise<ShopResponse> => {
-    const data = await getWithETag<ShopResponse>('/api/shop');
+    const data = await getShopWithETag();
     expandAlbumArt(data.songs);
     return data;
   },
@@ -292,7 +288,7 @@ export const api = {
     if (instruments?.length) params.set('instruments', instruments.join(','));
     if (leeway != null) params.set('leeway', String(leeway));
     const qs = params.toString();
-    return getWithETag<PlayerResponse>(
+    return get<PlayerResponse>(
       `/api/player/${encodeURIComponent(accountId)}${qs ? `?${qs}` : ''}`,
     ).then(r => normalizeDisplayName(expandWirePlayerResponse(r as never)));
   },
@@ -363,7 +359,7 @@ export const api = {
   },
 
   getAllLeaderboards: (songId: string, top = 10, leeway?: number) =>
-    getWithETag<AllLeaderboardsResponse>(
+    get<AllLeaderboardsResponse>(
       `/api/leaderboard/${encodeURIComponent(songId)}/all?top=${top}${leeway != null ? `&leeway=${leeway}` : ''}`,
     ),
 
@@ -396,7 +392,7 @@ export const api = {
     if (selectedBandType) params.set('selectedBandType', selectedBandType);
     if (selectedTeamKey) params.set('selectedTeamKey', selectedTeamKey);
     if (comboId) params.set('combo', comboId);
-    return getWithETag<AllSongBandLeaderboardsResponse>(
+    return get<AllSongBandLeaderboardsResponse>(
       `/api/leaderboard/${encodeURIComponent(songId)}/bands/all?${params.toString()}`,
     );
   },
@@ -409,7 +405,7 @@ export const api = {
     const params = new URLSearchParams();
     if (comboId) params.set('combo', comboId);
     const qs = params.toString();
-    return getWithETag<PlayerBandTypeResponse>(
+    return get<PlayerBandTypeResponse>(
       `/api/player/${encodeURIComponent(accountId)}/bands/${encodeURIComponent(bandType)}${qs ? `?${qs}` : ''}`,
     );
   },
@@ -419,7 +415,7 @@ export const api = {
     params.set('group', group);
     params.set('page', String(page));
     params.set('pageSize', String(pageSize));
-    return getWithETag<PlayerBandListResponse>(
+    return get<PlayerBandListResponse>(
       `/api/player/${encodeURIComponent(accountId)}/bands?${params.toString()}`,
       options,
     );
@@ -573,22 +569,22 @@ export const api = {
   },
 
   getLeaderboardNeighborhood: (instrument: InstrumentKey, accountId: string, radius = 5) =>
-    getWithETag<LeaderboardNeighborhoodResponse>(
+    get<LeaderboardNeighborhoodResponse>(
       `/api/rankings/${encodeURIComponent(instrument)}/${encodeURIComponent(accountId)}/neighborhood?radius=${radius}`,
     ),
 
   getCompositeNeighborhood: (accountId: string, radius = 5) =>
-    getWithETag<CompositeNeighborhoodResponse>(
+    get<CompositeNeighborhoodResponse>(
       `/api/rankings/composite/${encodeURIComponent(accountId)}/neighborhood?radius=${radius}`,
     ),
 
   getLeaderboardRivals: (instrument: InstrumentKey, accountId: string, rankBy: RankingMetric = 'totalscore') =>
-    getWithETag<LeaderboardRivalsListResponse>(
+    get<LeaderboardRivalsListResponse>(
       `/api/player/${encodeURIComponent(accountId)}/leaderboard-rivals/${encodeURIComponent(instrument)}?rankBy=${encodeURIComponent(rankBy)}`,
     ),
 
   getLeaderboardRivalDetail: (instrument: InstrumentKey, accountId: string, rivalId: string, rankBy: RankingMetric = 'totalscore', sort = 'closest') =>
-    getWithETag<RivalDetailResponse>(
+    get<RivalDetailResponse>(
       `/api/player/${encodeURIComponent(accountId)}/leaderboard-rivals/${encodeURIComponent(instrument)}/${encodeURIComponent(rivalId)}?rankBy=${encodeURIComponent(rankBy)}&sort=${encodeURIComponent(sort)}`,
     ),
 
@@ -596,13 +592,13 @@ export const api = {
     const params = new URLSearchParams();
     if (combo) params.set('combo', combo);
     params.set('limit', String(limit));
-    return getWithETag<RivalSuggestionsResponse>(
+    return get<RivalSuggestionsResponse>(
       `/api/player/${encodeURIComponent(accountId)}/rivals/suggestions?${params}`,
     );
   },
 
   getRivalsAll: (accountId: string) =>
-    getWithETag<RivalsAllResponse>(
+    get<RivalsAllResponse>(
       `/api/player/${encodeURIComponent(accountId)}/rivals/all`,
     ),
 

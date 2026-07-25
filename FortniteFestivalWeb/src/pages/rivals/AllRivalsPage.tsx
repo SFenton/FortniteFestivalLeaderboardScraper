@@ -1,7 +1,10 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useQueries, useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
+import { queryKeys } from '../../api/queryKeys';
+import { remoteDataQueryPolicy } from '../../api/queryPolicy';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
 import { useSetPageReady } from '../../contexts/PageReadyContext';
@@ -22,12 +25,6 @@ import PageHeader from '../../components/common/PageHeader';
 import PageHeaderTransition from '../../components/common/PageHeaderTransition';
 import { comboScopeLabel, isRankingScopeComboId } from '../../utils/rankingScopes';
 import { coerceRankingMetric } from '../leaderboards/helpers/rankingHelpers';
-
-// Module-level data cache so back-navigation has instant data
-let _cachedAllRivalsKey: string | null = null;
-let _cachedInstrumentData: Map<ServerInstrumentKey, RivalsListResponse> = new Map();
-let _cachedSingleData: RivalsListResponse | null = null;
-let _cachedLeaderboardData: LeaderboardRivalsListResponse | null = null;
 
 const VALID_INSTRUMENTS = new Set<string>([
   'Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals',
@@ -66,107 +63,59 @@ export default function AllRivalsPage() {
       ? (resolvedCombo ?? 'none')
       : (instrument ?? 'none');
 
-  // ─── Data state (initialize from cache when returning) ─────
-
   const cacheKey = `${accountId ?? ''}:${category}:${mode ?? 'song'}:${isLeaderboard ? rankBy : 'song'}:${rivalsScopeKey}`;
-  const hasCachedData = cacheKey === _cachedAllRivalsKey;
-  const [instrumentData, setInstrumentData] = useState<Map<ServerInstrumentKey, RivalsListResponse>>(hasCachedData ? _cachedInstrumentData : new Map());
-  const [singleData, setSingleData] = useState<RivalsListResponse | null>(hasCachedData ? _cachedSingleData : null);
-  const [leaderboardData, setLeaderboardData] = useState<LeaderboardRivalsListResponse | null>(hasCachedData ? _cachedLeaderboardData : null);
-  const [loading, setLoading] = useState(!hasCachedData);
-
-  // ─── Fetch: common (all instruments, intersection) ───────────
-
-  useEffect(() => {
-    if (isLeaderboard || !isCommon || !accountId || activeInstruments.length < 2) {
-      if (isCommon) setLoading(false);
-      return;
-    }
-    if (hasCachedData) return;
-    let cancelled = false;
-    setLoading(true);
-    const pending = new Map<ServerInstrumentKey, RivalsListResponse>();
-    let completed = 0;
-
-    activeInstruments.forEach(inst => {
-      api.getRivalsList(accountId, inst).then(res => {
-        if (cancelled) return;
-        pending.set(inst, res);
-        completed++;
-        if (completed === activeInstruments.length) {
-          setInstrumentData(new Map(pending));
-          setLoading(false);
-        }
-      }).catch(() => {
-        if (cancelled) return;
-        completed++;
-        if (completed === activeInstruments.length) {
-          setInstrumentData(new Map(pending));
-          setLoading(false);
-        }
-      });
-    });
-
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- activeInstruments derived from settings
-  }, [isCommon, accountId, settings.showLead, settings.showBass, settings.showDrums, settings.showVocals, settings.showProLead, settings.showProBass, settings.showPeripheralVocals, settings.showPeripheralCymbals, settings.showPeripheralDrums]);
-
-  // ─── Fetch: single instrument ────────────────────────────────
-
-  useEffect(() => {
-    if (isLeaderboard || !isInstrument || !accountId || !instrument) return;
-    if (hasCachedData) return;
-    let cancelled = false;
-    setLoading(true);
-    api.getRivalsList(accountId, instrument).then(res => {
-      if (!cancelled) { setSingleData(res); setLoading(false); }
-    }).catch(() => {
-      if (!cancelled) { setSingleData(null); setLoading(false); }
-    });
-    return () => { cancelled = true; };
-  }, [isInstrument, accountId, instrument]);
-
-  // ─── Fetch: leaderboard rivals (per-instrument) ──────────────
-
-  useEffect(() => {
-    if (!isLeaderboard || !isInstrument || !accountId || !instrument) return;
-    if (hasCachedData) return;
-    let cancelled = false;
-    setLoading(true);
-    api.getLeaderboardRivals(instrument, accountId, rankBy).then(res => {
-      if (!cancelled) { setLeaderboardData(res); setLoading(false); }
-    }).catch(() => {
-      if (!cancelled) { setLeaderboardData(null); setLoading(false); }
-    });
-    return () => { cancelled = true; };
-  }, [isLeaderboard, isInstrument, accountId, instrument, rankBy]);
-
-  // ─── Fetch: combo (derived from settings) ────────────────────
-
-  useEffect(() => {
-    if (!isCombo || !accountId || !resolvedCombo) {
-      if (isCombo) setLoading(false);
-      return;
-    }
-    if (hasCachedData) return;
-    let cancelled = false;
-    setLoading(true);
-    api.getRivalsList(accountId, resolvedCombo).then(res => {
-      if (!cancelled) { setSingleData(res); setLoading(false); }
-    }).catch(() => {
-      if (!cancelled) { setSingleData(null); setLoading(false); }
-    });
-    return () => { cancelled = true; };
-  }, [isCombo, accountId, resolvedCombo]);
+  const commonQueries = useQueries({
+    queries: activeInstruments.map(currentInstrument => ({
+      queryKey: queryKeys.rivalsList(accountId ?? '', currentInstrument),
+      queryFn: () => api.getRivalsList(accountId!, currentInstrument),
+      enabled: !isLeaderboard && isCommon && !!accountId && activeInstruments.length >= 2,
+      ...remoteDataQueryPolicy,
+    })),
+  });
+  const singleScope = isInstrument ? instrument : isCombo ? resolvedCombo : null;
+  const singleQuery = useQuery({
+    queryKey: queryKeys.rivalsList(accountId ?? '', singleScope ?? ''),
+    queryFn: () => api.getRivalsList(accountId!, singleScope!),
+    enabled: !isLeaderboard && !isCommon && !!accountId && !!singleScope,
+    ...remoteDataQueryPolicy,
+  });
+  const leaderboardQuery = useQuery({
+    queryKey: queryKeys.leaderboardRivals(accountId ?? '', instrument ?? '', rankBy),
+    queryFn: () => api.getLeaderboardRivals(instrument!, accountId!, rankBy),
+    enabled: isLeaderboard && isInstrument && !!accountId && !!instrument,
+    ...remoteDataQueryPolicy,
+  });
+  const instrumentData = useMemo(() => (
+    activeInstruments.flatMap((currentInstrument, index) => {
+      const data = commonQueries[index]?.data;
+      return data ? [{ instrument: currentInstrument, data }] : [];
+    })
+  ), [activeInstruments, commonQueries]);
+  const singleData: RivalsListResponse | null = singleQuery.data ?? null;
+  const leaderboardData: LeaderboardRivalsListResponse | null = leaderboardQuery.data ?? null;
+  const loading = isLeaderboard
+    ? !!(isInstrument && accountId && instrument && leaderboardQuery.isPending)
+    : isCommon
+      ? !!(accountId && activeInstruments.length >= 2 && commonQueries.some(query => query.isPending))
+      : !!(accountId && singleScope && singleQuery.isPending);
+  const mountedWithDataRef = useRef(
+    isLeaderboard
+      ? leaderboardQuery.data !== undefined
+      : isCommon
+        ? activeInstruments.length >= 2 && commonQueries.every(query => query.data !== undefined)
+        : singleQuery.data !== undefined,
+  );
+  const initialCacheKeyRef = useRef(cacheKey);
+  const hasCachedData = initialCacheKeyRef.current === cacheKey && mountedWithDataRef.current;
 
   // ─── Common rivals: intersection logic ───────────────────────
 
   const commonRivals = useMemo<{ above: RivalSummary[]; below: RivalSummary[] }>(() => {
-    if (!isCommon || instrumentData.size < 2) return { above: [], below: [] };
+    if (!isCommon || instrumentData.length < 2) return { above: [], below: [] };
 
     const countMap = new Map<string, number>();
     const summaryMap = new Map<string, { above: RivalSummary[]; below: RivalSummary[] }>();
-    for (const [, data] of instrumentData) {
+    for (const { data } of instrumentData) {
       const seen = new Set<string>();
       for (const rival of [...data.above, ...data.below]) {
         if (seen.has(rival.accountId)) continue;
@@ -179,7 +128,7 @@ export default function AllRivalsPage() {
       }
     }
 
-    const threshold = instrumentData.size;
+    const threshold = instrumentData.length;
     const above: RivalSummary[] = [];
     const below: RivalSummary[] = [];
     for (const [id, count] of countMap) {
@@ -206,15 +155,6 @@ export default function AllRivalsPage() {
       : singleData
         ? { above: singleData.above, below: singleData.below }
         : { above: [], below: [] };
-
-  // Persist data to module-level cache for instant back-nav
-  useEffect(() => {
-    if (loading) return;
-    _cachedAllRivalsKey = cacheKey;
-    _cachedInstrumentData = instrumentData;
-    _cachedSingleData = singleData;
-    _cachedLeaderboardData = leaderboardData;
-  }, [loading, cacheKey, instrumentData, singleData, leaderboardData]);
 
   // ─── UI hooks ────────────────────────────────────────────────
 

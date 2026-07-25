@@ -93,16 +93,30 @@ describe('queryKeys', () => {
   });
 
   it('rivalsOverview() returns key with accountId', () => {
-    expect(queryKeys.rivalsOverview('acc-1')).toEqual(['rivalsOverview', 'acc-1']);
+    expect(queryKeys.rivalsOverview('acc-1')).toEqual(['rivals', 'acc-1', 'overview']);
   });
 
   it('rivalsList() returns key with accountId and combo', () => {
-    expect(queryKeys.rivalsList('acc-1', 'Solo_Guitar')).toEqual(['rivalsList', 'acc-1', 'Solo_Guitar']);
+    expect(queryKeys.rivalsList('acc-1', 'Solo_Guitar')).toEqual(['rivals', 'acc-1', 'list', 'Solo_Guitar']);
   });
 
-  it('rivalDetail() returns key with accountId, combo, and rivalId', () => {
-    expect(queryKeys.rivalDetail('acc-1', 'Solo_Guitar', 'rival-1')).toEqual(
-      ['rivalDetail', 'acc-1', 'Solo_Guitar', 'rival-1'],
+  it('rivalDetail() returns a canonical profile and scope key', () => {
+    expect(queryKeys.rivalDetail('acc-1', 'rival-1', {
+      source: 'song',
+      scopes: ['Solo_Guitar', 'Solo_Bass'],
+      allowLiveFallback: true,
+    })).toEqual(
+      ['rivals', 'acc-1', 'detail', 'rival-1', {
+        source: 'song',
+        scopes: ['Solo_Bass', 'Solo_Guitar'],
+        allowLiveFallback: true,
+      }],
+    );
+  });
+
+  it('leaderboardRivals() scopes instrument data to the selected profile and metric', () => {
+    expect(queryKeys.leaderboardRivals('acc-1', 'Solo_Guitar', 'totalscore')).toEqual(
+      ['rivals', 'acc-1', 'leaderboard', 'Solo_Guitar', { rankBy: 'totalscore' }],
     );
   });
 });

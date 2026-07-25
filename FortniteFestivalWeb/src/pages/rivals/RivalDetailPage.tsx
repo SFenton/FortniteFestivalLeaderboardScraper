@@ -1,7 +1,10 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useMemo, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
+import { queryKeys } from '../../api/queryKeys';
+import { remoteDataQueryPolicy } from '../../api/queryPolicy';
 import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
@@ -30,10 +33,6 @@ import { coerceRankingMetric } from '../leaderboards/helpers/rankingHelpers';
 import { resolveRivalCombo, resolveRivalCombos, rivalComboStateForNavigation, type RivalRouteState } from './helpers/rivalRouteState';
 import { fetchCombinedRivalDetail } from './helpers/rivalDetailFetch';
 import { getPlayerProfileRoute } from '../../utils/profileNavigation';
-
-let _cachedDetailSongs: RivalSongComparison[] = [];
-let _cachedDetailRivalName: string | null = null;
-let _cachedDetailKey: string | null = null;
 
 type RivalDetailQuickLink = PageQuickLinkItem;
 
@@ -69,53 +68,54 @@ export default function RivalDetailPage() {
   const lbRankBy = coerceRankingMetric(navState?.rankBy as string | undefined, true);
   /* v8 ignore stop */
 
-  /* v8 ignore start -- cache-based state initialization */
   const cacheKey = source === 'leaderboard'
     ? `lb:${accountId}:${rivalId}:${lbInstrument}:${lbRankBy}`
     : `${accountId}:${rivalId}:${comboKey}`;
-  const hasCachedData = cacheKey === _cachedDetailKey && _cachedDetailSongs.length > 0;
-
-  const [songs_, setSongs] = useState<RivalSongComparison[]>(hasCachedData ? _cachedDetailSongs : []);
-  const [rivalName, setRivalName] = useState<string | null>(hasCachedData ? _cachedDetailRivalName : (rivalNameFromState ?? rivalNameFromUrl ?? null));
-  const [loading, setLoading] = useState(!hasCachedData);
-  /* v8 ignore stop */
+  const detailQuery = useQuery({
+    queryKey: queryKeys.rivalDetail(accountId ?? '', rivalId ?? '', source === 'leaderboard'
+      ? {
+          source,
+          instrument: lbInstrument,
+          rankBy: lbRankBy,
+        }
+      : {
+          source,
+          scopes: combos,
+          allowLiveFallback,
+        }),
+    queryFn: () => source === 'leaderboard' && lbInstrument
+      ? api.getLeaderboardRivalDetail(
+          lbInstrument as Parameters<typeof api.getLeaderboardRivalDetail>[0],
+          accountId!,
+          rivalId!,
+          lbRankBy as Parameters<typeof api.getLeaderboardRivalDetail>[3],
+        )
+      : fetchCombinedRivalDetail(
+          accountId!,
+          rivalId!,
+          combos,
+          undefined,
+          allowLiveFallback ? { allowLiveFallback: true } : undefined,
+        ),
+    enabled: !!accountId && !!rivalId && (source === 'leaderboard' ? !!lbInstrument : !!combo),
+    ...remoteDataQueryPolicy,
+  });
+  const songs_: RivalSongComparison[] = detailQuery.data?.songs ?? [];
+  const rivalName = detailQuery.data?.rival.displayName ?? rivalNameFromState ?? rivalNameFromUrl ?? null;
+  const loading = detailQuery.isPending;
+  const mountedWithDataRef = useRef(detailQuery.data !== undefined);
+  const initialCacheKeyRef = useRef(cacheKey);
+  const hasCachedData = initialCacheKeyRef.current === cacheKey && mountedWithDataRef.current;
 
   const { albumArtMap, yearMap, sigMap } = useSongLookups();
 
-  /* v8 ignore start — async data fetch */
   useEffect(() => {
-    if (!accountId || !rivalId || hasCachedData) return;
-    let cancelled = false;
-    setLoading(true);
-
-    const fetchPromise = source === 'leaderboard' && lbInstrument
-      ? api.getLeaderboardRivalDetail(lbInstrument as Parameters<typeof api.getLeaderboardRivalDetail>[0], accountId, rivalId, lbRankBy as Parameters<typeof api.getLeaderboardRivalDetail>[3])
-      : fetchCombinedRivalDetail(accountId, rivalId, combos, undefined, allowLiveFallback ? { allowLiveFallback: true } : undefined);
-
-    fetchPromise.then(res => {
-      if (cancelled) return;
-      setSongs(res.songs);
-      setRivalName(res.rival.displayName);
-      // Persist to module cache
-      _cachedDetailKey = cacheKey;
-      _cachedDetailSongs = res.songs;
-      _cachedDetailRivalName = res.rival.displayName;
-      // Ensure the rival name is in the URL for refresh/sharing
-      if (res.rival.displayName && !searchParams.has('name')) {
-        const next = new URLSearchParams(searchParams);
-        next.set('name', res.rival.displayName);
-        navigate(`${location.pathname}?${next.toString()}`, { replace: true, state: location.state });
-      }
-      setLoading(false);
-    }).catch(() => {
-      if (cancelled) return;
-      setSongs([]);
-      setLoading(false);
-    });
-
-    return () => { cancelled = true; };
-  }, [accountId, rivalId, comboKey, source, lbInstrument, lbRankBy, allowLiveFallback]);
-  /* v8 ignore stop */
+    const resolvedName = detailQuery.data?.rival.displayName;
+    if (!resolvedName || searchParams.has('name')) return;
+    const next = new URLSearchParams(searchParams);
+    next.set('name', resolvedName);
+    navigate(`${location.pathname}?${next.toString()}`, { replace: true, state: location.state });
+  }, [detailQuery.data?.rival.displayName, location.pathname, location.state, navigate, searchParams]);
 
   const categories = useMemo(() => categorizeRivalSongs(songs_), [songs_]);
 

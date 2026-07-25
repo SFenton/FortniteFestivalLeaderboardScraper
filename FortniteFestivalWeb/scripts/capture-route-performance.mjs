@@ -25,8 +25,14 @@ const viewports = [
   ['desktop', { width: 1440, height: 900 }],
   ['mobile', { width: 375, height: 812 }],
 ];
+const chromiumExecutablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
 
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({
+  headless: true,
+  ...(chromiumExecutablePath
+    ? { executablePath: chromiumExecutablePath, args: ['--no-sandbox'] }
+    : {}),
+});
 const results = [];
 try {
   for (const [viewportName, viewport] of viewports) {

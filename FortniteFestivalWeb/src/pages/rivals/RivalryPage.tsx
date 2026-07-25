@@ -1,7 +1,10 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useMemo, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
+import { queryKeys } from '../../api/queryKeys';
+import { remoteDataQueryPolicy } from '../../api/queryPolicy';
 import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import { useSettings } from '../../contexts/SettingsContext';
@@ -40,10 +43,6 @@ const MODE_TITLE_KEYS: Record<string, string> = {
   dominating_them: 'rivals.detail.dominatingThem',
 };
 
-let _cachedRivalrySongs: RivalSongComparison[] = [];
-let _cachedRivalryName: string | null = null;
-let _cachedRivalryKey: string | null = null;
-
 const QUICK_LINK_GLYPH_ICON_SIZE = 20;
 
 type RivalryQuickLink = PageQuickLinkItem;
@@ -80,47 +79,46 @@ export default function RivalryPage() {
   const lbRankBy = coerceRankingMetric(navState?.rankBy as string | undefined, true);
   /* v8 ignore stop */
 
-  /* v8 ignore start -- cache-based state initialization */
   const cacheKey = source === 'leaderboard'
     ? `lb:${accountId}:${rivalId}:${lbInstrument}:${lbRankBy}:${mode}`
     : `${accountId}:${rivalId}:${comboKey}`;
-  const hasCachedData = cacheKey === _cachedRivalryKey && _cachedRivalrySongs.length > 0;
-
-  const [allSongs, setAllSongs] = useState<RivalSongComparison[]>(hasCachedData ? _cachedRivalrySongs : []);
-  const [rivalName, setRivalName] = useState<string | null>(hasCachedData ? _cachedRivalryName : null);
-  const [loading, setLoading] = useState(!hasCachedData);
-  /* v8 ignore stop */
+  const detailQuery = useQuery({
+    queryKey: queryKeys.rivalDetail(accountId ?? '', rivalId ?? '', source === 'leaderboard'
+      ? {
+          source,
+          instrument: lbInstrument,
+          rankBy: lbRankBy,
+        }
+      : {
+          source,
+          scopes: combos,
+          allowLiveFallback,
+        }),
+    queryFn: () => source === 'leaderboard' && lbInstrument
+      ? api.getLeaderboardRivalDetail(
+          lbInstrument as Parameters<typeof api.getLeaderboardRivalDetail>[0],
+          accountId!,
+          rivalId!,
+          lbRankBy as Parameters<typeof api.getLeaderboardRivalDetail>[3],
+        )
+      : fetchCombinedRivalDetail(
+          accountId!,
+          rivalId!,
+          combos,
+          undefined,
+          allowLiveFallback ? { allowLiveFallback: true } : undefined,
+        ),
+    enabled: !!accountId && !!rivalId && (source === 'leaderboard' ? !!lbInstrument : !!combo),
+    ...remoteDataQueryPolicy,
+  });
+  const allSongs: RivalSongComparison[] = detailQuery.data?.songs ?? [];
+  const rivalName = detailQuery.data?.rival.displayName ?? null;
+  const loading = detailQuery.isPending;
+  const mountedWithDataRef = useRef(detailQuery.data !== undefined);
+  const initialCacheKeyRef = useRef(cacheKey);
+  const hasCachedData = initialCacheKeyRef.current === cacheKey && mountedWithDataRef.current;
 
   const { albumArtMap, yearMap, sigMap } = useSongLookups();
-
-  /* v8 ignore start — async data fetch */
-  useEffect(() => {
-    if (!accountId || !rivalId || hasCachedData) return;
-    if (source !== 'leaderboard' && !combo) return;
-    let cancelled = false;
-    setLoading(true);
-
-    const fetchPromise = source === 'leaderboard' && lbInstrument
-      ? api.getLeaderboardRivalDetail(lbInstrument as Parameters<typeof api.getLeaderboardRivalDetail>[0], accountId, rivalId, lbRankBy as Parameters<typeof api.getLeaderboardRivalDetail>[3])
-      : fetchCombinedRivalDetail(accountId, rivalId, combos, undefined, allowLiveFallback ? { allowLiveFallback: true } : undefined);
-
-    fetchPromise.then(res => {
-      if (cancelled) return;
-      setAllSongs(res.songs);
-      setRivalName(res.rival.displayName);
-      _cachedRivalryKey = cacheKey;
-      _cachedRivalrySongs = res.songs;
-      _cachedRivalryName = res.rival.displayName;
-      setLoading(false);
-    }).catch(() => {
-      if (cancelled) return;
-      setAllSongs([]);
-      setLoading(false);
-    });
-
-    return () => { cancelled = true; };
-  }, [accountId, rivalId, comboKey, source, lbInstrument, lbRankBy, allowLiveFallback]);
-  /* v8 ignore stop */
 
   /* v8 ignore start -- category/score computation */
   const category = useMemo(() => {

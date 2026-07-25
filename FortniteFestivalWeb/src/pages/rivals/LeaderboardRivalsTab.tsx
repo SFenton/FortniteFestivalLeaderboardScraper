@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
+import { useQueries } from '@tanstack/react-query';
 import { api } from '../../api/client';
+import { queryKeys } from '../../api/queryKeys';
+import { remoteDataQueryPolicy } from '../../api/queryPolicy';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
 import { staggerCompletionDelay, useStagger } from '../../hooks/ui/useStagger';
 import EmptyState from '../../components/common/EmptyState';
@@ -18,10 +21,6 @@ import { useRivalsSharedStyles } from './useRivalsSharedStyles';
 import { Routes } from '../../routes';
 import fx from '../../styles/effects.module.css';
 import type { PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
-
-// Module-level cache for instant back-navigation
-let _cachedInstrumentRivals: InstrumentLeaderboardRivals[] = [];
-let _cachedLeaderboardKey: string | null = null;
 
 type InstrumentLeaderboardRivals = {
   instrument: ServerInstrumentKey;
@@ -57,59 +56,29 @@ export default function LeaderboardRivalsTab({
   const navigate = useNavigate();
   const { settings } = useSettings();
   const activeInstruments = visibleInstruments(settings);
-  const leaderboardScopeKey = `${accountId}:${rankBy}:${activeInstruments.join(',')}`;
+  const queries = useQueries({
+    queries: activeInstruments.map(instrument => ({
+      queryKey: queryKeys.leaderboardRivals(accountId, instrument, rankBy),
+      queryFn: () => api.getLeaderboardRivals(instrument, accountId, rankBy),
+      enabled: !!accountId,
+      ...remoteDataQueryPolicy,
+    })),
+  });
+  const instrumentRivals = useMemo<InstrumentLeaderboardRivals[]>(() => (
+    activeInstruments.map((instrument, index) => {
+      const query = queries[index];
+      return {
+        instrument,
+        data: query?.data ?? null,
+        loading: query?.isPending ?? true,
+        error: query?.error
+          ? (query.error instanceof Error ? query.error.message : 'Error')
+          : null,
+      };
+    })
+  ), [activeInstruments, queries]);
 
-  const hasCached = leaderboardScopeKey === _cachedLeaderboardKey && _cachedInstrumentRivals.length > 0;
-
-  const [instrumentRivals, setInstrumentRivals] = useState<InstrumentLeaderboardRivals[]>(
-    hasCached ? _cachedInstrumentRivals : [],
-  );
-
-  // Fetch per-instrument leaderboard rivals
-  /* v8 ignore start — async data fetch */
-  useEffect(() => {
-    if (!accountId || hasCached) return;
-    let cancelled = false;
-
-    const entries: InstrumentLeaderboardRivals[] = activeInstruments.map(inst => ({
-      instrument: inst,
-      data: null,
-      loading: true,
-      error: null,
-    }));
-    setInstrumentRivals(entries);
-
-    activeInstruments.forEach((inst, idx) => {
-      api.getLeaderboardRivals(inst, accountId, rankBy).then(res => {
-        if (cancelled) return;
-        setInstrumentRivals(prev => {
-          const next = [...prev];
-          next[idx] = { instrument: inst, data: res, loading: false, error: null };
-          return next;
-        });
-      }).catch(err => {
-        if (cancelled) return;
-        setInstrumentRivals(prev => {
-          const next = [...prev];
-          next[idx] = { instrument: inst, data: null, loading: false, error: err instanceof Error ? err.message : 'Error' };
-          return next;
-        });
-      });
-    });
-
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- activeInstruments derived from settings
-  }, [accountId, rankBy, settings.showLead, settings.showBass, settings.showDrums, settings.showVocals, settings.showProLead, settings.showProBass, settings.showPeripheralVocals, settings.showPeripheralCymbals, settings.showPeripheralDrums]);
-  /* v8 ignore stop */
-
-  const allReady = instrumentRivals.length > 0 && instrumentRivals.every(r => !r.loading);
-
-  // Persist to module cache
-  useEffect(() => {
-    if (!allReady || !accountId) return;
-    _cachedLeaderboardKey = leaderboardScopeKey;
-    _cachedInstrumentRivals = instrumentRivals;
-  }, [allReady, accountId, leaderboardScopeKey, instrumentRivals]);
+  const allReady = activeInstruments.length === 0 || instrumentRivals.every(r => !r.loading);
 
   const { next: nextStagger, clearAnim } = useStagger(shouldStagger);
   const shared = useRivalsSharedStyles();

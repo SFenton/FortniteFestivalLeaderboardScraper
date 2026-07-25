@@ -5,7 +5,8 @@ import SongDetailPage, { clearSongDetailCache } from '../../../src/pages/songinf
 import { useSettings } from '../../../src/contexts/SettingsContext';
 import { songInfoSlides } from '../../../src/pages/songinfo/firstRun';
 import { contentHash } from '../../../src/firstRun/types';
-import { TestProviders } from '../../helpers/TestProviders';
+import { createTestQueryClient, TestProviders } from '../../helpers/TestProviders';
+import type { QueryClient } from '@tanstack/react-query';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../helpers/browserStubs';
 import { songDetailCache } from '../../../src/api/pageCache';
 import type { PlayerBandType } from '@festival/core/api/serverTypes';
@@ -178,9 +179,9 @@ beforeEach(() => {
   localStorage.setItem('fst:firstRun', JSON.stringify(seen));
 });
 
-function renderSongDetail(route = '/songs/song-1', accountId?: string) {
+function renderSongDetail(route = '/songs/song-1', accountId?: string, queryClient?: QueryClient) {
   return render(
-    <TestProviders route={route} accountId={accountId}>
+    <TestProviders route={route} accountId={accountId} queryClient={queryClient}>
       <Routes>
         <Route path="/songs/:songId" element={<SongDetailPage />} />
       </Routes>
@@ -504,7 +505,7 @@ describe('SongDetailPage', () => {
 
     await screen.findByTestId('song-band-preview-list-Band_Duets');
     await waitFor(() => {
-      expect(songDetailCache.get('song-1')?.bandSelectionKey).toBeUndefined();
+      expect(songDetailCache.get('song-1')).toEqual({ scrollTop: 0 });
     });
     firstRender.unmount();
 
@@ -650,12 +651,13 @@ describe('SongDetailPage', () => {
   });
 
   it('uses cached data on second render (no refetch)', async () => {
-    const { unmount } = renderSongDetail();
+    const queryClient = createTestQueryClient();
+    const { unmount } = renderSongDetail('/songs/song-1', undefined, queryClient);
     await waitFor(() => { expect(screen.getByText('Test Song')).toBeDefined(); });
     const callCount = mockApi.getAllLeaderboards.mock.calls.length;
     unmount();
 
-    renderSongDetail();
+    renderSongDetail('/songs/song-1', undefined, queryClient);
     await waitFor(() => { expect(screen.getByText('Test Song')).toBeDefined(); });
     expect(mockApi.getAllLeaderboards).toHaveBeenCalledTimes(callCount);
   });

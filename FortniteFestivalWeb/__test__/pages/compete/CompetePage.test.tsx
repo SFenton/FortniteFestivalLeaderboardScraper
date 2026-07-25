@@ -257,7 +257,6 @@ describe('CompetePage', () => {
 
     renderCompete();
     await advancePastPageTransition();
-
     expect(mockApi.getComboRankings).toHaveBeenCalledWith('05', 'totalscore', 1, 10);
     expect(mockApi.getComboRankings).not.toHaveBeenCalledWith('c0', 'totalscore', 1, 10);
     expect(mockApi.getComboRankings).not.toHaveBeenCalledWith('c5', 'totalscore', 1, 10);
@@ -554,6 +553,11 @@ describe('CompetePage', () => {
 
     renderCompete();
     await advancePastPageTransition();
+    const requestCountsBeforeNavigation = {
+      rankings: mockApi.getRankings.mock.calls.length,
+      playerRankings: mockApi.getPlayerRanking.mock.calls.length,
+      rivals: mockApi.getRivalsList.mock.calls.length,
+    };
 
     const scrollContainer = screen.getByTestId('test-scroll-container') as HTMLDivElement & {
       scrollTo: ReturnType<typeof vi.fn>;
@@ -581,5 +585,55 @@ describe('CompetePage', () => {
 
     expect(scrollToSpy).toHaveBeenCalledWith(0, 420);
     expect(scrollContainer.scrollTop).toBe(420);
+    expect(mockApi.getRankings).toHaveBeenCalledTimes(requestCountsBeforeNavigation.rankings);
+    expect(mockApi.getPlayerRanking).toHaveBeenCalledTimes(requestCountsBeforeNavigation.playerRankings);
+    expect(mockApi.getRivalsList).toHaveBeenCalledTimes(requestCountsBeforeNavigation.rivals);
+  });
+
+  it('isolates profile queries and reuses the first profile cache when switching back', async () => {
+    localStorage.setItem('fst:appSettings', JSON.stringify({
+      showLead: true,
+      showBass: false,
+      showDrums: false,
+      showVocals: false,
+      showProLead: false,
+      showProBass: false,
+      showPeripheralVocals: false,
+      showPeripheralCymbals: false,
+      showPeripheralDrums: false,
+    }));
+
+    renderCompete();
+    await advancePastPageTransition();
+    const firstProfileRivalCalls = mockApi.getRivalsList.mock.calls.filter(
+      ([accountId]) => accountId === 'test-player',
+    ).length;
+
+    act(() => {
+      const nextProfile = { type: 'player', accountId: 'second-player', displayName: 'Second Player' };
+      localStorage.setItem('fst:selectedProfile', JSON.stringify(nextProfile));
+      localStorage.setItem('fst:trackedPlayer', JSON.stringify(nextProfile));
+      window.dispatchEvent(new Event('fst:selectedProfileChanged'));
+      window.dispatchEvent(new Event('fst:trackedPlayerChanged'));
+    });
+
+    await waitFor(() => {
+      expect(mockApi.getRivalsList.mock.calls.some(([accountId]) => accountId === 'second-player')).toBe(true);
+    });
+
+    act(() => {
+      const firstProfile = { type: 'player', accountId: 'test-player', displayName: 'Test Player' };
+      localStorage.setItem('fst:selectedProfile', JSON.stringify(firstProfile));
+      localStorage.setItem('fst:trackedPlayer', JSON.stringify(firstProfile));
+      window.dispatchEvent(new Event('fst:selectedProfileChanged'));
+      window.dispatchEvent(new Event('fst:trackedPlayerChanged'));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Above Solo_Guitar')).toBeInTheDocument();
+    });
+    expect(mockApi.getRivalsList.mock.calls.filter(
+      ([accountId]) => accountId === 'test-player',
+    )).toHaveLength(firstProfileRivalCalls);
   });
 });

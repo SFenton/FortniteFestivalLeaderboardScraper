@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import type { SongBandData } from '../../../../src/api/pageCache';
+import type { SongBandData } from '../../../../src/pages/songinfo/songDetailTypes';
 import SongBandLeaderboardPreview from '../../../../src/pages/songinfo/components/SongBandLeaderboardPreview';
 
 const mockUseIsMobile = vi.hoisted(() => vi.fn(() => false));

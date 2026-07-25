@@ -7,6 +7,10 @@ import { usePlayerData } from '../../../contexts/PlayerDataContext';
 import { api } from '../../../api/client';
 import { queryKeys } from '../../../api/queryKeys';
 import {
+  keepPreviousLeaderboardPage,
+  remoteDataQueryPolicy,
+} from '../../../api/queryPolicy';
+import {
   type ServerInstrumentKey as InstrumentKey,
   type LeaderboardEntry as LeaderboardEntryType,
   serverInstrumentLabel,
@@ -56,12 +60,13 @@ export default function LeaderboardPage() {
   const song = songs.find((s) => s.songId === songId);
   const instKey = instrument as InstrumentKey;
   const goToSongDetail = useNavigateToSongDetail(songId);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const cacheKey = `${songId}:${instKey}`;
   const cached = leaderboardCache.get(cacheKey);
-  const hasCached = !!cached;
-  // Skip all animations when data is already cached (return visit to this leaderboard)
-  const skipAllAnim = hasCached;
+  const pageParam = parseInt(searchParams.get('page') ?? '', 10);
+  const requestedPage = !isNaN(pageParam) && pageParam >= 1 ? pageParam - 1 : 0;
+  const [page, setPage] = useState(cached?.page ?? requestedPage);
 
   const showAccuracy = useMediaQuery(QUERY_SHOW_ACCURACY);
   const showSeason = useMediaQuery(QUERY_SHOW_SEASON);
@@ -71,8 +76,6 @@ export default function LeaderboardPage() {
   const isMobileChrome = useIsMobileChrome();
   const reserveFabSpace = false;
   const showFooterScore = useMediaQuery('(min-width: 310px)');
-
-  const [searchParams, setSearchParams] = useSearchParams();
 
   const { playerData } = usePlayerData();
   const { profile } = useSelectedProfile();
@@ -95,7 +98,7 @@ export default function LeaderboardPage() {
     queryFn: () => api.getSongBandLeaderboard(songId!, selectedBand!.bandType, 1, 0, undefined, selectedBand!.teamKey, activeBandComboId),
     enabled: !!songId && !!selectedBand,
     select: (data) => data.selectedBandEntry ?? null,
-    retry: false,
+    ...remoteDataQueryPolicy,
   });
 
   const selectedBandFooterName = useMemo(() => {
@@ -112,14 +115,32 @@ export default function LeaderboardPage() {
     }, profile);
   }, [profile, selectedBand, selectedBandFooterName]);
 
-  const [entries, setEntries] = useState<LeaderboardEntryType[]>(hasCached ? cached.entries : []);
-  const [showLeaderboardEntryTotals, setShowLeaderboardEntryTotals] = useState(hasCached ? cached.showLeaderboardEntryTotals === true : false);
-  const [totalEntries, setTotalEntries] = useState(hasCached ? cached.totalEntries : 0);
-  const [localEntries, setLocalEntries] = useState(hasCached ? cached.localEntries : 0);
-  const [page, setPage] = useState(hasCached ? cached.page : 0);
-  const [loading, setLoading] = useState(!hasCached);
-  const [error, setError] = useState<string | null>(null);
   const { isScoreValid, leewayParam, leeway: userLeeway, getFilteredRank, getFilteredTotal } = useScoreFilter();
+  const leaderboardQuery = useQuery({
+    queryKey: queryKeys.leaderboard(songId ?? '', instKey, PAGE_SIZE, page * PAGE_SIZE, leewayParam),
+    queryFn: () => api.getLeaderboard(songId!, instKey, PAGE_SIZE, page * PAGE_SIZE, leewayParam),
+    enabled: !!songId && !!instrument,
+    placeholderData: keepPreviousLeaderboardPage(songId ?? '', instKey),
+    ...remoteDataQueryPolicy,
+  });
+  const entries: LeaderboardEntryType[] = leaderboardQuery.data?.entries ?? [];
+  const showLeaderboardEntryTotals = leaderboardQuery.data?.showLeaderboardEntryTotals === true;
+  const totalEntries = leaderboardQuery.data?.totalEntries ?? 0;
+  const localEntries = leaderboardQuery.data
+    ? (leaderboardQuery.data.localEntries ?? leaderboardQuery.data.totalEntries)
+    : 0;
+  const loading = leaderboardQuery.isPending;
+  const error = leaderboardQuery.error
+    ? (leaderboardQuery.error instanceof Error ? leaderboardQuery.error.message : t('leaderboard.failedToLoad'))
+    : null;
+  const mountedWithRemoteDataRef = useRef(!!leaderboardQuery.data);
+  const dataScopeKey = `${cacheKey}:${leewayParam ?? 'none'}`;
+  const initialDataScopeKeyRef = useRef(dataScopeKey);
+  const hasCached = initialDataScopeKeyRef.current === dataScopeKey
+    && !!cached
+    && mountedWithRemoteDataRef.current;
+  // Skip all animations when navigation and query data are both cached.
+  const skipAllAnim = hasCached;
 
   // When the player's highest score is invalid but a valid fallback exists,
   // resolve it client-side from the precomputed validScores array.
@@ -207,50 +228,17 @@ export default function LeaderboardPage() {
   const hasFooter = hasPlayerFooter || hasBandFooter;
   const hasFab = hasFooter ? isMobileChrome : false;
 
-  const fetchPage = useCallback(
-    async (pageNum: number, mode: 'first' | 'paginate' = 'paginate') => {
-      if (!songId || !instrument) return;
-      setAnimMode(mode);
-      if (mode === 'paginate') {
-        scrollContainerRef.current?.scrollTo(0, 0);
-        resetRush();
-        headerPinned.current = true;
-        userScrolledRef.current = false;
-      }
-      setLoading(true);
-      setError(null);
-      try {
-        let res = await api.getLeaderboard(
-          songId,
-          instKey,
-          PAGE_SIZE,
-          pageNum * PAGE_SIZE,
-          leewayParam,
-        );
-        let effectiveLocal = res.localEntries ?? res.totalEntries;
-        // Self-correct if the requested page is beyond available data (stale bookmarks, manual URL)
-        if (res.entries.length === 0 && pageNum > 0 && effectiveLocal > 0) {
-          const lastPage = Math.ceil(effectiveLocal / PAGE_SIZE) - 1;
-          if (lastPage >= 0 && lastPage < pageNum) {
-            res = await api.getLeaderboard(songId, instKey, PAGE_SIZE, lastPage * PAGE_SIZE, leewayParam);
-            effectiveLocal = res.localEntries ?? res.totalEntries;
-            pageNum = lastPage;
-          }
-        }
-        setEntries(res.entries);
-        setShowLeaderboardEntryTotals(res.showLeaderboardEntryTotals === true);
-        setTotalEntries(res.totalEntries);
-        setLocalEntries(effectiveLocal);
-        setPage(pageNum);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : t('leaderboard.failedToLoad'));
-      } finally {
-        setLoading(false);
-      }
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- t is stable i18n fn
-    [songId, instrument, instKey, leewayParam],
-  );
+  const goToPage = useCallback((pageNum: number, mode: 'first' | 'paginate' = 'paginate') => {
+    if (!songId || !instrument) return;
+    setAnimMode(mode);
+    if (mode === 'paginate') {
+      scrollContainerRef.current?.scrollTo(0, 0);
+      resetRush();
+      headerPinned.current = true;
+      userScrolledRef.current = false;
+    }
+    setPage(pageNum);
+  }, [instrument, resetRush, scrollContainerRef, songId]);
 
   // Restore scroll position when returning from cache
   /* v8 ignore start � scroll restoration: scrollTop DOM API */
@@ -263,29 +251,24 @@ export default function LeaderboardPage() {
   }, []);
   /* v8 ignore stop */
 
+  // Self-correct stale bookmarks after the requested response resolves.
   useEffect(() => {
-    // Skip fetch if the leaderboard is already cached (return visit)
-    if (leaderboardCache.has(cacheKey)) return;
-    const pageParam = parseInt(searchParams.get('page') ?? '', 10);
-    const startPage = !isNaN(pageParam) && pageParam >= 1 ? pageParam - 1 : 0;
-    void fetchPage(startPage, 'first');
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally skip searchParams
-  }, [fetchPage, cacheKey]);
+    if (!leaderboardQuery.data || leaderboardQuery.isPlaceholderData || entries.length > 0 || page <= 0 || localEntries <= 0) return;
+    const lastPage = Math.ceil(localEntries / PAGE_SIZE) - 1;
+    if (lastPage >= 0 && lastPage < page) {
+      setPage(lastPage);
+    }
+  }, [entries.length, leaderboardQuery.data, leaderboardQuery.isPlaceholderData, localEntries, page]);
 
-  // Write cache whenever data changes (skip empty non-first pages to prevent stale cache from out-of-range navigation)
+  // Persist navigation state only; remote rows remain in React Query.
   useEffect(() => {
-    if (loading || error || !songId) return;
-    if (entries.length === 0 && page > 0) return;
+    if (!songId) return;
+    const previous = leaderboardCache.get(cacheKey);
     leaderboardCache.set(cacheKey, {
-      entries,
-      showLeaderboardEntryTotals,
-      totalEntries,
-      localEntries,
       page,
-      /* v8 ignore next -- scrollTop: DOM scroll API */
-      scrollTop: scrollContainerRef.current?.scrollTop ?? 0,
+      scrollTop: previous?.scrollTop ?? scrollContainerRef.current?.scrollTop ?? 0,
     });
-  }, [loading, error, entries, showLeaderboardEntryTotals, totalEntries, localEntries, page, songId, cacheKey]);
+  }, [cacheKey, page, scrollContainerRef, songId]);
 
   // Spinner -> staggered-content transition
   const hasLoadedOnce = useRef(hasCached);
@@ -446,7 +429,7 @@ export default function LeaderboardPage() {
                 entries={entries}
                 page={page + 1}
                 totalPages={totalPages}
-                onGoToPage={(p) => void fetchPage(p - 1)}
+                onGoToPage={(p) => goToPage(p - 1)}
                 entryKey={(e) => e.accountId}
                 isPlayerEntry={(e) => playerData?.accountId === e.accountId}
                 renderRow={(e, i) => (
@@ -564,4 +547,3 @@ function LeaderboardFooterLink({ to, className, style, children }: { to: string;
     </Link>
   );
 }
-
