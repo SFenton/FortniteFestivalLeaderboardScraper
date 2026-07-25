@@ -179,6 +179,55 @@ Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/web-1.4-service-info-20260725T163705Z/`
 
+### WEB-2.1 remote-data cache ownership
+
+**Decision:** Accepted and deployed.
+
+- Restricted `src/api/pageCache.ts` to navigation state: Song Details retains
+  scroll, song leaderboards retain page/scroll, and rankings retain page/scroll.
+  Complete leaderboard, history, score, instrument, band, profile, and rival
+  payloads no longer enter those Maps.
+- Removed response caches from Rivals, All Rivals, Leaderboard Rivals, Rival
+  Detail, Rivalry, and Compete. React Query now owns those payloads with
+  profile/song/instrument/band-scoped keys, five-minute freshness, ten-minute
+  idle collection, targeted invalidation, same-song/instrument placeholders,
+  and no cross-profile placeholder reuse.
+- Removed the unbounded generic API ETag response Map. Shop keeps one dedicated
+  ETag owner until WEB-2.3; this phase did not move Shop ownership.
+- Fail-closed query errors remain in React Query across route remounts without
+  retry storms. The first deployed candidate, `festivalweb:web21-10c3c084`,
+  was rejected and rolled back when matched A/B showed Rivals p95
+  `397 -> 1,513 ms` and requests `6 -> 51`. Commits `8712e426` and
+  `ed161ef6` repaired cached-error and transition semantics before promotion.
+- The accepted 20-sample matched A/B held route-ready p95 within the 10% gate:
+  Player `1,295 -> 1,295 ms`, song Leaderboard `36 -> 32 ms`, Rivals
+  `11 -> 11 ms`, and Compete `24 -> 14 ms`. Route-window requests were Player
+  `330 -> 352` (`+6.7%`), Leaderboard `0 -> 0`, Rivals `5 -> 2`, and Compete
+  `664 -> 5`. DOM p95 changed `84/651/104/92 -> 85/652/105/102`; heap p95
+  stayed effectively flat at about `9.7-13.1 MB`.
+- Focused API/cache/page coverage passed `199/199`; the ownership browser flow
+  passed `6/6` across every configured viewport. TypeScript, ESLint
+  errors-only, Stylelint, encoding, production build, and bundle budgets pass.
+  The final entry is `1,037,632` raw, `305,891` gzip, and `253,882` Brotli
+  bytes; the largest lazy chunk is `113,108` gzip bytes.
+- The broad 450-case Playwright matrix was also run but rejected as a release
+  gate: 138 unrelated FRE/notification/scroll cases assume healthy
+  derived/player/band APIs, while the approved live state intentionally returns
+  HTTP `503` for those paths. The focused deterministic WEB-2.1 browser matrix
+  is green and validates dedupe, back navigation, pagination state, and profile
+  switching.
+- Production runs `festivalweb:web21-ed161ef6`
+  (`sha256:8fe4a21ca24304510e1ac1752e91d6a2730bd3608634d0bec2358b6c93e223a9`).
+  FestivalWeb, FSTService, and PostgreSQL are healthy; published scrape `1236`
+  remains unfrozen; the worker remains offline; mapped solo reads remain HTTP
+  `200`; and isolated player-derived/band routes remain HTTP `503`. Final
+  browser console output contains only those expected `503` resource messages,
+  with no JavaScript/page errors. Rollback is `festivalweb:web14-b843ef61`.
+
+Evidence:
+
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/web-2.1-remote-cache-20260725T180703Z/`
+
 Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/web-0.2/`
@@ -482,6 +531,11 @@ WEB-2.2 remains separate generic cancellation work.
 
 ### WEB-2.1 - Restrict `pageCache` to navigation state
 
+**Decision:** Accepted and deployed on 2026-07-25.
+
+**Next dependency:** WEB-2.2 can propagate cancellation through remaining GET
+paths. WEB-2.3 remains the separate Shop/local-storage ownership phase.
+
 **Evidence**
 
 - `src/utils/pageCache.ts:1-57` claims not to cache data but stores complete
@@ -501,6 +555,9 @@ WEB-2.2 remains separate generic cancellation work.
 
 - Remote data has one owner and is visible in React Query devtools.
 - Cache entries are garbage-collected after the configured idle period.
+- Focused tests prove scoped invalidation, profile switching, request dedupe,
+  cached-error remount behavior, ten-minute idle collection, and navigation
+  state preservation without response payloads in page/module Maps.
 
 ### WEB-2.2 - Propagate cancellation through every GET
 
