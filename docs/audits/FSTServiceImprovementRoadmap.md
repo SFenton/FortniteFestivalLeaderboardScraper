@@ -407,6 +407,14 @@ and old cache artifacts.
   prevents future schema/ranking rebuilds from recreating retired secondary
   indexes. Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/fst-residual-capacity-20260725T161042Z`.
+- The LOGICAL-RETIRE readiness phase proved that public service reads have no
+  logical-shadow owner. A published Solo Bass slice matched mapped physical
+  snapshot `1236` exactly while stale logical current rows containing failed
+  scrape `1237` differed. Repository configuration now defaults the writer
+  off and startup validation rejects accidental enablement. The target tables
+  remain intact because no disabled-writer scrape has completed global
+  publication; the destructive A/B gate is still open. Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/logical-retire-20260725T2306Z`.
 
 ### SERVICE-0.3 - Protect or remove token-backed diagnostics
 

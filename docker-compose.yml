@@ -108,6 +108,8 @@ services:
       # Optional band-song projection rebuild is expensive and has live/current fallbacks.
       - BandTeamRankings__RebuildBandSongTeamRankings=${BAND_TEAM_RANKINGS_REBUILD_BAND_SONG_TEAM_RANKINGS:-false}
       # ── Feature flags (default: all OFF in production) ──
+      # Retired shadow writer; future enablement requires a migration/promotion code change.
+      - Features__WriteLogicalLeaderboardVersions=false
       - Features__Shop=${FEATURE_SHOP:-false}
       - Features__Rivals=${FEATURE_RIVALS:-false}
       - Features__Leaderboards=${FEATURE_LEADERBOARDS:-false}

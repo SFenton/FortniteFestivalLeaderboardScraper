@@ -568,6 +568,23 @@ until replay and live shadow parity pass.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/fst-residual-capacity-20260725T161042Z`.
 
+**Logical shadow retirement readiness - accepted; destructive action blocked
+2026-07-25**
+
+- Worker configuration remains
+  `Features__WriteLogicalLeaderboardVersions=false`. Code/config defaults now
+  fail closed, and startup rejects an attempted true value until a future
+  migration/promotion changes that contract.
+- Scrapes `1261`, `1262`, and `1263` prove the disabled writer can complete
+  `8,208/8,208` solo/band manifests with zero writer or
+  publication-critical failures. They do not satisfy the destructive gate:
+  each failed on capacity before global publication, and none produced a
+  complete post-publish route/export/ranking/history comparison.
+- No worker was started and no logical-shadow row was truncated. The exact
+  `141,462,937,600`-byte target remains available after the next successful
+  disabled-writer publication window. Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/logical-retire-20260725T2306Z`.
+
 ### WORKER-0.5 - Separate solo and band completion
 
 A band timeout must not mark `LeaderboardScrapeCompleted=true`. A task still

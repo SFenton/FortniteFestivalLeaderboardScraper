@@ -898,6 +898,47 @@ move to PG-7 after backup/restore and live-scrape parity.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/fst-residual-capacity-20260725T161042Z`.
 
+### PG-3 logical leaderboard shadow retirement - readiness accepted, truncate blocked 2026-07-25
+
+- Production keeps `Features__WriteLogicalLeaderboardVersions=false`. The
+  repository default is now false, and startup options validation rejects an
+  attempted true value until a future versioned migration, rebuild/restore
+  validation, and live-scrape promotion explicitly restore an owner.
+- Exact live targets are the two partitioned parents
+  `leaderboard_current_entries` and `leaderboard_entry_versions`, with nine
+  leaf partitions each. They occupy `33,480,859,648` and
+  `107,982,077,952` bytes respectively, or `141,462,937,600` bytes total.
+  `leaderboard_logical_write_metrics` is retained at `108` rows /
+  `106,496` bytes.
+- Exact counts are `39,820,273` current rows and `194,171,215` version rows
+  over scrape IDs `1223`-`1237`. Every current row has exactly one matching
+  open version: zero duplicate open keys, missing rows, fingerprint
+  mismatches, invalid intervals, or timestamp-close inconsistencies.
+- The shadow is demonstrably non-authoritative. Failed scrape `1237` remains
+  embedded in `4,531,665` current rows; a sampled public Solo Bass slice
+  matched published physical snapshot `1236` with zero diff lines and differed
+  from the stale logical current rows by `46` diff lines.
+- The pre-probe statistics snapshot showed no table/index access after
+  2026-07-13 19:36 UTC. Repository, production config, cron, process,
+  `pg_depend`, FK, view, materialized-view, routine, rule, trigger, and policy
+  searches found no service/API/external runtime reader. The only non-writer
+  source reference is the operator-invoked bounded restore drill.
+- Disabled-write windows `1261`, `1262`, and `1263` each completed all
+  `8,208/8,208` manifests with zero writer or publication-critical failures,
+  but all failed before global publication on capacity. No scrape has both
+  completed publication and live route/export/ranking/history parity with the
+  logical writer disabled.
+- The destructive live-scrape A/B gate is therefore not satisfied. No
+  `TRUNCATE`, table/index drop, row deletion, worker start, or schema drop was
+  executed. The exact future command remains a two-parent, no-`CASCADE`
+  transaction after that missing publication gate passes.
+- Schema DDL, exact object/index/TOAST manifests, counts/ranges/fingerprints,
+  deterministic samples, and fail-closed rebuild SQL are preserved. A
+  rollback-only temporary proof rebuilt `139,264` rows across `27` published
+  scopes and all nine instruments with zero scope-count mismatches.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/logical-retire-20260725T2306Z`.
+
 ## Phase PG-4: Make scrape writes proportional to semantic changes
 
 **Decision:** Experimental until live-scrape parity  

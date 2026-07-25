@@ -111,6 +111,29 @@ public class ScraperOptionsAndModelsTests
         Assert.False(opts.EnforceScopeCompletenessManifests);
         Assert.False(opts.RequireSuccessfulScrapeWriters);
         Assert.False(opts.EnforcePublicationCriticalPhases);
+        Assert.False(opts.WriteLogicalLeaderboardVersions);
+        Assert.Null(typeof(FeatureOptions).GetProperty("UseLogicalLeaderboardVersions"));
+    }
+
+    [Fact]
+    public void FeatureOptionsValidator_RejectsRetiredLogicalLeaderboardWriter()
+    {
+        var result = new FeatureOptionsValidator().Validate(
+            null,
+            new FeatureOptions { WriteLogicalLeaderboardVersions = true });
+
+        Assert.True(result.Failed);
+        Assert.Contains(
+            FeatureOptionsValidator.RetiredLogicalLeaderboardShadowMessage,
+            result.Failures);
+    }
+
+    [Fact]
+    public void FeatureOptionsValidator_AcceptsRetiredLogicalLeaderboardWriterDisabled()
+    {
+        var result = new FeatureOptionsValidator().Validate(null, new FeatureOptions());
+
+        Assert.True(result.Succeeded);
     }
 
     [Fact]

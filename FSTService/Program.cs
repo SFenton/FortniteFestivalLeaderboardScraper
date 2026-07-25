@@ -87,8 +87,10 @@ var hostedWorkerMode = HostedWorkerModeResolver.Resolve(
 
 builder.Services.Configure<ScraperOptions>(
     builder.Configuration.GetSection(ScraperOptions.Section));
-builder.Services.Configure<FeatureOptions>(
-    builder.Configuration.GetSection(FeatureOptions.Section));
+builder.Services.AddOptions<FeatureOptions>()
+    .Bind(builder.Configuration.GetSection(FeatureOptions.Section))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<FeatureOptions>, FeatureOptionsValidator>();
 builder.Services.Configure<ClientTelemetryOptions>(
     builder.Configuration.GetSection(ClientTelemetryOptions.Section));
 builder.Services.Configure<ImprovementNotificationOptions>(

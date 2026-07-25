@@ -143,6 +143,15 @@ scrape boundary. Exact recreate SQL is retained. Primary/unique indexes,
 published `1236`, failed-candidate route isolation, rows, and constraints were
 unchanged.
 
+The 2026-07-25 LOGICAL-RETIRE inventory measured the disabled experimental
+logical shadow exactly. `leaderboard_current_entries` has `39,820,273` rows
+and occupies `33,480,859,648` bytes; `leaderboard_entry_versions` has
+`194,171,215` rows and occupies `107,982,077,952` bytes. The combined
+`141,462,937,600` bytes remain allocated because the required full
+disabled-writer publish/parity window does not yet exist. The retained
+`leaderboard_logical_write_metrics` table has `108` rows and occupies
+`106,496` bytes.
+
 ## Data ownership and restore class
 
 | Class | Meaning | Restore rule |
@@ -187,6 +196,7 @@ and clears the public-read freeze in one transaction.
 | `Features__EnforceScopeCompletenessManifests` | `fstworker` | `false` | Requires every expected solo and band scope to have a complete page manifest before publication | Set `false`; manifests remain available as observe-only evidence |
 | `Features__RequireSuccessfulScrapeWriters` | `fstworker` | `false` | Rejects a candidate when any disk-spool or bounded-online writer reports failed pages/rows | Set `false`; durable failure rows and replay artifacts remain |
 | `Features__EnforcePublicationCriticalPhases` | `fstworker` | `false` | Rejects a candidate after any explicitly publication-critical post-scrape phase failure | Set `false`; phase outcomes remain visible while legacy swallow behavior is restored |
+| `Features__WriteLogicalLeaderboardVersions` | all roles | `false` and startup-rejected when true | Retired shadow writer; no service/API reader exists | Future enablement requires a versioned migration, rebuild/restore validation, and a new live-scrape promotion |
 
 ### Song, account, registration, and authentication metadata
 
@@ -220,8 +230,8 @@ All instrument-partitioned families use these nine keys:
 | `leaderboard_published_scope_source` | Durable published source selection | Worker candidate build and publication transaction | Service and export resolver when `Features:UsePublishedScopeSources=true`; supports physical snapshot and explicit empty sources |
 | `leaderboard_population`, `song_stats` | Durable derived metadata | Worker/post-process | Ranking totals/statistics; generation must match source |
 | `leaderboard_entries_overlay` | Durable corrective overlay | Controlled writes | Merged with selected base source; precedence is explicit |
-| `leaderboard_current_entries` | Experimental logical current source | Worker logical dual-write | Shadow until PG-4 parity promotes a read owner |
-| `leaderboard_entry_versions` | Experimental logical history | Worker logical dual-write | Historical versions; semantic rank churn ownership unresolved |
+| `leaderboard_current_entries` | Retired experimental logical current shadow | Disabled worker dual-write | Never authoritative; rebuild semantic current from the published physical map only after an explicit future migration/promotion |
+| `leaderboard_entry_versions` | Retired experimental logical chronology | Disabled worker dual-write | Non-authoritative scrape `1223`-`1237` chronology; intentionally discardable after the destructive gate, with metadata/fingerprint/sample evidence retained |
 | `leaderboard_logical_write_metrics` | Audit/artifact | Worker | Per-scrape changed/new/unchanged evidence |
 | `current_leaderboard_entries`, `solo_current_projection_scope`, `solo_current_projection_state` | Derived published/current projection | `SoloCurrentProjectionBuilder` | Preferred bounded current reads when scope state is ready |
 | `valid_score_overrides` | Durable operator/source metadata | Controlled writes | Threshold exception source; retain provenance |
@@ -532,6 +542,32 @@ the measured formula. The bounded drill is accepted evidence, not a waiver.
 | Index experiment | Recreate exact captured DDL and verify owning query/route |
 | Feature-flag candidate | Revert config/image/commit while retaining diagnostic dual-write data when safe |
 
+### Retired logical leaderboard shadow
+
+- Exact candidate truncate:
+  `TRUNCATE TABLE public.leaderboard_current_entries,
+  public.leaderboard_entry_versions;` without `CASCADE`. Truncating either
+  partitioned parent includes its nine leaf partitions and their indexes; it
+  does not include `leaderboard_logical_write_metrics`.
+- Current-state rebuild uses the current
+  `scrape_publication_state` row, complete
+  `leaderboard_published_scope_source` snapshot mappings, and
+  `leaderboard_entries_snapshot`. It recomputes the writer-compatible row
+  fingerprint and resets logical first/change/seen metadata to the published
+  baseline. It does not recreate discarded chronology.
+- Version chronology is experimental and non-authoritative. No full same-drive
+  duplicate is permitted. Preserve exact counts/ranges/canonical
+  fingerprints, schema DDL, and a bounded deterministic sample. A future
+  promotion may seed one new open baseline version per rebuilt current row,
+  but must not describe that as restoration of the discarded history.
+- Truncate remains blocked until one complete live scrape runs with the writer
+  disabled, globally publishes, and passes mapped route, export, ranking,
+  history, publication, health, and resource parity. Complete pre-publication
+  manifests from `1261`-`1263` are useful readiness evidence but do not waive
+  this gate.
+- Current evidence and exact rebuild SQL:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/logical-retire-20260725T2306Z`.
+
 ## Operational verification
 
 Before broad work:
@@ -594,7 +630,8 @@ scope-total, and relation-size deltas for an A/B decision.
   observation-table dual writes, and nullable score-history uniqueness remain
   explicit owner decisions.
 - **PG-4 / WORKER-4:** semantic-change writes, unchanged physical source reuse,
-  diff projections/rankings, and one atomic band publication.
+  diff projections/rankings, and one atomic band publication. The retired
+  logical shadow is not a PG-4 reader or default writer.
 - **PG-5:** latest-state history design, explicit retention, and same-drive
   Parquet/DuckDB artifact pilots.
 - **PG-6 / SERVICE-4:** versioned migrations, one migration owner, autovacuum,

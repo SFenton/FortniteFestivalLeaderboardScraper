@@ -497,9 +497,40 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
     }
 
     [Fact]
-    public async Task FlushSpoolAsync_dual_writes_logical_current_and_versions()
+    public async Task FlushSpoolAsync_default_does_not_write_retired_logical_shadow()
     {
         using var glp = CreatePersistence();
+
+        glp.StartSpoolWriter(42, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 100_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 99.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+        ]);
+        await glp.FlushSpoolAsync();
+
+        Assert.Null(GetLogicalCurrentRow("song_1", "Solo_Guitar", "acct_1"));
+        Assert.Equal(
+            (Total: 0, Open: 0, Closed: 0),
+            GetLogicalVersionCounts("song_1", "Solo_Guitar", "acct_1"));
+        Assert.Null(GetLogicalWriteMetrics(42, "Solo_Guitar"));
+    }
+
+    [Fact]
+    public async Task FlushSpoolAsync_dual_writes_logical_current_and_versions()
+    {
+        using var glp = CreatePersistence(new FeatureOptions { WriteLogicalLeaderboardVersions = true });
 
         glp.StartSpoolWriter(42, _dataDir);
         glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
@@ -1445,7 +1476,7 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
     [Fact]
     public async Task RollbackIncompleteLogicalLeaderboardScrapes_removes_partial_or_orphaned_current_and_versions()
     {
-        using var glp = CreatePersistence();
+        using var glp = CreatePersistence(new FeatureOptions { WriteLogicalLeaderboardVersions = true });
         InsertScrapeLog(42, completed: true);
         InsertScrapeLog(43, completed: false);
         InsertScrapeLog(44, completed: false);
@@ -1525,7 +1556,7 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
     [Fact]
     public async Task RollbackIncompleteLogicalLeaderboardScrapes_truncates_when_all_logical_artifacts_are_invalid()
     {
-        using var glp = CreatePersistence();
+        using var glp = CreatePersistence(new FeatureOptions { WriteLogicalLeaderboardVersions = true });
         InsertScrapeLog(43, completed: false);
         InsertScrapeLog(44, completed: false);
 

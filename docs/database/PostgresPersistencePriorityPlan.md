@@ -51,6 +51,11 @@ This plan records the approved direction for improving FST Postgres persistence 
   six families, reclaiming `17,174,200,320` database bytes. Final measured
   free space is `48,546,029,568` bytes, leaving `3,397,804,032` bytes above
   the same scrape boundary.
+- LOGICAL-RETIRE readiness identified `141,462,937,600` bytes in the disabled
+  `leaderboard_current_entries*` and `leaderboard_entry_versions*` shadow.
+  Exact ownership, rebuild, and rollback evidence is complete, but no
+  disabled-writer scrape has completed global publication. The tables remain
+  intact and the destructive gate remains blocked.
 - Public band-history team/date indexes remain because live plans proved their
   route ownership. Composite retention now uses BRIN cutoff rejection plus the
   primary key for account/date probes.
@@ -159,6 +164,7 @@ path, and post-action validation are documented.
 |---|---|---|
 | Phase 6 logical current/version dual-write | Complete | Implemented, deployed, evaluated on scrape `1214`, committed as `02460b13`. |
 | Phase 7 logical write metrics | Complete | Implemented, deployed, committed as `2ac02445`; production metrics captured from failed scrape `1218`. |
+| LOGICAL-RETIRE ownership/rebuild package | Accepted readiness / truncate blocked | Exact `141,462,937,600`-byte object manifest, `39,820,273` current rows, `194,171,215` version rows, open-version integrity, stale-1237/public-1236 divergence proof, schema/rebuild SQL, and bounded nine-instrument regeneration are complete. No disabled-writer scrape has globally published, so no truncate ran. |
 | Experimental logical shadow cleanup | Complete | Approved cleanup truncated experimental logical shadow tables and removed incomplete scrape `1218`. |
 | Database architecture evaluation | Complete | Read-only code review and production probes completed on 2026-07-06. |
 | History/index owner cards | Complete | Refreshed band v2, composite history, observation, dirty-work, and latest-state owner cards on 2026-07-13. Public team/date and retention indexes were retained from plan/caller proof. |
@@ -184,6 +190,25 @@ path, and post-action validation are documented.
 | Autonomous scrape rollout | Rejected after scrape `1263`; capacity repaired | Candidate `1263` completed `8,208/8,208` manifests and entered rankings, but the watchdog stopped it at `14,871,388,160` free bytes. Published `1236` remains safe through failed-candidate isolation; the residual reclaim now restores a positive measured capacity margin. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
 | Next implementation phase | WORKER-0A capacity-ready / deploy-held | Band publication isolation, the measured scrape guard, and the `25/25` proxy guard pass. Keep the worker stopped until commit `8db72081` or newer is deployed and the same guards/public-path checks are rerun. Optional builds, rewrites, repacks, table deletion, broad movement, and owner-rejected index drops remain blocked. |
+
+## LOGICAL-RETIRE decision package (2026-07-25)
+
+| Gate | Evidence | Decision |
+|---|---|---|
+| Ownership | No API/service reader; no FK/view/matview/routine/rule/trigger/policy/external runtime dependency; production writer disabled | Pass |
+| Exact inventory | 18 leaf tables, 60 indexes, local primary keys only, negligible TOAST, `141,462,937,600` bytes total | Pass |
+| Integrity | `39,820,273` current rows match `39,820,273` open versions with zero duplicate/missing/fingerprint errors | Pass |
+| Current rebuild | Published snapshot sample rebuilt `139,264` rows across 27 scopes/all nine instruments with zero count mismatches | Pass |
+| Version retention | Chronology is experimental/non-authoritative; preserve metadata/fingerprints and a deterministic sample, not a full duplicate | Pass |
+| Live destructive parity | Disabled-write scrapes `1261`-`1263` completed manifests but failed before global publication | **Blocked** |
+
+The exact future action is a short-timeout transaction truncating only the two
+partitioned parents without `CASCADE`; schema and metrics remain. Do not run it
+until a complete disabled-writer scrape publishes and the route/export/
+ranking/history/publication fingerprints pass.
+
+Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/logical-retire-20260725T2306Z`.
 
 ## Architecture evaluation evidence (2026-07-06)
 

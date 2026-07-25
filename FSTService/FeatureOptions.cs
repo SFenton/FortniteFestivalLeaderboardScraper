@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Options;
+
 namespace FSTService;
 
 /// <summary>
@@ -95,14 +97,28 @@ public sealed class FeatureOptions
     public bool UsePublishedScopeSources { get; set; }
 
     /// <summary>
-    /// When true, scrape flushes dual-write logical current/version rows for
-    /// shadow validation while physical snapshots remain authoritative.
+    /// Retired logical current/version shadow writer. This must remain false
+    /// until a future versioned migration and live-scrape promotion explicitly
+    /// restore an owner for the shadow tables.
     /// </summary>
-    public bool WriteLogicalLeaderboardVersions { get; set; } = true;
+    public bool WriteLogicalLeaderboardVersions { get; set; }
 
     /// <summary>
     /// Compete page. Always enabled; the flag derivation is retained only for API
     /// shape compatibility and is expected to be removed alongside this property.
     /// </summary>
     public bool Compete => true;
+}
+
+public sealed class FeatureOptionsValidator : IValidateOptions<FeatureOptions>
+{
+    public const string RetiredLogicalLeaderboardShadowMessage =
+        "Features:WriteLogicalLeaderboardVersions is retired. Re-enabling it requires a versioned migration, rebuild/restore validation, and a new live-scrape promotion.";
+
+    public ValidateOptionsResult Validate(string? name, FeatureOptions options)
+    {
+        return options.WriteLogicalLeaderboardVersions
+            ? ValidateOptionsResult.Fail(RetiredLogicalLeaderboardShadowMessage)
+            : ValidateOptionsResult.Success;
+    }
 }
