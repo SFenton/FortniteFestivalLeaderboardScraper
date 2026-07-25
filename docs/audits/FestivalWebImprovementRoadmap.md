@@ -274,6 +274,72 @@ Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/web-2.2-request-cancellation-20260725T181349Z/`
 
+### WEB-2.3 Shop and persisted-cache ownership
+
+**Decision:** Accepted and deployed.
+
+- `ShopContext` now consumes one profile-invariant React Query entry with a
+  five-minute stale time, ten-minute idle lifetime, disabled automatic retry,
+  targeted invalidation, shared-request dedupe, and real `AbortSignal`
+  cancellation. The browser HTTP cache owns Shop ETag revalidation while React
+  Query owns parsed Shop data; the previous module-level Shop response/ETag
+  cache and boolean-only effect cleanup are gone.
+- The Shop websocket remains the live-update source. Query-backed IDs,
+  leaving-tomorrow state, new-item state, URLs, and enriched cards remain the
+  fallback until a websocket snapshot/delta becomes authoritative; failed
+  refetches retain last-good query data and offline startup still fails closed
+  to an empty Shop until HTTP or websocket data arrives.
+- `src/api/songsCache.ts` is now the only Songs local-storage parser. It
+  validates required and optional normalized song fields, versions and scopes
+  the public cache, migrates valid version-2 entries, removes invalid entries,
+  memoizes by raw storage value, and shares the same normalized object between
+  `FestivalContext` placeholder rendering and `api.getSongs`.
+- URL-only Songs and Shop cache sharing is proven safe rather than assumed.
+  Both service endpoints use global `SongsCacheService`/`ShopCacheService`
+  payloads without selected-profile reads. Live anonymous, player, and band
+  requests produced identical body hashes and ETags, and each cross-profile
+  `If-None-Match` request returned HTTP `304`; `Vary` contains only
+  `Accept-Encoding`. Query and storage scopes therefore remain explicitly
+  `public`.
+- App settings and Suggestions filters now validate known persisted fields,
+  merge explicit defaults, carry storage versions, preserve supported legacy
+  records, and rewrite malformed, wrong-typed, or unsupported-version values to
+  visible defaults. The duplicate Suggestions utility parser is now only a
+  compatibility re-export of the production owner.
+- Focused ownership coverage passed `201/201`, Settings context/page coverage
+  passed `82/82`, and Songs plus first-run coverage passed `427/427`. The
+  focused production-image Playwright flow passed `20/20` for both baseline and
+  candidate and `6/6` candidate viewports. TypeScript, project and changed-file
+  ESLint, Stylelint, encoding, production build, and bundle budgets passed.
+  The monolithic Vitest process was rejected as a release gate after its Node
+  worker exhausted the existing 4 GiB heap; bounded affected suites supplied
+  the release evidence instead.
+- Matched browser p95 remained within the 10% gate: Songs
+  `1,005.6 -> 1,014.2 ms` (`+0.86%`), Shop `385.9 -> 388.2 ms`
+  (`+0.58%`), and profile switch `109.2 -> 109.5 ms` (`+0.32%`).
+  Songs cache parses fell `3 -> 1`; Songs and Shop stayed at one request each;
+  profile switching added zero catalog requests; heap p95 improved
+  `10,305,831 -> 10,221,845` bytes. Long-task maximum held `52 -> 52 ms`,
+  and both captures had zero console errors, page errors, or unhandled
+  rejections.
+- The final entry bundle is `1,041,819` raw, `307,240` gzip, and `254,947`
+  Brotli bytes; the largest lazy chunk is `113,107` gzip bytes.
+- Production runs `festivalweb:web23-ac6b4773`
+  (`sha256:ca4a8ac0526235e62a791a9ae5dee9b8191d881a0647ed8296b6faa3ea26a85c`).
+  FestivalWeb, FSTService, and PostgreSQL are healthy; published scrape `1236`
+  remains unfrozen; the worker remains held/offline; Songs, Shop, service info,
+  and mapped solo reads return HTTP `200`; isolated player-derived, band, and
+  export routes remain HTTP `503`. Live browser verification showed Songs,
+  Shop, and the selected-profile control with one Songs request, one Shop
+  request, zero catalog requests on profile switch, and zero JavaScript errors.
+  Rollback is `festivalweb:web22-a3a8ca01`.
+- Implementation commit `ac6b4773` and deterministic browser-evidence commit
+  `c7acb57b` are pushed.
+
+Evidence:
+
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/web-2.3-shop-storage-20260725T192900Z/`
+
 Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/web-0.2/`
@@ -634,6 +700,28 @@ into shared owners. Shop was deliberately not moved during WEB-2.2.
 - Rapid route/filter changes leave no obsolete requests completing in HAR.
 
 ### WEB-2.3 - Move Shop and duplicate local-storage parsing into shared owners
+
+**Decision:** Accepted and deployed on 2026-07-25.
+
+**Next dependency:** WEB-2 cache/request ownership is complete. WEB-3.1 can
+narrow shared-package barrels and remove the suggestion generator from the
+default Songs dependency graph.
+
+**Evidence**
+
+- Shop HTTP data has one cancellable, deduplicated, profile-invariant React
+  Query owner with explicit stale, garbage-collection, invalidation, and
+  cached-failure semantics.
+- Songs local storage has one validated, versioned, memoized parser shared by
+  placeholder and API paths.
+- Source-contract tests plus live anonymous/player/band body, ETag, `Vary`, and
+  conditional-request captures prove the public cache scope is profile
+  invariant.
+- Invalid settings and Suggestions JSON is visibly reset to versioned defaults
+  while valid legacy records migrate.
+- Matched production-image browser evidence reduced Songs parses from `3` to
+  `1`, retained one Songs request and one Shop request, added no catalog request
+  on profile switch, and held all route p95 changes below `1%`.
 
 **Work**
 
