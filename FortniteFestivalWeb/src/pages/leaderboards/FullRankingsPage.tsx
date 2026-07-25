@@ -164,11 +164,11 @@ export default function FullRankingsPage() {
       : isFamily
         ? queryKeys.soloFamilyRankings(familyScopeId!, metric, page, LEADERBOARD_PAGE_SIZE)
       : queryKeys.rankings(instrument, metric, page, LEADERBOARD_PAGE_SIZE),
-    queryFn: () => isCombo
-      ? api.getComboRankings(comboId!, metric, page, LEADERBOARD_PAGE_SIZE)
+    queryFn: ({ signal }) => isCombo
+      ? api.getComboRankings(comboId!, metric, page, LEADERBOARD_PAGE_SIZE, { signal })
       : isFamily
-        ? api.getSoloFamilyRankings(familyScopeId!, metric, page, LEADERBOARD_PAGE_SIZE)
-      : api.getRankings(instrument, metric, page, LEADERBOARD_PAGE_SIZE),
+        ? api.getSoloFamilyRankings(familyScopeId!, metric, page, LEADERBOARD_PAGE_SIZE, { signal })
+      : api.getRankings(instrument, metric, page, LEADERBOARD_PAGE_SIZE, { signal }),
     placeholderData: (previous, previousQuery) => {
       if (!previous || !previousQuery) return undefined;
       const [queryName, scopeValue, options] = previousQuery.queryKey as [string, string, { rankBy?: string }];
@@ -190,11 +190,11 @@ export default function FullRankingsPage() {
             ? queryKeys.playerSoloFamilyRanking(player.accountId, familyScopeId!, metric)
           : queryKeys.playerRanking(instrument, player.accountId, metric))
       : ['disabled'],
-    queryFn: () => isCombo
-      ? api.getPlayerComboRanking(player!.accountId, comboId!, metric)
+    queryFn: ({ signal }) => isCombo
+      ? api.getPlayerComboRanking(player!.accountId, comboId!, metric, { signal })
       : isFamily
-        ? api.getPlayerSoloFamilyRanking(player!.accountId, familyScopeId!, metric)
-      : api.getPlayerRanking(instrument, player!.accountId, metric),
+        ? api.getPlayerSoloFamilyRanking(player!.accountId, familyScopeId!, metric, { signal })
+      : api.getPlayerRanking(instrument, player!.accountId, metric, { signal }),
     enabled: !!player,
   });
 
@@ -202,7 +202,7 @@ export default function FullRankingsPage() {
     queryKey: selectedBand
       ? queryKeys.bandRanking(selectedBand.bandType, selectedBand.teamKey, selectedBandComboId, bandMetric)
       : ['bandRanking', 'selectedBand', 'disabled'],
-    queryFn: () => api.getBandRanking(selectedBand!.bandType, selectedBand!.teamKey, selectedBandComboId, bandMetric),
+    queryFn: ({ signal }) => api.getBandRanking(selectedBand!.bandType, selectedBand!.teamKey, selectedBandComboId, bandMetric, { signal }),
     enabled: !!selectedBand && !useSelectedBandSoloFooter,
     retry: false,
   });
@@ -229,7 +229,7 @@ export default function FullRankingsPage() {
     queryKey: useSelectedBandSoloFooter && selectedBandMemberAccountIds.length > 0
       ? queryKeys.selectedMemberRankings(selectedBandMemberAccountIds, [instrument], metric)
       : ['selectedMemberRankings', 'fullRankingsFooter', 'disabled'],
-    queryFn: () => api.getSelectedMemberRankings(selectedBandMemberAccountIds, [instrument], metric),
+    queryFn: ({ signal }) => api.getSelectedMemberRankings(selectedBandMemberAccountIds, [instrument], metric, { signal }),
     enabled: useSelectedBandSoloFooter && selectedBandMemberAccountIds.length > 0,
     retry: false,
   });

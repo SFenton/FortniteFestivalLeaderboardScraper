@@ -500,22 +500,22 @@ function PathImage({ songId, instrument, difficulty, displayMode, isMobile, colu
     setDataError(false);
     setPathData(null);
     textDataRef.current = null;
-    let cancelled = false;
-    fetch(`/api/paths/${songId}/${instrument}/${difficulty}/data`)
+    const controller = new AbortController();
+    fetch(`/api/paths/${songId}/${instrument}/${difficulty}/data`, { signal: controller.signal })
       .then(res => {
         if (!res.ok) throw new Error(`API ${res.status}`);
         return res.json() as Promise<PathDataResponse>;
       })
       .then(data => {
-        if (cancelled) return;
+        if (controller.signal.aborted) return;
         textDataRef.current = data;
         resolveTextSpinner(data, false);
       })
       .catch(() => {
-        if (cancelled) return;
+        if (controller.signal.aborted) return;
         resolveTextSpinner(null, true);
       });
-    return () => { cancelled = true; };
+    return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayMode, songId, instrument, difficulty]);
 
@@ -712,4 +712,3 @@ function PathImage({ songId, instrument, difficulty, displayMode, isMobile, colu
     </div>
   );
 }
-

@@ -59,7 +59,7 @@ export default function LeaderboardRivalsTab({
   const queries = useQueries({
     queries: activeInstruments.map(instrument => ({
       queryKey: queryKeys.leaderboardRivals(accountId, instrument, rankBy),
-      queryFn: () => api.getLeaderboardRivals(instrument, accountId, rankBy),
+      queryFn: ({ signal }: { signal: AbortSignal }) => api.getLeaderboardRivals(instrument, accountId, rankBy, { signal }),
       enabled: !!accountId,
       ...remoteDataQueryPolicy,
     })),

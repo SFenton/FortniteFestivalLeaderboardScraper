@@ -136,12 +136,12 @@ export function useSuggestions(
     if (!accountId) return;
     if (!generatorRef.current || rivalDataInjectedRef.current) return;
 
-    let cancelled = false;
+    const controller = new AbortController();
     const combo = deriveComboFromSettings(settings) ?? undefined;
 
-    api.getRivalsAll(accountId)
+    api.getRivalsAll(accountId, { signal: controller.signal })
       .then((response) => {
-        if (cancelled || !generatorRef.current) return;
+        if (controller.signal.aborted || !generatorRef.current) return;
         const index = buildRivalDataIndexFromRivalsAll(response, combo, 5);
         generatorRef.current.setRivalData(index);
         rivalDataInjectedRef.current = true;
@@ -150,7 +150,7 @@ export function useSuggestions(
         // Graceful degradation — rival suggestions simply won't appear
       });
 
-    return () => { cancelled = true; };
+    return () => controller.abort();
   // eslint-disable-next-line react-hooks/exhaustive-deps -- inject once after generator init using the current settings snapshot
   }, [accountId, mode, settings, generatorRef.current]);
 

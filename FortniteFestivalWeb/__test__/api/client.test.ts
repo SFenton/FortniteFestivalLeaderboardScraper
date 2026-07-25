@@ -121,6 +121,21 @@ describe('api/client', () => {
       expect(stored.etag).toBe('"newetag"');
       expect(stored.data.songs[0].songId).toBe('s2');
     });
+
+    it('preserves ETag and no-cache semantics when a caller supplies a signal', async () => {
+      const cached = { songs: [{ songId: 's1', title: 'Old' }], count: 1, currentSeason: 5 };
+      localStorage.setItem('fst_songs_cache', JSON.stringify({ data: cached, etag: '"abc123"', v: 2 }));
+      const controller = new AbortController();
+      mockFetchOk({ songs: [], count: 0, currentSeason: 5 });
+
+      await api.getSongs({ signal: controller.signal });
+
+      expect(global.fetch).toHaveBeenCalledWith('/api/songs', {
+        headers: { 'If-None-Match': '"abc123"' },
+        cache: 'no-cache',
+        signal: controller.signal,
+      });
+    });
   });
 
   describe('getLeaderboard', () => {
@@ -473,6 +488,23 @@ describe('api/client', () => {
       expect(result).toEqual({ version: '1.0.0' });
       expect(global.fetch).toHaveBeenCalledWith('/api/version', { headers: {} });
     });
+
+    it('passes a caller signal without dropping selected-profile headers', async () => {
+      localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'tracked-1', displayName: 'Tracked' }));
+      const controller = new AbortController();
+      mockFetchOk({ version: '1.0.0' });
+
+      await api.getVersion({ signal: controller.signal });
+
+      expect(global.fetch).toHaveBeenCalledWith('/api/version', {
+        headers: {
+          'X-FST-Selected-Profile-Type': 'player',
+          'X-FST-Selected-Profile-Id': 'tracked-1',
+          'X-FST-Selected-Player': 'tracked-1',
+        },
+        signal: controller.signal,
+      });
+    });
   });
 
   describe('getRivalsOverview', () => {
@@ -520,6 +552,25 @@ describe('api/client', () => {
       mockFetchOk({ rival: { accountId: 'r1', displayName: null }, combo: 'Solo_Guitar', totalSongs: 0, offset: 0, limit: 0, sort: 'closest', songs: [] });
       await api.getRivalDetail('acc-1', 'Solo_Guitar', 'r1', 'closest', { allowLiveFallback: true, includeGaps: true });
       expect(global.fetch).toHaveBeenCalledWith('/api/player/acc-1/rivals/Solo_Guitar/r1?limit=0&sort=closest&allowLiveFallback=true&includeGaps=true', { headers: {} });
+    });
+
+    it('keeps rival response options separate from request cancellation', async () => {
+      const controller = new AbortController();
+      mockFetchOk({ rival: { accountId: 'r1', displayName: null }, combo: 'Solo_Guitar', totalSongs: 0, offset: 0, limit: 0, sort: 'closest', songs: [] });
+
+      await api.getRivalDetail(
+        'acc-1',
+        'Solo_Guitar',
+        'r1',
+        'closest',
+        { allowLiveFallback: true },
+        { signal: controller.signal },
+      );
+
+      expect(global.fetch).toHaveBeenCalledWith('/api/player/acc-1/rivals/Solo_Guitar/r1?limit=0&sort=closest&allowLiveFallback=true', {
+        headers: {},
+        signal: controller.signal,
+      });
     });
   });
 

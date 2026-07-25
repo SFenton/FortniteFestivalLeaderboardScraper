@@ -79,7 +79,7 @@ export function PlayerDataProvider({
 
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.player(accountId ?? ''),
-    queryFn: () => api.getPlayer(accountId!),
+    queryFn: ({ signal }) => api.getPlayer(accountId!, undefined, undefined, undefined, { signal }),
     enabled: !!accountId,
   });
 

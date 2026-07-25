@@ -6,7 +6,7 @@ import { IoChevronForward, IoList, IoMusicalNotes, IoPeople, IoStatsChart, IoTro
 import { DEFAULT_INSTRUMENT, type BandDetailResponse, type BandRankingDto, type BandRankingMetric, type BandType, type PlayerBandEntry, type PlayerBandMember, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { ACCURACY_SCALE, LoadPhase } from '@festival/core';
 import { Colors, Font, Gap, GridTemplate, IconSize, Layout, Radius, TRANSITION_MS, Weight, flexColumn, flexRow, frostedCard, transition, transitions } from '@festival/theme';
-import { api } from '../../api/client';
+import { api, type ApiRequestOptions } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
 import EmptyState from '../../components/common/EmptyState';
@@ -101,8 +101,8 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
 
   const lookupQuery = useQuery({
     queryKey: queryKeys.bandLookup(lookupAccountId ?? '', lookupBandType ?? '', lookupTeamKey ?? ''),
-    queryFn: async () => {
-      const response = await api.getPlayerBandsByType(lookupAccountId!, lookupBandType!);
+    queryFn: async ({ signal }) => {
+      const response = await api.getPlayerBandsByType(lookupAccountId!, lookupBandType!, undefined, { signal });
       const match = response.entries.find(entry => entry.bandType === lookupBandType && entry.teamKey === lookupTeamKey);
       if (!match) throw new Error(t('band.lookupFailed'));
       return match;
@@ -113,14 +113,14 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
 
   const rankingQuery = useQuery({
     queryKey: queryKeys.bandRanking(lookupBandType ?? '', lookupTeamKey ?? ''),
-    queryFn: () => getBandRanking(lookupBandType!, lookupTeamKey!),
+    queryFn: ({ signal }) => getBandRanking(lookupBandType!, lookupTeamKey!, undefined, { signal }),
     enabled: hasTeamContext,
     staleTime: 5 * 60_000,
   });
 
   const scopedRankingQuery = useQuery({
     queryKey: queryKeys.bandRanking(lookupBandType ?? '', lookupTeamKey ?? '', contextualComboId),
-    queryFn: () => getBandRanking(lookupBandType!, lookupTeamKey!, contextualComboId),
+    queryFn: ({ signal }) => getBandRanking(lookupBandType!, lookupTeamKey!, contextualComboId, { signal }),
     enabled: hasTeamContext && !!contextualComboId,
     staleTime: 5 * 60_000,
     retry: false,
@@ -152,7 +152,7 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
 
   const detailQuery = useQuery({
     queryKey: queryKeys.bandDetail(effectiveBandId ?? ''),
-    queryFn: () => api.getBandDetail(effectiveBandId!),
+    queryFn: ({ signal }) => api.getBandDetail(effectiveBandId!, { signal }),
     enabled: !!effectiveBandId && !hasTeamContext && !contextBand,
     staleTime: 5 * 60_000,
   });
@@ -174,7 +174,7 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
 
   const detailScopedRankingQuery = useQuery({
     queryKey: queryKeys.bandRanking(basePayload?.band.bandType ?? '', basePayload?.band.teamKey ?? '', activeComboId),
-    queryFn: () => getBandRanking(basePayload!.band.bandType, basePayload!.band.teamKey, activeComboId),
+    queryFn: ({ signal }) => getBandRanking(basePayload!.band.bandType, basePayload!.band.teamKey, activeComboId, { signal }),
     enabled: !!basePayload?.band && !hasTeamContext && !!activeComboId,
     staleTime: 5 * 60_000,
     retry: false,
@@ -692,8 +692,10 @@ function StatCard({ label, value, onClick }: { label: string; value: ReactNode; 
   );
 }
 
-function getBandRanking(bandType: BandType, teamKey: string, comboId?: string): Promise<BandRankingDto> {
-  return comboId ? api.getBandRanking(bandType, teamKey, comboId) : api.getBandRanking(bandType, teamKey);
+function getBandRanking(bandType: BandType, teamKey: string, comboId?: string, options?: ApiRequestOptions): Promise<BandRankingDto> {
+  return comboId
+    ? api.getBandRanking(bandType, teamKey, comboId, undefined, options)
+    : api.getBandRanking(bandType, teamKey, undefined, undefined, options);
 }
 
 function rankClick(rank: number, metric: BandRankingMetric, onNavigate: (metric: BandRankingMetric, rank: number) => void): (() => void) | undefined {

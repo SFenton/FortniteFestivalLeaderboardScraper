@@ -51,7 +51,7 @@ export function useBandInstrumentFilterController({
 
   const detailQuery = useQuery({
     queryKey: queryKeys.bandDetail(bandId),
-    queryFn: () => api.getBandDetail(bandId),
+    queryFn: ({ signal }) => api.getBandDetail(bandId, { signal }),
     enabled: visible && !!bandId,
     staleTime: BAND_FILTER_DETAIL_STALE_MS,
   });

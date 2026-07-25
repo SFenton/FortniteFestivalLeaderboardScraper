@@ -9,6 +9,7 @@ import { BandFilterActionProvider } from '../../../../src/contexts/BandFilterAct
 import { FeatureFlagsProvider } from '../../../../src/contexts/FeatureFlagsContext';
 import type { AppliedBandComboFilter } from '../../../../src/types/bandFilter';
 import { LEGACY_TRACKED_PLAYER_STORAGE_KEY, SELECTED_PROFILE_STORAGE_KEY } from '../../../../src/state/selectedProfile';
+import { expectCancellableCall } from '../../../helpers/requestAssertions';
 
 const mockGetSongBandLeaderboard = vi.hoisted(() => vi.fn());
 const mockGetBandRankingCombos = vi.hoisted(() => vi.fn());
@@ -255,7 +256,7 @@ describe('SongBandLeaderboardPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 
     await waitFor(() => {
-      expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 25, undefined, undefined, undefined);
+      expectCancellableCall(mockGetSongBandLeaderboard, 'song-a', 'Band_Duets', 25, 25, undefined, undefined, undefined);
     });
     expect(mockScrollTo).toHaveBeenCalledWith(0, 0);
   });
@@ -356,7 +357,7 @@ describe('SongBandLeaderboardPage', () => {
     });
 
     await waitFor(() => {
-      expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 0, undefined, undefined, 'Solo_Guitar+Solo_Bass');
+      expectCancellableCall(mockGetSongBandLeaderboard, 'song-a', 'Band_Duets', 25, 0, undefined, undefined, 'Solo_Guitar+Solo_Bass');
     });
   });
 
@@ -444,7 +445,7 @@ describe('SongBandLeaderboardPage', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }));
 
     await waitFor(() => {
-      expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 0, undefined, undefined, 'Solo_Guitar+Solo_Guitar');
+      expectCancellableCall(mockGetSongBandLeaderboard, 'song-a', 'Band_Duets', 25, 0, undefined, undefined, 'Solo_Guitar+Solo_Guitar');
     });
   });
 
@@ -461,7 +462,7 @@ describe('SongBandLeaderboardPage', () => {
     }, '/songs/song-a/bands/Band_Duets?combo=Solo_Guitar+Solo_Vocals');
 
     await waitFor(() => {
-      expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 0, undefined, undefined, 'Solo_Guitar+Solo_Vocals');
+      expectCancellableCall(mockGetSongBandLeaderboard, 'song-a', 'Band_Duets', 25, 0, undefined, undefined, 'Solo_Guitar+Solo_Vocals');
     });
     expect(await screen.findByTestId('leaderboard-page-info')).toHaveTextContent('1 / 2');
 
@@ -469,7 +470,7 @@ describe('SongBandLeaderboardPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 
     await waitFor(() => {
-      expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 25, undefined, undefined, 'Solo_Guitar+Solo_Vocals');
+      expectCancellableCall(mockGetSongBandLeaderboard, 'song-a', 'Band_Duets', 25, 25, undefined, undefined, 'Solo_Guitar+Solo_Vocals');
     });
   });
 
@@ -488,7 +489,7 @@ describe('SongBandLeaderboardPage', () => {
     renderPage(null, '/songs/song-a/bands/Band_Duets?combo=Solo_Guitar+Solo_Bass');
 
     await waitFor(() => {
-      expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 0, undefined, undefined, 'Solo_Guitar+Solo_Bass');
+      expectCancellableCall(mockGetSongBandLeaderboard, 'song-a', 'Band_Duets', 25, 0, undefined, undefined, 'Solo_Guitar+Solo_Bass');
     });
 
     const list = await screen.findByTestId('song-band-leaderboard-list');
@@ -512,7 +513,7 @@ describe('SongBandLeaderboardPage', () => {
     }, '/songs/song-a/bands/Band_Duets?combo=all');
 
     await waitFor(() => {
-      expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 0, undefined, undefined, undefined);
+      expectCancellableCall(mockGetSongBandLeaderboard, 'song-a', 'Band_Duets', 25, 0, undefined, undefined, undefined);
     });
   });
 
@@ -541,7 +542,7 @@ describe('SongBandLeaderboardPage', () => {
     renderPage();
 
     await waitFor(() => {
-      expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 0, 'acct-selected', undefined, undefined);
+      expectCancellableCall(mockGetSongBandLeaderboard, 'song-a', 'Band_Duets', 25, 0, 'acct-selected', undefined, undefined);
     });
 
     const footer = await screen.findByTestId('leaderboard-fixed-player-footer');
@@ -560,7 +561,7 @@ describe('SongBandLeaderboardPage', () => {
     renderPage();
 
     await waitFor(() => {
-      expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 0, 'acct-a', undefined, undefined);
+      expectCancellableCall(mockGetSongBandLeaderboard, 'song-a', 'Band_Duets', 25, 0, 'acct-a', undefined, undefined);
     });
 
     expect(await screen.findByTestId('song-band-leaderboard-entry-1')).toHaveStyle({ backgroundColor: 'rgba(75, 15, 99, 0.75)' });
@@ -602,7 +603,7 @@ describe('SongBandLeaderboardPage', () => {
     renderPage();
 
     await waitFor(() => {
-      expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 0, undefined, 'acct-selected:acct-partner', undefined);
+      expectCancellableCall(mockGetSongBandLeaderboard, 'song-a', 'Band_Duets', 25, 0, undefined, 'acct-selected:acct-partner', undefined);
     });
 
     const list = await screen.findByTestId('song-band-leaderboard-list');

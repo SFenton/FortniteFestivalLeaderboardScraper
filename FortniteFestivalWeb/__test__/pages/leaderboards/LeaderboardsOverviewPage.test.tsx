@@ -8,6 +8,7 @@ import LeaderboardsOverviewPage from '../../../src/pages/leaderboards/Leaderboar
 import { computeRankWidth } from '../../../src/pages/leaderboards/helpers/rankingHelpers';
 import { writeSelectedProfile } from '../../../src/state/selectedProfile';
 import { BAND_TYPES } from '../../../src/utils/bandTypes';
+import { expectCancellableCall } from '../../helpers/requestAssertions';
 
 const mockApi = vi.hoisted(() => ({
   getRankings: vi.fn(),
@@ -211,14 +212,15 @@ describe('LeaderboardsOverviewPage band rankings', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getRankings).toHaveBeenCalledWith('Solo_Guitar', 'totalscore', 1, 10);
-      expect(mockApi.getSelectedMemberRankings).toHaveBeenCalledWith(
+      expectCancellableCall(mockApi.getRankings, 'Solo_Guitar', 'totalscore', 1, 10);
+      expectCancellableCall(
+        mockApi.getSelectedMemberRankings,
         ['selected-a', 'selected-b'],
         expect.arrayContaining(['Solo_Guitar']),
         'totalscore',
       );
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'totalscore', 1, 10, undefined, 'selected-a:selected-b');
-      expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'selected-a:selected-b', undefined, 'totalscore');
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Duets', undefined, 'totalscore', 1, 10, undefined, 'selected-a:selected-b');
+      expectCancellableCall(mockApi.getBandRanking, 'Band_Duets', 'selected-a:selected-b', undefined, 'totalscore');
       expect(JSON.parse(localStorage.getItem('fst:leaderboardSettings') || '{}').rankBy).toBe('totalscore');
     });
   });
@@ -255,9 +257,9 @@ describe('LeaderboardsOverviewPage band rankings', () => {
     expect(within(duosCard).getByText('View all band rankings (42)')).toBeTruthy();
 
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'totalscore', 1, 10, undefined, undefined);
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Trios', undefined, 'totalscore', 1, 10, undefined, undefined);
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Quad', undefined, 'totalscore', 1, 10, undefined, undefined);
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Duets', undefined, 'totalscore', 1, 10, undefined, undefined);
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Trios', undefined, 'totalscore', 1, 10, undefined, undefined);
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Quad', undefined, 'totalscore', 1, 10, undefined, undefined);
     });
   });
 
@@ -313,7 +315,8 @@ describe('LeaderboardsOverviewPage band rankings', () => {
     expect(within(instrumentGrid).getByText('Selected A')).toBeTruthy();
     expect(within(instrumentGrid).getByText('#42')).toBeTruthy();
     await waitFor(() => {
-      expect(mockApi.getSelectedMemberRankings).toHaveBeenCalledWith(
+      expectCancellableCall(
+        mockApi.getSelectedMemberRankings,
         ['selected-a', 'selected-b'],
         expect.arrayContaining(['Solo_Guitar']),
         'adjusted',
@@ -350,9 +353,9 @@ describe('LeaderboardsOverviewPage band rankings', () => {
     expect(within(selectedRow).getByText('#17')).toBeTruthy();
 
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'weighted', 1, 10, 'tracked-player', undefined);
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Trios', undefined, 'weighted', 1, 10, 'tracked-player', undefined);
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Quad', undefined, 'weighted', 1, 10, 'tracked-player', undefined);
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Duets', undefined, 'weighted', 1, 10, 'tracked-player', undefined);
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Trios', undefined, 'weighted', 1, 10, 'tracked-player', undefined);
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Quad', undefined, 'weighted', 1, 10, 'tracked-player', undefined);
     });
   });
 
@@ -425,10 +428,10 @@ describe('LeaderboardsOverviewPage band rankings', () => {
     expect(screen.queryByTestId('band-ranking-selected-entry-Band_Quad')).toBeNull();
 
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'weighted', 1, 10, undefined, 'selected-a:selected-b');
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Trios', undefined, 'weighted', 1, 10, undefined, undefined);
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Quad', undefined, 'weighted', 1, 10, undefined, undefined);
-      expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'selected-a:selected-b', undefined, 'weighted');
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Duets', undefined, 'weighted', 1, 10, undefined, 'selected-a:selected-b');
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Trios', undefined, 'weighted', 1, 10, undefined, undefined);
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Quad', undefined, 'weighted', 1, 10, undefined, undefined);
+      expectCancellableCall(mockApi.getBandRanking, 'Band_Duets', 'selected-a:selected-b', undefined, 'weighted');
     });
   });
 
@@ -466,10 +469,10 @@ describe('LeaderboardsOverviewPage band rankings', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Bass', 'weighted', 1, 10, undefined, 'selected-a:selected-b');
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Trios', undefined, 'weighted', 1, 10, undefined, undefined);
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Quad', undefined, 'weighted', 1, 10, undefined, undefined);
-      expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'selected-a:selected-b', 'Solo_Guitar+Solo_Bass', 'weighted');
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Duets', 'Solo_Guitar+Solo_Bass', 'weighted', 1, 10, undefined, 'selected-a:selected-b');
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Trios', undefined, 'weighted', 1, 10, undefined, undefined);
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Quad', undefined, 'weighted', 1, 10, undefined, undefined);
+      expectCancellableCall(mockApi.getBandRanking, 'Band_Duets', 'selected-a:selected-b', 'Solo_Guitar+Solo_Bass', 'weighted');
     });
   });
 
@@ -594,8 +597,8 @@ describe('LeaderboardsOverviewPage band rankings', () => {
     expect(within(triosRows[1]!).getByAltText('Solo_Drums')).toBeTruthy();
 
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Vocals', 'weighted', 1, 10, undefined, 'selected-a:selected-b');
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Trios', undefined, 'weighted', 1, 10, undefined, undefined);
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Duets', 'Solo_Guitar+Solo_Vocals', 'weighted', 1, 10, undefined, 'selected-a:selected-b');
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Trios', undefined, 'weighted', 1, 10, undefined, undefined);
     });
     expect(await screen.findByTestId('band-ranking-selected-entry-Band_Duets')).toBeTruthy();
   });
@@ -776,7 +779,7 @@ describe('LeaderboardsOverviewPage band rankings', () => {
     expect(within(selectedRows[1]!).getByAltText('Solo_Guitar')).toBeTruthy();
     expect(within(selectedRows[1]!).getByAltText('Solo_Vocals')).toBeTruthy();
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Vocals', 'weighted', 1, 10, undefined, 'selected-a:selected-b');
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Duets', 'Solo_Guitar+Solo_Vocals', 'weighted', 1, 10, undefined, 'selected-a:selected-b');
     });
   });
 
@@ -821,8 +824,8 @@ describe('LeaderboardsOverviewPage band rankings', () => {
     expect(screen.queryByTestId('band-ranking-selected-entry-Band_Quad')).toBeNull();
 
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'weighted', 1, 10, undefined, 'selected-a:selected-b');
-      expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'selected-a:selected-b', undefined, 'weighted');
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Duets', undefined, 'weighted', 1, 10, undefined, 'selected-a:selected-b');
+      expectCancellableCall(mockApi.getBandRanking, 'Band_Duets', 'selected-a:selected-b', undefined, 'weighted');
     });
   });
 

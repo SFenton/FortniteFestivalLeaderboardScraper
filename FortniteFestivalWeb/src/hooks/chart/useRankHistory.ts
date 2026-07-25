@@ -108,7 +108,7 @@ export function useRankHistory(
 ) {
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.rankHistory(instrument, accountId ?? '', days),
-    queryFn: () => api.getRankHistory(instrument, accountId!, days),
+    queryFn: ({ signal }) => api.getRankHistory(instrument, accountId!, days, { signal }),
     enabled: !!accountId,
     staleTime: 5 * 60 * 1000,
   });
@@ -154,7 +154,7 @@ export function useRankHistoryAll(
   const queries = useQueries({
     queries: instruments.map((inst) => ({
       queryKey: queryKeys.rankHistory(inst, accountId ?? '', days),
-      queryFn: () => api.getRankHistory(inst, accountId!, days),
+      queryFn: ({ signal }: { signal: AbortSignal }) => api.getRankHistory(inst, accountId!, days, { signal }),
       enabled: enabled && !!accountId,
       staleTime: STALE_TIME,
     })),

@@ -104,12 +104,12 @@ export default function CompetePage() {
       scope.kind === 'combo'
         ? {
             queryKey: queryKeys.comboRankings(scope.comboId, 'totalscore', 1, 10),
-            queryFn: () => api.getComboRankings(scope.comboId, 'totalscore', 1, 10),
+            queryFn: ({ signal }: { signal: AbortSignal }) => api.getComboRankings(scope.comboId, 'totalscore', 1, 10, { signal }),
             ...remoteDataQueryPolicy,
           }
         : {
             queryKey: queryKeys.rankings(scope.instrument, 'totalscore', 1, 10),
-            queryFn: () => api.getRankings(scope.instrument, 'totalscore', 1, 10),
+            queryFn: ({ signal }: { signal: AbortSignal }) => api.getRankings(scope.instrument, 'totalscore', 1, 10, { signal }),
             ...remoteDataQueryPolicy,
           }
     )),
@@ -121,12 +121,12 @@ export default function CompetePage() {
           scope.kind === 'combo'
             ? {
                 queryKey: queryKeys.playerComboRanking(accountId, scope.comboId, 'totalscore'),
-                queryFn: () => api.getPlayerComboRanking(accountId, scope.comboId, 'totalscore'),
+                queryFn: ({ signal }: { signal: AbortSignal }) => api.getPlayerComboRanking(accountId, scope.comboId, 'totalscore', { signal }),
                 ...remoteDataQueryPolicy,
               }
             : {
                 queryKey: queryKeys.playerRanking(scope.instrument, accountId, 'totalscore'),
-                queryFn: () => api.getPlayerRanking(scope.instrument, accountId, 'totalscore'),
+                queryFn: ({ signal }: { signal: AbortSignal }) => api.getPlayerRanking(scope.instrument, accountId, 'totalscore', { signal }),
                 ...remoteDataQueryPolicy,
               }
         ))
@@ -137,7 +137,7 @@ export default function CompetePage() {
     queries: accountId
       ? scopes.map((scope) => ({
           queryKey: queryKeys.rivalsList(accountId, scope.queryValue),
-          queryFn: () => api.getRivalsList(accountId, scope.queryValue),
+          queryFn: ({ signal }: { signal: AbortSignal }) => api.getRivalsList(accountId, scope.queryValue, { signal }),
           ...remoteDataQueryPolicy,
         }))
       : [],

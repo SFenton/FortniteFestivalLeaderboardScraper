@@ -83,12 +83,14 @@ export default function RivalDetailPage() {
           scopes: combos,
           allowLiveFallback,
         }),
-    queryFn: () => source === 'leaderboard' && lbInstrument
+    queryFn: ({ signal }) => source === 'leaderboard' && lbInstrument
       ? api.getLeaderboardRivalDetail(
           lbInstrument as Parameters<typeof api.getLeaderboardRivalDetail>[0],
           accountId!,
           rivalId!,
           lbRankBy as Parameters<typeof api.getLeaderboardRivalDetail>[3],
+          undefined,
+          { signal },
         )
       : fetchCombinedRivalDetail(
           accountId!,
@@ -96,6 +98,7 @@ export default function RivalDetailPage() {
           combos,
           undefined,
           allowLiveFallback ? { allowLiveFallback: true } : undefined,
+          { signal },
         ),
     enabled: !!accountId && !!rivalId && (source === 'leaderboard' ? !!lbInstrument : !!combo),
     ...remoteDataQueryPolicy,

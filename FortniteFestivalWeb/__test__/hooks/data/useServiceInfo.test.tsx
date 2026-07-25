@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { defaultScheduler, notifyManager } from '@tanstack/query-core';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { queryKeys } from '../../../src/api/queryKeys';
 
 const mockApi = vi.hoisted(() => ({
   getServiceInfo: vi.fn(),
@@ -14,6 +15,7 @@ const {
   SERVICE_INFO_AVAILABILITY_POLL_MS,
   SERVICE_INFO_SETTINGS_POLL_MS,
   SERVICE_INFO_TIMEOUT_MS,
+  ServiceInfoTimeoutError,
   useServiceInfo,
 } = await import('../../../src/hooks/data/useServiceInfo');
 
@@ -172,6 +174,37 @@ describe('useServiceInfo', () => {
 
     expect(capturedSignal?.aborted).toBe(true);
     expect(result.current.isError).toBe(true);
+    expect(result.current.error).toBeInstanceOf(ServiceInfoTimeoutError);
+    expect(result.current.error).toMatchObject({ name: 'TimeoutError' });
+    expect(mockApi.getServiceInfo).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats caller cancellation as query cancellation rather than a timeout or retry', async () => {
+    vi.useFakeTimers();
+    let capturedSignal: AbortSignal | undefined;
+    mockApi.getServiceInfo.mockImplementation((signal?: AbortSignal) => {
+      capturedSignal = signal;
+      return new Promise((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+      });
+    });
+    const queryClient = createClient();
+    const hook = renderHook(() => useServiceInfo('availability'), { wrapper: makeWrapper(queryClient) });
+
+    expect(capturedSignal).toBeInstanceOf(AbortSignal);
+    hook.unmount();
+    await flushPromises();
+
+    expect(capturedSignal?.aborted).toBe(true);
+    expect(queryClient.getQueryState(queryKeys.serviceInfo())).toMatchObject({
+      status: 'pending',
+      fetchStatus: 'idle',
+      error: null,
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SERVICE_INFO_TIMEOUT_MS * 2);
+    });
     expect(mockApi.getServiceInfo).toHaveBeenCalledTimes(1);
   });
 });

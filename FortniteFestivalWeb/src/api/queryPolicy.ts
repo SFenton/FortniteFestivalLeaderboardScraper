@@ -16,7 +16,7 @@ export const remoteDataQueryPolicy = {
 export function keepPreviousLeaderboardPage(
   songId: string,
   instrument: string,
-) {
+): (previousData: LeaderboardResponse | undefined) => LeaderboardResponse | undefined {
   return (previousData: LeaderboardResponse | undefined) => (
     previousData?.songId === songId && previousData.instrument === instrument
       ? keepPreviousData(previousData)
@@ -24,7 +24,9 @@ export function keepPreviousLeaderboardPage(
   );
 }
 
-export function keepPreviousSongLeaderboards(songId: string) {
+export function keepPreviousSongLeaderboards(
+  songId: string,
+): (previousData: AllLeaderboardsResponse | undefined) => AllLeaderboardsResponse | undefined {
   return (previousData: AllLeaderboardsResponse | undefined) => (
     previousData?.songId === songId
       ? keepPreviousData(previousData)

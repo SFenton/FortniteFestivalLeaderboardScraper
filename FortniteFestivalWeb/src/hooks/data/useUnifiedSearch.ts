@@ -130,47 +130,51 @@ export function useUnifiedSearch(query: string, options?: UnifiedSearchOptions):
     if (debouncedQuery.length < 2) return undefined;
 
     const requestSeq = ++requestSeqRef.current;
-    let cancelled = false;
+    const controller = new AbortController();
+    const isCurrentRequest = () => !controller.signal.aborted && requestSeq === requestSeqRef.current;
     setLoading(prev => ({ ...prev, players: enabledTargets.players, bands: enabledTargets.bands }));
     setErrors(prev => ({ ...prev, players: false, bands: false }));
     setPlayerResults([]);
     setBandResults([]);
 
     if (enabledTargets.players) {
-      void api.searchAccounts(debouncedQuery, playerLimit)
+      void api.searchAccounts(debouncedQuery, playerLimit, { signal: controller.signal })
         .then(response => {
-          if (cancelled || requestSeq !== requestSeqRef.current) return;
+          if (!isCurrentRequest()) return;
           setPlayerResults(response.results);
         })
         .catch(() => {
-          if (cancelled || requestSeq !== requestSeqRef.current) return;
+          if (!isCurrentRequest()) return;
           setPlayerResults([]);
           setErrors(prev => ({ ...prev, players: true }));
         })
         .finally(() => {
-          if (cancelled || requestSeq !== requestSeqRef.current) return;
+          if (!isCurrentRequest()) return;
           setLoading(prev => ({ ...prev, players: false }));
         });
     }
 
     if (enabledTargets.bands) {
-      void api.searchBands({ q: debouncedQuery, page: 1, pageSize: bandLimit })
+      void api.searchBands(
+        { q: debouncedQuery, page: 1, pageSize: bandLimit },
+        { signal: controller.signal },
+      )
         .then(response => {
-          if (cancelled || requestSeq !== requestSeqRef.current) return;
+          if (!isCurrentRequest()) return;
           setBandResults(response.results);
         })
         .catch(() => {
-          if (cancelled || requestSeq !== requestSeqRef.current) return;
+          if (!isCurrentRequest()) return;
           setBandResults([]);
           setErrors(prev => ({ ...prev, bands: true }));
         })
         .finally(() => {
-          if (cancelled || requestSeq !== requestSeqRef.current) return;
+          if (!isCurrentRequest()) return;
           setLoading(prev => ({ ...prev, bands: false }));
         });
     }
 
-    return () => { cancelled = true; };
+    return () => controller.abort();
   }, [bandLimit, debouncedQuery, enabledTargets.bands, enabledTargets.players, playerLimit]);
 
   return {

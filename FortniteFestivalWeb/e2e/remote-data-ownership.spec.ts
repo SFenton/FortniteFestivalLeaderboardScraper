@@ -1,10 +1,14 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
+import { writeFileSync } from 'node:fs';
 
 const SONG_ID = 'song-cache-test';
 const PROFILE_A = { accountId: 'profile-a', displayName: 'Profile A' };
 const PROFILE_B = { accountId: 'profile-b', displayName: 'Profile B' };
 
 type RequestCounts = Map<string, number>;
+type ApiInstallOptions = {
+  delayMs?: (path: string) => number;
+};
 
 function incrementRequest(counts: RequestCounts, path: string) {
   counts.set(path, (counts.get(path) ?? 0) + 1);
@@ -69,8 +73,14 @@ function rankingEntry(accountId: string, rank: number) {
   };
 }
 
-async function installApi(page: Page, counts: RequestCounts) {
+async function installApi(page: Page, counts: RequestCounts, options: ApiInstallOptions = {}) {
   await page.routeWebSocket('**/api/ws', () => {});
+  page.on('requestfailed', request => {
+    const url = new URL(request.url());
+    if (!url.pathname.startsWith('/api/')) return;
+    const path = `${url.pathname}${url.search}`;
+    counts.set(path, Math.max(0, (counts.get(path) ?? 1) - 1));
+  });
   await page.route('**/api/**', async route => {
     const url = new URL(route.request().url());
     if (!url.pathname.startsWith('/api/')) {
@@ -78,6 +88,8 @@ async function installApi(page: Page, counts: RequestCounts) {
     }
     const path = `${url.pathname}${url.search}`;
     incrementRequest(counts, path);
+    const delayMs = options.delayMs?.(path) ?? 0;
+    if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs));
 
     if (url.pathname === '/api/features') {
       return json(route, {
@@ -251,16 +263,20 @@ async function installApi(page: Page, counts: RequestCounts) {
       });
     }
 
-    if (url.pathname === `/api/leaderboard/${SONG_ID}/Solo_Guitar`) {
+    const songLeaderboardMatch = new RegExp(`^/api/leaderboard/${SONG_ID}/(Solo_[^/]+)$`).exec(url.pathname);
+    if (songLeaderboardMatch) {
+      const instrument = songLeaderboardMatch[1]!;
       return json(route, {
         songId: SONG_ID,
-        instrument: 'Solo_Guitar',
+        instrument,
         count: 25,
         totalEntries: 50,
         localEntries: 50,
         entries: Array.from({ length: 25 }, (_, index) => ({
           accountId: index === 0 ? 'top-player' : `player-${index + 1}`,
-          displayName: index === 0 ? 'Top Player' : `Player ${index + 1}`,
+          displayName: index === 0
+            ? instrument === 'Solo_Guitar' ? 'Top Player' : `Top ${instrument}`
+            : `Player ${index + 1}`,
           score: 100_000 - index,
           rank: index + 1,
           accuracy: 1_000_000,
@@ -372,4 +388,160 @@ test('React Query owns remote data across Player, Leaderboard, Rivals, and Compe
   await navigate(page, '/rivals');
   await expect(page.getByText(`Above ${PROFILE_A.accountId}`).first()).toBeVisible();
   expect(counts.get(`/api/player/${PROFILE_A.accountId}/rivals/Solo_Guitar`)).toBe(1);
+});
+
+test('rapid route and profile changes cancel obsolete GET requests', async ({ page }, testInfo) => {
+  const counts: RequestCounts = new Map();
+  const responses: { path: string; at: number }[] = [];
+  const failures: { path: string; at: number; error: string | null }[] = [];
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const delayedPath = (path: string) => (
+    path === `/api/leaderboard/${SONG_ID}/Solo_Guitar?top=25&offset=0`
+    || path === '/api/rankings/Solo_Guitar?rankBy=adjusted&page=1&pageSize=25'
+    || path.startsWith(`/api/player/${PROFILE_A.accountId}/rivals/`)
+      ? 500
+      : 0
+  );
+
+  page.on('response', response => {
+    const url = new URL(response.url());
+    if (url.pathname.startsWith('/api/')) responses.push({ path: `${url.pathname}${url.search}`, at: Date.now() });
+  });
+  page.on('requestfailed', request => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith('/api/')) {
+      failures.push({ path: `${url.pathname}${url.search}`, at: Date.now(), error: request.failure()?.errorText ?? null });
+    }
+  });
+  page.on('console', message => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
+  page.on('pageerror', error => pageErrors.push(error.message));
+  await page.addInitScript(() => {
+    const failures: string[] = [];
+    Object.assign(window, { __web22UnhandledRejections: failures });
+    window.addEventListener('unhandledrejection', event => {
+      failures.push(String(event.reason));
+    });
+  });
+  await installApi(page, counts, { delayMs: delayedPath });
+
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await page.evaluate(profile => {
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith('fst:')) localStorage.removeItem(key);
+    }
+    localStorage.setItem('fst:appSettings', JSON.stringify({
+      showLead: true,
+      showBass: true,
+      showDrums: false,
+      showVocals: false,
+      showProLead: false,
+      showProBass: false,
+      showPeripheralVocals: false,
+      showPeripheralCymbals: false,
+      showPeripheralDrums: false,
+    }));
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({ type: 'player', ...profile }));
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify(profile));
+  }, PROFILE_A);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+
+  const guitarPath = `/api/leaderboard/${SONG_ID}/Solo_Guitar?top=25&offset=0`;
+  const guitarRequest = page.waitForRequest(request => {
+    const url = new URL(request.url());
+    return `${url.pathname}${url.search}` === guitarPath;
+  });
+  await navigate(page, `/songs/${SONG_ID}/Solo_Guitar`);
+  await guitarRequest;
+  const guitarSupersededAt = Date.now();
+  const routeLatestStartedAt = Date.now();
+  await navigate(page, `/songs/${SONG_ID}/Solo_Bass`);
+  await expect(page.getByText('Top Solo_Bass')).toBeVisible();
+  const routeLatestReadyMs = Date.now() - routeLatestStartedAt;
+
+  const adjustedRankingsPath = '/api/rankings/Solo_Guitar?rankBy=adjusted&page=1&pageSize=25';
+  const latestRankingsPath = '/api/rankings/Solo_Guitar?rankBy=totalscore&page=1&pageSize=25';
+  const adjustedRankingsRequest = page.waitForRequest(request => {
+    const url = new URL(request.url());
+    return `${url.pathname}${url.search}` === adjustedRankingsPath;
+  });
+  await navigate(page, '/leaderboards/all?instrument=Solo_Guitar&rankBy=adjusted&page=1');
+  await adjustedRankingsRequest;
+  const filterSupersededAt = Date.now();
+  const filterLatestStartedAt = Date.now();
+  const latestRankingsResponse = page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return `${url.pathname}${url.search}` === latestRankingsPath;
+  });
+  await navigate(page, '/leaderboards/all?instrument=Solo_Guitar&rankBy=totalscore&page=1');
+  await latestRankingsResponse;
+  const filterLatestReadyMs = Date.now() - filterLatestStartedAt;
+
+  const rivalAPath = `/api/player/${PROFILE_A.accountId}/rivals/Solo_Guitar`;
+  const rivalARequest = page.waitForRequest(request => {
+    const url = new URL(request.url());
+    return url.pathname === rivalAPath;
+  });
+  await navigate(page, '/rivals');
+  await rivalARequest;
+  const profileSupersededAt = Date.now();
+  const profileLatestStartedAt = Date.now();
+  await selectProfile(page, PROFILE_B);
+  await expect(page.getByText(`Above ${PROFILE_B.accountId}`).first()).toBeVisible();
+  const profileLatestReadyMs = Date.now() - profileLatestStartedAt;
+  await page.waitForTimeout(650);
+
+  const obsoleteResponses = responses.filter(response => (
+    (response.path === guitarPath && response.at >= guitarSupersededAt)
+    || (response.path === adjustedRankingsPath && response.at >= filterSupersededAt)
+    || (response.path.startsWith(`/api/player/${PROFILE_A.accountId}/rivals/`) && response.at >= profileSupersededAt)
+  ));
+  const obsoleteFailures = failures.filter(failure => (
+    failure.path === guitarPath
+    || failure.path === adjustedRankingsPath
+    || failure.path.startsWith(`/api/player/${PROFILE_A.accountId}/rivals/`)
+  ));
+  const unhandledRejections = await page.evaluate(() => (
+    (window as Window & { __web22UnhandledRejections?: string[] }).__web22UnhandledRejections ?? []
+  ));
+  const metrics = {
+    project: testInfo.project.name,
+    imageExpectation: process.env.WEB22_EXPECT_CANCELLATION === '0' ? 'baseline' : 'candidate',
+    guitarSupersededAt,
+    filterSupersededAt,
+    profileSupersededAt,
+    transitionMs: {
+      route: routeLatestReadyMs,
+      filter: filterLatestReadyMs,
+      profile: profileLatestReadyMs,
+    },
+    obsoleteResponses,
+    obsoleteFailures,
+    requestCounts: Object.fromEntries(counts),
+    consoleErrors,
+    pageErrors,
+    unhandledRejections,
+  };
+  if (process.env.WEB22_METRICS_PATH) {
+    const metricsPath = process.env.WEB22_METRICS_PATH
+      .replace('{project}', testInfo.project.name)
+      .replace('{repeat}', String(testInfo.repeatEachIndex));
+    writeFileSync(metricsPath, `${JSON.stringify(metrics, null, 2)}\n`);
+  }
+
+  expect(page.getByText(`Above ${PROFILE_A.accountId}`)).not.toBeVisible();
+  expect(counts.get(latestRankingsPath)).toBe(1);
+  expect(counts.get(`/api/player/${PROFILE_B.accountId}/rivals/Solo_Guitar`)).toBe(1);
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(unhandledRejections).toEqual([]);
+
+  if (process.env.WEB22_EXPECT_CANCELLATION === '0') {
+    expect(obsoleteResponses.length).toBeGreaterThan(0);
+  } else {
+    expect(obsoleteResponses).toEqual([]);
+    expect(obsoleteFailures.length).toBeGreaterThanOrEqual(3);
+  }
 });

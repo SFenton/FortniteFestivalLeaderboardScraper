@@ -120,14 +120,14 @@ export default function RivalsPage() {
   const instrumentQueries = useQueries({
     queries: activeInstruments.map(instrument => ({
       queryKey: queryKeys.rivalsList(accountId ?? '', instrument),
-      queryFn: () => api.getRivalsList(accountId!, instrument),
+      queryFn: ({ signal }: { signal: AbortSignal }) => api.getRivalsList(accountId!, instrument, { signal }),
       enabled: !!accountId,
       ...remoteDataQueryPolicy,
     })),
   });
   const comboQuery = useQuery({
     queryKey: queryKeys.rivalsList(accountId ?? '', combo ?? ''),
-    queryFn: () => api.getRivalsList(accountId!, combo!),
+    queryFn: ({ signal }) => api.getRivalsList(accountId!, combo!, { signal }),
     enabled: !!accountId && !!combo,
     ...remoteDataQueryPolicy,
   });

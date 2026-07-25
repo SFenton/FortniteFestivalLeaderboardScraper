@@ -8,6 +8,7 @@ import type { ComboPageResponse, RankingsPageResponse, RivalsListResponse } from
 import { contentHash } from '../../../src/firstRun/types';
 import { competeSlides } from '../../../src/pages/compete/firstRun';
 import { usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
+import { expectCancellableCall, expectNoCancellableCall } from '../../helpers/requestAssertions';
 
 const mockApi = vi.hoisted(() => ({
   getComboRankings: vi.fn(),
@@ -257,25 +258,25 @@ describe('CompetePage', () => {
 
     renderCompete();
     await advancePastPageTransition();
-    expect(mockApi.getComboRankings).toHaveBeenCalledWith('05', 'totalscore', 1, 10);
-    expect(mockApi.getComboRankings).not.toHaveBeenCalledWith('c0', 'totalscore', 1, 10);
-    expect(mockApi.getComboRankings).not.toHaveBeenCalledWith('c5', 'totalscore', 1, 10);
-    expect(mockApi.getRankings).toHaveBeenCalledWith('Solo_Guitar', 'totalscore', 1, 10);
-    expect(mockApi.getRankings).toHaveBeenCalledWith('Solo_Drums', 'totalscore', 1, 10);
-    expect(mockApi.getRankings).toHaveBeenCalledWith('Solo_PeripheralVocals', 'totalscore', 1, 10);
-    expect(mockApi.getRankings).toHaveBeenCalledWith('Solo_PeripheralCymbals', 'totalscore', 1, 10);
-    expect(mockApi.getPlayerComboRanking).toHaveBeenCalledWith('test-player', '05', 'totalscore');
-    expect(mockApi.getPlayerComboRanking).not.toHaveBeenCalledWith('test-player', 'c0', 'totalscore');
-    expect(mockApi.getPlayerRanking).toHaveBeenCalledWith('Solo_Guitar', 'test-player', 'totalscore');
-    expect(mockApi.getPlayerRanking).toHaveBeenCalledWith('Solo_Drums', 'test-player', 'totalscore');
-    expect(mockApi.getPlayerRanking).toHaveBeenCalledWith('Solo_PeripheralVocals', 'test-player', 'totalscore');
-    expect(mockApi.getPlayerRanking).toHaveBeenCalledWith('Solo_PeripheralCymbals', 'test-player', 'totalscore');
-    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-player', '05');
-    expect(mockApi.getRivalsList).not.toHaveBeenCalledWith('test-player', 'c0');
-    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-player', 'Solo_Guitar');
-    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-player', 'Solo_Drums');
-    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-player', 'Solo_PeripheralVocals');
-    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-player', 'Solo_PeripheralCymbals');
+    expectCancellableCall(mockApi.getComboRankings, '05', 'totalscore', 1, 10);
+    expectNoCancellableCall(mockApi.getComboRankings, 'c0', 'totalscore', 1, 10);
+    expectNoCancellableCall(mockApi.getComboRankings, 'c5', 'totalscore', 1, 10);
+    expectCancellableCall(mockApi.getRankings, 'Solo_Guitar', 'totalscore', 1, 10);
+    expectCancellableCall(mockApi.getRankings, 'Solo_Drums', 'totalscore', 1, 10);
+    expectCancellableCall(mockApi.getRankings, 'Solo_PeripheralVocals', 'totalscore', 1, 10);
+    expectCancellableCall(mockApi.getRankings, 'Solo_PeripheralCymbals', 'totalscore', 1, 10);
+    expectCancellableCall(mockApi.getPlayerComboRanking, 'test-player', '05', 'totalscore');
+    expectNoCancellableCall(mockApi.getPlayerComboRanking, 'test-player', 'c0', 'totalscore');
+    expectCancellableCall(mockApi.getPlayerRanking, 'Solo_Guitar', 'test-player', 'totalscore');
+    expectCancellableCall(mockApi.getPlayerRanking, 'Solo_Drums', 'test-player', 'totalscore');
+    expectCancellableCall(mockApi.getPlayerRanking, 'Solo_PeripheralVocals', 'test-player', 'totalscore');
+    expectCancellableCall(mockApi.getPlayerRanking, 'Solo_PeripheralCymbals', 'test-player', 'totalscore');
+    expectCancellableCall(mockApi.getRivalsList, 'test-player', '05');
+    expectNoCancellableCall(mockApi.getRivalsList, 'test-player', 'c0');
+    expectCancellableCall(mockApi.getRivalsList, 'test-player', 'Solo_Guitar');
+    expectCancellableCall(mockApi.getRivalsList, 'test-player', 'Solo_Drums');
+    expectCancellableCall(mockApi.getRivalsList, 'test-player', 'Solo_PeripheralVocals');
+    expectCancellableCall(mockApi.getRivalsList, 'test-player', 'Solo_PeripheralCymbals');
     expect((await screen.findAllByRole('button', { name: /Lead \+ Drums/i })).length).toBe(2);
     expect((await screen.findAllByText(/^Lead$/i)).length).toBe(2);
     expect((await screen.findAllByText(/^Drums$/i)).length).toBe(2);
@@ -303,18 +304,18 @@ describe('CompetePage', () => {
     renderCompete();
     await advancePastPageTransition();
 
-    expect(mockApi.getComboRankings).toHaveBeenCalledWith('05', 'totalscore', 1, 10);
-    expect(mockApi.getRankings).toHaveBeenCalledWith('Solo_Guitar', 'totalscore', 1, 10);
-    expect(mockApi.getRankings).toHaveBeenCalledWith('Solo_Drums', 'totalscore', 1, 10);
-    expect(mockApi.getRankings).toHaveBeenCalledWith('Solo_PeripheralCymbals', 'totalscore', 1, 10);
-    expect(mockApi.getPlayerComboRanking).toHaveBeenCalledWith('test-player', '05', 'totalscore');
-    expect(mockApi.getPlayerRanking).toHaveBeenCalledWith('Solo_Guitar', 'test-player', 'totalscore');
-    expect(mockApi.getPlayerRanking).toHaveBeenCalledWith('Solo_Drums', 'test-player', 'totalscore');
-    expect(mockApi.getPlayerRanking).toHaveBeenCalledWith('Solo_PeripheralCymbals', 'test-player', 'totalscore');
-    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-player', '05');
-    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-player', 'Solo_Guitar');
-    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-player', 'Solo_Drums');
-    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-player', 'Solo_PeripheralCymbals');
+    expectCancellableCall(mockApi.getComboRankings, '05', 'totalscore', 1, 10);
+    expectCancellableCall(mockApi.getRankings, 'Solo_Guitar', 'totalscore', 1, 10);
+    expectCancellableCall(mockApi.getRankings, 'Solo_Drums', 'totalscore', 1, 10);
+    expectCancellableCall(mockApi.getRankings, 'Solo_PeripheralCymbals', 'totalscore', 1, 10);
+    expectCancellableCall(mockApi.getPlayerComboRanking, 'test-player', '05', 'totalscore');
+    expectCancellableCall(mockApi.getPlayerRanking, 'Solo_Guitar', 'test-player', 'totalscore');
+    expectCancellableCall(mockApi.getPlayerRanking, 'Solo_Drums', 'test-player', 'totalscore');
+    expectCancellableCall(mockApi.getPlayerRanking, 'Solo_PeripheralCymbals', 'test-player', 'totalscore');
+    expectCancellableCall(mockApi.getRivalsList, 'test-player', '05');
+    expectCancellableCall(mockApi.getRivalsList, 'test-player', 'Solo_Guitar');
+    expectCancellableCall(mockApi.getRivalsList, 'test-player', 'Solo_Drums');
+    expectCancellableCall(mockApi.getRivalsList, 'test-player', 'Solo_PeripheralCymbals');
 
     const leaderboardButtons = await screen.findAllByRole('button');
     const buttonLabels = leaderboardButtons.map((button) => button.textContent ?? '');

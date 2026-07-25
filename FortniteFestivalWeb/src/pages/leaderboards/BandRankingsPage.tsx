@@ -102,7 +102,7 @@ export default function BandRankingsPage() {
 
   const comboCatalogQuery = useQuery({
     queryKey: queryKeys.bandRankingCombos(bandType ?? 'unknown'),
-    queryFn: () => api.getBandRankingCombos(bandType!),
+    queryFn: ({ signal }) => api.getBandRankingCombos(bandType!, { signal }),
     enabled: !!bandType,
     staleTime: COMBO_CATALOG_STALE_TIME_MS,
   });
@@ -151,7 +151,7 @@ export default function BandRankingsPage() {
 
   const leaderboardQuery = useQuery({
     queryKey: queryKeys.bandRankings(bandType ?? 'unknown', activeComboId, metric, pageParam, LEADERBOARD_PAGE_SIZE, selectedPlayerAccountId, selectedBandTeamKey),
-    queryFn: () => api.getBandRankings(bandType!, activeComboId, metric, pageParam, LEADERBOARD_PAGE_SIZE, selectedPlayerAccountId, selectedBandTeamKey),
+    queryFn: ({ signal }) => api.getBandRankings(bandType!, activeComboId, metric, pageParam, LEADERBOARD_PAGE_SIZE, selectedPlayerAccountId, selectedBandTeamKey, { signal }),
     enabled: !!bandType,
     placeholderData: (previous) => previous,
   });

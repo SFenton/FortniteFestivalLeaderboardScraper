@@ -58,7 +58,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   // Local state for when viewing an arbitrary player via URL -- use React Query
   const { data: queryData, isLoading: queryLoading, error: queryError } = useQuery({
     queryKey: queryKeys.player(accountId ?? ''),
-    queryFn: () => api.getPlayer(accountId!),
+    queryFn: ({ signal }) => api.getPlayer(accountId!, undefined, undefined, undefined, { signal }),
     enabled: !!accountId && !isTrackedPlayer,
   });
   const qc = useQueryClient();
@@ -132,7 +132,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   // Fetch pre-computed tiered stats (hoisted from PlayerContent so stagger waits for data)
   const statsQuery = useQuery({
     queryKey: queryKeys.playerStats(accountId ?? ''),
-    queryFn: () => api.getPlayerStats(accountId!),
+    queryFn: ({ signal }) => api.getPlayerStats(accountId!, { signal }),
     staleTime: 5 * 60_000,
     enabled: !!accountId,
   });
@@ -146,7 +146,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
     queries: accountId
       ? visibleKeys.map((inst) => ({
           queryKey: queryKeys.playerRanking(inst, accountId),
-          queryFn: () => api.getPlayerRanking(inst, accountId),
+          queryFn: ({ signal }: { signal: AbortSignal }) => api.getPlayerRanking(inst, accountId, undefined, { signal }),
           staleTime: 5 * 60_000,
           enabled: shouldFetchRankingFallback,
         }))

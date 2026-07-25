@@ -15,6 +15,7 @@ import { usePageQuickLinksController } from '../../../src/contexts/PageQuickLink
 import { useSettings, type AppSettings } from '../../../src/contexts/SettingsContext';
 import { useTrackedPlayer } from '../../../src/hooks/data/useTrackedPlayer';
 import type { RivalSongComparison, RivalsListResponse, RivalDetailResponse, LeaderboardRivalsListResponse } from '@festival/core/api/serverTypes';
+import { expectCancellableCall, expectNoCancellableCall } from '../../helpers/requestAssertions';
 
 /* ── API mock ── */
 
@@ -319,7 +320,7 @@ describe('RivalsPage', () => {
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
-    expect(mockApi.getLeaderboardRivals).toHaveBeenCalledWith('Solo_Guitar', 'test-1', 'adjusted');
+    expectCancellableCall(mockApi.getLeaderboardRivals, 'Solo_Guitar', 'test-1', 'adjusted');
   });
 
   it('renders the page', async () => {
@@ -360,9 +361,9 @@ describe('RivalsPage', () => {
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
-    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-1', 'Solo_PeripheralVocals');
-    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-1', 'Solo_PeripheralCymbals');
-    expect(mockApi.getRivalsList).not.toHaveBeenCalledWith('test-1', 'c0');
+    expectCancellableCall(mockApi.getRivalsList, 'test-1', 'Solo_PeripheralVocals');
+    expectCancellableCall(mockApi.getRivalsList, 'test-1', 'Solo_PeripheralCymbals');
+    expectNoCancellableCall(mockApi.getRivalsList, 'test-1', 'c0');
   });
 
   it('requests the pro-drums family scope when cymbals and pro drums are selected', async () => {
@@ -375,9 +376,9 @@ describe('RivalsPage', () => {
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
-    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-1', 'Solo_PeripheralCymbals');
-    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-1', 'Solo_PeripheralDrums');
-    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-1', 'pro_drums');
+    expectCancellableCall(mockApi.getRivalsList, 'test-1', 'Solo_PeripheralCymbals');
+    expectCancellableCall(mockApi.getRivalsList, 'test-1', 'Solo_PeripheralDrums');
+    expectCancellableCall(mockApi.getRivalsList, 'test-1', 'pro_drums');
   });
 
   it('renders a single-instrument empty-state subtitle when no song rivals exist', async () => {
@@ -462,7 +463,7 @@ describe('RivalsPage', () => {
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
-    expect(mockApi.getRivalsList).toHaveBeenCalledWith(accountId, 'Solo_Drums');
+    expectCancellableCall(mockApi.getRivalsList, accountId, 'Solo_Drums');
   });
 
   it('opens Find Rival search and navigates selected players to rival detail', async () => {
@@ -747,20 +748,20 @@ describe('RivalDetailPage', () => {
     const view = render(renderTree());
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
-    expect(mockApi.getRivalDetail).toHaveBeenCalledWith(accountId, 'Solo_Guitar', rivalId);
+    expectCancellableCall(mockApi.getRivalDetail, accountId, 'Solo_Guitar', rivalId);
 
     mockApi.getRivalDetail.mockClear();
     view.rerender(renderTree(visibleInstrumentSettings({ showDrums: true })));
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
-    expect(mockApi.getRivalDetail).toHaveBeenCalledWith(accountId, 'Solo_Drums', rivalId);
+    expectCancellableCall(mockApi.getRivalDetail, accountId, 'Solo_Drums', rivalId);
 
     mockApi.getRivalDetail.mockClear();
     view.rerender(renderTree(visibleInstrumentSettings({ showLead: true, showDrums: true, showPeripheralCymbals: true, showPeripheralDrums: true })));
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
-    expect(mockApi.getRivalDetail).toHaveBeenCalledWith(accountId, '05', rivalId);
-    expect(mockApi.getRivalDetail).toHaveBeenCalledWith(accountId, 'pro_drums', rivalId);
+    expectCancellableCall(mockApi.getRivalDetail, accountId, '05', rivalId);
+    expectCancellableCall(mockApi.getRivalDetail, accountId, 'pro_drums', rivalId);
   });
 
   it('allows live fallback for details opened from Find Rival', async () => {
@@ -787,7 +788,7 @@ describe('RivalDetailPage', () => {
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
-    expect(mockApi.getRivalDetail).toHaveBeenCalledWith(accountId, 'Solo_Guitar', rivalId, undefined, { allowLiveFallback: true });
+    expectCancellableCall(mockApi.getRivalDetail, accountId, 'Solo_Guitar', rivalId, undefined, { allowLiveFallback: true });
   });
 
   it('keeps fixed combo rival detail pinned when visible instruments change', async () => {
@@ -813,13 +814,13 @@ describe('RivalDetailPage', () => {
     const view = render(renderTree());
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
-    expect(mockApi.getRivalDetail).toHaveBeenCalledWith(accountId, 'Solo_Guitar', rivalId);
+    expectCancellableCall(mockApi.getRivalDetail, accountId, 'Solo_Guitar', rivalId);
 
     mockApi.getRivalDetail.mockClear();
     view.rerender(renderTree(visibleInstrumentSettings({ showDrums: true })));
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
-    expect(mockApi.getRivalDetail).not.toHaveBeenCalledWith(accountId, 'Solo_Drums', rivalId);
+    expectNoCancellableCall(mockApi.getRivalDetail, accountId, 'Solo_Drums', rivalId);
   });
 
   it('registers quick links on mobile and opens the rival-detail quick-links modal', async () => {
@@ -959,20 +960,20 @@ describe('RivalryPage', () => {
     const view = render(renderTree());
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
-    expect(mockApi.getRivalDetail).toHaveBeenCalledWith(accountId, 'Solo_Guitar', rivalId);
+    expectCancellableCall(mockApi.getRivalDetail, accountId, 'Solo_Guitar', rivalId);
 
     mockApi.getRivalDetail.mockClear();
     view.rerender(renderTree(visibleInstrumentSettings({ showDrums: true })));
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
-    expect(mockApi.getRivalDetail).toHaveBeenCalledWith(accountId, 'Solo_Drums', rivalId);
+    expectCancellableCall(mockApi.getRivalDetail, accountId, 'Solo_Drums', rivalId);
 
     mockApi.getRivalDetail.mockClear();
     view.rerender(renderTree(visibleInstrumentSettings({ showDrums: true, showVocals: true, showPeripheralCymbals: true, showPeripheralDrums: true })));
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
-    expect(mockApi.getRivalDetail).toHaveBeenCalledWith(accountId, '0c', rivalId);
-    expect(mockApi.getRivalDetail).toHaveBeenCalledWith(accountId, 'pro_drums', rivalId);
+    expectCancellableCall(mockApi.getRivalDetail, accountId, '0c', rivalId);
+    expectCancellableCall(mockApi.getRivalDetail, accountId, 'pro_drums', rivalId);
   });
 });
 
@@ -991,7 +992,7 @@ describe('AllRivalsPage', () => {
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
-    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-1', '05');
+    expectCancellableCall(mockApi.getRivalsList, 'test-1', '05');
   });
 
   it('renders the page with instrument category', async () => {
@@ -1020,7 +1021,7 @@ describe('AllRivalsPage', () => {
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
-    expect(mockApi.getRivalsList).toHaveBeenCalledWith(accountId, 'pro_drums');
+    expectCancellableCall(mockApi.getRivalsList, accountId, 'pro_drums');
   });
 
   it('calls getRivalsList for instrument category', async () => {
@@ -1067,6 +1068,6 @@ describe('AllRivalsPage', () => {
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
-    expect(mockApi.getRivalsList).toHaveBeenCalledWith(accountId, 'Solo_Drums');
+    expectCancellableCall(mockApi.getRivalsList, accountId, 'Solo_Drums');
   });
 });

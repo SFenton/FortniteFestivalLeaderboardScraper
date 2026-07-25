@@ -5,6 +5,7 @@ import { computeRankWidth } from '../../../src/pages/leaderboards/helpers/rankin
 import { DEMO_SWAP_INTERVAL_MS, FADE_DURATION, Gap, Layout } from '@festival/theme';
 import { stubElementDimensions, stubMatchMedia, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
 import { TestProviders } from '../../helpers/TestProviders';
+import { expectCancellableCall } from '../../helpers/requestAssertions';
 
 const mockApi = vi.hoisted(() => ({
   getComboRankings: vi.fn(),
@@ -201,7 +202,7 @@ describe('FullRankingsPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getRankings).toHaveBeenCalledWith('Solo_Guitar', 'adjusted', 1, 25);
+      expectCancellableCall(mockApi.getRankings, 'Solo_Guitar', 'adjusted', 1, 25);
     });
   });
 
@@ -217,7 +218,7 @@ describe('FullRankingsPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getRankings).toHaveBeenCalledWith('Solo_Bass', 'totalscore', 1, 25);
+      expectCancellableCall(mockApi.getRankings, 'Solo_Bass', 'totalscore', 1, 25);
     });
 
     const instrumentButton = screen.getByRole('button', { name: 'Bass' });
@@ -237,7 +238,7 @@ describe('FullRankingsPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getRankings).toHaveBeenCalledWith('Solo_Bass', 'totalscore', 1, 25);
+      expectCancellableCall(mockApi.getRankings, 'Solo_Bass', 'totalscore', 1, 25);
     });
 
     const headerPortal = screen.getByTestId('test-header-portal');
@@ -279,7 +280,7 @@ describe('FullRankingsPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getComboRankings).toHaveBeenCalledWith('05', 'totalscore', 1, 25);
+      expectCancellableCall(mockApi.getComboRankings, '05', 'totalscore', 1, 25);
     });
 
     const headerPortal = screen.getByTestId('test-header-portal');
@@ -348,7 +349,7 @@ describe('FullRankingsPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getSoloFamilyRankings).toHaveBeenCalledWith('pad', 'totalscore', 1, 25);
+      expectCancellableCall(mockApi.getSoloFamilyRankings, 'pad', 'totalscore', 1, 25);
     });
 
     const headerPortal = screen.getByTestId('test-header-portal');
@@ -372,7 +373,7 @@ describe('FullRankingsPage', () => {
     await waitFor(() => {
       expect(mockApi.getRankings.mock.calls.some(call => call[0] === 'Solo_Guitar' && call[1] === 'totalscore')).toBe(true);
       expect(mockApi.getRankings.mock.calls.some(call => call[1] === 'maxscore')).toBe(false);
-      expect(mockApi.getSelectedMemberRankings).toHaveBeenCalledWith(['band-a', 'band-b'], ['Solo_Guitar'], 'totalscore');
+      expectCancellableCall(mockApi.getSelectedMemberRankings, ['band-a', 'band-b'], ['Solo_Guitar'], 'totalscore');
       expect(mockApi.getBandRanking).not.toHaveBeenCalled();
       expect(JSON.parse(localStorage.getItem('fst:leaderboardSettings') || '{}').rankBy).toBe('totalscore');
     });
@@ -388,9 +389,9 @@ describe('FullRankingsPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getComboRankings).toHaveBeenCalledWith('05', 'totalscore', 1, 25);
+      expectCancellableCall(mockApi.getComboRankings, '05', 'totalscore', 1, 25);
     });
-    expect(mockApi.getPlayerComboRanking).toHaveBeenCalledWith('test-player', '05', 'totalscore');
+    expectCancellableCall(mockApi.getPlayerComboRanking, 'test-player', '05', 'totalscore');
     expect(await screen.findByText('Top 05')).toBeTruthy();
     const iconTitle = await screen.findByTestId('combo-ranking-title-icons');
     expect(iconTitle).toHaveAttribute('aria-label', 'Lead + Drums Leaderboards');
@@ -616,7 +617,7 @@ describe('FullRankingsPage', () => {
     expect(await screen.findByText('Alpha')).toBeTruthy();
     expect(await screen.findByText('#12')).toBeTruthy();
     expect(await screen.findByText('765,432')).toBeTruthy();
-    expect(mockApi.getSelectedMemberRankings).toHaveBeenCalledWith(['band-a', 'band-b'], ['Solo_Guitar'], 'totalscore');
+    expectCancellableCall(mockApi.getSelectedMemberRankings, ['band-a', 'band-b'], ['Solo_Guitar'], 'totalscore');
     expect(mockApi.getBandRanking).not.toHaveBeenCalled();
     expect(document.body.textContent).not.toContain('Alpha + Beta');
   });
@@ -702,7 +703,7 @@ describe('FullRankingsPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getSelectedMemberRankings).toHaveBeenCalledWith(['band-a', 'band-b'], ['Solo_Guitar'], 'adjusted');
+      expectCancellableCall(mockApi.getSelectedMemberRankings, ['band-a', 'band-b'], ['Solo_Guitar'], 'adjusted');
     });
     expect(mockApi.getBandRanking).not.toHaveBeenCalled();
   });
@@ -785,7 +786,7 @@ describe('FullRankingsPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'band-a:band-b', '05', 'totalscore');
+      expectCancellableCall(mockApi.getBandRanking, 'Band_Duets', 'band-a:band-b', '05', 'totalscore');
     });
   });
 
@@ -824,7 +825,7 @@ describe('FullRankingsPage', () => {
     );
 
     expect(await screen.findByText('Top Player')).toBeTruthy();
-    expect(mockApi.getSelectedMemberRankings).toHaveBeenCalledWith(['band-a', 'band-b'], ['Solo_Guitar'], 'totalscore');
+    expectCancellableCall(mockApi.getSelectedMemberRankings, ['band-a', 'band-b'], ['Solo_Guitar'], 'totalscore');
     expect(mockApi.getBandRanking).not.toHaveBeenCalled();
     expect(document.body.textContent).toContain('Alpha');
   });

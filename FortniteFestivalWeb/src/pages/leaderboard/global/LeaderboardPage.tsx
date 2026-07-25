@@ -95,7 +95,7 @@ export default function LeaderboardPage() {
     queryKey: selectedBand && songId
       ? queryKeys.songBandLeaderboard(songId, selectedBand.bandType, 1, 0, undefined, selectedBand.teamKey, activeBandComboId)
       : ['songBandLeaderboard', 'selectedBand', 'disabled', songId, instKey],
-    queryFn: () => api.getSongBandLeaderboard(songId!, selectedBand!.bandType, 1, 0, undefined, selectedBand!.teamKey, activeBandComboId),
+    queryFn: ({ signal }) => api.getSongBandLeaderboard(songId!, selectedBand!.bandType, 1, 0, undefined, selectedBand!.teamKey, activeBandComboId, { signal }),
     enabled: !!songId && !!selectedBand,
     select: (data) => data.selectedBandEntry ?? null,
     ...remoteDataQueryPolicy,
@@ -116,9 +116,9 @@ export default function LeaderboardPage() {
   }, [profile, selectedBand, selectedBandFooterName]);
 
   const { isScoreValid, leewayParam, leeway: userLeeway, getFilteredRank, getFilteredTotal } = useScoreFilter();
-  const leaderboardQuery = useQuery({
+  const leaderboardQuery = useQuery<Awaited<ReturnType<typeof api.getLeaderboard>>>({
     queryKey: queryKeys.leaderboard(songId ?? '', instKey, PAGE_SIZE, page * PAGE_SIZE, leewayParam),
-    queryFn: () => api.getLeaderboard(songId!, instKey, PAGE_SIZE, page * PAGE_SIZE, leewayParam),
+    queryFn: ({ signal }) => api.getLeaderboard(songId!, instKey, PAGE_SIZE, page * PAGE_SIZE, leewayParam, { signal }),
     enabled: !!songId && !!instrument,
     placeholderData: keepPreviousLeaderboardPage(songId ?? '', instKey),
     ...remoteDataQueryPolicy,

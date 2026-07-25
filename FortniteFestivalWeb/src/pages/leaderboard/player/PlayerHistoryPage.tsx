@@ -126,24 +126,23 @@ export default function PlayerHistoryPage() {
       setLoading(false);
       return;
     }
-    let cancelled = false;
+    const controller = new AbortController();
     setLoading(true);
     setError(null);
-    api.getPlayerHistory(player.accountId, songId)
+    api.getPlayerHistory(player.accountId, songId, undefined, { signal: controller.signal })
       .then((res) => {
-        if (!cancelled) {
-          const filtered = res.history
-            .filter(h => h.instrument === instKey);
-          setHistory(filtered);
-        }
+        if (controller.signal.aborted) return;
+        const filtered = res.history
+          .filter(h => h.instrument === instKey);
+        setHistory(filtered);
       })
       .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : t('history.failedToLoad'));
+        if (!controller.signal.aborted) setError(e instanceof Error ? e.message : t('history.failedToLoad'));
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       });
-    return () => { cancelled = true; };
+    return () => controller.abort();
   // eslint-disable-next-line react-hooks/exhaustive-deps -- t is stable i18n fn
   }, [player, songId, instKey]);
   /* v8 ignore stop */
@@ -360,4 +359,3 @@ const histStyles = {
     color: Colors.textMuted,
   } as CSSProperties,
 };
-

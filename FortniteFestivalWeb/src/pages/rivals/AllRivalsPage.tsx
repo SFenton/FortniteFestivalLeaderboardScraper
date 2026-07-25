@@ -67,7 +67,7 @@ export default function AllRivalsPage() {
   const commonQueries = useQueries({
     queries: activeInstruments.map(currentInstrument => ({
       queryKey: queryKeys.rivalsList(accountId ?? '', currentInstrument),
-      queryFn: () => api.getRivalsList(accountId!, currentInstrument),
+      queryFn: ({ signal }: { signal: AbortSignal }) => api.getRivalsList(accountId!, currentInstrument, { signal }),
       enabled: !isLeaderboard && isCommon && !!accountId && activeInstruments.length >= 2,
       ...remoteDataQueryPolicy,
     })),
@@ -75,13 +75,13 @@ export default function AllRivalsPage() {
   const singleScope = isInstrument ? instrument : isCombo ? resolvedCombo : null;
   const singleQuery = useQuery({
     queryKey: queryKeys.rivalsList(accountId ?? '', singleScope ?? ''),
-    queryFn: () => api.getRivalsList(accountId!, singleScope!),
+    queryFn: ({ signal }) => api.getRivalsList(accountId!, singleScope!, { signal }),
     enabled: !isLeaderboard && !isCommon && !!accountId && !!singleScope,
     ...remoteDataQueryPolicy,
   });
   const leaderboardQuery = useQuery({
     queryKey: queryKeys.leaderboardRivals(accountId ?? '', instrument ?? '', rankBy),
-    queryFn: () => api.getLeaderboardRivals(instrument!, accountId!, rankBy),
+    queryFn: ({ signal }) => api.getLeaderboardRivals(instrument!, accountId!, rankBy, { signal }),
     enabled: isLeaderboard && isInstrument && !!accountId && !!instrument,
     ...remoteDataQueryPolicy,
   });

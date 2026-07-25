@@ -4,6 +4,7 @@ import { Route, Routes, useLocation } from 'react-router-dom';
 import { GridTemplate } from '@festival/theme';
 import { TestProviders } from '../../helpers/TestProviders';
 import { stubElementDimensions, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
+import { expectCancellableCall } from '../../helpers/requestAssertions';
 
 const mockApi = vi.hoisted(() => ({
   getPlayerBandsList: vi.fn(),
@@ -93,7 +94,7 @@ describe('PlayerBandsPage', () => {
     renderPlayerBandsPage();
     await advancePastSpinner();
 
-    expect(mockApi.getPlayerBandsList).toHaveBeenCalledWith('p1', 'all', 1, 25);
+    expectCancellableCall(mockApi.getPlayerBandsList, 'p1', 'all', 1, 25);
     expect(await screen.findByText("Alpha's Bands")).toBeTruthy();
     expect(screen.getByText('Alpha')).toBeTruthy();
     expect(screen.getByText('Beta')).toBeTruthy();

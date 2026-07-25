@@ -32,7 +32,7 @@ export function useBandSongs(
 ) {
   return useQuery({
     queryKey: queryKeys.bandSongs(bandType ?? '', teamKey ?? '', limit, comboId),
-    queryFn: () => api.getBandSongs(bandType!, teamKey!, limit, comboId),
+    queryFn: ({ signal }) => api.getBandSongs(bandType!, teamKey!, limit, comboId, { signal }),
     enabled: !!bandType && !!teamKey,
     staleTime: 5 * 60 * 1000,
   });

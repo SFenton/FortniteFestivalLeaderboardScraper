@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useUnifiedSearch, type UnifiedSearchState } from '../../../src/hooks/data/useUnifiedSearch';
 import { TestProviders } from '../../helpers/TestProviders';
+import { expectCancellableCall } from '../../helpers/requestAssertions';
 
 const mockApi = vi.hoisted(() => ({
   getSongs: vi.fn(),
@@ -65,8 +66,8 @@ describe('useUnifiedSearch', () => {
       await Promise.resolve();
     });
 
-    expect(mockApi.searchAccounts).toHaveBeenCalledWith('pla', 10);
-    expect(mockApi.searchBands).toHaveBeenCalledWith({ q: 'pla', page: 1, pageSize: 10 });
+    expectCancellableCall(mockApi.searchAccounts, 'pla', 10);
+    expectCancellableCall(mockApi.searchBands, { q: 'pla', page: 1, pageSize: 10 });
     expect(result.current.debouncedQuery).toBe('pla');
     expect(result.current.debouncing).toBe(false);
     expect(result.current.loading.players).toBe(true);
@@ -128,7 +129,7 @@ describe('useUnifiedSearch', () => {
       await Promise.resolve();
     });
 
-    expect(mockApi.searchAccounts).toHaveBeenCalledWith('pla', 10);
+    expectCancellableCall(mockApi.searchAccounts, 'pla', 10);
     expect(mockApi.searchBands).not.toHaveBeenCalled();
     expect(result.current.songResults).toEqual([]);
     expect(result.current.bandResults).toEqual([]);

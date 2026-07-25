@@ -6,6 +6,7 @@ import { stubElementDimensions, stubMatchMedia, stubResizeObserver, stubScrollTo
 import { TestProviders } from '../../helpers/TestProviders';
 import BandRankingsPage from '../../../src/pages/leaderboards/BandRankingsPage';
 import { SELECTED_PROFILE_STORAGE_KEY, writeSelectedProfile } from '../../../src/state/selectedProfile';
+import { expectCancellableCall } from '../../helpers/requestAssertions';
 
 const mockApi = vi.hoisted(() => ({
   getBandRankings: vi.fn(),
@@ -102,7 +103,7 @@ describe('BandRankingsPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'totalscore', 1, 25, undefined, undefined);
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Duets', undefined, 'totalscore', 1, 25, undefined, undefined);
     });
 
     expect(await screen.findByText('Duos Leaderboards')).toBeTruthy();
@@ -124,7 +125,7 @@ describe('BandRankingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'totalscore', 2, 25, undefined, undefined);
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Duets', undefined, 'totalscore', 2, 25, undefined, undefined);
     });
   });
 
@@ -170,7 +171,7 @@ describe('BandRankingsPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'totalscore', 1, 25, undefined, undefined);
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Duets', undefined, 'totalscore', 1, 25, undefined, undefined);
     });
   });
 
@@ -237,7 +238,7 @@ describe('BandRankingsPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Bass', 'totalscore', 1, 25, undefined, undefined);
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Duets', 'Solo_Guitar+Solo_Bass', 'totalscore', 1, 25, undefined, undefined);
     });
   });
 
@@ -263,7 +264,7 @@ describe('BandRankingsPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Vocals', 'totalscore', 1, 25, undefined, undefined);
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Duets', 'Solo_Guitar+Solo_Vocals', 'totalscore', 1, 25, undefined, undefined);
     });
     expect(await screen.findByTestId('leaderboard-page-info')).toHaveTextContent('1 / 2');
 
@@ -271,7 +272,7 @@ describe('BandRankingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Vocals', 'totalscore', 2, 25, undefined, undefined);
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Duets', 'Solo_Guitar+Solo_Vocals', 'totalscore', 2, 25, undefined, undefined);
     });
   });
 
@@ -297,7 +298,7 @@ describe('BandRankingsPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'totalscore', 1, 25, undefined, undefined);
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Duets', undefined, 'totalscore', 1, 25, undefined, undefined);
     });
   });
 
@@ -409,7 +410,7 @@ describe('BandRankingsPage', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }));
 
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Guitar', 'totalscore', 1, 25, undefined, undefined);
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Duets', 'Solo_Guitar+Solo_Guitar', 'totalscore', 1, 25, undefined, undefined);
     });
   });
 
@@ -446,7 +447,7 @@ describe('BandRankingsPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'totalscore', 1, 25, undefined, 'selected:partner');
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Duets', undefined, 'totalscore', 1, 25, undefined, 'selected:partner');
     });
 
     const list = await screen.findByTestId('band-rankings-card-list');
@@ -503,7 +504,7 @@ describe('BandRankingsPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Bass', 'totalscore', 1, 25, undefined, 'selected:partner');
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Duets', 'Solo_Guitar+Solo_Bass', 'totalscore', 1, 25, undefined, 'selected:partner');
     });
     expect(await screen.findByTestId('band-rankings-card-list')).toBeTruthy();
     const footer = await screen.findByTestId('leaderboard-fixed-player-footer');
@@ -537,7 +538,7 @@ describe('BandRankingsPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'totalscore', 1, 25, 'tracked-player', undefined);
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Duets', undefined, 'totalscore', 1, 25, 'tracked-player', undefined);
     });
 
     const list = await screen.findByTestId('band-rankings-card-list');
@@ -672,7 +673,7 @@ describe('BandRankingsPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Trios', 'Solo_Guitar+Solo_Bass+Solo_Drums', 'totalscore', 1, 25, undefined, undefined);
+      expectCancellableCall(mockApi.getBandRankings, 'Band_Trios', 'Solo_Guitar+Solo_Bass+Solo_Drums', 'totalscore', 1, 25, undefined, undefined);
     });
 
     const row = await screen.findByTestId('band-rankings-entry-0');

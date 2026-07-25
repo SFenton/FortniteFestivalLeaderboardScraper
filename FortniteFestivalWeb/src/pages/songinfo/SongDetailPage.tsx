@@ -177,13 +177,13 @@ export default function SongDetailPage() {
   const cached = songId ? songDetailCache.get(songId) : undefined;
   const scoreHistoryQuery = useQuery({
     queryKey: queryKeys.playerHistory(selectedAccountId ?? '', songId),
-    queryFn: () => api.getPlayerHistory(selectedAccountId!, songId).then(response => response.history),
+    queryFn: ({ signal }) => api.getPlayerHistory(selectedAccountId!, songId, undefined, { signal }).then(response => response.history),
     enabled: !!selectedAccountId && !!songId,
     ...remoteDataQueryPolicy,
   });
-  const leaderboardsQuery = useQuery({
+  const leaderboardsQuery = useQuery<Awaited<ReturnType<typeof api.getAllLeaderboards>>>({
     queryKey: queryKeys.allLeaderboards(songId ?? '', 10, leewayParam),
-    queryFn: () => api.getAllLeaderboards(songId!, 10, leewayParam),
+    queryFn: ({ signal }) => api.getAllLeaderboards(songId!, 10, leewayParam, { signal }),
     enabled: !!songId,
     placeholderData: keepPreviousSongLeaderboards(songId ?? ''),
     ...remoteDataQueryPolicy,
@@ -195,11 +195,12 @@ export default function SongDetailPage() {
       activeInstruments,
       leewayParam,
     ),
-    queryFn: () => api.getSelectedMemberSongScores(
+    queryFn: ({ signal }) => api.getSelectedMemberSongScores(
       songId!,
       [...selectedBandMemberAccountIds],
       [...activeInstruments],
       leewayParam,
+      { signal },
     ),
     enabled: !!songId && selectedBandMemberAccountIds.length > 0 && activeInstruments.length > 0,
     ...remoteDataQueryPolicy,
@@ -213,13 +214,14 @@ export default function SongDetailPage() {
       selectedTeamKey,
       activeBandComboId,
     ),
-    queryFn: () => api.getAllSongBandLeaderboards(
+    queryFn: ({ signal }) => api.getAllSongBandLeaderboards(
       songId!,
       10,
       selectedAccountId,
       selectedBandType,
       selectedTeamKey,
       activeBandComboId,
+      { signal },
     ),
     enabled: !!songId,
     ...remoteDataQueryPolicy,

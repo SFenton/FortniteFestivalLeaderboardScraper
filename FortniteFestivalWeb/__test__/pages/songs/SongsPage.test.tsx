@@ -14,6 +14,7 @@ import { safeAreaBottomOffset } from '../../../src/utils/safeAreaStyles';
 import { createTestQueryClient, TestProviders } from '../../helpers/TestProviders';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../helpers/browserStubs';
 import type { AppliedBandComboFilter } from '../../../src/types/bandFilter';
+import { expectCancellableCall } from '../../helpers/requestAssertions';
 
 const SONGS_MOBILE_CENTER_TOP_STYLE = `max(${Layout.desktopNavHeight}px, var(${HEADER_PORTAL_HEIGHT_VAR}, 0px))`;
 const SONGS_MOBILE_CENTER_BOTTOM_STYLE = `max(${safeAreaBottomOffset(Layout.fabBottom + Layout.fabSize)}, var(${SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR}, 0px))`;
@@ -569,7 +570,7 @@ describe('SongsPage', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(100); });
     await act(async () => { await vi.advanceTimersByTimeAsync(600); });
 
-    expect(mockApi.getBandSongRows).toHaveBeenCalledWith('Band_Duets', 'p1:p2', undefined);
+    expectCancellableCall(mockApi.getBandSongRows, 'Band_Duets', 'p1:p2', undefined);
     expect(container.textContent).toContain('123,456');
     expect(container.querySelector('[data-metadata-key="difficulty"]')).toBeNull();
     expect(container.querySelector('[data-metadata-key="intensity"]')).toBeNull();
@@ -638,7 +639,7 @@ describe('SongsPage', () => {
     const { container } = renderSongsPage('/songs', undefined, matchingFilter);
     await settleSongsPage();
 
-    expect(mockApi.getMemberScoreFilter).toHaveBeenCalledWith({
+    expectCancellableCall(mockApi.getMemberScoreFilter, {
       hasAccountIds: ['sfentonx'],
       missingAccountIds: [],
       instruments: ['Solo_Bass', 'Solo_Drums'],
@@ -695,7 +696,7 @@ describe('SongsPage', () => {
     const { container } = renderSongsPage('/songs', undefined, matchingFilter);
     await settleSongsPage();
 
-    expect(mockApi.getBandSongRows).toHaveBeenCalledWith('Band_Trios', 'sfentonx:kahnyri:phankie', 'Solo_Bass+Solo_Bass+Solo_Drums');
+    expectCancellableCall(mockApi.getBandSongRows, 'Band_Trios', 'sfentonx:kahnyri:phankie', 'Solo_Bass+Solo_Bass+Solo_Drums');
     expect(container.textContent).toContain('Alpha Song');
     expect(container.textContent).not.toContain('Beta Song');
     expect(container.textContent).not.toContain('Gamma Song');
@@ -717,7 +718,7 @@ describe('SongsPage', () => {
 
     const firstRender = renderSongsPage('/songs', undefined, matchingFilter);
 
-    await waitFor(() => expect(mockApi.getBandSongRows).toHaveBeenCalledWith('Band_Duets', 'p1:p2', 'Solo_Guitar+Solo_Bass'));
+    await waitFor(() => expectCancellableCall(mockApi.getBandSongRows, 'Band_Duets', 'p1:p2', 'Solo_Guitar+Solo_Bass'));
     firstRender.unmount();
 
     resetMocks();
@@ -727,7 +728,7 @@ describe('SongsPage', () => {
 
     renderSongsPage('/songs', undefined, otherBandFilter);
 
-    await waitFor(() => expect(mockApi.getBandSongRows).toHaveBeenCalledWith('Band_Duets', 'p1:p2', undefined));
+    await waitFor(() => expectCancellableCall(mockApi.getBandSongRows, 'Band_Duets', 'p1:p2', undefined));
   });
 
   it('opens sort modal when Sort button is clicked', async () => {

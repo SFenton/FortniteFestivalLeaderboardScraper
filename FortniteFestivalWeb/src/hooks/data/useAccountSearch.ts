@@ -45,33 +45,47 @@ export function useAccountSearch(
   const [resultSeq, setResultSeq] = useState(0);
   const [activeIndex, setActiveIndex] = useState(-1);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
+  const requestRef = useRef<AbortController | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const cancelSearch = useCallback(() => {
+    requestRef.current?.abort();
+    requestRef.current = null;
+  }, []);
+
   const search = useCallback(async (q: string) => {
+    cancelSearch();
     if (q.length < 2) {
       setResults([]);
       setIsOpen(false);
       return;
     }
+    const controller = new AbortController();
+    requestRef.current = controller;
     setDebouncing(false);
     setLoading(true);
     try {
-      const res = await api.searchAccounts(q, limit);
+      const res = await api.searchAccounts(q, limit, { signal: controller.signal });
+      if (controller.signal.aborted) return;
       setResults(res.results);
       setResultSeq(s => s + 1);
       setIsOpen(res.results.length > 0);
       setActiveIndex(-1);
     } catch {
+      if (controller.signal.aborted) return;
       setResults([]);
       setIsOpen(false);
     } finally {
-      setLoading(false);
+      if (requestRef.current === controller) requestRef.current = null;
+      if (!controller.signal.aborted) setLoading(false);
     }
-  }, [limit]);
+  }, [cancelSearch, limit]);
 
   const handleChange = useCallback((value: string) => {
     setQuery(value);
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    cancelSearch();
+    setLoading(false);
     if (value.trim().length < 2) {
       setDebouncing(false);
       setResults([]);
@@ -82,16 +96,22 @@ export function useAccountSearch(
     debounceRef.current = setTimeout(() => {
       void search(value.trim());
     }, debounceMs);
-  }, [search, debounceMs]);
+  }, [cancelSearch, search, debounceMs]);
 
   const selectResult = useCallback((r: AccountSearchResult) => {
+    cancelSearch();
+    setLoading(false);
     onSelect(r);
     setQuery('');
     setResults([]);
     setIsOpen(false);
-  }, [onSelect]);
+  }, [cancelSearch, onSelect]);
 
-  const close = useCallback(() => setIsOpen(false), []);
+  const close = useCallback(() => {
+    cancelSearch();
+    setLoading(false);
+    setIsOpen(false);
+  }, [cancelSearch]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (!isOpen || results.length === 0) return;
@@ -122,6 +142,11 @@ export function useAccountSearch(
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
   /* v8 ignore stop */
+
+  useEffect(() => () => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    cancelSearch();
+  }, [cancelSearch]);
 
   return {
     query, setQuery, results, isOpen, activeIndex, setActiveIndex,

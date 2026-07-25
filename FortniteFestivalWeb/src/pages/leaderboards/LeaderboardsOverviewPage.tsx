@@ -132,7 +132,7 @@ export default function LeaderboardsOverviewPage() {
   const rankingQueries = useQueries({
     queries: instruments.map((inst) => ({
       queryKey: queryKeys.rankings(inst, metric, 1, 10),
-      queryFn: () => api.getRankings(inst, metric, 1, 10),
+      queryFn: ({ signal }: { signal: AbortSignal }) => api.getRankings(inst, metric, 1, 10, { signal }),
     })),
   });
 
@@ -152,7 +152,7 @@ export default function LeaderboardsOverviewPage() {
       const comboId = appliedBandComboFilter && appliedBandComboFilter.bandType === bandType ? appliedBandComboFilter.comboId : undefined;
       return {
         queryKey: queryKeys.bandRankings(bandType, comboId, bandMetric, 1, 10, selectedAccountId, selectedTeamKey),
-        queryFn: () => api.getBandRankings(bandType, comboId, bandMetric, 1, 10, selectedAccountId, selectedTeamKey),
+        queryFn: ({ signal }: { signal: AbortSignal }) => api.getBandRankings(bandType, comboId, bandMetric, 1, 10, selectedAccountId, selectedTeamKey, { signal }),
       };
     }),
   });
@@ -165,7 +165,7 @@ export default function LeaderboardsOverviewPage() {
     queryKey: selectedBandType && selectedBandTeamKey
       ? queryKeys.bandRanking(selectedBandType, selectedBandTeamKey, selectedBandComboId, bandMetric)
       : ['bandRanking', 'none'],
-    queryFn: () => api.getBandRanking(selectedBandType!, selectedBandTeamKey!, selectedBandComboId, bandMetric),
+    queryFn: ({ signal }) => api.getBandRanking(selectedBandType!, selectedBandTeamKey!, selectedBandComboId, bandMetric, { signal }),
     enabled: !!selectedBandType && !!selectedBandTeamKey,
     retry: false,
   });
@@ -175,7 +175,7 @@ export default function LeaderboardsOverviewPage() {
     queries: player
       ? instruments.map((inst) => ({
           queryKey: queryKeys.playerRanking(inst, player.accountId, metric),
-          queryFn: () => api.getPlayerRanking(inst, player.accountId, metric),
+          queryFn: ({ signal }: { signal: AbortSignal }) => api.getPlayerRanking(inst, player.accountId, metric, { signal }),
         }))
       : [],
   });
@@ -184,7 +184,7 @@ export default function LeaderboardsOverviewPage() {
     queryKey: selectedBandMemberAccountIds.length > 0
       ? queryKeys.selectedMemberRankings(selectedBandMemberAccountIds, instruments, metric)
       : ['selectedMemberRankings', 'none'],
-    queryFn: () => api.getSelectedMemberRankings(selectedBandMemberAccountIds, instruments, metric),
+    queryFn: ({ signal }) => api.getSelectedMemberRankings(selectedBandMemberAccountIds, instruments, metric, { signal }),
     enabled: selectedBandMemberAccountIds.length > 0 && instruments.length > 0,
     retry: false,
   });

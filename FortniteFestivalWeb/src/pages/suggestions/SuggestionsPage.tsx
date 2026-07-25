@@ -116,7 +116,7 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
 
   const bandSongRowsQuery = useQuery({
     queryKey: queryKeys.bandSongRows(selectedBand?.bandType ?? '', selectedBand?.teamKey ?? '', activeBandComboId),
-    queryFn: () => api.getBandSongRows(selectedBand!.bandType, selectedBand!.teamKey, activeBandComboId),
+    queryFn: ({ signal }) => api.getBandSongRows(selectedBand!.bandType, selectedBand!.teamKey, activeBandComboId, { signal }),
     enabled: !!selectedBand,
     staleTime: 5 * 60 * 1000,
   });
@@ -454,4 +454,3 @@ const suggestionsStyles = {
     animation: `spin ${Spinner.duration} linear infinite`,
   } as CSSProperties,
 };
-

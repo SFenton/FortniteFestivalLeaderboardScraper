@@ -6,6 +6,7 @@ import { computeRankWidth } from '../../../../src/pages/leaderboards/helpers/ran
 import { createTestQueryClient, TestProviders } from '../../../helpers/TestProviders';
 import type { QueryClient } from '@tanstack/react-query';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubMatchMedia } from '../../../helpers/browserStubs';
+import { expectCancellableCall } from '../../../helpers/requestAssertions';
 
 const defaultEntries = [
   { accountId: 'acc-1', displayName: 'Player One', score: 145000, rank: 1, percentile: 99, accuracy: 99.5, isFullCombo: true, stars: 6, season: 5 },
@@ -838,7 +839,7 @@ describe('LeaderboardPage — selected band footer', () => {
     expect(score.compareDocumentPosition(stars) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(stars.compareDocumentPosition(accuracy) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByText('?')).toBeNull();
-    expect(mockApi.getSongBandLeaderboard).toHaveBeenCalledWith('song-1', 'Band_Duets', 1, 0, undefined, 'band-a:band-b', undefined);
+    expectCancellableCall(mockApi.getSongBandLeaderboard, 'song-1', 'Band_Duets', 1, 0, undefined, 'band-a:band-b', undefined);
   });
 
   it('does not apply FAB spacing class to the mobile selected-band footer', async () => {

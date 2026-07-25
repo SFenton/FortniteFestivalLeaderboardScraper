@@ -12,6 +12,7 @@ import { songDetailCache } from '../../../src/api/pageCache';
 import type { PlayerBandType } from '@festival/core/api/serverTypes';
 import { SONG_BAND_TYPES } from '../../../src/utils/songBandLeaderboards';
 import { LEGACY_TRACKED_PLAYER_STORAGE_KEY, SELECTED_PROFILE_STORAGE_KEY } from '../../../src/state/selectedProfile';
+import { expectCancellableCall } from '../../helpers/requestAssertions';
 
 const mockApi = vi.hoisted(() => {
   const fn = vi.fn;
@@ -375,7 +376,7 @@ describe('SongDetailPage', () => {
   it('fetches all leaderboards for the song', async () => {
     renderSongDetail();
     await waitFor(() => {
-      expect(mockApi.getAllLeaderboards).toHaveBeenCalledWith('song-1', 10, undefined);
+      expectCancellableCall(mockApi.getAllLeaderboards, 'song-1', 10, undefined);
     });
   });
 
@@ -395,7 +396,8 @@ describe('SongDetailPage', () => {
     renderSongDetail();
 
     await waitFor(() => {
-      expect(mockApi.getAllSongBandLeaderboards).toHaveBeenCalledWith(
+      expectCancellableCall(
+        mockApi.getAllSongBandLeaderboards,
         'song-1',
         10,
         undefined,
@@ -440,7 +442,8 @@ describe('SongDetailPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getAllSongBandLeaderboards).toHaveBeenCalledWith(
+      expectCancellableCall(
+        mockApi.getAllSongBandLeaderboards,
         'song-1',
         10,
         undefined,
@@ -457,7 +460,8 @@ describe('SongDetailPage', () => {
     renderSongDetail('/songs/song-1', 'test-player-1');
 
     await waitFor(() => {
-      expect(mockApi.getAllSongBandLeaderboards).toHaveBeenCalledWith(
+      expectCancellableCall(
+        mockApi.getAllSongBandLeaderboards,
         'song-1',
         10,
         'test-player-1',
@@ -514,7 +518,8 @@ describe('SongDetailPage', () => {
     renderSongDetail('/songs/song-1', 'test-player-1');
 
     await waitFor(() => {
-      expect(mockApi.getAllSongBandLeaderboards).toHaveBeenCalledWith(
+      expectCancellableCall(
+        mockApi.getAllSongBandLeaderboards,
         'song-1',
         10,
         'test-player-1',
@@ -600,13 +605,13 @@ describe('SongDetailPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getAllLeaderboards).toHaveBeenCalledWith('song-1', 10, undefined);
+      expectCancellableCall(mockApi.getAllLeaderboards, 'song-1', 10, undefined);
     });
 
     fireEvent.click(screen.getByText('Set leeway 5'));
 
     await waitFor(() => {
-      expect(mockApi.getAllLeaderboards).toHaveBeenCalledWith('song-1', 10, 5);
+      expectCancellableCall(mockApi.getAllLeaderboards, 'song-1', 10, 5);
     });
   });
 
@@ -615,12 +620,13 @@ describe('SongDetailPage', () => {
     renderSongDetail('/songs/song-1', 'test-player-1');
     await waitFor(() => {
       // Player data loaded via PlayerDataContext (full profile, no songId filter)
-      expect(mockApi.getPlayer).toHaveBeenCalledWith('test-player-1');
+      expectCancellableCall(mockApi.getPlayer, 'test-player-1');
       expect(mockApi.getPlayerHistory).toHaveBeenCalled();
     });
     // Verify NO per-song getPlayer call was made (songId should NOT be passed)
     for (const call of mockApi.getPlayer.mock.calls) {
-      expect(call.length).toBeLessThanOrEqual(1); // only accountId, no songId
+      expect(call[1]).toBeUndefined();
+      expect(call[call.length - 1]?.signal).toBeInstanceOf(AbortSignal);
     }
   });
 

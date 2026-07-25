@@ -132,15 +132,17 @@ describe('useSyncStatus', () => {
     await flush();
 
     expect(mockTrackPlayer).toHaveBeenCalledWith('acc2');
-    expect(mockGetStatus).toHaveBeenCalledWith('acc2');
+    expect(mockGetStatus).toHaveBeenCalledWith('acc2', { signal: expect.any(AbortSignal) });
     expect(result.current.isSyncing).toBe(false);
     expect(result.current.phase).toBe('idle');
   });
 
   it('ignores late status responses for a deselected account', async () => {
     let resolveAcc1Status: ((value: unknown) => void) | undefined;
-    mockGetStatus.mockImplementation((requestedAccountId: string) => {
+    let acc1Signal: AbortSignal | undefined;
+    mockGetStatus.mockImplementation((requestedAccountId: string, options?: { signal?: AbortSignal }) => {
       if (requestedAccountId === 'acc1') {
+        acc1Signal = options?.signal;
         return new Promise(resolve => { resolveAcc1Status = resolve; }) as any;
       }
 
@@ -153,12 +155,13 @@ describe('useSyncStatus', () => {
     );
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
-    expect(mockGetStatus).toHaveBeenCalledWith('acc1');
+    expect(mockGetStatus).toHaveBeenCalledWith('acc1', { signal: expect.any(AbortSignal) });
     expect(resolveAcc1Status).toBeDefined();
 
     rerender({ accountId: undefined });
     await flush();
 
+    expect(acc1Signal?.aborted).toBe(true);
     expect(result.current.isSyncing).toBe(false);
     expect(result.current.phase).toBe('idle');
 
@@ -186,7 +189,7 @@ describe('useSyncStatus', () => {
     renderHook(() => useSyncStatus('acc1'), { wrapper });
     await flush();
     expect(mockTrackPlayer).toHaveBeenCalledWith('acc1');
-    expect(mockGetStatus).toHaveBeenCalledWith('acc1');
+    expect(mockGetStatus).toHaveBeenCalledWith('acc1', { signal: expect.any(AbortSignal) });
   });
 
   it('shows queued after untracked preflight before trackPlayer resolves', async () => {
@@ -198,7 +201,7 @@ describe('useSyncStatus', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
-    expect(mockGetStatus).toHaveBeenCalledWith('acc1');
+    expect(mockGetStatus).toHaveBeenCalledWith('acc1', { signal: expect.any(AbortSignal) });
     expect(mockTrackPlayer).toHaveBeenCalledWith('acc1');
     expect(result.current.isSyncing).toBe(true);
     expect(result.current.phase).toBe('queued');
@@ -348,7 +351,7 @@ describe('useSyncStatus', () => {
     renderHook(() => useSyncStatus('acc1', { track: false }), { wrapper });
     await flush();
     expect(mockTrackPlayer).not.toHaveBeenCalled();
-    expect(mockGetStatus).toHaveBeenCalledWith('acc1');
+    expect(mockGetStatus).toHaveBeenCalledWith('acc1', { signal: expect.any(AbortSignal) });
   });
 
   it('clearCompleted resets justCompleted', async () => {

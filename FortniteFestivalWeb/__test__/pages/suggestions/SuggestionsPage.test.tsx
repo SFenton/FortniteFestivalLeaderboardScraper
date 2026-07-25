@@ -10,6 +10,7 @@ import { TestProviders } from '../../helpers/TestProviders';
 import { stubScrollTo, stubResizeObserver, stubIntersectionObserver } from '../../helpers/browserStubs';
 import type { AppliedBandComboFilter } from '../../../src/types/bandFilter';
 import type { SelectedBandProfile } from '../../../src/state/selectedProfile';
+import { expectCancellableCall } from '../../helpers/requestAssertions';
 
 const mockApi = vi.hoisted(() => {
   const fn = vi.fn;
@@ -341,7 +342,7 @@ describe('SuggestionsPage', () => {
     const { container } = renderBandSuggestions(bandFilter);
 
     await waitFor(() => {
-      expect(mockApi.getBandSongRows).toHaveBeenCalledWith('Band_Duets', selectedBand.teamKey, bandFilter.comboId);
+      expectCancellableCall(mockApi.getBandSongRows, 'Band_Duets', selectedBand.teamKey, bandFilter.comboId);
       expect(screen.getAllByText('First Plays for This Combo').length).toBeGreaterThan(0);
     });
     expect(screen.getByText('Band FC Chase')).toBeTruthy();

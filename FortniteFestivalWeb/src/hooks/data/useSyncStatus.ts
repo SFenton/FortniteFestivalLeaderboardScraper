@@ -176,6 +176,7 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
   const [syncStateAccountId, setSyncStateAccountId] = useState<string | null>(() => accountId ?? null);
   const [justCompleted, setJustCompleted] = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout>>(null);
+  const statusRequestRef = useRef<AbortController | null>(null);
   const wasSyncingRef = useRef(false);
   const syncKickedRef = useRef(false);
   const mountedRef = useRef(true);
@@ -194,9 +195,15 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
     }
   }, []);
 
+  const abortStatusRequest = useCallback(() => {
+    statusRequestRef.current?.abort();
+    statusRequestRef.current = null;
+  }, []);
+
   const resetSyncTracking = useCallback((nextAccountId: string | null) => {
     desiredAccountRef.current = nextAccountId;
     stopPolling();
+    abortStatusRequest();
     wasSyncingRef.current = false;
     syncKickedRef.current = false;
     lastWsMsgRef.current = 0;
@@ -204,7 +211,7 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
     setJustCompleted(false);
     setSyncStateAccountId(nextAccountId);
     setSyncState(createIdleSyncState());
-  }, [stopPolling]);
+  }, [abortStatusRequest, stopPolling]);
 
   // ── WebSocket message handler ──
   const handleWsMessage = useCallback((msg: WsNotificationMessage) => {
@@ -213,6 +220,7 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
     if (msg.type === 'sync_progress') {
       const sp = msg as SyncProgressMessage;
       if (sp.accountId !== accountId) return;
+      abortStatusRequest();
 
       const phaseMap: Record<string, SyncPhase> = {
         queued: SyncPhase.Queued,
@@ -292,7 +300,7 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
     if (msg.type === 'backfill_complete' || msg.type === 'history_recon_complete' || msg.type === 'rivals_complete') {
       lastWsMsgRef.current = Date.now();
     }
-  }, [accountId, stopPolling]);
+  }, [abortStatusRequest, accountId, stopPolling]);
 
   useEffect(() => {
     if (!useWebSocket) return;
@@ -361,8 +369,11 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
       return;
     }
 
+    abortStatusRequest();
+    const controller = new AbortController();
+    statusRequestRef.current = controller;
     try {
-      const res: SyncStatusResponse = await api.getSyncStatus(requestedAccountId);
+      const res: SyncStatusResponse = await api.getSyncStatus(requestedAccountId, { signal: controller.signal });
       const isSyncing = isSyncingStatus(res);
 
       if (isSyncing) {
@@ -394,14 +405,17 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
         pollRef.current = setTimeout(checkStatus, isSyncing ? SYNC_POLL_ACTIVE_MS : SYNC_POLL_IDLE_MS);
       }
     } catch {
+      if (controller.signal.aborted) return;
       // On error, retry after a longer delay
       if (!document.hidden && mountedRef.current && desiredAccountRef.current === requestedAccountId) {
         stopPolling();
         pollRef.current = setTimeout(checkStatus, SYNC_POLL_IDLE_MS);
       }
       /* v8 ignore stop */
+    } finally {
+      if (statusRequestRef.current === controller) statusRequestRef.current = null;
     }
-  }, [accountId, stopPolling, useWebSocket, wsConnected]);
+  }, [abortStatusRequest, accountId, stopPolling, useWebSocket, wsConnected]);
 
   useEffect(() => {
     checkStatusRef.current = checkStatus;
@@ -424,9 +438,12 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
 
       // Fast read first: completed/tracked profiles should not flash a queued card.
       if (track) {
+        abortStatusRequest();
+        const preflightController = new AbortController();
+        statusRequestRef.current = preflightController;
         try {
-          preflightStatus = await api.getSyncStatus(requestedAccountId);
-          if (!mountedRef.current || desiredAccountRef.current !== requestedAccountId) return;
+          preflightStatus = await api.getSyncStatus(requestedAccountId, { signal: preflightController.signal });
+          if (preflightController.signal.aborted || !mountedRef.current || desiredAccountRef.current !== requestedAccountId) return;
 
           preflightPhase = getSyncPhaseFromStatus(preflightStatus);
           preflightWasSyncing = isSyncingStatus(preflightStatus);
@@ -456,7 +473,10 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
             }));
           }
         } catch {
+          if (preflightController.signal.aborted) return;
           preflightStatus = null;
+        } finally {
+          if (statusRequestRef.current === preflightController) statusRequestRef.current = null;
         }
 
         try {
@@ -529,6 +549,7 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
       /* v8 ignore start */
       if (document.hidden) {
         stopPolling();
+        abortStatusRequest();
       } else {
         // Check immediately on return (this schedules the next poll if needed)
         void checkStatus();
@@ -542,9 +563,10 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
     return () => {
       mountedRef.current = false;
       stopPolling();
+      abortStatusRequest();
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [accountId, track, checkStatus, stopPolling]);
+  }, [abortStatusRequest, accountId, track, checkStatus, stopPolling]);
 
   // Clear justCompleted after consumer reads it
   const clearCompleted = useCallback(() => setJustCompleted(false), []);

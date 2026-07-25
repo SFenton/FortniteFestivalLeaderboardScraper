@@ -12,6 +12,7 @@ import type { AppliedBandComboFilter } from '../../../src/types/bandFilter';
 import type { SelectedBandProfile } from '../../../src/hooks/data/useSelectedProfile';
 import { usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
 import { useBandPageSelect } from '../../../src/contexts/FabSearchContext';
+import { expectCancellableCall, expectNoCancellableCall } from '../../helpers/requestAssertions';
 
 const mockApi = vi.hoisted(() => ({
   getSongs: vi.fn(),
@@ -377,7 +378,7 @@ describe('BandPage', () => {
     await advancePastSpinner();
 
     expect(screen.getByTestId('current-location')).toHaveTextContent('/statistics');
-    expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'p1:p2');
+    expectCancellableCall(mockApi.getBandRanking, 'Band_Duets', 'p1:p2');
     expect(mockApi.getPlayerBandsByType).not.toHaveBeenCalled();
     expect(mockApi.getBandDetail).not.toHaveBeenCalled();
     expect(await screen.findByText('Player One + Player Two')).toBeTruthy();
@@ -396,7 +397,7 @@ describe('BandPage', () => {
     expect(screen.getByTestId('test-header-portal').childElementCount).toBe(0);
     expect(screen.getByTestId('test-quick-links-portal').childElementCount).toBe(0);
     expect(screen.getByTestId('current-location')).toHaveTextContent('/statistics');
-    expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'p1:p2');
+    expectCancellableCall(mockApi.getBandRanking, 'Band_Duets', 'p1:p2');
     expect(screen.getByTestId('band-section-statistics')).toHaveTextContent('2 / 10');
   });
 
@@ -409,7 +410,7 @@ describe('BandPage', () => {
 
     expect(screen.getByTestId('test-header-portal').childElementCount).toBe(0);
     expect(screen.queryByTestId('band-header-filter-instruments')).toBeNull();
-    expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'p1:p2', 'Solo_Guitar+Solo_Bass');
+    expectCancellableCall(mockApi.getBandRanking, 'Band_Duets', 'p1:p2', 'Solo_Guitar+Solo_Bass');
     expect(screen.queryByRole('heading', { level: 1, name: 'Player One + Player Two' })).toBeNull();
   });
 
@@ -529,7 +530,7 @@ describe('BandPage', () => {
     const { container } = renderBandPage('/bands/band-guid-1');
     await advancePastSpinner();
 
-    expect(mockApi.getBandDetail).toHaveBeenCalledWith('band-guid-1');
+    expectCancellableCall(mockApi.getBandDetail, 'band-guid-1');
     expect(await screen.findByText('Player One + Player Two')).toBeTruthy();
     expect(screen.getByText('Band Summary')).toBeTruthy();
     expect(screen.getByText('Band Statistics')).toBeTruthy();
@@ -537,8 +538,8 @@ describe('BandPage', () => {
     expect(screen.getByText('Five Best Songs')).toBeTruthy();
     expect(screen.getByText('Five Worst Songs')).toBeTruthy();
     expect(screen.getAllByText('#7').length).toBeGreaterThan(0);
-    expect(mockApi.getBandRankHistory).toHaveBeenCalledWith('Band_Duets', 'p1:p2', 30, undefined);
-    expect(mockApi.getBandSongs).toHaveBeenCalledWith('Band_Duets', 'p1:p2', 5, undefined);
+    expectCancellableCall(mockApi.getBandRankHistory, 'Band_Duets', 'p1:p2', 30, undefined);
+    expectCancellableCall(mockApi.getBandSongs, 'Band_Duets', 'p1:p2', 5, undefined);
 
     expect(Array.from(container.querySelectorAll('h2')).map(heading => heading.textContent)).toEqual([
       'Members',
@@ -822,7 +823,7 @@ describe('BandPage', () => {
 
     expect(screen.getByText('Friendly One + Friendly Two')).toBeTruthy();
     expect(container.querySelector('[style*="visibility: hidden"]')).toBeTruthy();
-    expect(mockApi.getBandDetail).toHaveBeenCalledWith('band-guid-1');
+    expectCancellableCall(mockApi.getBandDetail, 'band-guid-1');
     expect(screen.queryByText('Band Summary')).toBeNull();
   });
 
@@ -848,8 +849,8 @@ describe('BandPage', () => {
     renderBandPage('/bands?accountId=p1&bandType=Band_Duets&teamKey=p1%3Ap2&names=Player%20One%20%2B%20Player%20Two');
     await advancePastSpinner();
 
-    expect(mockApi.getPlayerBandsByType).toHaveBeenCalledWith('p1', 'Band_Duets');
-    expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'p1:p2');
+    expectCancellableCall(mockApi.getPlayerBandsByType, 'p1', 'Band_Duets');
+    expectCancellableCall(mockApi.getBandRanking, 'Band_Duets', 'p1:p2');
     expect(mockApi.getBandDetail).not.toHaveBeenCalled();
     expect(await screen.findByText('Player One + Player Two')).toBeTruthy();
     expect(screen.getByTestId('current-location')).toHaveTextContent('/bands/band-guid-1?accountId=p1&bandType=Band_Duets&teamKey=p1%3Ap2&names=Player%20One%20%2B%20Player%20Two');
@@ -859,7 +860,7 @@ describe('BandPage', () => {
     renderBandPage('/bands/band-guid-1?bandType=Band_Duets&teamKey=p1%3Ap2&names=Player%20One%20%2B%20Player%20Two');
     await advancePastSpinner();
 
-    expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'p1:p2');
+    expectCancellableCall(mockApi.getBandRanking, 'Band_Duets', 'p1:p2');
     expect(mockApi.getPlayerBandsByType).not.toHaveBeenCalled();
     expect(mockApi.getBandDetail).not.toHaveBeenCalled();
     expect(await screen.findByText('Player One + Player Two')).toBeTruthy();
@@ -929,10 +930,10 @@ describe('BandPage', () => {
     );
     await advancePastSpinner();
 
-    expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'p3:p4');
-    expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'p3:p4', DUET_COMBO_FILTER.comboId);
-    expect(mockApi.getBandRankHistory).toHaveBeenCalledWith('Band_Duets', 'p3:p4', 30, DUET_COMBO_FILTER.comboId);
-    expect(mockApi.getBandSongs).toHaveBeenCalledWith('Band_Duets', 'p3:p4', 5, DUET_COMBO_FILTER.comboId);
+    expectCancellableCall(mockApi.getBandRanking, 'Band_Duets', 'p3:p4');
+    expectCancellableCall(mockApi.getBandRanking, 'Band_Duets', 'p3:p4', DUET_COMBO_FILTER.comboId);
+    expectCancellableCall(mockApi.getBandRankHistory, 'Band_Duets', 'p3:p4', 30, DUET_COMBO_FILTER.comboId);
+    expectCancellableCall(mockApi.getBandSongs, 'Band_Duets', 'p3:p4', 5, DUET_COMBO_FILTER.comboId);
 
     const statisticsSection = screen.getByTestId('band-section-statistics');
     expect(statisticsSection).toHaveTextContent('4 / 10');
@@ -989,10 +990,10 @@ describe('BandPage', () => {
     );
     await advancePastSpinner();
 
-    expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Quad', 'q1:q2:q3:q4');
-    expect(mockApi.getBandRanking).not.toHaveBeenCalledWith('Band_Quad', 'q1:q2:q3:q4', DUET_COMBO_FILTER.comboId);
-    expect(mockApi.getBandRankHistory).toHaveBeenCalledWith('Band_Quad', 'q1:q2:q3:q4', 30, undefined);
-    expect(mockApi.getBandSongs).toHaveBeenCalledWith('Band_Quad', 'q1:q2:q3:q4', 5, undefined);
+    expectCancellableCall(mockApi.getBandRanking, 'Band_Quad', 'q1:q2:q3:q4');
+    expectNoCancellableCall(mockApi.getBandRanking, 'Band_Quad', 'q1:q2:q3:q4', DUET_COMBO_FILTER.comboId);
+    expectCancellableCall(mockApi.getBandRankHistory, 'Band_Quad', 'q1:q2:q3:q4', 30, undefined);
+    expectCancellableCall(mockApi.getBandSongs, 'Band_Quad', 'q1:q2:q3:q4', 5, undefined);
     expect(screen.queryByTestId('band-header-filter-instruments')).toBeNull();
   });
 
@@ -1002,7 +1003,7 @@ describe('BandPage', () => {
     await advancePastSpinner();
 
     const cached = queryClient.getQueryData<BandDetailResponse>(queryKeys.bandDetail('band-guid-1'));
-    expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'p1:p2');
+    expectCancellableCall(mockApi.getBandRanking, 'Band_Duets', 'p1:p2');
     expect(mockApi.getBandDetail).not.toHaveBeenCalled();
     expect(cached?.band.bandId).toBe('band-guid-1');
     expect(cached?.ranking?.bandId).toBe('band-guid-1');
@@ -1060,7 +1061,7 @@ describe('BandPage', () => {
     renderBandPage('/bands/band-guid-missing?bandType=Band_Duets&teamKey=missing-a%3Amissing-b&names=Missing%20Band');
     await advancePastSpinner();
 
-    expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'missing-a:missing-b');
+    expectCancellableCall(mockApi.getBandRanking, 'Band_Duets', 'missing-a:missing-b');
     expect(mockApi.getBandDetail).not.toHaveBeenCalled();
     expect(await screen.findByText('Band not found')).toBeTruthy();
     expect(screen.getByText('Team not found')).toBeTruthy();

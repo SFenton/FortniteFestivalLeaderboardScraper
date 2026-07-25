@@ -47,7 +47,7 @@ export function useBandRankHistory(
 ) {
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.bandRankHistory(bandType ?? '', teamKey ?? '', days, comboId),
-    queryFn: () => api.getBandRankHistory(bandType!, teamKey!, days, comboId),
+    queryFn: ({ signal }) => api.getBandRankHistory(bandType!, teamKey!, days, comboId, { signal }),
     enabled: !!bandType && !!teamKey,
     staleTime: 5 * 60 * 1000,
     refetchInterval: query => query.state.data?.historyStatus === 'catching_up' ? 30 * 1000 : false,

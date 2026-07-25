@@ -49,10 +49,10 @@ export function FestivalProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
   const cachedResponse = useMemo(getCachedSongs, []);
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error } = useQuery<SongsResponse>({
     queryKey: queryKeys.songs(),
-    queryFn: () => api.getSongs(),
-    placeholderData: getCachedSongs,  // instant render from localStorage; always refetches in background
+    queryFn: ({ signal }) => api.getSongs({ signal }),
+    placeholderData: () => getCachedSongs(),  // instant render from localStorage; always refetches in background
     staleTime: 5 * 60 * 1000,        // 5 min — revalidation is cheap (304 via ETag)
   });
 

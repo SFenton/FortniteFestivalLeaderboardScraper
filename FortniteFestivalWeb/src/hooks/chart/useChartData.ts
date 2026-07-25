@@ -30,7 +30,7 @@ export function useChartData(
 ) {
   const { data: fetchedHistory, isLoading } = useQuery({
     queryKey: queryKeys.playerHistory(accountId, songId),
-    queryFn: () => api.getPlayerHistory(accountId, songId).then(r => r.history),
+    queryFn: ({ signal }) => api.getPlayerHistory(accountId, songId, undefined, { signal }).then(r => r.history),
     enabled: !historyProp && !!accountId && !!songId,
     staleTime: 5 * 60 * 1000,
   });

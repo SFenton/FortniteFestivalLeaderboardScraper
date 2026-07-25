@@ -67,7 +67,7 @@ const SELECTED_BAND_TYPE_HEADER = 'X-FST-Selected-Band-Type';
 const SELECTED_BAND_TEAM_KEY_HEADER = 'X-FST-Selected-Band-Team-Key';
 const EXPORT_TIME_ZONE_HEADER = 'X-FST-Time-Zone';
 
-type ApiRequestOptions = {
+export type ApiRequestOptions = {
   signal?: AbortSignal;
 };
 
@@ -237,14 +237,16 @@ export const api = {
   getFeatures: (options?: ApiRequestOptions): Promise<FeatureFlagsResponse> =>
     get<FeatureFlagsResponse>('/api/features', options),
 
-  getSongs: async (): Promise<SongsResponse> => {
+  getSongs: async (options?: ApiRequestOptions): Promise<SongsResponse> => {
     const cached = loadSongsCache();
     const headers: Record<string, string> = {};
     if (cached?.etag) headers['If-None-Match'] = cached.etag;
 
     // Bypass browser HTTP cache so our ETag check hits the server directly.
     // Without this, the browser's max-age (30 min) silently returns stale data.
-    const res = await fetch(`${BASE}/api/songs`, { headers: withSelectedProfileHeaders(headers), cache: 'no-cache' });
+    const init: RequestInit = { headers: withSelectedProfileHeaders(headers), cache: 'no-cache' };
+    if (options?.signal) init.signal = options.signal;
+    const res = await fetch(`${BASE}/api/songs`, init);
 
     // 304 Not Modified — server confirms our cached data is still current
     if (res.status === 304 && cached) return cached.data;
@@ -263,26 +265,31 @@ export const api = {
     return data;
   },
 
-  getMemberScoreFilter: (params: { hasAccountIds?: string[]; missingAccountIds?: string[]; instruments: InstrumentKey[]; leeway?: number }) => {
+  getMemberScoreFilter: (
+    params: { hasAccountIds?: string[]; missingAccountIds?: string[]; instruments: InstrumentKey[]; leeway?: number },
+    options?: ApiRequestOptions,
+  ) => {
     const query = new URLSearchParams();
     if (params.hasAccountIds?.length) query.set('has', params.hasAccountIds.join(','));
     if (params.missingAccountIds?.length) query.set('missing', params.missingAccountIds.join(','));
     if (params.instruments.length) query.set('instruments', params.instruments.join(','));
     if (params.leeway != null) query.set('leeway', String(params.leeway));
-    return get<MemberScoreFilterResponse>(`/api/songs/member-score-filter?${query.toString()}`);
+    return get<MemberScoreFilterResponse>(`/api/songs/member-score-filter?${query.toString()}`, options);
   },
 
-  getLeaderboard: (songId: string, instrument: InstrumentKey, top = 100, offset = 0, leeway?: number) =>
+  getLeaderboard: (songId: string, instrument: InstrumentKey, top = 100, offset = 0, leeway?: number, options?: ApiRequestOptions) =>
     get<LeaderboardResponse>(
       `/api/leaderboard/${encodeURIComponent(songId)}/${encodeURIComponent(instrument)}?top=${top}&offset=${offset}${leeway != null ? `&leeway=${leeway}` : ''}`,
+      options,
     ),
 
-  getLeaderboardRankOffsets: (songId: string, instrument: InstrumentKey) =>
+  getLeaderboardRankOffsets: (songId: string, instrument: InstrumentKey, options?: ApiRequestOptions) =>
     get<LeaderboardRankOffsetsResponse>(
       `/api/leaderboard-rank-offsets/${encodeURIComponent(songId)}/${encodeURIComponent(instrument)}`,
+      options,
     ),
 
-  getPlayer: (accountId: string, songId?: string, instruments?: string[], leeway?: number) => {
+  getPlayer: (accountId: string, songId?: string, instruments?: string[], leeway?: number, options?: ApiRequestOptions) => {
     const params = new URLSearchParams();
     if (songId) params.set('songId', songId);
     if (instruments?.length) params.set('instruments', instruments.join(','));
@@ -290,12 +297,14 @@ export const api = {
     const qs = params.toString();
     return get<PlayerResponse>(
       `/api/player/${encodeURIComponent(accountId)}${qs ? `?${qs}` : ''}`,
+      options,
     ).then(r => normalizeDisplayName(expandWirePlayerResponse(r as never)));
   },
 
-  searchAccounts: (q: string, limit = 10) =>
+  searchAccounts: (q: string, limit = 10, options?: ApiRequestOptions) =>
     get<AccountSearchResponse>(
       `/api/account/search?q=${encodeURIComponent(q)}&limit=${limit}`,
+      options,
     ),
 
   refreshAccountNames: (accountIds: string[]) =>
@@ -304,11 +313,11 @@ export const api = {
   trackPlayer: (accountId: string) =>
     post<TrackPlayerResponse>(`/api/player/${encodeURIComponent(accountId)}/track`).then(normalizeDisplayName),
 
-  getSyncStatus: (accountId: string) =>
-    get<SyncStatusResponse>(`/api/player/${encodeURIComponent(accountId)}/sync-status`),
+  getSyncStatus: (accountId: string, options?: ApiRequestOptions) =>
+    get<SyncStatusResponse>(`/api/player/${encodeURIComponent(accountId)}/sync-status`, options),
 
-  getBandSyncStatus: (bandType: BandType, teamKey: string) =>
-    get<BandSyncStatusResponse>(`/api/bands/${encodeURIComponent(bandType)}/${encodeURIComponent(teamKey)}/sync-status`),
+  getBandSyncStatus: (bandType: BandType, teamKey: string, options?: ApiRequestOptions) =>
+    get<BandSyncStatusResponse>(`/api/bands/${encodeURIComponent(bandType)}/${encodeURIComponent(teamKey)}/sync-status`, options),
 
   getPlayerNotifications: (accountId: string, limit = 50, options?: ApiRequestOptions) =>
     get<ImprovementNotificationsEnvelope>(`/api/player/${encodeURIComponent(accountId)}/notifications?limit=${limit}`, options),
@@ -330,13 +339,14 @@ export const api = {
     return res.json() as Promise<ServiceInfoResponse>;
   },
 
-  getPlayerHistory: (accountId: string, songId?: string, instrument?: string) => {
+  getPlayerHistory: (accountId: string, songId?: string, instrument?: string, options?: ApiRequestOptions) => {
     const params = new URLSearchParams();
     if (songId) params.set('songId', songId);
     if (instrument) params.set('instrument', instrument);
     const qs = params.toString();
     return get<PlayerHistoryResponse>(
       `/api/player/${encodeURIComponent(accountId)}/history${qs ? `?${qs}` : ''}`,
+      options,
     );
   },
 
@@ -358,22 +368,24 @@ export const api = {
     );
   },
 
-  getAllLeaderboards: (songId: string, top = 10, leeway?: number) =>
+  getAllLeaderboards: (songId: string, top = 10, leeway?: number, options?: ApiRequestOptions) =>
     get<AllLeaderboardsResponse>(
       `/api/leaderboard/${encodeURIComponent(songId)}/all?top=${top}${leeway != null ? `&leeway=${leeway}` : ''}`,
+      options,
     ),
 
-  getSelectedMemberSongScores: (songId: string, accountIds: string[], instruments?: InstrumentKey[], leeway?: number) => {
+  getSelectedMemberSongScores: (songId: string, accountIds: string[], instruments?: InstrumentKey[], leeway?: number, options?: ApiRequestOptions) => {
     const params = new URLSearchParams();
     params.set('accountIds', accountIds.join(','));
     if (instruments?.length) params.set('instruments', instruments.join(','));
     if (leeway != null) params.set('leeway', String(leeway));
     return get<SelectedMemberSongScoresResponse>(
       `/api/leaderboard/${encodeURIComponent(songId)}/members/scores?${params.toString()}`,
+      options,
     );
   },
 
-  getSongBandLeaderboard: (songId: string, bandType: BandType, top = 25, offset = 0, selectedAccountId?: string, selectedTeamKey?: string, comboId?: string) => {
+  getSongBandLeaderboard: (songId: string, bandType: BandType, top = 25, offset = 0, selectedAccountId?: string, selectedTeamKey?: string, comboId?: string, options?: ApiRequestOptions) => {
     const params = new URLSearchParams();
     params.set('top', String(top));
     params.set('offset', String(offset));
@@ -382,10 +394,11 @@ export const api = {
     if (comboId) params.set('combo', comboId);
     return get<SongBandLeaderboardResponse>(
       `/api/leaderboard/${encodeURIComponent(songId)}/bands/${encodeURIComponent(bandType)}?${params.toString()}`,
+      options,
     );
   },
 
-  getAllSongBandLeaderboards: (songId: string, top = 10, selectedAccountId?: string, selectedBandType?: BandType, selectedTeamKey?: string, comboId?: string) => {
+  getAllSongBandLeaderboards: (songId: string, top = 10, selectedAccountId?: string, selectedBandType?: BandType, selectedTeamKey?: string, comboId?: string, options?: ApiRequestOptions) => {
     const params = new URLSearchParams();
     params.set('top', String(top));
     if (selectedAccountId) params.set('accountId', selectedAccountId);
@@ -394,19 +407,21 @@ export const api = {
     if (comboId) params.set('combo', comboId);
     return get<AllSongBandLeaderboardsResponse>(
       `/api/leaderboard/${encodeURIComponent(songId)}/bands/all?${params.toString()}`,
+      options,
     );
   },
 
-  getPlayerStats: (accountId: string) =>
-    get<PlayerStatsResponse>(`/api/player/${encodeURIComponent(accountId)}/stats`)
+  getPlayerStats: (accountId: string, options?: ApiRequestOptions) =>
+    get<PlayerStatsResponse>(`/api/player/${encodeURIComponent(accountId)}/stats`, options)
       .then(r => expandWireStatsResponse(r as never)),
 
-  getPlayerBandsByType: (accountId: string, bandType: BandType, comboId?: string) => {
+  getPlayerBandsByType: (accountId: string, bandType: BandType, comboId?: string, options?: ApiRequestOptions) => {
     const params = new URLSearchParams();
     if (comboId) params.set('combo', comboId);
     const qs = params.toString();
     return get<PlayerBandTypeResponse>(
       `/api/player/${encodeURIComponent(accountId)}/bands/${encodeURIComponent(bandType)}${qs ? `?${qs}` : ''}`,
+      options,
     );
   },
 
@@ -421,10 +436,13 @@ export const api = {
     );
   },
 
-  getBandDetail: (bandId: string) =>
-    get<BandDetailResponse>(`/api/bands/${encodeURIComponent(bandId)}`),
+  getBandDetail: (bandId: string, options?: ApiRequestOptions) =>
+    get<BandDetailResponse>(`/api/bands/${encodeURIComponent(bandId)}`, options),
 
-  searchBands: (params: { q?: string; accountIds?: string[]; bandType?: BandType; combo?: string; rankBy?: BandSearchRankBy; page?: number; pageSize?: number }) => {
+  searchBands: (
+    params: { q?: string; accountIds?: string[]; bandType?: BandType; combo?: string; rankBy?: BandSearchRankBy; page?: number; pageSize?: number },
+    options?: ApiRequestOptions,
+  ) => {
     const query = new URLSearchParams();
     if (params.q) query.set('q', params.q);
     if (params.accountIds?.length) query.set('accountIds', params.accountIds.join(','));
@@ -434,20 +452,28 @@ export const api = {
     if (params.page != null) query.set('page', String(params.page));
     if (params.pageSize != null) query.set('pageSize', String(params.pageSize));
     const qs = query.toString();
-    return get<BandSearchResponse>(`/api/bands/search${qs ? `?${qs}` : ''}`);
+    return get<BandSearchResponse>(`/api/bands/search${qs ? `?${qs}` : ''}`, options);
   },
 
-  getVersion: () => get<{ version: string }>('/api/version'),
+  getVersion: (options?: ApiRequestOptions) => get<{ version: string }>('/api/version', options),
 
-  getRivalsOverview: (accountId: string) =>
-    get<RivalsOverviewResponse>(`/api/player/${encodeURIComponent(accountId)}/rivals`),
+  getRivalsOverview: (accountId: string, options?: ApiRequestOptions) =>
+    get<RivalsOverviewResponse>(`/api/player/${encodeURIComponent(accountId)}/rivals`, options),
 
-  getRivalsList: (accountId: string, combo: string) =>
+  getRivalsList: (accountId: string, combo: string, options?: ApiRequestOptions) =>
     get<RivalsListResponse>(
       `/api/player/${encodeURIComponent(accountId)}/rivals/${encodeURIComponent(combo)}`,
+      options,
     ),
 
-  getRivalDetail: (accountId: string, combo: string, rivalId: string, sort = 'closest', options?: { allowLiveFallback?: boolean; includeGaps?: boolean }) => {
+  getRivalDetail: (
+    accountId: string,
+    combo: string,
+    rivalId: string,
+    sort = 'closest',
+    options?: { allowLiveFallback?: boolean; includeGaps?: boolean },
+    requestOptions?: ApiRequestOptions,
+  ) => {
     const params = new URLSearchParams();
     params.set('limit', '0');
     params.set('sort', sort);
@@ -455,69 +481,80 @@ export const api = {
     if (options?.includeGaps) params.set('includeGaps', 'true');
     return get<RivalDetailResponse>(
       `/api/player/${encodeURIComponent(accountId)}/rivals/${encodeURIComponent(combo)}/${encodeURIComponent(rivalId)}?${params.toString()}`,
+      requestOptions,
     );
   },
 
   // ─── Rankings ──────────────────────────────────────────────────
 
-  getRankings: (instrument: InstrumentKey, rankBy: RankingMetric = 'totalscore', page = 1, pageSize = 10) =>
+  getRankings: (instrument: InstrumentKey, rankBy: RankingMetric = 'totalscore', page = 1, pageSize = 10, options?: ApiRequestOptions) =>
     get<RankingsPageResponse>(
       `/api/rankings/${encodeURIComponent(instrument)}?rankBy=${encodeURIComponent(rankBy)}&page=${page}&pageSize=${pageSize}`,
+      options,
     ),
 
-  getPlayerRanking: (instrument: InstrumentKey, accountId: string, rankBy?: string) => {
+  getPlayerRanking: (instrument: InstrumentKey, accountId: string, rankBy?: string, options?: ApiRequestOptions) => {
     const params = rankBy ? `rankBy=${encodeURIComponent(rankBy)}` : '';
     return get<AccountRankingDto>(
       `/api/rankings/${encodeURIComponent(instrument)}/${encodeURIComponent(accountId)}${params ? `?${params}` : ''}`,
+      options,
     );
   },
 
-  getSelectedMemberRankings: (accountIds: string[], instruments: InstrumentKey[], rankBy: RankingMetric = 'totalscore') => {
+  getSelectedMemberRankings: (accountIds: string[], instruments: InstrumentKey[], rankBy: RankingMetric = 'totalscore', options?: ApiRequestOptions) => {
     const params = new URLSearchParams();
     params.set('accountIds', accountIds.join(','));
     params.set('instruments', instruments.join(','));
     params.set('rankBy', rankBy);
     return get<SelectedMemberRankingsResponse>(
       `/api/rankings/selected-members?${params.toString()}`,
+      options,
     );
   },
 
-  getCompositeRankings: (page = 1, pageSize = 10) =>
+  getCompositeRankings: (page = 1, pageSize = 10, options?: ApiRequestOptions) =>
     get<CompositePageResponse>(
       `/api/rankings/composite?page=${page}&pageSize=${pageSize}`,
+      options,
     ),
 
-  getPlayerCompositeRanking: (accountId: string) =>
+  getPlayerCompositeRanking: (accountId: string, options?: ApiRequestOptions) =>
     get<CompositeRankingDto>(
       `/api/rankings/composite/${encodeURIComponent(accountId)}`,
+      options,
     ),
 
-  getSoloFamilyRankings: (scopeId: SoloFamilyScopeId, rankBy: RankingMetric = 'totalscore', page = 1, pageSize = 10) =>
+  getSoloFamilyRankings: (scopeId: SoloFamilyScopeId, rankBy: RankingMetric = 'totalscore', page = 1, pageSize = 10, options?: ApiRequestOptions) =>
     get<SoloFamilyPageResponse>(
       `/api/rankings/family/${encodeURIComponent(scopeId)}?rankBy=${encodeURIComponent(rankBy)}&page=${page}&pageSize=${pageSize}`,
+      options,
     ),
 
-  getPlayerSoloFamilyRanking: (accountId: string, scopeId: SoloFamilyScopeId, rankBy: RankingMetric = 'totalscore') =>
+  getPlayerSoloFamilyRanking: (accountId: string, scopeId: SoloFamilyScopeId, rankBy: RankingMetric = 'totalscore', options?: ApiRequestOptions) =>
     get<SoloFamilyRankingDto>(
       `/api/rankings/family/${encodeURIComponent(scopeId)}/${encodeURIComponent(accountId)}?rankBy=${encodeURIComponent(rankBy)}`,
+      options,
     ),
 
-  getComboRankings: (comboId: string, rankBy: RankingMetric = 'adjusted', page = 1, pageSize = 10) =>
+  getComboRankings: (comboId: string, rankBy: RankingMetric = 'adjusted', page = 1, pageSize = 10, options?: ApiRequestOptions) =>
     get<ComboPageResponse>(
       `/api/rankings/combo?combo=${encodeURIComponent(comboId)}&rankBy=${encodeURIComponent(rankBy)}&page=${page}&pageSize=${pageSize}`,
+      options,
     ),
 
-  getPlayerComboRanking: (accountId: string, comboId: string, rankBy: RankingMetric = 'adjusted') =>
+  getPlayerComboRanking: (accountId: string, comboId: string, rankBy: RankingMetric = 'adjusted', options?: ApiRequestOptions) =>
     get<{ comboId: string; rankBy: string; totalAccounts: number } & ComboRankingEntry>(
       `/api/rankings/combo/${encodeURIComponent(accountId)}?combo=${encodeURIComponent(comboId)}&rankBy=${encodeURIComponent(rankBy)}`,
+      options,
     ),
 
-  getBandRankingCombos: (bandType: BandType) =>
+  getBandRankingCombos: (bandType: BandType, options?: ApiRequestOptions) =>
     get<BandComboCatalogResponse>(
       `/api/rankings/bands/${encodeURIComponent(bandType)}/combos`,
+      options,
     ),
 
-  getBandRankings: (bandType: BandType, comboId?: string, rankBy: BandRankingMetric = 'adjusted', page = 1, pageSize = 10, selectedAccountId?: string, selectedTeamKey?: string) => {
+  getBandRankings: (bandType: BandType, comboId?: string, rankBy: BandRankingMetric = 'adjusted', page = 1, pageSize = 10, selectedAccountId?: string, selectedTeamKey?: string, options?: ApiRequestOptions) => {
     const params = new URLSearchParams();
     params.set('rankBy', rankBy);
     params.set('page', String(page));
@@ -527,87 +564,99 @@ export const api = {
     if (selectedTeamKey) params.set('teamKey', selectedTeamKey);
     return get<BandRankingsPageResponse>(
       `/api/rankings/bands/${encodeURIComponent(bandType)}?${params.toString()}`,
+      options,
     );
   },
 
-  getBandRanking: (bandType: BandType, teamKey: string, comboId?: string, rankBy: BandRankingMetric = 'adjusted') => {
+  getBandRanking: (bandType: BandType, teamKey: string, comboId?: string, rankBy: BandRankingMetric = 'adjusted', options?: ApiRequestOptions) => {
     const params = new URLSearchParams();
     params.set('rankBy', rankBy);
     if (comboId) params.set('combo', comboId);
     const qs = params.toString();
     return get<BandRankingDto>(
       `/api/rankings/bands/${encodeURIComponent(bandType)}/${encodeURIComponent(teamKey)}${qs ? `?${qs}` : ''}`,
+      options,
     );
   },
 
-  getBandRankHistory: (bandType: BandType, teamKey: string, days?: number, comboId?: string) => {
+  getBandRankHistory: (bandType: BandType, teamKey: string, days?: number, comboId?: string, options?: ApiRequestOptions) => {
     const params = new URLSearchParams();
     if (days != null) params.set('days', String(days));
     if (comboId) params.set('combo', comboId);
     const qs = params.toString();
     return get<BandRankHistoryResponse>(
       `/api/rankings/bands/${encodeURIComponent(bandType)}/${encodeURIComponent(teamKey)}/history${qs ? `?${qs}` : ''}`,
+      options,
     );
   },
 
-  getBandSongs: (bandType: BandType, teamKey: string, limit = 5, comboId?: string) => {
+  getBandSongs: (bandType: BandType, teamKey: string, limit = 5, comboId?: string, options?: ApiRequestOptions) => {
     const params = new URLSearchParams();
     params.set('limit', String(limit));
     if (comboId) params.set('combo', comboId);
     return get<BandSongsResponse>(
       `/api/rankings/bands/${encodeURIComponent(bandType)}/${encodeURIComponent(teamKey)}/songs?${params.toString()}`,
+      options,
     );
   },
 
-  getBandSongRows: (bandType: BandType, teamKey: string, comboId?: string) => {
+  getBandSongRows: (bandType: BandType, teamKey: string, comboId?: string, options?: ApiRequestOptions) => {
     const params = new URLSearchParams();
     if (comboId) params.set('combo', comboId);
     const qs = params.toString();
     return get<BandSongRowsResponse>(
       `/api/rankings/bands/${encodeURIComponent(bandType)}/${encodeURIComponent(teamKey)}/song-rows${qs ? `?${qs}` : ''}`,
+      options,
     );
   },
 
-  getLeaderboardNeighborhood: (instrument: InstrumentKey, accountId: string, radius = 5) =>
+  getLeaderboardNeighborhood: (instrument: InstrumentKey, accountId: string, radius = 5, options?: ApiRequestOptions) =>
     get<LeaderboardNeighborhoodResponse>(
       `/api/rankings/${encodeURIComponent(instrument)}/${encodeURIComponent(accountId)}/neighborhood?radius=${radius}`,
+      options,
     ),
 
-  getCompositeNeighborhood: (accountId: string, radius = 5) =>
+  getCompositeNeighborhood: (accountId: string, radius = 5, options?: ApiRequestOptions) =>
     get<CompositeNeighborhoodResponse>(
       `/api/rankings/composite/${encodeURIComponent(accountId)}/neighborhood?radius=${radius}`,
+      options,
     ),
 
-  getLeaderboardRivals: (instrument: InstrumentKey, accountId: string, rankBy: RankingMetric = 'totalscore') =>
+  getLeaderboardRivals: (instrument: InstrumentKey, accountId: string, rankBy: RankingMetric = 'totalscore', options?: ApiRequestOptions) =>
     get<LeaderboardRivalsListResponse>(
       `/api/player/${encodeURIComponent(accountId)}/leaderboard-rivals/${encodeURIComponent(instrument)}?rankBy=${encodeURIComponent(rankBy)}`,
+      options,
     ),
 
-  getLeaderboardRivalDetail: (instrument: InstrumentKey, accountId: string, rivalId: string, rankBy: RankingMetric = 'totalscore', sort = 'closest') =>
+  getLeaderboardRivalDetail: (instrument: InstrumentKey, accountId: string, rivalId: string, rankBy: RankingMetric = 'totalscore', sort = 'closest', options?: ApiRequestOptions) =>
     get<RivalDetailResponse>(
       `/api/player/${encodeURIComponent(accountId)}/leaderboard-rivals/${encodeURIComponent(instrument)}/${encodeURIComponent(rivalId)}?rankBy=${encodeURIComponent(rankBy)}&sort=${encodeURIComponent(sort)}`,
+      options,
     ),
 
-  getRivalSuggestions: (accountId: string, combo?: string, limit = 5) => {
+  getRivalSuggestions: (accountId: string, combo?: string, limit = 5, options?: ApiRequestOptions) => {
     const params = new URLSearchParams();
     if (combo) params.set('combo', combo);
     params.set('limit', String(limit));
     return get<RivalSuggestionsResponse>(
       `/api/player/${encodeURIComponent(accountId)}/rivals/suggestions?${params}`,
+      options,
     );
   },
 
-  getRivalsAll: (accountId: string) =>
+  getRivalsAll: (accountId: string, options?: ApiRequestOptions) =>
     get<RivalsAllResponse>(
       `/api/player/${encodeURIComponent(accountId)}/rivals/all`,
+      options,
     ),
 
-  getRankHistory: (instrument: InstrumentKey, accountId: string, days?: number) => {
+  getRankHistory: (instrument: InstrumentKey, accountId: string, days?: number, options?: ApiRequestOptions) => {
     const params = new URLSearchParams();
     if (days != null) params.set('days', String(days));
     const qs = params.toString();
     return get<RankHistoryResponse>(
       `/api/rankings/${encodeURIComponent(instrument)}/${encodeURIComponent(accountId)}/history${qs ? `?${qs}` : ''}`,
+      options,
     );
   },
 };

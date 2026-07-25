@@ -541,15 +541,17 @@ export default function SettingsPage() {
 
   /* v8 ignore start — version fetch + settings callbacks */
   useEffect(() => {
-    let cancelled = false;
-    api.getVersion()
-      .then(data => { if (!cancelled) setServiceVersion(data.version); })
+    const controller = new AbortController();
+    api.getVersion({ signal: controller.signal })
+      .then(data => {
+        if (!controller.signal.aborted) setServiceVersion(data.version);
+      })
       .catch(() => { /* service unreachable */ });
-    return () => { cancelled = true; };
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     if (!selectedProfile) {
@@ -566,22 +568,22 @@ export default function SettingsPage() {
     const loadSelectedProfileSyncStatus = async () => {
       try {
         if (selectedPlayerAccountId) {
-          const data = await api.getSyncStatus(selectedPlayerAccountId);
-          if (cancelled) return;
+          const data = await api.getSyncStatus(selectedPlayerAccountId, { signal: controller.signal });
+          if (controller.signal.aborted) return;
           setTrackedPlayerSyncStatus(data);
           setSelectedBandSyncStatus(null);
         } else if (selectedBandType && selectedBandTeamKey) {
-          const data = await api.getBandSyncStatus(selectedBandType, selectedBandTeamKey);
-          if (cancelled) return;
+          const data = await api.getBandSyncStatus(selectedBandType, selectedBandTeamKey, { signal: controller.signal });
+          if (controller.signal.aborted) return;
           setSelectedBandSyncStatus(data);
           setTrackedPlayerSyncStatus(null);
         }
-        if (cancelled) return;
+        if (controller.signal.aborted) return;
         setSelectedProfileSyncLoadFailed(false);
       } catch {
-        if (!cancelled) setSelectedProfileSyncLoadFailed(true);
+        if (!controller.signal.aborted) setSelectedProfileSyncLoadFailed(true);
       } finally {
-        if (!cancelled) {
+        if (!controller.signal.aborted) {
           timer = setTimeout(loadSelectedProfileSyncStatus, PROFILE_SYNC_STATUS_POLL_MS);
         }
       }
@@ -590,7 +592,7 @@ export default function SettingsPage() {
     void loadSelectedProfileSyncStatus();
 
     return () => {
-      cancelled = true;
+      controller.abort();
       if (timer) clearTimeout(timer);
     };
   }, [selectedBandTeamKey, selectedBandType, selectedPlayerAccountId, selectedProfile]);

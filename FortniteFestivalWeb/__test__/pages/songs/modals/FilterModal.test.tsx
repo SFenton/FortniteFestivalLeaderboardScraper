@@ -8,6 +8,7 @@ import { TRANSITION_MS } from '@festival/theme';
 import { TestProviders } from '../../../helpers/TestProviders';
 import type { SelectedBandProfile } from '../../../../src/hooks/data/useSelectedProfile';
 import type { BandInstrumentFilterAssignment } from '../../../../src/types/bandFilter';
+import { expectCancellableCall } from '../../../helpers/requestAssertions';
 
 const apiMock = vi.hoisted(() => ({
   getBandDetail: vi.fn(),
@@ -297,7 +298,7 @@ describe('FilterModal', () => {
     const selectedBandScores = screen.getByText('Selected Band Scores');
     expect(firstSlot.compareDocumentPosition(selectedBandScores) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByText('Instrument #2')).toBeDefined();
-    expect(apiMock.getBandDetail).toHaveBeenCalledWith('band-duo');
+    expectCancellableCall(apiMock.getBandDetail, 'band-duo');
   });
 
   it('applies a valid embedded combo through the Songs filter modal Apply button', async () => {

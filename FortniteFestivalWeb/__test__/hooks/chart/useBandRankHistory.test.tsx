@@ -3,6 +3,7 @@ import { renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useBandRankHistory } from '../../../src/hooks/chart/useBandRankHistory';
+import { expectCancellableCall } from '../../helpers/requestAssertions';
 
 const { getBandRankHistory } = vi.hoisted(() => ({
   getBandRankHistory: vi.fn().mockResolvedValue({
@@ -59,7 +60,7 @@ describe('useBandRankHistory', () => {
       expect(result.current.chartData.length).toBeGreaterThan(0);
     });
 
-    expect(getBandRankHistory).toHaveBeenCalledWith('Band_Duets', 'p1:p2', 30, undefined);
+    expectCancellableCall(getBandRankHistory, 'Band_Duets', 'p1:p2', 30, undefined);
     expect(result.current.historyStatus).toBe('catching_up');
     expect(result.current.historyComputedThrough).toBe('2026-04-22');
     expect(result.current.historyJobUpdatedAt).toBe('2026-04-23T12:00:00.000Z');

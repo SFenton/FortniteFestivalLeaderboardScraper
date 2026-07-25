@@ -1,5 +1,5 @@
 import type { RivalDetailResponse, RivalSongComparison } from '@festival/core/api/serverTypes';
-import { api } from '../../../api/client';
+import { api, type ApiRequestOptions } from '../../../api/client';
 
 export async function fetchCombinedRivalDetail(
   accountId: string,
@@ -7,13 +7,14 @@ export async function fetchCombinedRivalDetail(
   scopes: readonly string[],
   sort?: string,
   options?: { allowLiveFallback?: boolean; includeGaps?: boolean },
+  requestOptions?: ApiRequestOptions,
 ): Promise<RivalDetailResponse> {
   const uniqueScopes = [...new Set(scopes.filter(Boolean))];
   if (uniqueScopes.length === 0) throw new Error('No rival scopes resolved.');
-  if (uniqueScopes.length === 1) return fetchRivalDetail(accountId, uniqueScopes[0]!, rivalId, sort, options);
+  if (uniqueScopes.length === 1) return fetchRivalDetail(accountId, uniqueScopes[0]!, rivalId, sort, options, requestOptions);
 
   const results = await Promise.allSettled(
-    uniqueScopes.map(scope => fetchRivalDetail(accountId, scope, rivalId, sort, options)),
+    uniqueScopes.map(scope => fetchRivalDetail(accountId, scope, rivalId, sort, options, requestOptions)),
   );
   const fulfilled = results.filter((result): result is PromiseFulfilledResult<RivalDetailResponse> => result.status === 'fulfilled');
   if (fulfilled.length === 0) {
@@ -34,12 +35,19 @@ export async function fetchCombinedRivalDetail(
   };
 }
 
-function fetchRivalDetail(accountId: string, scope: string, rivalId: string, sort?: string, options?: { allowLiveFallback?: boolean; includeGaps?: boolean }): Promise<RivalDetailResponse> {
-  if (!sort && !options) return api.getRivalDetail(accountId, scope, rivalId);
+function fetchRivalDetail(
+  accountId: string,
+  scope: string,
+  rivalId: string,
+  sort?: string,
+  options?: { allowLiveFallback?: boolean; includeGaps?: boolean },
+  requestOptions?: ApiRequestOptions,
+): Promise<RivalDetailResponse> {
+  if (!sort && !options) return api.getRivalDetail(accountId, scope, rivalId, undefined, undefined, requestOptions);
 
   return sort
-    ? api.getRivalDetail(accountId, scope, rivalId, sort, options)
-    : api.getRivalDetail(accountId, scope, rivalId, undefined, options);
+    ? api.getRivalDetail(accountId, scope, rivalId, sort, options, requestOptions)
+    : api.getRivalDetail(accountId, scope, rivalId, undefined, options, requestOptions);
 }
 
 function dedupeSongs(songs: RivalSongComparison[]): RivalSongComparison[] {

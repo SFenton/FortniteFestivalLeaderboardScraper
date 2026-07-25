@@ -16,6 +16,7 @@ import { TRANSITION_MS } from '@festival/theme';
 import { TestProviders } from '../../../helpers/TestProviders';
 import type { SelectedBandProfile } from '../../../../src/hooks/data/useSelectedProfile';
 import type { BandInstrumentFilterAssignment } from '../../../../src/types/bandFilter';
+import { expectCancellableCall } from '../../../helpers/requestAssertions';
 
 const apiMock = vi.hoisted(() => ({
   getBandDetail: vi.fn(),
@@ -365,7 +366,7 @@ describe('SuggestionsFilterModal', () => {
     expect(await screen.findByText('Instrument #1')).toBeDefined();
     expect(screen.getByText('Instrument #2')).toBeDefined();
     expect(screen.queryByText('Instruments')).toBeNull();
-    expect(apiMock.getBandDetail).toHaveBeenCalledWith('band-duo');
+    expectCancellableCall(apiMock.getBandDetail, 'band-duo');
   });
 
   it('applies a valid embedded combo through the modal Apply button', async () => {

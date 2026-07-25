@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import SearchModal from '../../../src/components/search/SearchModal';
 import { TestProviders } from '../../helpers/TestProviders';
 import { LEGACY_TRACKED_PLAYER_STORAGE_KEY, SELECTED_PROFILE_STORAGE_KEY } from '../../../src/state/selectedProfile';
+import { expectCancellableCall } from '../../helpers/requestAssertions';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async (importOriginal) => {
@@ -280,7 +281,7 @@ describe('SearchModal', () => {
     const playerResult = await screen.findByTestId('search-player-result');
     fireEvent.click(playerResult);
 
-    expect(mockApi.searchAccounts).toHaveBeenCalledWith('pla', 10);
+    expectCancellableCall(mockApi.searchAccounts, 'pla', 10);
     expect(mockApi.searchBands).not.toHaveBeenCalled();
     expect(props.onClose).toHaveBeenCalled();
     expect(onPlayerSelect).toHaveBeenCalledWith({ accountId: 'p1', displayName: 'PlayerOne' });
@@ -491,8 +492,8 @@ describe('SearchModal', () => {
     await advanceAndFlush(SEARCH_SETTLE_MS);
 
     await waitFor(() => {
-      expect(mockApi.searchAccounts).toHaveBeenCalledWith('but', 10);
-      expect(mockApi.searchBands).toHaveBeenCalledWith({ q: 'but', page: 1, pageSize: 10 });
+      expectCancellableCall(mockApi.searchAccounts, 'but', 10);
+      expectCancellableCall(mockApi.searchBands, { q: 'but', page: 1, pageSize: 10 });
       expect(within(screen.getByTestId('search-section-songs')).getByText('Butter Barn Hoedown')).toBeDefined();
     });
 

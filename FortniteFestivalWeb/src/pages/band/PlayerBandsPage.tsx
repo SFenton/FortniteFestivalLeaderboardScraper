@@ -82,7 +82,7 @@ export default function PlayerBandsPage() {
 
   const bandsQuery = useQuery({
     queryKey: queryKeys.playerBandsList(accountId, group, page, PLAYER_BANDS_PAGE_SIZE),
-    queryFn: () => api.getPlayerBandsList(accountId, group, page, PLAYER_BANDS_PAGE_SIZE),
+    queryFn: ({ signal }) => api.getPlayerBandsList(accountId, group, page, PLAYER_BANDS_PAGE_SIZE, { signal }),
     enabled: !!accountId,
     placeholderData: (previous) => previous,
     staleTime: 5 * 60_000,

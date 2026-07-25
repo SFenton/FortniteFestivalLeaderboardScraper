@@ -11,14 +11,31 @@ export const SERVICE_INFO_GC_TIME_MS = 10 * 60_000;
 
 export type ServiceInfoConsumer = 'availability' | 'settings';
 
-async function fetchServiceInfo() {
+export class ServiceInfoTimeoutError extends Error {
+  override name = 'TimeoutError';
+}
+
+async function fetchServiceInfo({ signal }: { signal: AbortSignal }) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), SERVICE_INFO_TIMEOUT_MS);
+  let timedOut = false;
+  const abortFromCaller = () => controller.abort(signal.reason);
+  if (signal.aborted) abortFromCaller();
+  else signal.addEventListener('abort', abortFromCaller, { once: true });
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort(new DOMException('Service info request timed out', 'TimeoutError'));
+  }, SERVICE_INFO_TIMEOUT_MS);
 
   try {
     return await api.getServiceInfo(controller.signal);
+  } catch (error) {
+    if (timedOut && !signal.aborted) {
+      throw new ServiceInfoTimeoutError(`Service info request timed out after ${SERVICE_INFO_TIMEOUT_MS} ms`);
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
+    signal.removeEventListener('abort', abortFromCaller);
   }
 }
 
