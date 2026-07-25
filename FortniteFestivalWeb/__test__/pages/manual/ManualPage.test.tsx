@@ -1,8 +1,18 @@
-import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
+import { act, render, screen, fireEvent, within } from '@testing-library/react';
 import ManualPage, { MANUAL_SECTIONS } from '../../../src/pages/manual/ManualPage';
 import { TestProviders } from '../../helpers/TestProviders';
 import { stubElementDimensions, stubMatchMedia, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
+
+type IntersectionObserverRecord = {
+  callback: IntersectionObserverCallback;
+  observer: IntersectionObserver;
+  options?: IntersectionObserverInit;
+  targets: Set<Element>;
+};
+
+let autoIntersectManualCarousels = true;
+let intersectionObservers: IntersectionObserverRecord[] = [];
 
 beforeAll(() => {
   stubScrollTo();
@@ -21,12 +31,82 @@ beforeAll(() => {
   }
 });
 
+beforeEach(() => {
+  autoIntersectManualCarousels = true;
+  intersectionObservers = [];
+
+  class MockIntersectionObserver {
+    readonly root: Element | Document | null;
+    readonly rootMargin: string;
+    readonly thresholds: readonly number[];
+    private readonly record: IntersectionObserverRecord;
+
+    constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+      this.root = options?.root ?? null;
+      this.rootMargin = options?.rootMargin ?? '0px';
+      this.thresholds = Array.isArray(options?.threshold)
+        ? options.threshold
+        : [options?.threshold ?? 0];
+      this.record = {
+        callback,
+        observer: this as unknown as IntersectionObserver,
+        options,
+        targets: new Set(),
+      };
+      intersectionObservers.push(this.record);
+    }
+
+    observe(target: Element) {
+      this.record.targets.add(target);
+      if (autoIntersectManualCarousels) {
+        this.record.callback([createIntersectionEntry(target, true)], this as unknown as IntersectionObserver);
+      }
+    }
+
+    unobserve(target: Element) {
+      this.record.targets.delete(target);
+    }
+
+    disconnect() {
+      this.record.targets.clear();
+    }
+
+    takeRecords(): IntersectionObserverEntry[] {
+      return [];
+    }
+  }
+
+  vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
+});
+
 function renderManualPage() {
   return render(
     <TestProviders route="/manual">
       <ManualPage />
     </TestProviders>,
   );
+}
+
+function createIntersectionEntry(target: Element, isIntersecting: boolean): IntersectionObserverEntry {
+  const rect = target.getBoundingClientRect();
+  return {
+    boundingClientRect: rect,
+    intersectionRatio: isIntersecting ? 1 : 0,
+    intersectionRect: isIntersecting ? rect : new DOMRectReadOnly(),
+    isIntersecting,
+    rootBounds: null,
+    target,
+    time: performance.now(),
+  };
+}
+
+function intersectCarousel(carouselId: string, isIntersecting = true) {
+  const target = screen.getByTestId(`manual-carousel-${carouselId}`);
+  const record = intersectionObservers.find(observer => observer.targets.has(target));
+  expect(record).toBeDefined();
+  act(() => {
+    record!.callback([createIntersectionEntry(target, isIntersecting)], record!.observer);
+  });
 }
 
 function stubResponsiveMatchMedia({ mobile = false, wide = false }: { mobile?: boolean; wide?: boolean }) {
@@ -90,6 +170,70 @@ describe('ManualPage', () => {
     const carousels = screen.getAllByTestId(/^manual-carousel-/)
       .filter(element => !element.getAttribute('data-testid')?.startsWith('manual-carousel-frame-'));
     expect(carousels).toHaveLength(expectedCarouselCount);
+  });
+
+  it('mounts only visible or near-viewport carousel images and keeps stable placeholders for the rest', () => {
+    autoIntersectManualCarousels = false;
+    stubMatchMedia(false);
+    renderManualPage();
+
+    const firstCarousel = screen.getByTestId('manual-carousel-navigation-overview');
+    const nearCarousel = screen.getByTestId('manual-carousel-navigation-sidebar');
+    const farCarousel = screen.getByTestId('manual-carousel-settings-preferences');
+
+    expect(firstCarousel.getAttribute('data-mounted')).toBe('true');
+    expect(nearCarousel.getAttribute('data-mounted')).toBe('false');
+    expect(farCarousel.getAttribute('data-mounted')).toBe('false');
+    expect(document.images).toHaveLength(1);
+    expect(within(nearCarousel).queryByRole('img')).toBeNull();
+    expect(within(farCarousel).queryByRole('img')).toBeNull();
+
+    intersectCarousel('navigation-sidebar');
+
+    expect(nearCarousel.getAttribute('data-mounted')).toBe('true');
+    expect(document.images).toHaveLength(2);
+    expect(within(farCarousel).queryByRole('img')).toBeNull();
+  });
+
+  it('uses responsive WebP sources with a PNG fallback, explicit dimensions, and translated alt text', () => {
+    autoIntersectManualCarousels = false;
+    stubMatchMedia(false);
+    renderManualPage();
+
+    const carousel = screen.getByTestId('manual-carousel-navigation-overview');
+    const image = within(carousel).getByRole('img', { name: 'Navigation overview screenshot for Mobile' });
+    const source = carousel.querySelector('source[type="image/webp"]') as HTMLSourceElement;
+
+    expect(source.srcset).toContain('-240.webp 240w');
+    expect(source.srcset).toContain('-390.webp 390w');
+    expect(source.sizes).toBe('(max-width: 600px) 100px, 250px');
+    expect(image.getAttribute('src')).toBe('/manual/screenshots/navigation-overview-mobile.png');
+    expect(image.getAttribute('width')).toBe('390');
+    expect(image.getAttribute('height')).toBe('844');
+    expect(image.getAttribute('loading')).toBe('eager');
+    expect(image.getAttribute('decoding')).toBe('async');
+    expect(image.getAttribute('fetchpriority')).toBe('high');
+
+    fireEvent.error(image);
+
+    expect(carousel.querySelector('source[type="image/webp"]')).toBeNull();
+    expect(within(carousel).getByRole('img', { name: 'Navigation overview screenshot for Mobile' }).getAttribute('src'))
+      .toBe('/manual/screenshots/navigation-overview-mobile.png');
+  });
+
+  it('keeps a mounted carousel and its selected viewport state after it leaves the near-viewport range', () => {
+    autoIntersectManualCarousels = false;
+    stubMatchMedia(false);
+    renderManualPage();
+
+    intersectCarousel('songs-overview');
+    const carousel = screen.getByTestId('manual-carousel-songs-overview');
+    fireEvent.click(within(carousel).getByRole('button', { name: 'Next screenshot' }));
+    expect(within(carousel).getAllByText('Compact Web').length).toBeGreaterThan(0);
+
+    expect(intersectionObservers.some(observer => observer.targets.has(carousel))).toBe(false);
+    expect(carousel.getAttribute('data-mounted')).toBe('true');
+    expect(within(carousel).getAllByText('Compact Web').length).toBeGreaterThan(0);
   });
 
   it('cycles screenshot carousel viewports for mobile, compact, and wide captures', () => {

@@ -1,6 +1,7 @@
+/* global process */
 import { chromium } from '@playwright/test';
 import { createServer } from 'vite';
-import { copyFile, mkdir, readFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,8 +17,8 @@ const chromiumFallback = '/home/sfenton/.cache/ms-playwright/chromium-1208/chrom
 const outputs = [
   { size: 192, fileName: 'fst-icon-192.png' },
   { size: 512, fileName: 'fst-icon-512.png' },
-  { size: 512, fileName: 'fst-icon-maskable-512.png' },
 ];
+const legacyDuplicateFileName = 'fst-icon-maskable-512.png';
 
 function readPngDimensions(buffer) {
   if (buffer.toString('ascii', 1, 4) !== 'PNG') {
@@ -102,6 +103,10 @@ async function mirrorAssets() {
   }
 }
 
+async function removeLegacyDuplicate() {
+  await rm(resolve(webIconDir, legacyDuplicateFileName), { force: true });
+}
+
 let viteServer;
 let browser;
 
@@ -114,6 +119,7 @@ try {
     await captureIcon(browser, vite.baseUrl, output);
   }
 
+  await removeLegacyDuplicate();
   await mirrorAssets();
 } finally {
   await browser?.close();

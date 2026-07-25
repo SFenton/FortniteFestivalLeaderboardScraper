@@ -73,13 +73,15 @@
       "serverErrorCountMax": 0
     },
     "Manual": {
-      "domElementsMax": 3200,
-      "loadedImagesMax": 300,
-      "hiddenLoadedImagesMax": 280,
-      "requestCountMax": 180,
-      "transferBytesMax": 34000000,
-      "usedJsHeapBytesMax": 335544320,
-      "longTaskCountMax": 35,
+      "domElementsMax": 1100,
+      "loadedImagesMax": 4,
+      "hiddenLoadedImagesMax": 3,
+      "requestCountMax": 50,
+      "transferBytesMax": 2000000,
+      "imageTransferBytesMax": 1048576,
+      "decodedImagePixelBytesMax": 4194304,
+      "usedJsHeapBytesMax": 268435456,
+      "longTaskCountMax": 20,
       "consoleErrorCountMax": 0,
       "serverErrorCountMax": 0
     }

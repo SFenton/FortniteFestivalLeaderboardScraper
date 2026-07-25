@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { IoBagHandle, IoChevronBack, IoChevronForward, IoCompass, IoMusicalNotes, IoPeople, IoPhonePortrait, IoSettings, IoSparkles, IoStatsChart, IoSync, IoTrophy } from 'react-icons/io5';
@@ -15,6 +15,7 @@ import { useIsMobileChrome, useIsWideDesktop } from '../../hooks/ui/useIsMobile'
 import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 import { usePressAction } from '../../hooks/ui/usePressAction';
 import { useSwipeNavigation } from '../../hooks/ui/useSwipeNavigation';
+import { getManualScreenshotAsset, type ManualScreenshotAsset, type ManualScreenshotViewport } from './manualScreenshotAssets';
 
 type ManualSectionId =
   | 'navigation'
@@ -44,7 +45,7 @@ type ManualIcon =
   | 'shop'
   | 'settings';
 
-type ViewportId = 'mobile' | 'compact' | 'wide';
+type ViewportId = ManualScreenshotViewport;
 
 type ManualCarousel = {
   id: string;
@@ -70,12 +71,14 @@ type ManualSection = {
 
 type ScreenshotSlide = {
   viewport: ViewportId;
-  src: string;
+  asset: ManualScreenshotAsset;
 };
 
 const VIEWPORTS: ViewportId[] = ['mobile', 'compact', 'wide'];
 const SECTION_ICON_SLOT_SIZE = 32;
 const SECTION_ICON_SIZE = Size.iconSm;
+const FIRST_MANUAL_CAROUSEL_ID = 'navigation-overview';
+export const MANUAL_CAROUSEL_ROOT_MARGIN = '400px 0px';
 
 export const MANUAL_SECTIONS: ManualSection[] = [
   {
@@ -177,8 +180,7 @@ export const MANUAL_SECTIONS: ManualSection[] = [
 ];
 
 function buildSlides(slug: string): ScreenshotSlide[] {
-  const baseUrl = `${import.meta.env.BASE_URL}manual/screenshots`;
-  return VIEWPORTS.map(viewport => ({ viewport, src: `${baseUrl}/${slug}-${viewport}.png` }));
+  return VIEWPORTS.map(viewport => ({ viewport, asset: getManualScreenshotAsset(slug, viewport) }));
 }
 
 function sectionTitleKey(section: ManualSection) {
@@ -350,19 +352,81 @@ function ManualCarouselGroup({ section, carousels, titleResolver }: { section: M
 function ScreenshotCarousel({ carouselId, titleKey, slides, sectionTitleKey }: { carouselId: string; titleKey: string; slides: ScreenshotSlide[]; sectionTitleKey: string }) {
   const { t } = useTranslation();
   const styles = useStyles();
+  const scrollContainerRef = useScrollContainer();
+  const slotRef = useRef<HTMLDivElement>(null);
+  const [shouldMount, setShouldMount] = useState(
+    () => carouselId === FIRST_MANUAL_CAROUSEL_ID || typeof IntersectionObserver === 'undefined',
+  );
+  const firstSlide = slides[0]!;
+  const title = t(titleKey);
+  const viewportLabel = t(`appManual.viewports.${firstSlide.viewport}`);
+
+  useEffect(() => {
+    if (shouldMount) return;
+    const element = slotRef.current;
+    if (!element || typeof IntersectionObserver === 'undefined') return;
+
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some(entry => entry.isIntersecting || entry.intersectionRatio > 0)) return;
+      setShouldMount(true);
+      observer.disconnect();
+    }, {
+      root: scrollContainerRef.current,
+      rootMargin: MANUAL_CAROUSEL_ROOT_MARGIN,
+      threshold: 0.01,
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [scrollContainerRef, shouldMount]);
+
+  return (
+    <div
+      ref={slotRef}
+      style={styles.carousel}
+      data-testid={`manual-carousel-${carouselId}`}
+      data-section={sectionTitleKey}
+      data-mounted={shouldMount ? 'true' : 'false'}
+    >
+      {shouldMount
+        ? <ScreenshotCarouselContent carouselId={carouselId} titleKey={titleKey} slides={slides} />
+        : (
+          <>
+            <div style={styles.carouselHeader} aria-hidden="true">
+              <span style={styles.carouselTitle}>{title}</span>
+              <span style={styles.viewportPill}>{viewportLabel}</span>
+            </div>
+            <div style={styles.screenshotFrame} aria-hidden="true">
+              <div style={styles.screenshotPlaceholder}>
+                <span style={styles.placeholderTitle}>{title}</span>
+                <span style={styles.placeholderHint}>{t('appManual.screenshotPending')}</span>
+              </div>
+            </div>
+            <div style={styles.deferredCarouselControls} aria-hidden="true" />
+          </>
+        )}
+    </div>
+  );
+}
+
+function ScreenshotCarouselContent({ carouselId, titleKey, slides }: { carouselId: string; titleKey: string; slides: ScreenshotSlide[] }) {
+  const { t } = useTranslation();
+  const styles = useStyles();
   const [index, setIndex] = useState(0);
-  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
+  const [fallbackSlideKey, setFallbackSlideKey] = useState<string | null>(null);
+  const placeholderRef = useRef<HTMLDivElement>(null);
   const slide = slides[index] ?? slides[0]!;
+  const slideKey = `${carouselId}-${slide.viewport}`;
+  const useWebp = fallbackSlideKey !== slideKey;
   const viewportLabel = t(`appManual.viewports.${slide.viewport}`);
   const title = t(titleKey);
   const altText = t('appManual.screenshotAlt', { topic: title, viewport: viewportLabel });
 
   const goPrevious = useCallback(() => {
-    setLoadedSrc(null);
+    setFallbackSlideKey(null);
     setIndex(current => (current === 0 ? slides.length - 1 : current - 1));
   }, [slides.length]);
   const goNext = useCallback(() => {
-    setLoadedSrc(null);
+    setFallbackSlideKey(null);
     setIndex(current => (current + 1) % slides.length);
   }, [slides.length]);
   const previousPressHandlers = usePressAction<HTMLButtonElement>({ onPress: goPrevious });
@@ -370,23 +434,39 @@ function ScreenshotCarousel({ carouselId, titleKey, slides, sectionTitleKey }: {
   const { handleTouchStart, handleTouchEnd } = useSwipeNavigation({ onBack: goPrevious, onForward: goNext });
 
   return (
-    <div style={styles.carousel} data-testid={`manual-carousel-${carouselId}`} data-section={sectionTitleKey}>
+    <>
       <div style={styles.carouselHeader}>
         <span style={styles.carouselTitle}>{title}</span>
         <span style={styles.viewportPill}>{viewportLabel}</span>
       </div>
       <div style={styles.screenshotFrame} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd} data-testid={`manual-carousel-frame-${carouselId}`}>
-        <div style={loadedSrc === slide.src ? styles.hiddenScreenshotPlaceholder : styles.screenshotPlaceholder} aria-hidden={loadedSrc === slide.src ? 'true' : undefined}>
+        <div key={`placeholder-${slideKey}`} ref={placeholderRef} style={styles.screenshotPlaceholder}>
           <span style={styles.placeholderTitle}>{title}</span>
           <span style={styles.placeholderHint}>{t('appManual.screenshotPending')}</span>
         </div>
-        <img
-          src={slide.src}
-          alt={altText}
-          onLoad={() => setLoadedSrc(slide.src)}
-          onError={() => setLoadedSrc(null)}
-          style={loadedSrc === slide.src ? styles.screenshotImage : styles.hiddenScreenshotImage}
-        />
+        <picture key={`${slideKey}-${useWebp ? 'webp' : 'fallback'}`}>
+          {useWebp && <source type="image/webp" srcSet={slide.asset.webpSrcSet} sizes={slide.asset.sizes} />}
+          <img
+            src={slide.asset.fallbackSrc}
+            alt={altText}
+            width={slide.asset.width}
+            height={slide.asset.height}
+            loading={carouselId === FIRST_MANUAL_CAROUSEL_ID ? 'eager' : 'lazy'}
+            decoding="async"
+            fetchPriority={carouselId === FIRST_MANUAL_CAROUSEL_ID ? 'high' : undefined}
+            data-source-viewport={slide.viewport}
+            data-source-hash={slide.asset.sourceHash.slice(0, 12)}
+            onLoad={(event) => {
+              event.currentTarget.style.opacity = '1';
+              placeholderRef.current?.style.setProperty('display', 'none');
+              placeholderRef.current?.setAttribute('aria-hidden', 'true');
+            }}
+            onError={() => {
+              if (useWebp) setFallbackSlideKey(slideKey);
+            }}
+            style={styles.hiddenScreenshotImage}
+          />
+        </picture>
       </div>
       <div style={styles.carouselControls}>
         <button type="button" style={styles.carouselButton} {...previousPressHandlers} aria-label={t('appManual.previousScreenshot')}>
@@ -397,7 +477,7 @@ function ScreenshotCarousel({ carouselId, titleKey, slides, sectionTitleKey }: {
           <IoChevronForward size={Size.iconSm} />
         </button>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -552,9 +632,6 @@ function useStyles() {
       color: Colors.textPrimary,
       backgroundColor: Colors.surfaceMuted,
     } as CSSProperties,
-    hiddenScreenshotPlaceholder: {
-      display: 'none',
-    } as CSSProperties,
     viewportPill: {
       flexShrink: 0,
       padding: padding(Gap.xs, Gap.md),
@@ -579,20 +656,22 @@ function useStyles() {
       fontSize: Font.sm,
       lineHeight: LineHeight.snug,
     } as CSSProperties,
-    screenshotImage: {
+    hiddenScreenshotImage: {
       position: 'absolute',
       inset: 0,
       width: CssValue.full,
       height: CssValue.full,
       objectFit: ObjectFit.contain,
       display: 'block',
-    } as CSSProperties,
-    hiddenScreenshotImage: {
-      display: 'none',
+      opacity: 0,
+      pointerEvents: 'none',
     } as CSSProperties,
     carouselControls: {
       ...flexBetween,
       gap: Gap.md,
+    } as CSSProperties,
+    deferredCarouselControls: {
+      minHeight: Layout.pillButtonHeight,
     } as CSSProperties,
     carouselButton: {
       ...flexCenter,

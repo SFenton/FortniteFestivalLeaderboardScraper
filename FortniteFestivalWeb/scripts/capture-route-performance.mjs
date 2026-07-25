@@ -12,7 +12,7 @@ const accountId = args['account-id'] ?? '195e93ef108143b2975ee46662d4d0e1';
 const displayName = args['display-name'] ?? 'SFenton';
 const songId = args['song-id'] ?? '1fcee9b4-dc49-41b1-8e7d-add244f556a2';
 const routeBudgets = JSON.parse(readFileSync(path.join(webRoot, 'performance-budgets.json'), 'utf8')).routes;
-const routes = [
+const allRoutes = [
   ['Songs', '/songs'],
   ['Song Details', `/songs/${songId}`],
   ['Leaderboards', '/leaderboards'],
@@ -21,6 +21,12 @@ const routes = [
   ['Settings', '/settings'],
   ['Manual', '/manual'],
 ];
+const routes = args.route
+  ? allRoutes.filter(([routeName]) => routeName === args.route)
+  : allRoutes;
+if (routes.length === 0) {
+  throw new Error(`Unknown route ${JSON.stringify(args.route)}. Expected one of: ${allRoutes.map(([routeName]) => routeName).join(', ')}`);
+}
 const viewports = [
   ['desktop', { width: 1440, height: 900 }],
   ['mobile', { width: 375, height: 812 }],
@@ -60,10 +66,12 @@ if (failures.length) process.exitCode = 1;
 
 async function captureRoute({ viewportName, viewport, routeName, route }) {
   const context = await browser.newContext({ viewport, hasTouch: viewportName === 'mobile' });
-  await context.addInitScript(({ accountId: selectedAccountId, displayName: selectedDisplayName }) => {
-    const profile = { type: 'player', accountId: selectedAccountId, displayName: selectedDisplayName };
-    localStorage.setItem('fst:selectedProfile', JSON.stringify(profile));
-    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: selectedAccountId, displayName: selectedDisplayName }));
+  await context.addInitScript(({ accountId: selectedAccountId, displayName: selectedDisplayName, seedProfile }) => {
+    if (seedProfile) {
+      const profile = { type: 'player', accountId: selectedAccountId, displayName: selectedDisplayName };
+      localStorage.setItem('fst:selectedProfile', JSON.stringify(profile));
+      localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: selectedAccountId, displayName: selectedDisplayName }));
+    }
     window.__fstLongTasks = [];
     if ('PerformanceObserver' in window) {
       try {
@@ -75,7 +83,7 @@ async function captureRoute({ viewportName, viewport, routeName, route }) {
         // Long-task observation is optional in older browsers.
       }
     }
-  }, { accountId, displayName });
+  }, { accountId, displayName, seedProfile: routeName !== 'Manual' });
 
   const page = await context.newPage();
   const consoleErrors = [];
@@ -117,6 +125,7 @@ async function captureRoute({ viewportName, viewport, routeName, route }) {
       return rect.bottom <= 0 || rect.right <= 0 || rect.top >= viewportHeight || rect.left >= viewportWidth;
     });
     const resources = performance.getEntriesByType('resource');
+    const imageResources = resources.filter(entry => entry.initiatorType === 'img');
     const navigation = performance.getEntriesByType('navigation')[0];
     const memory = performance.memory;
     return {
@@ -129,6 +138,11 @@ async function captureRoute({ viewportName, viewport, routeName, route }) {
       transferBytes: resources.reduce((sum, entry) => sum + (entry.transferSize || 0), 0),
       encodedBodyBytes: resources.reduce((sum, entry) => sum + (entry.encodedBodySize || 0), 0),
       decodedBodyBytes: resources.reduce((sum, entry) => sum + (entry.decodedBodySize || 0), 0),
+      imageTransferBytes: imageResources.reduce((sum, entry) => sum + (entry.transferSize || 0), 0),
+      decodedImagePixelBytes: loadedImages.reduce(
+        (sum, image) => sum + image.naturalWidth * image.naturalHeight * 4,
+        0,
+      ),
       usedJsHeapBytes: memory?.usedJSHeapSize ?? null,
       longTaskCount: window.__fstLongTasks?.length ?? 0,
       longTaskDurationMs: window.__fstLongTasks?.reduce((sum, entry) => sum + entry.duration, 0) ?? 0,
@@ -181,6 +195,8 @@ function compareBudget(result, budget) {
     ['hiddenLoadedImages', 'hiddenLoadedImagesMax'],
     ['requestCount', 'requestCountMax'],
     ['transferBytes', 'transferBytesMax'],
+    ['imageTransferBytes', 'imageTransferBytesMax'],
+    ['decodedImagePixelBytes', 'decodedImagePixelBytesMax'],
     ['usedJsHeapBytes', 'usedJsHeapBytesMax'],
     ['longTaskCount', 'longTaskCountMax'],
     ['consoleErrorCount', 'consoleErrorCountMax'],
