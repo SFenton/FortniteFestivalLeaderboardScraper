@@ -228,6 +228,52 @@ Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/web-2.1-remote-cache-20260725T180703Z/`
 
+### WEB-2.2 request cancellation
+
+**Decision:** Accepted and deployed.
+
+- Added typed optional request options to `48/49` GET/search API helpers while
+  preserving selected-profile headers, Songs ETag plus `no-cache`, service-info
+  `no-store`, response parsing, and existing call defaults. Shop remains the
+  sole exception and keeps its dedicated manual ETag/websocket owner for
+  WEB-2.3.
+- All `56/56` React Query query functions now consume the supplied
+  `AbortSignal`. Manual account and unified search, Suggestions rival data,
+  sync-status polling, Settings version/profile polling, Player History, and
+  Paths text data now abort real requests instead of only suppressing late
+  state writes. POST writes, websocket ownership, `pageCache`, and cache
+  policies were not changed.
+- Service-info caller cancellation remains a React Query cancellation with no
+  user-visible error or retry. Its independent three-second timeout now throws
+  a distinct `TimeoutError`.
+- In the matched 20-sample production-image browser A/B, obsolete completed
+  responses changed from `100 -> 0` and explicit aborts from `0 -> 100`.
+  Completed requests changed from `749 -> 613` (`-18.2%`) and request-count p95
+  from `38 -> 31` (`-18.4%`).
+- Rapid transition p95 stayed within the 10% gate: route
+  `906 -> 914 ms` (`+0.9%`), filter `23 -> 21 ms` (`-8.7%`), and profile
+  `874 -> 876 ms` (`+0.2%`). Baseline and candidate captures had zero console
+  errors, page errors, or unhandled rejections.
+- Focused cancellation coverage passed `156/156`; affected band/Compete,
+  route, and search/filter suites passed `70/70`, `339/339`, and `126/126`.
+  The focused React Query ownership plus cancellation Playwright matrix passed
+  `12/12` across all six configured viewports. TypeScript, ESLint errors-only,
+  Stylelint, encoding, production build, and bundle budgets passed.
+- The final entry bundle is `1,038,787` raw, `306,337` gzip, and `254,200`
+  Brotli bytes; the largest lazy chunk is `113,106` gzip bytes.
+- Production runs `festivalweb:web22-a3a8ca01`
+  (`sha256:08dbbea51609e5e0a1a9cb2ed4de9d4c98738d1400e60362f95e2c25e650c3ea`).
+  FestivalWeb, FSTService, and PostgreSQL are healthy; published scrape `1236`
+  remains unfrozen; the worker remains offline; mapped solo reads remain HTTP
+  `200`; and player-derived, band, and export routes remain HTTP `503`.
+  Rollback is `festivalweb:web21-ed161ef6`.
+- Implementation commit `a3a8ca01` and browser evidence repair `26b241dd`
+  are pushed.
+
+Evidence:
+
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/web-2.2-request-cancellation-20260725T181349Z/`
+
 Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/web-0.2/`
@@ -561,9 +607,21 @@ paths. WEB-2.3 remains the separate Shop/local-storage ownership phase.
 
 ### WEB-2.2 - Propagate cancellation through every GET
 
+**Decision:** Accepted and deployed on 2026-07-25.
+
+**Next dependency:** WEB-2.3 can move Shop and duplicate local-storage parsing
+into shared owners. Shop was deliberately not moved during WEB-2.2.
+
 **Evidence**
 
-- Only a few query paths consume React Query's `AbortSignal`.
+- Baseline inventory found `49` GET/search API methods with only `5`
+  signal-aware and `56` query functions with only `3` signal-aware.
+- The accepted implementation leaves only `getShop` and its existing
+  boolean-cleanup owner for WEB-2.3; every other GET/search helper and every
+  query function is cancellation-aware.
+- Matched production-image network captures prove obsolete route, filter, and
+  profile requests are aborted rather than completed, with no request-count or
+  p95 regression.
 
 **Work**
 
