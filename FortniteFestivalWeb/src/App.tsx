@@ -129,6 +129,12 @@ import {
   LazyBandInstrumentFilterModal,
   LazyMobileNotificationsModal,
   LazySearchModal,
+  isBandInstrumentFilterModalLoaded,
+  isMobileNotificationsModalLoaded,
+  isSearchModalLoaded,
+  loadBandInstrumentFilterModal,
+  loadMobileNotificationsModal,
+  loadSearchModal,
   preloadBandInstrumentFilterModal,
   preloadMobileNotificationsModal,
   preloadSearchModal,
@@ -1293,6 +1299,8 @@ function AppShell() {
         title={t('search.title')}
         boundaryName="search-modal"
         onClose={closeSearch}
+        load={loadSearchModal}
+        isLoaded={isSearchModalLoaded}
       >
         <LazySearchModal
           visible={searchOpen}
@@ -1306,6 +1314,8 @@ function AppShell() {
         title={t('notifications.title')}
         boundaryName="notifications-modal"
         onClose={() => setNotificationsOpen(false)}
+        load={loadMobileNotificationsModal}
+        isLoaded={isMobileNotificationsModalLoaded}
       >
         <LazyMobileNotificationsModal
           visible={notificationsOpen}
@@ -1325,6 +1335,8 @@ function AppShell() {
         title={t('bandFilter.modalTitle')}
         boundaryName="band-filter-modal"
         onClose={() => setBandFilterModalOpen(false)}
+        load={loadBandInstrumentFilterModal}
+        isLoaded={isBandInstrumentFilterModalLoaded}
       >
         <LazyBandInstrumentFilterModal
           visible={bandFilterModalOpen && selectedProfile?.type === 'band'}

@@ -52,6 +52,10 @@ import LazyModalBoundary from '../../components/common/LazyModalBoundary';
 import {
   LazySongsFilterModal,
   LazySongsSortModal,
+  isSongsFilterModalLoaded,
+  isSongsSortModalLoaded,
+  loadSongsFilterModal,
+  loadSongsSortModal,
   preloadSongsFilterModal,
   preloadSongsSortModal,
 } from '../../components/lazy/secondaryControls';
@@ -1218,6 +1222,8 @@ export default function SongsPage() {
           title={t('common.sortSongs')}
           boundaryName="songs-sort-modal"
           onClose={sortModal.close}
+          load={loadSongsSortModal}
+          isLoaded={isSongsSortModalLoaded}
         >
           <LazySongsSortModal
             visible={sortModal.visible}
@@ -1254,6 +1260,8 @@ export default function SongsPage() {
           title={t('common.filterSongs')}
           boundaryName="songs-filter-modal"
           onClose={filterModal.close}
+          load={loadSongsFilterModal}
+          isLoaded={isSongsFilterModalLoaded}
         >
           <LazySongsFilterModal
             visible={filterModal.visible}

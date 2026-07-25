@@ -10,6 +10,8 @@ type LazyModalBoundaryProps = {
   title: string;
   boundaryName: string;
   onClose: () => void;
+  load?: () => Promise<void>;
+  isLoaded?: () => boolean;
   children: ReactNode;
 };
 
@@ -39,15 +41,58 @@ export default function LazyModalBoundary({
   title,
   boundaryName,
   onClose,
+  load,
+  isLoaded,
   children,
 }: LazyModalBoundaryProps) {
   const [requested, setRequested] = useState(visible);
+  const [loadState, setLoadState] = useState<'idle' | 'loading' | 'ready' | 'failed'>(() => (
+    !load || isLoaded?.() ? 'ready' : 'idle'
+  ));
 
   useEffect(() => {
     if (visible) setRequested(true);
   }, [visible]);
 
+  useEffect(() => {
+    if (!visible || !load) return;
+    if (isLoaded?.()) {
+      setLoadState('ready');
+      return;
+    }
+
+    let active = true;
+    setLoadState('loading');
+    void load().then(
+      () => { if (active) setLoadState('ready'); },
+      () => { if (active) setLoadState('failed'); },
+    );
+    return () => { active = false; };
+  }, [isLoaded, load, visible]);
+
   if (!visible && !requested) return null;
+
+  if (loadState === 'failed') {
+    return (
+      <LazyModalFailure
+        visible={visible}
+        title={title}
+        boundaryName={boundaryName}
+        onClose={onClose}
+      />
+    );
+  }
+
+  if (load && loadState !== 'ready' && !isLoaded?.()) {
+    return (
+      <LazyModalLoading
+        visible={visible}
+        title={title}
+        boundaryName={boundaryName}
+        onClose={onClose}
+      />
+    );
+  }
 
   return (
     <LazyImportErrorBoundary

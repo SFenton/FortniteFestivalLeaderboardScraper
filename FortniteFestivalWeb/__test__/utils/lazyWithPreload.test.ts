@@ -1,3 +1,5 @@
+import { createElement, Suspense } from 'react';
+import { render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { lazyWithPreload } from '../../src/utils/lazyWithPreload';
 
@@ -41,5 +43,22 @@ describe('lazyWithPreload', () => {
     await Promise.resolve();
 
     expect(loader).toHaveBeenCalledOnce();
+  });
+
+  it('renders synchronously through React.lazy after the external load gate resolves', async () => {
+    const control = lazyWithPreload(async () => ({
+      default: () => createElement('span', null, 'Loaded synchronously'),
+    }));
+    await control.load();
+
+    render(createElement(
+      Suspense,
+      { fallback: createElement('span', null, 'Suspended') },
+      createElement(control.Component),
+    ));
+
+    expect(screen.getByText('Loaded synchronously')).toBeVisible();
+    expect(screen.queryByText('Suspended')).toBeNull();
+    expect(control.isLoaded()).toBe(true);
   });
 });
