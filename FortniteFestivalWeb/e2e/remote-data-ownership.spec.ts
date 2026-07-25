@@ -380,6 +380,8 @@ test('React Query owns remote data across Player, Leaderboard, Rivals, and Compe
   expect(counts.get(`/api/player/${PROFILE_A.accountId}/rivals/Solo_Guitar`)).toBe(1);
 
   await selectProfile(page, PROFILE_B);
+  await expect(page.getByText(`Above ${PROFILE_B.accountId}`).first()).toBeVisible();
+  expect(counts.get(`/api/player/${PROFILE_B.accountId}/rivals/Solo_Guitar`)).toBe(1);
   await navigate(page, '/compete');
   await expect(page.getByText(`Above ${PROFILE_B.accountId}`).first()).toBeVisible();
   expect(counts.get(`/api/player/${PROFILE_B.accountId}/rivals/Solo_Guitar`)).toBe(1);
