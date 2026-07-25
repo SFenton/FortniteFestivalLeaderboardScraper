@@ -405,6 +405,76 @@ Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/web-3.1-shared-barrels-20260725T201725Z/`
 
+### WEB-3.2 shell modal and secondary-control lazy loading
+
+**Decision:** Accepted and deployed.
+
+- The production Rollup audit found the remaining initial-shell cost in
+  `SearchModal` (`29,399` rendered bytes), `MobileNotificationsModal`
+  (`39,220`) plus notification presentation (`32,775`), Songs Sort/Filter
+  (`10,626`/`20,045`), and DnD Kit (`120,608`). The hidden DnD path was
+  `SettingsContext -> PathDataTable -> @dnd-kit`; the path-column settings
+  contract now lives in a lightweight module. RankBy/KaTeX was already outside
+  the initial closure behind route chunks. The primary mobile FAB and its
+  `2,738`-byte menu stayed eager because splitting the launch surface was
+  shell decomposition for negligible savings.
+- Search/profile, notifications, selected-band filtering, Songs Sort, and
+  Songs Filter now cross explicit interaction boundaries. Intent from header,
+  toolbar, band-filter, and FAB controls starts a deduplicated preload.
+  First-open loading and failure remain accessible modals with close, Escape,
+  focus trapping/restoration, and reload actions. Once loaded, controls stay
+  mounted through their close animation and reopen without another request.
+- Notification feed types, mock fixtures, and surface filtering were separated
+  from the visual modal so header unread state remains eager while the
+  presentation chunk is deferred. Source and production Rollup gates reject
+  any return of the modal implementations, RankBy/KaTeX, PathDataTable, or DnD
+  Kit to the initial Songs graph and prove DnD remains reachable from Sort.
+- The entry moved `991,967 -> 858,619` raw bytes (`-13.44%`),
+  `296,511 -> 258,107` gzip bytes (`-12.95%`), and
+  `246,663 -> 216,080` Brotli bytes (`-12.40%`). This clears both the
+  `275 KiB` target and the roadmap's `10%` gate. Largest lazy-chunk gzip held
+  `113,107 -> 113,108` bytes.
+- New on-demand gzip chunks include DnD/shared sortable code (`15,431`),
+  notifications (`9,158`), Search (`5,543`), Filter (`2,783`), Sort (`1,927`),
+  the band picker (`2,051`), and the band-filter shell (`570`). Live initial
+  script transfer fell `348,030 -> 302,982` bytes (`-45,048`, `-12.94%`).
+- The first deployed candidate was rejected and rolled back because React
+  Suspense delayed actual control readiness to about `800 ms` despite showing
+  the loading shell immediately. Commit `6c9c4040` added an external import
+  readiness gate and a synchronously fulfilled React-lazy handoff. Matched
+  final p95 control-ready latency was Search `26.3 -> 26.9 ms`, profile
+  `22.7 -> 29.8`, notifications `29.0 -> 50.3`, band filter
+  `20.9 -> 32.6`, Sort `22.8 -> 30.9`, Filter `53.4 -> 54.4`, and mobile
+  Search `21.7 -> 32.3`. Every path stayed below the `100 ms` absolute gate
+  and within the `25 ms` sub-frame/noise-floor regression allowance; reopen
+  p95 stayed below `43 ms`.
+- Focused Vitest passed `237/237`; desktop/mobile Playwright passed all five
+  applicable lazy-interaction scenarios. TypeScript, production build,
+  tightened bundle budgets, ESLint (`0` errors; repository baseline warnings
+  only), Stylelint, encoding, and license-manifest checks passed. Live browser
+  smoke covered first open, close/reopen, focus restoration, mobile
+  input/Enter behavior, six notification rows, profile target restriction,
+  selected-band filtering, Sort apply, and deferred network requests.
+- Live captures had zero page errors. Initial Songs, Search, profile, and Sort
+  had zero console errors; notification/filter/band contexts retained only the
+  expected HTTP `503` failed-resource messages from unavailable derived reads.
+  An actual WEB-3.1 tab survived the deployment: its missing old chunks set the
+  stale-chunk reload marker, reloaded `index-C9Uudn0F.js`, preserved
+  `#/settings`, and rendered Settings with zero page errors.
+- Production runs `festivalweb:web32-6c9c4040`
+  (`sha256:6c13cd19860bb387bc97221f4c32bbda0fb81954caf07dde7f186ea0c959be67`).
+  FestivalWeb, FSTService, and PostgreSQL are healthy; published scrape `1236`
+  remains unfrozen and the worker remains offline. Songs, service info, and
+  mapped solo reads return HTTP `200`; isolated player-derived, band, and
+  export reads remain HTTP `503`. Rollback is `festivalweb:web31-a8d76359`.
+- Implementation commits `68c100fb` and `6c9c4040` are pushed. WEB-3.2 did
+  not include chart lazy loading, Manual assets, or shell/context
+  decomposition.
+
+Evidence:
+
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/web-3.2-shell-lazy-20260725T205821Z/`
+
 Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/web-0.2/`
@@ -835,6 +905,21 @@ this task.
 
 ### WEB-3.2 - Lazy-load shell modals and secondary controls
 
+**Decision:** Accepted and deployed on 2026-07-25.
+
+**Next dependency:** WEB-3.3 can address the Manual image waterfall. The
+cross-WEB-3 initial-shell target is complete; chart loading and shell/context
+decomposition remain owned by their existing tasks.
+
+**Evidence**
+
+- Initial JS is `258,107` gzip bytes, down `12.95%` from WEB-3.1 and below
+  `275 KiB`.
+- Search/profile, notification, selected-band, Songs Sort, and Songs Filter
+  implementations are absent from the initial graph.
+- DnD Kit loads with Sort/path interaction rather than through
+  `SettingsContext`; RankBy/KaTeX remains route-deferred.
+
 **Work**
 
 1. Lazy-load search/profile/notification/band-filter modal implementations.
@@ -843,7 +928,9 @@ this task.
 
 **Acceptance**
 
-- Initial JS is reduced by at least 10% without interaction regressions.
+- Initial JS is reduced `12.95%` gzip with all control-ready p95 values below
+  `55 ms`, focus/keyboard/reopen behavior preserved, and stale old tabs
+  recovering to the deployed entry.
 
 ### WEB-3.3 - Fix Manual asset waterfall
 
