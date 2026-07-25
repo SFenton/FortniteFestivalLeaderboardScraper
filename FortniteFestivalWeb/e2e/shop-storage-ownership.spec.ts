@@ -87,32 +87,28 @@ async function installApi(page: Page, requests: RequestMetric[]) {
             songId: SONG_ID,
             title: 'WEB23 Cached Song',
             artist: 'WEB23 Artist',
-            albumArt: 'https://example.com/web23.jpg',
           }, {
             songId: `${SONG_ID}-new`,
             title: 'WEB23 New Song',
             artist: 'WEB23 Artist',
-            albumArt: 'https://example.com/web23-new.jpg',
           }],
         }),
       });
     }
     if (url.pathname === '/api/shop') {
-      await new Promise(resolve => setTimeout(resolve, 40));
+      await new Promise(resolve => setTimeout(resolve, 1_200));
       return json(route, {
         count: 2,
         songs: [{
           songId: SONG_ID,
           title: 'WEB23 Leaving Song',
           artist: 'WEB23 Artist',
-          albumArt: 'https://example.com/web23.jpg',
           shopUrl: 'https://example.com/shop/web23',
           leavingTomorrow: true,
         }, {
           songId: `${SONG_ID}-new`,
           title: 'WEB23 New Song',
           artist: 'WEB23 Artist',
-          albumArt: 'https://example.com/web23-new.jpg',
           shopUrl: 'https://example.com/shop/web23-new',
           isNew: true,
         }],
@@ -134,6 +130,7 @@ async function installApi(page: Page, requests: RequestMetric[]) {
 
     const playerMatch = /^\/api\/player\/([^/]+)$/.exec(url.pathname);
     if (playerMatch) {
+      await new Promise(resolve => setTimeout(resolve, 100));
       return json(
         route,
         playerResponse(playerMatch[1] === PROFILE_B.accountId ? PROFILE_B : PROFILE_A),
@@ -244,12 +241,10 @@ test('Songs and Shop share one cache/request owner across profile switches', asy
           songId,
           title: 'WEB23 Cached Song',
           artist: 'WEB23 Artist',
-          albumArt: 'https://example.com/web23.jpg',
         }, {
           songId: `${songId}-new`,
           title: 'WEB23 New Song',
           artist: 'WEB23 Artist',
-          albumArt: 'https://example.com/web23-new.jpg',
         }],
       },
     }));
