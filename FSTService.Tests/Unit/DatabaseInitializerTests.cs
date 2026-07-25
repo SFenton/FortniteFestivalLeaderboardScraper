@@ -190,6 +190,34 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public async Task EnsureSchemaAsync_does_not_recreate_residual_capacity_indexes()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT
+                to_regclass('public.ix_cr_rank') IS NULL,
+                to_regclass('public.ix_pso_union_lookup') IS NULL,
+                to_regclass('public.ix_pso_band_source') IS NULL,
+                to_regclass('public.ix_band_identity_type_appearance') IS NULL,
+                to_regclass('public.ix_bstp_type_appearance') IS NULL,
+                to_regclass('public.ix_btr_current_duets_team') IS NULL,
+                to_regclass('public.ix_btr_current_trios_team') IS NULL,
+                to_regclass('public.ix_btr_current_quad_team') IS NULL,
+                to_regclass('public.band_team_rankings_published_band_duets_ix_adjusted') IS NULL,
+                to_regclass('public.band_team_rankings_published_band_trios_ix_adjusted') IS NULL,
+                to_regclass('public.band_team_rankings_published_band_quad_ix_adjusted') IS NULL
+            """;
+
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        for (var ordinal = 0; ordinal < reader.FieldCount; ordinal++)
+            Assert.True(reader.GetBoolean(ordinal));
+    }
+
+    [Fact]
     public async Task Retired_composite_history_latest_index_maintenance_sql_is_valid()
     {
         await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);

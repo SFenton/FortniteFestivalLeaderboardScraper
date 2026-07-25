@@ -873,12 +873,9 @@ public static class DatabaseInitializer
         CREATE UNIQUE INDEX IF NOT EXISTS ux_pso_source
             ON player_score_observations (account_id, song_id, instrument, source_kind, source_id);
 
-        CREATE INDEX IF NOT EXISTS ix_pso_union_lookup
-            ON player_score_observations (account_id, song_id, instrument, score DESC, score_achieved_at);
-
-        CREATE INDEX IF NOT EXISTS ix_pso_band_source
-            ON player_score_observations (band_type, team_key)
-            WHERE source_kind = 'band-member';
+        -- The observation table has no production reader. Its three retired
+        -- lookup indexes remain available as exact rollback DDL, while the
+        -- unique source index continues to own write idempotency.
 
         CREATE OR REPLACE VIEW player_score_observation_union AS
         SELECT
@@ -1387,8 +1384,8 @@ public static class DatabaseInitializer
             computed_at              TIMESTAMPTZ NOT NULL
         );
 
-        CREATE INDEX IF NOT EXISTS ix_cr_rank
-            ON composite_rankings (composite_rank);
+        -- composite_rank is UNIQUE, so its constraint index owns adjusted-rank
+        -- ordering without a duplicate non-constraint ix_cr_rank index.
 
         -- Per-metric composite rank indexes for pagination
         ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS composite_rating_weighted REAL;
@@ -2063,9 +2060,6 @@ public static class DatabaseInitializer
             UNIQUE (band_type, team_key)
         );
 
-        CREATE INDEX IF NOT EXISTS ix_band_identity_type_appearance
-            ON band_identity (band_type, appearance_count DESC, team_key);
-
         -- Rich global band-search projection. Search reads these precomputed
         -- rows instead of triggering request-time per-account summary rebuilds.
         CREATE TABLE IF NOT EXISTS band_search_team_projection (
@@ -2083,9 +2077,6 @@ public static class DatabaseInitializer
         CREATE UNIQUE INDEX IF NOT EXISTS ix_bstp_band_id
             ON band_search_team_projection (band_id)
             WHERE band_id <> '';
-
-        CREATE INDEX IF NOT EXISTS ix_bstp_type_appearance
-            ON band_search_team_projection (band_type, appearance_count DESC, team_key);
 
         CREATE TABLE IF NOT EXISTS band_search_member_projection (
             account_id              TEXT        NOT NULL,
@@ -2242,22 +2233,6 @@ public static class DatabaseInitializer
             ON current_band_leaderboard_entries_trios (band_type, team_key, song_id, ranking_scope, scope_combo_id, projection_generation);
         CREATE INDEX IF NOT EXISTS ix_cble_quad_team_scope_generation
             ON current_band_leaderboard_entries_quad (band_type, team_key, song_id, ranking_scope, scope_combo_id, projection_generation);
-
-        DO $$
-        BEGIN
-            IF to_regclass('band_team_rankings_current_band_duets') IS NOT NULL THEN
-                CREATE INDEX IF NOT EXISTS ix_btr_current_duets_team
-                    ON band_team_rankings_current_band_duets (band_type, team_key);
-            END IF;
-            IF to_regclass('band_team_rankings_current_band_trios') IS NOT NULL THEN
-                CREATE INDEX IF NOT EXISTS ix_btr_current_trios_team
-                    ON band_team_rankings_current_band_trios (band_type, team_key);
-            END IF;
-            IF to_regclass('band_team_rankings_current_band_quad') IS NOT NULL THEN
-                CREATE INDEX IF NOT EXISTS ix_btr_current_quad_team
-                    ON band_team_rankings_current_band_quad (band_type, team_key);
-            END IF;
-        END $$;
 
         CREATE TABLE IF NOT EXISTS band_current_projection_state (
             id                    BOOLEAN     PRIMARY KEY DEFAULT TRUE CHECK (id),

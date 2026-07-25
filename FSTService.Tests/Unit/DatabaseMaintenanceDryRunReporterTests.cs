@@ -204,6 +204,23 @@ public sealed class DatabaseMaintenanceDryRunReporterTests
         Assert.DoesNotContain("band_team_rankings_current_band_quad_ix_weighted", schema, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("band_team_rankings_current_band_quad_ix_fcrate", schema, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("band_team_rankings_current_band_quad_ix_totalscore", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("band_team_rankings_published_band_duets_ix_adjusted", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("band_team_rankings_published_band_trios_ix_adjusted", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("band_team_rankings_published_band_quad_ix_adjusted", schema, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BandRankingBuildIndexes_KeepTeamLookupOnlyForCurrentTables()
+    {
+        var current = BandRankingStorageNames.GetCreateRankingBuildIndexesSql("band_team_rankings_build_band_duets_current", includeTeamLookup: true);
+        var published = BandRankingStorageNames.GetCreateRankingBuildIndexesSql("band_team_rankings_build_band_duets_published", includeTeamLookup: false);
+
+        Assert.Contains("_ix_team", current, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("_ix_team", published, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("_ix_adjusted", current, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("_ix_adjusted", published, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("_pkey", current, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("_pkey", published, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -3803,7 +3803,7 @@ public sealed class MetaDatabase : IMetaDatabase
             copyStats.ExecuteNonQuery();
         }
 
-        CreateBandRankingIndexes(conn, tx, options, buildRankingTable);
+        CreateBandRankingIndexes(conn, tx, options, buildRankingTable, includeTeamLookup: false);
         CreateBandRankingStatsIndexes(conn, tx, options, buildStatsTable);
         SwapBandPublishedTables(conn, tx, options, bandType, buildRankingTable, buildStatsTable, buildSuffix);
     }
@@ -3946,7 +3946,7 @@ public sealed class MetaDatabase : IMetaDatabase
 
             currentStage = "create_ranking_indexes";
             var createRankingIndexesSw = Stopwatch.StartNew();
-            CreateBandRankingIndexes(conn, tx, resolvedOptions, buildRankingTable);
+            CreateBandRankingIndexes(conn, tx, resolvedOptions, buildRankingTable, includeTeamLookup: true);
             createRankingIndexesSw.Stop();
             LogBandRebuildStage(bandType, resolvedOptions, "create_ranking_indexes", RoundElapsed(createRankingIndexesSw));
 
@@ -4852,18 +4852,16 @@ public sealed class MetaDatabase : IMetaDatabase
         return tableName;
     }
 
-    private static void CreateBandRankingIndexes(NpgsqlConnection conn, NpgsqlTransaction tx, BandTeamRankingRebuildOptions options, string tableName)
+    private static void CreateBandRankingIndexes(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        BandTeamRankingRebuildOptions options,
+        string tableName,
+        bool includeTeamLookup)
     {
         using var cmd = conn.CreateCommand();
         ConfigureBandRebuildCommand(cmd, tx, options);
-        var quotedTable = BandRankingStorageNames.QuoteIdentifier(tableName);
-        cmd.CommandText = $@"
-                CREATE UNIQUE INDEX {BandRankingStorageNames.QuoteIdentifier(tableName + "_pkey")} ON {quotedTable} (band_type, ranking_scope, combo_id, team_key);
-                CREATE INDEX {BandRankingStorageNames.QuoteIdentifier(tableName + "_ix_team")} ON {quotedTable} (band_type, team_key);
-                CREATE INDEX {BandRankingStorageNames.QuoteIdentifier(tableName + "_ix_adjusted")} ON {quotedTable} (band_type, ranking_scope, combo_id, adjusted_skill_rank);
-                CREATE INDEX {BandRankingStorageNames.QuoteIdentifier(tableName + "_ix_weighted")} ON {quotedTable} (band_type, ranking_scope, combo_id, weighted_rank);
-                CREATE INDEX {BandRankingStorageNames.QuoteIdentifier(tableName + "_ix_fcrate")} ON {quotedTable} (band_type, ranking_scope, combo_id, fc_rate_rank);
-                CREATE INDEX {BandRankingStorageNames.QuoteIdentifier(tableName + "_ix_totalscore")} ON {quotedTable} (band_type, ranking_scope, combo_id, total_score_rank);";
+        cmd.CommandText = BandRankingStorageNames.GetCreateRankingBuildIndexesSql(tableName, includeTeamLookup);
         cmd.ExecuteNonQuery();
     }
 

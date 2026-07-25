@@ -71,12 +71,22 @@ internal static class BandRankingStorageNames
             ALTER TABLE IF EXISTS {QuoteIdentifier(tableName)}
                 ADD COLUMN IF NOT EXISTS row_fingerprint TEXT NOT NULL DEFAULT '';";
 
-    internal static string GetCreateRankingIndexesSql(string tableName, bool ifNotExists = false)
+    internal static string GetCreateRankingBuildIndexesSql(string tableName, bool includeTeamLookup)
     {
-        return string.Join(
-            Environment.NewLine,
-            BuildRankingIndexDefinitions(tableName, ifNotExists, concurrently: false, schemaName: null)
-                .Select(definition => $"            {definition.CreateSql};"));
+        var quotedTable = QuoteIdentifier(tableName);
+        var statements = new List<string>
+        {
+            $"CREATE UNIQUE INDEX {QuoteIdentifier(tableName + "_pkey")} ON {quotedTable} (band_type, ranking_scope, combo_id, team_key)",
+        };
+
+        if (includeTeamLookup)
+            statements.Add($"CREATE INDEX {QuoteIdentifier(tableName + "_ix_team")} ON {quotedTable} (band_type, team_key)");
+
+        statements.AddRange(
+            BuildRankingIndexDefinitions(tableName, ifNotExists: false, concurrently: false, schemaName: null)
+                .Select(definition => definition.CreateSql));
+
+        return string.Join($";{Environment.NewLine}", statements.Select(statement => $"            {statement}")) + ";";
     }
 
     internal static IReadOnlyList<BandRankingIndexSqlDefinition> GetCurrentRankingIndexDefinitions() =>
@@ -168,7 +178,6 @@ internal static class BandRankingStorageNames
             statements.Add(GetCreateStatsTableSql(statsTable, includePrimaryKey: true, ifNotExists: true));
             statements.Add(GetCreateRankingTableSql(publishedRankingsTable, includePrimaryKey: true, ifNotExists: true));
             statements.Add(GetEnsureRankingMetadataColumnsSql(publishedRankingsTable));
-            statements.Add(GetCreateRankingIndexesSql(publishedRankingsTable, ifNotExists: true));
             statements.Add(GetCreateStatsTableSql(publishedStatsTable, includePrimaryKey: true, ifNotExists: true));
             statements.Add(GetCreateBandSongRankingTableSql(songRankingsTable, includePrimaryKey: true, ifNotExists: true));
         }
