@@ -739,6 +739,38 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var unfrozenWorkbookXml = await ReadExportWorkbookXmlAsync(unfrozenExportResponse);
         Assert.Contains("100000", unfrozenWorkbookXml);
         Assert.DoesNotContain("900000", unfrozenWorkbookXml);
+
+        metaDb.FailScrapeRun(
+            activeId,
+            MetaDatabase.FailedCandidateReadIsolationFailurePhase,
+            "derived state changed before the candidate was abandoned");
+        services.GetRequiredService<PublicReadGateService>().Invalidate();
+
+        var isolatedBoardResponse = await client.GetAsync(
+            "/api/leaderboard/service_published_song/Solo_Guitar");
+        Assert.Equal(HttpStatusCode.OK, isolatedBoardResponse.StatusCode);
+        var isolatedBoard = await isolatedBoardResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var isolatedScores = isolatedBoard.GetProperty("entries").EnumerateArray()
+            .Select(entry => entry.GetProperty("score").GetInt32())
+            .ToArray();
+        Assert.Equal([110_000, 100_000], isolatedScores);
+        Assert.DoesNotContain(900_000, isolatedScores);
+
+        var isolatedExportResponse = await client.GetAsync("/api/player/acct_published/export");
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, isolatedExportResponse.StatusCode);
+
+        using (var conn = dataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                UPDATE scrape_log
+                SET failure_phase = 'test_cleared'
+                WHERE id = @activeId
+                """;
+            cmd.Parameters.AddWithValue("activeId", activeId);
+            cmd.ExecuteNonQuery();
+        }
+        services.GetRequiredService<PublicReadGateService>().Invalidate();
     }
 
     // ─── Songs ──────────────────────────────────────────────────

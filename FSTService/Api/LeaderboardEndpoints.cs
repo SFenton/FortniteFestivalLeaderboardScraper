@@ -355,8 +355,11 @@ public static partial class ApiEndpoints
             if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
                 return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
 
-            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, lbCache);
-            if (frozenMiss is not null) return frozenMiss;
+            if (!persistence.UsePublishedScopeSources)
+            {
+                var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, lbCache);
+                if (frozenMiss is not null) return frozenMiss;
+            }
 
             int? maxScore = null;
             int? rawMaxScore = null;
