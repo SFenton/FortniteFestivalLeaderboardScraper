@@ -849,6 +849,55 @@ move to PG-7 after backup/restore and live-scrape parity.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/stale-scrape-1263-recovery-20260725T153938Z`.
 
+### PG-3 post-scrape-1263 residual capacity recovery - accepted 2026-07-25
+
+- The measured preflight started at `31,373,258,752` filesystem bytes free,
+  with no active scrape, query, transaction, ungranted lock, vacuum, index
+  build, rewrite, or invalid index. Published scrape `1236` remained
+  authoritative and unfrozen while `fstworker` stayed exited with restart
+  policy `no`.
+- Docker had `79.97 GB` of reclaimable build cache, but Docker root is
+  `/mnt/storage/docker-data`, not the FST filesystem. Same-drive non-Postgres
+  artifacts were not material after excluding active path data, manifests,
+  evidence, rollback SQL, and source artifacts, so no non-database deletion
+  was accepted.
+- Six owner-card decisions dropped `33` non-constraint indexes, one logical
+  family at a time: exact duplicate/non-owning band ranking indexes
+  (`8,271,380,480` bytes), unowned dirty-work secondary indexes
+  (`2,949,160,960`), unused band appearance-sort indexes
+  (`1,959,124,992`), orphan latest-snapshot indexes (`1,159,544,832`),
+  observation-table read indexes with no production read statement
+  (`2,314,706,944`), and duplicate/deprecated composite ranking indexes
+  (`520,282,112`).
+- Exact recreate SQL was checksummed before mutation. Transactional proofs
+  preserved every sampled fingerprint. Published band ranking pages moved to
+  byte-equivalent build indexes, current team lookups retained their
+  build-owned team indexes, published team lookups retained their primary
+  keys, observation lookups retained `ux_pso_source`, latest-state reads
+  retained primary keys, and composite adjusted-rank reads retained the
+  `composite_rank` unique constraint index.
+- The `8,775,794,688`-byte current band-song `*_ix_team` family was rejected:
+  representative Duets/Trios/Quad reads remained correct but regressed from
+  `0.122/0.076/0.069 ms` to `0.330/0.235/0.257 ms`. The indexes were restored
+  by transaction rollback and never dropped from production.
+- Database size fell from `3,846,380,738,227` to `3,829,206,537,907` bytes,
+  an exact `17,174,200,320`-byte reclaim. Measured filesystem free space rose
+  to `48,546,029,568` bytes. The `45,148,225,536`-byte scrape guard now passes
+  with `3,397,804,032` bytes of margin; optional builds and rewrites remain
+  blocked below seven-day headroom.
+- Mapped solo leaderboard output remained byte-exact HTTP `200`; ranking,
+  history, export, band ranking, and band-song routes remained the same stable
+  failed-candidate HTTP `503`. `120/120` relevant tests passed, the Release
+  build succeeded, the proxy guard passed `25/25`, and no active query,
+  ungranted lock, invalid index, vacuum, or index build remained.
+- Pushed commit `8db72081` prevents startup or future ranking publication from
+  recreating the retired duplicate/read-only indexes. The current held worker
+  image predates that commit, so no scrape was started; a later resume must
+  deploy `8db72081` or newer and rerun the capacity, proxy, and full-public-path
+  preflight first.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/fst-residual-capacity-20260725T161042Z`.
+
 ## Phase PG-4: Make scrape writes proportional to semantic changes
 
 **Decision:** Experimental until live-scrape parity  

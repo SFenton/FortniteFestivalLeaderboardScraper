@@ -18,7 +18,10 @@ This plan records the approved direction for improving FST Postgres persistence 
   available while unversioned ranking/history/export and band-song cache
   misses fail closed until the next successful publication. This is separate
   from `scrape_publication_state.public_reads_frozen`, which is `false`.
-- Scrapes should proceed normally. `fstworker`, `fstservice`, and `festivalweb` may be restarted or temporarily taken down for maintenance, but must be redeployed/recovered as soon as possible to preserve the user experience.
+- `fstservice` and `festivalweb` may be restarted for maintenance and must be
+  recovered promptly. `fstworker` remains held for this boundary; the next
+  scrape must use commit `8db72081` or newer so retired indexes are not
+  recreated.
 - PG-3 dropped only `public.ix_crh_latest`, reclaiming exactly
   `20,890,148,864` database bytes. Free space rose from `78,549,483,520` to
   `99,439,702,016` bytes; the guard horizon improved from `2.61` to `3.31`
@@ -43,10 +46,11 @@ This plan records the approved direction for improving FST Postgres persistence 
   `45,547,339,776` database bytes; final measured free space is
   `76,804,927,488` bytes, `31,656,701,952` bytes above the
   `45,148,225,536`-byte scrape boundary.
-- Scrape `1263` consumed the restored headroom before publication. Final
-  measured free space is `31,385,374,720` bytes, leaving a
-  `13,762,850,816`-byte shortfall against the same scrape boundary before any
-  rollback margin. Both scrape and reclaim guards block.
+- Scrape `1263` consumed the restored headroom before publication. A separate
+  residual recovery then retired `33` owner-proven non-constraint indexes in
+  six families, reclaiming `17,174,200,320` database bytes. Final measured
+  free space is `48,546,029,568` bytes, leaving `3,397,804,032` bytes above
+  the same scrape boundary.
 - Public band-history team/date indexes remain because live plans proved their
   route ownership. Composite retention now uses BRIN cutoff rejection plus the
   primary key for account/date probes.
@@ -131,17 +135,18 @@ window.
 ## Capacity boundary and remaining alert
 
 `/mnt/docker-storage` hosts the active Postgres bind mount and now has
-`31,385,374,720` bytes free. The scrape-`1236` monitor requires
+`48,546,029,568` bytes free. The scrape-`1236` monitor requires
 `45,148,225,536` bytes from the equivalent pre-rank boundary through
-publication, so the measured gate blocks with a `13,762,850,816`-byte
-shortfall before rollback margin. The exact measured guard horizon is about
-`0.35` days and remains below every optional-build/rewrite threshold.
+publication, so the measured gate passes with `3,397,804,032` bytes of
+margin. The exact measured guard horizon is about `0.54` days and remains
+below every optional-build/rewrite threshold.
 
 `fstworker` remains held after candidate `1263` was abandoned during
-rank-history snapshots. Band-song/live-fallback isolation is deployed and the
-proxy compose guard passes `25/25`, but capacity is again the exact hard gate.
-No additional scrape is authorized until a separate parity-proven capacity
-phase creates at least the measured shortfall plus rollback margin.
+rank-history snapshots. Band-song/live-fallback isolation is deployed, the
+proxy compose guard passes `25/25`, and capacity now passes. No scrape was
+started in the recovery phase. Before a later run, deploy commit `8db72081` or
+newer to the held worker, then rerun the measured capacity guard, proxy guard,
+and full public-path preflight.
 
 Destructive cleanup, irreversible migration, drop/truncate/repack/rewrite
 work, or active Postgres data movement may proceed automatically after a
@@ -164,6 +169,7 @@ path, and post-action validation are documented.
 | PG-3 composite retention btree reclaim | Accepted | Built a 688,128-byte BRIN replacement, removed the global retention sort, and dropped only `ix_crh_retention_cutoff_account` concurrently in 0.16 s. Reclaimed `23,526,973,440` database bytes; final free space is `63,339,065,344` bytes with `18,190,839,808` bytes above the measured scrape boundary. `12/12` fingerprints and `106` targeted tests passed. |
 | PG-3 post-`1262` rank-history index reclaim | Accepted | Replaced latest-row distinct/sort with a primary-key group/max join, then dropped only non-constraint `ix_rh_latest` in 0.30 s. Reclaimed `45,547,339,776` database bytes; final measured free space is `76,804,927,488` with `31,656,701,952` bytes above the scrape boundary. `12/12` fingerprints and `68` targeted tests passed. |
 | Scrape `1263` stale recovery and derived isolation | Accepted safety recovery / capacity blocked | Marked the watchdog-stopped scrape failed, preserved/unfroze published `1236`, reconciled the worker offline, deployed failed-candidate cache-only/fail-closed isolation, and restored the proxy guard to `25/25`. Free space is `31,385,374,720`, `13,762,850,816` bytes below the measured scrape boundary. |
+| PG-3 post-`1263` residual index reclaim | Accepted | Dropped `33` non-constraint indexes across six exact owner-card families. Reclaimed `17,174,200,320` database bytes; measured free space is `48,546,029,568`, `3,397,804,032` bytes above the scrape boundary. Public route/fail-closed parity was exact, `120/120` tests passed, and commit `8db72081` prevents recreation. |
 | Band rank-history retention policy draft | Complete | Semantics-first v2 retention options and parity gates documented on 2026-07-06. |
 | `band_read_*` quarantine parity package | Complete | Reversible, live-scrape A/B parity-gated quarantine package documented on 2026-07-06; no DDL executed. |
 | Phase 8 physical snapshot write skipping | Accepted behind feature flag | Added `SkipUnchangedPhysicalLeaderboardSnapshots` as a rollback-safe, default-off candidate that skips unchanged solo physical snapshot scopes and keeps snapshot state pinned to the prior active snapshot. Production rollout remains gated by live-scrape A/B parity and disk headroom. |
@@ -175,9 +181,9 @@ path, and post-action validation are documented.
 | Worker validation start | Rejected / blocked | Starting `fstworker` with safer defaults caused `fstservice` and `/api/service-info` through `festivalweb` to time out; `fstworker` was stopped immediately and public API/web health recovered. |
 | Worker scraping heal | Complete | Added worker-only startup schema-init skip, rebuilt the image, started `fstworker`, and held a 10-minute full-public-path watchdog while scrape `1219` began. |
 | Emergency `band_read_*` reclaim | Complete | At 44 MB free / 100% disk, stopped `fstworker`, froze public reads to published `1214`, truncated rollback-safe logical shadow tables, quarantined/validated/dropped unused derived `band_read_*` tables, restored about 435 GB free, and restarted `fstworker` as scrape `1222`. |
-| Autonomous scrape rollout | Rejected / capacity-blocked after scrape `1263` | Candidate `1263` completed `8,208/8,208` manifests and entered rankings, but the watchdog stopped it at `14,871,388,160` free bytes. Published `1236` remains safe through failed-candidate isolation; current free space is still below the measured scrape boundary. |
+| Autonomous scrape rollout | Rejected after scrape `1263`; capacity repaired | Candidate `1263` completed `8,208/8,208` manifests and entered rankings, but the watchdog stopped it at `14,871,388,160` free bytes. Published `1236` remains safe through failed-candidate isolation; the residual reclaim now restores a positive measured capacity margin. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
-| Next implementation phase | WORKER-0A capacity-blocked | Band publication isolation and the `25/25` proxy guard pass, but the measured scrape gate is short by `13,762,850,816` bytes before rollback margin. No run may resume; optional builds, rewrites, repacks, table deletion, broad movement, and owner-rejected index drops remain blocked. |
+| Next implementation phase | WORKER-0A capacity-ready / deploy-held | Band publication isolation, the measured scrape guard, and the `25/25` proxy guard pass. Keep the worker stopped until commit `8db72081` or newer is deployed and the same guards/public-path checks are rerun. Optional builds, rewrites, repacks, table deletion, broad movement, and owner-rejected index drops remain blocked. |
 
 ## Architecture evaluation evidence (2026-07-06)
 

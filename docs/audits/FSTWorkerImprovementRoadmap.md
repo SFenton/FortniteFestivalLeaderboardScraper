@@ -549,6 +549,25 @@ until replay and live shadow parity pass.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/stale-scrape-1263-recovery-20260725T153938Z`.
 
+**Post-1263 residual capacity recovery - accepted; worker remains held
+2026-07-25**
+
+- Six low-scratch owner-card decisions retired `33` non-constraint indexes and
+  reclaimed `17,174,200,320` database bytes. Final measured free space is
+  `48,546,029,568` bytes, `3,397,804,032` bytes above the
+  `45,148,225,536`-byte scrape boundary.
+- Public mapped leaderboard output remained byte-exact HTTP `200`; isolated
+  ranking/history/export and band-song routes remained stable HTTP `503`.
+  `120/120` relevant tests and the Release build passed, and the worker proxy
+  guard remains `25/25`.
+- Commit `8db72081` prevents future startup/ranking publication from
+  recreating the retired indexes. The existing
+  `fstservice:worker0a-recovery-21bd5f56` worker remains exited with restart
+  `no` and was not started. Before any later scrape, deploy `8db72081` or
+  newer and rerun the measured capacity, proxy, and public-health guards.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/fst-residual-capacity-20260725T161042Z`.
+
 ### WORKER-0.5 - Separate solo and band completion
 
 A band timeout must not mark `LeaderboardScrapeCompleted=true`. A task still

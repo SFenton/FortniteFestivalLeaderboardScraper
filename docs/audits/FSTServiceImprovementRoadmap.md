@@ -399,6 +399,14 @@ and old cache artifacts.
   baseline failures and one load-sensitive failure that passed alone.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/stale-scrape-1263-recovery-20260725T153938Z`.
+- The subsequent residual capacity phase changed no public read contract.
+  Mapped leaderboard output stayed byte-exact HTTP `200`; player ranking,
+  history, export, composite/band ranking, and band-song routes stayed on the
+  same stable failed-candidate HTTP `503`. The service image remained
+  `fstservice:failed-candidate-isolation-633e7583`; commit `8db72081` only
+  prevents future schema/ranking rebuilds from recreating retired secondary
+  indexes. Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/fst-residual-capacity-20260725T161042Z`.
 
 ### SERVICE-0.3 - Protect or remove token-backed diagnostics
 

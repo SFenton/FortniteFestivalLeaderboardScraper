@@ -3,7 +3,7 @@
 **Authoritative runtime:** PostgreSQL 17 in `fst-postgres`  
 **Production compose owner:** `/home/sfenton/Docker/FestivalServiceTracker`  
 **Production data root:** `/mnt/docker-storage/Docker/FestivalServiceTracker/pg-data`  
-**Last live inventory:** 2026-07-16 02:40 UTC
+**Last live inventory:** 2026-07-25 16:32 UTC
 
 This document defines FST PostgreSQL ownership, source-of-truth boundaries,
 publication behavior, retention, index posture, and restore paths. PostgreSQL
@@ -131,6 +131,17 @@ filesystem free space reached `76,804,927,488` bytes, leaving
 DDL builds nine child indexes concurrently and attaches them to a partitioned
 parent. No history row, constraint, publication state, route, export, or
 retention result changed.
+
+After scrape `1263` failed on capacity, PG-3 retired `33` non-constraint
+indexes across six owner-proven families: duplicate/non-owning band ranking
+indexes, obsolete dirty-work lookups, unowned band appearance sorts, orphan
+latest-snapshot lookups, observation-table read indexes with no production
+reader, and duplicate/deprecated composite ranking indexes. Database size
+fell from `3,846,380,738,227` to `3,829,206,537,907` bytes and measured free
+space reached `48,546,029,568` bytes, `3,397,804,032` bytes above the measured
+scrape boundary. Exact recreate SQL is retained. Primary/unique indexes,
+published `1236`, failed-candidate route isolation, rows, and constraints were
+unchanged.
 
 ## Data ownership and restore class
 
@@ -576,7 +587,10 @@ scope-total, and relation-size deltas for an A/B decision.
   redundant `ix_crh_latest`, latest-v2 `ix_btrhlv2_snapshot`, and points-v2
   `ix_btrhpv2_snapshot` indexes were retired with exact plan/route/export
   parity. The solo `ix_rh_latest` family was also retired after its ranking
-  latest-row owner moved to a primary-key group/max plan. Member facts,
+  latest-row owner moved to a primary-key group/max plan. Post-`1263`,
+  duplicate band ranking, dirty-work, appearance-sort, orphan latest,
+  observation-read, and composite-ranking secondary indexes were retired
+  while their primary/unique owners stayed intact. Member facts,
   observation-table dual writes, and nullable score-history uniqueness remain
   explicit owner decisions.
 - **PG-4 / WORKER-4:** semantic-change writes, unchanged physical source reuse,
