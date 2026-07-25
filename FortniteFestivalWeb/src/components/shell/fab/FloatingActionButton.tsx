@@ -40,6 +40,7 @@ export interface ActionItem {
   icon: React.ReactNode;
   iconAccessory?: React.ReactNode;
   onPress: () => void;
+  onIntent?: () => void;
 }
 
 type FabPressButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'> & {
@@ -162,10 +163,11 @@ export default function FloatingActionButton({
 
   /* v8 ignore start — action menu open/close handlers (rAF/setTimeout) */
   const openActions = useCallback(() => {
+    for (const action of (actionGroups ?? []).flat()) action.onIntent?.();
     setActionsOpen(true);
     setPopupMounted(true);
     requestAnimationFrame(() => requestAnimationFrame(() => setPopupVisible(true)));
-  }, []);
+  }, [actionGroups]);
 
   const closeActions = useCallback(() => {
     setPopupVisible(false);
@@ -685,6 +687,8 @@ export default function FloatingActionButton({
       'aria-label': action.label,
       title: action.label,
       'data-testid': 'fab-side-action',
+      onPointerEnter: action.onIntent,
+      onFocus: action.onIntent,
       ...getRevealAnimationHandlers(`side:${index}`),
     };
     if (action.href) {
@@ -816,6 +820,8 @@ export default function FloatingActionButton({
                       style={getDockActionButtonStyle(action)}
                       aria-label={action.label}
                       title={action.label}
+                      onPointerEnter={action.onIntent}
+                      onFocus={action.onIntent}
                       onPress={action.onPress}
                     >
                       {action.icon}

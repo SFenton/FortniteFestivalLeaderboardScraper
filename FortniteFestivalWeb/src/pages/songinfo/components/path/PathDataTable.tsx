@@ -23,6 +23,10 @@ import {
   Display, TextAlign, Overflow, Cursor, CssValue,
   border, padding, frostedCard, STAGGER_ROW_MS,
 } from '@festival/theme';
+import { DEFAULT_COLUMN_ORDER, type ColumnKey } from './pathTableColumns';
+
+export { DEFAULT_COLUMN_ORDER } from './pathTableColumns';
+export type { ColumnKey } from './pathTableColumns';
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -163,9 +167,6 @@ function formatTime(totalSeconds: number): string {
 const scoreFormatter = new Intl.NumberFormat('en-US');
 
 // ── Column ordering ──────────────────────────────────────────
-
-export type ColumnKey = 'note' | 'beat' | 'time' | 'od' | 'score';
-export const DEFAULT_COLUMN_ORDER: ColumnKey[] = ['note', 'beat', 'time', 'od', 'score'];
 
 const COLUMN_WIDTHS: Record<ColumnKey, string> = {
   note: '160px',

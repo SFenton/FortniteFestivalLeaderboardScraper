@@ -141,6 +141,19 @@ describe('FloatingActionButton', () => {
     expect(menuItem.style.touchAction).toBe('none');
   });
 
+  it('prefetches popup actions when the secondary menu opens', () => {
+    const onIntent = vi.fn();
+    renderFAB({
+      actionGroups: [[
+        { label: 'Sort', icon: <span>S</span>, onPress: vi.fn(), onIntent },
+      ]],
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /actions/i }));
+
+    expect(onIntent).toHaveBeenCalledOnce();
+  });
+
   it('opens the popup menu from touch pointerup without the following click closing it', () => {
     const actionGroups: ActionItem[][] = [[
       { label: 'Sort', icon: <span>S</span>, onPress: vi.fn() },

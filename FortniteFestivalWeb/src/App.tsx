@@ -124,8 +124,17 @@ import MobileFloatingActionButton from './components/shell/fab/MobileFloatingAct
 import ComboInstrumentFabAccessory from './components/shell/fab/ComboInstrumentFabAccessory';
 import type { ActionItem } from './components/shell/fab/FloatingActionButton';
 import { InstrumentIcon } from './components/display/InstrumentIcons';
-import SearchModal from './components/search/SearchModal';
-import MobileNotificationsModal, { filterSurfaceNotifications, type MobileNotification } from './components/notifications/MobileNotificationsModal';
+import LazyModalBoundary from './components/common/LazyModalBoundary';
+import {
+  LazyBandInstrumentFilterModal,
+  LazyMobileNotificationsModal,
+  LazySearchModal,
+  preloadBandInstrumentFilterModal,
+  preloadMobileNotificationsModal,
+  preloadSearchModal,
+} from './components/lazy/secondaryControls';
+import { filterSurfaceNotifications } from './components/notifications/notificationSurface';
+import type { MobileNotification } from './components/notifications/notificationTypes';
 import { getNotificationDestination } from './components/notifications/notificationDestination';
 import { useNotificationFreshnessState } from './components/notifications/notificationFreshnessState';
 import { notificationFeedKeyForProfile, useNotificationSeenState } from './components/notifications/notificationSeenState';
@@ -134,9 +143,8 @@ import type { SearchTarget } from './types/search';
 import { IS_IOS, IS_ANDROID, IS_PWA, IS_PAGE_RELOAD } from '@festival/ui-utils';
 import ChangelogModal from './components/modals/ChangelogModal';
 import ConfirmAlert from './components/modals/ConfirmAlert';
-import BandInstrumentFilterModal, { type BandInstrumentFilterApplyPayload, type BandInstrumentFilterAssignment } from './pages/band/modals/BandInstrumentFilterModal';
 import { DEFAULT_INSTRUMENT, SERVER_INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey } from '@festival/core/api';
-import type { AppliedBandComboFilter } from './types/bandFilter';
+import type { AppliedBandComboFilter, BandInstrumentFilterApplyPayload, BandInstrumentFilterAssignment } from './types/bandFilter';
 import { APP_VERSION } from './hooks/data/useVersions';
 import { changelogHash } from './changelog';
 import ErrorBoundary from './components/page/ErrorBoundary';
@@ -487,6 +495,7 @@ function AppShell() {
   const navType = useNavigationType();
 
   const openSearch = useCallback((config?: SearchModalConfig) => {
+    preloadSearchModal();
     setSearchConfig(config ?? null);
     setSearchOpen(true);
   }, []);
@@ -500,7 +509,10 @@ function AppShell() {
   const shouldAutoOpenNotifications = hasWindowValidationToken(NOTIFICATIONS_VALIDATION_TOKEN) || useEmptyNotificationMock;
   const notificationHeaderBusy = notificationHeaderVisualState !== 'icon';
   const canOpenNotifications = selectedProfile != null && notificationRequestMatchesSelection && notificationFeedReadyForHeader && !notificationHeaderBusy;
-  const handleOpenNotifications = useCallback(() => setNotificationsOpen(true), []);
+  const handleOpenNotifications = useCallback(() => {
+    preloadMobileNotificationsModal();
+    setNotificationsOpen(true);
+  }, []);
 
   useEffect(() => () => clearNotificationSwapTimers(), [clearNotificationSwapTimers]);
 
@@ -680,6 +692,9 @@ function AppShell() {
     }
     handleProfileClick();
   }, [handleProfileClick, openProfileSearch, selectedProfile]);
+  const profileSelectionIntent = getProfileClickDestination(player, selectedProfile) === 'search'
+    ? preloadSearchModal
+    : undefined;
   /* v8 ignore stop */
 
   /* v8 ignore start — deep AppInner: instrument sync event listener */
@@ -757,7 +772,10 @@ function AppShell() {
   const bandFilterIconAccessory = bandFilterActive
     ? <ComboInstrumentFabAccessory instruments={selectedBandFilterInstruments} />
     : undefined;
-  const handleBandFilterPress = useCallback(() => setBandFilterModalOpen(true), []);
+  const handleBandFilterPress = useCallback(() => {
+    preloadBandInstrumentFilterModal();
+    setBandFilterModalOpen(true);
+  }, []);
   const handleApplyBandFilter = useCallback((payload: BandInstrumentFilterApplyPayload) => {
     if (selectedProfile?.type !== 'band') return;
     const nextFilter = writeAppliedBandFilter({
@@ -789,6 +807,7 @@ function AppShell() {
     appliedFilter: activeBandFilter,
     appliedAssignments: activeBandFilterAssignments,
     onPress: handleBandFilterPress,
+    onIntent: preloadBandInstrumentFilterModal,
     onApplyFilter: handleApplyBandFilter,
     onResetFilter: handleResetBandFilter,
   }), [activeBandFilter, activeBandFilterAssignments, bandFilterLabel, handleApplyBandFilter, handleBandFilterPress, handleResetBandFilter, isMobile, selectedBandFilterInstruments, showBandFilterAction]);
@@ -801,6 +820,7 @@ function AppShell() {
       icon: <IoFunnel size={Size.iconFab} />,
       iconAccessory: bandFilterIconAccessory,
       onPress: handleBandFilterPress,
+      onIntent: preloadBandInstrumentFilterModal,
     }] : []),
       ...(fabSearch.leaderboardMetricReady ? [{ label: t('rankings.changeRanking'), active: fabSearch.leaderboardMetricActive, iconOnly: true, icon: <IoOptions size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardMetric() }] : []),
     ]
@@ -815,7 +835,7 @@ function AppShell() {
     onPress: () => fabSearch.openLeaderboardBandCombo(),
   }] : [];
   const bandFilterFabActions: ActionItem[] = isMobile && showBandFilterAction && location.pathname !== AppRoutes.leaderboards
-    ? [{ label: bandFilterLabel, active: bandFilterActive, icon: <IoFunnel size={Size.iconFab} />, iconAccessory: bandFilterIconAccessory, onPress: handleBandFilterPress }]
+    ? [{ label: bandFilterLabel, active: bandFilterActive, icon: <IoFunnel size={Size.iconFab} />, iconAccessory: bandFilterIconAccessory, onPress: handleBandFilterPress, onIntent: preloadBandInstrumentFilterModal }]
     : [];
   const statisticsSideActions: ActionItem[] = isMobile && location.pathname === AppRoutes.statistics && !player && selectedProfile?.type === 'band'
     ? bandFilterFabActions.map(action => ({ ...action, iconOnly: true }))
@@ -918,8 +938,11 @@ function AppShell() {
             profileType={profileType}
             profileLabel={mobileHeaderProfileLabel}
             onProfileAction={handleMobileHeaderProfileAction}
+            onProfileIntent={profileSelectionIntent}
             onOpenSearch={() => openSearch()}
+            onSearchIntent={preloadSearchModal}
             onOpenNotifications={canOpenNotifications ? handleOpenNotifications : undefined}
+            onNotificationsIntent={canOpenNotifications ? preloadMobileNotificationsModal : undefined}
             hasNotifications={hasNotifications}
             notificationCount={surfaceUnreadCount}
             notificationVisualState={notificationHeaderVisualState}
@@ -931,8 +954,11 @@ function AppShell() {
             profileLabel={mobileHeaderProfileLabel}
             onOpenSidebar={() => setSidebarOpen((o) => !o)}
             onProfileClick={handleProfileClick}
+            onProfileIntent={profileSelectionIntent}
             onOpenSearch={() => openSearch()}
+            onSearchIntent={preloadSearchModal}
             onOpenNotifications={canOpenNotifications ? handleOpenNotifications : undefined}
+            onNotificationsIntent={canOpenNotifications ? preloadMobileNotificationsModal : undefined}
             hasNotifications={hasNotifications}
             notificationCount={surfaceUnreadCount}
             notificationVisualState={notificationHeaderVisualState}
@@ -1262,32 +1288,53 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
-      <SearchModal
+      <LazyModalBoundary
         visible={searchOpen}
+        title={t('search.title')}
+        boundaryName="search-modal"
         onClose={closeSearch}
-        availableTargets={searchConfig?.availableTargets}
-        placeholderKey={searchConfig?.placeholderKey}
-      />
-      <MobileNotificationsModal
+      >
+        <LazySearchModal
+          visible={searchOpen}
+          onClose={closeSearch}
+          availableTargets={searchConfig?.availableTargets}
+          placeholderKey={searchConfig?.placeholderKey}
+        />
+      </LazyModalBoundary>
+      <LazyModalBoundary
         visible={notificationsOpen}
+        title={t('notifications.title')}
+        boundaryName="notifications-modal"
         onClose={() => setNotificationsOpen(false)}
-        presentation={isMobile ? 'mobileModal' : 'desktopDrawer'}
-        notifications={surfaceNotifications}
-        unreadNotificationIds={surfaceUnreadNotificationIds}
-        newNotificationIds={surfaceNewNotificationIds}
-        notificationsGenerated={notificationFeed.generationStatus === 'generated'}
-        onNotificationsSeen={markNotificationsSeen}
-        onNotificationOpen={handleNotificationOpen}
-      />
+      >
+        <LazyMobileNotificationsModal
+          visible={notificationsOpen}
+          onClose={() => setNotificationsOpen(false)}
+          presentation={isMobile ? 'mobileModal' : 'desktopDrawer'}
+          notifications={surfaceNotifications}
+          unreadNotificationIds={surfaceUnreadNotificationIds}
+          newNotificationIds={surfaceNewNotificationIds}
+          notificationsGenerated={notificationFeed.generationStatus === 'generated'}
+          onNotificationsSeen={markNotificationsSeen}
+          onNotificationOpen={handleNotificationOpen}
+        />
+      </LazyModalBoundary>
       {selectedProfile && !useNotificationMockData && <NotificationFeedWebSocketBridge profile={selectedProfile} />}
-      <BandInstrumentFilterModal
+      <LazyModalBoundary
         visible={bandFilterModalOpen && selectedProfile?.type === 'band'}
-        selectedBand={selectedProfile?.type === 'band' ? selectedProfile : null}
-        appliedAssignments={activeBandFilterAssignments}
-        onCancel={() => setBandFilterModalOpen(false)}
-        onApply={handleApplyBandFilter}
-        onReset={handleResetBandFilter}
-      />
+        title={t('bandFilter.modalTitle')}
+        boundaryName="band-filter-modal"
+        onClose={() => setBandFilterModalOpen(false)}
+      >
+        <LazyBandInstrumentFilterModal
+          visible={bandFilterModalOpen && selectedProfile?.type === 'band'}
+          selectedBand={selectedProfile?.type === 'band' ? selectedProfile : null}
+          appliedAssignments={activeBandFilterAssignments}
+          onCancel={() => setBandFilterModalOpen(false)}
+          onApply={handleApplyBandFilter}
+          onReset={handleResetBandFilter}
+        />
+      </LazyModalBoundary>
       {showChangelog && <ChangelogModal onDismiss={dismissChangelog} onExitComplete={() => setChangelogDismissed(true)} />}
       {showDeselectConfirm && (
         <ConfirmAlert

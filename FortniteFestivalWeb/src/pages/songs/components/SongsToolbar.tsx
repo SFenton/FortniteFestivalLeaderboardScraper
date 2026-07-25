@@ -27,7 +27,9 @@ interface SongsToolbarProps {
   filteredCount: number;
   totalCount: number;
   onOpenSort: () => void;
+  onSortIntent?: () => void;
   onOpenFilter: () => void;
+  onFilterIntent?: () => void;
 }
 
 export function SongsToolbar({
@@ -41,7 +43,9 @@ export function SongsToolbar({
   filteredCount,
   totalCount,
   onOpenSort,
+  onSortIntent,
   onOpenFilter,
+  onFilterIntent,
 }: SongsToolbarProps) {
   const { t } = useTranslation();
   const styles = useStyles();
@@ -123,13 +127,14 @@ export function SongsToolbar({
         )}
         <div style={styles.sortGroup}>
           <div style={sortVisible ? styles.sortSlot : styles.sortSlotHidden}>
-            <ActionPill icon={<IoSwapVerticalSharp size={Size.iconAction} />} label={t('common.sort')} onClick={onOpenSort} active={sortActive} />
+            <ActionPill icon={<IoSwapVerticalSharp size={Size.iconAction} />} label={t('common.sort')} onClick={onOpenSort} onIntent={onSortIntent} active={sortActive} />
           </div>
           <div style={filterVisible ? styles.filterSlot : styles.filterSlotHidden}>
             <ActionPill
               icon={<IoFunnel size={Size.iconAction} />}
               label={t('common.filter')}
               onClick={onOpenFilter}
+              onIntent={onFilterIntent}
               active={filtersActive}
             />
           </div>

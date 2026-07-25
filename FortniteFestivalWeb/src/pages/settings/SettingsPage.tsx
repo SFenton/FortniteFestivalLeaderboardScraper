@@ -15,7 +15,7 @@ import SectionHeader from '../../components/common/SectionHeader';
 import MarqueeText from '../../components/common/MarqueeText';
 import { ReorderList } from '../../components/sort/ReorderList';
 import { METADATA_SORT_DISPLAY } from '../../utils/songSettings';
-import { type ColumnKey } from '../songinfo/components/path/PathDataTable';
+import type { ColumnKey } from '../songinfo/components/path/pathTableColumns';
 import ConfirmAlert from '../../components/modals/ConfirmAlert';
 import { modalStyles as modalCss } from '../../components/modals/modalStyles';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';

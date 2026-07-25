@@ -29,8 +29,12 @@ export interface MobileHeaderProps {
   onOpenSidebar?: () => void;
   /** Callback to open the unified search modal. */
   onOpenSearch?: () => void;
+  /** Callback used to warm the unified search modal before activation. */
+  onSearchIntent?: () => void;
   /** Callback to open the notifications modal. */
   onOpenNotifications?: () => void;
+  /** Callback used to warm the notifications modal before activation. */
+  onNotificationsIntent?: () => void;
   /** Whether the selected profile/band has any notifications in its feed. */
   hasNotifications?: boolean;
   /** Number of active notifications for the mobile bell badge. */
@@ -43,6 +47,8 @@ export interface MobileHeaderProps {
   profileLabel?: string;
   /** Callback for profile-state action presses. */
   onProfileAction?: () => void;
+  /** Callback used to warm profile selection before activation. */
+  onProfileIntent?: () => void;
 }
 
 export default function MobileHeader({
@@ -54,13 +60,16 @@ export default function MobileHeader({
   isSongsRoute,
   onOpenSidebar,
   onOpenSearch,
+  onSearchIntent,
   onOpenNotifications,
+  onNotificationsIntent,
   hasNotifications,
   notificationCount = 0,
   notificationVisualState,
   profileType = 'none',
   profileLabel,
   onProfileAction,
+  onProfileIntent,
 }: MobileHeaderProps) {
   const navigate = useNavigate();
   const s = useStyles();
@@ -77,8 +86,11 @@ export default function MobileHeader({
     profileType={profileType}
     profileLabel={profileLabel}
     onProfileAction={onProfileAction}
+    onProfileIntent={onProfileIntent}
     onOpenSearch={onOpenSearch}
+    onSearchIntent={onSearchIntent}
     onOpenNotifications={onOpenNotifications}
+    onNotificationsIntent={onNotificationsIntent}
     hasNotifications={hasNotifications}
     notificationCount={notificationCount}
     notificationVisualState={notificationVisualState}

@@ -8,14 +8,24 @@ import {
   Opacity, FADE_DURATION, DEMO_SWAP_INTERVAL_MS,
   flexColumn, flexRow, border, padding,
 } from '@festival/theme';
-import { SERVER_INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey } from '@festival/core/api';
-import { isExperimentalRankingMetric } from '../../pages/leaderboards/helpers/rankingHelpers';
+import { serverInstrumentLabel } from '@festival/core/api';
 import { InstrumentIcon } from '../display/InstrumentIcons';
 import MarqueeText from '../common/MarqueeText';
 import PressableButton from '../common/PressableButton';
-import { getNotificationDestination, type NotificationNavigationContext } from './notificationDestination';
-import { getNotificationRankingMetric, isAggregateRankNotificationEvent } from './notificationRanking';
-import { formatNotificationPresentation, type NotificationFlagGroup, type NotificationFlagKind, type NotificationMessagePart, type NotificationPresentation, type NotificationTextEvent, type NotificationTextInput } from './notificationText';
+import { getNotificationDestination } from './notificationDestination';
+import { formatNotificationPresentation, type NotificationFlagGroup, type NotificationFlagKind, type NotificationMessagePart, type NotificationPresentation } from './notificationText';
+import { mockMobileNotifications } from './notificationMocks';
+import type { MobileNotification, NotificationMedia } from './notificationTypes';
+
+export { mockEmptyMobileNotifications, mockMobileNotifications } from './notificationMocks';
+export {
+  filterSurfaceNotifications,
+  notificationSurfaceInstrument,
+  notificationSurfaceInstruments,
+  shouldSurfaceNotification,
+} from './notificationSurface';
+export type { NotificationInstrumentFilter, NotificationSurfaceFilter } from './notificationSurface';
+export type { MobileNotification } from './notificationTypes';
 
 const NOTIFICATION_MODAL_DESKTOP: CSSProperties = { width: 460, height: 640, maxHeight: '90vh' };
 const NOTIFICATION_DESKTOP_DRAWER: CSSProperties = { width: 460, maxWidth: '92vw' };
@@ -32,7 +42,6 @@ const MEDIA_CYCLE_SWAP_INTERVAL_MS = DEMO_SWAP_INTERVAL_MS;
 const MEDIA_CYCLE_FADE_MS = FADE_DURATION;
 const MEDIA_CYCLE_DURATION_SECONDS = (MEDIA_CYCLE_SWAP_INTERVAL_MS * 2) / 1000;
 const MEDIA_CYCLE_EPOCH = 1_700_000_000_000;
-const ALBUM_ART_PREFIX = 'https://cdn2.unrealengine.com/';
 const MEDIA_CYCLE_STYLES = `
 @media (prefers-reduced-motion: reduce) {
   [data-media-cycle-row-layer] { transition: none !important; transform: translateY(0) !important; }
@@ -48,12 +57,6 @@ const VISIBLE_SEEN_THRESHOLD = 0.9;
 const EMPTY_UNREAD_IDS = new Set<string>();
 const EMPTY_NEW_IDS = new Set<string>();
 const NOOP_SEEN_HANDLER = () => {};
-const SFENTONX_ACCOUNT_ID = '195e93ef108143b2975ee46662d4d0e1';
-const KAHNYRI_ACCOUNT_ID = '4c2a1300df4c49a9b9d2b352d704bdf0';
-const THIRD_BAND_ACCOUNT_ID = 'db9342c9dd874c799b58f177ec899f5e';
-const APPLE_SONG_ID = 'e90125a8-742a-4be9-baa0-4d93f5fba556';
-const STAND_AND_FIGHT_REMIX_SONG_ID = '4e5b8da5-0891-4a5b-9386-85031fcdca08';
-const GHOSTS_N_STUFF_SONG_ID = 'e60b07e6-065a-4059-a7a4-4a88fe268108';
 const FLAG_COLORS: Record<NotificationFlagKind, string> = {
   improvement: '#4b5563',
   firstPlay: '#6d28d9',
@@ -66,318 +69,7 @@ const FLAG_COLORS: Record<NotificationFlagKind, string> = {
   progress: '#4338ca',
 };
 
-type NotificationMedia =
-  | { kind: 'song'; albumArt: string; alt: string }
-  | { kind: 'songInstrumentGrid'; albumArt: string; alt: string; instruments: ServerInstrumentKey[]; label: string }
-  | { kind: 'soloInstrument'; instrument: ServerInstrumentKey; label: string }
-  | { kind: 'instrumentCombo'; instruments: ServerInstrumentKey[]; label: string; cycleAlbumArt?: { albumArt: string; alt: string } };
-
 type NotificationMediaCycleLayer = 'icons' | 'art';
-
-export type MobileNotification = NotificationTextInput & {
-  eventId: number;
-  notificationGuid: string;
-  detectedAt: string;
-  eventKind: string;
-  songId?: string;
-  instrument?: ServerInstrumentKey;
-  title: string;
-  artist?: string;
-  context: string;
-  detectedLabel: string;
-  media: NotificationMedia;
-  surfaceInstruments?: ServerInstrumentKey[];
-  navigation?: NotificationNavigationContext | null;
-  payload: {
-    coalescedEventCount: number;
-    coalescedEventKinds: string[];
-    coalescedInstruments?: ServerInstrumentKey[];
-    coalescedEvents: NotificationTextEvent[];
-    oldFullCombo?: boolean | null;
-    newFullCombo?: boolean | null;
-    oldStars?: number | null;
-    newStars?: number | null;
-  };
-};
-
-const MOCK_NOTIFICATIONS: MobileNotification[] = [
-  {
-    eventId: 1,
-    notificationGuid: 'f2ddf535-f63e-4fd3-9c2c-9b7273fd0001',
-    detectedAt: '2026-05-09T14:53:00Z',
-    eventKind: 'player_score_pb',
-    songId: APPLE_SONG_ID,
-    instrument: 'Solo_Drums',
-    title: 'Apple',
-    songTitle: 'Apple',
-    instrumentLabel: 'Pro Drums',
-    context: 'SFentonX - Pro Drums',
-    detectedLabel: 'Today 7:53 AM',
-    media: { kind: 'song', albumArt: albumArt('tg9ervxpjbz6zww6-512x512-16b50aeec442.jpg'), alt: 'Apple album art' },
-    navigation: { songId: APPLE_SONG_ID, instrument: 'Solo_Drums' },
-    payload: {
-      coalescedEventCount: 4,
-      coalescedEventKinds: ['player_score_pb', 'player_gold_stars_achieved', 'player_stars_improved', 'player_song_rank_improved'],
-      coalescedEvents: [
-        { eventKind: 'player_score_pb', metric: 'score', oldNumeric: 127025, newNumeric: 137700 },
-        { eventKind: 'player_gold_stars_achieved', metric: 'stars', oldNumeric: 5, newNumeric: 6 },
-        { eventKind: 'player_stars_improved', metric: 'stars', oldNumeric: 5, newNumeric: 6 },
-        { eventKind: 'player_song_rank_improved', metric: 'song_rank', oldRank: 1214, newRank: 982 },
-      ],
-    },
-  },
-  {
-    eventId: 2,
-    notificationGuid: 'f2ddf535-f63e-4fd3-9c2c-9b7273fd0002',
-    detectedAt: '2026-05-09T14:52:00Z',
-    eventKind: 'player_score_pb',
-    songId: STAND_AND_FIGHT_REMIX_SONG_ID,
-    instrument: 'Solo_Drums',
-    title: 'Stand and Fight (Remix)',
-    songTitle: 'Stand and Fight (Remix)',
-    instrumentLabel: 'Drums',
-    context: 'SFentonX - Drums',
-    detectedLabel: 'Today 7:53 AM',
-    media: { kind: 'song', albumArt: albumArt('9yu2qyo48olhpmev-512x512-ed189e21217f.jpg'), alt: 'Stand and Fight (Remix) album art' },
-    navigation: { songId: STAND_AND_FIGHT_REMIX_SONG_ID, instrument: 'Solo_Drums' },
-    payload: {
-      coalescedEventCount: 3,
-      coalescedEventKinds: ['player_score_pb', 'player_fc_achieved', 'player_song_rank_improved'],
-      coalescedEvents: [
-        { eventKind: 'player_score_pb', metric: 'score', oldNumeric: 126384, newNumeric: 126978 },
-        { eventKind: 'player_fc_achieved', metric: 'full_combo' },
-        { eventKind: 'player_song_rank_improved', metric: 'song_rank', oldRank: 442, newRank: 391 },
-      ],
-    },
-  },
-  {
-    eventId: 3,
-    notificationGuid: 'f2ddf535-f63e-4fd3-9c2c-9b7273fd0003',
-    detectedAt: '2026-05-09T14:51:00Z',
-    eventKind: 'player_first_score',
-    songId: GHOSTS_N_STUFF_SONG_ID,
-    instrument: 'Solo_Drums',
-    title: "Ghosts 'n' Stuff",
-    songTitle: "Ghosts 'n' Stuff",
-    instrumentLabel: 'Pro Drums',
-    context: 'SFentonX - Pro Drums',
-    detectedLabel: 'Today 7:53 AM',
-    media: { kind: 'song', albumArt: albumArt('brc3mquv0rvjdlhz-512x512-cfb9e6ab2c73.jpg'), alt: "Ghosts 'n' Stuff album art" },
-    navigation: { songId: GHOSTS_N_STUFF_SONG_ID, instrument: 'Solo_Drums' },
-    payload: {
-      coalescedEventCount: 2,
-      coalescedEventKinds: ['player_first_score', 'player_gold_stars_achieved'],
-      coalescedEvents: [
-        { eventKind: 'player_first_score', metric: 'score', newNumeric: 180005, newRank: 1288 },
-        { eventKind: 'player_gold_stars_achieved', metric: 'stars', newNumeric: 6 },
-      ],
-    },
-  },
-  {
-    eventId: 4,
-    notificationGuid: 'f2ddf535-f63e-4fd3-9c2c-9b7273fd0004',
-    detectedAt: '2026-05-09T14:50:00Z',
-    eventKind: 'player_weighted_rank_improved',
-    title: 'Solo Drums weighted percentile rank',
-    instrumentLabel: 'Drums',
-    context: 'SFentonX - Rankings',
-    detectedLabel: 'Today 7:53 AM',
-    media: { kind: 'soloInstrument', instrument: 'Solo_Drums', label: 'Drums' },
-    navigation: { rankBy: 'weighted' },
-    payload: {
-      coalescedEventCount: 1,
-      coalescedEventKinds: ['player_weighted_rank_improved'],
-      coalescedEvents: [
-        { eventKind: 'player_weighted_rank_improved', metric: 'weighted_rank', oldRank: 45, newRank: 42 },
-      ],
-    },
-  },
-  {
-    eventId: 5,
-    notificationGuid: 'f2ddf535-f63e-4fd3-9c2c-9b7273fd0005',
-    detectedAt: '2026-05-09T14:49:00Z',
-    eventKind: 'band_weighted_rank_improved',
-    title: 'Band Duos weighted percentile rank',
-    scopeLabel: 'Band Duos',
-    context: 'SFentonX + kahnyri - Guitar/Drums',
-    detectedLabel: 'Today 7:53 AM',
-    media: { kind: 'instrumentCombo', instruments: ['Solo_Guitar', 'Solo_Drums'], label: 'Guitar/Drums' },
-    navigation: { rankBy: 'weighted' },
-    payload: {
-      coalescedEventCount: 1,
-      coalescedEventKinds: ['band_weighted_rank_improved'],
-      coalescedEvents: [
-        { eventKind: 'band_weighted_rank_improved', metric: 'weighted_rank', oldRank: 19, newRank: 16 },
-      ],
-    },
-  },
-  {
-    eventId: 6,
-    notificationGuid: 'f2ddf535-f63e-4fd3-9c2c-9b7273fd0006',
-    detectedAt: '2026-05-09T14:48:00Z',
-    eventKind: 'band_score_pb',
-    songId: APPLE_SONG_ID,
-    title: 'Apple',
-    songTitle: 'Apple',
-    rankingScope: 'overall',
-    comboLabel: 'Bass/Bass/Drums',
-    scopeLabel: 'Band Trios',
-    context: 'SFentonX + kahnyri + db9342 - Bass/Bass/Drums',
-    detectedLabel: 'Today 7:53 AM',
-    media: {
-      kind: 'instrumentCombo',
-      instruments: ['Solo_Bass', 'Solo_Bass', 'Solo_Drums'],
-      label: 'Bass/Bass/Drums',
-      cycleAlbumArt: { albumArt: albumArt('tg9ervxpjbz6zww6-512x512-16b50aeec442.jpg'), alt: 'Apple band notification album art' },
-    },
-    navigation: {
-      songId: APPLE_SONG_ID,
-      band: {
-        bandId: 'notification-band-trios-apple',
-        bandType: 'Band_Trios',
-        teamKey: `${SFENTONX_ACCOUNT_ID}:${KAHNYRI_ACCOUNT_ID}:${THIRD_BAND_ACCOUNT_ID}`,
-        displayName: 'SFentonX + kahnyri + db9342',
-        members: [
-          { accountId: SFENTONX_ACCOUNT_ID, displayName: 'SFentonX' },
-          { accountId: KAHNYRI_ACCOUNT_ID, displayName: 'kahnyri' },
-          { accountId: THIRD_BAND_ACCOUNT_ID, displayName: 'db9342' },
-        ],
-      },
-      bandFilter: {
-        comboId: 'Solo_Bass+Solo_Bass+Solo_Drums',
-        assignments: [
-          { accountId: SFENTONX_ACCOUNT_ID, instrument: 'Solo_Bass' },
-          { accountId: KAHNYRI_ACCOUNT_ID, instrument: 'Solo_Bass' },
-          { accountId: THIRD_BAND_ACCOUNT_ID, instrument: 'Solo_Drums' },
-        ],
-      },
-    },
-    payload: {
-      coalescedEventCount: 5,
-      coalescedEventKinds: ['band_score_pb', 'band_fc_achieved', 'band_gold_stars_achieved', 'band_song_rank_improved', 'band_song_rank_improved'],
-      coalescedEvents: [
-        { eventKind: 'band_score_pb', metric: 'score', oldNumeric: 1210400, newNumeric: 1234567 },
-        { eventKind: 'band_fc_achieved', metric: 'full_combo' },
-        { eventKind: 'band_gold_stars_achieved', metric: 'stars', oldNumeric: 5, newNumeric: 6 },
-        { eventKind: 'band_song_rank_improved', metric: 'song_rank', oldRank: 42, newRank: 31, rankingScope: 'overall', scopeLabel: 'Band Trios' },
-        { eventKind: 'band_song_rank_improved', metric: 'song_rank', oldRank: 9, newRank: 6, rankingScope: 'combo', comboLabel: 'Bass/Bass/Drums' },
-      ],
-    },
-  },
-];
-
-export const mockMobileNotifications = MOCK_NOTIFICATIONS;
-export const mockEmptyMobileNotifications: MobileNotification[] = [];
-
-export type NotificationInstrumentFilter = ReadonlySet<ServerInstrumentKey> | null | undefined;
-export type NotificationSurfaceFilter = NotificationInstrumentFilter | {
-  visibleInstruments?: NotificationInstrumentFilter;
-  enableExperimentalRanks?: boolean;
-};
-
-export function notificationSurfaceInstrument(
-  notification: Pick<MobileNotification, 'instrument' | 'media' | 'surfaceInstruments'>,
-): ServerInstrumentKey | null {
-  return notificationSurfaceInstruments(notification)[0] ?? null;
-}
-
-export function notificationSurfaceInstruments(
-  notification: Pick<MobileNotification, 'instrument' | 'media' | 'surfaceInstruments'>,
-): ServerInstrumentKey[] {
-  if (notification.surfaceInstruments?.length) return orderedUniqueInstruments(notification.surfaceInstruments);
-  if (notification.instrument) return [notification.instrument];
-  if (notification.media.kind === 'soloInstrument') return [notification.media.instrument];
-  if (notification.media.kind === 'songInstrumentGrid') return orderedUniqueInstruments(notification.media.instruments);
-  return [];
-}
-
-export function shouldSurfaceNotification(
-  notification: MobileNotification,
-  surfaceFilter: NotificationSurfaceFilter,
-): boolean {
-  return Boolean(projectSurfaceNotification(notification, surfaceFilter));
-}
-
-export function filterSurfaceNotifications(
-  notifications: readonly MobileNotification[],
-  surfaceFilter: NotificationSurfaceFilter,
-): MobileNotification[] {
-  return notifications.flatMap((notification) => {
-    const projected = projectSurfaceNotification(notification, surfaceFilter);
-    return projected ? [projected] : [];
-  });
-}
-
-function projectSurfaceNotification(
-  notification: MobileNotification,
-  surfaceFilter: NotificationSurfaceFilter,
-): MobileNotification | null {
-  const filter = normalizeSurfaceFilter(surfaceFilter);
-  const rankProjected = projectExperimentalRankNotification(notification, filter.enableExperimentalRanks);
-  if (!rankProjected) return null;
-  if (!filter.visibleInstruments) return rankProjected;
-
-  const instruments = notificationSurfaceInstruments(rankProjected);
-  if (instruments.length === 0) return rankProjected;
-  return instruments.some(instrument => filter.visibleInstruments?.has(instrument)) ? rankProjected : null;
-}
-
-function normalizeSurfaceFilter(surfaceFilter: NotificationSurfaceFilter): { visibleInstruments: NotificationInstrumentFilter; enableExperimentalRanks: boolean } {
-  if (!isStructuredSurfaceFilter(surfaceFilter)) {
-    return { visibleInstruments: surfaceFilter, enableExperimentalRanks: true };
-  }
-  return {
-    visibleInstruments: surfaceFilter.visibleInstruments,
-    enableExperimentalRanks: surfaceFilter.enableExperimentalRanks ?? true,
-  };
-}
-
-function isStructuredSurfaceFilter(surfaceFilter: NotificationSurfaceFilter): surfaceFilter is Exclude<NotificationSurfaceFilter, NotificationInstrumentFilter> {
-  return Boolean(surfaceFilter) && !(surfaceFilter instanceof Set);
-}
-
-function projectExperimentalRankNotification(notification: MobileNotification, enableExperimentalRanks: boolean): MobileNotification | null {
-  if (enableExperimentalRanks) return notification;
-
-  const events = notification.payload.coalescedEvents.length > 0
-    ? notification.payload.coalescedEvents
-    : [{ eventKind: notification.eventKind, metric: notification.metric, oldRank: notification.oldRank, newRank: notification.newRank }];
-  const hasAggregateRankEvents = events.some(isAggregateRankNotificationEvent);
-  if (!hasAggregateRankEvents) return notification;
-
-  const visibleEvents = events.filter((event) => {
-    const metric = getNotificationRankingMetric(event);
-    return !metric || !isExperimentalRankingMetric(metric);
-  });
-  if (visibleEvents.length === 0) return null;
-  if (visibleEvents.length === events.length) return notification;
-
-  const primary = visibleEvents[0]!;
-  const rankBy = getNotificationRankingMetric(primary);
-  return {
-    ...notification,
-    eventKind: primary.eventKind,
-    metric: primary.metric,
-    oldNumeric: primary.oldNumeric,
-    newNumeric: primary.newNumeric,
-    oldRank: primary.oldRank,
-    newRank: primary.newRank,
-    navigation: notification.navigation || rankBy
-      ? { ...notification.navigation, rankBy }
-      : notification.navigation,
-    payload: {
-      ...notification.payload,
-      coalescedEventCount: visibleEvents.length,
-      coalescedEventKinds: visibleEvents.map(event => event.eventKind),
-      coalescedEvents: visibleEvents,
-    },
-  };
-}
-
-function orderedUniqueInstruments(instruments: readonly ServerInstrumentKey[]): ServerInstrumentKey[] {
-  const present = new Set(instruments);
-  return SERVER_INSTRUMENT_KEYS.filter(instrument => present.has(instrument));
-}
 
 type MobileNotificationsModalProps = {
   visible: boolean;
@@ -395,7 +87,7 @@ export default function MobileNotificationsModal({
   visible,
   onClose,
   presentation = 'mobileModal',
-  notifications = MOCK_NOTIFICATIONS,
+  notifications = mockMobileNotifications,
   unreadNotificationIds = EMPTY_UNREAD_IDS,
   newNotificationIds = EMPTY_NEW_IDS,
   notificationsGenerated = true,
@@ -798,10 +490,6 @@ function mediaCycleDelayUntilNextSwap(timeMs: number): number {
   const elapsed = Math.max(0, timeMs - MEDIA_CYCLE_EPOCH);
   const progress = elapsed % MEDIA_CYCLE_SWAP_INTERVAL_MS;
   return progress === 0 ? MEDIA_CYCLE_SWAP_INTERVAL_MS : MEDIA_CYCLE_SWAP_INTERVAL_MS - progress;
-}
-
-function albumArt(path: string) {
-  return `${ALBUM_ART_PREFIX}${path}`;
 }
 
 function notificationTime(notification: Pick<MobileNotification, 'detectedAt'>): number {

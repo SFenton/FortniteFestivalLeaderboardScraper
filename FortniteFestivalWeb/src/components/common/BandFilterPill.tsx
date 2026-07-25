@@ -27,6 +27,7 @@ export interface BandFilterPillProps {
   selectedInstruments: readonly ServerInstrumentKey[];
   bandType?: PlayerBandType | null;
   onClick: () => void;
+  onIntent?: () => void;
 }
 
 const activeButtonOverrides: CSSProperties = {
@@ -44,7 +45,7 @@ const bandFilterPillTransition = transitions(
   transition('box-shadow', TRANSITION_MS),
 );
 
-export default function BandFilterPill({ label, selectedInstruments, bandType, onClick }: BandFilterPillProps) {
+export default function BandFilterPill({ label, selectedInstruments, bandType, onClick, onIntent }: BandFilterPillProps) {
   const { t } = useTranslation();
   const active = selectedInstruments.length > 0;
   const s = useStyles(active);
@@ -59,6 +60,8 @@ export default function BandFilterPill({ label, selectedInstruments, bandType, o
       aria-label={label}
       data-testid="band-filter-pill"
       {...pressHandlers}
+      onPointerEnter={onIntent}
+      onFocus={onIntent}
     >
       {active ? (
         <>

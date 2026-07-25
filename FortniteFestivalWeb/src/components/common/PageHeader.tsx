@@ -52,6 +52,7 @@ export default function PageHeader({
           selectedInstruments={bandFilterAction.selectedInstruments}
           bandType={bandFilterAction.appliedFilter?.bandType}
           onClick={bandFilterAction.onPress}
+          onIntent={bandFilterAction.onIntent}
         />
       )}
       {actions}

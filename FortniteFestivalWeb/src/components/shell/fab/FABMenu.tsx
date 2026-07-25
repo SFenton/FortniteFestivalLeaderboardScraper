@@ -36,7 +36,7 @@ export default FABMenu;
 function FABMenuItem({ action, styles, onAction }: { action: ActionItem; styles: ReturnType<typeof useFABMenuStyles>; onAction: (action: ActionItem) => void }) {
   const pressHandlers = usePressAction<HTMLButtonElement>({ onPress: () => onAction(action) });
   return (
-    <button style={styles.item} {...pressHandlers}>
+    <button style={styles.item} {...pressHandlers} onPointerEnter={action.onIntent} onFocus={action.onIntent}>
       <span style={styles.itemIcon}>{action.icon}</span>
       {action.label}
     </button>

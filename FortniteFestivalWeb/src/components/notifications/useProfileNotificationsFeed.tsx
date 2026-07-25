@@ -17,7 +17,8 @@ import {
   type ServerSong,
   type WsNotificationMessage,
 } from '@festival/core/api';
-import { mockEmptyMobileNotifications, mockMobileNotifications, type MobileNotification } from './MobileNotificationsModal';
+import { mockEmptyMobileNotifications, mockMobileNotifications } from './notificationMocks';
+import type { MobileNotification } from './notificationTypes';
 import { notificationFeedKeyForProfile } from './notificationSeenState';
 import type { NotificationNavigationContext } from './notificationDestination';
 import type { NotificationTextEvent } from './notificationText';

@@ -3,6 +3,41 @@ import path from 'node:path';
 
 const CORE_GENERATOR_SUFFIX = '/packages/core/src/suggestions/suggestionGenerator.ts';
 const SUGGESTIONS_PAGE_SUFFIX = '/FortniteFestivalWeb/src/pages/suggestions/SuggestionsPage.tsx';
+const SECONDARY_CONTROL_BOUNDARIES = [
+  {
+    label: 'SearchModal',
+    suffix: '/FortniteFestivalWeb/src/components/search/SearchModal.tsx',
+  },
+  {
+    label: 'MobileNotificationsModal',
+    suffix: '/FortniteFestivalWeb/src/components/notifications/MobileNotificationsModal.tsx',
+  },
+  {
+    label: 'BandInstrumentFilterModal',
+    suffix: '/FortniteFestivalWeb/src/pages/band/modals/BandInstrumentFilterModal.tsx',
+  },
+  {
+    label: 'Songs SortModal',
+    suffix: '/FortniteFestivalWeb/src/pages/songs/modals/SortModal.tsx',
+  },
+  {
+    label: 'Songs FilterModal',
+    suffix: '/FortniteFestivalWeb/src/pages/songs/modals/FilterModal.tsx',
+  },
+];
+const INITIAL_FORBIDDEN_MODULE_SUFFIXES = [
+  ...SECONDARY_CONTROL_BOUNDARIES.map(boundary => boundary.suffix),
+  '/FortniteFestivalWeb/src/components/notifications/notificationText.ts',
+  '/FortniteFestivalWeb/src/components/sort/ReorderList.tsx',
+  '/FortniteFestivalWeb/src/components/sort/SortableRow.tsx',
+  '/FortniteFestivalWeb/src/pages/songinfo/components/path/PathDataTable.tsx',
+  '/FortniteFestivalWeb/src/pages/leaderboards/modals/RankByModal.tsx',
+  '/FortniteFestivalWeb/src/components/common/Math.tsx',
+];
+const INITIAL_FORBIDDEN_MODULE_MARKERS = [
+  '/node_modules/@dnd-kit/',
+  '/node_modules/katex/',
+];
 
 export function sharedPackageBoundaryPlugin({ webRoot, graphOutput }) {
   return {
@@ -24,6 +59,12 @@ export function sharedPackageBoundaryPlugin({ webRoot, graphOutput }) {
       const generatorChunks = chunks.filter(chunk =>
         Object.keys(chunk.modules).some(id => normalizeId(id).endsWith(CORE_GENERATOR_SUFFIX)),
       );
+      const secondaryControlFiles = Object.fromEntries(SECONDARY_CONTROL_BOUNDARIES.map((boundary) => {
+        const chunk = chunks.find(candidate =>
+          normalizeId(candidate.facadeModuleId).endsWith(boundary.suffix),
+        );
+        return [boundary.label, chunk ? [...staticClosure([chunk.fileName], chunksByFile)] : []];
+      }));
 
       if (initialModules.some(id => normalizeId(id).endsWith(CORE_GENERATOR_SUFFIX))) {
         this.error('SuggestionGenerator must not be reachable from the initial Songs chunk graph.');
@@ -34,6 +75,30 @@ export function sharedPackageBoundaryPlugin({ webRoot, graphOutput }) {
       if (!suggestionsModules.some(id => normalizeId(id).endsWith(CORE_GENERATOR_SUFFIX))) {
         this.error('SuggestionGenerator must remain reachable from the lazy SuggestionsPage chunk graph.');
       }
+      for (const suffix of INITIAL_FORBIDDEN_MODULE_SUFFIXES) {
+        if (initialModules.some(id => normalizeId(id).endsWith(suffix))) {
+          this.error(`${path.basename(suffix)} must not be reachable from the initial Songs chunk graph.`);
+        }
+      }
+      for (const marker of INITIAL_FORBIDDEN_MODULE_MARKERS) {
+        if (initialModules.some(id => normalizeId(id).includes(marker))) {
+          this.error(`${marker} must not be reachable from the initial Songs chunk graph.`);
+        }
+      }
+      for (const boundary of SECONDARY_CONTROL_BOUNDARIES) {
+        const files = secondaryControlFiles[boundary.label];
+        if (files.length === 0) {
+          this.error(`Unable to locate the lazy ${boundary.label} chunk.`);
+        }
+        const modules = modulesForFiles(files, chunksByFile);
+        if (!modules.some(id => normalizeId(id).endsWith(boundary.suffix))) {
+          this.error(`${boundary.label} must remain reachable from its lazy interaction chunk graph.`);
+        }
+      }
+      const sortModules = modulesForFiles(secondaryControlFiles['Songs SortModal'], chunksByFile);
+      if (!sortModules.some(id => normalizeId(id).includes('/node_modules/@dnd-kit/'))) {
+        this.error('DnD Kit must remain reachable from the lazy Songs SortModal chunk graph.');
+      }
 
       if (graphOutput) {
         const outputPath = path.isAbsolute(graphOutput)
@@ -43,6 +108,7 @@ export function sharedPackageBoundaryPlugin({ webRoot, graphOutput }) {
           capturedAtUtc: new Date().toISOString(),
           entryFiles: [...initialFiles],
           suggestionsFiles: [...suggestionsFiles],
+          secondaryControlFiles,
           generatorChunks: generatorChunks.map(chunk => chunk.fileName),
           chunks: chunks.map(chunk => ({
             fileName: chunk.fileName,

@@ -10,8 +10,11 @@ export interface DesktopNavProps {
   profileLabel?: string;
   onOpenSidebar: () => void;
   onProfileClick: () => void;
+  onProfileIntent?: () => void;
   onOpenSearch?: () => void;
+  onSearchIntent?: () => void;
   onOpenNotifications?: () => void;
+  onNotificationsIntent?: () => void;
   hasNotifications?: boolean;
   notificationCount?: number;
   notificationVisualState?: HeaderNotificationVisualState;
@@ -24,8 +27,11 @@ export default function DesktopNav({
   profileLabel,
   onOpenSidebar,
   onProfileClick,
+  onProfileIntent,
   onOpenSearch,
+  onSearchIntent,
   onOpenNotifications,
+  onNotificationsIntent,
   hasNotifications,
   notificationCount,
   notificationVisualState,
@@ -37,8 +43,11 @@ export default function DesktopNav({
     profileType={resolvedProfileType}
     profileLabel={profileLabel}
     onProfileAction={onProfileClick}
+    onProfileIntent={onProfileIntent}
     onOpenSearch={onOpenSearch}
+    onSearchIntent={onSearchIntent}
     onOpenNotifications={onOpenNotifications}
+    onNotificationsIntent={onNotificationsIntent}
     hasNotifications={hasNotifications}
     notificationCount={notificationCount}
     notificationVisualState={notificationVisualState}

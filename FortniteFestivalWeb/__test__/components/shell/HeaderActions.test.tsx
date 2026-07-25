@@ -63,6 +63,32 @@ describe('HeaderActions', () => {
     expect(onOpenSearch).toHaveBeenCalledTimes(1);
   });
 
+  it('prefetches secondary controls on pointer and keyboard intent', () => {
+    const onProfileIntent = vi.fn();
+    const onSearchIntent = vi.fn();
+    const onNotificationsIntent = vi.fn();
+
+    render(
+      <HeaderActions
+        testIdPrefix="desktop"
+        onProfileAction={vi.fn()}
+        onProfileIntent={onProfileIntent}
+        onOpenSearch={vi.fn()}
+        onSearchIntent={onSearchIntent}
+        onOpenNotifications={vi.fn()}
+        onNotificationsIntent={onNotificationsIntent}
+      />,
+    );
+
+    fireEvent.pointerEnter(screen.getByTestId('desktop-profile'));
+    fireEvent.focus(screen.getByTestId('desktop-search'));
+    fireEvent.pointerEnter(screen.getByTestId('desktop-notifications'));
+
+    expect(onProfileIntent).toHaveBeenCalledOnce();
+    expect(onSearchIntent).toHaveBeenCalledOnce();
+    expect(onNotificationsIntent).toHaveBeenCalledOnce();
+  });
+
   it('uses thumb-sized header action targets', () => {
     render(
       <HeaderActions

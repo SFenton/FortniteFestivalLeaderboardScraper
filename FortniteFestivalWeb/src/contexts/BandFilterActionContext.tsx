@@ -9,6 +9,7 @@ export type BandFilterActionContextValue = {
   appliedFilter?: AppliedBandComboFilter | null;
   appliedAssignments?: readonly BandInstrumentFilterAssignment[];
   onPress: () => void;
+  onIntent?: () => void;
   onApplyFilter?: (payload: BandInstrumentFilterApplyPayload) => void;
   onResetFilter?: () => void;
 };
@@ -22,6 +23,7 @@ const DEFAULT_VALUE: BandFilterActionContextValue = {
   appliedFilter: null,
   appliedAssignments: [],
   onPress: noop,
+  onIntent: noop,
   onApplyFilter: noop,
   onResetFilter: noop,
 };

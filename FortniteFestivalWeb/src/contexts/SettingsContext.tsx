@@ -10,8 +10,7 @@ import {
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import { INSTRUMENT_KEYS } from '@festival/core/api';
 import { DEFAULT_METADATA_ORDER } from '../utils/songSettings';
-import { DEFAULT_COLUMN_ORDER } from '../pages/songinfo/components/path/PathDataTable';
-import type { ColumnKey } from '../pages/songinfo/components/path/PathDataTable';
+import { DEFAULT_COLUMN_ORDER, type ColumnKey } from '../pages/songinfo/components/path/pathTableColumns';
 import { isSearchTarget, type SearchTarget } from '../types/search';
 
 /* ── Settings shape ── */

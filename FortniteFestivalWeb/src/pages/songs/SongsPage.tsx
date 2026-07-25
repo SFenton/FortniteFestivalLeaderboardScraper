@@ -46,10 +46,15 @@ import { SongsToolbar } from './components/SongsToolbar';
 import { visibleInstruments } from '../../contexts/SettingsContext';
 import { DEFAULT_SONGS_SCROLL_OFFSET, getPageQuickLinkTestId, usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
-import SortModal from './modals/SortModal';
 import type { SortDraft } from './modals/SortModal';
-import FilterModal from './modals/FilterModal';
 import type { FilterDraft } from './modals/FilterModal';
+import LazyModalBoundary from '../../components/common/LazyModalBoundary';
+import {
+  LazySongsFilterModal,
+  LazySongsSortModal,
+  preloadSongsFilterModal,
+  preloadSongsSortModal,
+} from '../../components/lazy/secondaryControls';
 import DifficultyBars from '../../components/songs/metadata/DifficultyBars';
 import DifficultyPill from '../../components/songs/metadata/DifficultyPill';
 import MiniStars from '../../components/songs/metadata/MiniStars';
@@ -555,6 +560,7 @@ export default function SongsPage() {
   useEffect(() => { savingRef.current = true; saveSongSettings(settings); savingRef.current = false; }, [settings]);
 
   const openSort = () => {
+    preloadSongsSortModal();
     sortModal.open({
       sortMode: effectiveSortMode,
       sortAscending: settings.sortAscending,
@@ -572,6 +578,7 @@ export default function SongsPage() {
   };
 
   const openFilter = () => {
+    preloadSongsFilterModal();
     filterModal.open({ ...scopedFilters, instrumentFilter: modalInstrumentFilter });
   };
   const applyFilter = () => {
@@ -1158,8 +1165,8 @@ export default function SongsPage() {
   // On revisit the wrapper passes initialRevealed so nothing re-staggers.
   const fabReady = loadPhase === LoadPhase.ContentIn;
   const fabDockActions: ActionItem[] = useMemo(() => [
-    { label: t('common.sortSongs'), displayLabel: t('common.sort', 'Sort'), active: sortActive, icon: <IoSwapVerticalSharp size={Size.iconFab} />, onPress: openSort },
-    ...(fabHasFilterPill ? [{ label: t('common.filterSongs'), displayLabel: t('common.filter', 'Filter'), active: filtersActive || fabBandFilterActive, icon: <IoFunnel size={Size.iconFab} />, iconAccessory: fabBandFilterAccessory, onPress: openFilter }] : []),
+    { label: t('common.sortSongs'), displayLabel: t('common.sort', 'Sort'), active: sortActive, icon: <IoSwapVerticalSharp size={Size.iconFab} />, onPress: openSort, onIntent: preloadSongsSortModal },
+    ...(fabHasFilterPill ? [{ label: t('common.filterSongs'), displayLabel: t('common.filter', 'Filter'), active: filtersActive || fabBandFilterActive, icon: <IoFunnel size={Size.iconFab} />, iconAccessory: fabBandFilterAccessory, onPress: openFilter, onIntent: preloadSongsFilterModal }] : []),
   // eslint-disable-next-line react-hooks/exhaustive-deps -- openSort/openFilter are stable per-render closures intentionally re-read
   ], [t, sortActive, filtersActive, fabHasFilterPill, fabBandFilterActive, fabBandFilterAccessory]);
   const fabHasQuickLinks = pageQuickLinks != null;
@@ -1193,7 +1200,9 @@ export default function SongsPage() {
                     filteredCount={filtered.length}
                     totalCount={songs.length}
                     onOpenSort={openSort}
+                    onSortIntent={preloadSongsSortModal}
                     onOpenFilter={openFilter}
+                    onFilterIntent={preloadSongsFilterModal}
                   />
                 </div>
               }
@@ -1204,50 +1213,64 @@ export default function SongsPage() {
         </LoadGate>
       </>}
       after={<>
-        <SortModal
+        <LazyModalBoundary
           visible={sortModal.visible}
-          draft={sortModal.draft}
-          savedDraft={{
-            sortMode: effectiveSortMode,
-            sortAscending: settings.sortAscending,
-            metadataOrder: settings.metadataOrder,
-            instrumentOrder: settings.instrumentOrder,
-          }}
-          instrumentFilter={displayInstrumentFilter}
-          hasPlayer={!!playerData}
-          hideItemShop={!isShopVisible}
-          bandComboInstruments={isSelectedBand ? bandComboInstruments : undefined}
-          metadataVisibility={{
-            score: appSettings.metadataShowScore,
-            percentage: appSettings.metadataShowPercentage,
-            percentile: appSettings.metadataShowPercentile,
-            seasonachieved: appSettings.metadataShowSeasonAchieved,
-            intensity: appSettings.metadataShowIntensity,
-            difficulty: appSettings.metadataShowGameDifficulty,
-            stars: appSettings.metadataShowStars,
-            lastplayed: appSettings.metadataShowLastPlayed,
-          }}
-          songRowVisualOrderEnabled={appSettings.songRowVisualOrderEnabled}
-          onChange={sortModal.setDraft}
-          onCancel={sortModal.close}
-          onReset={resetSort}
-          onApply={applySort}
-        />
-        <FilterModal
+          title={t('common.sortSongs')}
+          boundaryName="songs-sort-modal"
+          onClose={sortModal.close}
+        >
+          <LazySongsSortModal
+            visible={sortModal.visible}
+            draft={sortModal.draft}
+            savedDraft={{
+              sortMode: effectiveSortMode,
+              sortAscending: settings.sortAscending,
+              metadataOrder: settings.metadataOrder,
+              instrumentOrder: settings.instrumentOrder,
+            }}
+            instrumentFilter={displayInstrumentFilter}
+            hasPlayer={!!playerData}
+            hideItemShop={!isShopVisible}
+            bandComboInstruments={isSelectedBand ? bandComboInstruments : undefined}
+            metadataVisibility={{
+              score: appSettings.metadataShowScore,
+              percentage: appSettings.metadataShowPercentage,
+              percentile: appSettings.metadataShowPercentile,
+              seasonachieved: appSettings.metadataShowSeasonAchieved,
+              intensity: appSettings.metadataShowIntensity,
+              difficulty: appSettings.metadataShowGameDifficulty,
+              stars: appSettings.metadataShowStars,
+              lastplayed: appSettings.metadataShowLastPlayed,
+            }}
+            songRowVisualOrderEnabled={appSettings.songRowVisualOrderEnabled}
+            onChange={sortModal.setDraft}
+            onCancel={sortModal.close}
+            onReset={resetSort}
+            onApply={applySort}
+          />
+        </LazyModalBoundary>
+        <LazyModalBoundary
           visible={filterModal.visible}
-          draft={filterModal.draft}
-          savedDraft={{ ...scopedFilters, instrumentFilter: displayInstrumentFilter }}
-          availableSeasons={availableSeasons}
-          selectedBandMode={isSelectedBand}
-          selectedBandName={selectedBand?.displayName}
-          selectedBandMembers={selectedBandMemberFilterOptions}
-          bandComboInstruments={bandComboInstruments}
-          bandComboFilter={bandComboFilterProps}
-          onChange={filterModal.setDraft}
-          onCancel={filterModal.close}
-          onReset={resetFilter}
-          onApply={applyFilter}
-        />
+          title={t('common.filterSongs')}
+          boundaryName="songs-filter-modal"
+          onClose={filterModal.close}
+        >
+          <LazySongsFilterModal
+            visible={filterModal.visible}
+            draft={filterModal.draft}
+            savedDraft={{ ...scopedFilters, instrumentFilter: displayInstrumentFilter }}
+            availableSeasons={availableSeasons}
+            selectedBandMode={isSelectedBand}
+            selectedBandName={selectedBand?.displayName}
+            selectedBandMembers={selectedBandMemberFilterOptions}
+            bandComboInstruments={bandComboInstruments}
+            bandComboFilter={bandComboFilterProps}
+            onChange={filterModal.setDraft}
+            onCancel={filterModal.close}
+            onReset={resetFilter}
+            onApply={applyFilter}
+          />
+        </LazyModalBoundary>
       </>}
     >
       <div ref={containerRef} style={songsStyles.container}>

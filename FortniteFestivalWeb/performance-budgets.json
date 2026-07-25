@@ -1,8 +1,8 @@
 {
   "bundle": {
-    "entryJsRawMaxBytes": 1000000,
-    "entryJsGzipMaxBytes": 300000,
-    "entryJsBrotliMaxBytes": 250000,
+    "entryJsRawMaxBytes": 870000,
+    "entryJsGzipMaxBytes": 260000,
+    "entryJsBrotliMaxBytes": 220000,
     "largestChunkGzipMaxBytes": 120000
   },
   "routes": {

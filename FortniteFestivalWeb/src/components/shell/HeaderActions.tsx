@@ -20,8 +20,11 @@ export interface HeaderActionsProps {
   profileType?: HeaderActionProfileType;
   profileLabel?: string;
   onProfileAction?: () => void;
+  onProfileIntent?: () => void;
   onOpenSearch?: () => void;
+  onSearchIntent?: () => void;
   onOpenNotifications?: () => void;
+  onNotificationsIntent?: () => void;
   hasNotifications?: boolean;
   notificationCount?: number;
   notificationVisualState?: HeaderNotificationVisualState;
@@ -34,8 +37,11 @@ export default function HeaderActions({
   profileType = 'none',
   profileLabel,
   onProfileAction,
+  onProfileIntent,
   onOpenSearch,
+  onSearchIntent,
   onOpenNotifications,
+  onNotificationsIntent,
   notificationCount = 0,
   hasNotifications = notificationCount > 0,
   notificationVisualState = 'icon',
@@ -77,6 +83,8 @@ export default function HeaderActions({
           type="button"
           style={s.profileButton}
           {...profilePressHandlers}
+          onPointerEnter={onProfileIntent}
+          onFocus={onProfileIntent}
           aria-label={profileLabel ?? t('aria.profile')}
           data-testid={`${testIdPrefix}-profile`}
           data-profile-type={profileType}
@@ -88,6 +96,8 @@ export default function HeaderActions({
         type="button"
         style={s.iconButton}
         {...searchPressHandlers}
+        onPointerEnter={onSearchIntent}
+        onFocus={onSearchIntent}
         aria-label={t('common.searchAction')}
         data-testid={`${testIdPrefix}-search`}
       >
@@ -98,6 +108,8 @@ export default function HeaderActions({
           type="button"
           style={{ ...s.iconButton, ...(notificationInteractive ? undefined : s.iconButtonInert) }}
           {...notificationPressHandlers}
+          onPointerEnter={onNotificationsIntent}
+          onFocus={onNotificationsIntent}
           disabled={!notificationInteractive}
           aria-label={t('common.notifications')}
           aria-busy={notificationLoading ? 'true' : undefined}

@@ -250,6 +250,7 @@
   },
   "error": {
     "unexpectedCrash": "An unexpected error occurred. Try reloading the page.",
+    "controlLoadFailed": "This control could not be loaded. Check your connection or reload the page.",
     "routeLoadFailed": "An error occurred loading this page. Try going back or reloading.",
     "goToSongs": "Go to Songs"
   },

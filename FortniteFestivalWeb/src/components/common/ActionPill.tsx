@@ -50,6 +50,7 @@ export interface ActionPillProps {
   icon: React.ReactNode;
   label: string;
   onClick: () => void;
+  onIntent?: () => void;
   /** Highlight the pill as active (e.g. filters applied). */
   active?: boolean;
   /** Show a small dot indicator. */
@@ -62,7 +63,7 @@ export interface ActionPillProps {
   tabIndex?: number;
 }
 
-export function ActionPill({ icon, label, onClick, active, dot, className, style, tabIndex }: ActionPillProps) {
+export function ActionPill({ icon, label, onClick, onIntent, active, dot, className, style, tabIndex }: ActionPillProps) {
   const merged = active ? { ...pillStyle, ...pillActiveOverrides, ...style } : { ...pillStyle, ...style };
   const pressHandlers = usePressAction<HTMLButtonElement>({ onPress: onClick });
 
@@ -74,6 +75,8 @@ export function ActionPill({ icon, label, onClick, active, dot, className, style
       title={label}
       aria-label={label}
       tabIndex={tabIndex}
+      onPointerEnter={onIntent}
+      onFocus={onIntent}
     >
       {icon}
       <span>{label}</span>
