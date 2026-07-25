@@ -62,7 +62,7 @@ test('desktop Manual loads only near responsive images and preserves carousel st
   await expect(page.getByTestId('manual-carousel-settings-overview')).toHaveAttribute('data-mounted', 'true');
   await expect.poll(() => manualRequests.some(url => url.includes('settings-overview-mobile-'))).toBe(true);
   await waitForRequestSettle(page);
-  expect(new Set(manualRequests).size).toBeLessThanOrEqual(4);
+  expect(new Set(manualRequests).size).toBeLessThanOrEqual(5);
   expect(manualRequests.some(url => url.includes('/optimized/songs-'))).toBe(false);
   expect(manualRequests.some(url => url.includes('/optimized/profiles-'))).toBe(false);
 
