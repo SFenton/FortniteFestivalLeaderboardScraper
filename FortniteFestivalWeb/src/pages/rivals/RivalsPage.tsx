@@ -148,8 +148,10 @@ export default function RivalsPage() {
   const comboLoading = !!combo && comboQuery.isPending;
   const mountedWithDataRef = useRef(
     !!accountId
-      && activeInstruments.every((_, index) => instrumentQueries[index]?.data !== undefined)
-      && (!combo || comboQuery.data !== undefined),
+      && activeInstruments.every((_, index) => (
+        instrumentQueries[index]?.data !== undefined || instrumentQueries[index]?.isError
+      ))
+      && (!combo || comboQuery.data !== undefined || comboQuery.isError),
   );
   const initialRivalsScopeRef = useRef(rivalsScopeKey);
   const hasCachedData = initialRivalsScopeRef.current === rivalsScopeKey && mountedWithDataRef.current;

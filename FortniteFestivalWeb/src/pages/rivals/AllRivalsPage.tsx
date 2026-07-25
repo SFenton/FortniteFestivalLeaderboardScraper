@@ -100,10 +100,10 @@ export default function AllRivalsPage() {
       : !!(accountId && singleScope && singleQuery.isPending);
   const mountedWithDataRef = useRef(
     isLeaderboard
-      ? leaderboardQuery.data !== undefined
+      ? leaderboardQuery.data !== undefined || leaderboardQuery.isError
       : isCommon
-        ? activeInstruments.length >= 2 && commonQueries.every(query => query.data !== undefined)
-        : singleQuery.data !== undefined,
+        ? activeInstruments.length >= 2 && commonQueries.every(query => query.data !== undefined || query.isError)
+        : singleQuery.data !== undefined || singleQuery.isError,
   );
   const initialCacheKeyRef = useRef(cacheKey);
   const hasCachedData = initialCacheKeyRef.current === cacheKey && mountedWithDataRef.current;
