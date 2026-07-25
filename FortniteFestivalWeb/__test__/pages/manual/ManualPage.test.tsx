@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { act, render, screen, fireEvent, within } from '@testing-library/react';
-import ManualPage, { MANUAL_SECTIONS } from '../../../src/pages/manual/ManualPage';
+import ManualPage, { MANUAL_CAROUSEL_MOUNT_DELAY_MS, MANUAL_SECTIONS } from '../../../src/pages/manual/ManualPage';
 import { TestProviders } from '../../helpers/TestProviders';
 import { stubElementDimensions, stubMatchMedia, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
 
@@ -11,7 +11,7 @@ type IntersectionObserverRecord = {
   targets: Set<Element>;
 };
 
-let autoIntersectManualCarousels = true;
+let autoIntersectManualCarousels = false;
 let intersectionObservers: IntersectionObserverRecord[] = [];
 
 beforeAll(() => {
@@ -32,7 +32,7 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
-  autoIntersectManualCarousels = true;
+  autoIntersectManualCarousels = false;
   intersectionObservers = [];
 
   class MockIntersectionObserver {
@@ -100,13 +100,18 @@ function createIntersectionEntry(target: Element, isIntersecting: boolean): Inte
   };
 }
 
-function intersectCarousel(carouselId: string, isIntersecting = true) {
+async function intersectCarousel(carouselId: string, isIntersecting = true) {
   const target = screen.getByTestId(`manual-carousel-${carouselId}`);
   const record = intersectionObservers.find(observer => observer.targets.has(target));
   expect(record).toBeDefined();
   act(() => {
     record!.callback([createIntersectionEntry(target, isIntersecting)], record!.observer);
   });
+  if (isIntersecting) {
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, MANUAL_CAROUSEL_MOUNT_DELAY_MS + 20));
+    });
+  }
 }
 
 function stubResponsiveMatchMedia({ mobile = false, wide = false }: { mobile?: boolean; wide?: boolean }) {
@@ -172,7 +177,7 @@ describe('ManualPage', () => {
     expect(carousels).toHaveLength(expectedCarouselCount);
   });
 
-  it('mounts only visible or near-viewport carousel images and keeps stable placeholders for the rest', () => {
+  it('mounts only visible or near-viewport carousel images and keeps stable placeholders for the rest', async () => {
     autoIntersectManualCarousels = false;
     stubMatchMedia(false);
     renderManualPage();
@@ -188,11 +193,29 @@ describe('ManualPage', () => {
     expect(within(nearCarousel).queryByRole('img')).toBeNull();
     expect(within(farCarousel).queryByRole('img')).toBeNull();
 
-    intersectCarousel('navigation-sidebar');
+    await intersectCarousel('navigation-sidebar');
 
     expect(nearCarousel.getAttribute('data-mounted')).toBe('true');
     expect(document.images).toHaveLength(2);
     expect(within(farCarousel).queryByRole('img')).toBeNull();
+  });
+
+  it('does not mount a carousel that only crosses the near range during a fast scroll', async () => {
+    renderManualPage();
+    const target = screen.getByTestId('manual-carousel-songs-overview');
+    const record = intersectionObservers.find(observer => observer.targets.has(target));
+    expect(record).toBeDefined();
+
+    act(() => {
+      record!.callback([createIntersectionEntry(target, true)], record!.observer);
+      record!.callback([createIntersectionEntry(target, false)], record!.observer);
+    });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, MANUAL_CAROUSEL_MOUNT_DELAY_MS + 20));
+    });
+
+    expect(target.getAttribute('data-mounted')).toBe('false');
+    expect(within(target).queryByRole('img')).toBeNull();
   });
 
   it('uses responsive WebP sources with a PNG fallback, explicit dimensions, and translated alt text', () => {
@@ -221,12 +244,12 @@ describe('ManualPage', () => {
       .toBe('/manual/screenshots/navigation-overview-mobile.png');
   });
 
-  it('keeps a mounted carousel and its selected viewport state after it leaves the near-viewport range', () => {
+  it('keeps a mounted carousel and its selected viewport state after it leaves the near-viewport range', async () => {
     autoIntersectManualCarousels = false;
     stubMatchMedia(false);
     renderManualPage();
 
-    intersectCarousel('songs-overview');
+    await intersectCarousel('songs-overview');
     const carousel = screen.getByTestId('manual-carousel-songs-overview');
     fireEvent.click(within(carousel).getByRole('button', { name: 'Next screenshot' }));
     expect(within(carousel).getAllByText('Compact Web').length).toBeGreaterThan(0);
@@ -236,10 +259,11 @@ describe('ManualPage', () => {
     expect(within(carousel).getAllByText('Compact Web').length).toBeGreaterThan(0);
   });
 
-  it('cycles screenshot carousel viewports for mobile, compact, and wide captures', () => {
+  it('cycles screenshot carousel viewports for mobile, compact, and wide captures', async () => {
     stubMatchMedia(false);
     renderManualPage();
 
+    await intersectCarousel('songs-overview');
     const carousel = screen.getByTestId('manual-carousel-songs-overview');
     expect(within(carousel).getAllByText('Mobile').length).toBeGreaterThan(0);
 
@@ -250,10 +274,11 @@ describe('ManualPage', () => {
     expect(within(carousel).getAllByText('Wide Web').length).toBeGreaterThan(0);
   });
 
-  it('swipes screenshot carousel viewports with the shared swipe interaction', () => {
+  it('swipes screenshot carousel viewports with the shared swipe interaction', async () => {
     stubMatchMedia(false);
     renderManualPage();
 
+    await intersectCarousel('songs-overview');
     const carousel = screen.getByTestId('manual-carousel-songs-overview');
     const frame = screen.getByTestId('manual-carousel-frame-songs-overview');
     expect(within(carousel).getAllByText('Mobile').length).toBeGreaterThan(0);
@@ -277,6 +302,21 @@ describe('ManualPage', () => {
     expect(childIconSlot).toBeDefined();
     expect(childIconSlot.style.visibility).toBe('hidden');
     expect(screen.getByRole('navigation', { name: 'Manual Sections' })).toBeDefined();
+  });
+
+  it('mounts the selected quick-link carousel without mounting intermediate sections', () => {
+    stubResponsiveMatchMedia({ wide: true });
+    renderManualPage();
+
+    const songsCarousel = screen.getByTestId('manual-carousel-songs-overview');
+    const settingsCarousel = screen.getByTestId('manual-carousel-settings-overview');
+    expect(songsCarousel.getAttribute('data-mounted')).toBe('false');
+    expect(settingsCarousel.getAttribute('data-mounted')).toBe('false');
+
+    fireEvent.click(screen.getByTestId('manual-quick-link-settings'));
+
+    expect(settingsCarousel.getAttribute('data-mounted')).toBe('true');
+    expect(songsCarousel.getAttribute('data-mounted')).toBe('false');
   });
 
   it('uses white aligned section icons, bright text, and no section divider bars', () => {

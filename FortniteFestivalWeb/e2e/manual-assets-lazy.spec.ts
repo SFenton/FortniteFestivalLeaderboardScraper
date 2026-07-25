@@ -56,10 +56,15 @@ test('desktop Manual loads only near responsive images and preserves carousel st
   await expect(compactImage).toHaveAttribute('width', '1024');
   await expect(compactImage).toHaveAttribute('height', '768');
 
-  const settingsSection = page.getByTestId('manual-section-settings');
-  await settingsSection.scrollIntoViewIfNeeded();
+  const settingsLink = page.getByTestId('manual-quick-link-settings');
+  await settingsLink.focus();
+  await settingsLink.press('Enter');
   await expect(page.getByTestId('manual-carousel-settings-overview')).toHaveAttribute('data-mounted', 'true');
   await expect.poll(() => manualRequests.some(url => url.includes('settings-overview-mobile-'))).toBe(true);
+  await waitForRequestSettle(page);
+  expect(new Set(manualRequests).size).toBeLessThanOrEqual(4);
+  expect(manualRequests.some(url => url.includes('/optimized/songs-'))).toBe(false);
+  expect(manualRequests.some(url => url.includes('/optimized/profiles-'))).toBe(false);
 
   await firstCarousel.scrollIntoViewIfNeeded();
   await expect(firstCarousel.getByText('Compact Web', { exact: true }).first()).toBeVisible();

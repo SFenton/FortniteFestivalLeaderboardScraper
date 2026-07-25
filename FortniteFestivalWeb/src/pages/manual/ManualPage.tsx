@@ -79,6 +79,8 @@ const SECTION_ICON_SLOT_SIZE = 32;
 const SECTION_ICON_SIZE = Size.iconSm;
 const FIRST_MANUAL_CAROUSEL_ID = 'navigation-overview';
 export const MANUAL_CAROUSEL_ROOT_MARGIN = '400px 0px';
+export const MANUAL_CAROUSEL_MOUNT_DELAY_MS = 120;
+export const MANUAL_QUICK_LINK_SCROLL_SUPPRESSION_MS = 1500;
 
 export const MANUAL_SECTIONS: ManualSection[] = [
   {
@@ -179,6 +181,15 @@ export const MANUAL_SECTIONS: ManualSection[] = [
   },
 ];
 
+const MANUAL_CAROUSEL_IDS_BY_LANDMARK = new Map<string, readonly string[]>(
+  MANUAL_SECTIONS.flatMap(section => [
+    [section.id, section.carousels.map(carousel => carousel.id)] as const,
+    ...section.subsections.map(subsection => (
+      [subsection.id, subsection.carousels.map(carousel => carousel.id)] as const
+    )),
+  ]),
+);
+
 function buildSlides(slug: string): ScreenshotSlide[] {
   return VIEWPORTS.map(viewport => ({ viewport, asset: getManualScreenshotAsset(slug, viewport) }));
 }
@@ -214,6 +225,9 @@ export default function ManualPage() {
   const scrollContainerRef = useScrollContainer();
   const isWideDesktop = useIsWideDesktop();
   const isMobileChrome = useIsMobileChrome();
+  const [forcedCarouselIds, setForcedCarouselIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [suppressObservedMounts, setSuppressObservedMounts] = useState(false);
+  const quickLinkScrollTimerRef = useRef<number | null>(null);
 
   const quickLinkItems = useMemo<PageQuickLinkItem[]>(() => MANUAL_SECTIONS.flatMap(section => {
     const sectionTitle = t(sectionTitleKey(section));
@@ -241,6 +255,30 @@ export default function ManualPage() {
     scrollContainerRef,
     isDesktopRailEnabled: isWideDesktop,
   });
+  const selectQuickLink = quickLinksState.handleQuickLinkSelect;
+  useEffect(() => () => {
+    if (quickLinkScrollTimerRef.current !== null) {
+      window.clearTimeout(quickLinkScrollTimerRef.current);
+    }
+  }, []);
+  const handleQuickLinkSelect = useCallback((item: PageQuickLinkItem, options?: { skipScroll?: boolean }) => {
+    const carouselIds = MANUAL_CAROUSEL_IDS_BY_LANDMARK.get(item.id) ?? [];
+    if (carouselIds.length > 0) {
+      setForcedCarouselIds((current) => {
+        if (carouselIds.every(id => current.has(id))) return current;
+        return new Set([...current, ...carouselIds]);
+      });
+    }
+    setSuppressObservedMounts(true);
+    if (quickLinkScrollTimerRef.current !== null) {
+      window.clearTimeout(quickLinkScrollTimerRef.current);
+    }
+    quickLinkScrollTimerRef.current = window.setTimeout(() => {
+      quickLinkScrollTimerRef.current = null;
+      setSuppressObservedMounts(false);
+    }, MANUAL_QUICK_LINK_SCROLL_SUPPRESSION_MS);
+    selectQuickLink(item, options);
+  }, [selectQuickLink]);
 
   const quickLinks = {
     title: t('appManual.quickLinks'),
@@ -249,7 +287,7 @@ export default function ManualPage() {
     visible: quickLinksState.quickLinksOpen,
     onOpen: quickLinksState.openQuickLinks,
     onClose: quickLinksState.closeQuickLinks,
-    onSelect: quickLinksState.handleQuickLinkSelect,
+    onSelect: handleQuickLinkSelect,
     testIdPrefix: 'manual',
   };
 
@@ -273,6 +311,8 @@ export default function ManualPage() {
             key={section.id}
             section={section}
             registerSectionRef={quickLinksState.registerSectionRef}
+            forcedCarouselIds={forcedCarouselIds}
+            suppressObservedMounts={suppressObservedMounts}
           />
         ))}
       </div>
@@ -280,7 +320,12 @@ export default function ManualPage() {
   );
 }
 
-function ManualSectionBlock({ section, registerSectionRef }: { section: ManualSection; registerSectionRef: (id: string, element: HTMLElement | null) => void }) {
+function ManualSectionBlock({ section, registerSectionRef, forcedCarouselIds, suppressObservedMounts }: {
+  section: ManualSection;
+  registerSectionRef: (id: string, element: HTMLElement | null) => void;
+  forcedCarouselIds: ReadonlySet<string>;
+  suppressObservedMounts: boolean;
+}) {
   const { t } = useTranslation();
   const styles = useStyles();
   const title = t(sectionTitleKey(section));
@@ -294,7 +339,13 @@ function ManualSectionBlock({ section, registerSectionRef }: { section: ManualSe
         </div>
         <ManualParagraphs keysList={section.copyKeys} resolveKey={(copyKey) => sectionCopyKey(section, copyKey)} style={styles.sectionParagraph} />
       </div>
-      <ManualCarouselGroup section={section} carousels={section.carousels} titleResolver={(carousel) => carouselTitleKey(section, carousel.titleKey)} />
+      <ManualCarouselGroup
+        section={section}
+        carousels={section.carousels}
+        titleResolver={(carousel) => carouselTitleKey(section, carousel.titleKey)}
+        forcedCarouselIds={forcedCarouselIds}
+        suppressObservedMounts={suppressObservedMounts}
+      />
       <div style={styles.subsectionStack}>
         {section.subsections.map(subsection => (
           <ManualSubsectionBlock
@@ -302,6 +353,8 @@ function ManualSectionBlock({ section, registerSectionRef }: { section: ManualSe
             section={section}
             subsection={subsection}
             registerSectionRef={registerSectionRef}
+            forcedCarouselIds={forcedCarouselIds}
+            suppressObservedMounts={suppressObservedMounts}
           />
         ))}
       </div>
@@ -309,7 +362,13 @@ function ManualSectionBlock({ section, registerSectionRef }: { section: ManualSe
   );
 }
 
-function ManualSubsectionBlock({ section, subsection, registerSectionRef }: { section: ManualSection; subsection: ManualSubsection; registerSectionRef: (id: string, element: HTMLElement | null) => void }) {
+function ManualSubsectionBlock({ section, subsection, registerSectionRef, forcedCarouselIds, suppressObservedMounts }: {
+  section: ManualSection;
+  subsection: ManualSubsection;
+  registerSectionRef: (id: string, element: HTMLElement | null) => void;
+  forcedCarouselIds: ReadonlySet<string>;
+  suppressObservedMounts: boolean;
+}) {
   const { t } = useTranslation();
   const styles = useStyles();
   const title = t(subsectionTitleKey(section, subsection));
@@ -318,7 +377,13 @@ function ManualSubsectionBlock({ section, subsection, registerSectionRef }: { se
     <section ref={(element) => registerSectionRef(subsection.id, element)} data-testid={`manual-subsection-${subsection.id}`} aria-labelledby={`manual-heading-${subsection.id}`} style={styles.subsection}>
       <h3 id={`manual-heading-${subsection.id}`} style={styles.subsectionTitle}>{title}</h3>
       <ManualParagraphs keysList={subsection.copyKeys} resolveKey={(copyKey) => subsectionCopyKey(section, subsection, copyKey)} style={styles.subsectionParagraph} />
-      <ManualCarouselGroup section={section} carousels={subsection.carousels} titleResolver={(carousel) => subsectionCarouselTitleKey(section, subsection, carousel.titleKey)} />
+      <ManualCarouselGroup
+        section={section}
+        carousels={subsection.carousels}
+        titleResolver={(carousel) => subsectionCarouselTitleKey(section, subsection, carousel.titleKey)}
+        forcedCarouselIds={forcedCarouselIds}
+        suppressObservedMounts={suppressObservedMounts}
+      />
     </section>
   );
 }
@@ -332,7 +397,13 @@ function ManualParagraphs({ keysList, resolveKey, style }: { keysList: string[];
   );
 }
 
-function ManualCarouselGroup({ section, carousels, titleResolver }: { section: ManualSection; carousels: ManualCarousel[]; titleResolver: (carousel: ManualCarousel) => string }) {
+function ManualCarouselGroup({ section, carousels, titleResolver, forcedCarouselIds, suppressObservedMounts }: {
+  section: ManualSection;
+  carousels: ManualCarousel[];
+  titleResolver: (carousel: ManualCarousel) => string;
+  forcedCarouselIds: ReadonlySet<string>;
+  suppressObservedMounts: boolean;
+}) {
   const styles = useStyles();
   return (
     <div style={styles.carouselGroup}>
@@ -343,41 +414,68 @@ function ManualCarouselGroup({ section, carousels, titleResolver }: { section: M
           titleKey={titleResolver(carousel)}
           slides={buildSlides(carousel.slug)}
           sectionTitleKey={sectionTitleKey(section)}
+          forceMounted={forcedCarouselIds.has(carousel.id)}
+          suppressObservedMounts={suppressObservedMounts}
         />
       ))}
     </div>
   );
 }
 
-function ScreenshotCarousel({ carouselId, titleKey, slides, sectionTitleKey }: { carouselId: string; titleKey: string; slides: ScreenshotSlide[]; sectionTitleKey: string }) {
+function ScreenshotCarousel({ carouselId, titleKey, slides, sectionTitleKey, forceMounted, suppressObservedMounts }: {
+  carouselId: string;
+  titleKey: string;
+  slides: ScreenshotSlide[];
+  sectionTitleKey: string;
+  forceMounted: boolean;
+  suppressObservedMounts: boolean;
+}) {
   const { t } = useTranslation();
   const styles = useStyles();
   const scrollContainerRef = useScrollContainer();
   const slotRef = useRef<HTMLDivElement>(null);
-  const [shouldMount, setShouldMount] = useState(
+  const mountTimerRef = useRef<number | null>(null);
+  const [observedMounted, setObservedMounted] = useState(
     () => carouselId === FIRST_MANUAL_CAROUSEL_ID || typeof IntersectionObserver === 'undefined',
   );
+  const shouldMount = forceMounted || observedMounted;
   const firstSlide = slides[0]!;
   const title = t(titleKey);
   const viewportLabel = t(`appManual.viewports.${firstSlide.viewport}`);
 
   useEffect(() => {
-    if (shouldMount) return;
+    if (shouldMount || suppressObservedMounts) return;
     const element = slotRef.current;
     if (!element || typeof IntersectionObserver === 'undefined') return;
 
+    const clearMountTimer = () => {
+      if (mountTimerRef.current === null) return;
+      window.clearTimeout(mountTimerRef.current);
+      mountTimerRef.current = null;
+    };
     const observer = new IntersectionObserver((entries) => {
-      if (!entries.some(entry => entry.isIntersecting || entry.intersectionRatio > 0)) return;
-      setShouldMount(true);
-      observer.disconnect();
+      const isNear = entries.some(entry => entry.isIntersecting || entry.intersectionRatio > 0);
+      if (!isNear) {
+        clearMountTimer();
+        return;
+      }
+      if (mountTimerRef.current !== null) return;
+      mountTimerRef.current = window.setTimeout(() => {
+        mountTimerRef.current = null;
+        setObservedMounted(true);
+        observer.disconnect();
+      }, MANUAL_CAROUSEL_MOUNT_DELAY_MS);
     }, {
       root: scrollContainerRef.current,
       rootMargin: MANUAL_CAROUSEL_ROOT_MARGIN,
       threshold: 0.01,
     });
     observer.observe(element);
-    return () => observer.disconnect();
-  }, [scrollContainerRef, shouldMount]);
+    return () => {
+      clearMountTimer();
+      observer.disconnect();
+    };
+  }, [scrollContainerRef, shouldMount, suppressObservedMounts]);
 
   return (
     <div
