@@ -340,6 +340,71 @@ Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/web-2.3-shop-storage-20260725T192900Z/`
 
+### WEB-3.1 shared-package barrel narrowing
+
+**Decision:** Accepted and deployed.
+
+- The measured static path was
+  `main.tsx -> App.tsx -> SongsPage.tsx -> @festival/core -> index.ts`.
+  Because the package had no `sideEffects` declaration, Rollup conservatively
+  retained the root barrel's `suggestionGenerator.ts` re-export in the initial
+  entry. The generator contributed `79,634` rendered module bytes, and the
+  initial graph contained seven `@festival/core` modules totaling `96,415`
+  rendered bytes.
+- `@festival/core` now publishes explicit `runtime`, `config`, `api`, `app`,
+  `suggestions`, `types`, and `persistence` entries plus compatibility
+  subpaths. Web TypeScript and Vite resolve the package through those exports
+  instead of source aliases. The backward-compatible root remains intact for
+  React Native and other consumers.
+- All Web and shared-native runtime sources now avoid the root barrel.
+  Type-only imports use the type surface where appropriate, API contracts use
+  the API entry, and only the lazy Suggestions feature imports suggestion
+  generation. Package-resolution, source import-graph, and production Rollup
+  assertions fail if the root or generator returns to the initial graph.
+- `sideEffects: false` is based on an explicit core-package audit. No core
+  module registers globals, installs polyfills, mutates browser state, or
+  performs host-visible import-time work. The package-local `combos` IIFE,
+  HTTP-error Map, and i18n fallback registry are observed only through called
+  exports. Environment-sensitive sibling packages were not reclassified.
+- The production entry moved from `1,041,819` to `991,967` raw bytes
+  (`-49,852`, `-4.79%`), `307,240` to `296,511` gzip bytes
+  (`-10,729`, `-3.49%`), and `254,947` to `246,663` Brotli bytes
+  (`-8,284`, `-3.25%`). The largest lazy chunk remained `113,107` gzip bytes.
+  The initial core graph fell from seven modules to five, and the generator is
+  now present only in the lazy `SuggestionsPage` chunk.
+- Live browser delivery confirmed the graph change. Songs loaded only
+  `index-E6kVq9vj.js`; its decoded size was `991,967` bytes and transfer size
+  fell `361,474 -> 348,030` bytes (`-13,444`, `-3.72%`). Suggestions then
+  requested `SuggestionsPage-0oDd_KWK.js`; total route-script transfer held
+  `382,171 -> 381,731` bytes because the deferred generator moved out of the
+  entry rather than being duplicated.
+- Core and Web TypeScript, production build, ESLint, Stylelint, license
+  generation/check, tightened bundle budgets, and `27/27` package-boundary
+  focused tests passed. Independently bounded runs passed `53/56` changed test
+  files. The other three files changed only import specifiers: two retain
+  pre-existing stale provider/animation expectations and the Rivals aggregate
+  retains the documented full-suite resource stall. Default and one-worker
+  monolithic Vitest runs reproduced the existing `WEB-7.4-D1` resource issue;
+  no WEB-3.1 regression was isolated.
+- Production runs `festivalweb:web31-a8d76359`
+  (`sha256:7326540d5c2b3b3330f3fd0e2f1917ff59dab0f71bbb811114c858f764c28dbb`).
+  FestivalWeb, FSTService, and PostgreSQL are healthy; published scrape `1236`
+  remains unfrozen; the worker remains held/offline; Songs, service info, and
+  mapped solo reads return HTTP `200`; isolated player-derived, band, and
+  export routes remain HTTP `503`. Baseline and candidate browser captures
+  both had zero page errors and the same ten expected failed-resource console
+  messages from those fail-closed routes.
+- Implementation commit `a8d76359` is pushed. Rollback is
+  `festivalweb:web23-ac6b4773`.
+- The original cross-phase `275 KiB` gzip target is not yet complete:
+  `296,511` bytes is `14,911` bytes above `275 KiB`. WEB-3.2 owns the remaining
+  initial-shell reduction without folding shell modal, DnD, chart, or Manual
+  asset work into this phase.
+
+Evidence:
+
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/web-3.1-shared-barrels-20260725T201725Z/`
+
 Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/web-0.2/`
@@ -742,10 +807,19 @@ default Songs dependency graph.
 
 ### WEB-3.1 - Narrow shared-package barrels
 
+**Decision:** Accepted and deployed on 2026-07-25.
+
+**Next dependency:** WEB-3.2 can lazy-load shell modals and secondary controls.
+The generator boundary is complete; the broader `275 KiB` gzip target remains
+`14,911` bytes away and must not be closed by folding later WEB-3 scope into
+this task.
+
 **Evidence**
 
 - `packages/core/src/index.ts:1-20` re-exports the large suggestion generator
   into the default Songs dependency graph.
+- The accepted Rollup graph removes the generator from the initial closure and
+  places it only in the lazy Suggestions chunk.
 
 **Work**
 
@@ -755,7 +829,8 @@ default Songs dependency graph.
 
 **Acceptance**
 
-- Initial JS is at or below 275 KiB gzip.
+- Initial JS moved `307,240 -> 296,511` gzip bytes; the cross-WEB-3
+  `275 KiB` target remains open for WEB-3.2.
 - The generator is absent from the default Songs chunk.
 
 ### WEB-3.2 - Lazy-load shell modals and secondary controls
