@@ -139,6 +139,46 @@ Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/web-0.5/`
 
+### WEB-1.4 service-info request consolidation
+
+**Decision:** Accepted and deployed.
+
+- Moved the application-wide `QueryClientProvider` above the backend
+  availability gate and gave `/api/service-info` one profile-independent query
+  key and hook owner. Settings now shares the gate's fresh result instead of
+  starting its own timer/request.
+- The shared query has an explicit 3-second timeout, no automatic retry,
+  5-second Settings freshness/polling, 30-second healthy availability polling,
+  a 5-second unavailable recovery interval, and a 10-minute idle cache lifetime.
+  A failed availability refetch enters maintenance even when an older successful
+  response remains cached.
+- Desktop and mobile production captures reduced cold Settings requests from
+  `2` to `1`, pre-expiry route-transition requests from `1` to `0`, and
+  11.5-second request totals from `5` to `3` (`-40%`). Maximum concurrency
+  stayed at one. Settled Settings polling was `5.004` seconds and availability
+  polling was `30.004` seconds in both viewports.
+- Browser service-info aggregate duration improved `81.3%` desktop and `30.1%`
+  mobile; p95 improved `74.0%` desktop and `3.1%` mobile. Thirty-request shell
+  and service-info checks also improved or held within the 10% gate. Settings
+  became visible `2.9%` faster desktop and `1.1%` faster mobile, with zero
+  console errors.
+- Focused API/query-key/hook/gate/Settings coverage passed `138/138`; desktop
+  and mobile ownership Playwright passed `2/2`. TypeScript, ESLint errors-only,
+  production build, bundle budgets, and the unchanged-dependency license check
+  passed.
+- Production runs `festivalweb:web14-b843ef61`
+  (`sha256:0c571eace67b74cc4b05c7a1eabe2dbce34811dee883d2425c22d14920781d8b`).
+  FestivalWeb, FSTService, and PostgreSQL are healthy; published scrape `1236`
+  remains safe and unfrozen; the worker remains held/offline; mapped solo reads
+  remain HTTP `200`; and isolated derived, band-song, and export routes remain
+  HTTP `503`. Rollback is the prior `festivalweb:service02-824415e9` image.
+- Final FST-drive free space is `48,544,817,152` bytes, preserving
+  `3,396,591,616` bytes above the measured scrape boundary.
+
+Evidence:
+
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/web-1.4-service-info-20260725T163705Z/`
+
 Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/web-0.2/`
@@ -419,6 +459,10 @@ Details; materially lower style/layout work and memory.
 - Chart-open latency remains within an agreed p95 budget.
 
 ### WEB-1.4 - Remove duplicate service-info requests
+
+**Decision:** Accepted and deployed on 2026-07-25.
+**Next dependency:** WEB-2.1 can now restrict `pageCache` to navigation state;
+WEB-2.2 remains separate generic cancellation work.
 
 **Work**
 
