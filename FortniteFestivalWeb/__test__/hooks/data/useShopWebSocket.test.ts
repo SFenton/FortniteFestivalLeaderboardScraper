@@ -87,6 +87,49 @@ describe('useShopWebSocket', () => {
     expect(result.current.newShopIds).toEqual(initialNew);
   });
 
+  it('tracks refreshed query data until a WebSocket message becomes authoritative', () => {
+    const { result, rerender } = renderHook(
+      ({ ids, leaving, fresh }) => useShopWebSocket(ids, leaving, fresh),
+      {
+        initialProps: {
+          ids: new Set(['s1']) as ReadonlySet<string>,
+          leaving: null as ReadonlySet<string> | null,
+          fresh: null as ReadonlySet<string> | null,
+        },
+      },
+    );
+
+    rerender({
+      ids: new Set(['s2']),
+      leaving: new Set(['s2']),
+      fresh: new Set(['s2']),
+    });
+
+    expect(result.current.shopSongIds).toEqual(new Set(['s2']));
+    expect(result.current.leavingTomorrowIds).toEqual(new Set(['s2']));
+    expect(result.current.newShopIds).toEqual(new Set(['s2']));
+  });
+
+  it('does not overwrite a live WebSocket snapshot with older query data', () => {
+    const { result, rerender } = renderHook(
+      ({ ids }) => useShopWebSocket(ids),
+      { initialProps: { ids: new Set(['query-song']) as ReadonlySet<string> } },
+    );
+    act(() => {
+      mockAppWebSocket.handler?.({
+        type: 'shop_snapshot',
+        songs: [{ songId: 'live-song', title: 'Live', artist: 'Artist', shopUrl: '/live' }],
+        total: 1,
+        leavingTomorrow: [],
+        newSongs: [],
+      });
+    });
+
+    rerender({ ids: new Set(['stale-query-song']) });
+
+    expect(result.current.shopSongIds).toEqual(new Set(['live-song']));
+  });
+
   it('handles shop_snapshot message with newSongs', () => {
     const { result } = renderHook(() => useShopWebSocket(null));
 

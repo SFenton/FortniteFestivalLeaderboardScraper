@@ -1,9 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { api, expandAlbumArt } from '../../src/api/client';
+import {
+  clearSongsCache,
+  PUBLIC_CATALOG_CACHE_SCOPE,
+  SONGS_CACHE_KEY,
+  SONGS_CACHE_VERSION,
+} from '../../src/api/songsCache';
 
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  clearSongsCache();
   global.fetch = vi.fn();
 });
 
@@ -84,7 +91,7 @@ describe('api/client', () => {
 
   describe('getSongs', () => {
     it('fetches songs from /api/songs', async () => {
-      const data = { songs: [{ songId: 's1', title: 'Test' }], count: 1, currentSeason: 5 };
+      const data = { songs: [{ songId: 's1', title: 'Test', artist: 'Artist' }], count: 1, currentSeason: 5 };
       mockFetchOk(data);
       const result = await api.getSongs();
       expect(result).toEqual(data);
@@ -93,8 +100,8 @@ describe('api/client', () => {
 
     it('sends If-None-Match when cached ETag exists', async () => {
       // Seed localStorage with a cached response + etag
-      const cached = { songs: [{ songId: 's1', title: 'Old' }], count: 1, currentSeason: 5 };
-      localStorage.setItem('fst_songs_cache', JSON.stringify({ data: cached, etag: '"abc123"', v: 2 }));
+      const cached = { songs: [{ songId: 's1', title: 'Old', artist: 'Artist' }], count: 1, currentSeason: 5 };
+      localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({ data: cached, etag: '"abc123"', v: 2 }));
 
       (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
         ok: false,
@@ -108,7 +115,7 @@ describe('api/client', () => {
     });
 
     it('updates cache on 200 with new ETag', async () => {
-      const data = { songs: [{ songId: 's2', title: 'New' }], count: 1, currentSeason: 6 };
+      const data = { songs: [{ songId: 's2', title: 'New', artist: 'Artist' }], count: 1, currentSeason: 6 };
       (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
         ok: true,
         status: 200,
@@ -117,14 +124,16 @@ describe('api/client', () => {
       });
 
       await api.getSongs();
-      const stored = JSON.parse(localStorage.getItem('fst_songs_cache')!);
+      const stored = JSON.parse(localStorage.getItem(SONGS_CACHE_KEY)!);
       expect(stored.etag).toBe('"newetag"');
+      expect(stored.version).toBe(SONGS_CACHE_VERSION);
+      expect(stored.scope).toBe(PUBLIC_CATALOG_CACHE_SCOPE);
       expect(stored.data.songs[0].songId).toBe('s2');
     });
 
     it('preserves ETag and no-cache semantics when a caller supplies a signal', async () => {
-      const cached = { songs: [{ songId: 's1', title: 'Old' }], count: 1, currentSeason: 5 };
-      localStorage.setItem('fst_songs_cache', JSON.stringify({ data: cached, etag: '"abc123"', v: 2 }));
+      const cached = { songs: [{ songId: 's1', title: 'Old', artist: 'Artist' }], count: 1, currentSeason: 5 };
+      localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({ data: cached, etag: '"abc123"', v: 2 }));
       const controller = new AbortController();
       mockFetchOk({ songs: [], count: 0, currentSeason: 5 });
 
@@ -133,6 +142,89 @@ describe('api/client', () => {
       expect(global.fetch).toHaveBeenCalledWith('/api/songs', {
         headers: { 'If-None-Match': '"abc123"' },
         cache: 'no-cache',
+        signal: controller.signal,
+      });
+    });
+
+    it('safely reuses the public ETag cache across selected profiles', async () => {
+      const cached = {
+        songs: [{ songId: 's1', title: 'Shared', artist: 'Artist' }],
+        count: 1,
+        currentSeason: 5,
+      };
+      localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({
+        version: SONGS_CACHE_VERSION,
+        scope: PUBLIC_CATALOG_CACHE_SCOPE,
+        data: cached,
+        etag: '"shared-etag"',
+      }));
+      localStorage.setItem('fst:selectedProfile', JSON.stringify({
+        type: 'player',
+        accountId: 'player-1',
+        displayName: 'Player One',
+      }));
+      localStorage.setItem('fst:trackedPlayer', JSON.stringify({
+        accountId: 'player-1',
+        displayName: 'Player One',
+      }));
+      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ok: false,
+        status: 304,
+        headers: new Headers({ etag: '"shared-etag"' }),
+      });
+
+      await expect(api.getSongs()).resolves.toEqual(cached);
+      expect(global.fetch).toHaveBeenLastCalledWith('/api/songs', {
+        cache: 'no-cache',
+        headers: {
+          'If-None-Match': '"shared-etag"',
+          'X-FST-Selected-Profile-Type': 'player',
+          'X-FST-Selected-Profile-Id': 'player-1',
+          'X-FST-Selected-Player': 'player-1',
+        },
+      });
+
+      localStorage.setItem('fst:selectedProfile', JSON.stringify({
+        type: 'band',
+        bandId: 'band-1',
+        bandType: 'Band_Duets',
+        teamKey: 'player-1:player-2',
+        displayName: 'Band One',
+        members: [],
+      }));
+      await expect(api.getSongs()).resolves.toEqual(cached);
+      expect(global.fetch).toHaveBeenLastCalledWith('/api/songs', {
+        cache: 'no-cache',
+        headers: {
+          'If-None-Match': '"shared-etag"',
+          'X-FST-Selected-Profile-Type': 'band',
+          'X-FST-Selected-Profile-Id': 'band-1',
+          'X-FST-Selected-Band-Id': 'band-1',
+          'X-FST-Selected-Band-Type': 'Band_Duets',
+          'X-FST-Selected-Band-Team-Key': 'player-1:player-2',
+        },
+      });
+    });
+  });
+
+  describe('getShop', () => {
+    it('uses browser ETag revalidation and caller cancellation without a second data owner', async () => {
+      const controller = new AbortController();
+      mockFetchOk({
+        songs: [{
+          songId: 'shop-1',
+          title: 'Shop Song',
+          artist: 'Artist',
+          shopUrl: 'https://shop/1',
+        }],
+      });
+
+      const result = await api.getShop({ signal: controller.signal });
+
+      expect(result.songs[0]?.songId).toBe('shop-1');
+      expect(global.fetch).toHaveBeenCalledWith('/api/shop', {
+        cache: 'no-cache',
+        headers: {},
         signal: controller.signal,
       });
     });

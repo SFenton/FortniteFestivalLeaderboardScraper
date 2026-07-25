@@ -29,7 +29,7 @@ function wrapper(client: QueryClient) {
 }
 
 describe('request cancellation coverage', () => {
-  it('keeps every GET queryFn signal-aware and leaves Shop for WEB-2.3', () => {
+  it('keeps every GET queryFn signal-aware', () => {
     const root = resolve(process.cwd(), 'src');
     const queryFunctions: { file: string; expression: string }[] = [];
 
@@ -82,16 +82,15 @@ describe('request cancellation coverage', () => {
     };
     visitClient(clientFile);
 
-    for (const method of getMethods.filter(method => method.name !== 'getShop')) {
+    for (const method of getMethods) {
       expect(method.source, method.name).toMatch(/ApiRequestOptions|AbortSignal/);
     }
-    expect(getMethods.find(method => method.name === 'getShop')?.source).not.toMatch(/ApiRequestOptions|AbortSignal/);
-    expect(clientSource).toContain('Shop remains a separate owner until WEB-2.3');
+    expect(clientSource).not.toContain('shopEtagCache');
 
     const booleanCancellationFiles = sourceFiles(root)
       .filter(file => /\blet\s+cancelled\s*=\s*false\b/.test(readFileSync(file, 'utf8')))
       .map(file => file.replace(`${root}/`, ''));
-    expect(booleanCancellationFiles).toEqual(['contexts/ShopContext.tsx']);
+    expect(booleanCancellationFiles).toEqual([]);
 
     for (const relativePath of [
       'hooks/data/useAccountSearch.ts',

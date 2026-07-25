@@ -3,7 +3,7 @@
  * a live set of in-shop songIds. Applies incremental deltas (shop_changed)
  * and full snapshots (shop_snapshot) without requiring a full /api/songs refetch.
  */
-import { useEffect, useCallback, useState } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import type {
   WsNotificationMessage,
   ShopChangedMessage,
@@ -29,7 +29,7 @@ export type ShopState = {
 /**
  * Maintains shop state via the shared /api/ws connection.
  *
- * @param initialShopIds - Song IDs with shopUrl from the initial /api/songs fetch.
+ * @param initialShopIds - Song IDs from the shared initial /api/shop query.
  *                         Used as the starting set before the first WS snapshot arrives.
  */
 /* v8 ignore start -- WebSocket lifecycle cannot be exercised in jsdom */
@@ -43,29 +43,32 @@ export function useShopWebSocket(
   const [newShopIds, setNewShopIds] = useState<ReadonlySet<string> | null>(initialNewIds);
   const [shopSongsMap, setShopSongsMap] = useState<ReadonlyMap<string, ShopSong> | null>(null);
   const { connected, subscribe } = useAppWebSocket();
+  const hasLiveShopData = useRef(false);
 
-  // Seed from initial fetch when it arrives (if WS snapshot hasn't come yet)
+  // Keep query-backed state current until a WebSocket snapshot/delta takes ownership.
   useEffect(() => {
-    if (initialShopIds && !shopSongIds) {
+    if (!hasLiveShopData.current) {
       setShopSongIds(initialShopIds);
+      setShopSongsMap(null);
     }
-  }, [initialShopIds, shopSongIds]);
+  }, [initialShopIds]);
 
   useEffect(() => {
-    if (initialLeavingIds && !leavingTomorrowIds) {
-      setLeavingTomorrowIds(initialLeavingIds);
-    }
-  }, [initialLeavingIds, leavingTomorrowIds]);
+    if (!hasLiveShopData.current) setLeavingTomorrowIds(initialLeavingIds);
+  }, [initialLeavingIds]);
 
   useEffect(() => {
-    if (initialNewIds && !newShopIds) {
-      setNewShopIds(initialNewIds);
-    }
-  }, [initialNewIds, newShopIds]);
+    if (!hasLiveShopData.current) setNewShopIds(initialNewIds);
+  }, [initialNewIds]);
+
+  useEffect(() => {
+    if (!connected) hasLiveShopData.current = false;
+  }, [connected]);
 
   const handleMessage = useCallback((msg: WsNotificationMessage) => {
     switch (msg.type) {
       case 'shop_snapshot': {
+        hasLiveShopData.current = true;
         const snap = msg as ShopSnapshotMessage;
         expandAlbumArt(snap.songs);
         const map = new Map<string, ShopSong>();
@@ -81,6 +84,7 @@ export function useShopWebSocket(
         break;
       }
       case 'shop_changed': {
+        hasLiveShopData.current = true;
         const delta = msg as ShopChangedMessage;
         expandAlbumArt(delta.added);
         setShopSongsMap(prev => {

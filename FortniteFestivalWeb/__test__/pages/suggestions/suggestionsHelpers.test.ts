@@ -12,6 +12,7 @@ import {
   getCardDelay,
   buildAlbumArtMap,
   FILTER_STORAGE_KEY,
+  SUGGESTIONS_FILTER_STORAGE_VERSION,
 } from '../../../src/pages/suggestions/suggestionsHelpers';
 import { defaultSuggestionsFilterDraft } from '../../../src/pages/suggestions/modals/SuggestionsFilterModal';
 import type { SuggestionCategory } from '@festival/core/suggestions/types';
@@ -38,12 +39,45 @@ describe('loadSuggestionsFilter', () => {
     localStorage.setItem(FILTER_STORAGE_KEY, 'not-json{{{');
     const result = loadSuggestionsFilter();
     expect(result.suggestionsLeadFilter).toBe(true);
+    expect(JSON.parse(localStorage.getItem(FILTER_STORAGE_KEY)!)).toEqual({
+      version: SUGGESTIONS_FILTER_STORAGE_VERSION,
+      data: defaultSuggestionsFilterDraft(),
+    });
   });
 
   it('returns defaults when localStorage has null-ish value', () => {
     localStorage.setItem(FILTER_STORAGE_KEY, 'null');
     const result = loadSuggestionsFilter();
     expect(result.suggestionsLeadFilter).toBe(true);
+  });
+
+  it('resets invalid boolean values and unsupported versions', () => {
+    localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({
+      suggestionsLeadFilter: 'false',
+    }));
+    expect(loadSuggestionsFilter()).toEqual(defaultSuggestionsFilterDraft());
+
+    localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({
+      version: 99,
+      data: { suggestionsLeadFilter: false },
+    }));
+    expect(loadSuggestionsFilter()).toEqual(defaultSuggestionsFilterDraft());
+    expect(JSON.parse(localStorage.getItem(FILTER_STORAGE_KEY)!)).toEqual({
+      version: SUGGESTIONS_FILTER_STORAGE_VERSION,
+      data: defaultSuggestionsFilterDraft(),
+    });
+  });
+
+  it('loads the current version envelope with explicit defaults', () => {
+    localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({
+      version: SUGGESTIONS_FILTER_STORAGE_VERSION,
+      data: { suggestionsLeadFilter: false },
+    }));
+
+    const result = loadSuggestionsFilter();
+
+    expect(result.suggestionsLeadFilter).toBe(false);
+    expect(result.suggestionsBassFilter).toBe(true);
   });
 });
 
@@ -55,7 +89,10 @@ describe('saveSuggestionsFilter', () => {
     saveSuggestionsFilter(draft);
     const raw = localStorage.getItem(FILTER_STORAGE_KEY);
     expect(raw).toBeTruthy();
-    expect(JSON.parse(raw!).suggestionsLeadFilter).toBe(false);
+    expect(JSON.parse(raw!)).toMatchObject({
+      version: SUGGESTIONS_FILTER_STORAGE_VERSION,
+      data: { suggestionsLeadFilter: false },
+    });
   });
 });
 

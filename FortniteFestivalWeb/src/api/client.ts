@@ -57,6 +57,11 @@ import type {
 } from '@festival/core/api/serverTypes';
 import { expandWirePlayerResponse, expandWireSongsResponse, expandWireStatsResponse } from '@festival/core/api/serverTypes';
 import { readSelectedProfile } from '../state/selectedProfile';
+import {
+  isSongsResponse,
+  readSongsCache,
+  writeSongsCache,
+} from './songsCache';
 
 const BASE = '';
 const SELECTED_PLAYER_HEADER = 'X-FST-Selected-Player';
@@ -172,9 +177,6 @@ async function download(path: string, fallbackFileName: string, headers: Record<
 const UNKNOWN_USER = 'Unknown User';
 
 const ALBUM_ART_PREFIX = 'https://cdn2.unrealengine.com/';
-const SONGS_CACHE_KEY = 'fst_songs_cache';
-/** Bump when the SongsResponse shape changes (e.g. adding maxScores). */
-const SONGS_CACHE_VERSION = 2;
 
 export function expandAlbumArt(songs: { albumArt?: string }[]): void {
   for (const song of songs) {
@@ -184,52 +186,8 @@ export function expandAlbumArt(songs: { albumArt?: string }[]): void {
   }
 }
 
-type SongsCache = { data: SongsResponse; etag: string | null; v?: number };
-
-function loadSongsCache(): SongsCache | null {
-  try {
-    const raw = localStorage.getItem(SONGS_CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as SongsCache;
-    // Discard caches from before the current version (shape may have changed)
-    if ((parsed.v ?? 0) < SONGS_CACHE_VERSION) {
-      localStorage.removeItem(SONGS_CACHE_KEY);
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function saveSongsCache(data: SongsResponse, etag: string | null): void {
-  try {
-    localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({ data, etag, v: SONGS_CACHE_VERSION }));
-  } catch { /* quota exceeded — ignore */ }
-}
-
 function normalizeDisplayName<T extends { displayName: string }>(data: T): T {
   if (!data.displayName) return { ...data, displayName: UNKNOWN_USER };
-  return data;
-}
-
-// Shop remains a separate owner until WEB-2.3 moves it into React Query.
-let shopEtagCache: { data: ShopResponse; etag: string } | null = null;
-
-async function getShopWithETag(): Promise<ShopResponse> {
-  const url = `${BASE}/api/shop`;
-  const headers: Record<string, string> = {};
-  if (shopEtagCache?.etag) headers['If-None-Match'] = shopEtagCache.etag;
-
-  const init: RequestInit = { headers: withSelectedProfileHeaders(headers) };
-  const res = await fetch(url, init);
-
-  if (res.status === 304 && shopEtagCache) return shopEtagCache.data;
-  if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
-
-  const data = await res.json() as ShopResponse;
-  const etag = res.headers.get('etag');
-  if (etag) shopEtagCache = { data, etag };
   return data;
 }
 
@@ -238,7 +196,7 @@ export const api = {
     get<FeatureFlagsResponse>('/api/features', options),
 
   getSongs: async (options?: ApiRequestOptions): Promise<SongsResponse> => {
-    const cached = loadSongsCache();
+    const cached = readSongsCache();
     const headers: Record<string, string> = {};
     if (cached?.etag) headers['If-None-Match'] = cached.etag;
 
@@ -254,13 +212,22 @@ export const api = {
     if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
 
     const data = expandWireSongsResponse(await res.json());
+    if (!isSongsResponse(data)) throw new Error('Invalid songs response');
     expandAlbumArt(data.songs);
-    saveSongsCache(data, res.headers.get('etag'));
+    writeSongsCache(data, res.headers.get('etag'));
     return data;
   },
 
-  getShop: async (): Promise<ShopResponse> => {
-    const data = await getShopWithETag();
+  getShop: async (options?: ApiRequestOptions): Promise<ShopResponse> => {
+    const init: RequestInit = {
+      headers: withSelectedProfileHeaders(),
+      cache: 'no-cache',
+    };
+    if (options?.signal) init.signal = options.signal;
+    const res = await fetch(`${BASE}/api/shop`, init);
+    if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
+
+    const data = await res.json() as ShopResponse;
     expandAlbumArt(data.songs);
     return data;
   },

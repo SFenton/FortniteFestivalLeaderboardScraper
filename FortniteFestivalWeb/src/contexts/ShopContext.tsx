@@ -1,8 +1,11 @@
-import { createContext, useContext, useMemo, useState, useEffect, type ReactNode } from 'react';
-import type { ShopSong } from '@festival/core/api/serverTypes';
+import { createContext, useContext, useMemo, type ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import type { ShopResponse, ShopSong } from '@festival/core/api/serverTypes';
 import { useFestival } from './FestivalContext';
 import { useShopWebSocket, type ShopState } from '../hooks/data/useShopWebSocket';
 import { api } from '../api/client';
+import { queryKeys } from '../api/queryKeys';
+import { shopQueryPolicy } from '../api/queryPolicy';
 
 type ShopContextValue = {
   /** Set of songIds currently in the item shop (null until data loaded). */
@@ -24,22 +27,12 @@ const ShopContext = createContext<ShopContextValue | null>(null);
 export function ShopProvider({ children }: { children: ReactNode }) {
   const { state: { songs } } = useFestival();
 
-  // Fetch /api/shop as the initial data source
-  const [shopData, setShopData] = useState<ShopSong[] | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    try {
-      api.getShop()
-        .then((response) => {
-          if (!cancelled) setShopData(response.songs);
-        })
-        .catch(() => { /* graceful degradation — WS will provide data */ });
-    } catch {
-      /* api.getShop may not exist in test environments */
-    }
-    return () => { cancelled = true; };
-  }, []);
+  const shopQuery = useQuery<ShopResponse>({
+    queryKey: queryKeys.shop(),
+    queryFn: ({ signal }) => api.getShop({ signal }),
+    ...shopQueryPolicy,
+  });
+  const shopData = shopQuery.data?.songs ?? null;
 
   // Build initial IDs from /api/shop response
   const initialShopIds = useMemo(() => {

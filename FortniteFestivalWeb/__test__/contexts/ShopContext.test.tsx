@@ -6,8 +6,9 @@
  * useShopState layers settings on top.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ShopSong } from '@festival/core/api/serverTypes';
 
 // Mock shop songs map for WS
@@ -23,9 +24,22 @@ const mockShopState = vi.hoisted(() => ({
   leavingTomorrowIds: null as ReadonlySet<string> | null,
   newShopIds: new Set(['song-1']) as ReadonlySet<string>,
 }));
+const mockUseInitialQueryData = vi.hoisted(() => ({ value: false }));
 
 vi.mock('../../src/hooks/data/useShopWebSocket', () => ({
-  useShopWebSocket: () => mockShopState,
+  useShopWebSocket: (
+    initialShopIds: ReadonlySet<string> | null,
+    initialLeavingIds: ReadonlySet<string> | null,
+    initialNewIds: ReadonlySet<string> | null,
+  ) => mockUseInitialQueryData.value
+    ? {
+        shopSongIds: initialShopIds,
+        leavingTomorrowIds: initialLeavingIds,
+        newShopIds: initialNewIds,
+        shopSongsMap: null,
+        connected: false,
+      }
+    : mockShopState,
 }));
 
 // Mock FestivalContext (songs no longer have shopUrl)
@@ -44,15 +58,11 @@ vi.mock('../../src/contexts/FeatureFlagsContext', () => ({
   useFeatureFlags: () => ({ rivals: true, compete: true, leaderboards: true }),
 }));
 
-// Mock api.getShop
+const mockGetShop = vi.hoisted(() => vi.fn());
+
 vi.mock('../../src/api/client', () => ({
   api: {
-    getShop: vi.fn().mockResolvedValue({
-      songs: [
-        { songId: 'song-1', title: 'Song One', artist: 'Artist 1', shopUrl: 'https://shop/1' },
-        { songId: 'song-3', title: 'Song Three', artist: 'Artist 3', shopUrl: 'https://shop/3' },
-      ],
-    }),
+    getShop: mockGetShop,
   },
 }));
 
@@ -60,20 +70,32 @@ import { ShopProvider, useShop } from '../../src/contexts/ShopContext';
 import { useShopState } from '../../src/hooks/data/useShopState';
 import { SettingsProvider } from '../../src/contexts/SettingsContext';
 
+let testQc: QueryClient;
+
 function shopWrapper({ children }: { children: ReactNode }) {
-  return <ShopProvider>{children}</ShopProvider>;
+  return (
+    <QueryClientProvider client={testQc}>
+      <ShopProvider>{children}</ShopProvider>
+    </QueryClientProvider>
+  );
 }
 
 function fullWrapper({ children }: { children: ReactNode }) {
   return (
-    <SettingsProvider>
-      <ShopProvider>{children}</ShopProvider>
-    </SettingsProvider>
+    <QueryClientProvider client={testQc}>
+      <SettingsProvider>
+        <ShopProvider>{children}</ShopProvider>
+      </SettingsProvider>
+    </QueryClientProvider>
   );
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
   localStorage.clear();
+  testQc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  mockGetShop.mockReturnValue(new Promise(() => {}));
+  mockUseInitialQueryData.value = false;
   mockShopState.shopSongIds = new Set(['song-1', 'song-3']);
   mockShopState.shopSongsMap = mockShopSongsMap;
   mockShopState.connected = true;
@@ -120,6 +142,113 @@ describe('ShopContext', () => {
     expect(result.current.shopSongs).toEqual([]);
   });
 
+  it('uses one shared query request across concurrent providers', async () => {
+    let resolveRequest!: (value: { songs: ShopSong[] }) => void;
+    mockUseInitialQueryData.value = true;
+    mockGetShop.mockReturnValue(new Promise(resolve => {
+      resolveRequest = resolve;
+    }));
+
+    const first = renderHook(() => useShop(), { wrapper: shopWrapper });
+    const second = renderHook(() => useShop(), { wrapper: shopWrapper });
+
+    expect(mockGetShop).toHaveBeenCalledTimes(1);
+    resolveRequest({
+      songs: [{ songId: 'shared', title: 'Shared', artist: 'Artist', shopUrl: '/shared' }],
+    });
+    await waitFor(() => expect(first.result.current.shopSongs[0]?.songId).toBe('shared'));
+    expect(second.result.current.shopSongs[0]?.songId).toBe('shared');
+  });
+
+  it('aborts the shared Shop request when its final observer unmounts', async () => {
+    let requestSignal: AbortSignal | undefined;
+    mockGetShop.mockImplementation(({ signal }: { signal: AbortSignal }) => {
+      requestSignal = signal;
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+      });
+    });
+
+    const view = renderHook(() => useShop(), { wrapper: shopWrapper });
+    await waitFor(() => expect(requestSignal).toBeDefined());
+
+    view.unmount();
+
+    expect(requestSignal?.aborted).toBe(true);
+  });
+
+  it('applies invalidated HTTP data while WebSocket data is unavailable', async () => {
+    mockUseInitialQueryData.value = true;
+    mockGetShop
+      .mockResolvedValueOnce({
+        songs: [{ songId: 'song-1', title: 'Song One', artist: 'Artist', shopUrl: '/one' }],
+      })
+      .mockResolvedValueOnce({
+        songs: [{
+          songId: 'song-2',
+          title: 'Song Two',
+          artist: 'Artist',
+          shopUrl: '/two',
+          leavingTomorrow: true,
+          isNew: true,
+        }],
+      });
+    const { result } = renderHook(() => useShop(), { wrapper: shopWrapper });
+    await waitFor(() => expect(result.current.shopSongs[0]?.songId).toBe('song-1'));
+
+    await act(async () => {
+      await testQc.invalidateQueries({ queryKey: ['shop', 'public'] });
+    });
+
+    await waitFor(() => expect(result.current.shopSongs[0]?.songId).toBe('song-2'));
+    expect(result.current.leavingTomorrowIds?.has('song-2')).toBe(true);
+    expect(result.current.newShopIds?.has('song-2')).toBe(true);
+    expect(mockGetShop).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves cached Shop data when an invalidated refetch fails', async () => {
+    mockUseInitialQueryData.value = true;
+    mockGetShop
+      .mockResolvedValueOnce({
+        songs: [{ songId: 'cached', title: 'Cached', artist: 'Artist', shopUrl: '/cached' }],
+      })
+      .mockRejectedValueOnce(new Error('Offline'));
+    const { result } = renderHook(() => useShop(), { wrapper: shopWrapper });
+    await waitFor(() => expect(result.current.shopSongs[0]?.songId).toBe('cached'));
+
+    await act(async () => {
+      await testQc.invalidateQueries({ queryKey: ['shop', 'public'] });
+    });
+
+    expect(result.current.shopSongs[0]?.songId).toBe('cached');
+    expect(mockGetShop).toHaveBeenCalledTimes(2);
+  });
+
+  it('shares profile-invariant Shop data across profile switches without refetching', async () => {
+    mockUseInitialQueryData.value = true;
+    mockGetShop.mockResolvedValue({
+      songs: [{ songId: 'shared', title: 'Shared', artist: 'Artist', shopUrl: '/shared' }],
+    });
+    const first = renderHook(() => useShop(), { wrapper: shopWrapper });
+    await waitFor(() => expect(first.result.current.shopSongs[0]?.songId).toBe('shared'));
+    first.unmount();
+
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'player',
+      accountId: 'profile-b',
+      displayName: 'Profile B',
+    }));
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({
+      accountId: 'profile-b',
+      displayName: 'Profile B',
+    }));
+    window.dispatchEvent(new Event('fst:selectedProfileChanged'));
+    const second = renderHook(() => useShop(), { wrapper: shopWrapper });
+
+    expect(second.result.current.shopSongs[0]?.songId).toBe('shared');
+    expect(mockGetShop).toHaveBeenCalledTimes(1);
+  });
+
   it('throws when used outside provider', () => {
     expect(() => {
       renderHook(() => useShop());
@@ -146,6 +275,13 @@ describe('useShopState', () => {
     const { result } = renderHook(() => useShopState(), { wrapper: fullWrapper });
     expect(result.current.isShopNew('song-1')).toBe(true);
     expect(result.current.isShopNew('song-3')).toBe(false);
+  });
+
+  it('reports leaving-tomorrow state from the shared Shop owner', () => {
+    mockShopState.leavingTomorrowIds = new Set(['song-3']);
+    const { result } = renderHook(() => useShopState(), { wrapper: fullWrapper });
+    expect(result.current.isLeavingTomorrow('song-3')).toBe(true);
+    expect(result.current.isLeavingTomorrow('song-1')).toBe(false);
   });
 
   it('disables highlighting when hideItemShop is true', () => {

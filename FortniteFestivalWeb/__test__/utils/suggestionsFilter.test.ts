@@ -79,7 +79,8 @@ describe('saveSuggestionsFilter', () => {
     const draft = mockFilterDraft({ suggestionsLeadFilter: false });
     saveSuggestionsFilter(draft);
     const stored = JSON.parse(localStorage.getItem('fst-suggestions-filter')!);
-    expect(stored.suggestionsLeadFilter).toBe(false);
+    expect(stored.version).toBe(1);
+    expect(stored.data.suggestionsLeadFilter).toBe(false);
   });
 });
 

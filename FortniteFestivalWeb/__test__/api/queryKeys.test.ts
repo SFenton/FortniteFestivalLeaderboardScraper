@@ -10,8 +10,9 @@ describe('queryKeys', () => {
     expect(queryKeys.serviceInfo()).toEqual(['serviceInfo']);
   });
 
-  it('songs() returns ["songs"]', () => {
-    expect(queryKeys.songs()).toEqual(['songs']);
+  it('uses explicit profile-invariant catalog scopes', () => {
+    expect(queryKeys.songs()).toEqual(['songs', 'public']);
+    expect(queryKeys.shop()).toEqual(['shop', 'public']);
   });
 
   it('player() returns key with accountId and optional params', () => {

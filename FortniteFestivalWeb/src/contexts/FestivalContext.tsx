@@ -9,23 +9,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ServerSong as Song, SongsResponse } from '@festival/core/api/serverTypes';
 import { api } from '../api/client';
 import { queryKeys } from '../api/queryKeys';
-
-const SONGS_CACHE_KEY = 'fst_songs_cache';
-/** Must match SONGS_CACHE_VERSION in api/client.ts */
-const SONGS_CACHE_VERSION = 2;
-
-function getCachedSongs(): SongsResponse | undefined {
-  try {
-    const raw = localStorage.getItem(SONGS_CACHE_KEY);
-    if (!raw) return undefined;
-    const parsed = JSON.parse(raw) as { data: SongsResponse; v?: number };
-    // Reject stale cache versions (shape may lack new fields like maxScores)
-    if ((parsed.v ?? 0) < SONGS_CACHE_VERSION) return undefined;
-    return parsed.data;
-  } catch {
-    return undefined;
-  }
-}
+import { readSongsCache } from '../api/songsCache';
 
 type FestivalState = {
   songs: Song[];
@@ -47,13 +31,14 @@ export const FestivalContext = createContext<FestivalContextValue | null>(null);
 
 export function FestivalProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
-  const cachedResponse = useMemo(getCachedSongs, []);
+  const cachedResponse = useMemo(() => readSongsCache()?.data, []);
 
   const { data, isLoading, error } = useQuery<SongsResponse>({
     queryKey: queryKeys.songs(),
     queryFn: ({ signal }) => api.getSongs({ signal }),
-    placeholderData: () => getCachedSongs(),  // instant render from localStorage; always refetches in background
+    placeholderData: cachedResponse,
     staleTime: 5 * 60 * 1000,        // 5 min — revalidation is cheap (304 via ETag)
+    gcTime: 10 * 60 * 1000,
   });
 
   const refresh = useCallback(async () => {

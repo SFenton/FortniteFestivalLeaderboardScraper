@@ -3,6 +3,12 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { FestivalProvider, useFestival } from '../../src/contexts/FestivalContext';
+import {
+  clearSongsCache,
+  PUBLIC_CATALOG_CACHE_SCOPE,
+  SONGS_CACHE_KEY,
+  SONGS_CACHE_VERSION,
+} from '../../src/api/songsCache';
 
 vi.mock('../../src/api/client', () => ({
   api: {
@@ -21,6 +27,8 @@ function wrapper({ children }: { children: ReactNode }) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
+  clearSongsCache();
   testQc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
 });
 
@@ -47,6 +55,52 @@ describe('FestivalContext', () => {
     await waitFor(() => expect(result.current.state.isLoading).toBe(false));
     expect(result.current.state.error).toBe('Network fail');
     expect(result.current.state.songs).toEqual([]);
+  });
+
+  it('parses one validated placeholder and preserves it when the refetch fails', async () => {
+    const cached = {
+      count: 1,
+      currentSeason: 4,
+      songs: [{ songId: 'cached', title: 'Cached', artist: 'Artist' }],
+    };
+    localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({
+      version: SONGS_CACHE_VERSION,
+      scope: PUBLIC_CATALOG_CACHE_SCOPE,
+      data: cached,
+      etag: '"cached"',
+    }));
+    const parse = vi.spyOn(JSON, 'parse');
+    mockGetSongs.mockRejectedValue(new Error('Offline'));
+
+    const { result } = renderHook(() => useFestival(), { wrapper });
+
+    expect(result.current.state.songs).toEqual(cached.songs);
+    expect(result.current.state.currentSeason).toBe(4);
+    await waitFor(() => expect(result.current.state.error).toBe('Offline'));
+    expect(result.current.state.songs).toEqual(cached.songs);
+    expect(parse).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps local placeholder and network normalization in parity', async () => {
+    const response = {
+      count: 1,
+      currentSeason: 6,
+      songs: [{ songId: 'same', title: 'Same Song', artist: 'Artist' }],
+    };
+    localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({
+      version: SONGS_CACHE_VERSION,
+      scope: PUBLIC_CATALOG_CACHE_SCOPE,
+      data: response,
+      etag: '"same"',
+    }));
+    mockGetSongs.mockResolvedValue(response);
+
+    const { result } = renderHook(() => useFestival(), { wrapper });
+
+    expect(result.current.state.songs).toEqual(response.songs);
+    await waitFor(() => expect(mockGetSongs).toHaveBeenCalledTimes(1));
+    expect(result.current.state.songs).toEqual(response.songs);
+    expect(result.current.state.currentSeason).toBe(response.currentSeason);
   });
 
   it('refresh reloads data', async () => {

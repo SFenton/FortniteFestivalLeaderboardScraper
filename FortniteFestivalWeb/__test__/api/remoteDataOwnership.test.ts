@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient, QueryObserver } from '@tanstack/react-query';
@@ -12,7 +12,9 @@ import {
   keepPreviousLeaderboardPage,
   keepPreviousSongLeaderboards,
   REMOTE_DATA_GC_TIME_MS,
+  SHOP_GC_TIME_MS,
   remoteDataQueryPolicy,
+  shopQueryPolicy,
 } from '../../src/api/queryPolicy';
 
 const remoteCacheOwners = [
@@ -23,7 +25,19 @@ const remoteCacheOwners = [
   'src/pages/rivals/RivalDetailPage.tsx',
   'src/pages/rivals/RivalryPage.tsx',
   'src/pages/compete/CompetePage.tsx',
+  'src/contexts/ShopContext.tsx',
 ];
+
+function sourceFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+    const path = resolve(directory, entry.name);
+    return entry.isDirectory()
+      ? sourceFiles(path)
+      : /\.tsx?$/.test(entry.name)
+        ? [path]
+        : [];
+  });
+}
 
 function createClient() {
   return new QueryClient({
@@ -54,7 +68,49 @@ describe('remote data ownership', () => {
 
     const clientSource = readFileSync(resolve(process.cwd(), 'src/api/client.ts'), 'utf8');
     expect(clientSource).not.toMatch(/new Map<.*data|const etagCache/i);
-    expect(clientSource).toContain('Shop remains a separate owner until WEB-2.3');
+    expect(clientSource).not.toContain('shopEtagCache');
+    expect(clientSource).not.toContain('getShopWithETag');
+  });
+
+  it('keeps Songs and Shop globally scoped only while the service contract is profile invariant', () => {
+    const source = readFileSync(
+      resolve(process.cwd(), '../FSTService/Api/SongEndpoints.cs'),
+      'utf8',
+    );
+    const songsStart = source.indexOf('app.MapGet("/api/songs"');
+    const memberFilterStart = source.indexOf('app.MapGet("/api/songs/member-score-filter"');
+    const shopStart = source.indexOf('app.MapGet("/api/shop"');
+    const pathsStart = source.indexOf('// ── Path images');
+    const songsEndpoint = source.slice(songsStart, memberFilterStart);
+    const shopEndpoint = source.slice(shopStart, pathsStart);
+
+    expect(songsStart).toBeGreaterThanOrEqual(0);
+    expect(memberFilterStart).toBeGreaterThan(songsStart);
+    expect(shopStart).toBeGreaterThan(memberFilterStart);
+    expect(pathsStart).toBeGreaterThan(shopStart);
+    expect(songsEndpoint).toContain('SongsCacheService songsCache');
+    expect(shopEndpoint).toContain('ShopCacheService shopCache');
+    expect(songsEndpoint).not.toMatch(/SelectedProfileHeaders|Request\.Headers/);
+    expect(shopEndpoint).not.toMatch(/SelectedProfileHeaders|Request\.Headers/);
+    expect(queryKeys.songs()).toEqual(['songs', 'public']);
+    expect(queryKeys.shop()).toEqual(['shop', 'public']);
+  });
+
+  it('assigns each coupled persisted payload to one parser', () => {
+    const root = resolve(process.cwd(), 'src');
+    const sources = sourceFiles(root).map(file => ({
+      file: file.replace(`${root}/`, ''),
+      source: readFileSync(file, 'utf8'),
+    }));
+    const owners = (storageKey: string) => sources
+      .filter(candidate => candidate.source.includes(storageKey))
+      .map(candidate => candidate.file);
+
+    expect(owners('fst_songs_cache')).toEqual(['api/songsCache.ts']);
+    expect(owners('fst:appSettings')).toEqual(['contexts/SettingsContext.tsx']);
+    expect(owners('fst-suggestions-filter')).toEqual(['pages/suggestions/suggestionsHelpers.ts']);
+    expect(readFileSync(resolve(root, 'contexts/FestivalContext.tsx'), 'utf8')).not.toContain('JSON.parse');
+    expect(readFileSync(resolve(root, 'api/client.ts'), 'utf8')).not.toContain('JSON.parse');
   });
 
   it('deduplicates concurrent requests for one profile and scope', async () => {
@@ -124,6 +180,28 @@ describe('remote data ownership', () => {
 
     await vi.advanceTimersByTimeAsync(REMOTE_DATA_GC_TIME_MS + 1);
     expect(client.getQueryData(key)).toBeUndefined();
+    client.clear();
+  });
+
+  it('deduplicates, invalidates, and garbage-collects the shared Shop query', async () => {
+    vi.useFakeTimers();
+    const client = createClient();
+    const queryFn = vi.fn(async () => ({ songs: [] }));
+    const options = {
+      queryKey: queryKeys.shop(),
+      queryFn,
+      ...shopQueryPolicy,
+    };
+
+    await Promise.all([client.fetchQuery(options), client.fetchQuery(options)]);
+    expect(queryFn).toHaveBeenCalledTimes(1);
+
+    await client.invalidateQueries({ queryKey: queryKeys.shop() });
+    await client.fetchQuery(options);
+    expect(queryFn).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(SHOP_GC_TIME_MS + 1);
+    expect(client.getQueryData(queryKeys.shop())).toBeUndefined();
     client.clear();
   });
 

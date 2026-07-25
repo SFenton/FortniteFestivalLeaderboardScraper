@@ -150,46 +150,166 @@ export function hasUnavailablePathInstrumentsEnabled(settings: AppSettings): boo
 /* ── Persistence ── */
 
 const STORAGE_KEY = 'fst:appSettings';
+export const APP_SETTINGS_STORAGE_VERSION = 1;
+
+const BOOLEAN_SETTING_KEYS = [
+  'songsHideInstrumentIcons',
+  'songRowVisualOrderEnabled',
+  'pathUnavailableWarningDismissed',
+  'filterInvalidScores',
+  'enableExperimentalRanks',
+  'disableLightTrails',
+  'showButtonsInHeaderMobile',
+  'hideItemShop',
+  'disableShopHighlighting',
+  'showLead',
+  'showBass',
+  'showDrums',
+  'showVocals',
+  'showProLead',
+  'showProBass',
+  'showPeripheralVocals',
+  'showPeripheralCymbals',
+  'showPeripheralDrums',
+  'metadataShowScore',
+  'metadataShowPercentage',
+  'metadataShowPercentile',
+  'metadataShowSeasonAchieved',
+  'metadataShowIntensity',
+  'metadataShowGameDifficulty',
+  'metadataShowStars',
+  'metadataShowLastPlayed',
+] as const satisfies readonly (keyof AppSettings)[];
+
+type PersistedSettings = AppSettings & {
+  version: typeof APP_SETTINGS_STORAGE_VERSION;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasOwn(value: object, key: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'string');
+}
+
+function normalizeOrderedKeys(
+  value: string[],
+  defaults: readonly string[],
+): string[] {
+  const allowed = new Set(defaults);
+  const normalized = value.filter((key, index) => (
+    allowed.has(key) && value.indexOf(key) === index
+  ));
+  return [...normalized, ...defaults.filter(key => !normalized.includes(key))];
+}
+
+function unwrapSettings(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) return null;
+  if (!hasOwn(value, 'version')) return value;
+  return value.version === APP_SETTINGS_STORAGE_VERSION ? value : null;
+}
+
+function normalizeSettings(value: unknown): AppSettings | null {
+  const source = unwrapSettings(value);
+  if (!source) return null;
+
+  const defaults = defaultAppSettings();
+  const normalized = { ...defaults };
+  const normalizedRecord = normalized as unknown as Record<string, unknown>;
+
+  for (const key of BOOLEAN_SETTING_KEYS) {
+    if (!hasOwn(source, key)) continue;
+    if (typeof source[key] !== 'boolean') return null;
+    normalizedRecord[key] = source[key];
+  }
+
+  if (hasOwn(source, 'filterInvalidScoresLeeway')) {
+    if (
+      typeof source.filterInvalidScoresLeeway !== 'number'
+      || !Number.isFinite(source.filterInvalidScoresLeeway)
+    ) {
+      return null;
+    }
+    normalized.filterInvalidScoresLeeway = source.filterInvalidScoresLeeway;
+  }
+
+  if (hasOwn(source, 'songRowVisualOrder')) {
+    if (!isStringArray(source.songRowVisualOrder)) return null;
+    normalized.songRowVisualOrder = normalizeOrderedKeys(
+      source.songRowVisualOrder,
+      DEFAULT_METADATA_ORDER,
+    );
+  }
+
+  if (hasOwn(source, 'pathColumnOrder')) {
+    if (!isStringArray(source.pathColumnOrder)) return null;
+    normalized.pathColumnOrder = normalizeOrderedKeys(
+      source.pathColumnOrder,
+      DEFAULT_COLUMN_ORDER,
+    ) as ColumnKey[];
+  }
+
+  if (hasOwn(source, 'pathDefaultView')) {
+    if (source.pathDefaultView !== 'image' && source.pathDefaultView !== 'text') {
+      return null;
+    }
+    normalized.pathDefaultView = source.pathDefaultView;
+  }
+
+  if (hasOwn(source, 'defaultSearchTarget')) {
+    if (!isSearchTarget(source.defaultSearchTarget)) return null;
+    normalized.defaultSearchTarget = source.defaultSearchTarget;
+  }
+
+  if (
+    hasOwn(source, 'metadataShowDifficulty')
+    && !hasOwn(source, 'metadataShowIntensity')
+  ) {
+    if (typeof source.metadataShowDifficulty !== 'boolean') return null;
+    normalized.metadataShowIntensity = source.metadataShowDifficulty;
+  }
+
+  return normalized;
+}
+
+function serializeSettings(settings: AppSettings): string {
+  const persisted: PersistedSettings = {
+    version: APP_SETTINGS_STORAGE_VERSION,
+    ...settings,
+  };
+  return JSON.stringify(persisted);
+}
 
 function loadSettings(): AppSettings {
+  const defaults = defaultAppSettings();
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaultAppSettings();
-    const parsed = JSON.parse(raw);
-    const defaults = defaultAppSettings();
-    const merged = { ...defaults, ...parsed };
-    // Migrate songRowVisualOrder: strip keys not in DEFAULT_METADATA_ORDER, append new keys
-    if (Array.isArray(merged.songRowVisualOrder)) {
-      const allowed = new Set(DEFAULT_METADATA_ORDER);
-      merged.songRowVisualOrder = merged.songRowVisualOrder.filter((k: string) => allowed.has(k));
-      const missing = DEFAULT_METADATA_ORDER.filter(k => !merged.songRowVisualOrder.includes(k));
-      if (missing.length > 0) merged.songRowVisualOrder = [...merged.songRowVisualOrder, ...missing];
-    }
-    // Migrate pathColumnOrder: strip invalid keys, append new keys
-    if (Array.isArray(merged.pathColumnOrder)) {
-      const allowedCols = new Set<string>(DEFAULT_COLUMN_ORDER);
-      merged.pathColumnOrder = merged.pathColumnOrder.filter((k: string) => allowedCols.has(k));
-      const missingCols = DEFAULT_COLUMN_ORDER.filter(k => !merged.pathColumnOrder.includes(k));
-      if (missingCols.length > 0) merged.pathColumnOrder = [...merged.pathColumnOrder, ...missingCols];
-    }
-    // Strip removed settings keys
-    delete (merged as Record<string, unknown>).metadataShowMaxDistance;
-    // Migrate metadataShowDifficulty → metadataShowIntensity (one-time rename)
-    if ('metadataShowDifficulty' in parsed && !('metadataShowIntensity' in parsed)) {
-      merged.metadataShowIntensity = (parsed as Record<string, unknown>).metadataShowDifficulty;
-    }
-    delete (merged as Record<string, unknown>).metadataShowDifficulty;
-    if (!isSearchTarget(merged.defaultSearchTarget)) {
-      merged.defaultSearchTarget = defaults.defaultSearchTarget;
-    }
-    return merged;
+    if (!raw) return defaults;
+    const normalized = normalizeSettings(JSON.parse(raw));
+    if (normalized) return normalized;
   } catch {
-    return defaultAppSettings();
+    // Invalid persisted state is reset below.
   }
+
+  try {
+    localStorage.setItem(STORAGE_KEY, serializeSettings(defaults));
+  } catch {
+    // Storage can be unavailable or full; defaults still keep the app usable.
+  }
+  return defaults;
 }
 
 function saveSettings(settings: AppSettings): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+  try {
+    localStorage.setItem(STORAGE_KEY, serializeSettings(settings));
+  } catch {
+    // Keep the in-memory settings usable when storage is unavailable.
+  }
 }
 
 /* ── Context ── */

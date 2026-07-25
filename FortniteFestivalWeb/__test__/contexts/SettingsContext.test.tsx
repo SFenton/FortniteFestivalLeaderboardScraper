@@ -9,6 +9,7 @@ import {
   isInstrumentVisible,
   visibleInstruments,
   visiblePathInstruments,
+  APP_SETTINGS_STORAGE_VERSION,
 } from '../../src/contexts/SettingsContext';
 import type { AppSettings } from '../../src/contexts/SettingsContext';
 
@@ -153,6 +154,43 @@ describe('SettingsContext', () => {
 
       const { result } = renderHook(() => useSettings(), { wrapper });
       expect(result.current.settings).toEqual(defaultAppSettings());
+      expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toEqual({
+        version: APP_SETTINGS_STORAGE_VERSION,
+        ...defaultAppSettings(),
+      });
+    });
+
+    it('visibly resets invalid known setting types', () => {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        showLead: 'false',
+        showBass: false,
+      }));
+
+      const { result } = renderHook(() => useSettings(), { wrapper });
+
+      expect(result.current.settings).toEqual(defaultAppSettings());
+      expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toEqual({
+        version: APP_SETTINGS_STORAGE_VERSION,
+        ...defaultAppSettings(),
+      });
+    });
+
+    it('resets unsupported versions and accepts the current version envelope', () => {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        version: 99,
+        showBass: false,
+      }));
+      const unsupported = renderHook(() => useSettings(), { wrapper });
+      expect(unsupported.result.current.settings).toEqual(defaultAppSettings());
+      unsupported.unmount();
+
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        version: APP_SETTINGS_STORAGE_VERSION,
+        showBass: false,
+      }));
+      const current = renderHook(() => useSettings(), { wrapper });
+      expect(current.result.current.settings.showBass).toBe(false);
+      expect(current.result.current.settings.showLead).toBe(true);
     });
 
     it('updateSettings merges partial updates', () => {
@@ -226,6 +264,7 @@ describe('SettingsContext', () => {
       // Settings are persisted via useEffect, wait for it
       await vi.waitFor(() => {
         const stored = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
+        expect(stored.version).toBe(APP_SETTINGS_STORAGE_VERSION);
         expect(stored.showVocals).toBe(false);
       });
     });

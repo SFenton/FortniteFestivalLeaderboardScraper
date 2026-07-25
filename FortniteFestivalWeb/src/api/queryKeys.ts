@@ -6,7 +6,9 @@
 export const queryKeys = {
   features: () => ['features'] as const,
   serviceInfo: () => ['serviceInfo'] as const,
-  songs: () => ['songs'] as const,
+  // Songs and Shop are backed by profile-invariant service caches and ETags.
+  songs: () => ['songs', 'public'] as const,
+  shop: () => ['shop', 'public'] as const,
   playerScope: (accountId: string) => ['player', accountId] as const,
   player: (accountId: string, songId?: string, instruments?: string[], leeway?: number) =>
     [...queryKeys.playerScope(accountId), { songId, instruments, leeway }] as const,

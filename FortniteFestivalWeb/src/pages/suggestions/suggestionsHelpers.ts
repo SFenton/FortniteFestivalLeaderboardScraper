@@ -10,22 +10,85 @@ import { estimateVisibleCount } from '@festival/ui-utils';
 import i18next from 'i18next';
 
 export const FILTER_STORAGE_KEY = 'fst-suggestions-filter';
+export const SUGGESTIONS_FILTER_STORAGE_VERSION = 1;
+
+type PersistedSuggestionsFilter = {
+  version: typeof SUGGESTIONS_FILTER_STORAGE_VERSION;
+  data: SuggestionsFilterDraft;
+};
 
 // ── localStorage helpers ──
 
-export function loadSuggestionsFilter(): SuggestionsFilterDraft {
-  try {
-    const raw = localStorage.getItem(FILTER_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      return { ...defaultSuggestionsFilterDraft(), ...parsed };
-    }
-  } catch { /* ignore corrupt data */ }
-  return defaultSuggestionsFilterDraft();
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
-export function saveSuggestionsFilter(draft: SuggestionsFilterDraft) {
-  localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(draft));
+function hasOwn(value: object, key: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function normalizeSuggestionsFilter(
+  value: unknown,
+  defaults: SuggestionsFilterDraft,
+): SuggestionsFilterDraft | null {
+  if (!isRecord(value)) return null;
+
+  const source = hasOwn(value, 'version')
+    ? value.version === SUGGESTIONS_FILTER_STORAGE_VERSION && isRecord(value.data)
+      ? value.data
+      : null
+    : value;
+  if (!source) return null;
+
+  const normalized = { ...defaults };
+  for (const key of Object.keys(defaults)) {
+    if (!hasOwn(source, key)) continue;
+    if (typeof source[key] !== 'boolean') return null;
+    normalized[key] = source[key];
+  }
+  return normalized;
+}
+
+export function loadSuggestionsFilter(
+  defaultDraft: () => SuggestionsFilterDraft = defaultSuggestionsFilterDraft,
+): SuggestionsFilterDraft {
+  const defaults = defaultDraft();
+  try {
+    const raw = localStorage.getItem(FILTER_STORAGE_KEY);
+    if (!raw) return defaults;
+    const normalized = normalizeSuggestionsFilter(JSON.parse(raw), defaults);
+    if (normalized) return normalized;
+  } catch {
+    // Invalid persisted state is reset below.
+  }
+
+  persistSuggestionsFilter(defaults, defaults);
+  return defaults;
+}
+
+export function saveSuggestionsFilter(draft: SuggestionsFilterDraft): void {
+  const defaults = defaultSuggestionsFilterDraft();
+  persistSuggestionsFilter(draft, defaults);
+}
+
+function persistSuggestionsFilter(
+  draft: SuggestionsFilterDraft,
+  defaults: SuggestionsFilterDraft,
+): void {
+  const normalized = { ...defaults };
+  for (const key of Object.keys(defaults)) {
+    const fallback = defaults[key] ?? true;
+    normalized[key] = typeof draft[key] === 'boolean' ? draft[key] : fallback;
+  }
+  const persisted: PersistedSuggestionsFilter = {
+    version: SUGGESTIONS_FILTER_STORAGE_VERSION,
+    data: normalized,
+  };
+  try {
+    localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(persisted));
+  } catch {
+    // Keep the in-memory filter usable when storage is unavailable.
+  }
 }
 
 // ── Instrument visibility ──
