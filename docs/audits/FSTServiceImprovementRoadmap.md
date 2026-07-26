@@ -440,6 +440,19 @@ and old cache artifacts.
   shell, and `/api/service-info` remained healthy; published `1236` remained
   unfrozen. Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-20260726T010701Z`.
+- The resumed authenticated live attempt ran worker candidate `1264` while the
+  service stayed on `fstservice:failed-candidate-isolation-633e7583`.
+  Every one-minute public-health sample passed through `8,232/8,232`
+  manifests and writer drain. The post-writer capacity guard stopped the
+  worker before rankings/publication, so the service read contract did not
+  advance.
+- Rollback kept published `1236` unfrozen and candidate `1264` owns zero
+  published-source rows. All 13 leaderboard/export/player/rank/history/band
+  fingerprints matched baseline exactly. Final idle p95 changed
+  `2.012 -> 2.046 ms` for service-info, `6.482 -> 7.031 ms` for the mapped
+  leaderboard, and `1.421 -> 1.323 ms` for the stable fail-closed rankings
+  response. Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T032124Z`.
 
 ### SERVICE-0.3 - Protect or remove token-backed diagnostics
 

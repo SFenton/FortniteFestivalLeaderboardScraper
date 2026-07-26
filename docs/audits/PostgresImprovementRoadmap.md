@@ -1013,7 +1013,7 @@ move to PG-7 after backup/restore and live-scrape parity.
 - Eliminate physical writes for unchanged scopes.
 - Preserve exact API and replay parity.
 
-**SNAPSHOT-REUSE readiness execution - code accepted, live A/B auth-blocked
+**SNAPSHOT-REUSE readiness and live execution - code accepted, live A/B capacity-blocked
 2026-07-26**
 
 - The original default-off implementation could not produce a useful live
@@ -1055,6 +1055,31 @@ move to PG-7 after backup/restore and live-scrape parity.
   remain untouched and the disabled-writer publication prerequisite is not
   cleared. Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-20260726T010701Z`.
+- After operator device authentication, the auth-only credential rotation and
+  `25/25` paired authenticated direct/PIA JSON canary passed. The corrected
+  current-source image from `919daa32` ran scrape `1264`; an earlier
+  registry-wrapper image was rejected before scrape allocation after it
+  attempted retired `ix_rh_latest`, and its exact backend rollback restored
+  DB size, free space, and public parity.
+- Scrape `1264` completed all `8,232` manifests and `59,077,331` reported
+  entries with zero incomplete scopes, parse/retry failures, or writer
+  failures. Exact content comparison found only `281` reusable scopes /
+  `219,427` rows, not the preflight estimate. Zero reusable scope contained a
+  physical scrape-`1264` row.
+- Snapshot relations grew `15,552,274,432` bytes. Actual-run calibration
+  estimates `78,765,704` physical bytes and about `166,448,926` WAL bytes
+  avoided. Total WAL delta was `97,876,358,577` bytes and temp-byte delta was
+  zero. Network/writer duration was about `23,247 s`, `+4.1%` versus `1262`.
+- The strict post-writer guard blocked at `32,390,148,096` free bytes, below
+  both `45,148,225,536` baseline and `44,394,828,933` candidate requirements.
+  The worker stopped before rankings/publication; `1264` was reconciled failed,
+  owned zero published-source rows, and left `1236` authoritative/unfrozen.
+- Production worker/config was reverted, all 13 public/export/history/ranking
+  fingerprints matched exactly, and final free space is `32,725,393,408`.
+  Both scrape guards now block, so the worker remains held. Decision: retain
+  the candidate default-off; no promotion, maintenance, deletion, or logical
+  truncate. Live evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T032124Z`.
 
 ### PG-4.2 - Separate semantic score changes from derived rank changes
 

@@ -2,17 +2,26 @@
 
 ## Current decision
 
-**Tier:** code/readiness accepted, live A/B blocked before deployment.
+**Tier:** code/readiness accepted; live A/B capacity-blocked and reverted.
 
 `Features:SkipUnchangedPhysicalLeaderboardSnapshots` remains default-off. The
-2026-07-26 SNAPSHOT-REUSE preflight found that the stored Epic refresh token is
-invalid, and the existing worker authentication path correctly requires device
-login. No candidate image/config was deployed, no worker was started, no scrape
-ID was allocated, and published scrape `1236` remains authoritative and
-unfrozen.
+refreshed Epic device credential passed the auth-only persistence canary, all
+`25/25` PIA exits returned valid authenticated Epic JSON with exact direct/proxy
+entry parity, and corrected current-source image
+`fstservice:snapshot-reuse-919daa32` ran candidate scrape `1264`.
+
+The candidate completed all `8,232/8,232` manifests with zero incomplete
+scopes, writer failures, parse failures, retry exhaustion, or observed
+publication-critical failures. The post-writer capacity guard then failed at
+`32,390,148,096` free bytes versus the `45,148,225,536` measured baseline
+requirement and `44,394,828,933` candidate estimate. The worker was stopped
+before rankings or global publication, scrape `1264` was reconciled failed at
+`capacity_postwriter_guard`, and production was reverted to the prior worker
+image/config with scheduling held. Published scrape `1236` remains
+authoritative and unfrozen; `1264` owns zero published-source rows.
 
 Evidence:
-`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-20260726T010701Z`.
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T032124Z`.
 
 ## Candidate contract
 
@@ -64,6 +73,35 @@ The estimate uses exact published-`1236` versus complete-`1263`
 content/row parity and measured `1236 -> 1262` per-instrument snapshot relation
 growth. It is a capacity estimate, not promotion evidence.
 
+## 2026-07-26 live A/B
+
+| Gate | Result |
+|---|---|
+| Runtime | `gpt-5.6-sol`, reasoning `max`, context `long_context` |
+| Auth persistence | Passed twice on `/mnt/docker-storage`; rotated credential remained mode `0600` |
+| Authenticated provider canary | `25/25` direct and `25/25` PIA responses were valid Epic JSON; all 25 entry arrays and structures matched exactly |
+| Proxy/compose guard | 30 canonical services, 25 healthy unique PIA exits, 400 aggregate RPS, 2 RPS and one in-flight per effective exit; no AirVPN/direct fallback |
+| Image ancestry | Initial production-wrapper build was rejected before scrape allocation when it inherited stale `ghcr.io` code and attempted retired `ix_rh_latest`; the exact backend was cancelled, free space and DB size recovered, and the image was rebuilt with `FSTService/Dockerfile` from `919daa32` |
+| Corrected candidate | `fstservice:snapshot-reuse-919daa32`, image `sha256:470d5a5d2bf7...`, binary contained snapshot-reuse/current ownership markers and no `ix_rh_latest` string |
+| Current validation | `300/300` targeted snapshot/published-source/export/config tests passed; Release and corrected source-image builds passed |
+| Start capacity | `52,199,215,104` free bytes; both initial scrape guards passed with severe alert |
+| Scrape | `1264`; `8,232/8,232` complete manifests, `59,077,331` reported entries, `592,460` pages, zero writer failures |
+| Scope behavior | `5,815` changed, `36` new, `281` unchanged reusable, and `42` explicit-empty solo scopes |
+| Physical skip proof | `219,427` exact rows avoided; zero unchanged scope had a scrape-`1264` physical row |
+| Storage benefit | `15,552,274,432` snapshot-relation bytes still grew; actual-run calibration estimates only `78,765,704` physical bytes avoided |
+| WAL/temp | `97,876,358,577` WAL bytes and zero temp-byte growth through the stop; approximate avoided-WAL attribution is `166,448,926` bytes |
+| Network/writer performance | About `23,247 s`, versus `22,326.583 s` for candidate `1262` (`+4.1%`); 30.7 RPS, 205 retries, 90.4 GB received |
+| Resources/public health | 379 one-minute samples, zero health failures/locks/long queries; peak worker/Postgres RSS about `2.76/8.63 GiB`; minimum free space `23,176,040,448` during band flush |
+| Post-writer capacity | **Blocked:** `32,390,148,096` free, below both measured requirements |
+| Publication | None; `1264` owns zero published-source rows, `1236` remains unfrozen |
+| Rollback parity | All 13 route/export/history/ranking fingerprints matched baseline exactly; final stable leaderboard p95 changed `6.482 -> 7.031 ms` (`+8.46%`) |
+| Final capacity | `32,725,393,408` free; both baseline and candidate scrape guards block; worker remains held |
+
+The default-off code remains a valid correctness candidate, but this observation
+did not produce enough unchanged data to make the storage benefit meaningful
+against current full-scrape growth. Do not promote or rerun it until the
+post-writer capacity gate can pass on the FST drive.
+
 ## Validation completed
 
 - `186/186` focused writer/orchestrator tests passed, including bounded-online
@@ -77,21 +115,23 @@ growth. It is a capacity estimate, not promotion evidence.
 
 ## Resume procedure
 
-1. Complete operator-owned Epic device authentication without placing URLs,
-   codes, tokens, or credentials in logs or reports.
-2. Rerun the auth-only refresh canary. Stop unless it succeeds and persists the
-   rotated refresh token on `/mnt/docker-storage`.
-3. Rerun the low-rate authenticated direct/PIA JSON parity canary and the
-   `25/25` compose guard. Do not add AirVPN/direct fallback or raise rates.
-4. Rerun both the measured baseline and candidate capacity guards.
-5. Build/deploy exactly the current accepted worker code with only
-   `Features__SkipUnchangedPhysicalLeaderboardSnapshots=true`.
-6. Verify the full public path, then use
-   `tools/fst-worker-compose-guard.sh --recreate-runonce`.
-7. Monitor every 60 seconds through one complete scrape, post-process,
+1. Do not start another scrape while either measured scrape/post-process guard
+   is blocked. Final free space is below both requirements.
+2. Preserve all DB/storage work on `/mnt/docker-storage`; do not use alternate
+   drive scratch or delete data to force a retry.
+3. Build current source with `docker build -f FSTService/Dockerfile ...`.
+   `/home/sfenton/Docker/FestivalServiceTracker/Dockerfile.fstservice` is a
+   registry-wrapper Dockerfile and must not be labeled as a current-source
+   candidate.
+4. Before any future retry, revalidate auth persistence, authenticated
+   direct/PIA JSON parity, the `25/25` compose guard, public health, locks, and
+   both start and post-writer capacity gates.
+5. Deploy only the snapshot-reuse flag while preserving all other writer
+   behavior, then use `tools/fst-worker-compose-guard.sh --recreate-runonce`.
+6. Monitor every 60 seconds through one complete scrape, post-process,
    publication, unfreeze, and parity window. Hold the worker before another
    scrape.
-8. Accept only with complete manifests, zero writer/critical failures, exact
+7. Accept only with complete manifests, zero writer/critical failures, exact
    source/count/content/coverage/public API/workbook parity, meaningful
    physical/WAL growth reduction, and no sustained regression above 10%.
 
@@ -105,7 +145,10 @@ growth. It is a capacity estimate, not promotion evidence.
 
 ## Logical-shadow prerequisite
 
-This blocked preflight does **not** clear the logical-shadow live-publication
-prerequisite. No disabled-writer candidate globally published, so
+Scrape `1264` does **not** clear the logical-shadow live-publication
+prerequisite. The disabled-writer candidate did not globally publish, so
 `leaderboard_current_entries*` and `leaderboard_entry_versions*` must not be
-truncated.
+truncated. The hashed decision is
+`parity/logical-shadow-retirement-live-gate.json` in the live A/B evidence
+root, SHA-256
+`75dc6c9ad8348199f447f9f4e549bb2b633c7e43f68338ea218fed3127e568b9`.

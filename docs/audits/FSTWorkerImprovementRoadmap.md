@@ -585,34 +585,50 @@ until replay and live shadow parity pass.
   disabled-writer publication window. Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/logical-retire-20260725T2306Z`.
 
-**SNAPSHOT-REUSE full-scrape A/B - code accepted, pre-deploy auth-blocked
+**SNAPSHOT-REUSE full-scrape A/B - code accepted, live capacity-blocked and reverted
 2026-07-26**
 
-- The worker remains exited on `fstservice:worker0a-recovery-21bd5f56` with
-  restart `no`; no candidate container was deployed or started.
-- The repaired default-off candidate works with the current
-  `OnlineBounded` writer. Each completed result registers its manifest before
-  enqueue, and the writer reuses only the validated current published
-  physical source after exact content, row-count, coverage compatibility, and
-  physical existence/count checks. Failed active source `1263` is never a
-  reuse candidate.
-- Exact preflight estimated `1,203` reusable scopes / `3,371,702` rows and
-  `753,396,603` bytes avoided. The candidate capacity requirement is
-  `44,394,828,933` bytes versus `48,960,053,248` free.
-- Docker/public/Postgres health and the 30-service/25-effective PIA guard
-  passed. The auth-only refresh canary failed with
-  `invalid_refresh_token`; the existing worker correctly requires operator
-  device login. A client-token probe reached all 26 direct/PIA paths but
-  returned auth/entitlement JSON rather than valid leaderboard JSON.
-- `186/186` focused and `317/317` broader tests passed, including bounded
-  online reuse, changed/unchanged/empty/mixed scopes, missing physical source,
-  coverage change, failed active source, overlays, projections, exports, and
-  frozen reads. Release build passed.
-- Decision: do not deploy or allocate a scrape ID until auth refresh and the
-  authenticated low-rate PIA canary pass. Published `1236` stays unfrozen and
-  authoritative; logical writes remain disabled; no logical truncate ran.
+- Auth persistence passed on the FST drive, and a bounded paired canary
+  returned valid Epic JSON for `25/25` direct and `25/25` PIA requests with
+  exact entry-array and structural parity. The canonical compose guard stayed
+  `25/25` at 400 aggregate RPS with no AirVPN/direct fallback.
+- A pre-scrape ancestry check rejected an incorrectly built registry-wrapper
+  image before it allocated a scrape. That image attempted retired
+  `ix_rh_latest`; the worker and exact backend were stopped, DB size/free space
+  recovered, and all 13 public fingerprints remained exact. The corrected
+  image was rebuilt from `FSTService/Dockerfile` at `919daa32` and verified to
+  contain current snapshot/ownership code without the retired index string.
+- Corrected candidate scrape `1264` completed `8,232/8,232` manifests,
+  `592,460` pages, and `59,077,331` reported entries with zero incomplete
+  scopes, parse failures, retry exhaustion, writer failures, locks, long
+  queries, or public-health failures.
+- Exact live classification was `5,815` changed, `36` new, `281` unchanged,
+  and `42` explicit-empty solo scopes. The writer avoided `219,427` physical
+  rows, and zero unchanged scope had scrape-`1264` physical rows. Actual-run
+  calibration estimates only `78,765,704` physical bytes and about
+  `166,448,926` WAL bytes avoided.
+- Snapshot relations still grew `15,552,274,432` bytes. Network/writer time
+  was about `23,247 s`, `+4.1%` versus candidate `1262`, at 30.7 RPS. The
+  one-minute monitor recorded zero health failures; peak worker/Postgres RSS
+  was about `2.76/8.63 GiB`, WAL grew `97,876,358,577` bytes, and temp bytes
+  did not grow.
+- After writer drain deleted the `9.27 GB` band spool, only
+  `32,390,148,096` bytes remained. Both the `45,148,225,536` measured
+  post-process requirement and `44,394,828,933` candidate estimate failed.
+  The worker was stopped before rankings/global publication and `1264` was
+  reconciled failed at `capacity_postwriter_guard`.
+- Production compose and the held worker were restored to
+  `fstservice:worker0a-recovery-21bd5f56`, restart `no`. Published `1236`
+  remains unfrozen, `1264` owns zero published-source rows, all 13
+  route/export/history/ranking fingerprints match baseline, and final stable
+  leaderboard p95 is within `8.46%` of baseline.
+- Decision: code/readiness remains accepted default-off; live promotion is
+  capacity-blocked and reverted. Do not rerun or restore scheduling until the
+  same-drive post-writer capacity gate passes. Logical writes stayed disabled,
+  no logical-shadow row was truncated, and the retirement gate remains
+  `NOT_CLEARED`.
   Evidence:
-  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-20260726T010701Z`.
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T032124Z`.
 
 ### WORKER-0.5 - Separate solo and band completion
 

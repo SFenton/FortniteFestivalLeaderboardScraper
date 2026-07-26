@@ -8,9 +8,11 @@ The logical leaderboard shadow is disabled and non-authoritative, but the
 repository's destructive live-scrape A/B gate is not yet satisfied. Scrapes
 `1261`, `1262`, and `1263` completed all `8,208` manifests with logical writes
 disabled, zero writer failures, and zero publication-critical failures. Each
-failed on capacity before global publication. Do not truncate until one
-disabled-writer scrape completes post-process, publishes, unfreezes, and passes
-the full public parity suite.
+failed on capacity before global publication. SNAPSHOT-REUSE candidate `1264`
+then completed `8,232/8,232` manifests with logical writes disabled and zero
+writer failures, but its post-writer capacity guard failed before rankings or
+publication. Do not truncate until one disabled-writer scrape completes
+post-process, publishes, unfreezes, and passes the full public parity suite.
 
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/logical-retire-20260725T2306Z`.
@@ -20,6 +22,15 @@ capacity, source-integrity, public-health, and proxy gates passed, but Epic
 refresh returned `invalid_refresh_token` before any candidate deploy or worker
 start. No scrape ID was allocated and no publication occurred. Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-20260726T010701Z`.
+
+The resumed live A/B authenticated successfully and ran scrape `1264`, but the
+strict post-process guard blocked at `32,390,148,096` free bytes. The scrape was
+reconciled failed at `capacity_postwriter_guard`, published `1236` remained
+unfrozen, and `1264` owns zero published-source rows. Logical current/version
+tables had zero scrape-`1264` writes. The gate remains `NOT_CLEARED`; hashed
+evidence is:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T032124Z/parity/logical-shadow-retirement-live-gate.json`
+(`75dc6c9ad8348199f447f9f4e549bb2b633c7e43f68338ea218fed3127e568b9`).
 
 ## Exact scope
 

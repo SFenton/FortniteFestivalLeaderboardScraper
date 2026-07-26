@@ -13,7 +13,9 @@ This plan records the approved direction for improving FST Postgres persistence 
 - Scrape `1236` published `6,138` complete scopes and `39,588,650` rows with
   the publication ledger unfrozen and remains authoritative. Scrape `1263` is
   failed at `capacity_watchdog_abandoned`, owns zero published-source rows,
-  and the worker ledger is offline.
+  and scrape `1264` is failed at `capacity_postwriter_guard` after
+  `8,232/8,232` complete manifests. Both candidates own zero published-source
+  rows, and the worker ledger is offline.
 - Failed-candidate derived-read isolation keeps mapped solo leaderboards
   available while unversioned ranking/history/export and band-song cache
   misses fail closed until the next successful publication. This is separate
@@ -64,10 +66,14 @@ This plan records the approved direction for improving FST Postgres persistence 
   production table, index, or read-source cutover occurred.
 - SNAPSHOT-REUSE repaired the default-off physical write-skip candidate so it
   uses complete manifests and the current published source rather than mutable
-  active/failed state. Exact `1236` versus complete `1263` evidence estimates
-  `1,203` reusable scopes, `3,371,702` rows, and `753,396,603` bytes avoided.
-  Capacity and the `25/25` PIA guard pass, but Epic refresh failed with
-  `invalid_refresh_token`; no deploy, worker start, scrape, or flag change ran.
+  active/failed state. After device authentication was refreshed, scrape
+  `1264` completed all network manifests/writers under the candidate, but only
+  `281` scopes / `219,427` exact rows were reusable. Actual-run calibration
+  estimates `78,765,704` physical bytes and about `166,448,926` WAL bytes
+  avoided, while snapshot relations still grew `15,552,274,432` bytes.
+  The post-writer guard blocked at `32,390,148,096` free bytes before
+  rankings/publication. Production config was reverted; the flag remains
+  default-off.
 - STORAGE-OWNERSHIP completed continuous-safe P6/P8/P9 owner cards and exact
   manifests for `player_score_observations`, `scrape_dirty_*`, and legacy
   `leaderboard_entries_*`: `61,217,292,288` bytes total. Observation dual
@@ -160,22 +166,21 @@ window.
 
 ## Capacity boundary and remaining alert
 
-`/mnt/docker-storage` hosts the active Postgres bind mount. SNAPSHOT-REUSE
-preflight measured `48,960,053,248` bytes free. The scrape-`1236` monitor requires
-`45,148,225,536` bytes from the equivalent pre-rank boundary through
-publication, so the baseline gate passes with `3,811,827,712` bytes of
-margin. The candidate estimate is `44,394,828,933` bytes after
-`753,396,603` estimated physical bytes avoided, for about `4.565 GB` of
-margin. The exact measured guard horizon is about `0.54-0.55` days and remains
-below every optional-build/rewrite threshold.
+`/mnt/docker-storage` hosts the active Postgres bind mount. The resumed
+SNAPSHOT-REUSE run started with `52,199,215,104` free bytes. All `8,232`
+manifests and writers completed, but the post-writer guard found only
+`32,390,148,096` free bytes versus the `45,148,225,536` measured baseline
+requirement and `44,394,828,933` candidate estimate. The guard rejected both
+paths and stopped scrape `1264` before rankings/publication.
 
-`fstworker` remains held after candidate `1263` was abandoned during
-rank-history snapshots. Band-song/live-fallback isolation is deployed, the
-proxy compose guard passes `25/25`, and capacity now passes. SNAPSHOT-REUSE
-did not start because the stored Epic refresh token is invalid. Complete
-operator device authentication, then rerun the auth-only refresh, authenticated
-low-rate proxy, measured capacity, compose, and full public-path guards before
-deploying the default-off candidate code with only its rollback flag enabled.
+Final free space is `32,725,393,408` bytes. The baseline scrape guard is short
+`12,422,832,128` bytes and the candidate estimate is short
+`11,669,435,525` bytes. `fstworker` is recreated but held on
+`fstservice:worker0a-recovery-21bd5f56` with restart `no`; do not start that
+older image. Any future worker candidate must use current source built with
+`FSTService/Dockerfile`, pass the `25/25` PIA/public-health gates, and have
+enough post-writer headroom on the FST drive. Optional builds, rewrites, and
+normal scheduling remain blocked.
 
 Destructive cleanup, irreversible migration, drop/truncate/repack/rewrite
 work, or active Postgres data movement may proceed automatically after a
@@ -203,7 +208,7 @@ path, and post-action validation are documented.
 | PG-3 post-`1263` residual index reclaim | Accepted | Dropped `33` non-constraint indexes across six exact owner-card families. Reclaimed `17,174,200,320` database bytes; measured free space is `48,546,029,568`, `3,397,804,032` bytes above the scrape boundary. Public route/fail-closed parity was exact, `120/120` tests passed, and commit `8db72081` prevents recreation. |
 | Band rank-history retention policy draft | Complete | Semantics-first v2 retention options and parity gates documented on 2026-07-06. |
 | `band_read_*` quarantine parity package | Complete | Reversible, live-scrape A/B parity-gated quarantine package documented on 2026-07-06; no DDL executed. |
-| Phase 8 physical snapshot write skipping | Code/readiness accepted / live A/B auth-blocked | `SkipUnchangedPhysicalLeaderboardSnapshots` remains rollback-safe and default-off. It now requires strict manifests/published mappings, supports `OnlineBounded`, verifies current/published content, coverage compatibility, row count, and physical existence, and pins only to the published source. Exact estimate: `1,203` scopes / `3,371,702` rows / `753,396,603` bytes avoided. Stored Epic refresh is invalid, so no deploy/scrape occurred. |
+| Phase 8 physical snapshot write skipping | Code/readiness accepted / live A/B capacity-blocked and reverted | Scrape `1264` completed `8,232/8,232` manifests and zero writer failures with the default-off candidate enabled. Exact live reuse was only `281` scopes / `219,427` rows; zero unchanged scope had candidate physical rows. Estimated benefit was `78,765,704` physical bytes and `166,448,926` WAL bytes, but the post-writer guard blocked at `32,390,148,096` free before rankings/publication. Production config was reverted, `1236` remains published, and the flag remains off. |
 | P6 player-score observation ownership | Code/readiness accepted / truncate blocked | `11,686,199,296` bytes and `9,480,671` rows. No production reader; solo and band-member writers now have independent default-off flags. Full live writer-off publication parity is still required. |
 | P8 stale dirty-work ownership | Readiness accepted / truncate blocked | Four tables total `8,706,752,512` bytes and `19,836,661` rows only from scrapes `926`-`1146`. No current repo/database/runtime writer; checksum-guarded exact truncate package is ready. |
 | P9 legacy mutable leaderboard ownership | Mixed / reader migration blocked | Nine partitions total `40,824,340,480` bytes and `36,768,081` rows. Main scrape writer is off and mapped public reads bypass legacy, but supplemental dual writers and publication-critical band extraction remain owners. |
@@ -215,9 +220,9 @@ path, and post-action validation are documented.
 | Worker validation start | Rejected / blocked | Starting `fstworker` with safer defaults caused `fstservice` and `/api/service-info` through `festivalweb` to time out; `fstworker` was stopped immediately and public API/web health recovered. |
 | Worker scraping heal | Complete | Added worker-only startup schema-init skip, rebuilt the image, started `fstworker`, and held a 10-minute full-public-path watchdog while scrape `1219` began. |
 | Emergency `band_read_*` reclaim | Complete | At 44 MB free / 100% disk, stopped `fstworker`, froze public reads to published `1214`, truncated rollback-safe logical shadow tables, quarantined/validated/dropped unused derived `band_read_*` tables, restored about 435 GB free, and restarted `fstworker` as scrape `1222`. |
-| Autonomous scrape rollout | Rejected after scrape `1263`; capacity repaired | Candidate `1263` completed `8,208/8,208` manifests and entered rankings, but the watchdog stopped it at `14,871,388,160` free bytes. Published `1236` remains safe through failed-candidate isolation; the residual reclaim now restores a positive measured capacity margin. |
+| Autonomous scrape rollout | Rejected after scrape `1264`; capacity blocked | Candidate `1263` completed `8,208/8,208` manifests and was stopped during rank history. Residual reclaim restored enough start headroom for SNAPSHOT-REUSE candidate `1264`, which completed `8,232/8,232` manifests/writers but failed the strict post-writer guard at `32,390,148,096` free bytes before rankings/publication. Published `1236` remains safe; final free space is below both scrape requirements. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
-| Next implementation phase | SNAPSHOT-REUSE auth-gated / worker held | Capacity, public health, source counts, code tests, and the `25/25` proxy guard pass. Operator device authentication is required before the auth refresh and authenticated Epic JSON canaries can pass. Then deploy only the snapshot-reuse flag, run one guarded run-once scrape, and hold before another. Optional builds, rewrites, repacks, table deletion, broad movement, logical truncate, and owner-rejected index drops remain blocked. |
+| Next implementation phase | Full scrape/post-process capacity hard-gated / worker held | Authentication and the `25/25` PIA canary pass, but final free space is below both measured scrape requirements. Do not rerun or restore normal scheduling until same-drive post-writer capacity is safe. Optional builds, rewrites, repacks, table deletion, broad movement, logical truncate, and owner-rejected index drops remain blocked. |
 
 ## LOGICAL-RETIRE decision package (2026-07-25)
 
@@ -311,18 +316,23 @@ Evidence:
 | Code semantics | Complete manifests arrive before bounded-online writes; reuse selects the current published source, not active/failed state | Pass |
 | Changed/unchanged/empty/mixed | PostgreSQL fixtures cover source pinning, legacy coverage upgrade, changed coverage, missing physical rows, failed active sources, overlays, projection fallback, and exports | Pass |
 | Published source integrity | `6,096/6,096` snapshot scopes have exact counts totaling `39,588,650` rows; `42` explicit empty scopes | Pass |
-| Capacity | `48,960,053,248` free; baseline `45,148,225,536`; candidate estimate `44,394,828,933` | Pass with severe alert |
-| Estimated storage benefit | `1,203` scopes / `3,371,702` rows / `753,396,603` bytes from the latest complete comparison | Evaluation-ready |
+| Start capacity | `52,199,215,104` free; baseline `45,148,225,536`; candidate estimate `44,394,828,933` | Pass with severe alert |
+| Post-writer capacity | `32,390,148,096` free after `8,232/8,232` manifests/writers | **Blocked** |
+| Actual storage benefit | `281` scopes / `219,427` rows; estimated `78,765,704` physical bytes and `166,448,926` WAL bytes avoided | Too small to offset current growth |
 | PIA guard | 30 canonical services, 25 healthy unique effective exits, 400 aggregate RPS | Pass |
-| Worker authentication | Epic refresh returned `invalid_refresh_token`; client-token probes lack user entitlement | **Blocked** |
-| Live publication parity | No candidate deploy, scrape ID, publication, or unfreeze window | **Not cleared** |
+| Worker authentication | Auth persistence and `25/25` paired authenticated direct/PIA JSON parity | Pass |
+| Manifest/writer correctness | `8,232/8,232` complete; zero incomplete, parse, retry-exhausted, or writer failures | Pass before stop |
+| Physical skip proof | Zero unchanged scope had scrape-`1264` physical rows | Pass |
+| Live publication parity | Capacity stop before rankings/publication; `1264` owns zero mappings and `1236` remained authoritative | **Not cleared** |
+| Rollback/public parity | Prior worker/config restored; all 13 public/export/history/ranking fingerprints exact | Pass |
 
-The code/readiness change is accepted default-off. Production remains on the
-existing service/worker images with the worker held. The exact resume sequence
-is documented in `docs/database/SnapshotReuseRunbook.md`.
+The code/readiness change remains accepted default-off, but the live candidate
+was reverted and not promoted. Production remains on the existing
+service/worker images with the worker held. The exact capacity gate and future
+build procedure are documented in `docs/database/SnapshotReuseRunbook.md`.
 
 Evidence:
-`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-20260726T010701Z`.
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T032124Z`.
 
 ## Architecture evaluation evidence (2026-07-06)
 
