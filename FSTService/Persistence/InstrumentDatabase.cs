@@ -37,6 +37,12 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     /// </summary>
     public bool UsePublishedScopeSources { get; set; }
 
+    /// <summary>
+    /// When true, filtered projection reads preserve projection order by using
+    /// the stored rank as the window ordering key.
+    /// </summary>
+    public bool UseStoredProjectionRanksForFilteredReads { get; set; }
+
     /// <summary>Exposes the data source for batched writer transactions.</summary>
     internal NpgsqlDataSource DataSource => _ds;
 
@@ -1426,46 +1432,96 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         var songFilter = songId is not null ? "AND projection.song_id = @songId" : string.Empty;
-        cmd.CommandText = $"""
-            WITH {BuildProjectionSourceCtes(filterSong: false)},
-            player_songs AS (
-                SELECT projection.song_id
-                FROM {SoloCurrentProjectionTable} projection
-                JOIN {SoloCurrentProjectionScopeTable} scope
-                  ON scope.song_id = projection.song_id
-                 AND scope.instrument = projection.instrument
-                 AND scope.projection_generation = projection.projection_generation
-                 AND scope.status = 'ready'
-                 AND scope.row_count > 0
-                JOIN selected_sources source
-                  ON source.song_id = scope.song_id
-                 AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
-                WHERE projection.account_id = @accountId
-                  AND projection.instrument = @instrument
-                  {songFilter}
-            ),
-            ranked AS (
-                SELECT projection.account_id, projection.song_id,
-                       ROW_NUMBER() OVER (PARTITION BY projection.song_id ORDER BY projection.score DESC, COALESCE(projection.end_time, projection.first_seen_at::TEXT) ASC) AS rank
-                FROM {SoloCurrentProjectionTable} projection
-                JOIN {SoloCurrentProjectionScopeTable} scope
-                  ON scope.song_id = projection.song_id
-                 AND scope.instrument = projection.instrument
-                 AND scope.projection_generation = projection.projection_generation
-                 AND scope.status = 'ready'
-                 AND scope.row_count > 0
-                JOIN selected_sources source
-                  ON source.song_id = scope.song_id
-                 AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
-                LEFT JOIN _max_thresholds_projected_current_state mt ON mt.song_id = projection.song_id
-                WHERE projection.instrument = @instrument
-                  AND projection.song_id IN (SELECT song_id FROM player_songs)
-                  AND projection.score <= COALESCE(mt.max_score, projection.score + 1)
-            )
-            SELECT song_id, rank
-            FROM ranked
-            WHERE account_id = @accountId
-            """;
+        cmd.CommandText = UseStoredProjectionRanksForFilteredReads
+            ? $"""
+                WITH {BuildProjectionSourceCtes(filterSong: false)},
+                player_rows AS (
+                    SELECT projection.song_id,
+                           projection.rank,
+                           projection.score,
+                           COALESCE(mt.max_score, projection.score + 1) AS max_score
+                    FROM {SoloCurrentProjectionTable} projection
+                    JOIN {SoloCurrentProjectionScopeTable} scope
+                      ON scope.song_id = projection.song_id
+                     AND scope.instrument = projection.instrument
+                     AND scope.projection_generation = projection.projection_generation
+                     AND scope.status = 'ready'
+                     AND scope.row_count > 0
+                    JOIN selected_sources source
+                      ON source.song_id = scope.song_id
+                     AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
+                    LEFT JOIN _max_thresholds_projected_current_state mt ON mt.song_id = projection.song_id
+                    WHERE projection.account_id = @accountId
+                      AND projection.instrument = @instrument
+                      {songFilter}
+                ),
+                invalid_counts AS (
+                    SELECT projection.song_id, COUNT(*)::BIGINT AS removed_above
+                    FROM {SoloCurrentProjectionTable} projection
+                    JOIN {SoloCurrentProjectionScopeTable} scope
+                      ON scope.song_id = projection.song_id
+                     AND scope.instrument = projection.instrument
+                     AND scope.projection_generation = projection.projection_generation
+                     AND scope.status = 'ready'
+                     AND scope.row_count > 0
+                    JOIN selected_sources source
+                      ON source.song_id = scope.song_id
+                     AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
+                    JOIN _max_thresholds_projected_current_state mt ON mt.song_id = projection.song_id
+                    WHERE projection.instrument = @instrument
+                      AND projection.song_id IN (SELECT song_id FROM player_rows)
+                      AND projection.score > mt.max_score
+                    GROUP BY projection.song_id
+                )
+                SELECT player.song_id,
+                       player.rank - COALESCE(invalid.removed_above, 0) AS rank
+                FROM player_rows player
+                LEFT JOIN invalid_counts invalid ON invalid.song_id = player.song_id
+                WHERE player.score <= player.max_score
+                """
+            : $"""
+                WITH {BuildProjectionSourceCtes(filterSong: false)},
+                player_songs AS (
+                    SELECT projection.song_id
+                    FROM {SoloCurrentProjectionTable} projection
+                    JOIN {SoloCurrentProjectionScopeTable} scope
+                      ON scope.song_id = projection.song_id
+                     AND scope.instrument = projection.instrument
+                     AND scope.projection_generation = projection.projection_generation
+                     AND scope.status = 'ready'
+                     AND scope.row_count > 0
+                    JOIN selected_sources source
+                      ON source.song_id = scope.song_id
+                     AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
+                    WHERE projection.account_id = @accountId
+                      AND projection.instrument = @instrument
+                      {songFilter}
+                ),
+                ranked AS (
+                    SELECT projection.account_id, projection.song_id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY projection.song_id
+                               ORDER BY projection.score DESC,
+                                        COALESCE(projection.end_time, projection.first_seen_at::TEXT) ASC) AS rank
+                    FROM {SoloCurrentProjectionTable} projection
+                    JOIN {SoloCurrentProjectionScopeTable} scope
+                      ON scope.song_id = projection.song_id
+                     AND scope.instrument = projection.instrument
+                     AND scope.projection_generation = projection.projection_generation
+                     AND scope.status = 'ready'
+                     AND scope.row_count > 0
+                    JOIN selected_sources source
+                      ON source.song_id = scope.song_id
+                     AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
+                    LEFT JOIN _max_thresholds_projected_current_state mt ON mt.song_id = projection.song_id
+                    WHERE projection.instrument = @instrument
+                      AND projection.song_id IN (SELECT song_id FROM player_songs)
+                      AND projection.score <= COALESCE(mt.max_score, projection.score + 1)
+                )
+                SELECT song_id, rank
+                FROM ranked
+                WHERE account_id = @accountId
+                """;
         cmd.Parameters.AddWithValue("accountId", accountId);
         cmd.Parameters.AddWithValue("instrument", Instrument);
         if (songId is not null)
@@ -2791,35 +2847,86 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         var limitClause = top.HasValue ? $"LIMIT {top.Value} OFFSET {offset}" : string.Empty;
         if (maxScore.HasValue)
         {
-            cmd.CommandText = $"""
-                WITH {BuildProjectionSourceCtes(filterSong: true)},
-                ranked_rows AS (
-                    SELECT projection.account_id, projection.score, projection.accuracy, projection.is_full_combo,
-                           projection.stars, projection.season, projection.difficulty, projection.percentile, projection.end_time,
-                           ROW_NUMBER() OVER (ORDER BY score DESC, COALESCE(end_time, first_seen_at::TEXT) ASC) AS rank,
-                           COUNT(*) OVER ()::INT AS total_count,
+            cmd.CommandText = UseStoredProjectionRanksForFilteredReads
+                ? $"""
+                    WITH {BuildProjectionSourceCtes(filterSong: true)},
+                    ready_scope AS (
+                        SELECT scope.song_id,
+                               scope.instrument,
+                               scope.projection_generation,
+                               scope.row_count
+                        FROM {SoloCurrentProjectionScopeTable} scope
+                        JOIN selected_sources selected
+                          ON selected.song_id = scope.song_id
+                         AND selected.source_kind IN ('snapshot', 'empty')
+                         AND scope.source_snapshot_id IS NOT DISTINCT FROM selected.source_snapshot_id
+                        WHERE scope.song_id = @songId
+                          AND scope.instrument = @instrument
+                          AND scope.status = 'ready'
+                    ),
+                    invalid_count AS (
+                        SELECT COUNT(*)::BIGINT AS removed_above
+                        FROM {SoloCurrentProjectionTable} projection
+                        JOIN ready_scope scope
+                          ON scope.song_id = projection.song_id
+                         AND scope.instrument = projection.instrument
+                         AND scope.projection_generation = projection.projection_generation
+                        WHERE projection.score > @maxScore
+                    )
+                    SELECT projection.account_id,
+                           projection.score,
+                           projection.accuracy,
+                           projection.is_full_combo,
+                           projection.stars,
+                           projection.season,
+                           projection.difficulty,
+                           projection.percentile,
+                           projection.end_time,
+                           (projection.rank - invalid.removed_above)::BIGINT AS rank,
+                           GREATEST(scope.row_count - invalid.removed_above, 0)::INT AS total_count,
                            projection.api_rank,
                            projection.source
                     FROM {SoloCurrentProjectionTable} projection
-                    JOIN {SoloCurrentProjectionScopeTable} scope
+                    JOIN ready_scope scope
                       ON scope.song_id = projection.song_id
                      AND scope.instrument = projection.instrument
                      AND scope.projection_generation = projection.projection_generation
-                     AND scope.status = 'ready'
-                    JOIN selected_sources selected
-                      ON selected.song_id = scope.song_id
-                     AND selected.source_kind IN ('snapshot', 'empty')
-                     AND scope.source_snapshot_id IS NOT DISTINCT FROM selected.source_snapshot_id
-                    WHERE projection.song_id = @songId
-                      AND projection.instrument = @instrument
-                      AND projection.score <= @maxScore
-                )
-                SELECT account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time,
-                       rank, total_count, api_rank, source
-                FROM ranked_rows
-                ORDER BY rank
-                {limitClause}
-                """;
+                    CROSS JOIN invalid_count invalid
+                    WHERE projection.score <= @maxScore
+                    ORDER BY projection.rank
+                    {limitClause}
+                    """
+                : $"""
+                    WITH {BuildProjectionSourceCtes(filterSong: true)},
+                    ranked_rows AS (
+                        SELECT projection.account_id, projection.score, projection.accuracy, projection.is_full_combo,
+                               projection.stars, projection.season, projection.difficulty, projection.percentile, projection.end_time,
+                               ROW_NUMBER() OVER (
+                                   ORDER BY projection.score DESC,
+                                            COALESCE(projection.end_time, projection.first_seen_at::TEXT) ASC) AS rank,
+                               COUNT(*) OVER ()::INT AS total_count,
+                               projection.api_rank,
+                               projection.source
+                        FROM {SoloCurrentProjectionTable} projection
+                        JOIN {SoloCurrentProjectionScopeTable} scope
+                          ON scope.song_id = projection.song_id
+                         AND scope.instrument = projection.instrument
+                         AND scope.projection_generation = projection.projection_generation
+                         AND scope.status = 'ready'
+                        JOIN selected_sources selected
+                          ON selected.song_id = scope.song_id
+                         AND selected.source_kind IN ('snapshot', 'empty')
+                         AND scope.source_snapshot_id IS NOT DISTINCT FROM selected.source_snapshot_id
+                        WHERE projection.song_id = @songId
+                          AND projection.instrument = @instrument
+                          AND projection.score <= @maxScore
+                    )
+                    SELECT account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time,
+                           rank, total_count, api_rank, source
+                    FROM ranked_rows
+                    ORDER BY rank
+                    {limitClause}
+                    """;
             cmd.Parameters.AddWithValue("maxScore", maxScore.Value);
         }
         else

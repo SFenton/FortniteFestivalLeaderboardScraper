@@ -56,6 +56,12 @@ This plan records the approved direction for improving FST Postgres persistence 
   Exact ownership, rebuild, and rollback evidence is complete, but no
   disabled-writer scrape has completed global publication. The tables remain
   intact and the destructive gate remains blocked.
+- SOLO-DYNAMIC-AB measured the published solo projection at
+  `46,633,459,712` bytes for `39,601,283` rows. Wholesale dynamic reads remain
+  rejected. The accepted research candidate is a keyless, partitioned compact
+  projection with the existing account/rank/score access paths, a bounded
+  generation-hot tier, and a default-off stored-rank offset query flag. No
+  production table, index, or read-source cutover occurred.
 - Public band-history team/date indexes remain because live plans proved their
   route ownership. Composite retention now uses BRIN cutoff rejection plus the
   primary key for account/date probes.
@@ -165,6 +171,7 @@ path, and post-action validation are documented.
 | Phase 6 logical current/version dual-write | Complete | Implemented, deployed, evaluated on scrape `1214`, committed as `02460b13`. |
 | Phase 7 logical write metrics | Complete | Implemented, deployed, committed as `2ac02445`; production metrics captured from failed scrape `1218`. |
 | LOGICAL-RETIRE ownership/rebuild package | Accepted readiness / truncate blocked | Exact `141,462,937,600`-byte object manifest, `39,820,273` current rows, `194,171,215` version rows, open-version integrity, stale-1237/public-1236 divergence proof, schema/rebuild SQL, and bounded nine-instrument regeneration are complete. No disabled-writer scrape has globally published, so no truncate ran. |
+| SOLO-DYNAMIC-AB compact published solo read model | Accepted research/implementation candidate / migration blocked | Full owner/query matrix, service-cold and warm baseline, bounded unlogged samples, exact c1/c8 fingerprints, storage math, rollback DDL, and default-off rank-offset code are complete. Conservative compact-plus-hot projection is <=`20,215,010,912` bytes, reclaiming >=`26,418,448,800` bytes (`56.65%`). Final `3,812,061,184`-byte margin cannot safely build it. |
 | Experimental logical shadow cleanup | Complete | Approved cleanup truncated experimental logical shadow tables and removed incomplete scrape `1218`. |
 | Database architecture evaluation | Complete | Read-only code review and production probes completed on 2026-07-06. |
 | History/index owner cards | Complete | Refreshed band v2, composite history, observation, dirty-work, and latest-state owner cards on 2026-07-13. Public team/date and retention indexes were retained from plan/caller proof. |
@@ -209,6 +216,48 @@ ranking/history/publication fingerprints pass.
 
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/logical-retire-20260725T2306Z`.
+
+## SOLO-DYNAMIC-AB decision package (2026-07-25)
+
+`current_leaderboard_entries*` currently owns `17,821,523,968` heap bytes and
+`28,806,701,056` index bytes. The primary-key, account, rank, and score
+families occupy `9,189,982,208`, `8,910,036,992`, `6,352,797,696`, and
+`4,347,568,128` bytes respectively.
+
+Every runtime reader is classified in the phase evidence. Exports and
+unfiltered published totals already bypass the projection. Deep pagination,
+account/player reads, score bands, rivals, rankings, precompute, and
+notifications force retention of a full current row set and the three
+account/rank/score access paths. The primary key and per-row `computed_at` do
+not own a read path.
+
+| Candidate | Storage / performance decision |
+|---|---|
+| Fully dynamic mapped physical reads | Rejected. Even the improved frozen-overlay query was exact but regressed warm top p95 by `312.6%` at c1 and `84.7%` at c8; deep cold p95 regressed `72.5%`. Live overlay also produced a correctness difference against the frozen projection. |
+| Top-N or registered-only projection | Rejected alone. Top/registered routes were exact and faster, but deep pages and worker full scans still require the full projection. |
+| Hash-account compact projection | Rejected. It projected to `15,417,423,699` bytes, but selected-row p95 regressed `140.9%` at c1 and `45.2%` at c8. |
+| Keyless compact btree projection | Accepted research candidate. A 501,284-row matched sample projects to `18,536,114,242` bytes while preserving the account/rank/score indexes and generation/source guards. |
+| Compact btree plus hot generation | Accepted design. Exact rank-offset coverage, registered accounts, and frozen overlay keys add <=`1,678,896,670` bytes, for a conservative <=`20,215,010,912` bytes total and >=`26,418,448,800` bytes reclaim. |
+
+The default-off
+`Features__UseStoredSoloProjectionRanksForFilteredReads` candidate computes a
+filtered rank by subtracting only rows above the threshold from the stored
+published rank. Exact 240-pair warm A/Bs improved filtered-player p95 from
+`94.678` to `17.858 ms` at c1 and `190.519` to `59.291 ms` at c8; filtered
+top p95 improved from `8.654` to `3.585 ms` and `29.644` to `22.545 ms`.
+Separate c8 resource runs reduced PostgreSQL CPU by `86.9%`, reads by `88.0%`,
+created no temp files/bytes, and did not increase peak memory.
+
+Migration remains blocked. A compact logged shadow needs about `18.54 GB`
+plus roughly `4.58 GB` largest-index workspace and `18.54-37.1 GB` WAL, or
+about `41.6-60.2 GB` practical headroom while retaining rollback. Current
+margin above the measured scrape boundary is only `3,812,061,184` bytes. First
+complete the disabled-writer publication gate and logical-shadow retirement,
+then run one full dual-build scrape/publication A/B before any compact
+read-source cutover or old projection drop.
+
+Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/solo-dynamic-ab-20260725T2346Z`.
 
 ## Architecture evaluation evidence (2026-07-06)
 

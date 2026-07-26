@@ -97,6 +97,13 @@ public sealed class FeatureOptions
     public bool UsePublishedScopeSources { get; set; }
 
     /// <summary>
+    /// When true, filtered solo projection reads preserve the already-published
+    /// projection order by re-ranking on stored rank instead of re-sorting the
+    /// same rows by score and tie-break fields.
+    /// </summary>
+    public bool UseStoredSoloProjectionRanksForFilteredReads { get; set; }
+
+    /// <summary>
     /// Retired logical current/version shadow writer. This must remain false
     /// until a future versioned migration and live-scrape promotion explicitly
     /// restore an owner for the shadow tables.

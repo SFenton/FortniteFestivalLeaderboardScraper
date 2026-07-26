@@ -390,6 +390,29 @@ public sealed class InstrumentDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void Filtered_projection_reads_can_preserve_stored_rank_order()
+    {
+        InsertSnapshotState("song_filtered_projection", 42, isFinalized: true);
+        InsertProjectionScope("song_filtered_projection", sourceSnapshotId: 42, rowCount: 3);
+        InsertProjectionEntry("song_filtered_projection", "acct_invalid", 100_000, "projection", rank: 1);
+        InsertProjectionEntry("song_filtered_projection", "acct_first", 90_000, "projection", rank: 2);
+        InsertProjectionEntry("song_filtered_projection", "acct_second", 80_000, "projection", rank: 3);
+        Db.UseStoredProjectionRanksForFilteredReads = true;
+
+        var (entries, total) = Db.GetCurrentStateLeaderboardWithCount(
+            "song_filtered_projection",
+            maxScore: 90_000);
+        var rankings = Db.GetCurrentStatePlayerRankingsFiltered(
+            "acct_second",
+            new Dictionary<string, int> { ["song_filtered_projection"] = 90_000 });
+
+        Assert.Equal(2, total);
+        Assert.Equal(["acct_first", "acct_second"], entries.Select(entry => entry.AccountId));
+        Assert.Equal([1, 2], entries.Select(entry => entry.Rank));
+        Assert.Equal(2, rankings["song_filtered_projection"]);
+    }
+
+    [Fact]
     public void GetCurrentStateLeaderboard_falls_back_to_live_rows_without_snapshot_state()
     {
         Db.UpsertEntries("song_1",
@@ -1846,7 +1869,13 @@ public sealed class InstrumentDatabaseTests : IDisposable
         cmd.ExecuteNonQuery();
     }
 
-    private void InsertProjectionEntry(string songId, string accountId, int score, string source, long generation = 1)
+    private void InsertProjectionEntry(
+        string songId,
+        string accountId,
+        int score,
+        string source,
+        long generation = 1,
+        int rank = 1)
     {
         using var conn = _fixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -1855,10 +1884,12 @@ public sealed class InstrumentDatabaseTests : IDisposable
             (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, percentile, rank,
              api_rank, source, difficulty, end_time, first_seen_at, last_updated_at, projection_generation, computed_at)
             VALUES
-            (@songId, @instrument, @accountId, @score, 95, false, 5, 3, 99.0, 1,
-             1, @source, 3, '2025-01-15T12:00:00Z', @now, @now, @generation, @now)
+            (@songId, @instrument, @accountId, @score, 95, false, 5, 3, 99.0, @rank,
+             @rank, @source, 3, '2025-01-15T12:00:00Z', @now, @now, @generation, @now)
             ON CONFLICT (song_id, instrument, account_id) DO UPDATE SET
                 score = EXCLUDED.score,
+                rank = EXCLUDED.rank,
+                api_rank = EXCLUDED.api_rank,
                 source = EXCLUDED.source,
                 last_updated_at = EXCLUDED.last_updated_at,
                 projection_generation = EXCLUDED.projection_generation
@@ -1869,6 +1900,7 @@ public sealed class InstrumentDatabaseTests : IDisposable
         cmd.Parameters.AddWithValue("score", score);
         cmd.Parameters.AddWithValue("source", source);
         cmd.Parameters.AddWithValue("generation", generation);
+        cmd.Parameters.AddWithValue("rank", rank);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         cmd.ExecuteNonQuery();
     }

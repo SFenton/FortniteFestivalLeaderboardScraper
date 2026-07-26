@@ -108,6 +108,7 @@ public class ScraperOptionsAndModelsTests
         Assert.False(opts.SkipUnchangedPhysicalLeaderboardSnapshots);
         Assert.False(opts.WritePublishedScopeSources);
         Assert.False(opts.UsePublishedScopeSources);
+        Assert.False(opts.UseStoredSoloProjectionRanksForFilteredReads);
         Assert.False(opts.EnforceScopeCompletenessManifests);
         Assert.False(opts.RequireSuccessfulScrapeWriters);
         Assert.False(opts.EnforcePublicationCriticalPhases);

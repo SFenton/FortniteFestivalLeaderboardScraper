@@ -939,6 +939,36 @@ move to PG-7 after backup/restore and live-scrape parity.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/logical-retire-20260725T2306Z`.
 
+### PG-3 published solo compact read model - research accepted, migration blocked 2026-07-25
+
+- The current `current_leaderboard_entries*` projection is
+  `46,633,459,712` bytes for `39,601,283` rows. Its primary-key, account,
+  rank, and score index families are `9.19/8.91/6.35/4.35 GB`.
+- The complete owner matrix proves exports and unfiltered totals already use
+  mapped physical/source metadata, while deep pages, accounts, score bands,
+  rivals, rankings/precompute, and notifications still require a complete
+  current row set and account/rank/score access.
+- Wholesale dynamic reads remain rejected. Improved frozen-overlay SQL was
+  exact but regressed warm top p95 by `312.6%` at c1 and `84.7%` at c8;
+  deep cold p95 regressed `72.5%`. Live overlay also differed from the frozen
+  projection in a sampled top-100 payload.
+- The accepted design is a keyless compact btree projection plus a bounded
+  generation-hot tier. A 501,284-row sample projects the full compact table to
+  `18,536,114,242` bytes. Exact top-100/leeway coverage, registered accounts,
+  and frozen overlay keys conservatively raise this to no more than
+  `20,215,010,912` bytes, reclaiming at least `26,418,448,800` bytes
+  (`56.65%`).
+- Exact randomized SQL A/Bs passed top/deep, registered player, selected-row,
+  score/population, ranking scan, and filtered-rank parity. The default-off
+  stored-rank offset flag reduced filtered-player p95 from `94.678` to
+  `17.858 ms` at c1 and `190.519` to `59.291 ms` at c8.
+- No production schema/index/read cutover ran. Practical logged migration
+  headroom is `41.6-60.2 GB` while rollback is retained, versus only about
+  `3,812,061,184` bytes of current margin. The next live shadow waits for successful
+  disabled-writer publication and logical-shadow retirement.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/solo-dynamic-ab-20260725T2346Z`.
+
 ## Phase PG-4: Make scrape writes proportional to semantic changes
 
 **Decision:** Experimental until live-scrape parity  

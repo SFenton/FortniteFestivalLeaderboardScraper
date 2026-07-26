@@ -152,6 +152,15 @@ disabled-writer publish/parity window does not yet exist. The retained
 `leaderboard_logical_write_metrics` table has `108` rows and occupies
 `106,496` bytes.
 
+The 2026-07-25 SOLO-DYNAMIC-AB inventory measured the active solo current
+projection at `39,601,283` rows / `46,633,459,712` bytes:
+`17,821,523,968` heap and `28,806,701,056` indexes. The accepted replacement
+research candidate is not a dynamic read cutover. It retains a complete,
+partitioned, generation-guarded row set and the account/rank/score indexes,
+removes the structural-only primary key and unowned per-row `computed_at`,
+and adds a bounded publication-hot tier. Conservative projected steady size is
+no more than `20,215,010,912` bytes. No production schema changed.
+
 ## Data ownership and restore class
 
 | Class | Meaning | Restore rule |
@@ -193,6 +202,7 @@ and clears the public-read freeze in one transaction.
 |---|---|---:|---|---|
 | `Features__WritePublishedScopeSources` | `fstworker` | `false` | Backfills the current clean publication when needed, records scope coverage, builds the next mapping, and requires it in publication | Set `false`; incomplete candidates never move the global pointer |
 | `Features__UsePublishedScopeSources` | `fstservice` | `false` | Resolves solo current reads, projection readiness, totals, member filters, and published solo exports from the current mapping | Set `false`; active-state/legacy resolver remains available |
+| `Features__UseStoredSoloProjectionRanksForFilteredReads` | service or worker reader | `false` | Uses stored projection rank plus exact removed-above counts for filtered leaderboard/player ranks instead of full window re-sorts | Set `false`; prior score/tie window SQL remains |
 | `Features__EnforceScopeCompletenessManifests` | `fstworker` | `false` | Requires every expected solo and band scope to have a complete page manifest before publication | Set `false`; manifests remain available as observe-only evidence |
 | `Features__RequireSuccessfulScrapeWriters` | `fstworker` | `false` | Rejects a candidate when any disk-spool or bounded-online writer reports failed pages/rows | Set `false`; durable failure rows and replay artifacts remain |
 | `Features__EnforcePublicationCriticalPhases` | `fstworker` | `false` | Rejects a candidate after any explicitly publication-critical post-scrape phase failure | Set `false`; phase outcomes remain visible while legacy swallow behavior is restored |
@@ -306,6 +316,17 @@ projection ledger matches the mapped physical/empty source. Mismatched or
 failed scopes fall back individually to the mapped snapshot plus overlay, so a
 single stale projection cannot force an all-instrument slow path or leak the
 active candidate.
+
+SOLO-DYNAMIC-AB confirmed that exports, member-score filtering, and
+unfiltered totals do not force projection retention, but deep pages,
+player/account rows, score-band metadata, rivals, ranking/precompute, and
+registered-player notifications do. The promotion candidate therefore keeps
+all current payload fields except `computed_at`, all nine instrument
+partitions, and the account/rank/score indexes. It intentionally omits a
+primary key because scope build SQL already resolves one row per account and
+the source/generation ledger must validate exact row count and fingerprint.
+Promotion requires a logged shadow, complete live scrape/publication parity,
+and retained old-table rollback; bounded unlogged samples are evaluation-only.
 
 ### Score, player, and solo ranking history
 

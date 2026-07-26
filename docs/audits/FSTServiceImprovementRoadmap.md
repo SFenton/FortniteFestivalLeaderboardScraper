@@ -415,6 +415,17 @@ and old cache artifacts.
   remain intact because no disabled-writer scrape has completed global
   publication; the destructive A/B gate is still open. Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/logical-retire-20260725T2306Z`.
+- SOLO-DYNAMIC-AB classified every published solo read. The accepted
+  service-side candidate keeps a compact complete projection for deep/account
+  reads, adds bounded generation-hot coverage for top/leeway/registered rows,
+  and leaves exports/totals on their mapped physical/source-metadata paths.
+  A default-off stored-rank offset flag preserves exact filtered ranks while
+  removing full window re-sorts. In 240-pair A/Bs it reduced filtered-player
+  p95 from `94.678` to `17.858 ms` at c1 and `190.519` to `59.291 ms` at c8;
+  filtered-top p95 also improved at both concurrencies. No production cutover
+  occurred because failed-candidate isolation prevents a complete player/export
+  API A/B and current DB margin cannot host the compact shadow. Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/solo-dynamic-ab-20260725T2346Z`.
 
 ### SERVICE-0.3 - Protect or remove token-backed diagnostics
 
