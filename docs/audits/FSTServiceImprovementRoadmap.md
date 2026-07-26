@@ -466,6 +466,18 @@ and old cache artifacts.
   healthy. `17/17` focused tests and the Release build passed.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-song-projection-retirement-20260726T103231Z`.
+- The capacity-ready SNAPSHOT-REUSE retry deployed current-source
+  `fstservice:snapshot-reuse-efdd70b8` and kept the public API healthy for all
+  694 one-minute samples while scrape `1265` ran. No HTTP health failure,
+  ungranted lock, or public-read contract change occurred.
+- Capacity stopped the worker during ranking snapshots before publication.
+  The service was restored to `fstservice:band-song-retire-3ac2a7c9`;
+  published `1236` remained unfrozen and all 13 normalized
+  leaderboard/export/player/rank/history/band fingerprints matched baseline
+  exactly. Candidate-source route parity was not testable because `1265`
+  owns zero published mappings.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T110731Z`.
 
 ### SERVICE-0.3 - Protect or remove token-backed diagnostics
 

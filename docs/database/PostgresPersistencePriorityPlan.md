@@ -74,6 +74,14 @@ This plan records the approved direction for improving FST Postgres persistence 
   The post-writer guard blocked at `32,390,148,096` free bytes before
   rankings/publication. Production config was reverted; the flag remains
   default-off.
+- After BAND-SONG-PROJECTION reclaim, capacity-ready scrape `1265` passed both
+  start and post-writer guards and completed `8,232/8,232` manifests, zero
+  writer failures, and four publication-critical phases. It reused `273`
+  scopes / `218,892` rows, with estimated savings of `112,343,764` physical
+  bytes and `160,525,751` WAL bytes. Ranking snapshots then reduced free space
+  to `13,144,125,440`, below the declared `14,571,150,203` safety floor.
+  The worker stopped, `1265` was reconciled failed, production was reverted,
+  and published `1236` remains unfrozen with zero candidate mappings.
 - STORAGE-OWNERSHIP completed continuous-safe P6/P8/P9 owner cards and exact
   manifests for `player_score_observations`, `scrape_dirty_*`, and legacy
   `leaderboard_entries_*`: `61,217,292,288` bytes total. Observation dual
@@ -195,6 +203,15 @@ restart `no`; a future candidate must use current source built with
 public-health guards immediately before start. Optional builds and rewrites
 remain blocked below seven-day headroom.
 
+The capacity-ready retry proved that start and post-writer margin alone were
+insufficient. Scrape `1265` passed the post-writer guard at
+`48,613,908,480` free bytes, completed band maintenance, and entered ranking
+snapshots before the 60-second monitor stopped it at `13,144,125,440` free.
+After rollback and transient cleanup, final free space is about
+`33,477,099,520` bytes. The baseline guard is short `11,671,126,016` bytes
+and the SNAPSHOT-REUSE estimate is short `10,917,729,413`; normal scheduling
+and another candidate remain blocked.
+
 Destructive cleanup, irreversible migration, drop/truncate/repack/rewrite
 work, or active Postgres data movement may proceed automatically after a
 live-scrape A/B proves old-vs-new data parity and the exact objects, rollback
@@ -221,7 +238,7 @@ path, and post-action validation are documented.
 | PG-3 post-`1263` residual index reclaim | Accepted | Dropped `33` non-constraint indexes across six exact owner-card families. Reclaimed `17,174,200,320` database bytes; measured free space is `48,546,029,568`, `3,397,804,032` bytes above the scrape boundary. Public route/fail-closed parity was exact, `120/120` tests passed, and commit `8db72081` prevents recreation. |
 | Band rank-history retention policy draft | Complete | Semantics-first v2 retention options and parity gates documented on 2026-07-06. |
 | `band_read_*` quarantine parity package | Complete | Reversible, live-scrape A/B parity-gated quarantine package documented on 2026-07-06; no DDL executed. |
-| Phase 8 physical snapshot write skipping | Code/readiness accepted / live A/B capacity-blocked and reverted | Scrape `1264` completed `8,232/8,232` manifests and zero writer failures with the default-off candidate enabled. Exact live reuse was only `281` scopes / `219,427` rows; zero unchanged scope had candidate physical rows. Estimated benefit was `78,765,704` physical bytes and `166,448,926` WAL bytes, but the post-writer guard blocked at `32,390,148,096` free before rankings/publication. Production config was reverted, `1236` remains published, and the flag remains off. |
+| Phase 8 physical snapshot write skipping | Code/readiness accepted / two live A/Bs capacity-blocked and reverted | Scrape `1264` failed the post-writer guard. Capacity-ready scrape `1265` passed that guard, completed `8,232/8,232` manifests and band maintenance, and proved `273` scopes / `218,892` rows reusable with zero unexpected physical rows. Ranking snapshots crossed the `14,571,150,203` safety floor at `13,144,125,440` free before publication. Production was reverted, `1236` remains published, and the flag remains off. |
 | P6 player-score observation ownership | Code/readiness accepted / truncate blocked | `11,686,199,296` bytes and `9,480,671` rows. No production reader; solo and band-member writers now have independent default-off flags. Full live writer-off publication parity is still required. |
 | P8 stale dirty-work ownership | Readiness accepted / truncate blocked | Four tables total `8,706,752,512` bytes and `19,836,661` rows only from scrapes `926`-`1146`. No current repo/database/runtime writer; checksum-guarded exact truncate package is ready. |
 | P9 legacy mutable leaderboard ownership | Mixed / reader migration blocked | Nine partitions total `40,824,340,480` bytes and `36,768,081` rows. Main scrape writer is off and mapped public reads bypass legacy, but supplemental dual writers and publication-critical band extraction remain owners. |
@@ -234,9 +251,9 @@ path, and post-action validation are documented.
 | Worker validation start | Rejected / blocked | Starting `fstworker` with safer defaults caused `fstservice` and `/api/service-info` through `festivalweb` to time out; `fstworker` was stopped immediately and public API/web health recovered. |
 | Worker scraping heal | Complete | Added worker-only startup schema-init skip, rebuilt the image, started `fstworker`, and held a 10-minute full-public-path watchdog while scrape `1219` began. |
 | Emergency `band_read_*` reclaim | Complete | At 44 MB free / 100% disk, stopped `fstworker`, froze public reads to published `1214`, truncated rollback-safe logical shadow tables, quarantined/validated/dropped unused derived `band_read_*` tables, restored about 435 GB free, and restarted `fstworker` as scrape `1222`. |
-| Autonomous scrape rollout | Rejected after scrape `1264`; capacity blocked | Candidate `1263` completed `8,208/8,208` manifests and was stopped during rank history. Residual reclaim restored enough start headroom for SNAPSHOT-REUSE candidate `1264`, which completed `8,232/8,232` manifests/writers but failed the strict post-writer guard at `32,390,148,096` free bytes before rankings/publication. Published `1236` remains safe; final free space is below both scrape requirements. |
+| Autonomous scrape rollout | Rejected after scrape `1265`; capacity blocked | Candidate `1265` passed start/post-writer guards, completed all manifests/writers and band maintenance, then crossed its declared capacity floor during ranking snapshots. It was stopped and reconciled failed with zero published mappings. Published `1236` remains safe; final free space is below both scrape requirements. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
-| Next implementation phase | Snapshot-reuse resume capacity-ready / worker held | Both measured scrape guards pass after BAND-SONG-PROJECTION reclaim. Do not start in this phase; rebuild a current-source worker image, rerun auth/proxy/public-health/capacity guards, and execute the parent-owned single-candidate SNAPSHOT-REUSE window. Logical truncate, optional builds, rewrites, repacks, broad movement, and owner-rejected drops remain blocked. |
+| Next implementation phase | Additional same-drive capacity required / worker held | Do not rerun SNAPSHOT-REUSE or restore scheduling while both measured scrape guards block. Publication parity, logical truncate, optional builds, rewrites, repacks, broad movement, and owner-rejected drops remain blocked. |
 
 ## LOGICAL-RETIRE decision package (2026-07-25)
 
@@ -347,6 +364,20 @@ build procedure are documented in `docs/database/SnapshotReuseRunbook.md`.
 
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T032124Z`.
+
+### Capacity-ready retry update
+
+Scrape `1265` used current-source image `fstservice:snapshot-reuse-efdd70b8`
+with only the snapshot-reuse flag changed. Auth and the canonical `25/25` PIA
+guard passed. The candidate completed `8,232/8,232` manifests, zero writer or
+critical failures, and band maintenance, while avoiding `218,892` physical
+rows. It did not publish: ranking snapshots crossed the declared safety floor
+and the worker stopped at `13,144,125,440` free bytes. Production config and
+images were restored, all 13 public fingerprints matched, and the logical
+retirement gate remains `NOT_CLEARED`.
+
+Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T110731Z`.
 
 ## Architecture evaluation evidence (2026-07-06)
 

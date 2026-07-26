@@ -651,6 +651,32 @@ until replay and live shadow parity pass.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-song-projection-retirement-20260726T103231Z`.
 
+**SNAPSHOT-REUSE capacity-ready retry - rejected/reverted; worker held
+2026-07-26**
+
+- Scrape `1265` ran exactly once on
+  `fstservice:snapshot-reuse-efdd70b8`, restart `no`, with logical writes
+  disabled and only physical snapshot reuse enabled.
+- Auth refresh and `25/25` authenticated direct/PIA parity passed. The
+  canonical pool stayed at 25 healthy unique PIA exits, 400 aggregate RPS, two
+  RPS and one in-flight request per exit, with no AirVPN fallback.
+- The run completed all `8,232` manifests, `592,506` pages, and
+  `59,081,828` reported entries with zero incomplete, parse, retry-exhausted,
+  writer, or publication-critical failures. Three five-minute enrichment
+  timeouts remained correctly classified best-effort.
+- Exact solo reuse was `273` scopes / `218,892` rows; no unchanged scope wrote
+  scrape-`1265` physical rows. Network/writer time improved to about
+  `19,890 s`.
+- The post-writer guard passed at `48,613,908,480` free bytes. Band
+  maintenance then completed in `5:16:46.669`, but ranking snapshots crossed
+  the declared `14,571,150,203` safety floor at `13,144,125,440` free bytes.
+  The monitor stopped the worker before global publication.
+- Recovery reconciled `1265` failed, unfroze published `1236`, restored the
+  prior service/worker images and flag-off configuration, and recreated
+  `fstworker` held with restart `no`. Both final scrape guards block.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T110731Z`.
+
 ### WORKER-0.5 - Separate solo and band completion
 
 A band timeout must not mark `LeaderboardScrapeCompleted=true`. A task still

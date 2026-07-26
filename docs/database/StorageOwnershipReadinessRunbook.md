@@ -236,4 +236,6 @@ The tool:
    after each action.
 
 The logical-shadow truncate remains a separate prerequisite and is not cleared
-by this readiness phase.
+by this readiness phase. Capacity-ready SNAPSHOT-REUSE scrape `1265` also
+failed before publication when ranking snapshots crossed its declared
+same-drive safety floor, so steps 7-9 remain blocked and the worker is held.

@@ -2,27 +2,28 @@
 
 ## Current decision
 
-**Tier:** code/readiness accepted; prior live A/B reverted; resume capacity is
-now sufficient but no new candidate has started.
+**Tier:** code/readiness accepted; capacity-ready retry rejected and reverted;
+the production flag remains off.
 
 `Features:SkipUnchangedPhysicalLeaderboardSnapshots` remains default-off. The
-refreshed Epic device credential passed the auth-only persistence canary, all
-`25/25` PIA exits returned valid authenticated Epic JSON with exact direct/proxy
-entry parity, and corrected current-source image
-`fstservice:snapshot-reuse-919daa32` ran candidate scrape `1264`.
+refreshed Epic credential, authenticated `25/25` direct/PIA canary, canonical
+PIA guard, current-source image, public health, and both start guards passed.
+Scrape `1265` completed `8,232/8,232` manifests and all writers, then passed
+the post-writer guard at `48,613,908,480` free bytes. It completed four
+publication-critical phases, including the full band projection refresh, but
+the 60-second safety monitor stopped ranking snapshots when free space reached
+`13,144,125,440`, below the declared `14,571,150,203`-byte floor.
 
-The candidate completed all `8,232/8,232` manifests with zero incomplete
-scopes, writer failures, parse failures, retry exhaustion, or observed
-publication-critical failures. The post-writer capacity guard then failed at
-`32,390,148,096` free bytes versus the `45,148,225,536` measured baseline
-requirement and `44,394,828,933` candidate estimate. The worker was stopped
-before rankings or global publication, scrape `1264` was reconciled failed at
-`capacity_postwriter_guard`, and production was reverted to the prior worker
-image/config with scheduling held. Published scrape `1236` remains
-authoritative and unfrozen; `1264` owns zero published-source rows.
+Scrape `1265` was reconciled failed at
+`capacity_during_ranking_snapshots`. It owns zero published-source rows,
+published `1236` remains authoritative and unfrozen, all 13 rollback
+route/export/history/ranking fingerprints are exact, and production service,
+worker, flag, and compose configuration were restored. Final free space is
+about `33.48 GB`, so both measured scrape guards block and scheduling remains
+held.
 
 Evidence:
-`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T032124Z`.
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T110731Z`.
 
 ## 2026-07-26 same-drive capacity recovery
 
@@ -46,6 +47,29 @@ Capacity now permits another guarded candidate start, but this does not change
 the prior rejection, enable the default-off flag, or prove publication parity.
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-song-projection-retirement-20260726T103231Z`.
+
+## 2026-07-26 capacity-ready retry
+
+| Gate | Result |
+|---|---|
+| Runtime / image | `gpt-5.6-sol`, max, long context; `fstservice:snapshot-reuse-efdd70b8` built from `FSTService/Dockerfile` |
+| Auth / proxy | Refresh persisted mode `0600`; `25/25` direct and `25/25` PIA Epic responses exact; 25 healthy unique PIA exits at 400 aggregate RPS |
+| Validation | `231/231` candidate-focused tests, Release build, source-image build, and exact three-setting production config diff passed |
+| Start / post-writer capacity | `58,966,065,152` / `48,613,908,480` free bytes; both baseline and candidate guards passed |
+| Manifests / writers | `8,232/8,232` complete; `59,081,828` entries; `592,506` pages; zero parse, retry-exhausted, writer, or critical failures |
+| Best-effort phases | Registered-user refresh, registered-player band discovery, and registered-band targeted processing timed out at their declared five-minute bounds |
+| Reuse | `273` scopes / `218,892` rows; zero reused scope had scrape-`1265` physical rows |
+| Estimated benefit | `112,343,764` physical bytes and about `160,525,751` WAL bytes avoided; snapshot relations still grew `19,439,173,632` bytes |
+| Network / resources | About `19,890 s`, `-14.4%` versus `1264`; 694 one-minute samples, zero public-health failures; peak worker/Postgres RSS about `7.87/13.66 GiB` |
+| Post-process | Band maintenance completed `29,145/29,145` selected scopes and `32,651,304` rows with zero failures in `5:16:46.669` |
+| Capacity stop | Ranking snapshots reached `13,144,125,440` free bytes, below the `14,571,150,203` safety floor; worker stopped before global publication |
+| Publication / rollback | No candidate mappings; published `1236` unfrozen; `13/13` rollback fingerprints exact; baseline images/config restored |
+| Final capacity | About `33.48 GB`; baseline shortfall `11,671,126,016`, candidate shortfall `10,917,729,413`; worker held |
+
+The retry proves unchanged-scope physical skipping again, but it does not clear
+publication/source-map/API parity and cannot be promoted. The run also showed
+material ranking-phase variance while the filesystem was at 100% usage; this
+is additional rejection evidence, not a reason to weaken the capacity floor.
 
 ## Candidate contract
 
@@ -139,9 +163,9 @@ post-writer capacity gate can pass on the FST drive.
 
 ## Resume procedure
 
-1. Keep the worker held until the parent-owned retry. Both measured guards now
-   pass, but rerun them immediately before start because evidence/archive and
-   normal filesystem activity can change the margin.
+1. Keep the worker held. Both measured scrape guards now block; do not start
+   another candidate without additional same-drive capacity and a new complete
+   preflight.
 2. Preserve all DB/storage work on `/mnt/docker-storage`; do not use alternate
    drive scratch or delete data to force a retry.
 3. Build current source with `docker build -f FSTService/Dockerfile ...`.
@@ -170,10 +194,11 @@ post-writer capacity gate can pass on the FST drive.
 
 ## Logical-shadow prerequisite
 
-Scrape `1264` does **not** clear the logical-shadow live-publication
-prerequisite. The disabled-writer candidate did not globally publish, so
+Scrapes `1264` and `1265` do **not** clear the logical-shadow live-publication
+prerequisite. Both disabled-writer candidates failed before global
+publication, so
 `leaderboard_current_entries*` and `leaderboard_entry_versions*` must not be
 truncated. The hashed decision is
 `parity/logical-shadow-retirement-live-gate.json` in the live A/B evidence
 root, SHA-256
-`75dc6c9ad8348199f447f9f4e549bb2b633c7e43f68338ea218fed3127e568b9`.
+`35723055c9439e2d75b4ba06e630d8c5bfc4a89aaa70c9ecced1e6fff3b4bc2f`.

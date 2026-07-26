@@ -32,6 +32,16 @@ evidence is:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T032124Z/parity/logical-shadow-retirement-live-gate.json`
 (`75dc6c9ad8348199f447f9f4e549bb2b633c7e43f68338ea218fed3127e568b9`).
 
+The capacity-ready retry ran scrape `1265` with logical writers still disabled.
+It completed `8,232/8,232` manifests, zero writer failures, and four
+publication-critical phases, but the safety monitor stopped ranking snapshots
+at `13,144,125,440` free bytes before global publication. Exact before/after
+fingerprints remained unchanged for all `39,820,273` current rows and
+`194,171,215` version rows. The gate remains `NOT_CLEARED`; no truncate ran.
+Latest hashed evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T110731Z/parity/logical-shadow-retirement-live-gate.json`
+(`35723055c9439e2d75b4ba06e630d8c5bfc4a89aaa70c9ecced1e6fff3b4bc2f`).
+
 ## Exact scope
 
 | Family | Parent | Leaf partitions | Rows | Bytes | Restore class |

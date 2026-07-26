@@ -1123,6 +1123,30 @@ move to PG-7 after backup/restore and live-scrape parity.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-song-projection-retirement-20260726T103231Z`.
 
+**SNAPSHOT-REUSE capacity-ready retry - rejected and reverted 2026-07-26**
+
+- Current-source image `fstservice:snapshot-reuse-efdd70b8`, auth persistence,
+  authenticated `25/25` direct/PIA parity, the canonical proxy guard, targeted
+  tests, and both start guards passed.
+- Scrape `1265` completed `8,232/8,232` manifests, zero writer failures, and
+  four publication-critical phases. It reused `273` scopes / `218,892` rows;
+  zero unchanged scope had candidate physical rows. Estimated savings were
+  `112,343,764` physical bytes and `160,525,751` WAL bytes.
+- Network/writer time was about `19,890 s`, `-14.4%` from `1264`. Band
+  maintenance completed `29,145/29,145` selected scopes with zero failures,
+  but took `5:16:46.669`. Ranking phases showed material variance while the
+  filesystem remained at 100% usage.
+- The 60-second monitor stopped ranking snapshots at `13,144,125,440` free
+  bytes, below the declared `14,571,150,203` floor. The run accumulated
+  `456,457,274,086` WAL bytes and `52,117,414,796` temp bytes before the stop.
+- Scrape `1265` was reconciled failed, owns zero published mappings, and did
+  not clear candidate-source API or logical-retirement publication parity.
+  Production images/config and the default-off flag were restored; all `13/13`
+  public fingerprints matched and published `1236` remains unfrozen.
+- Final free space is about `33.48 GB`; both measured scrape guards block and
+  the worker remains held. Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T110731Z`.
+
 ### PG-4.2 - Separate semantic score changes from derived rank changes
 
 The current logical version volume is 15.39M rows for one scrape. Evaluate
