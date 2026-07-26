@@ -8533,9 +8533,6 @@ public sealed class MetaDatabase : IMetaDatabase
         if (!TableExists(conn, null, tableName))
             return false;
 
-        if (!IsBandSongRankingTableFreshForCurrentRankings(conn, tableName, bandType))
-            return false;
-
         var quotedTable = BandRankingStorageNames.QuoteIdentifier(tableName);
 
         using (var scopeCmd = conn.CreateCommand())
@@ -8554,6 +8551,9 @@ public sealed class MetaDatabase : IMetaDatabase
             if (scopeCmd.ExecuteScalar() is not bool hasScopeRows || !hasScopeRows)
                 return false;
         }
+
+        if (!IsBandSongRankingTableFreshForCurrentRankings(conn, tableName, bandType))
+            return false;
 
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $@"
