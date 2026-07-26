@@ -8314,6 +8314,21 @@ public sealed class MetaDatabase : IMetaDatabase
         return GetBandSongPerformancesLive(bandType, teamKey, comboId);
     }
 
+    public BandSongPerformancesResult GetPublishedBandSongPerformances(
+        string bandType,
+        string teamKey,
+        string? comboId = null)
+    {
+        if (TryGetPublishedBandSongPerformances(bandType, teamKey, comboId, out var performances))
+            return new BandSongPerformancesResult(true, performances);
+
+        _log.LogWarning(
+            "Published band song projections are unavailable for band_type={BandType}, combo_id={ComboId}; public song-row read failed closed.",
+            bandType,
+            comboId ?? string.Empty);
+        return new BandSongPerformancesResult(false, []);
+    }
+
     private bool TryGetPublishedBandSongPerformances(
         string bandType,
         string teamKey,

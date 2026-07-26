@@ -284,10 +284,10 @@ When that projection is stale or disabled, extrema are derived from
 transaction as the global published scrape. Both public band-song endpoints
 return `503` while that generation differs from
 `band_current_projection_state.current_generation`, preventing an internally
-published projection from escaping before global publication. The extrema
-endpoint also returns `503` when no published projection exists instead of
-reading candidate `band_entries`; live current-state extrema require the
-explicit `BandSongPerformanceReadMode.CurrentState` selector.
+published projection from escaping before global publication. Both endpoints
+also return `503` when their published scope is unavailable instead of reading
+candidate `band_entries`; live current-state extrema require the explicit
+`BandSongPerformanceReadMode.CurrentState` selector.
 
 PG-1 does not enable physical snapshot write skipping or change max-page,
 deep-scrape, retry, or Epic request policy. WORKER-0A extends scope

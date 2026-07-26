@@ -5696,6 +5696,57 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task Rankings_BandSongRows_ReturnsUnavailableWhenPublishedProjectionIsMissing()
+    {
+        using var factory = _factory.WithWebHostBuilder(_ => { });
+        using var client = factory.CreateClient();
+        using var scope = factory.Services.CreateScope();
+        var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+        var persistence = new BandLeaderboardPersistence(
+            dataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+        persistence.UpsertBandEntries(
+            "missing_rows_projection_song",
+            "Band_Duets",
+            [CreateBandEntry("missing:rows:projection", "0:1", 999_999)]);
+
+        using (var conn = dataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                TRUNCATE TABLE
+                    band_song_team_rankings,
+                    band_song_team_rankings_current_band_duets,
+                    band_song_team_rankings_current_band_trios,
+                    band_song_team_rankings_current_band_quad;
+
+                INSERT INTO band_current_projection_state (id, current_generation, updated_at)
+                VALUES (TRUE, 4242, now())
+                ON CONFLICT (id) DO UPDATE SET
+                    current_generation = EXCLUDED.current_generation,
+                    updated_at = EXCLUDED.updated_at;
+
+                INSERT INTO scrape_publication_state (
+                    id, band_projection_generation, updated_at)
+                VALUES (TRUE, 4242, now())
+                ON CONFLICT (id) DO UPDATE SET
+                    band_projection_generation = EXCLUDED.band_projection_generation,
+                    updated_at = EXCLUDED.updated_at;
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        var response = await client.GetAsync(
+            "/api/rankings/bands/Band_Duets/missing%3Arows%3Aprojection/song-rows");
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
+        Assert.Equal("30", Assert.Single(response.Headers.GetValues("Retry-After")));
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("Published band song data unavailable", json.GetProperty("title").GetString());
+    }
+
+    [Fact]
     public async Task Rankings_BandSongs_FailedCandidateStaysExactAndSuccessfulPublishAdvancesAtomically()
     {
         using var factory = _factory.WithWebHostBuilder(_ => { });

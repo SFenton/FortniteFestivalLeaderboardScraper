@@ -996,15 +996,27 @@ public static partial class ApiEndpoints
                     statusCode: StatusCodes.Status503ServiceUnavailable);
             }
 
-            var entries = metaDb.GetBandSongPerformances(bandType, teamKey, comboValidation.ComboId);
+            var published = metaDb.GetPublishedBandSongPerformances(
+                bandType,
+                teamKey,
+                comboValidation.ComboId);
+            if (!published.IsAvailable)
+            {
+                httpContext.Response.Headers.CacheControl = "no-store";
+                httpContext.Response.Headers["Retry-After"] = "30";
+                return Results.Problem(
+                    title: "Published band song data unavailable",
+                    detail: "A stable published band song projection is not available for this request yet. Retry shortly.",
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
 
             return Results.Ok(new
             {
                 bandType,
                 teamKey,
                 comboId = comboValidation.ComboId,
-                count = entries.Count,
-                entries,
+                count = published.Entries.Count,
+                entries = published.Entries,
             });
         })
         .WithTags("Rankings")

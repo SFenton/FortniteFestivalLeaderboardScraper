@@ -896,6 +896,10 @@ public enum BandSongPerformanceReadMode
     CurrentState,
 }
 
+public sealed record BandSongPerformancesResult(
+    bool IsAvailable,
+    List<BandSongPerformanceDto> Entries);
+
 public sealed record BandSongPerformanceExtremesResult(
     bool IsAvailable,
     List<BandSongPerformanceDto> Best,
