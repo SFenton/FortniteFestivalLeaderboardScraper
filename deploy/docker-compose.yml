@@ -170,7 +170,10 @@ services:
       - Scraper__RegistrationBackfillMode=${REGISTRATION_BACKFILL_MODE:-ForegroundEpicExclusive}
       # ── Path generation (MIDI decryption key for CHOpt max score calculation) ──
       - Scraper__MidiEncryptionKey=${MIDI_ENCRYPTION_KEY:-}
-      # ── Feature flags (default: all OFF in production) ──
+      # ── Feature flags ──
+      - Features__WriteLegacyLiveLeaderboardSupplementalRows=${WRITE_LEGACY_LIVE_LEADERBOARD_SUPPLEMENTAL_ROWS:-true}
+      - Features__WriteSoloScoreObservations=${WRITE_SOLO_SCORE_OBSERVATIONS:-false}
+      - Features__WriteBandMemberScoreObservations=${WRITE_BAND_MEMBER_SCORE_OBSERVATIONS:-false}
       # Retired shadow writer; future enablement requires a migration/promotion code change.
       - Features__WriteLogicalLeaderboardVersions=false
       - Features__UseStoredSoloProjectionRanksForFilteredReads=${USE_STORED_SOLO_PROJECTION_RANKS_FOR_FILTERED_READS:-false}

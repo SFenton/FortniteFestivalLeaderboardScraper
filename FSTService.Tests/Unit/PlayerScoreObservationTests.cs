@@ -2,13 +2,18 @@ using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 
 namespace FSTService.Tests.Unit;
 
 public sealed class PlayerScoreObservationTests : IDisposable
 {
-    private readonly InMemoryMetaDatabase _fixture = new();
+    private readonly InMemoryMetaDatabase _fixture = new(new FeatureOptions
+    {
+        WriteSoloScoreObservations = true,
+        WriteBandMemberScoreObservations = true,
+    });
     private MetaDatabase Db => _fixture.Db;
 
     public void Dispose() => _fixture.Dispose();
@@ -97,7 +102,8 @@ public sealed class PlayerScoreObservationTests : IDisposable
     {
         var persistence = new BandLeaderboardPersistence(
             _fixture.DataSource,
-            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+            Substitute.For<ILogger<BandLeaderboardPersistence>>(),
+            Options.Create(new FeatureOptions { WriteBandMemberScoreObservations = true }));
 
         persistence.UpsertBandEntries("song-1", "Band_Duets", [new BandLeaderboardEntry
         {
@@ -183,9 +189,75 @@ public sealed class PlayerScoreObservationTests : IDisposable
         }
     }
 
+    [Fact]
+    public void DefaultFlags_KeepScoreHistoryButSkipSoloObservations()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var changes = Enumerable.Range(0, 21)
+            .Select(index => new ScoreChangeRecord
+            {
+                SongId = "song-1",
+                Instrument = "Solo_Guitar",
+                AccountId = $"acct-{index}",
+                NewScore = 100_000 + index,
+                NewRank = index + 1,
+                Season = 11,
+            })
+            .ToArray();
+
+        fixture.Db.InsertScoreChange(
+            "song-single", "Solo_Guitar", "acct-single",
+            oldScore: null, newScore: 123_456, oldRank: null, newRank: 1);
+        fixture.Db.InsertScoreChanges(changes);
+
+        using var connection = fixture.DataSource.OpenConnection();
+        Assert.Equal(22, ScalarInt(connection, "SELECT COUNT(*) FROM score_history"));
+        Assert.Equal(0, ScalarInt(connection, "SELECT COUNT(*) FROM player_score_observations"));
+    }
+
+    [Fact]
+    public void DefaultFlags_KeepBandFactsButSkipBandMemberObservations()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var persistence = new BandLeaderboardPersistence(
+            fixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+
+        persistence.UpsertBandEntries("song-1", "Band_Duets", [new BandLeaderboardEntry
+        {
+            TeamKey = "acct-1:acct-2",
+            TeamMembers = ["acct-1", "acct-2"],
+            InstrumentCombo = "0:1",
+            Score = 222_222,
+            Accuracy = 900_000,
+            IsFullCombo = false,
+            Stars = 5,
+            Difficulty = 3,
+            Season = 11,
+            Rank = 99,
+            Percentile = 0.34,
+            Source = "findteams",
+            MemberStats =
+            [
+                new BandMemberStats { MemberIndex = 0, AccountId = "acct-1", InstrumentId = 0, Score = 111_111 },
+                new BandMemberStats { MemberIndex = 1, AccountId = "acct-2", InstrumentId = 1, Score = 101_111 },
+            ],
+        }]);
+
+        using var connection = fixture.DataSource.OpenConnection();
+        Assert.Equal(1, ScalarInt(connection, "SELECT COUNT(*) FROM band_entries"));
+        Assert.Equal(2, ScalarInt(connection, "SELECT COUNT(*) FROM band_member_stats"));
+        Assert.Equal(0, ScalarInt(connection, "SELECT COUNT(*) FROM player_score_observations"));
+    }
+
     private int ScalarInt(string sql)
     {
         using var connection = _fixture.DataSource.OpenConnection();
+        return ScalarInt(connection, sql);
+    }
+
+    private static int ScalarInt(Npgsql.NpgsqlConnection connection, string sql)
+    {
         using var command = connection.CreateCommand();
         command.CommandText = sql;
         return Convert.ToInt32(command.ExecuteScalar());

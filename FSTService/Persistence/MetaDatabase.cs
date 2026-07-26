@@ -16,6 +16,7 @@ public sealed class MetaDatabase : IMetaDatabase
     private readonly NpgsqlDataSource _ds;
     private readonly ILogger<MetaDatabase> _log;
     private readonly BandRankHistoryOptions _bandRankHistoryOptions;
+    private readonly FeatureOptions _features;
     private readonly object _bandRankHistoryPollingSchemaLock = new();
     private bool _bandRankHistoryPollingSchemaEnsured;
 
@@ -28,15 +29,24 @@ public sealed class MetaDatabase : IMetaDatabase
     internal const string FailedCandidateReadIsolationReason = "failed-candidate";
     private const string LeaderboardStagingReadColumns = "scrape_id, song_id, instrument, page_num, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, staged_at";
 
-    public MetaDatabase(NpgsqlDataSource dataSource, ILogger<MetaDatabase> log, BandRankHistoryOptions? bandRankHistoryOptions = null)
+    public MetaDatabase(
+        NpgsqlDataSource dataSource,
+        ILogger<MetaDatabase> log,
+        BandRankHistoryOptions? bandRankHistoryOptions = null,
+        FeatureOptions? features = null)
     {
         _ds = dataSource;
         _log = log;
         _bandRankHistoryOptions = bandRankHistoryOptions ?? new BandRankHistoryOptions();
+        _features = features ?? new FeatureOptions();
     }
 
-    public MetaDatabase(NpgsqlDataSource dataSource, ILogger<MetaDatabase> log, IOptions<BandRankHistoryOptions> bandRankHistoryOptions)
-        : this(dataSource, log, bandRankHistoryOptions.Value)
+    public MetaDatabase(
+        NpgsqlDataSource dataSource,
+        ILogger<MetaDatabase> log,
+        IOptions<BandRankHistoryOptions> bandRankHistoryOptions,
+        IOptions<FeatureOptions> features)
+        : this(dataSource, log, bandRankHistoryOptions.Value, features.Value)
     {
     }
 
@@ -1110,10 +1120,13 @@ public sealed class MetaDatabase : IMetaDatabase
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         cmd.ExecuteNonQuery();
 
-        UpsertSoloScoreObservation(
-            conn, tx,
-            songId, instrument, accountId, newScore, accuracy, isFullCombo, stars,
-            percentile, season, parsedScoreAchievedAt, newRank, seasonRank, allTimeRank, difficulty);
+        if (_features.WriteSoloScoreObservations)
+        {
+            UpsertSoloScoreObservation(
+                conn, tx,
+                songId, instrument, accountId, newScore, accuracy, isFullCombo, stars,
+                percentile, season, parsedScoreAchievedAt, newRank, seasonRank, allTimeRank, difficulty);
+        }
 
         tx.Commit();
     }
@@ -1228,7 +1241,8 @@ public sealed class MetaDatabase : IMetaDatabase
                     """;
                 inserted = c.ExecuteNonQuery();
             }
-            UpsertSoloScoreObservationsFromStaging(conn, tx, "_sh_staging");
+            if (_features.WriteSoloScoreObservations)
+                UpsertSoloScoreObservationsFromStaging(conn, tx, "_sh_staging");
             tx.Commit();
             return inserted;
         }
@@ -1281,8 +1295,11 @@ public sealed class MetaDatabase : IMetaDatabase
             pNow.Value = now;
             loopInserted += cmd.ExecuteNonQuery();
         }
-        CreateScoreObservationStaging(conn, tx, changes, now);
-        UpsertSoloScoreObservationsFromStaging(conn, tx, "_pso_solo_staging");
+        if (_features.WriteSoloScoreObservations)
+        {
+            CreateScoreObservationStaging(conn, tx, changes, now);
+            UpsertSoloScoreObservationsFromStaging(conn, tx, "_pso_solo_staging");
+        }
         tx.Commit();
         return loopInserted;
     }

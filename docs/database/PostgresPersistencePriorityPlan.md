@@ -68,6 +68,15 @@ This plan records the approved direction for improving FST Postgres persistence 
   `1,203` reusable scopes, `3,371,702` rows, and `753,396,603` bytes avoided.
   Capacity and the `25/25` PIA guard pass, but Epic refresh failed with
   `invalid_refresh_token`; no deploy, worker start, scrape, or flag change ran.
+- STORAGE-OWNERSHIP completed continuous-safe P6/P8/P9 owner cards and exact
+  manifests for `player_score_observations`, `scrape_dirty_*`, and legacy
+  `leaderboard_entries_*`: `61,217,292,288` bytes total. Observation dual
+  writers are default-off in candidate code/config; dirty tables have no
+  current caller; legacy supplemental writes remain enabled because
+  publication-critical `PostScrapeBandExtractor` still reads the legacy
+  table. No production data/index/schema/config mutation or worker start ran.
+  The final observation guard measured `52,103,634,944` free bytes after temp
+  files/WAL aged out, with database size unchanged.
 - Public band-history team/date indexes remain because live plans proved their
   route ownership. Composite retention now uses BRIN cutoff rejection plus the
   primary key for account/date probes.
@@ -195,6 +204,9 @@ path, and post-action validation are documented.
 | Band rank-history retention policy draft | Complete | Semantics-first v2 retention options and parity gates documented on 2026-07-06. |
 | `band_read_*` quarantine parity package | Complete | Reversible, live-scrape A/B parity-gated quarantine package documented on 2026-07-06; no DDL executed. |
 | Phase 8 physical snapshot write skipping | Code/readiness accepted / live A/B auth-blocked | `SkipUnchangedPhysicalLeaderboardSnapshots` remains rollback-safe and default-off. It now requires strict manifests/published mappings, supports `OnlineBounded`, verifies current/published content, coverage compatibility, row count, and physical existence, and pins only to the published source. Exact estimate: `1,203` scopes / `3,371,702` rows / `753,396,603` bytes avoided. Stored Epic refresh is invalid, so no deploy/scrape occurred. |
+| P6 player-score observation ownership | Code/readiness accepted / truncate blocked | `11,686,199,296` bytes and `9,480,671` rows. No production reader; solo and band-member writers now have independent default-off flags. Full live writer-off publication parity is still required. |
+| P8 stale dirty-work ownership | Readiness accepted / truncate blocked | Four tables total `8,706,752,512` bytes and `19,836,661` rows only from scrapes `926`-`1146`. No current repo/database/runtime writer; checksum-guarded exact truncate package is ready. |
+| P9 legacy mutable leaderboard ownership | Mixed / reader migration blocked | Nine partitions total `40,824,340,480` bytes and `36,768,081` rows. Main scrape writer is off and mapped public reads bypass legacy, but supplemental dual writers and publication-critical band extraction remain owners. |
 | Rank/temp spill write-mode reduction | Accepted config/code default | Switched band team ranking rebuild default from `Monolithic` to `ComboBatched` to reduce one-shot build-table insert pressure; all write modes already have parity coverage. |
 | Optional band-song projection pressure gate | Complete | Defaulted optional band-song projection rebuilds to disabled and made current projection reads fall back when stale relative to current band rankings. |
 | P7 bloat readiness probe | Complete | Repaired stale candidate table stats with bounded `ANALYZE` and refreshed read-only size/dead-tuple estimates; destructive/rewrite maintenance remains blocked by headroom and parity gates. |
@@ -225,6 +237,30 @@ ranking/history/publication fingerprints pass.
 
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/logical-retire-20260725T2306Z`.
+
+## STORAGE-OWNERSHIP P6/P8/P9 decision package (2026-07-26)
+
+| Surface | Rows | Bytes | Code/runtime ownership | Rebuild/rollback | Decision |
+|---|---:|---:|---|---|---|
+| `player_score_observations` | `9,480,671` | `11,686,199,296` | Two dual writers; no production reader/export owner | Solo semantics from `score_history`; current band baseline from band facts; exact schema retained | Default-off writer code accepted; truncate/drop blocked on one complete writer-off live publication |
+| `scrape_dirty_*` | `19,836,661` | `8,706,752,512` | No current repository caller, DB dependency, external tool, or writer since 2026-07-07 stats reset | Work state is intentionally discardable; schema/checksum manifest retained | Exact truncate package accepted; execution blocked on successful current-code scrape/parity |
+| `leaderboard_entries_*` | `36,768,081` | `40,824,340,480` | Main scrape writer off; supplemental writer active; mapped public reads bypass; band extraction still reads legacy | Rebuild correct published baseline from scope map + physical snapshots; overlays remain separate | Do not disable supplemental writer or truncate until reader migration and full live A/B |
+
+The published map owns `39,588,650` rows, `2,820,569` more than the legacy
+table. All 27 bounded legacy-vs-published scope samples differed in count and
+checksum, so current legacy rows are not a byte-exact published rollback copy.
+An attempted exact all-row join was rejected after its read-only plan spilled
+temp and hit the capacity ceiling; public health recovered with no locks, and
+bounded indexed proof replaced it.
+
+Read-only recapture and exact future SQL:
+
+- `tools/postgres-storage-ownership-readiness.sh`
+- `tools/sql/postgres-storage-readiness/`
+- `docs/database/StorageOwnershipReadinessRunbook.md`
+
+Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/storage-ownership-20260726T013551Z`.
 
 ## SOLO-DYNAMIC-AB decision package (2026-07-25)
 

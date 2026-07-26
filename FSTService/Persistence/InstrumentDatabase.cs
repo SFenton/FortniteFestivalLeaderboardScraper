@@ -43,6 +43,12 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     /// </summary>
     public bool UseStoredProjectionRanksForFilteredReads { get; set; }
 
+    /// <summary>
+    /// When true, supplemental backfill, refresh, and neighbor writes continue
+    /// to maintain leaderboard_entries in addition to leaderboard_entries_overlay.
+    /// </summary>
+    public bool WriteLegacyLiveLeaderboardSupplementalRows { get; set; } = true;
+
     /// <summary>Exposes the data source for batched writer transactions.</summary>
     internal NpgsqlDataSource DataSource => _ds;
 
@@ -434,6 +440,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public int UpsertEntries(string songId, IReadOnlyList<LeaderboardEntry> entries)
     {
         if (entries.Count == 0) return 0;
+        if (ShouldWriteOverlayOnly(entries))
+            return UpsertOverlayEntriesOnly(songId, entries);
+
         return entries.Count > BulkThreshold
             ? UpsertEntriesBulk(songId, entries)
             : UpsertEntriesLoop(songId, entries);
@@ -448,9 +457,55 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                              NpgsqlConnection conn, NpgsqlTransaction tx)
     {
         if (entries.Count == 0) return 0;
+        if (ShouldWriteOverlayOnly(entries))
+            return UpsertOverlayEntriesOnly(songId, entries, conn, tx);
+
         return entries.Count > BulkThreshold
             ? UpsertEntriesBulk(songId, entries, conn, tx)
             : UpsertEntriesLoop(songId, entries, conn, tx);
+    }
+
+    private int UpsertOverlayEntriesOnly(string songId, IReadOnlyList<LeaderboardEntry> entries)
+    {
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        var affected = UpsertOverlayEntriesOnly(songId, entries, conn, tx);
+        tx.Commit();
+        return affected;
+    }
+
+    private bool ShouldWriteOverlayOnly(IReadOnlyList<LeaderboardEntry> entries)
+    {
+        if (WriteLegacyLiveLeaderboardSupplementalRows
+            || entries.Any(static entry => IsScrapeSource(entry.Source)))
+        {
+            return false;
+        }
+
+        var unsupportedSource = entries
+            .Select(static entry => entry.Source)
+            .FirstOrDefault(static source => !TryGetOverlayMetadata(source, out _, out _));
+        if (unsupportedSource is not null)
+        {
+            throw new InvalidOperationException(
+                $"Cannot disable legacy supplemental writes for unsupported source '{unsupportedSource}'.");
+        }
+
+        return true;
+    }
+
+    private int UpsertOverlayEntriesOnly(
+        string songId,
+        IReadOnlyList<LeaderboardEntry> entries,
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx)
+    {
+        var now = DateTime.UtcNow;
+        var affected = SyncOverlayEntries(songId, entries, now, conn, tx);
+        var maxObservedSeason = GetMaxObservedSeason(entries);
+        if (maxObservedSeason.HasValue)
+            UpsertInstrumentScrapeState(conn, tx, maxObservedSeason.Value);
+        return affected;
     }
 
     /// <summary>
@@ -2588,7 +2643,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     // ── Private helpers ──────────────────────────────────────────────
 
-    private void SyncOverlayEntries(
+    private int SyncOverlayEntries(
         string songId,
         IReadOnlyList<LeaderboardEntry> entries,
         DateTime now,
@@ -2621,11 +2676,14 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             }
         }
 
+        var affected = 0;
         if (scrapeAccountIds.Count > 0)
-            DeleteOverlayEntries(conn, tx, songId, scrapeAccountIds);
+            affected += DeleteOverlayEntries(conn, tx, songId, scrapeAccountIds);
 
         if (overlayRowsByAccount.Count > 0)
-            UpsertOverlayEntries(conn, tx, overlayRowsByAccount.Values);
+            affected += UpsertOverlayEntries(conn, tx, overlayRowsByAccount.Values);
+
+        return affected;
     }
 
     private static bool IsScrapeSource(string? source) =>
@@ -2690,7 +2748,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         }
     }
 
-    private void DeleteOverlayEntries(
+    private int DeleteOverlayEntries(
         NpgsqlConnection conn,
         NpgsqlTransaction tx,
         string songId,
@@ -2702,10 +2760,10 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         cmd.Parameters.AddWithValue("songId", songId);
         cmd.Parameters.AddWithValue("instrument", Instrument);
         cmd.Parameters.AddWithValue("accountIds", accountIds.ToArray());
-        cmd.ExecuteNonQuery();
+        return cmd.ExecuteNonQuery();
     }
 
-    private static void UpsertOverlayEntries(
+    private static int UpsertOverlayEntries(
         NpgsqlConnection conn,
         NpgsqlTransaction tx,
         IEnumerable<LeaderboardOverlayWriteRow> rows)
@@ -2766,6 +2824,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         cmd.Parameters.Add("overlayReason", NpgsqlDbType.Text);
         cmd.Prepare();
 
+        var affected = 0;
         foreach (var row in rows)
         {
             cmd.Parameters["songId"].Value = row.SongId;
@@ -2792,8 +2851,10 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             cmd.Parameters["lastUpdatedAt"].Value = row.LastUpdatedAt;
             cmd.Parameters["sourcePriority"].Value = row.SourcePriority;
             cmd.Parameters["overlayReason"].Value = row.OverlayReason;
-            cmd.ExecuteNonQuery();
+            affected += cmd.ExecuteNonQuery();
         }
+
+        return affected;
     }
 
     private (List<LeaderboardEntryDto> Entries, int TotalCount) GetCurrentStateLeaderboardCore(

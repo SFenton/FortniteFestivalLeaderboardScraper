@@ -3,7 +3,7 @@
 **Authoritative runtime:** PostgreSQL 17 in `fst-postgres`  
 **Production compose owner:** `/home/sfenton/Docker/FestivalServiceTracker`  
 **Production data root:** `/mnt/docker-storage/Docker/FestivalServiceTracker/pg-data`  
-**Last live inventory:** 2026-07-25 16:32 UTC
+**Last live inventory:** 2026-07-26 01:35 UTC
 
 This document defines FST PostgreSQL ownership, source-of-truth boundaries,
 publication behavior, retention, index posture, and restore paths. PostgreSQL
@@ -80,11 +80,12 @@ limits.
 | `band_member_stats` | 59.79 GB |
 | Solo published/current projection partitions | 45.18 GB |
 | `band_members` | 44.55 GB |
-| Legacy mutable solo leaderboard partitions | 40.82 GB |
+| Legacy mutable solo leaderboard partitions | 40.824 GB |
 | Logical current partitions | 27.30 GB |
 | Band source-entry partitions | 25.37 GB |
 | Band rank-history v2 latest partitions | 18.80 GB |
-| `player_score_observations` | 11.69 GB |
+| `player_score_observations` | 11.686 GB |
+| `scrape_dirty_*` | 8.707 GB |
 
 The PG-1 decision sample had `247.2GB` free on `/mnt/docker-storage`, published
 scrape `1230`, public reads unfrozen, `6,129` complete published-source rows,
@@ -234,7 +235,7 @@ All instrument-partitioned families use these nine keys:
 | Tables | Class | Write path | Read path / semantics |
 |---|---|---|---|
 | `leaderboard_staging`, `leaderboard_staging_meta`, `leaderboard_staging_v2` | Work state | Bounded/COPY writer | Never public; truncate/replay only after operation proof |
-| `leaderboard_entries` | Legacy mutable durable rollback source | Optional scrape dual-write | Legacy fallback only; not the preferred published model |
+| `leaderboard_entries` | Legacy mutable rollback/fallback source | Main scrape dual-write is disabled; backfill/refresh/neighbor writes still dual-write with overlays | Public mapped reads bypass it, but publication-critical `PostScrapeBandExtractor` and direct legacy helpers still own it |
 | `leaderboard_entries_snapshot` partitions | Durable physical source | Worker snapshot writer | Worker candidate reads use active state; service/exports use the mapped published snapshot after PG-1 cutover |
 | `leaderboard_snapshot_state` | Source-selection metadata | Worker finalization | Active source, not automatically a published source |
 | `leaderboard_scope_fingerprints` | Correctness/audit metadata | Worker observe/coverage dual-write | Content, reported entries/pages, completeness, source scrape, and published scrape must validate before publication |
@@ -355,7 +356,7 @@ and retained old-table rollback; bounded unlogged samples are evaluation-only.
 | Tables | Class | Owner/callers | Retention |
 |---|---|---|---|
 | `score_history` | Durable user-visible history | `MetaDatabase`, player/ranking services | Preserve score/rank/season/timestamp semantics; nullable-time uniqueness repair is PG-3/PG-7 |
-| `player_score_observations` | Durable candidate/duplicate observation owner | Band and metadata writers; no confirmed production reader in the audit window | Ownership decision required before archive/drop |
+| `player_score_observations` | Non-authoritative duplicate/audit observation surface | Solo-history and band-member writers are independently default-off behind rollback flags; no production reader | Truncate only after a complete writer-off scrape publishes and API/export/ranking/history parity passes |
 | `player_stats`, `player_stats_tiers` | Derived projection | Player stats calculator/API | Rebuildable for a published generation |
 | `account_rankings`, `account_ranking_stats` | Derived ranking projection | Rankings pipeline | Rebuildable; generation/source must remain auditable |
 | `rank_history` partitions, `rank_history_latest`, `rank_history_snapshot_stats`, `rank_history_tracked_accounts` | Durable user-visible history plus latest projection | Ranking/history pipeline and API | Append only on meaningful change after PG-5 redesign |
@@ -419,6 +420,13 @@ partial result.
 `notification_cleanup_audit_20260509` are work/audit surfaces. They must have a
 named owner and bounded retention before cleanup. Zero current rows or zero
 `pg_stat` scans is not sufficient evidence for deletion.
+
+The 2026-07-26 storage-owner manifest proved the four `scrape_dirty_*` tables
+contain `19,836,661` rows only from scrapes `926`-`1146`, occupy
+`8,706,752,512` bytes, have no current repository caller or database
+dependency, and have recorded no writer since the 2026-07-07
+`pg_stat_statements` reset. Their exact checksum-guarded truncate package
+remains live-scrape parity-gated.
 
 ## Index and partition policy
 
@@ -584,6 +592,12 @@ the measured formula. The bounded drill is accepted evidence, not a waiver.
 | Work queues/staging | Replay retained spool/outbox/claims or discard only the exact failed operation |
 | Index experiment | Recreate exact captured DDL and verify owning query/route |
 | Feature-flag candidate | Revert config/image/commit while retaining diagnostic dual-write data when safe |
+
+The P6/P8/P9 owner cards, manifests, rebuild limitations, and exact
+truncate/drop sequence are in
+`docs/database/StorageOwnershipReadinessRunbook.md`. Read-only recapture uses
+`tools/postgres-storage-ownership-readiness.sh`; the generated packages have no
+apply mode and all destructive SQL fails closed on an explicit session GUC.
 
 ### Retired logical leaderboard shadow
 

@@ -14,11 +14,11 @@ public sealed class InMemoryMetaDatabase : IDisposable
     private readonly NpgsqlDataSource _ds;
     public MetaDatabase Db { get; }
 
-    public InMemoryMetaDatabase()
+    public InMemoryMetaDatabase(FeatureOptions? features = null)
     {
         _ds = SharedPostgresContainer.CreateDatabase();
         var logger = Substitute.For<ILogger<MetaDatabase>>();
-        Db = new MetaDatabase(_ds, logger);
+        Db = new MetaDatabase(_ds, logger, features: features);
     }
 
     /// <summary>The underlying NpgsqlDataSource (for tests that need direct PG access).</summary>

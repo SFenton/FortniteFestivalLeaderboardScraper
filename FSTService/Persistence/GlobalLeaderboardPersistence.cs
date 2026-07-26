@@ -152,6 +152,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 UseTiers = _features.UseRankingDeltaTiers,
                 UsePublishedScopeSources = UsePublishedScopeSources,
                 UseStoredProjectionRanksForFilteredReads = _features.UseStoredSoloProjectionRanksForFilteredReads,
+                WriteLegacyLiveLeaderboardSupplementalRows = _features.WriteLegacyLiveLeaderboardSupplementalRows,
             };
             _instrumentDbs[instrument] = db;
             _log.LogDebug("Opened PG instrument DB: {Instrument}", instrument);
@@ -251,6 +252,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             UseTiers = _features.UseRankingDeltaTiers,
             UsePublishedScopeSources = UsePublishedScopeSources,
             UseStoredProjectionRanksForFilteredReads = _features.UseStoredSoloProjectionRanksForFilteredReads,
+            WriteLegacyLiveLeaderboardSupplementalRows = _features.WriteLegacyLiveLeaderboardSupplementalRows,
         };
 
         _instrumentDbs[instrument] = db;

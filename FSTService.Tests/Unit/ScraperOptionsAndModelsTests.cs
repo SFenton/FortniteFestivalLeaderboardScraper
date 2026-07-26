@@ -105,6 +105,10 @@ public class ScraperOptionsAndModelsTests
         Assert.True(opts.Compete);
         Assert.False(opts.ExperimentalRanks);
         Assert.False(opts.AppManual);
+        Assert.True(opts.WriteLegacyLiveLeaderboardDuringScrape);
+        Assert.True(opts.WriteLegacyLiveLeaderboardSupplementalRows);
+        Assert.False(opts.WriteSoloScoreObservations);
+        Assert.False(opts.WriteBandMemberScoreObservations);
         Assert.False(opts.SkipUnchangedPhysicalLeaderboardSnapshots);
         Assert.False(opts.WritePublishedScopeSources);
         Assert.False(opts.UsePublishedScopeSources);

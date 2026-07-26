@@ -873,9 +873,9 @@ public static class DatabaseInitializer
         CREATE UNIQUE INDEX IF NOT EXISTS ux_pso_source
             ON player_score_observations (account_id, song_id, instrument, source_kind, source_id);
 
-        -- The observation table has no production reader. Its three retired
-        -- lookup indexes remain available as exact rollback DDL, while the
-        -- unique source index continues to own write idempotency.
+        -- The observation table has no production reader. Solo-history and
+        -- band-member writers are independently feature-gated and default off.
+        -- The unique source index remains available for rollback idempotency.
 
         CREATE OR REPLACE VIEW player_score_observation_union AS
         SELECT

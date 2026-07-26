@@ -107,7 +107,10 @@ services:
       - BandTeamRankings__WriteMode=${BAND_TEAM_RANKINGS_WRITE_MODE:-ComboBatched}
       # Optional band-song projection rebuild is expensive and has live/current fallbacks.
       - BandTeamRankings__RebuildBandSongTeamRankings=${BAND_TEAM_RANKINGS_REBUILD_BAND_SONG_TEAM_RANKINGS:-false}
-      # ── Feature flags (default: all OFF in production) ──
+      # ── Feature flags ──
+      - Features__WriteLegacyLiveLeaderboardSupplementalRows=${WRITE_LEGACY_LIVE_LEADERBOARD_SUPPLEMENTAL_ROWS:-true}
+      - Features__WriteSoloScoreObservations=${WRITE_SOLO_SCORE_OBSERVATIONS:-false}
+      - Features__WriteBandMemberScoreObservations=${WRITE_BAND_MEMBER_SCORE_OBSERVATIONS:-false}
       # Retired shadow writer; future enablement requires a migration/promotion code change.
       - Features__WriteLogicalLeaderboardVersions=false
       - Features__UseStoredSoloProjectionRanksForFilteredReads=${USE_STORED_SOLO_PROJECTION_RANKS_FOR_FILTERED_READS:-false}

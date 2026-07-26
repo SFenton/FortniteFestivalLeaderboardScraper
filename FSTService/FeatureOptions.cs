@@ -52,6 +52,26 @@ public sealed class FeatureOptions
     public bool WriteLegacyLiveLeaderboardDuringScrape { get; set; } = true;
 
     /// <summary>
+    /// When true, backfill, refresh, and neighbor writes continue to dual-write
+    /// the legacy mutable leaderboard_entries table in addition to the
+    /// authoritative overlay. Keep enabled until legacy-only worker readers,
+    /// including band extraction, are migrated and pass a full scrape A/B.
+    /// </summary>
+    public bool WriteLegacyLiveLeaderboardSupplementalRows { get; set; } = true;
+
+    /// <summary>
+    /// When true, durable score_history writes also maintain the non-authoritative
+    /// solo-history rows in player_score_observations.
+    /// </summary>
+    public bool WriteSoloScoreObservations { get; set; }
+
+    /// <summary>
+    /// When true, band member fact writes also maintain the non-authoritative
+    /// band-member rows in player_score_observations.
+    /// </summary>
+    public bool WriteBandMemberScoreObservations { get; set; }
+
+    /// <summary>
     /// When true, scrape flushes compute observe-only per-song/instrument content
     /// fingerprints so future work can skip unchanged physical snapshot writes.
     /// Existing snapshot/current-state behavior remains authoritative.

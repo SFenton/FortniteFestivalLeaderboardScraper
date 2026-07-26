@@ -237,6 +237,58 @@ public sealed class InstrumentDatabaseTests : IDisposable
         Assert.True(result.ContainsKey("acct_1"));
     }
 
+    [Fact]
+    public void SupplementalWrites_CanSkipLegacyRowsAndKeepOverlayForBothTransactionPaths()
+    {
+        Db.WriteLegacyLiveLeaderboardSupplementalRows = false;
+        var directEntry = MakeEntry("acct-direct", 100_000);
+        directEntry.Source = "backfill";
+        var transactionEntry = MakeEntry("acct-transaction", 110_000);
+        transactionEntry.Source = "refresh";
+        var scrapeEntry = MakeEntry("acct-scrape", 120_000);
+
+        Assert.Equal(1, Db.UpsertEntries("song-direct", [directEntry]));
+        using (var connection = _fixture.DataSource.OpenConnection())
+        using (var transaction = connection.BeginTransaction())
+        {
+            Assert.Equal(1, Db.UpsertEntries("song-transaction", [transactionEntry], connection, transaction));
+            transaction.Commit();
+        }
+        Assert.Equal(1, Db.UpsertEntries("song-scrape", [scrapeEntry]));
+
+        using (var connection = _fixture.DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                SELECT
+                    (SELECT COUNT(*) FROM leaderboard_entries),
+                    (SELECT COUNT(*) FROM leaderboard_entries_overlay)
+                """;
+            using var reader = command.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.Equal(1L, reader.GetInt64(0));
+            Assert.Equal(2L, reader.GetInt64(1));
+        }
+
+        Assert.Equal("acct-direct", Assert.Single(Db.GetCurrentStateLeaderboard("song-direct")).AccountId);
+        Assert.Equal("acct-transaction", Assert.Single(Db.GetCurrentStateLeaderboard("song-transaction")).AccountId);
+        Assert.Equal("acct-scrape", Assert.Single(Db.GetCurrentStateLeaderboard("song-scrape")).AccountId);
+    }
+
+    [Fact]
+    public void SupplementalWrites_FailClosedForUnsupportedOverlaySource()
+    {
+        Db.WriteLegacyLiveLeaderboardSupplementalRows = false;
+        var entry = MakeEntry("acct-unsupported", 100_000);
+        entry.Source = "unknown-source";
+
+        Action action = () => Db.UpsertEntries("song-unsupported", [entry]);
+
+        var exception = Assert.Throws<InvalidOperationException>(action);
+        Assert.Contains("unknown-source", exception.Message);
+        Assert.Null(Db.GetEntry("song-unsupported", "acct-unsupported"));
+    }
+
     // ═══ GetLeaderboard ═════════════════════════════════════════
 
     [Fact]

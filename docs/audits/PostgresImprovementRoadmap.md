@@ -579,6 +579,21 @@ Confirm exports/external tools and produce an owner decision:
 
 PG-3 performs no table-row deletion or table drop.
 
+**2026-07-26 decision:** ownership/code readiness accepted; maintenance
+blocked. The exact table is `11,686,199,296` bytes and contains `9,480,671`
+rows: `9,251,686` (`97.58%`) `band-member` and `228,985` `solo-history`.
+Repository, database-dependency, export, and production-tool audits found no
+production reader; the only view is test-owned
+`player_score_observation_union`. All solo observations have a semantic
+`score_history` match. Historical band observations are not fully
+reconstructable from mutable current band facts.
+
+`WriteSoloScoreObservations` and `WriteBandMemberScoreObservations` now provide
+independent default-off rollback switches in candidate code/config. No deploy
+or data mutation occurred. A complete writer-off live scrape must publish and
+pass API/export/ranking/history parity before the checksum-manifested truncate
+package may run.
+
 ### PG-3.3 - Resolve overlapping band member facts
 
 `band_member_stats` and `band_members` together use about 97 GB, before
@@ -1155,6 +1170,9 @@ Do not blindly increase buffers. Measure:
 1. Drop only proven unused secondary indexes, one at a time.
 2. Execute the approved `player_score_observations` ownership migration,
    including archive/drop only after its manifest and parity gate.
+   The 2026-07-26 package prefers truncate before drop, preserves exact schema
+   DDL, rebuilds solo rows from `score_history`, and can rebuild only a current
+   band baseline rather than discarded historical band observations.
 3. Archive/prune exact snapshot/history ranges.
 4. Prefer partition-level or streaming low-scratch operations.
 5. Use `pg_repack` only when the FST drive has enough scratch for the exact
@@ -1166,6 +1184,13 @@ Do not blindly increase buffers. Measure:
 
 The largest snapshot/history tables cannot currently be safely repacked with
 only 275 GB free. Repack is blocked until low-scratch reclaim creates headroom.
+
+The same 2026-07-26 owner phase added checksum-guarded future packages for
+`8,706,752,512` bytes of stale `scrape_dirty_*` work state and
+`40,824,340,480` bytes of legacy `leaderboard_entries_*`. Dirty cleanup is
+blocked only on a successful current-code scrape/parity window. Legacy cleanup
+also requires migration of publication-critical `PostScrapeBandExtractor` and
+all direct legacy helpers before supplemental dual writes can be disabled.
 
 ## Projected outcomes
 

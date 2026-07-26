@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Threading.Channels;
 using FSTService.Scraping;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using NpgsqlTypes;
 
@@ -15,6 +16,7 @@ public sealed class BandLeaderboardPersistence
 {
     private readonly NpgsqlDataSource _dataSource;
     private readonly ILogger<BandLeaderboardPersistence> _log;
+    private readonly FeatureOptions _features;
 
     internal const string BandTeamMembershipTable = "band_team_membership";
     internal const string BandTeamMembershipStateTable = "band_team_membership_state";
@@ -23,10 +25,16 @@ public sealed class BandLeaderboardPersistence
     /// <summary>Exposes the data source for batched spool consumer transactions.</summary>
     internal NpgsqlDataSource DataSource => _dataSource;
 
-    public BandLeaderboardPersistence(NpgsqlDataSource dataSource, ILogger<BandLeaderboardPersistence> log)
+    internal bool WriteBandMemberScoreObservations => _features.WriteBandMemberScoreObservations;
+
+    public BandLeaderboardPersistence(
+        NpgsqlDataSource dataSource,
+        ILogger<BandLeaderboardPersistence> log,
+        IOptions<FeatureOptions>? features = null)
     {
         _dataSource = dataSource;
         _log = log;
+        _features = features?.Value ?? new FeatureOptions();
     }
 
     // ─── Per-band-type bounded channels for async batched writes ──────
@@ -310,7 +318,8 @@ public sealed class BandLeaderboardPersistence
                     cmd.ExecuteNonQuery();
                 }
 
-                UpsertBandMemberObservationsFromStaging(conn, tx, "_be_staging", "_bms_staging");
+                if (WriteBandMemberScoreObservations)
+                    UpsertBandMemberObservationsFromStaging(conn, tx, "_be_staging", "_bms_staging");
             }
 
             // ── 4. COPY band_members (denormalized lookup) ──
@@ -668,7 +677,8 @@ public sealed class BandLeaderboardPersistence
                 memberStatsCount = cmd.ExecuteNonQuery();
             }
 
-            UpsertBandMemberObservationsFromStaging(conn, tx, "_be_staging", "_bms_staging");
+            if (WriteBandMemberScoreObservations)
+                UpsertBandMemberObservationsFromStaging(conn, tx, "_be_staging", "_bms_staging");
 
             using (var cmd = conn.CreateCommand()) { cmd.Transaction = tx; cmd.CommandText = "DROP TABLE IF EXISTS _bms_staging"; cmd.ExecuteNonQuery(); }
         }
