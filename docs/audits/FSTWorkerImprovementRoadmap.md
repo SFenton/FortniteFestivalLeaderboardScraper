@@ -630,6 +630,27 @@ until replay and live shadow parity pass.
   Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T032124Z`.
 
+**BAND-SONG-PROJECTION capacity recovery - accepted; worker remains held
+2026-07-26**
+
+- Retired only the stale optional `band_song_team_rankings*` data after exact
+  ownership, live fallback/fail-closed parity, rollback, archive, and rebuild
+  proof. The transaction reclaimed `28,315,533,312` database bytes while
+  retaining schema, indexes, state, and an exact same-drive data archive.
+- Final free space is about `58.97 GB`. The measured baseline scrape guard now
+  has `13,822,787,584` bytes of margin and the SNAPSHOT-REUSE estimate has
+  `14,576,143,227` bytes. The generic seven-day capacity alert remains.
+- `fstservice` now runs `fstservice:band-song-retire-3ac2a7c9`; service, web,
+  Postgres, `/readyz`, shell, and `/api/service-info` are healthy. All `24/24`
+  representative band route bodies/statuses remained exact after truncate.
+- `fstworker` remains `created` on
+  `fstservice:worker0a-recovery-21bd5f56`, restart `no`. It was not started.
+  The next SNAPSHOT-REUSE attempt must build a current-source worker image,
+  rerun auth, `25/25` proxy, capacity, and full-public-path guards, then run
+  the single parent-owned candidate window.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-song-projection-retirement-20260726T103231Z`.
+
 ### WORKER-0.5 - Separate solo and band completion
 
 A band timeout must not mark `LeaderboardScrapeCompleted=true`. A task still

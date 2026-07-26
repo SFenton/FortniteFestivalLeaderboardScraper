@@ -7,7 +7,7 @@ This plan records the approved direction for improving FST Postgres persistence 
 - Production compose ownership: `/home/sfenton/Docker/FestivalServiceTracker`.
 - `fstservice`, `festivalweb`, and `fst-postgres` are healthy.
   `fstservice` runs
-  `fstservice:failed-candidate-isolation-633e7583`. `fstworker` remains held
+  `fstservice:band-song-retire-3ac2a7c9`. `fstworker` remains held
   on `fstservice:worker0a-recovery-21bd5f56` with run-once scheduling and
   restart disabled.
 - Scrape `1236` published `6,138` complete scopes and `39,588,650` rows with
@@ -83,6 +83,15 @@ This plan records the approved direction for improving FST Postgres persistence 
   table. No production data/index/schema/config mutation or worker start ran.
   The final observation guard measured `52,103,634,944` free bytes after temp
   files/WAL aged out, with database size unchanged.
+- BAND-SONG-PROJECTION retired only the stale optional
+  `band_song_team_rankings*` data after proving successful scrape `1236`
+  published with rebuilds skipped, live `/songs` versus `/song-rows` parity,
+  failed-candidate isolation, exact archive restore, and two rolled-back
+  production truncates. Four tables lost `36,747,099` rows and exactly
+  `28,315,533,312` database bytes while their schemas, nine indexes, TOAST
+  relations, and three `band_song_team_ranking_state` rows were retained.
+  Final free space is about `58.97 GB`; both measured scrape guards now pass.
+  The worker was not started.
 - Public band-history team/date indexes remain because live plans proved their
   route ownership. Composite retention now uses BRIN cutoff rejection plus the
   primary key for account/date probes.
@@ -173,14 +182,18 @@ manifests and writers completed, but the post-writer guard found only
 requirement and `44,394,828,933` candidate estimate. The guard rejected both
 paths and stopped scrape `1264` before rankings/publication.
 
-Final free space is `32,725,393,408` bytes. The baseline scrape guard is short
-`12,422,832,128` bytes and the candidate estimate is short
-`11,669,435,525` bytes. `fstworker` is recreated but held on
-`fstservice:worker0a-recovery-21bd5f56` with restart `no`; do not start that
-older image. Any future worker candidate must use current source built with
-`FSTService/Dockerfile`, pass the `25/25` PIA/public-health gates, and have
-enough post-writer headroom on the FST drive. Optional builds, rewrites, and
-normal scheduling remain blocked.
+The BAND-SONG-PROJECTION retirement later reclaimed exactly
+`28,315,533,312` database bytes. After retaining a checksummed
+`2,184,507,134`-byte exact data archive on the FST drive, final measured free
+space is `58,971,013,120` bytes. The baseline scrape guard now passes with
+`13,822,787,584` bytes of margin and the SNAPSHOT-REUSE estimate passes with
+`14,576,143,227` bytes of margin. This clears the start-capacity blocker but
+does not promote the rejected candidate or restore scheduling.
+`fstworker` remains held on `fstservice:worker0a-recovery-21bd5f56` with
+restart `no`; a future candidate must use current source built with
+`FSTService/Dockerfile` and rerun auth, `25/25` proxy, capacity, and full
+public-health guards immediately before start. Optional builds and rewrites
+remain blocked below seven-day headroom.
 
 Destructive cleanup, irreversible migration, drop/truncate/repack/rewrite
 work, or active Postgres data movement may proceed automatically after a
@@ -213,7 +226,8 @@ path, and post-action validation are documented.
 | P8 stale dirty-work ownership | Readiness accepted / truncate blocked | Four tables total `8,706,752,512` bytes and `19,836,661` rows only from scrapes `926`-`1146`. No current repo/database/runtime writer; checksum-guarded exact truncate package is ready. |
 | P9 legacy mutable leaderboard ownership | Mixed / reader migration blocked | Nine partitions total `40,824,340,480` bytes and `36,768,081` rows. Main scrape writer is off and mapped public reads bypass legacy, but supplemental dual writers and publication-critical band extraction remain owners. |
 | Rank/temp spill write-mode reduction | Accepted config/code default | Switched band team ranking rebuild default from `Monolithic` to `ComboBatched` to reduce one-shot build-table insert pressure; all write modes already have parity coverage. |
-| Optional band-song projection pressure gate | Complete | Defaulted optional band-song projection rebuilds to disabled and made current projection reads fall back when stale relative to current band rankings. |
+| Optional band-song projection pressure gate | Complete | Defaulted optional rebuilds to disabled, made published reads reject stale/missing rows, and retired `36,747,099` stale rows for `28,315,533,312` database bytes while retaining schema/state and an exact restore archive. |
+| BAND-SONG-PROJECTION retirement | Accepted | Truncated only `band_song_team_rankings` and the three `band_song_team_rankings_current_band_*` tables without `CASCADE`; 24/24 public route fingerprints remained exact, all nine indexes stayed valid, and both scrape guards now pass. Evidence: `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-song-projection-retirement-20260726T103231Z`. |
 | P7 bloat readiness probe | Complete | Repaired stale candidate table stats with bounded `ANALYZE` and refreshed read-only size/dead-tuple estimates; destructive/rewrite maintenance remains blocked by headroom and parity gates. |
 | P8 public cache write-pressure reduction | Complete | Stopped request-time public API middleware writes to `api_response_cache`; cache persistence now stays in precompute/publish paths while frozen reads still serve published cache hits. |
 | API service redeploy | Complete | Built `fstservice:sticky-rank-history-tracking`, recreated `fstservice` only, kept `fstworker` stopped, and verified `/readyz`, `festivalweb`, Postgres, and disk after recovery. |
@@ -222,7 +236,7 @@ path, and post-action validation are documented.
 | Emergency `band_read_*` reclaim | Complete | At 44 MB free / 100% disk, stopped `fstworker`, froze public reads to published `1214`, truncated rollback-safe logical shadow tables, quarantined/validated/dropped unused derived `band_read_*` tables, restored about 435 GB free, and restarted `fstworker` as scrape `1222`. |
 | Autonomous scrape rollout | Rejected after scrape `1264`; capacity blocked | Candidate `1263` completed `8,208/8,208` manifests and was stopped during rank history. Residual reclaim restored enough start headroom for SNAPSHOT-REUSE candidate `1264`, which completed `8,232/8,232` manifests/writers but failed the strict post-writer guard at `32,390,148,096` free bytes before rankings/publication. Published `1236` remains safe; final free space is below both scrape requirements. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
-| Next implementation phase | Full scrape/post-process capacity hard-gated / worker held | Authentication and the `25/25` PIA canary pass, but final free space is below both measured scrape requirements. Do not rerun or restore normal scheduling until same-drive post-writer capacity is safe. Optional builds, rewrites, repacks, table deletion, broad movement, logical truncate, and owner-rejected index drops remain blocked. |
+| Next implementation phase | Snapshot-reuse resume capacity-ready / worker held | Both measured scrape guards pass after BAND-SONG-PROJECTION reclaim. Do not start in this phase; rebuild a current-source worker image, rerun auth/proxy/public-health/capacity guards, and execute the parent-owned single-candidate SNAPSHOT-REUSE window. Logical truncate, optional builds, rewrites, repacks, broad movement, and owner-rejected drops remain blocked. |
 
 ## LOGICAL-RETIRE decision package (2026-07-25)
 

@@ -32,6 +32,26 @@ bytes; this was not a reclaim action.
 The three surfaces total `61,217,292,288` bytes (`57.01 GiB`) gated for
 possible future reclaim.
 
+## Separate BAND-SONG-PROJECTION retirement
+
+This P6/P8/P9 readiness decision did not authorize those three surfaces.
+A later, independent owner card did clear and retire the stale optional
+`band_song_team_rankings*` data:
+
+- four standalone data tables, `36,747,099` rows,
+  `28,315,639,808` pre-retirement bytes;
+- rebuild disabled, no database/external dependency, successful scrape `1236`
+  published with the optional rebuild skipped;
+- exact published fallback/fail-closed route parity plus two rolled-back live
+  truncates;
+- exact schema and `2,184,507,134`-byte compressed data archive retained on
+  the FST drive;
+- `28,315,533,312` database bytes reclaimed, with schema, indexes, TOAST, and
+  the three-row state ledger retained.
+
+P6, P8, and P9 remain governed by their unchanged gates below. Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-song-projection-retirement-20260726T103231Z`.
+
 ## Owner-card summary
 
 | Planner | Surface | Bytes | Owner decision | Growth posture | Execution class | Priority |

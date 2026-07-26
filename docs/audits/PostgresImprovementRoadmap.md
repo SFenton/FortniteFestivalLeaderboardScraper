@@ -1081,6 +1081,48 @@ move to PG-7 after backup/restore and live-scrape parity.
   truncate. Live evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T032124Z`.
 
+**BAND-SONG-PROJECTION stale optional projection retirement - accepted
+2026-07-26**
+
+- Exact ownership covered the empty legacy table plus Duets, Trios, and Quad
+  current tables: `36,747,099` rows and `28,315,639,808` bytes before
+  retirement. The tables are standalone derived projections with no FK, view,
+  routine, trigger, policy, scheduler, or external-tool owner. Production
+  rebuilds remain disabled.
+- The rows were stale: current-table `computed_at` values were July 6 while
+  current band rankings were July 13. Successful scrape `1236` recorded
+  optional rebuilds skipped and published without refreshing them. The
+  retained three-row state ledger dates to June 15 and has no current runtime
+  caller.
+- Live evidence did not rely on scan count. Commit `7558387f` made `/songs`
+  exactly match published `/song-rows`; the same overall and combo parity held
+  while scrape `1263` changed candidate band rows. Commits `21bd5f56` and
+  `633e7583` made unpublished/missing projections fail closed. Commit
+  `9dd93570` closed the remaining post-truncate song-row fallback, and
+  `3ac2a7c9` avoids expensive freshness scans when the retired scope is empty.
+- A schema dump, deterministic published-current rebuild SQL, and an exact
+  `2,184,507,134`-byte PostgreSQL custom/zstd data archive were checksummed on
+  the FST drive. Full archive read validation passed. Two production
+  `TRUNCATE` proofs rolled back exactly; the deployed proof kept all `24/24`
+  overall/combo/list/team/songs/song-row fingerprints exact with no blocked
+  lock.
+- The accepted transaction truncated only
+  `band_song_team_rankings` and the three
+  `band_song_team_rankings_current_band_*` tables without `CASCADE` in
+  `3.974 ms`. Schema, TOAST, nine valid indexes, ownership, and
+  `band_song_team_ranking_state` were retained. Database size fell by exactly
+  `28,315,533,312` bytes.
+- Final measured free space is about `58.97 GB`. The baseline scrape guard
+  passes with `13,822,787,584` bytes of margin and the SNAPSHOT-REUSE estimate
+  with `14,576,143,227` bytes. Service/web/Postgres stayed healthy, warm
+  fail-closed band-route p95 was `1.133 ms`, and `17/17` targeted tests plus
+  the Release build passed.
+- The worker remains held and was not started. Capacity is sufficient for the
+  next parent-owned SNAPSHOT-REUSE A/B, but the candidate remains default-off
+  and unpromoted.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-song-projection-retirement-20260726T103231Z`.
+
 ### PG-4.2 - Separate semantic score changes from derived rank changes
 
 The current logical version volume is 15.39M rows for one scrape. Evaluate

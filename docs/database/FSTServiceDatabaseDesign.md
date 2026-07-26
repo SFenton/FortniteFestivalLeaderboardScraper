@@ -280,6 +280,9 @@ Band best/worst-song public reads use the optional
 When that projection is stale or disabled, extrema are derived from
 `current_band_leaderboard_entries` rows joined to each scope's
 `published_generation`, using the same ordering as the `/song-rows` response.
+The stale projection data was retired on 2026-07-26; its empty tables,
+indexes, TOAST relations, and `band_song_team_ranking_state` audit rows remain
+available for an exact archive restore or a future clean-generation rebuild.
 `scrape_publication_state.band_projection_generation` is stamped in the same
 transaction as the global published scrape. Both public band-song endpoints
 return `503` while that generation differs from
@@ -388,7 +391,7 @@ Band-partitioned source/current families use `Band_Duets`, `Band_Trios`, and
 | `band_team_rankings_published_band_*` | Derived published ranking projection | Publication transaction | Public ranking source and rollback target |
 | `band_team_ranking_stats_current_band_*`, `band_team_ranking_stats_published_band_*` | Derived stats projection | Ranking rebuild/publication | Must promote with ranking rows |
 | `band_team_ranking_generation` | Publication/audit metadata | Ranking pipeline | Tracks durable generation and source scrape |
-| `band_song_team_rankings`, `band_song_team_rankings_current_band_*`, `band_song_team_ranking_state` | Derived song/team ranking projection | Ranking pipeline | Optional rebuild currently defaults off; stale public extrema fall back only to the published current-band projection |
+| `band_song_team_rankings`, `band_song_team_rankings_current_band_*`, `band_song_team_ranking_state` | Retired optional song/team ranking projection schema and audit state | Ranking pipeline only when explicitly re-enabled | Data tables are empty; rebuild defaults off; public reads use published current-band rows or fail closed |
 | `band_team_rank_history`, `band_team_rank_history_points`, `band_team_rank_history_latest`, `band_team_ranking_stats_history` | Legacy durable history/latest | `MetaDatabase`, history API | Retain until v2/read-source parity and restore prove removal |
 | `band_team_rank_history_points_v2` partitions | Durable compact public history | History worker through `MetaDatabase` | About 799 GiB; archive/prune only by exact range manifest |
 | `band_team_rank_history_latest_v2` partitions | Derived latest delta state | History worker | Rebuildable from retained history/current generation if proven |

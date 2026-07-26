@@ -2,7 +2,8 @@
 
 ## Current decision
 
-**Tier:** code/readiness accepted; live A/B capacity-blocked and reverted.
+**Tier:** code/readiness accepted; prior live A/B reverted; resume capacity is
+now sufficient but no new candidate has started.
 
 `Features:SkipUnchangedPhysicalLeaderboardSnapshots` remains default-off. The
 refreshed Epic device credential passed the auth-only persistence canary, all
@@ -22,6 +23,29 @@ authoritative and unfrozen; `1264` owns zero published-source rows.
 
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T032124Z`.
+
+## 2026-07-26 same-drive capacity recovery
+
+The separate BAND-SONG-PROJECTION phase retired only stale optional derived
+data. It truncated four `band_song_team_rankings*` tables without `CASCADE`
+after successful-scrape writer-disable evidence, live published-read parity,
+two rolled-back production proofs, a deterministic rebuild proof, and an exact
+same-drive archive.
+
+| Gate | Result |
+|---|---|
+| Database reclaim | `28,315,533,312` bytes |
+| Exact archive retained | `2,184,507,134` bytes, PostgreSQL custom/zstd, full read validation passed |
+| Final free space | about `58.97 GB` |
+| Baseline scrape margin | `13,822,787,584` bytes |
+| SNAPSHOT-REUSE estimated margin | `14,576,143,227` bytes |
+| Public/service health | Postgres, service, web, `/readyz`, shell, and `/api/service-info` healthy; `24/24` band route fingerprints exact |
+| Worker | Held; not started |
+
+Capacity now permits another guarded candidate start, but this does not change
+the prior rejection, enable the default-off flag, or prove publication parity.
+Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-song-projection-retirement-20260726T103231Z`.
 
 ## Candidate contract
 
@@ -115,8 +139,9 @@ post-writer capacity gate can pass on the FST drive.
 
 ## Resume procedure
 
-1. Do not start another scrape while either measured scrape/post-process guard
-   is blocked. Final free space is below both requirements.
+1. Keep the worker held until the parent-owned retry. Both measured guards now
+   pass, but rerun them immediately before start because evidence/archive and
+   normal filesystem activity can change the margin.
 2. Preserve all DB/storage work on `/mnt/docker-storage`; do not use alternate
    drive scratch or delete data to force a retry.
 3. Build current source with `docker build -f FSTService/Dockerfile ...`.

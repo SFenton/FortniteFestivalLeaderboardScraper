@@ -453,6 +453,19 @@ and old cache artifacts.
   leaderboard, and `1.421 -> 1.323 ms` for the stable fail-closed rankings
   response. Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T032124Z`.
+- BAND-SONG-PROJECTION retirement deployed
+  `fstservice:band-song-retire-3ac2a7c9`. Commit `9dd93570` makes
+  `/song-rows` fail closed when no published scope exists after the optional
+  tables are emptied; commit `3ac2a7c9` checks the empty scope before the
+  expensive stale-table freshness comparison.
+- The four optional data tables now contain zero rows. All `24/24`
+  representative overall/combo/list/team/songs/song-row responses remained
+  byte- and status-exact across rolled-back proof, committed truncate, and
+  final service deploy. Warm fail-closed band-route p95 was `1.133 ms`;
+  `/readyz`, festivalweb, Postgres, shell, and `/api/service-info` remained
+  healthy. `17/17` focused tests and the Release build passed.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-song-projection-retirement-20260726T103231Z`.
 
 ### SERVICE-0.3 - Protect or remove token-backed diagnostics
 
