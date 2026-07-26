@@ -31,6 +31,8 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     private readonly ILoggerFactory _loggerFactory;
     private readonly NpgsqlDataSource _pgDataSource;
     private readonly FeatureOptions _features;
+    private readonly ConcurrentDictionary<(long ScrapeId, string SongId, string Instrument), ScopeCompletenessManifest>
+        _snapshotReuseManifests = new();
 
     /// <summary>The meta database (ScrapeLog, ScoreHistory, etc.).</summary>
     public IMetaDatabase Meta => _metaDb;
@@ -48,12 +50,16 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     public bool UseLeaderboardScopeFingerprints => _features.UseLeaderboardScopeFingerprints;
 
     /// <summary>
-    /// True when unchanged all-time solo scopes should keep using their previous
-    /// physical snapshot instead of writing duplicate rows for the current scrape.
-    /// Scope fingerprints must remain enabled because they are the correctness gate.
+    /// True when unchanged all-time solo scopes should keep using their validated
+    /// published physical source instead of writing duplicate rows for the current
+    /// scrape. Complete manifests, fingerprints, and published-source writes are
+    /// required because they form the correctness and rollback gate.
     /// </summary>
     public bool SkipUnchangedPhysicalLeaderboardSnapshots =>
-        _features.SkipUnchangedPhysicalLeaderboardSnapshots && UseLeaderboardScopeFingerprints;
+        _features.SkipUnchangedPhysicalLeaderboardSnapshots
+        && UseLeaderboardScopeFingerprints
+        && WritePublishedScopeSources
+        && EnforceScopeCompletenessManifests;
 
     /// <summary>
     /// True when the worker should build and atomically promote per-scope
@@ -78,6 +84,41 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// Existing snapshot/current-state rows remain authoritative.
     /// </summary>
     public bool WriteLogicalLeaderboardVersions => _features.WriteLogicalLeaderboardVersions;
+
+    public void RegisterSnapshotReuseManifest(
+        long scrapeId,
+        string songId,
+        string instrument,
+        ScopeCompletenessManifest? manifest)
+    {
+        if (!SkipUnchangedPhysicalLeaderboardSnapshots
+            || scrapeId <= 0
+            || string.IsNullOrWhiteSpace(songId)
+            || string.IsNullOrWhiteSpace(instrument)
+            || manifest is null)
+        {
+            return;
+        }
+
+        _snapshotReuseManifests[(scrapeId, songId, instrument)] = manifest;
+    }
+
+    internal IReadOnlyDictionary<string, ScopeCompletenessManifest> GetSnapshotReuseManifests(
+        long scrapeId,
+        string instrument,
+        IEnumerable<string> songIds)
+    {
+        if (!SkipUnchangedPhysicalLeaderboardSnapshots)
+            return new Dictionary<string, ScopeCompletenessManifest>(StringComparer.OrdinalIgnoreCase);
+
+        var manifests = new Dictionary<string, ScopeCompletenessManifest>(StringComparer.OrdinalIgnoreCase);
+        foreach (var songId in songIds.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (_snapshotReuseManifests.TryGetValue((scrapeId, songId, instrument), out var manifest))
+                manifests[songId] = manifest;
+        }
+        return manifests;
+    }
 
     public GlobalLeaderboardPersistence(IMetaDatabase metaDb,
                                         ILoggerFactory loggerFactory,
@@ -924,6 +965,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         finally
         {
             await writer.DisposeAsync().ConfigureAwait(false);
+            _snapshotReuseManifests.Clear();
         }
     }
 
@@ -956,6 +998,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         finally
         {
             await spool.DisposeAsync();
+            _snapshotReuseManifests.Clear();
         }
     }
 
@@ -996,6 +1039,8 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 _log.LogWarning(ex, "Best-effort cleanup failed while disposing active solo spool writer.");
             }
         }
+
+        _snapshotReuseManifests.Clear();
     }
 
     private static void ReportSpoolFlushProgress(
@@ -1067,18 +1112,35 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                            WHEN @skipUnchangedPhysicalSnapshots
                             AND NOT activation_scopes.has_snapshot_rows
                             AND scope_fingerprint.last_seen_scrape_id = @scrapeId
-                            AND scope_fingerprint.last_changed_scrape_id < @scrapeId
-                               THEN COALESCE(existing.active_snapshot_id, scope_fingerprint.last_changed_scrape_id)
+                            AND scope_fingerprint.fingerprint_version >= 2
+                            AND scope_fingerprint.is_complete
+                            AND published_source.source_kind = 'snapshot'
+                            AND published_source.source_snapshot_id IS NOT NULL
+                            AND published_source.is_complete
+                            AND published_source.row_count = scope_fingerprint.entry_count
+                            AND published_source.content_fingerprint IS NOT DISTINCT FROM scope_fingerprint.content_fingerprint
+                            AND (
+                                published_source.coverage_fingerprint IS NOT DISTINCT FROM scope_fingerprint.coverage_fingerprint
+                                OR (
+                                    length(published_source.coverage_fingerprint) = 32
+                                    AND length(scope_fingerprint.coverage_fingerprint) = 64
+                                )
+                            )
+                               THEN published_source.source_snapshot_id
                            ELSE @scrapeId
                        END AS active_snapshot_id
                 FROM activation_scopes
-                LEFT JOIN leaderboard_snapshot_state existing
-                  ON existing.song_id = activation_scopes.song_id
-                 AND existing.instrument = activation_scopes.instrument
                 LEFT JOIN leaderboard_scope_fingerprints scope_fingerprint
                   ON scope_fingerprint.song_id = activation_scopes.song_id
                  AND scope_fingerprint.instrument = activation_scopes.instrument
                  AND scope_fingerprint.scope_kind = 'alltime'
+                LEFT JOIN scrape_publication_state publication
+                  ON publication.id = TRUE
+                LEFT JOIN leaderboard_published_scope_source published_source
+                  ON published_source.published_scrape_id = publication.published_scrape_id
+                 AND published_source.song_id = activation_scopes.song_id
+                 AND published_source.instrument = activation_scopes.instrument
+                 AND published_source.scope_kind = 'alltime'
             ), upserted AS (
                 INSERT INTO leaderboard_snapshot_state
                 (song_id, instrument, active_snapshot_id, scrape_id, is_finalized, {finalizedColumn}, updated_at)
@@ -1898,7 +1960,20 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                     CASE WHEN fingerprint.entry_count = 0 THEN 'empty' ELSE 'snapshot' END AS source_kind,
                     CASE WHEN fingerprint.entry_count = 0 THEN NULL ELSE state.active_snapshot_id END AS source_snapshot_id,
                     CASE
-                        WHEN fingerprint.entry_count = 0 THEN fingerprint.last_changed_scrape_id
+                        WHEN fingerprint.entry_count = 0
+                         AND prior_source.source_kind = 'empty'
+                         AND prior_source.is_complete
+                         AND prior_source.row_count = 0
+                         AND prior_source.content_fingerprint IS NOT DISTINCT FROM fingerprint.content_fingerprint
+                         AND (
+                             prior_source.coverage_fingerprint IS NOT DISTINCT FROM fingerprint.coverage_fingerprint
+                             OR (
+                                 length(prior_source.coverage_fingerprint) = 32
+                                 AND length(fingerprint.coverage_fingerprint) = 64
+                             )
+                         )
+                            THEN prior_source.source_scrape_id
+                        WHEN fingerprint.entry_count = 0 THEN @scrapeId
                         ELSE state.active_snapshot_id
                     END AS source_scrape_id,
                     fingerprint.entry_count::bigint AS row_count,
@@ -1928,6 +2003,13 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                  AND fingerprint.instrument = expected.instrument
                  AND fingerprint.scope_kind = 'alltime'
                  AND fingerprint.last_seen_scrape_id = @scrapeId
+                LEFT JOIN scrape_publication_state publication
+                  ON publication.id = TRUE
+                LEFT JOIN leaderboard_published_scope_source prior_source
+                  ON prior_source.published_scrape_id = publication.published_scrape_id
+                 AND prior_source.song_id = expected.song_id
+                 AND prior_source.instrument = expected.instrument
+                 AND prior_source.scope_kind = 'alltime'
                 LEFT JOIN leaderboard_population population
                   ON population.song_id = expected.song_id
                  AND population.instrument = expected.instrument
@@ -2133,7 +2215,8 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         NpgsqlConnection conn,
         NpgsqlTransaction tx,
         long scrapeId,
-        string instrument)
+        string instrument,
+        IReadOnlyDictionary<string, ScopeCompletenessManifest>? scopeManifests = null)
     {
         if (!UseLeaderboardScopeFingerprints || scrapeId <= 0)
             return;
@@ -2142,7 +2225,22 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         cmd.Transaction = tx;
         cmd.CommandTimeout = 0;
         cmd.CommandText = """
-            WITH desired_rows AS (
+            WITH provided_manifests AS (
+                SELECT *
+                FROM unnest(
+                    @manifestSongIds::text[],
+                    @manifestCoverageFingerprints::text[],
+                    @manifestReportedEntries::bigint[],
+                    @manifestReportedPages::integer[],
+                    @manifestIsComplete::boolean[]
+                ) AS manifest(
+                    song_id,
+                    coverage_fingerprint,
+                    reported_total_entries,
+                    reported_total_pages,
+                    is_complete)
+            ),
+            desired_rows AS (
                 SELECT DISTINCT ON (song_id, instrument, account_id)
                     song_id,
                     instrument,
@@ -2172,7 +2270,6 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 SELECT
                     song_id,
                     instrument,
-                    1 AS fingerprint_version,
                     md5(string_agg(
                         concat_ws(E'\x1f',
                             account_id,
@@ -2210,23 +2307,60 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 FROM desired_rows
                 GROUP BY song_id, instrument
             ),
+            observed AS (
+                SELECT
+                    scope_rows.song_id,
+                    scope_rows.instrument,
+                    CASE
+                        WHEN provided_manifest.song_id IS NOT NULL
+                          OR persisted_manifest.scrape_id IS NOT NULL
+                            THEN 2
+                        ELSE 1
+                    END AS fingerprint_version,
+                    scope_rows.content_fingerprint,
+                    COALESCE(
+                        provided_manifest.coverage_fingerprint,
+                        persisted_manifest.coverage_fingerprint,
+                        scope_rows.coverage_fingerprint) AS coverage_fingerprint,
+                    scope_rows.entry_count,
+                    COALESCE(
+                        provided_manifest.reported_total_entries,
+                        persisted_manifest.reported_total_entries) AS reported_total_entries,
+                    COALESCE(
+                        provided_manifest.reported_total_pages,
+                        persisted_manifest.reported_total_pages) AS reported_total_pages,
+                    COALESCE(
+                        provided_manifest.is_complete,
+                        persisted_manifest.is_complete,
+                        FALSE) AS is_complete,
+                    scope_rows.min_rank,
+                    scope_rows.max_rank
+                FROM scope_rows
+                LEFT JOIN provided_manifests provided_manifest
+                  ON provided_manifest.song_id = scope_rows.song_id
+                LEFT JOIN leaderboard_scope_manifests persisted_manifest
+                  ON persisted_manifest.scrape_id = @scrapeId
+                 AND persisted_manifest.song_id = scope_rows.song_id
+                 AND persisted_manifest.instrument = scope_rows.instrument
+                 AND persisted_manifest.scope_kind = 'alltime'
+            ),
             classified AS (
                 SELECT
-                    scope_rows.*,
+                    observed.*,
                     existing.first_seen_scrape_id AS existing_first_seen_scrape_id,
                     existing.last_changed_scrape_id AS existing_last_changed_scrape_id,
                     existing.changed_at AS existing_changed_at,
                     CASE
                         WHEN existing.song_id IS NULL THEN 'new'
-                        WHEN existing.fingerprint_version = scope_rows.fingerprint_version
-                         AND existing.content_fingerprint = scope_rows.content_fingerprint
-                         AND existing.coverage_fingerprint = scope_rows.coverage_fingerprint THEN 'unchanged'
+                        WHEN existing.fingerprint_version = observed.fingerprint_version
+                         AND existing.content_fingerprint = observed.content_fingerprint
+                         AND existing.coverage_fingerprint = observed.coverage_fingerprint THEN 'unchanged'
                         ELSE 'changed'
                     END AS change_kind
-                FROM scope_rows
+                FROM observed
                 LEFT JOIN leaderboard_scope_fingerprints existing
-                  ON existing.song_id = scope_rows.song_id
-                 AND existing.instrument = scope_rows.instrument
+                  ON existing.song_id = observed.song_id
+                 AND existing.instrument = observed.instrument
                  AND existing.scope_kind = 'alltime'
             ),
             upserted AS (
@@ -2258,9 +2392,9 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                     content_fingerprint,
                     coverage_fingerprint,
                     entry_count,
-                    NULL,
-                    NULL,
-                    FALSE,
+                    reported_total_entries,
+                    reported_total_pages,
+                    is_complete,
                     min_rank,
                     max_rank,
                     @scrapeId,
@@ -2304,6 +2438,29 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         cmd.Parameters.AddWithValue("instrument", instrument);
         cmd.Parameters.AddWithValue("scrapeId", scrapeId);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        var manifestRows = (scopeManifests ?? new Dictionary<string, ScopeCompletenessManifest>())
+            .OrderBy(static pair => pair.Key, StringComparer.Ordinal)
+            .ToArray();
+        cmd.Parameters.Add(
+            "manifestSongIds",
+            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            manifestRows.Select(static pair => pair.Key).ToArray();
+        cmd.Parameters.Add(
+            "manifestCoverageFingerprints",
+            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            manifestRows.Select(static pair => pair.Value.CoverageFingerprint).ToArray();
+        cmd.Parameters.Add(
+            "manifestReportedEntries",
+            NpgsqlDbType.Array | NpgsqlDbType.Bigint).Value =
+            manifestRows.Select(static pair => pair.Value.ReportedTotalEntries).ToArray();
+        cmd.Parameters.Add(
+            "manifestReportedPages",
+            NpgsqlDbType.Array | NpgsqlDbType.Integer).Value =
+            manifestRows.Select(static pair => pair.Value.ReportedTotalPages).ToArray();
+        cmd.Parameters.Add(
+            "manifestIsComplete",
+            NpgsqlDbType.Array | NpgsqlDbType.Boolean).Value =
+            manifestRows.Select(static pair => pair.Value.IsComplete).ToArray();
 
         var newScopes = 0;
         var changedScopes = 0;

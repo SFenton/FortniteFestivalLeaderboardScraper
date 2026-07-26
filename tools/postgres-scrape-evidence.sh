@@ -516,7 +516,7 @@ capture_route() {
     local path="$2"
     local body="$OUT_DIR/routes/$name.body"
     local metrics
-    metrics="$(curl --max-time 30 -fsS -o "$body" -w '%{http_code}|%{time_total}|%{size_download}' "$API_BASE$path")"
+    metrics="$(curl --max-time 30 -sS -o "$body" -w '%{http_code}|%{time_total}|%{size_download}' "$API_BASE$path")"
     local sha
     sha="$(sha256sum "$body" | awk '{print $1}')"
     printf 'name,path,http_status,time_seconds,body_bytes,sha256\n' > "$OUT_DIR/routes/$name.csv"

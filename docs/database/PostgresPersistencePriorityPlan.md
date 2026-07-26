@@ -62,6 +62,12 @@ This plan records the approved direction for improving FST Postgres persistence 
   projection with the existing account/rank/score access paths, a bounded
   generation-hot tier, and a default-off stored-rank offset query flag. No
   production table, index, or read-source cutover occurred.
+- SNAPSHOT-REUSE repaired the default-off physical write-skip candidate so it
+  uses complete manifests and the current published source rather than mutable
+  active/failed state. Exact `1236` versus complete `1263` evidence estimates
+  `1,203` reusable scopes, `3,371,702` rows, and `753,396,603` bytes avoided.
+  Capacity and the `25/25` PIA guard pass, but Epic refresh failed with
+  `invalid_refresh_token`; no deploy, worker start, scrape, or flag change ran.
 - Public band-history team/date indexes remain because live plans proved their
   route ownership. Composite retention now uses BRIN cutoff rejection plus the
   primary key for account/date probes.
@@ -145,19 +151,22 @@ window.
 
 ## Capacity boundary and remaining alert
 
-`/mnt/docker-storage` hosts the active Postgres bind mount and now has
-`48,546,029,568` bytes free. The scrape-`1236` monitor requires
+`/mnt/docker-storage` hosts the active Postgres bind mount. SNAPSHOT-REUSE
+preflight measured `48,960,053,248` bytes free. The scrape-`1236` monitor requires
 `45,148,225,536` bytes from the equivalent pre-rank boundary through
-publication, so the measured gate passes with `3,397,804,032` bytes of
-margin. The exact measured guard horizon is about `0.54` days and remains
+publication, so the baseline gate passes with `3,811,827,712` bytes of
+margin. The candidate estimate is `44,394,828,933` bytes after
+`753,396,603` estimated physical bytes avoided, for about `4.565 GB` of
+margin. The exact measured guard horizon is about `0.54-0.55` days and remains
 below every optional-build/rewrite threshold.
 
 `fstworker` remains held after candidate `1263` was abandoned during
 rank-history snapshots. Band-song/live-fallback isolation is deployed, the
-proxy compose guard passes `25/25`, and capacity now passes. No scrape was
-started in the recovery phase. Before a later run, deploy commit `8db72081` or
-newer to the held worker, then rerun the measured capacity guard, proxy guard,
-and full public-path preflight.
+proxy compose guard passes `25/25`, and capacity now passes. SNAPSHOT-REUSE
+did not start because the stored Epic refresh token is invalid. Complete
+operator device authentication, then rerun the auth-only refresh, authenticated
+low-rate proxy, measured capacity, compose, and full public-path guards before
+deploying the default-off candidate code with only its rollback flag enabled.
 
 Destructive cleanup, irreversible migration, drop/truncate/repack/rewrite
 work, or active Postgres data movement may proceed automatically after a
@@ -185,7 +194,7 @@ path, and post-action validation are documented.
 | PG-3 post-`1263` residual index reclaim | Accepted | Dropped `33` non-constraint indexes across six exact owner-card families. Reclaimed `17,174,200,320` database bytes; measured free space is `48,546,029,568`, `3,397,804,032` bytes above the scrape boundary. Public route/fail-closed parity was exact, `120/120` tests passed, and commit `8db72081` prevents recreation. |
 | Band rank-history retention policy draft | Complete | Semantics-first v2 retention options and parity gates documented on 2026-07-06. |
 | `band_read_*` quarantine parity package | Complete | Reversible, live-scrape A/B parity-gated quarantine package documented on 2026-07-06; no DDL executed. |
-| Phase 8 physical snapshot write skipping | Accepted behind feature flag | Added `SkipUnchangedPhysicalLeaderboardSnapshots` as a rollback-safe, default-off candidate that skips unchanged solo physical snapshot scopes and keeps snapshot state pinned to the prior active snapshot. Production rollout remains gated by live-scrape A/B parity and disk headroom. |
+| Phase 8 physical snapshot write skipping | Code/readiness accepted / live A/B auth-blocked | `SkipUnchangedPhysicalLeaderboardSnapshots` remains rollback-safe and default-off. It now requires strict manifests/published mappings, supports `OnlineBounded`, verifies current/published content, coverage compatibility, row count, and physical existence, and pins only to the published source. Exact estimate: `1,203` scopes / `3,371,702` rows / `753,396,603` bytes avoided. Stored Epic refresh is invalid, so no deploy/scrape occurred. |
 | Rank/temp spill write-mode reduction | Accepted config/code default | Switched band team ranking rebuild default from `Monolithic` to `ComboBatched` to reduce one-shot build-table insert pressure; all write modes already have parity coverage. |
 | Optional band-song projection pressure gate | Complete | Defaulted optional band-song projection rebuilds to disabled and made current projection reads fall back when stale relative to current band rankings. |
 | P7 bloat readiness probe | Complete | Repaired stale candidate table stats with bounded `ANALYZE` and refreshed read-only size/dead-tuple estimates; destructive/rewrite maintenance remains blocked by headroom and parity gates. |
@@ -196,7 +205,7 @@ path, and post-action validation are documented.
 | Emergency `band_read_*` reclaim | Complete | At 44 MB free / 100% disk, stopped `fstworker`, froze public reads to published `1214`, truncated rollback-safe logical shadow tables, quarantined/validated/dropped unused derived `band_read_*` tables, restored about 435 GB free, and restarted `fstworker` as scrape `1222`. |
 | Autonomous scrape rollout | Rejected after scrape `1263`; capacity repaired | Candidate `1263` completed `8,208/8,208` manifests and entered rankings, but the watchdog stopped it at `14,871,388,160` free bytes. Published `1236` remains safe through failed-candidate isolation; the residual reclaim now restores a positive measured capacity margin. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
-| Next implementation phase | WORKER-0A capacity-ready / deploy-held | Band publication isolation, the measured scrape guard, and the `25/25` proxy guard pass. Keep the worker stopped until commit `8db72081` or newer is deployed and the same guards/public-path checks are rerun. Optional builds, rewrites, repacks, table deletion, broad movement, and owner-rejected index drops remain blocked. |
+| Next implementation phase | SNAPSHOT-REUSE auth-gated / worker held | Capacity, public health, source counts, code tests, and the `25/25` proxy guard pass. Operator device authentication is required before the auth refresh and authenticated Epic JSON canaries can pass. Then deploy only the snapshot-reuse flag, run one guarded run-once scrape, and hold before another. Optional builds, rewrites, repacks, table deletion, broad movement, logical truncate, and owner-rejected index drops remain blocked. |
 
 ## LOGICAL-RETIRE decision package (2026-07-25)
 
@@ -258,6 +267,26 @@ read-source cutover or old projection drop.
 
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/solo-dynamic-ab-20260725T2346Z`.
+
+## SNAPSHOT-REUSE decision package (2026-07-26)
+
+| Gate | Evidence | Decision |
+|---|---|---|
+| Code semantics | Complete manifests arrive before bounded-online writes; reuse selects the current published source, not active/failed state | Pass |
+| Changed/unchanged/empty/mixed | PostgreSQL fixtures cover source pinning, legacy coverage upgrade, changed coverage, missing physical rows, failed active sources, overlays, projection fallback, and exports | Pass |
+| Published source integrity | `6,096/6,096` snapshot scopes have exact counts totaling `39,588,650` rows; `42` explicit empty scopes | Pass |
+| Capacity | `48,960,053,248` free; baseline `45,148,225,536`; candidate estimate `44,394,828,933` | Pass with severe alert |
+| Estimated storage benefit | `1,203` scopes / `3,371,702` rows / `753,396,603` bytes from the latest complete comparison | Evaluation-ready |
+| PIA guard | 30 canonical services, 25 healthy unique effective exits, 400 aggregate RPS | Pass |
+| Worker authentication | Epic refresh returned `invalid_refresh_token`; client-token probes lack user entitlement | **Blocked** |
+| Live publication parity | No candidate deploy, scrape ID, publication, or unfreeze window | **Not cleared** |
+
+The code/readiness change is accepted default-off. Production remains on the
+existing service/worker images with the worker held. The exact resume sequence
+is documented in `docs/database/SnapshotReuseRunbook.md`.
+
+Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-20260726T010701Z`.
 
 ## Architecture evaluation evidence (2026-07-06)
 
@@ -604,8 +633,8 @@ Implementation:
 | Change | Files | Safety gate | Rollback |
 |---|---|---|---|
 | Added `Features:SkipUnchangedPhysicalLeaderboardSnapshots` defaulting to `false`. | `FSTService/FeatureOptions.cs` | Default-off; existing production behavior is unchanged until explicitly enabled. | Set the flag to `false` or remove the override. |
-| Snapshot flush skips physical rows for all-time solo scopes whose scope fingerprint was seen in the current scrape but last changed in an earlier scrape. | `FSTService/Scraping/LeaderboardSpoolWriterFactory.cs` | Requires `UseLeaderboardScopeFingerprints`; unchanged scopes are filtered only after the same transaction updates fingerprint evidence. | Disable the flag; the old full physical snapshot insert path remains intact. |
-| Snapshot finalization keeps skipped unchanged scopes pinned to their previous active physical snapshot instead of advancing `active_snapshot_id` to a scrape with no duplicate rows. | `FSTService/Persistence/GlobalLeaderboardPersistence.cs` | Changed/new scopes with snapshot rows still advance to the current scrape; empty/unfingerprinted expected scopes retain the existing empty-snapshot behavior. | Disable the flag; finalization returns to one active snapshot per finalized scrape scope. |
+| Snapshot flush skips physical rows only when the current complete manifest, content, row count, coverage compatibility, and physical existence/count match the current published mapping. | `FSTService/Scraping/LeaderboardSpoolWriterFactory.cs` | Requires fingerprints, strict manifests, and published-source writes; incomplete or ambiguous scopes write normally. | Disable the flag; the old full physical snapshot insert path remains intact. |
+| Snapshot finalization pins a skipped unchanged scope to its validated published physical source, never merely to the previous active/failed source. | `FSTService/Persistence/GlobalLeaderboardPersistence.cs` | Changed/new scopes with snapshot rows advance to the current scrape; empty scopes retain explicit-empty mapping behavior. | Disable the flag; finalization returns to one active snapshot per finalized scrape scope. |
 | Added unit coverage for default flag behavior and the new/unchanged/changed snapshot-state contract. | `FSTService.Tests/Unit/ScraperOptionsAndModelsTests.cs`, `FSTService.Tests/Unit/GlobalLeaderboardPersistenceTests.cs` | Test proves unchanged scrape `43` writes zero duplicate snapshot rows, keeps active state at scrape `42`, and advances to scrape `44` when data changes. | Remove the flag and test if rejected before deployment. |
 
 Validation:
@@ -616,7 +645,8 @@ Validation:
 
 P5 decision:
 
-- Accepted as a default-off implementation candidate.
+- Accepted as a default-off implementation candidate; its source-selection and
+  complete-manifest gates were repaired by SNAPSHOT-REUSE on 2026-07-26.
 - This is not a production promotion yet: enabling it requires a controlled live-scrape A/B that proves API/current-state/publication parity, projection freshness behavior, and publish/freeze semantics under mixed active snapshot IDs.
 - Expected storage/WAL benefit is bounded by unchanged solo scopes; Phase 7 measured 27,178,074 unchanged rows out of 39,385,606 observed rows (69.01%), but the exact physical snapshot reduction must be measured in a matched scrape after deployment.
 - This implementation does not solve the current disk blocker alone; it reduces future duplicate physical snapshot writes after a safe rollout and leaves destructive reclaim work parity-gated.

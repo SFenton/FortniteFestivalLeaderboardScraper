@@ -60,8 +60,9 @@ public sealed class FeatureOptions
 
     /// <summary>
     /// When true, solo snapshot flushes skip physically writing scopes whose
-    /// content fingerprint is unchanged from the prior active snapshot. Snapshot
-    /// state remains pinned to the prior physical snapshot for those scopes.
+    /// complete content and coverage fingerprints match the current published
+    /// scope source. Snapshot state remains pinned to that validated published
+    /// physical source. Published-source writes and strict manifests are required.
     /// </summary>
     public bool SkipUnchangedPhysicalLeaderboardSnapshots { get; set; }
 

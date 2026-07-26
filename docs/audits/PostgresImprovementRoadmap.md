@@ -998,6 +998,49 @@ move to PG-7 after backup/restore and live-scrape parity.
 - Eliminate physical writes for unchanged scopes.
 - Preserve exact API and replay parity.
 
+**SNAPSHOT-REUSE readiness execution - code accepted, live A/B auth-blocked
+2026-07-26**
+
+- The original default-off implementation could not produce a useful live
+  result: manifest coverage upgrades fingerprints from version 1 to version 2,
+  so the old comparison classified nearly every complete scope as changed.
+  It also pinned to mutable active state, which could select a failed
+  candidate's physical rows.
+- The repaired path requires published-source writes, strict manifests, and
+  scope fingerprints. Bounded-online results register their complete manifest
+  before enqueue. Reuse requires exact current/published content and row-count
+  parity, compatible complete coverage, and an exact physical-source count.
+  Finalization pins to the current published source, never a failed active
+  source.
+- Published `1236` uses legacy 32-character coverage fingerprints while strict
+  candidates use 64-character manifest fingerprints. A one-way compatibility
+  rule permits this first upgrade only when the current manifest is complete;
+  once a strict scrape publishes, later reuse requires exact coverage parity.
+- All `6,096` published physical sources were present with exact
+  `39,588,650` rows; `42` explicit-empty mappings were complete. Exact
+  published-`1236` versus complete-`1263` content/row parity identified
+  `1,203` reusable scopes / `3,371,702` rows. Calibrated against measured
+  `1236 -> 1262` relation growth, the candidate estimate is
+  `753,396,603` bytes avoided.
+- The measured scrape requirement therefore estimates
+  `45,148,225,536 -> 44,394,828,933` bytes. At preflight,
+  `48,960,053,248` bytes were free, so both guards passed with a severe
+  capacity alert.
+- Public health, publication, locks, WAL/temp posture, and the canonical
+  `25/25` PIA guard passed. The auth-only canary failed with Epic
+  `invalid_refresh_token`; a client-credential network probe reached all
+  direct/PIA paths but correctly lacked user entitlement. Interactive device
+  login is the exact hard gate, so no candidate deploy, worker start, scrape,
+  or production flag change occurred.
+- Validation passed `186/186` focused and `317/317` broader
+  PostgreSQL/API/projection/export tests plus the Release build. The full suite
+  passed `2,068/2,072`; the four failures are existing unrelated baseline
+  fixtures.
+- Decision: code/readiness accepted, live promotion blocked. Logical tables
+  remain untouched and the disabled-writer publication prerequisite is not
+  cleared. Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-20260726T010701Z`.
+
 ### PG-4.2 - Separate semantic score changes from derived rank changes
 
 The current logical version volume is 15.39M rows for one scrape. Evaluate

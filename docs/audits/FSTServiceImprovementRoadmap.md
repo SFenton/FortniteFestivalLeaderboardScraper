@@ -426,6 +426,20 @@ and old cache artifacts.
   occurred because failed-candidate isolation prevents a complete player/export
   API A/B and current DB margin cannot host the compact shadow. Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/solo-dynamic-ab-20260725T2346Z`.
+- SNAPSHOT-REUSE changed no public service read contract. The candidate now
+  reuses only the validated published physical source; changed, incomplete,
+  coverage-changed, missing-source, and failed-active cases write new rows.
+  Existing mixed-source, explicit-empty, overlay, frozen cold-miss,
+  projection-generation, and workbook tests remain exact.
+- Baseline public capture kept the mapped leaderboard HTTP `200` and the
+  failed-candidate-isolated ranking/history/export/band-song surfaces on their
+  existing stable HTTP `503`. The scrape evidence tool now hashes expected
+  non-2xx fail-closed bodies instead of aborting on them.
+- No service or worker image was deployed because the Epic refresh canary
+  failed with `invalid_refresh_token`. Service, web, Postgres, `/readyz`,
+  shell, and `/api/service-info` remained healthy; published `1236` remained
+  unfrozen. Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-20260726T010701Z`.
 
 ### SERVICE-0.3 - Protect or remove token-backed diagnostics
 

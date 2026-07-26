@@ -15,6 +15,12 @@ the full public parity suite.
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/logical-retire-20260725T2306Z`.
 
+SNAPSHOT-REUSE preflight on 2026-07-26 did not clear this prerequisite. Its
+capacity, source-integrity, public-health, and proxy gates passed, but Epic
+refresh returned `invalid_refresh_token` before any candidate deploy or worker
+start. No scrape ID was allocated and no publication occurred. Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-20260726T010701Z`.
+
 ## Exact scope
 
 | Family | Parent | Leaf partitions | Rows | Bytes | Restore class |

@@ -585,6 +585,35 @@ until replay and live shadow parity pass.
   disabled-writer publication window. Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/logical-retire-20260725T2306Z`.
 
+**SNAPSHOT-REUSE full-scrape A/B - code accepted, pre-deploy auth-blocked
+2026-07-26**
+
+- The worker remains exited on `fstservice:worker0a-recovery-21bd5f56` with
+  restart `no`; no candidate container was deployed or started.
+- The repaired default-off candidate works with the current
+  `OnlineBounded` writer. Each completed result registers its manifest before
+  enqueue, and the writer reuses only the validated current published
+  physical source after exact content, row-count, coverage compatibility, and
+  physical existence/count checks. Failed active source `1263` is never a
+  reuse candidate.
+- Exact preflight estimated `1,203` reusable scopes / `3,371,702` rows and
+  `753,396,603` bytes avoided. The candidate capacity requirement is
+  `44,394,828,933` bytes versus `48,960,053,248` free.
+- Docker/public/Postgres health and the 30-service/25-effective PIA guard
+  passed. The auth-only refresh canary failed with
+  `invalid_refresh_token`; the existing worker correctly requires operator
+  device login. A client-token probe reached all 26 direct/PIA paths but
+  returned auth/entitlement JSON rather than valid leaderboard JSON.
+- `186/186` focused and `317/317` broader tests passed, including bounded
+  online reuse, changed/unchanged/empty/mixed scopes, missing physical source,
+  coverage change, failed active source, overlays, projections, exports, and
+  frozen reads. Release build passed.
+- Decision: do not deploy or allocate a scrape ID until auth refresh and the
+  authenticated low-rate PIA canary pass. Published `1236` stays unfrozen and
+  authoritative; logical writes remain disabled; no logical truncate ran.
+  Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-20260726T010701Z`.
+
 ### WORKER-0.5 - Separate solo and band completion
 
 A band timeout must not mark `LeaderboardScrapeCompleted=true`. A task still

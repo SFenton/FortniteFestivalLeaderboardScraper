@@ -192,6 +192,12 @@ public sealed class ScrapeOrchestrator
                 Interlocked.Add(ref totalRequests, result.Requests);
                 Interlocked.Add(ref totalBytes, result.BytesReceived);
 
+                _persistence.RegisterSnapshotReuseManifest(
+                    scrapeId,
+                    songId,
+                    result.Instrument,
+                    result.CompletenessManifest);
+
                 if (result.EntriesCount == 0) continue;
                 hasData = true;
                 aggregates.IncrementSoloLeaderboardsWithData();

@@ -201,6 +201,7 @@ and clears the public-read freeze in one transaction.
 | Rollout switch | Container | Default | Effect | Rollback |
 |---|---|---:|---|---|
 | `Features__WritePublishedScopeSources` | `fstworker` | `false` | Backfills the current clean publication when needed, records scope coverage, builds the next mapping, and requires it in publication | Set `false`; incomplete candidates never move the global pointer |
+| `Features__SkipUnchangedPhysicalLeaderboardSnapshots` | `fstworker` | `false` | With strict manifests/fingerprints and published-source writes enabled, reuses only exact validated published physical sources for unchanged scopes | Set `false`; all non-empty scopes write current-scrape physical rows |
 | `Features__UsePublishedScopeSources` | `fstservice` | `false` | Resolves solo current reads, projection readiness, totals, member filters, and published solo exports from the current mapping | Set `false`; active-state/legacy resolver remains available |
 | `Features__UseStoredSoloProjectionRanksForFilteredReads` | service or worker reader | `false` | Uses stored projection rank plus exact removed-above counts for filtered leaderboard/player ranks instead of full window re-sorts | Set `false`; prior score/tie window SQL remains |
 | `Features__EnforceScopeCompletenessManifests` | `fstworker` | `false` | Requires every expected solo and band scope to have a complete page manifest before publication | Set `false`; manifests remain available as observe-only evidence |
@@ -298,6 +299,27 @@ failures, or publication-critical phase failures reject the candidate. The
 selected physical row count and physical content fingerprint must still match
 the published-source mapping. Duplicate API rows remain deduplicated by
 highest score per account before physical-source validation.
+
+When `Features:SkipUnchangedPhysicalLeaderboardSnapshots=true`, the flag is
+effective only with published-source writes, scope fingerprints, and strict
+completeness manifests enabled. Both disk-spool and bounded-online writers
+receive the completed scope manifest before persistence. A non-empty scope may
+skip current-scrape physical rows only when:
+
+- the current manifest is complete;
+- current deduplicated content and row count match the current published
+  mapping;
+- coverage fingerprints match, except for the one-way upgrade from published
+  `1236`'s legacy 32-character coverage fingerprint to a complete
+  64-character manifest fingerprint;
+- the mapped physical source exists with its exact row count.
+
+Finalization then pins active snapshot state to that mapped published source.
+It never selects a newer failed/active source merely because its content
+matches. New, changed, incomplete, coverage-changed, missing-source, or
+ambiguous scopes write a new snapshot. Empty scopes remain explicit-empty
+mapping rows. The publication transaction still performs the final all-scope
+count/content/coverage validation.
 
 Disk-spool failures retain the original binary spool plus
 `writer-failures.json`; bounded-online failures retain typed JSON batches.

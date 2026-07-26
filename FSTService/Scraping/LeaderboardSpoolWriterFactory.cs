@@ -27,6 +27,10 @@ public static class LeaderboardSpoolWriterFactory
         var activeInstrument = db.Instrument;
         var writeLegacyLiveRows = persistence.WriteLegacyLiveLeaderboardDuringScrape;
         var skipUnchangedPhysicalSnapshots = persistence.SkipUnchangedPhysicalLeaderboardSnapshots;
+        var scopeManifests = persistence.GetSnapshotReuseManifests(
+            scrapeId,
+            activeInstrument,
+            batch.Select(static item => item.SongId));
 
         try
         {
@@ -108,7 +112,12 @@ public static class LeaderboardSpoolWriterFactory
                 writer.Complete();
             }
 
-            persistence.ObserveLeaderboardScopeFingerprints(conn, tx, scrapeId, activeInstrument);
+            persistence.ObserveLeaderboardScopeFingerprints(
+                conn,
+                tx,
+                scrapeId,
+                activeInstrument,
+                scopeManifests);
             persistence.WriteLogicalLeaderboardVersionsFromStaging(conn, tx, scrapeId, activeInstrument);
 
             if (scrapeId > 0)
@@ -179,13 +188,101 @@ public static class LeaderboardSpoolWriterFactory
     }
 
     internal static string BuildSnapshotInsertSql() =>
-        "INSERT INTO leaderboard_entries_snapshot (snapshot_id, song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, percentile, rank, source, difficulty, api_rank, end_time, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, first_seen_at, last_updated_at) " +
-        "SELECT @snapshotId, snapshot_rows.song_id, snapshot_rows.instrument, snapshot_rows.account_id, snapshot_rows.score, snapshot_rows.accuracy, snapshot_rows.is_full_combo, snapshot_rows.stars, snapshot_rows.season, snapshot_rows.percentile, snapshot_rows.rank, snapshot_rows.source, snapshot_rows.difficulty, snapshot_rows.api_rank, snapshot_rows.end_time, snapshot_rows.band_members_json, snapshot_rows.band_score, snapshot_rows.base_score, snapshot_rows.instrument_bonus, snapshot_rows.overdrive_bonus, snapshot_rows.instrument_combo, snapshot_rows.ts, snapshot_rows.ts " +
-        "FROM (SELECT DISTINCT ON (song_id, instrument, account_id) song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, source, api_rank, end_time, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, ts FROM _le_staging WHERE instrument = @instrument ORDER BY song_id, instrument, account_id, score DESC, ts DESC) snapshot_rows " +
-        "LEFT JOIN leaderboard_scope_fingerprints scope_fingerprint ON scope_fingerprint.song_id = snapshot_rows.song_id AND scope_fingerprint.instrument = snapshot_rows.instrument AND scope_fingerprint.scope_kind = 'alltime' " +
-        "WHERE NOT (@skipUnchangedPhysicalSnapshots AND scope_fingerprint.last_seen_scrape_id = @snapshotId AND scope_fingerprint.last_changed_scrape_id < @snapshotId) " +
-        "ON CONFLICT (snapshot_id, song_id, instrument, account_id) DO UPDATE SET " +
-        "score = EXCLUDED.score, accuracy = EXCLUDED.accuracy, is_full_combo = EXCLUDED.is_full_combo, stars = EXCLUDED.stars, season = EXCLUDED.season, percentile = EXCLUDED.percentile, rank = EXCLUDED.rank, source = EXCLUDED.source, difficulty = EXCLUDED.difficulty, api_rank = EXCLUDED.api_rank, end_time = EXCLUDED.end_time, band_members_json = EXCLUDED.band_members_json, band_score = EXCLUDED.band_score, base_score = EXCLUDED.base_score, instrument_bonus = EXCLUDED.instrument_bonus, overdrive_bonus = EXCLUDED.overdrive_bonus, instrument_combo = EXCLUDED.instrument_combo, last_updated_at = EXCLUDED.last_updated_at";
+        """
+        WITH snapshot_rows AS (
+            SELECT DISTINCT ON (song_id, instrument, account_id)
+                song_id, instrument, account_id, score, accuracy, is_full_combo,
+                stars, season, difficulty, percentile, rank, source, api_rank,
+                end_time, band_members_json, band_score, base_score,
+                instrument_bonus, overdrive_bonus, instrument_combo, ts
+            FROM _le_staging WHERE instrument = @instrument
+            ORDER BY song_id, instrument, account_id, score DESC, ts DESC
+        ), batch_scopes AS (
+            SELECT DISTINCT song_id, instrument
+            FROM snapshot_rows
+        ), reusable_scopes AS (
+            SELECT fingerprint.song_id, fingerprint.instrument
+            FROM batch_scopes batch
+            JOIN leaderboard_scope_fingerprints fingerprint
+              ON fingerprint.song_id = batch.song_id
+             AND fingerprint.instrument = batch.instrument
+             AND fingerprint.scope_kind = 'alltime'
+            JOIN scrape_publication_state publication
+              ON publication.id = TRUE
+            JOIN leaderboard_published_scope_source published_source
+              ON published_source.published_scrape_id = publication.published_scrape_id
+             AND published_source.song_id = fingerprint.song_id
+             AND published_source.instrument = fingerprint.instrument
+             AND published_source.scope_kind = fingerprint.scope_kind
+            WHERE fingerprint.instrument = @instrument
+              AND fingerprint.last_seen_scrape_id = @snapshotId
+              AND fingerprint.fingerprint_version >= 2
+              AND fingerprint.is_complete
+              AND published_source.source_kind = 'snapshot'
+              AND published_source.source_snapshot_id IS NOT NULL
+              AND published_source.is_complete
+              AND published_source.row_count = fingerprint.entry_count
+              AND published_source.content_fingerprint IS NOT DISTINCT FROM fingerprint.content_fingerprint
+              AND (
+                  published_source.coverage_fingerprint IS NOT DISTINCT FROM fingerprint.coverage_fingerprint
+                  -- Published 1236 predates strict manifest coverage. Allow only
+                  -- the one-way legacy MD5 to complete manifest SHA-256 upgrade.
+                  OR (
+                      length(published_source.coverage_fingerprint) = 32
+                      AND length(fingerprint.coverage_fingerprint) = 64
+                  )
+              )
+              AND (
+                  SELECT COUNT(*)::bigint
+                  FROM leaderboard_entries_snapshot prior_snapshot
+                  WHERE prior_snapshot.snapshot_id = published_source.source_snapshot_id
+                    AND prior_snapshot.song_id = fingerprint.song_id
+                    AND prior_snapshot.instrument = @instrument
+              ) = published_source.row_count
+        )
+        INSERT INTO leaderboard_entries_snapshot (
+            snapshot_id, song_id, instrument, account_id, score, accuracy,
+            is_full_combo, stars, season, percentile, rank, source, difficulty,
+            api_rank, end_time, band_members_json, band_score, base_score,
+            instrument_bonus, overdrive_bonus, instrument_combo, first_seen_at,
+            last_updated_at)
+        SELECT
+            @snapshotId, snapshot_rows.song_id, snapshot_rows.instrument,
+            snapshot_rows.account_id, snapshot_rows.score, snapshot_rows.accuracy,
+            snapshot_rows.is_full_combo, snapshot_rows.stars, snapshot_rows.season,
+            snapshot_rows.percentile, snapshot_rows.rank, snapshot_rows.source,
+            snapshot_rows.difficulty, snapshot_rows.api_rank, snapshot_rows.end_time,
+            snapshot_rows.band_members_json, snapshot_rows.band_score,
+            snapshot_rows.base_score, snapshot_rows.instrument_bonus,
+            snapshot_rows.overdrive_bonus, snapshot_rows.instrument_combo,
+            snapshot_rows.ts, snapshot_rows.ts
+        FROM snapshot_rows
+        LEFT JOIN reusable_scopes reusable
+          ON reusable.song_id = snapshot_rows.song_id
+         AND reusable.instrument = snapshot_rows.instrument
+        WHERE NOT (
+            @skipUnchangedPhysicalSnapshots
+            AND reusable.song_id IS NOT NULL)
+        ON CONFLICT (snapshot_id, song_id, instrument, account_id) DO UPDATE SET
+            score = EXCLUDED.score,
+            accuracy = EXCLUDED.accuracy,
+            is_full_combo = EXCLUDED.is_full_combo,
+            stars = EXCLUDED.stars,
+            season = EXCLUDED.season,
+            percentile = EXCLUDED.percentile,
+            rank = EXCLUDED.rank,
+            source = EXCLUDED.source,
+            difficulty = EXCLUDED.difficulty,
+            api_rank = EXCLUDED.api_rank,
+            end_time = EXCLUDED.end_time,
+            band_members_json = EXCLUDED.band_members_json,
+            band_score = EXCLUDED.band_score,
+            base_score = EXCLUDED.base_score,
+            instrument_bonus = EXCLUDED.instrument_bonus,
+            overdrive_bonus = EXCLUDED.overdrive_bonus,
+            instrument_combo = EXCLUDED.instrument_combo,
+            last_updated_at = EXCLUDED.last_updated_at
+        """;
 
     internal static string BuildScoreMergeSql() =>
         "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, first_seen_at, last_updated_at) " +
