@@ -52,6 +52,27 @@ sample fingerprints remained intact. Immediate free space reached
 passed with about `6.75 GB` of margin. Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-scrape-1265-capacity-recovery-20260727T0011Z`.
 
+The proxy-retuned disabled-writer baseline ran scrape `1266`. It completed
+`8,232/8,232` manifests and every recorded publication-critical phase with zero
+writer failures, but it exited during unbounded deferred registration/rivals
+processing before global publication. Recovery marked `1266` failed and
+confirmed that it owns zero published-source rows; published `1236` remains
+unfrozen.
+
+Logical current/version tables had zero scrape-`1266` touches or metric rows.
+Full before/after fingerprints are byte-identical for all `39,820,273` current
+rows and `194,171,215` version rows:
+
+- current fingerprint file:
+  `054b9bbeb52d6670b4adee9fc7afcc101977132a20cecaf14fcc30690a69f3f2`;
+- version fingerprint file:
+  `c9ab56adc1a983c62be0e3cc5dbe480ef6b6993a41de601638197cb394424313`.
+
+The gate remains `NOT_CLEARED_NO_PUBLICATION`; no truncate ran. The retained
+leaf tables currently occupy `123,173,888,000` bytes after the already accepted
+secondary-index retirement. Hashed evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/proxy-retune-disabled-writer-baseline-20260727T004228Z/parity/logical-shadow-retirement-live-gate.json`.
+
 ## Exact scope
 
 | Family | Parent | Leaf partitions | Rows | Bytes | Restore class |

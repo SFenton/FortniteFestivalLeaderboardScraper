@@ -92,6 +92,14 @@ This plan records the approved direction for improving FST Postgres persistence 
   scrape-`1265` start requirement now passes with about `6.75 GB` of margin.
   No table row, logical fingerprint, publication state, WAL file, or worker
   state changed.
+- PROXY-RETUNE scrape `1266` completed `8,232/8,232` manifests and improved
+  network/writer wall clock from `5:29:50` to `4:54:57.902`, but did not
+  publish. A Band Duets schema-ensure deadlock was repaired before publication;
+  the old worker later exited during an unbounded deferred-registration/rivals
+  phase. Recovery marked `1266` failed with zero published mappings and
+  preserved/unfroze `1236`. Full logical before/after hashes remained exact.
+  Final free space is `32,491,429,888`, so the corrected
+  `60,392,999,803`-byte scrape guard is blocked.
 - STORAGE-OWNERSHIP completed continuous-safe P6/P8/P9 owner cards and exact
   manifests for `player_score_observations`, `scrape_dirty_*`, and legacy
   `leaderboard_entries_*`: `61,217,292,288` bytes total. Observation dual
@@ -250,7 +258,7 @@ path, and post-action validation are documented.
 |---|---|---|
 | Phase 6 logical current/version dual-write | Complete | Implemented, deployed, evaluated on scrape `1214`, committed as `02460b13`. |
 | Phase 7 logical write metrics | Complete | Implemented, deployed, committed as `2ac02445`; production metrics captured from failed scrape `1218`. |
-| LOGICAL-RETIRE ownership/rebuild package | Secondary indexes retired / truncate blocked | Exact rows, integrity, stale-1237/public-1236 divergence proof, schema/rebuild SQL, and bounded regeneration remain preserved. POST-1265-LOW-SCRATCH removed only four dormant secondary index trees for `18,289,049,600` database bytes; `39,820,273` current rows, `194,171,215` version rows, 20 primary-key constraints, and table heaps remain intact. No disabled-writer scrape has globally published, so no truncate ran. |
+| LOGICAL-RETIRE ownership/rebuild package | Secondary indexes retired / truncate blocked | Exact rows, integrity, stale-1237/public-1236 divergence proof, schema/rebuild SQL, and bounded regeneration remain preserved. POST-1265-LOW-SCRATCH removed only four dormant secondary index trees for `18,289,049,600` database bytes; `39,820,273` current rows, `194,171,215` version rows, 20 primary-key constraints, and table heaps remain intact. Scrape `1266` added exact full-table before/after hashes and zero logical touches, but did not globally publish, so no truncate ran. |
 | SOLO-DYNAMIC-AB compact published solo read model | Accepted research/implementation candidate / migration blocked | Full owner/query matrix, service-cold and warm baseline, bounded unlogged samples, exact c1/c8 fingerprints, storage math, rollback DDL, and default-off rank-offset code are complete. Conservative compact-plus-hot projection is <=`20,215,010,912` bytes, reclaiming >=`26,418,448,800` bytes (`56.65%`). Final `3,812,061,184`-byte margin cannot safely build it. |
 | Experimental logical shadow cleanup | Complete | Approved cleanup truncated experimental logical shadow tables and removed incomplete scrape `1218`. |
 | Database architecture evaluation | Complete | Read-only code review and production probes completed on 2026-07-06. |
@@ -281,7 +289,7 @@ path, and post-action validation are documented.
 | Emergency `band_read_*` reclaim | Complete | At 44 MB free / 100% disk, stopped `fstworker`, froze public reads to published `1214`, truncated rollback-safe logical shadow tables, quarantined/validated/dropped unused derived `band_read_*` tables, restored about 435 GB free, and restarted `fstworker` as scrape `1222`. |
 | Autonomous scrape rollout | Rejected after scrape `1265`; worker held | Candidate `1265` passed start/post-writer guards, completed all manifests/writers and band maintenance, then crossed its declared capacity floor during ranking snapshots. It was stopped and reconciled failed with zero published mappings. Published `1236` remains safe. Post-cleanup nominal guards pass again, but the live run proved that model insufficient through publication. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
-| Next implementation phase | Corrected start guard passes / worker held | POST-1265-LOW-SCRATCH restored about `6.75 GB` above the corrected full-run requirement. This phase did not rerun SNAPSHOT-REUSE or restore scheduling; the candidate remains rejected/default-off. Publication parity, logical table truncate, optional builds, rewrites, repacks, broad movement, and owner-rejected drops remain separately blocked. |
+| Next implementation phase | Corrected start guard blocked / worker held | Failed scrape `1266` consumed the prior margin and left `32,491,429,888` free, `27,901,569,915` bytes below the corrected full-run requirement. Proxy tuning reverted to `400 / 2 / 1`; fixed image `fstservice:proxy-retune-6651ebd9` is held. Publication parity, logical truncate, another scrape, optional builds, rewrites, repacks, broad movement, and owner-rejected drops remain blocked. |
 
 ## LOGICAL-RETIRE decision package (2026-07-25)
 

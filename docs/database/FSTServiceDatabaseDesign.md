@@ -162,6 +162,16 @@ constraints, table heaps, metrics, and publication state were unchanged.
 `DatabaseInitializer` no longer recreates these dormant indexes; exact
 concurrent recreate/attach SQL is retained in the phase evidence.
 
+Scrape `1266` exposed a separate live concurrency defect: composite rank
+snapshotting and Band Duets ranking rebuild both entered
+`EnsureBandRankHistoryTables` concurrently and deadlocked on the same
+`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`. The ensure path now takes a
+transaction-scoped Postgres advisory lock before any idempotent band-rank
+history DDL, and the ranking caller retries one `40P01` deadlock. This preserves
+the existing schema and write modes while serializing only the localized schema
+ensure. The same-run Duets repair rebuilt `4,477,133` current ranking rows
+before the failed candidate was abandoned without publication.
+
 The 2026-07-25 SOLO-DYNAMIC-AB inventory measured the active solo current
 projection at `39,601,283` rows / `46,633,459,712` bytes:
 `17,821,523,968` heap and `28,806,701,056` indexes. The accepted replacement

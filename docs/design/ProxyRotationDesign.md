@@ -110,6 +110,37 @@ publication, unfreeze, and public/logical parity.
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/proxy-retune-disabled-writer-baseline-20260727T004228Z`.
 
+### Full disabled-writer baseline decision
+
+Scrape `1266` ran the selected `800 / 32 / 4` limits exactly once with curl
+primary transport, snapshot reuse off, logical writes off, and restart `no`.
+The network/writer boundary completed all `8,232/8,232` manifests,
+`592,631` reported pages, and `59,095,126` reported entries with zero writer,
+parse, retry-exhaustion, or incomplete-scope failures.
+
+Network plus writer drain took `17,697.902 s` (`4:54:57.902`), versus
+`19,890 s` (`5:29:50`) for scrape `1265`: wall clock improved `11.02%` and
+useful pages/s improved `12.41%` from `29.79` to `33.49`. Core transport
+recorded `613,040` wire sends, `18,208` isolated CDN blocks (`2.97%`), and
+`1.0344` wire sends per reported page, with no `429` or `503`. Two normal
+two-hour token rollovers caused bounded `401` retries; all manifests remained
+complete. All 25 exits stayed healthy and unique.
+
+The full baseline did **not** publish. Concurrent ranking schema setup
+deadlocked Band Duets once; a bounded same-run repair rebuilt
+`4,477,133` Duets ranking rows before publication, and commit `6651ebd9`
+serializes future schema setup with an advisory transaction lock plus one
+deadlock retry. The old worker then spent more than six hours in deferred
+registration/rivals processing without a phase deadline and exited before a
+terminal publication decision. Recovery marked `1266` failed, preserved and
+unfroze published `1236`, and confirmed zero candidate published-source rows.
+
+Decision: the `800 / 32 / 4` network result is a research win but is not
+promoted without a successful publication. Production reverted to
+`400 / 2 / 1`; `fstworker` is held on fixed image
+`fstservice:proxy-retune-6651ebd9`, restart `no`. A corrected full-scrape guard
+now fails at `32,491,429,888` free bytes, so another scrape is capacity-blocked.
+
 Internal curl timeouts are classified as transient transport failures and
 retried; only the caller/host cancellation token ends the pass. Controlled
 run-once compose also sets `restart: "no"` so Docker cannot restart a completed

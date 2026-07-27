@@ -1187,6 +1187,29 @@ move to PG-7 after backup/restore and live-scrape parity.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-scrape-1265-capacity-recovery-20260727T0011Z`.
 
+### PG-3 proxy-retuned disabled-writer baseline - rejected before publication 2026-07-27
+
+- Scrape `1266` completed `8,232/8,232` manifests, `592,631` pages, and
+  `59,095,126` reported entries with zero writer, parse, retry-exhaustion, or
+  publication-critical phase failures. Network plus writer drain improved
+  `11.02%` to `4:54:57.902`.
+- A Band Duets schema-ensure deadlock was repaired in the same frozen window.
+  Commit `6651ebd9` serializes future ensures and retries one PostgreSQL
+  deadlock; `130/130` ranking tests passed.
+- The old worker then entered an unbounded deferred-registration/rivals phase
+  and exited before publication. Recovery marked `1266` failed, removed the
+  freeze, retained published `1236`, and verified zero candidate mappings.
+- Full logical fingerprints remained exact for `39,820,273` current and
+  `194,171,215` version rows with zero scrape-`1266` logical touches. The
+  destructive truncate gate remains `NOT_CLEARED_NO_PUBLICATION`.
+- Final free space is `32,491,429,888`; another corrected full scrape is
+  blocked. Production proxy settings reverted to `400 / 2 / 1`, and the fixed
+  worker image is held with restart `no`.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/proxy-retune-disabled-writer-baseline-20260727T004228Z`
+  and
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/stale-scrape-1266-recovery-20260727T184133Z`.
+
 ### PG-4.2 - Separate semantic score changes from derived rank changes
 
 The current logical version volume is 15.39M rows for one scrape. Evaluate

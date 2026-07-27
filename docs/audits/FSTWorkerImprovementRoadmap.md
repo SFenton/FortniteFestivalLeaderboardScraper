@@ -725,6 +725,41 @@ until replay and live shadow parity pass.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/proxy-retune-disabled-writer-baseline-20260727T004228Z`.
 
+**PROXY-RETUNE + DISABLED-WRITER-BASELINE - network accepted as research;
+publication rejected 2026-07-27**
+
+- Scrape `1266` used `800` global RPS, `32` RPS per exit, concurrency `4`,
+  curl primary transport, 25 qualified unique PIA exits, snapshot reuse off,
+  logical writes off, and restart `no`.
+- It completed `8,232/8,232` manifests, `592,631` pages, and `59,095,126`
+  reported entries with zero incomplete scopes, parse failures, retry
+  exhaustion, or writer failures. Network plus writer drain was
+  `4:54:57.902`, `11.02%` below scrape `1265`; useful pages/s improved
+  `12.41%` to `33.49`.
+- Core transport recorded `613,040` wire sends and `18,208` isolated blocks
+  (`2.97%`, `1.0344` sends/reported page), with no `429` or `503`. The
+  60-second monitor captured `999` samples, zero public-health failures,
+  `8.33 GiB` peak worker RSS, `10.51 GiB` peak Postgres RSS, and a minimum
+  `18,134,577,152` free bytes, still above the `14,571,150,203` safety floor.
+- Band Duets ranking hit PostgreSQL `40P01` when two ranking paths concurrently
+  ran the same schema ensure. A same-run repair rebuilt `4,477,133` Duets
+  ranking rows before publication. Commit `6651ebd9` adds a transaction-scoped
+  advisory schema lock and one deadlock retry; `130/130` ranking tests and the
+  fixed image build passed.
+- The worker later remained in deferred registration/rivals processing for
+  more than six hours without a phase deadline or terminal publication
+  decision and exited `137` with `OOMKilled=false`. Incident recovery marked
+  `1266` failed at `capacity_watchdog_abandoned`, preserved/unfroze `1236`,
+  and confirmed zero candidate published-source rows.
+- Production reverted to `400 / 2 / 1`. The fixed worker image
+  `fstservice:proxy-retune-6651ebd9` is created-held with restart `no`.
+  Corrected scrape capacity is blocked at `32,491,429,888` free bytes.
+  The tuning candidate is not promoted without successful publication.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/proxy-retune-disabled-writer-baseline-20260727T004228Z`
+  and
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/stale-scrape-1266-recovery-20260727T184133Z`.
+
 ### WORKER-0.5 - Separate solo and band completion
 
 A band timeout must not mark `LeaderboardScrapeCompleted=true`. A task still
