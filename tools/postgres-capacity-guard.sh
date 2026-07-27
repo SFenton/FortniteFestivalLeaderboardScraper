@@ -10,7 +10,7 @@ ACTION_CLASS="${ACTION_CLASS:-observation}"
 OUTPUT_FILE="${OUTPUT_FILE:-}"
 TRANSIENT_BUILD_BYTES="${TRANSIENT_BUILD_BYTES:-0}"
 REQUIRED_SCRATCH_BYTES="${REQUIRED_SCRATCH_BYTES:-0}"
-ESTIMATED_FULL_SCRAPE_GROWTH_BYTES="${ESTIMATED_FULL_SCRAPE_GROWTH_BYTES:-15032385536}"
+ESTIMATED_FULL_SCRAPE_GROWTH_BYTES="${ESTIMATED_FULL_SCRAPE_GROWTH_BYTES:-60392999803}"
 EXPECTED_FULL_SCRAPES_PER_DAY="${EXPECTED_FULL_SCRAPES_PER_DAY:-2}"
 MINIMUM_HEADROOM_DAYS="${MINIMUM_HEADROOM_DAYS:-7}"
 
@@ -32,9 +32,10 @@ Options:
   --fst-storage-root DIR        Required FST storage root
   -h, --help                    Show this help
 
-Defaults assume 14 GiB growth per full scrape, two full scrapes per day, and a
-seven-day alert/defer threshold. Override the matching environment variables
-only with measured evidence.
+Defaults use the corrected 60,392,999,803-byte full-run emergency window
+measured through scrape 1265, two full scrapes per day, and a seven-day
+alert/defer threshold. Override the matching environment variables only with
+newer measured evidence.
 
 Exit codes:
   0  Action is allowed (possibly with a seven-day capacity alert)

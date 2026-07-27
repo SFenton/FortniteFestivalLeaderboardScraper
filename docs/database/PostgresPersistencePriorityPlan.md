@@ -147,8 +147,9 @@ guard:
 - records filesystem free/used bytes, database size, WAL-directory size,
   transient/scratch estimates, scrape/publication/freeze state, locks, and
   active vacuum/index/rewrite work;
-- defaults to measured roadmap assumptions of 14 GiB growth per full scrape,
-  two full scrapes per day, and a seven-day alert/defer threshold;
+- defaults to the corrected `60,392,999,803`-byte full-run emergency window
+  measured through scrape `1265`, two full scrapes per day, and a seven-day
+  alert/defer threshold;
 - blocks optional builds or rewrites that cannot preserve that headroom and
   blocks critical scrape/post-process work below one full-scrape growth window;
 - blocks `reclaim` below that emergency window or while vacuum, index build,
