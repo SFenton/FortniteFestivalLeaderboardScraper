@@ -28,6 +28,26 @@ capacity floor despite passing the nominal preflight model.
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T110731Z`.
 
+## 2026-07-27 post-1265 low-scratch recovery
+
+No additional scrape ran and snapshot reuse was not re-enabled. The recovery
+dropped only four dormant non-constraint secondary index trees from the
+retired logical shadow while preserving every logical row and primary-key
+constraint.
+
+| Gate | Result |
+|---|---|
+| Database reclaim | `18,289,049,600` bytes |
+| Immediate filesystem free | `67,148,181,504` bytes |
+| Corrected start requirement | `60,392,999,803` bytes |
+| Corrected margin | about `6.75 GB` |
+| Public/logical parity | `13/13` public fingerprints exact; bounded current/version fingerprints exact |
+| Logical data | `39,820,273` current rows and `194,171,215` version rows retained; 20 primary-key constraints retained |
+| Worker/candidate | Worker held; snapshot reuse remains rejected, reverted, and default-off |
+
+Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-scrape-1265-capacity-recovery-20260727T0011Z`.
+
 ## 2026-07-26 same-drive capacity recovery
 
 The separate BAND-SONG-PROJECTION phase retired only stale optional derived
@@ -76,7 +96,9 @@ is additional rejection evidence, not a reason to weaken the capacity floor.
 Observed peak consumption was `45,821,849,600` bytes, which exceeded the
 candidate estimate by `1,427,020,667` bytes (`3.21%`). Preserving the same
 safety floor requires at least `60,392,999,803` free bytes at start. Current
-stable free space is short by `11,616,701,307` bytes.
+post-recovery free space passes that requirement with about `6.75 GB` of
+margin. This clears the corrected capacity shortfall only; it does not promote
+the rejected candidate or authorize an automatic retry.
 
 ## Candidate contract
 
@@ -170,9 +192,9 @@ post-writer capacity gate can pass on the FST drive.
 
 ## Resume procedure
 
-1. Keep the worker held. Both measured scrape guards now block; do not start
-   another candidate without additional same-drive capacity and a new complete
-   preflight.
+1. Keep the worker held. The corrected capacity guard now passes, but this
+   recovery phase did not authorize another candidate. Require a new complete
+   preflight before any separately approved retry.
 2. Preserve all DB/storage work on `/mnt/docker-storage`; do not use alternate
    drive scratch or delete data to force a retry.
 3. Build current source with `docker build -f FSTService/Dockerfile ...`.

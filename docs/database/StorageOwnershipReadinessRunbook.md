@@ -29,6 +29,14 @@ The final guard measured `52,103,634,944` free bytes after failed-query temp
 files and WAL aged out. Database size was unchanged at `3,829,206,619,827`
 bytes; this was not a reclaim action.
 
+A later post-`1265` low-scratch phase retired only the four dormant
+non-constraint secondary index trees on the disabled logical shadow.
+Immediate free space reached `67,148,181,504` bytes and the corrected
+`60,392,999,803`-byte full-run start requirement passed with about `6.75 GB`
+of margin. This does not clear the separate P6/P8/P9 table-data gates below:
+observation, dirty-work, and legacy rows remain intact. Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-scrape-1265-capacity-recovery-20260727T0011Z`.
+
 The three surfaces total `61,217,292,288` bytes (`57.01 GiB`) gated for
 possible future reclaim.
 

@@ -218,6 +218,27 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public async Task EnsureSchemaAsync_does_not_recreate_retired_logical_shadow_secondary_indexes()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT
+                to_regclass('public.ix_lce_scope_rank') IS NULL,
+                to_regclass('public.ix_lce_last_changed') IS NULL,
+                to_regclass('public.ix_lev_open_versions') IS NULL,
+                to_regclass('public.ix_lev_from_scrape') IS NULL
+            """;
+
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        for (var ordinal = 0; ordinal < reader.FieldCount; ordinal++)
+            Assert.True(reader.GetBoolean(ordinal));
+    }
+
+    [Fact]
     public async Task Retired_composite_history_latest_index_maintenance_sql_is_valid()
     {
         await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);

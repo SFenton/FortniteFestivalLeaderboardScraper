@@ -3,7 +3,7 @@
 **Authoritative runtime:** PostgreSQL 17 in `fst-postgres`  
 **Production compose owner:** `/home/sfenton/Docker/FestivalServiceTracker`  
 **Production data root:** `/mnt/docker-storage/Docker/FestivalServiceTracker/pg-data`  
-**Last live inventory:** 2026-07-26 01:35 UTC
+**Last live inventory:** 2026-07-27 00:26 UTC
 
 This document defines FST PostgreSQL ownership, source-of-truth boundaries,
 publication behavior, retention, index posture, and restore paths. PostgreSQL
@@ -153,6 +153,15 @@ disabled-writer publish/parity window does not yet exist. The retained
 `leaderboard_logical_write_metrics` table has `108` rows and occupies
 `106,496` bytes.
 
+On 2026-07-27 POST-1265-LOW-SCRATCH retired only the logical shadow's four
+non-constraint secondary index trees: `ix_lce_scope_rank`,
+`ix_lce_last_changed`, `ix_lev_open_versions`, and `ix_lev_from_scrape`.
+Their 36 child indexes reclaimed `18,289,049,600` database bytes. The
+`39,820,273` current rows, `194,171,215` version rows, 20 primary-key
+constraints, table heaps, metrics, and publication state were unchanged.
+`DatabaseInitializer` no longer recreates these dormant indexes; exact
+concurrent recreate/attach SQL is retained in the phase evidence.
+
 The 2026-07-25 SOLO-DYNAMIC-AB inventory measured the active solo current
 projection at `39,601,283` rows / `46,633,459,712` bytes:
 `17,821,523,968` heap and `28,806,701,056` indexes. The accepted replacement
@@ -242,8 +251,8 @@ All instrument-partitioned families use these nine keys:
 | `leaderboard_published_scope_source` | Durable published source selection | Worker candidate build and publication transaction | Service and export resolver when `Features:UsePublishedScopeSources=true`; supports physical snapshot and explicit empty sources |
 | `leaderboard_population`, `song_stats` | Durable derived metadata | Worker/post-process | Ranking totals/statistics; generation must match source |
 | `leaderboard_entries_overlay` | Durable corrective overlay | Controlled writes | Merged with selected base source; precedence is explicit |
-| `leaderboard_current_entries` | Retired experimental logical current shadow | Disabled worker dual-write | Never authoritative; rebuild semantic current from the published physical map only after an explicit future migration/promotion |
-| `leaderboard_entry_versions` | Retired experimental logical chronology | Disabled worker dual-write | Non-authoritative scrape `1223`-`1237` chronology; intentionally discardable after the destructive gate, with metadata/fingerprint/sample evidence retained |
+| `leaderboard_current_entries` | Retired experimental logical current shadow | Disabled worker dual-write | Never authoritative; primary-key family retained, dormant rank/change secondary trees retired; rebuild semantic current from the published physical map only after an explicit future migration/promotion |
+| `leaderboard_entry_versions` | Retired experimental logical chronology | Disabled worker dual-write | Non-authoritative scrape `1223`-`1237` chronology; primary-key family retained, dormant open/from-scrape secondary trees retired; intentionally discardable after the destructive gate |
 | `leaderboard_logical_write_metrics` | Audit/artifact | Worker | Per-scrape changed/new/unchanged evidence |
 | `current_leaderboard_entries`, `solo_current_projection_scope`, `solo_current_projection_state` | Derived published/current projection | `SoloCurrentProjectionBuilder` | Preferred bounded current reads when scope state is ready |
 | `valid_score_overrides` | Durable operator/source metadata | Controlled writes | Threshold exception source; retain provenance |
@@ -461,6 +470,12 @@ remains live-scrape parity-gated.
    retained team/date indexes, while primary keys retain point identity and
    conflict behavior. Its exact rollback follows the same concurrent-child,
    metadata-parent, attach sequence.
+10. The retired logical shadow intentionally has no
+    `ix_lce_scope_rank`, `ix_lce_last_changed`, `ix_lev_open_versions`, or
+    `ix_lev_from_scrape` tree. The writer is startup-rejected and there is no
+    runtime reader. All primary-key constraints remain; exact child-concurrent,
+    metadata-parent, attach rollback SQL must run before any future migration
+    restores ownership.
 
 ## Publication and freeze sequence
 

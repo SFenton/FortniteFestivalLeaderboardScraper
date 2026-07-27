@@ -1152,6 +1152,41 @@ move to PG-7 after backup/restore and live-scrape parity.
   `11,616,701,307`-byte current shortfall. Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T110731Z`.
 
+### PG-3 post-scrape-1265 low-scratch capacity recovery - accepted 2026-07-27
+
+- The read-only inventory found no active scrape/query/transaction, ungranted
+  lock, vacuum, index build, rewrite, replication slot, standby, archive
+  backlog, temp file, PostgreSQL log, core dump, or same-drive spool/curl
+  scratch. Docker data/build cache is on `/mnt/storage`, not the FST drive.
+- `pg_wal` contained `11,089,739,776` bytes in 661 PostgreSQL-managed future
+  recycled segments. One standard checkpoint and a safe reload test reclaimed
+  zero bytes. WAL was not deleted manually and is not counted as durable
+  full-scrape capacity because the next scrape would reuse/reallocate it.
+- The only accepted object family was the retired logical shadow's four
+  non-constraint secondary trees: `ix_lce_scope_rank`,
+  `ix_lce_last_changed`, `ix_lev_open_versions`, and
+  `ix_lev_from_scrape`. They owned 36 child indexes and zero constraints.
+  Production has no logical reader, and its only writer is default-off and
+  startup-rejected.
+- A transactional drop/rollback completed in `6.121 ms`. Bounded current and
+  version fingerprints were exact; primary-key fallback plans remained
+  bounded. Exact concurrent child rebuild, parent creation, and attach SQL was
+  checksummed before production mutation.
+- The production transaction dropped the one owner-card family. Database size
+  changed from `3,829,657,859,763` to `3,811,368,810,163` bytes, reclaiming
+  `18,289,049,600` bytes. Immediate free space changed from
+  `48,858,976,256` to `67,148,181,504` bytes.
+- `13/13` public route/export/history/ranking fingerprints matched. All
+  `39,820,273` current rows, `194,171,215` version rows, 20 primary-key
+  constraints, and logical sample fingerprints remained exact. `119/119`
+  targeted tests and the Release build passed.
+- The terminal corrected `60,392,999,803`-byte start guard passed with
+  `6,754,436,229` bytes of margin. Optional builds/rewrites and the
+  logical-table truncate remain separately blocked; the worker remains held
+  and snapshot reuse remains default-off.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-scrape-1265-capacity-recovery-20260727T0011Z`.
+
 ### PG-4.2 - Separate semantic score changes from derived rank changes
 
 The current logical version volume is 15.39M rows for one scrape. Evaluate

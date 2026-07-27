@@ -2,7 +2,7 @@
 
 ## Current decision
 
-**Tier:** accepted readiness, blocked destructive action.
+**Tier:** secondary-index retirement accepted; table-data truncate blocked.
 
 The logical leaderboard shadow is disabled and non-authoritative, but the
 repository's destructive live-scrape A/B gate is not yet satisfied. Scrapes
@@ -42,18 +42,50 @@ Latest hashed evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T110731Z/parity/logical-shadow-retirement-live-gate.json`
 (`35723055c9439e2d75b4ba06e630d8c5bfc4a89aaa70c9ecced1e6fff3b4bc2f`).
 
+POST-1265-LOW-SCRATCH did not weaken that table-data gate. It removed only the
+four non-constraint secondary index trees from the already retired,
+startup-rejected logical shadow. The 36 child indexes reclaimed
+`18,289,049,600` database bytes; all `39,820,273` current rows,
+`194,171,215` version rows, 20 primary-key constraints, table heaps, and exact
+sample fingerprints remained intact. Immediate free space reached
+`67,148,181,504` bytes, and the corrected `60,392,999,803`-byte start guard
+passed with about `6.75 GB` of margin. Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-scrape-1265-capacity-recovery-20260727T0011Z`.
+
 ## Exact scope
 
 | Family | Parent | Leaf partitions | Rows | Bytes | Restore class |
 |---|---|---:|---:|---:|---|
-| Logical current | `public.leaderboard_current_entries` | 9 | 39,820,273 | 33,480,859,648 | Rebuild semantic current from published physical snapshots |
-| Logical versions | `public.leaderboard_entry_versions` | 9 | 194,171,215 | 107,982,077,952 | Experimental chronology; intentionally discardable |
+| Logical current | `public.leaderboard_current_entries` | 9 | 39,820,273 | 26,674,814,976 | Rebuild semantic current from published physical snapshots |
+| Logical versions | `public.leaderboard_entry_versions` | 9 | 194,171,215 | 96,499,073,024 | Experimental chronology; intentionally discardable |
 | Metrics | `public.leaderboard_logical_write_metrics` | none | 108 | 106,496 | Retain |
 
 Each target family has `bass`, `default`, `drums`, `guitar`, `solo_bass`,
 `solo_drums`, `solo_guitar`, `solo_vocals`, and `vocals` leaf partitions. The
 `default` partition owns the five peripheral instrument values. Schema,
-constraints, partitions, and indexes remain after `TRUNCATE`.
+constraints, partitions, and primary indexes remain after `TRUNCATE`.
+
+## Retired secondary index family
+
+The following parent trees are intentionally absent:
+
+- `ix_lce_scope_rank`
+- `ix_lce_last_changed`
+- `ix_lev_open_versions`
+- `ix_lev_from_scrape`
+
+They owned 36 physical child indexes and zero constraints. Current production
+has no logical-shadow reader, and `FeatureOptionsValidator` rejects enabling
+the only writer. A transactional drop/rollback proof preserved exact bounded
+current/version fingerprints; the production drop retained all 20 primary-key
+constraints and `13/13` public route/export/history/ranking fingerprints.
+
+Exact concurrent child rebuild, parent creation, and attach SQL is retained at:
+
+`post-scrape-1265-capacity-recovery-20260727T0011Z/rollback/recreate-logical-shadow-secondary-indexes.sql`
+
+Run that package before any future versioned migration re-enables a logical
+writer or reader. `DatabaseInitializer` no longer recreates these indexes.
 
 ## Preconditions
 
@@ -96,7 +128,8 @@ and at least 60 seconds afterward.
 - Both target parents and every leaf partition contain zero rows.
 - Metrics remain `108` rows unless later normal metadata retention changes
   them explicitly.
-- Constraints and indexes remain valid.
+- Constraints and retained primary indexes remain valid; the retired
+  secondary family remains absent.
 - No new target query, ungranted lock, vacuum, index build, or rewrite remains.
 - Mapped leaderboard remains byte-exact HTTP `200`.
 - Export, ranking, history, composite/band, and band-song routes retain their

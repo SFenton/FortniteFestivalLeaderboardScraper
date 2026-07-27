@@ -681,6 +681,24 @@ until replay and live shadow parity pass.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T110731Z`.
 
+**POST-1265-LOW-SCRATCH capacity recovery - accepted; worker held
+2026-07-27**
+
+- No additional scrape ran. The recovery retired only four dormant
+  non-constraint secondary index trees from the startup-rejected logical
+  shadow, reclaiming `18,289,049,600` database bytes.
+- Immediate free space reached `67,148,181,504` bytes. The corrected
+  `60,392,999,803`-byte scrape-`1265` start requirement now passes with about
+  `6.75 GB` of margin.
+- All logical rows and 20 primary-key constraints remained, `13/13` public
+  fingerprints matched, `119/119` targeted tests and the Release build passed,
+  and service/web/Postgres remained healthy.
+- `fstworker` remains held with restart `no`; snapshot reuse remains
+  default-off and rejected. Capacity recovery alone is not promotion or retry
+  authorization.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-scrape-1265-capacity-recovery-20260727T0011Z`.
+
 ### WORKER-0.5 - Separate solo and band completion
 
 A band timeout must not mark `LeaderboardScrapeCompleted=true`. A task still

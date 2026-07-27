@@ -278,11 +278,9 @@ public static class DatabaseInitializer
         CREATE TABLE IF NOT EXISTS leaderboard_current_entries_vocals PARTITION OF leaderboard_current_entries FOR VALUES IN ('Vocals');
         CREATE TABLE IF NOT EXISTS leaderboard_current_entries_default PARTITION OF leaderboard_current_entries DEFAULT;
 
-        CREATE INDEX IF NOT EXISTS ix_lce_scope_rank
-            ON leaderboard_current_entries (song_id, instrument, rank);
-
-        CREATE INDEX IF NOT EXISTS ix_lce_last_changed
-            ON leaderboard_current_entries (last_changed_scrape_id, instrument);
+        -- Retired 2026-07-27: the logical current shadow is startup-disabled,
+        -- non-authoritative, and has no runtime reader. Keep only its primary
+        -- key family unless a future versioned migration restores ownership.
 
         CREATE TABLE IF NOT EXISTS leaderboard_entry_versions (
             song_id                 TEXT        NOT NULL,
@@ -323,12 +321,9 @@ public static class DatabaseInitializer
         CREATE TABLE IF NOT EXISTS leaderboard_entry_versions_vocals PARTITION OF leaderboard_entry_versions FOR VALUES IN ('Vocals');
         CREATE TABLE IF NOT EXISTS leaderboard_entry_versions_default PARTITION OF leaderboard_entry_versions DEFAULT;
 
-        CREATE INDEX IF NOT EXISTS ix_lev_open_versions
-            ON leaderboard_entry_versions (song_id, instrument, account_id)
-            WHERE valid_to_scrape_id IS NULL;
-
-        CREATE INDEX IF NOT EXISTS ix_lev_from_scrape
-            ON leaderboard_entry_versions (valid_from_scrape_id, instrument);
+        -- Retired 2026-07-27: the logical version shadow is startup-disabled,
+        -- non-authoritative, and has no runtime reader. Keep only its primary
+        -- key family unless a future versioned migration restores ownership.
 
         CREATE TABLE IF NOT EXISTS leaderboard_logical_write_metrics (
             scrape_id          BIGINT      NOT NULL,
