@@ -2,17 +2,23 @@
 
 ## Current decision
 
-**Tier:** continuous-safe ownership/code readiness accepted; all destructive
-actions remain blocked.
+**Tier:** ownership/code readiness accepted; P8 dirty-work reclaim executed;
+P6 observations and P9 legacy rows remain blocked.
 
-This phase owns storage-planner queue items P6, P8, and P9 while Epic device
-authentication blocks the next live scrape. Runtime was `gpt-5.6-sol`,
-reasoning `max`, context `long_context`. No worker was started, no production
-row/index/schema/config was mutated, and no full export or alternate drive was
-used.
+The original 2026-07-26 readiness phase owned storage-planner queue items P6,
+P8, and P9 while Epic device authentication blocked the next live scrape.
+Runtime was `gpt-5.6-sol`, reasoning `max`, context `long_context`. That
+readiness phase started no worker and mutated no production row, index, schema,
+or config.
 
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/storage-ownership-20260726T013551Z`.
+
+ORPHAN-RECLAIM follow-through on 2026-07-27 independently recaptured the P8
+manifest, proved 27 later successful scrapes culminating in published `1236`,
+and truncated all four `scrape_dirty_*` tables without `CASCADE`. Empty schemas
+and primary keys remain. The same phase left P6 and P9 intact. Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/orphan-reclaim-20260727T193224Z`.
 
 Live preflight at `2026-07-26T01:35:54Z`:
 
@@ -33,12 +39,11 @@ A later post-`1265` low-scratch phase retired only the four dormant
 non-constraint secondary index trees on the disabled logical shadow.
 Immediate free space reached `67,148,181,504` bytes and the corrected
 `60,392,999,803`-byte full-run start requirement passed with about `6.75 GB`
-of margin. This does not clear the separate P6/P8/P9 table-data gates below:
-observation, dirty-work, and legacy rows remain intact. Evidence:
+of margin. At that point the separate P6/P8/P9 table-data gates remained
+intact; ORPHAN-RECLAIM later cleared only P8. Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-scrape-1265-capacity-recovery-20260727T0011Z`.
 
-The three surfaces total `61,217,292,288` bytes (`57.01 GiB`) gated for
-possible future reclaim.
+The remaining populated P6 and P9 surfaces total `53,506,695,168` bytes.
 
 ## Separate BAND-SONG-PROJECTION retirement
 
@@ -57,15 +62,16 @@ A later, independent owner card did clear and retire the stale optional
 - `28,315,533,312` database bytes reclaimed, with schema, indexes, TOAST, and
   the three-row state ledger retained.
 
-P6, P8, and P9 remain governed by their unchanged gates below. Evidence:
+P6 and P9 remain governed by their unchanged gates below; P8 was later
+executed by ORPHAN-RECLAIM. Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-song-projection-retirement-20260726T103231Z`.
 
 ## Owner-card summary
 
 | Planner | Surface | Bytes | Owner decision | Growth posture | Execution class | Priority |
 |---|---|---:|---|---|---|---|
-| P6 | `player_score_observations` | `11,686,199,296` | Non-authoritative duplicate/audit surface; no production reader | Solo and band-member dual writers are default-off in candidate code/config; deploy only for full-scrape A/B | `full-scrape-ab`, then `parity-gated-maintenance` | 1 |
-| P8 | `scrape_dirty_*` | `8,706,752,512` | Abandoned work/audit state from scrapes `926`-`1146`; no current repo/runtime owner found | No write statement since `pg_stat_statements` reset on 2026-07-07 | `parity-gated-maintenance` | 2 |
+| P6 | `player_score_observations` | `12,682,354,688` | Non-authoritative duplicate/audit surface; no production reader | Solo and band-member dual writers are default-off in deployed code/config; require one complete writer-off publication | `full-scrape-ab`, then `parity-gated-maintenance` | 1 |
+| P8 | `scrape_dirty_*` | `65,536` after truncate | Abandoned work/audit state from scrapes `926`-`1146`; no current repo/runtime owner found | ORPHAN-RECLAIM executed; family remains fully empty | accepted maintenance | complete |
 | P9 | `leaderboard_entries_*` | `40,824,340,480` | Legacy mutable rollback/fallback surface with active supplemental writers and a publication-critical worker reader | Main scrape writer is off; supplemental writer switch remains on until reader migration | `full-scrape-ab`, then `parity-gated-maintenance` | 3 |
 
 ## P6: `player_score_observations`
@@ -74,21 +80,21 @@ P6, P8, and P9 remain governed by their unchanged gates below. Evidence:
 
 | Requirement | Evidence / decision |
 |---|---|
-| Physical shape | `9,480,671` rows; `6,203,817,984` heap bytes; `5,480,636,416` index bytes |
-| Source distribution | `9,251,686` `band-member` rows (`97.58%`); `228,985` `solo-history` rows (`2.42%`) |
+| Physical shape | `10,167,937` rows; `6,774,161,408` heap bytes; `5,906,309,120` index bytes |
+| Source distribution | `9,938,912` `band-member` rows (`97.75%`); `229,025` `solo-history` rows (`2.25%`) |
 | Solo writer | `MetaDatabase.InsertScoreChange(s)` dual-writes durable `score_history` and observations |
 | Band writer | `BandLeaderboardPersistence` and `BandSpoolWriterFactory` dual-write durable `band_entries`/`band_member_stats` and observations |
 | Reader/view | Only `player_score_observation_union`; repository consumers are tests. No production API/export reader was found |
 | Database dependencies | No trigger, function, materialized view, publication, subscription, replication slot, RLS policy, or role other than `fst` |
-| Runtime stats | Before this phase's probes: `seq_scan=0`, `idx_scan=9,938,697`, `1,904,653` inserts and `8,034,032` updates. The index activity matches conflict/idempotency writes |
-| External tools | No production-compose/tool reference found; `pg_stat_statements` contained writers and explicit ownership probes, not an application reader |
-| Solo overlap | All `228,985/228,985` observation rows have a semantic `score_history` match; zero duplicate semantic groups |
+| Runtime stats | Current cumulative table stats recorded `2,591,919` inserts and `9,593,492` updates; production writers are now default-off and the worker is held. The unique-index activity matches conflict/idempotency writes, not a reader |
+| External tools | No production-compose/tool reference found; the original statement window contained writers and explicit ownership probes, not an application reader |
+| Solo overlap | The original `228,985/228,985` owner-card set had a semantic `score_history` match. Refresh overlap proof for the current `229,025` rows in the required writer-off publication window |
 | Band overlap | Writer SQL proves transactional derivation from band staging. A deterministic 1% live sample covered `93,423` rows across all 27 instrument/band-type combinations; `49,899` still matched current fact keys, showing historical rows are not fully reconstructable from mutable current band facts |
 | Export/API gate | Player export reads mapped physical snapshots plus overlays, not observations. Route/export parity must still be repeated on a full candidate scrape |
 | Rollback/rebuild | Re-enable either writer flag; retain exact schema DDL. Solo rows rebuild from `score_history`; band rows rebuild only as a current baseline from `band_entries` + `band_member_stats`, not as restoration of discarded historical observations |
-| Decision | Accept default-off writer readiness. Do not deploy, truncate, or drop before one complete live scrape publishes with flags off and parity passes |
+| Decision | Default-off writer readiness is deployed. Do not truncate or drop before one complete live scrape publishes with flags off and parity passes |
 
-### Candidate flags
+### Deployed flags
 
 - `Features:WriteSoloScoreObservations=false`
 - `Features:WriteBandMemberScoreObservations=false`
@@ -139,13 +145,15 @@ Exact package:
 
 - `tools/sql/postgres-storage-readiness/scrape-dirty-truncate.sql`
 
-The future action is one transaction truncating the four tables without
-`CASCADE`. Before execution, rerun the manifest tool and one successful live
-scrape with current code. If any row newer than scrape `1146` appears, stop and
-reopen ownership instead of updating the guard mechanically.
+ORPHAN-RECLAIM executed one transaction truncating the four tables without
+`CASCADE`. The checked-in package is now idempotent only for the fully empty
+retired state; any partial or newly populated state fails closed and must
+reopen ownership.
 
-After commit, rollback restores schema, not abandoned work rows. The rows are
-not a source of truth and cannot be used for publication or replay.
+After commit, rollback restores schema, not abandoned work rows. The rows were
+not a source of truth and could not be used for publication or replay. Exact
+pre-action counts, fingerprints, samples, and DDL remain in the ORPHAN-RECLAIM
+evidence package.
 
 ## P9: legacy `leaderboard_entries_*`
 
@@ -239,11 +247,12 @@ The tool:
    scrape.
 7. If snapshot reuse passes, run a separate observation-writer-off scrape A/B.
 8. Run a separate legacy reader/supplemental-writer migration A/B.
-9. With all exact gates passed, execute P6, P8, then P9 maintenance one surface
-   at a time, rerunning health, manifests, capacity, and public fingerprints
-   after each action.
+9. P8 is complete. With their separate exact gates passed, execute P6 and then
+   P9 maintenance one surface at a time, rerunning health, manifests, capacity,
+   and public fingerprints after each action.
 
 The logical-shadow truncate remains a separate prerequisite and is not cleared
-by this readiness phase. Capacity-ready SNAPSHOT-REUSE scrape `1265` also
-failed before publication when ranking snapshots crossed its declared
-same-drive safety floor, so steps 7-9 remain blocked and the worker is held.
+by this readiness phase. ORPHAN-RECLAIM restored enough start capacity for
+scrape `1267`, but P6, P9, and logical-shadow data still require their own
+publication/parity gates. The worker remains held for the next parent-owned
+scrape decision.

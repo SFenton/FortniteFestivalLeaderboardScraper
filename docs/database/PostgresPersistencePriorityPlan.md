@@ -102,10 +102,20 @@ This plan records the approved direction for improving FST Postgres persistence 
   failures, and adds the DB-aware autonomous watchdog. Final free space is
   `32,507,674,624`, so the corrected `60,392,999,803`-byte scrape guard is
   blocked by `27,885,325,179` bytes.
-- STORAGE-OWNERSHIP completed continuous-safe P6/P8/P9 owner cards and exact
+- ORPHAN-RECLAIM then removed only owner-proven obsolete/derived state while
+  the worker remained held. Tier 1 truncated nine retained schemas and dropped
+  the dated `notification_cleanup_audit_20260509` table without `CASCADE`,
+  reclaiming `10,027,671,552` database bytes. A separate Tier 2 decision
+  truncated `band_team_rank_history_latest_v2` and `rank_history_latest`,
+  reclaiming `18,553,454,592` database bytes. Combined filesystem free-space
+  gain was `28,581,343,232` bytes; final free space is `64,001,667,072`
+  bytes, `3,608,667,269` above the corrected full-run requirement.
+  Pre/post public route, export, history, and ranking fingerprints matched
+  `13/13`; published `1236` remains unfrozen and the worker remains offline.
+- The earlier STORAGE-OWNERSHIP phase completed continuous-safe P6/P8/P9 owner cards and exact
   manifests for `player_score_observations`, `scrape_dirty_*`, and legacy
   `leaderboard_entries_*`: `61,217,292,288` bytes total. Observation dual
-  writers are default-off in candidate code/config; dirty tables have no
+  writers are now default-off in deployed code/config; dirty tables had no
   current caller; legacy supplemental writes remain enabled because
   publication-critical `PostScrapeBandExtractor` still reads the legacy
   table. No production data/index/schema/config mutation or worker start ran.
@@ -153,7 +163,10 @@ guard:
 - blocks optional builds or rewrites that cannot preserve that headroom and
   blocks critical scrape/post-process work below one full-scrape growth window;
 - blocks `reclaim` below that emergency window or while vacuum, index build,
-  rewrite, or ungranted-lock conflicts exist.
+  rewrite, or ungranted-lock conflicts exist by default. A conservative
+  `--expected-reclaim-bytes` may explicitly unblock only zero-scratch reclaim
+  whose projected result restores the emergency window; the post-action guard
+  must then pass without the estimate.
 
 Override growth/rate thresholds only with measured evidence. A successful
 observation with a capacity alert is evidence, not permission for an optional
@@ -250,6 +263,12 @@ terminal corrected guard sampled `67,147,436,032` free bytes and passed with
 `6,754,436,229` bytes of margin. The default seven-day optional-build/rewrite
 gate remains blocked, and the worker remains held.
 
+ORPHAN-RECLAIM later recovered `28,581,126,144` database bytes from exact
+owner-proven orphan/derived state. Final filesystem free space is
+`64,001,667,072` bytes. The corrected `60,392,999,803`-byte scrape guard now
+passes with `3,608,667,269` bytes of margin; optional builds and rewrites still
+fail the seven-day headroom gate.
+
 Destructive cleanup, irreversible migration, drop/truncate/repack/rewrite
 work, or active Postgres data movement may proceed automatically after a
 live-scrape A/B proves old-vs-new data parity and the exact objects, rollback
@@ -275,11 +294,12 @@ path, and post-action validation are documented.
 | Scrape `1263` stale recovery and derived isolation | Accepted safety recovery / capacity blocked | Marked the watchdog-stopped scrape failed, preserved/unfroze published `1236`, reconciled the worker offline, deployed failed-candidate cache-only/fail-closed isolation, and restored the proxy guard to `25/25`. Free space is `31,385,374,720`, `13,762,850,816` bytes below the measured scrape boundary. |
 | PG-3 post-`1263` residual index reclaim | Accepted | Dropped `33` non-constraint indexes across six exact owner-card families. Reclaimed `17,174,200,320` database bytes; measured free space is `48,546,029,568`, `3,397,804,032` bytes above the scrape boundary. Public route/fail-closed parity was exact, `120/120` tests passed, and commit `8db72081` prevents recreation. |
 | PG-3 post-`1265` logical-shadow secondary reclaim | Accepted | Dropped the four parent trees / 36 child non-constraint indexes on the retired logical shadow. Reclaimed `18,289,049,600` database bytes; immediate free space reached `67,148,181,504`. `13/13` public fingerprints, logical samples, 20 constraints, `119/119` targeted tests, Release build, and the corrected `60,392,999,803`-byte start guard passed. |
+| PG-3 ORPHAN-RECLAIM | Accepted | Truncated nine owner-proven Tier 1 schemas, dropped one dated audit table, and separately truncated the unowned band-v2/solo latest-state tables without `CASCADE`. Reclaimed `28,581,126,144` database bytes; final free space is `64,001,667,072`, the corrected scrape guard passes by `3,608,667,269` bytes, and `13/13` public fingerprints matched. |
 | Band rank-history retention policy draft | Complete | Semantics-first v2 retention options and parity gates documented on 2026-07-06. |
 | `band_read_*` quarantine parity package | Complete | Reversible, live-scrape A/B parity-gated quarantine package documented on 2026-07-06; no DDL executed. |
 | Phase 8 physical snapshot write skipping | Code/readiness accepted / two live A/Bs capacity-blocked and reverted | Scrape `1264` failed the post-writer guard. Capacity-ready scrape `1265` passed that guard, completed `8,232/8,232` manifests and band maintenance, and proved `273` scopes / `218,892` rows reusable with zero unexpected physical rows. Ranking snapshots crossed the `14,571,150,203` safety floor at `13,144,125,440` free before publication. Production was reverted, `1236` remains published, and the flag remains off. |
-| P6 player-score observation ownership | Code/readiness accepted / truncate blocked | `11,686,199,296` bytes and `9,480,671` rows. No production reader; solo and band-member writers now have independent default-off flags. Full live writer-off publication parity is still required. |
-| P8 stale dirty-work ownership | Readiness accepted / truncate blocked | Four tables total `8,706,752,512` bytes and `19,836,661` rows only from scrapes `926`-`1146`. No current repo/database/runtime writer; checksum-guarded exact truncate package is ready. |
+| P6 player-score observation ownership | Code deployed / truncate blocked | Current table is `12,682,354,688` bytes and `10,167,937` rows. No production reader; solo and band-member writers are independently default-off in the deployed image and `28/28` targeted tests pass. A complete writer-off scrape must still publish/unfreeze and pass public parity. |
+| P8 stale dirty-work ownership | Accepted and executed | ORPHAN-RECLAIM truncated all four tables without `CASCADE`, preserving empty schemas and primary keys. Their `19,836,661` rows from scrapes `926`-`1146` were non-authoritative work state; the family contributed `8,706,752,512` pre-action bytes. |
 | P9 legacy mutable leaderboard ownership | Mixed / reader migration blocked | Nine partitions total `40,824,340,480` bytes and `36,768,081` rows. Main scrape writer is off and mapped public reads bypass legacy, but supplemental dual writers and publication-critical band extraction remain owners. |
 | Rank/temp spill write-mode reduction | Accepted config/code default | Switched band team ranking rebuild default from `Monolithic` to `ComboBatched` to reduce one-shot build-table insert pressure; all write modes already have parity coverage. |
 | Optional band-song projection pressure gate | Complete | Defaulted optional rebuilds to disabled, made published reads reject stale/missing rows, and retired `36,747,099` stale rows for `28,315,533,312` database bytes while retaining schema/state and an exact restore archive. |
@@ -293,7 +313,7 @@ path, and post-action validation are documented.
 | Autonomous scrape rollout | Rejected after scrape `1265`; worker held | Candidate `1265` passed start/post-writer guards, completed all manifests/writers and band maintenance, then crossed its declared capacity floor during ranking snapshots. It was stopped and reconciled failed with zero published mappings. Published `1236` remains safe. Post-cleanup nominal guards pass again, but the live run proved that model insufficient through publication. |
 | Scrape `1266` incident recovery | Complete / deployed / worker held | Exact rollback and guarded reconciliation preserved published `1236`; precise failed-candidate isolation remains active for derived reads. Commit `4121e7e5` adds critical band failure propagation, progress-only heartbeats, a 30-minute deferred-sync timeout, and DB-aware autonomous recovery. Service and held worker use `fstservice:scrape1266-recovery-4121e7e5`. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
-| Next implementation phase | Corrected start guard blocked / worker held | Final measured free space is `32,507,674,624`, `27,885,325,179` bytes below the corrected full-run requirement. Proxy tuning remains reverted at `400 / 2 / 1`; image `fstservice:scrape1266-recovery-4121e7e5` is held with restart `no`. Publication parity, logical truncate, another scrape, optional builds, rewrites, repacks, broad movement, and owner-rejected drops remain blocked. |
+| Next implementation phase | Scrape-capacity gate cleared / worker held | Final measured free space is `64,001,667,072`, `3,608,667,269` bytes above the corrected full-run requirement. Proxy tuning remains reverted at `400 / 2 / 1`; image `fstservice:scrape1266-recovery-4121e7e5` remains held with restart `no`. Scrape `1267` may proceed under the durable watchdog, while optional builds, rewrites, repacks, broad movement, logical truncate, and observation truncate retain their separate gates. |
 
 ## LOGICAL-RETIRE decision package (2026-07-25)
 
@@ -318,8 +338,8 @@ Evidence:
 
 | Surface | Rows | Bytes | Code/runtime ownership | Rebuild/rollback | Decision |
 |---|---:|---:|---|---|---|
-| `player_score_observations` | `9,480,671` | `11,686,199,296` | Two dual writers; no production reader/export owner | Solo semantics from `score_history`; current band baseline from band facts; exact schema retained | Default-off writer code accepted; truncate/drop blocked on one complete writer-off live publication |
-| `scrape_dirty_*` | `19,836,661` | `8,706,752,512` | No current repository caller, DB dependency, external tool, or writer since 2026-07-07 stats reset | Work state is intentionally discardable; schema/checksum manifest retained | Exact truncate package accepted; execution blocked on successful current-code scrape/parity |
+| `player_score_observations` | `10,167,937` | `12,682,354,688` | Two default-off dual writers; no production reader/export owner | Solo semantics from `score_history`; current band baseline from band facts; exact schema retained | Deployed writer-off readiness accepted; truncate/drop blocked on one complete writer-off live publication |
+| `scrape_dirty_*` | `0` | `65,536` after truncate | No current repository caller, DB dependency, external tool, or writer since 2026-07-07 stats reset | Historical work state intentionally discarded; schema/checksum manifest retained | **Executed by ORPHAN-RECLAIM**; all four schemas and primary keys retained |
 | `leaderboard_entries_*` | `36,768,081` | `40,824,340,480` | Main scrape writer off; supplemental writer active; mapped public reads bypass; band extraction still reads legacy | Rebuild correct published baseline from scope map + physical snapshots; overlays remain separate | Do not disable supplemental writer or truncate until reader migration and full live A/B |
 
 The published map owns `39,588,650` rows, `2,820,569` more than the legacy

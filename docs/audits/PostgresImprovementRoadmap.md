@@ -579,9 +579,9 @@ Confirm exports/external tools and produce an owner decision:
 
 PG-3 performs no table-row deletion or table drop.
 
-**2026-07-26 decision:** ownership/code readiness accepted; maintenance
-blocked. The exact table is `11,686,199,296` bytes and contains `9,480,671`
-rows: `9,251,686` (`97.58%`) `band-member` and `228,985` `solo-history`.
+**2026-07-27 decision:** ownership/code readiness accepted; maintenance
+blocked. The exact table is now `12,682,354,688` bytes and contains
+`10,167,937` rows: `9,938,912` `band-member` and `229,025` `solo-history`.
 Repository, database-dependency, export, and production-tool audits found no
 production reader; the only view is test-owned
 `player_score_observation_union`. All solo observations have a semantic
@@ -589,9 +589,11 @@ production reader; the only view is test-owned
 reconstructable from mutable current band facts.
 
 `WriteSoloScoreObservations` and `WriteBandMemberScoreObservations` now provide
-independent default-off rollback switches in candidate code/config. No deploy
-or data mutation occurred. A complete writer-off live scrape must publish and
-pass API/export/ranking/history parity before the checksum-manifested truncate
+independent default-off rollback switches in deployed code/config; `28/28`
+targeted flag/writer tests pass. The table remained intact during
+ORPHAN-RECLAIM because no complete writer-off scrape has globally published.
+A complete writer-off live scrape must publish and pass
+API/export/ranking/history parity before the checksum-manifested truncate
 package may run.
 
 ### PG-3.3 - Resolve overlapping band member facts
@@ -1221,6 +1223,46 @@ move to PG-7 after backup/restore and live-scrape parity.
   and
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/stale-scrape-1266-recovery-20260727T184133Z`.
 
+### PG-3 ORPHAN-RECLAIM - accepted 2026-07-27
+
+- The emergency reclaim guard initially rejected the phase at
+  `32,675,258,368` free bytes because the guard required the
+  `60,392,999,803`-byte scrape window even for a zero-scratch action. The
+  accepted repair adds an explicit conservative `--expected-reclaim-bytes`;
+  default behavior remains blocked, and the exception passes only when the
+  projected result restores the emergency window with no maintenance conflict.
+- Exact current/deployed source, `DatabaseInitializer`, dynamic-name, tooling,
+  git-history, database dependency, statement, and binary searches proved ten
+  Tier 1 objects had no runtime owner. Dirty/shadow content ended at scrape
+  `1146`; 27 later scrapes completed through published `1236`.
+- Tier 1 truncated nine retained schemas and dropped only
+  `notification_cleanup_audit_20260509`, a dated one-off audit table. No
+  statement used `CASCADE`. Database size fell by `10,027,671,552` bytes and
+  filesystem free space rose by `10,027,778,048` bytes.
+- `band_team_rank_history_latest_v2` was proven to be writer/change-detection
+  state rather than a public read source. Production
+  `BandRankHistory__Mode=Disabled`; `3,000/3,000` bounded edge samples matched
+  retained v2 history points. `rank_history_latest` had no current exact owner
+  and was stale: `4,386/4,500` bounded rows differed from newer retained
+  `rank_history`.
+- A separate Tier 2 transaction truncated those two latest-state surfaces,
+  reclaiming `18,553,454,592` database bytes and `18,553,565,184` filesystem
+  bytes while retaining all schemas, partitions, and primary keys.
+- Combined database reclaim was `28,581,126,144` bytes. Final free space is
+  `64,001,667,072`, so the corrected full-run guard passes with
+  `3,608,667,269` bytes of margin. Optional builds and rewrites remain below
+  the seven-day threshold.
+- Pre-action, post-Tier-1, and final captures retained exact `13/13`
+  route/export/history/ranking fingerprints. Postgres, service, web,
+  publication `1236`, worker-offline state, locks, and constraints remained
+  healthy through immediate and 60-second monitoring.
+- `player_score_observations` remains intact at `10,167,937` rows and
+  `12,682,354,688` bytes. Its two writers are default-off in the deployed
+  image, but truncate remains blocked on one complete writer-off publication
+  and exact public parity.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/orphan-reclaim-20260727T193224Z`.
+
 ### PG-4.2 - Separate semantic score changes from derived rank changes
 
 The current logical version volume is 15.39M rows for one scrape. Evaluate
@@ -1350,12 +1392,13 @@ Do not blindly increase buffers. Measure:
 The largest snapshot/history tables cannot currently be safely repacked with
 only 275 GB free. Repack is blocked until low-scratch reclaim creates headroom.
 
-The same 2026-07-26 owner phase added checksum-guarded future packages for
+The same 2026-07-26 owner phase added checksum-guarded packages for
 `8,706,752,512` bytes of stale `scrape_dirty_*` work state and
-`40,824,340,480` bytes of legacy `leaderboard_entries_*`. Dirty cleanup is
-blocked only on a successful current-code scrape/parity window. Legacy cleanup
-also requires migration of publication-critical `PostScrapeBandExtractor` and
-all direct legacy helpers before supplemental dual writes can be disabled.
+`40,824,340,480` bytes of legacy `leaderboard_entries_*`. ORPHAN-RECLAIM
+executed the dirty cleanup and retained all four empty schemas/primary keys.
+Legacy cleanup still requires migration of publication-critical
+`PostScrapeBandExtractor` and all direct legacy helpers before supplemental
+dual writes can be disabled.
 
 ## Projected outcomes
 

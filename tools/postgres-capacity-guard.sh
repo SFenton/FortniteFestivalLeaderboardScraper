@@ -10,6 +10,7 @@ ACTION_CLASS="${ACTION_CLASS:-observation}"
 OUTPUT_FILE="${OUTPUT_FILE:-}"
 TRANSIENT_BUILD_BYTES="${TRANSIENT_BUILD_BYTES:-0}"
 REQUIRED_SCRATCH_BYTES="${REQUIRED_SCRATCH_BYTES:-0}"
+EXPECTED_RECLAIM_BYTES="${EXPECTED_RECLAIM_BYTES:-0}"
 ESTIMATED_FULL_SCRAPE_GROWTH_BYTES="${ESTIMATED_FULL_SCRAPE_GROWTH_BYTES:-60392999803}"
 EXPECTED_FULL_SCRAPES_PER_DAY="${EXPECTED_FULL_SCRAPES_PER_DAY:-2}"
 MINIMUM_HEADROOM_DAYS="${MINIMUM_HEADROOM_DAYS:-7}"
@@ -26,6 +27,8 @@ Options:
                                 optional-build, reclaim, maintenance, or rewrite
   --transient-build-bytes N     Estimated temporary bytes for the action
   --required-scratch-bytes N    Additional rewrite/repack scratch bytes
+  --expected-reclaim-bytes N    Explicit reclaim estimate used only to prove
+                                the action restores one emergency window
   --output FILE                 Also persist the JSON report to FILE
   --compose-dir DIR             Production compose directory
   --pg-container NAME           PostgreSQL container name
@@ -44,8 +47,10 @@ Exit codes:
   4  Scrape/post-process rejected below one full-scrape emergency headroom
 
 The reclaim class is only for a proven space-releasing action with zero
-transient-build and required-scratch bytes. It still requires one full-scrape
-emergency buffer and no active vacuum/index/rewrite/lock conflict.
+transient-build and required-scratch bytes. By default it still requires one
+full-scrape emergency buffer. Below that buffer, an explicit conservative
+--expected-reclaim-bytes estimate may allow a conflict-free reclaim only when
+the projected post-action free space restores the full emergency window.
 EOF
 }
 
@@ -54,6 +59,7 @@ while [[ $# -gt 0 ]]; do
         --action-class) ACTION_CLASS="$2"; shift 2 ;;
         --transient-build-bytes) TRANSIENT_BUILD_BYTES="$2"; shift 2 ;;
         --required-scratch-bytes) REQUIRED_SCRATCH_BYTES="$2"; shift 2 ;;
+        --expected-reclaim-bytes) EXPECTED_RECLAIM_BYTES="$2"; shift 2 ;;
         --output) OUTPUT_FILE="$2"; shift 2 ;;
         --compose-dir) COMPOSE_DIR="$2"; shift 2 ;;
         --pg-container) PG_CONTAINER="$2"; shift 2 ;;
@@ -91,7 +97,8 @@ done
 
 for pair in \
     "TRANSIENT_BUILD_BYTES:$TRANSIENT_BUILD_BYTES" \
-    "REQUIRED_SCRATCH_BYTES:$REQUIRED_SCRATCH_BYTES"
+    "REQUIRED_SCRATCH_BYTES:$REQUIRED_SCRATCH_BYTES" \
+    "EXPECTED_RECLAIM_BYTES:$EXPECTED_RECLAIM_BYTES"
 do
     require_non_negative_integer "${pair%%:*}" "${pair#*:}"
 done
@@ -115,6 +122,11 @@ esac
 if [[ "$ACTION_CLASS" == "reclaim" ]] \
     && (( TRANSIENT_BUILD_BYTES != 0 || REQUIRED_SCRATCH_BYTES != 0 )); then
     printf 'ERROR: reclaim requires zero transient-build and required-scratch bytes\n' >&2
+    exit 64
+fi
+
+if [[ "$ACTION_CLASS" != "reclaim" ]] && (( EXPECTED_RECLAIM_BYTES != 0 )); then
+    printf 'ERROR: expected-reclaim-bytes is only valid for reclaim actions\n' >&2
     exit 64
 fi
 
@@ -197,6 +209,7 @@ python3 - \
     "$database_bytes" "$wal_directory_bytes" "$active_scrape_id" "$published_scrape_id" \
     "$public_reads_frozen" "$public_reads_frozen_reason" "$active_vacuums" "$active_index_builds" \
     "$active_rewrites" "$ungranted_locks" "$TRANSIENT_BUILD_BYTES" "$REQUIRED_SCRATCH_BYTES" \
+    "$EXPECTED_RECLAIM_BYTES" \
     "$ESTIMATED_FULL_SCRAPE_GROWTH_BYTES" "$EXPECTED_FULL_SCRAPES_PER_DAY" "$MINIMUM_HEADROOM_DAYS" <<'PY'
 import json
 import sys
@@ -229,6 +242,7 @@ from pathlib import Path
     ungranted_locks,
     transient_build_bytes,
     required_scratch_bytes,
+    expected_reclaim_bytes,
     estimated_growth_bytes,
     expected_scrapes_per_day,
     minimum_headroom_days,
@@ -249,6 +263,7 @@ numeric = {
     "ungrantedLocks": int(ungranted_locks),
     "transientBuildBytes": int(transient_build_bytes),
     "requiredScratchBytes": int(required_scratch_bytes),
+    "expectedReclaimBytes": int(expected_reclaim_bytes),
     "estimatedFullScrapeGrowthBytes": int(estimated_growth_bytes),
     "expectedFullScrapesPerDay": int(expected_scrapes_per_day),
     "minimumHeadroomDays": int(minimum_headroom_days),
@@ -261,6 +276,7 @@ headroom_days = (free_bytes / daily_growth) if daily_growth else None
 emergency_required_bytes = numeric["estimatedFullScrapeGrowthBytes"] + numeric["transientBuildBytes"]
 optional_required_bytes = minimum_headroom_bytes + numeric["transientBuildBytes"]
 rewrite_required_bytes = optional_required_bytes + numeric["requiredScratchBytes"]
+projected_post_reclaim_free_bytes = free_bytes + numeric["expectedReclaimBytes"]
 maintenance_conflict = (
     numeric["activeVacuums"] > 0
     or numeric["activeIndexBuilds"] > 0
@@ -271,7 +287,11 @@ maintenance_conflict = (
 capacity_alert = free_bytes < minimum_headroom_bytes
 scrape_allowed = free_bytes >= emergency_required_bytes
 optional_build_allowed = free_bytes >= optional_required_bytes
-reclaim_allowed = scrape_allowed and not maintenance_conflict
+reclaim_restores_emergency = (
+    numeric["expectedReclaimBytes"] > 0
+    and projected_post_reclaim_free_bytes >= emergency_required_bytes
+)
+reclaim_allowed = (scrape_allowed or reclaim_restores_emergency) and not maintenance_conflict
 rewrite_allowed = free_bytes >= rewrite_required_bytes and not maintenance_conflict
 reasons = []
 exit_code = 0
@@ -296,10 +316,17 @@ elif action_class == "reclaim" and not reclaim_allowed:
     if not scrape_allowed:
         reasons.append(
             f"reclaim requires at least one estimated full-scrape growth window "
-            f"({emergency_required_bytes} bytes)"
+            f"({emergency_required_bytes} bytes), or an explicit reclaim estimate "
+            f"that restores it ({projected_post_reclaim_free_bytes} projected bytes)"
         )
     if maintenance_conflict:
         reasons.append("maintenance conflict detected from vacuum/index/rewrite/lock activity")
+elif action_class == "reclaim" and not scrape_allowed and reclaim_restores_emergency:
+    reasons.append(
+        f"explicit reclaim estimate restores the emergency window "
+        f"({free_bytes} + {numeric['expectedReclaimBytes']} = "
+        f"{projected_post_reclaim_free_bytes} bytes)"
+    )
 elif action_class in {"maintenance", "rewrite"} and not rewrite_allowed:
     exit_code = 3
     if free_bytes < rewrite_required_bytes:
@@ -342,6 +369,7 @@ report = {
             "minimumHeadroomDays",
             "transientBuildBytes",
             "requiredScratchBytes",
+            "expectedReclaimBytes",
         )},
         "dailyGrowthBytes": daily_growth,
         "minimumHeadroomBytes": minimum_headroom_bytes,
@@ -350,6 +378,8 @@ report = {
         "scrapeAllowed": scrape_allowed,
         "optionalBuildAllowed": optional_build_allowed,
         "reclaimAllowed": reclaim_allowed,
+        "reclaimRestoresEmergency": reclaim_restores_emergency,
+        "projectedPostReclaimFreeBytes": projected_post_reclaim_free_bytes,
         "rewriteAllowed": rewrite_allowed,
     },
     "databaseState": {

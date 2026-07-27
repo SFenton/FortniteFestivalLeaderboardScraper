@@ -3,7 +3,7 @@
 **Authoritative runtime:** PostgreSQL 17 in `fst-postgres`  
 **Production compose owner:** `/home/sfenton/Docker/FestivalServiceTracker`  
 **Production data root:** `/mnt/docker-storage/Docker/FestivalServiceTracker/pg-data`  
-**Last live inventory:** 2026-07-27 00:26 UTC
+**Last targeted live storage validation:** 2026-07-27 19:58 UTC
 
 This document defines FST PostgreSQL ownership, source-of-truth boundaries,
 publication behavior, retention, index posture, and restore paths. PostgreSQL
@@ -70,7 +70,7 @@ limits.
 
 | Surface | Live size |
 |---|---:|
-| Database | 3,564.32 GB |
+| Database | 3,805.58 GB |
 | Solo physical snapshot partitions | 1,788.63 GB |
 | Band rank-history v2 point partitions | 857.72 GB |
 | Solo rank-history partitions | 174.47 GB |
@@ -83,9 +83,10 @@ limits.
 | Legacy mutable solo leaderboard partitions | 40.824 GB |
 | Logical current partitions | 27.30 GB |
 | Band source-entry partitions | 25.37 GB |
-| Band rank-history v2 latest partitions | 18.80 GB |
-| `player_score_observations` | 11.686 GB |
-| `scrape_dirty_*` | 8.707 GB |
+| Band rank-history v2 latest partitions | 48 KB after ORPHAN-RECLAIM |
+| `rank_history_latest` | 16 KB after ORPHAN-RECLAIM |
+| `player_score_observations` | 12.682 GB |
+| `scrape_dirty_*` | 64 KB after ORPHAN-RECLAIM |
 
 The PG-1 decision sample had `247.2GB` free on `/mnt/docker-storage`, published
 scrape `1230`, public reads unfrozen, `6,129` complete published-source rows,
@@ -171,6 +172,16 @@ history DDL, and the ranking caller retries one `40P01` deadlock. This preserves
 the existing schema and write modes while serializing only the localized schema
 ensure. The same-run Duets repair rebuilt `4,477,133` current ranking rows
 before the failed candidate was abandoned without publication.
+
+ORPHAN-RECLAIM then removed only exact owner-proven obsolete or derived state.
+Nine Tier 1 schemas were truncated and the dated
+`notification_cleanup_audit_20260509` table was dropped without `CASCADE`,
+reclaiming `10,027,671,552` database bytes. A separate Tier 2 transaction
+truncated `band_team_rank_history_latest_v2` and `rank_history_latest`,
+reclaiming `18,553,454,592` database bytes. All retained constraints remained
+valid, `13/13` normalized public fingerprints matched, and final filesystem
+free space reached `64,001,667,072` bytes. Exact evidence and rebuild limits
+are in `docs/database/OrphanReclaimRunbook.md`.
 
 The 2026-07-25 SOLO-DYNAMIC-AB inventory measured the active solo current
 projection at `39,601,283` rows / `46,633,459,712` bytes:
@@ -378,12 +389,14 @@ and retained old-table rollback; bounded unlogged samples are evaluation-only.
 | Tables | Class | Owner/callers | Retention |
 |---|---|---|---|
 | `score_history` | Durable user-visible history | `MetaDatabase`, player/ranking services | Preserve score/rank/season/timestamp semantics; nullable-time uniqueness repair is PG-3/PG-7 |
-| `player_score_observations` | Non-authoritative duplicate/audit observation surface | Solo-history and band-member writers are independently default-off behind rollback flags; no production reader | Truncate only after a complete writer-off scrape publishes and API/export/ranking/history parity passes |
+| `player_score_observations` | Non-authoritative duplicate/audit observation surface | Solo-history and band-member writers are independently default-off in deployed code/config; no production reader | `10,167,937` rows remain; truncate only after a complete writer-off scrape publishes and API/export/ranking/history parity passes |
 | `player_stats`, `player_stats_tiers` | Derived projection | Player stats calculator/API | Rebuildable for a published generation |
 | `account_rankings`, `account_ranking_stats` | Derived ranking projection | Rankings pipeline | Rebuildable; generation/source must remain auditable |
-| `rank_history` partitions, `rank_history_latest`, `rank_history_snapshot_stats`, `rank_history_tracked_accounts` | Durable user-visible history plus latest projection | Ranking/history pipeline and API | Append only on meaningful change after PG-5 redesign |
+| `rank_history` partitions, `rank_history_snapshot_stats`, `rank_history_tracked_accounts` | Durable user-visible history and snapshot metadata | Ranking/history pipeline and API | Append only on meaningful change after PG-5 redesign |
+| `rank_history_latest` | Empty obsolete latest projection schema | No current exact caller | ORPHAN-RECLAIM truncated stale rows; deterministic rebuild from retained `rank_history` |
 | `ranking_deltas`, `ranking_delta_tiers`, `rank_history_deltas` partitions | Derived experimental projections | Rankings pipeline | Feature-flagged; rebuildable |
-| `composite_rankings`, `composite_rank_history`, `composite_rank_history_latest`, `composite_ranking_deltas` | Derived current plus durable history | `MetaDatabase`, rankings API | Current/latest rebuildable; history retained by explicit policy |
+| `composite_rankings`, `composite_rank_history`, `composite_ranking_deltas` | Derived current plus durable history | `MetaDatabase`, rankings API | Current/deltas rebuildable; history retained by explicit policy |
+| `composite_rank_history_latest` | Empty obsolete latest projection schema | No current exact caller | ORPHAN-RECLAIM truncated stale rows; deterministic rebuild from retained `composite_rank_history` |
 | `solo_family_rankings`, `combo_leaderboard`, `combo_stats`, `combo_ranking_deltas` | Derived ranking projections | Rankings pipeline/API | Rebuildable from published solo current state |
 
 ### Band source, identity, membership, and projections
@@ -398,7 +411,8 @@ Band-partitioned source/current families use `Band_Duets`, `Band_Trios`, and
 | `band_members`, `band_member_stats` | Durable member facts/statistics | Band persistence | Exports, projection, search, API; overlapping ownership is PG-3.3 |
 | `band_team_configurations`, `band_team_membership`, `band_team_membership_state` | Durable configuration/membership source | Band extraction/ranking | Canonical membership migration is PG-2/PG-3 |
 | `current_band_leaderboard_entries` partitions | Derived current projection | `BandCurrentProjectionBuilder` | Public/export current band rows |
-| `band_current_projection_scope`, `band_current_projection_state`, `band_current_projection_source_state` | Publication/readiness metadata | Band projection builder | Published generation/readiness; source ownership must align with PG-1 |
+| `band_current_projection_scope`, `band_current_projection_state` | Publication/readiness metadata | Band projection builder | Published generation/readiness; source ownership must align with PG-1 |
+| `band_current_projection_source_state` | Empty retired source-state experiment schema | No current exact caller | ORPHAN-RECLAIM truncated stale rows; any reuse needs a versioned owner |
 | `band_search_team_projection`, `band_search_member_projection`, `band_search_projection_state` | Derived search projection | `BandSearchProjectionBuilder` | Service search/profile reads; rebuildable |
 | `band_extraction_source_state` | Durable work/source metadata | Band extraction pipeline | Prevents ambiguous source generation |
 
@@ -413,7 +427,7 @@ Band-partitioned source/current families use `Band_Duets`, `Band_Trios`, and
 | `band_song_team_rankings`, `band_song_team_rankings_current_band_*`, `band_song_team_ranking_state` | Retired optional song/team ranking projection schema and audit state | Ranking pipeline only when explicitly re-enabled | Data tables are empty; rebuild defaults off; public reads use published current-band rows or fail closed |
 | `band_team_rank_history`, `band_team_rank_history_points`, `band_team_rank_history_latest`, `band_team_ranking_stats_history` | Legacy durable history/latest | `MetaDatabase`, history API | Retain until v2/read-source parity and restore prove removal |
 | `band_team_rank_history_points_v2` partitions | Durable compact public history | History worker through `MetaDatabase` | About 799 GiB; archive/prune only by exact range manifest |
-| `band_team_rank_history_latest_v2` partitions | Derived latest delta state | History worker | Rebuildable from retained history/current generation if proven |
+| `band_team_rank_history_latest_v2` partitions | Empty derived latest delta schema | History worker only when mode is enabled | ORPHAN-RECLAIM truncated `21,403,363` rows while production mode was `Disabled`; rebuildable from retained v2 points |
 | `band_team_rank_history_snapshot_v2` | Durable history generation metadata | History worker/API status | Primary freshness/coverage ledger |
 | `band_rank_history_jobs`, `band_rank_history_job_chunks` | Durable resumability state | Background history worker | Keep incomplete/failed jobs for bounded retry/replay |
 
@@ -438,17 +452,19 @@ partial result.
 `scrape_dirty_account`, `scrape_dirty_song_instrument`,
 `scrape_dirty_band_scope`, `scrape_dirty_band_team`,
 `post_scrape_shadow_run`, `post_scrape_shadow_metric`,
-`invalid_leaderboard_shadow_observation`, and
-`notification_cleanup_audit_20260509` are work/audit surfaces. They must have a
+`invalid_leaderboard_shadow_observation`, and the former
+`notification_cleanup_audit_20260509` are work/audit surfaces. They require a
 named owner and bounded retention before cleanup. Zero current rows or zero
-`pg_stat` scans is not sufficient evidence for deletion.
+`pg_stat` scans alone is not sufficient evidence for deletion.
 
 The 2026-07-26 storage-owner manifest proved the four `scrape_dirty_*` tables
-contain `19,836,661` rows only from scrapes `926`-`1146`, occupy
-`8,706,752,512` bytes, have no current repository caller or database
-dependency, and have recorded no writer since the 2026-07-07
-`pg_stat_statements` reset. Their exact checksum-guarded truncate package
-remains live-scrape parity-gated.
+contained `19,836,661` rows only from scrapes `926`-`1146`, occupied
+`8,706,752,512` bytes, had no current repository caller or database
+dependency, and recorded no writer since the 2026-07-07
+`pg_stat_statements` reset. ORPHAN-RECLAIM truncated the complete family after
+confirming 27 later successful scrapes culminating in published `1236`; the
+empty schemas and primary keys remain. The checked-in package now accepts only
+the original exact manifest or the fully empty retired state.
 
 ## Index and partition policy
 
@@ -470,11 +486,12 @@ remains live-scrape parity-gated.
    The primary key preserves identity and account-bounded date access, while
    `ix_crh_retention_cutoff_brin` rejects empty cutoff ranges for bounded
    retention.
-8. `band_team_rank_history_latest_v2` intentionally has no
-   `ix_btrhlv2_snapshot` secondary family. Current application reads, delta
-   joins, and `ON CONFLICT` writes use the partition primary keys; the retired
-   `snapshot_id` path had no production owner. Rollback rebuilds each child
-   concurrently, creates the metadata-only parent, and attaches the children.
+8. `band_team_rank_history_latest_v2` is currently empty and intentionally has
+   no `ix_btrhlv2_snapshot` secondary family. Production history mode is
+   disabled and public reads use retained point/wide history, not this latest
+   state. Any future delta join or `ON CONFLICT` writer uses the retained
+   partition primary keys; the retired `snapshot_id` path had no production
+   owner.
 9. `band_team_rank_history_points_v2` intentionally has no
    `ix_btrhpv2_snapshot` secondary family. Public history/parity reads use the
    retained team/date indexes, while primary keys retain point identity and
@@ -576,7 +593,10 @@ cache and band-ranking publication work.
   DB/WAL size, scratch, publication state, locks, and active maintenance.
 - Use its `reclaim` action only for a proven space-releasing operation with
   zero transient/scratch bytes. It still requires one full-scrape emergency
-  buffer and no active vacuum/index/rewrite/ungranted-lock conflict.
+  buffer by default and no active vacuum/index/rewrite/ungranted-lock
+  conflict. Below the buffer, `--expected-reclaim-bytes` is an explicit
+  fail-closed exception only when the conservative estimate restores the full
+  emergency window; rerun the guard without an estimate after the action.
 - `VACUUM FULL`, broad table rewrites, large non-concurrent index builds, and
   unbounded `pg_repack` are prohibited at current headroom.
 - Archive/prune operations require exact object/range manifests, checksums,
@@ -586,7 +606,8 @@ cache and band-ranking publication work.
 
 ### Current promotion gate
 
-A full 3.56 TB duplicate restore is not safe with roughly 76.8 GB free. Full
+A full multi-terabyte duplicate restore is not safe with
+`64,001,667,072` bytes free. Full
 restore promotion remains blocked until same-drive reclaim creates the exact
 source database plus target data/WAL/index/scratch headroom.
 
@@ -654,6 +675,8 @@ truncate/drop sequence are in
 `docs/database/StorageOwnershipReadinessRunbook.md`. Read-only recapture uses
 `tools/postgres-storage-ownership-readiness.sh`; the generated packages have no
 apply mode and all destructive SQL fails closed on an explicit session GUC.
+The executed orphan/latest-state object list, exact byte deltas, and future
+rebuild statements are in `docs/database/OrphanReclaimRunbook.md`.
 
 ### Retired logical leaderboard shadow
 
@@ -739,9 +762,10 @@ scope-total, and relation-size deltas for an A/B decision.
   latest-row owner moved to a primary-key group/max plan. Post-`1263`,
   duplicate band ranking, dirty-work, appearance-sort, orphan latest,
   observation-read, and composite-ranking secondary indexes were retired
-  while their primary/unique owners stayed intact. Member facts,
-  observation-table dual writes, and nullable score-history uniqueness remain
-  explicit owner decisions.
+  while their primary/unique owners stayed intact. ORPHAN-RECLAIM also emptied
+  the stale dirty/shadow state plus unowned composite/solo/band latest caches.
+  Member facts, observation-table publication parity, and nullable
+  score-history uniqueness remain explicit owner decisions.
 - **PG-4 / WORKER-4:** semantic-change writes, unchanged physical source reuse,
   diff projections/rankings, and one atomic band publication. The retired
   logical shadow is not a PG-4 reader or default writer.

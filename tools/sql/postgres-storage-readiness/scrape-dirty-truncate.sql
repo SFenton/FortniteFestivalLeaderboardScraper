@@ -26,6 +26,16 @@ BEGIN
         RAISE EXCEPTION 'An active scrape exists';
     END IF;
 
+    -- ORPHAN-RECLAIM emptied the complete family on 2026-07-27. Keep this
+    -- package idempotent, but fail closed on any partial or newly populated
+    -- state rather than silently accepting a changed manifest.
+    IF NOT EXISTS (SELECT 1 FROM public.scrape_dirty_account)
+       AND NOT EXISTS (SELECT 1 FROM public.scrape_dirty_song_instrument)
+       AND NOT EXISTS (SELECT 1 FROM public.scrape_dirty_band_scope)
+       AND NOT EXISTS (SELECT 1 FROM public.scrape_dirty_band_team) THEN
+        RETURN;
+    END IF;
+
     SELECT COUNT(*), MIN(scrape_id), MAX(scrape_id),
            BIT_XOR(hashtextextended(concat_ws(E'\x1f', scrape_id::text, account_id,
                source, dirty_reason, created_at::text), 0)),
