@@ -675,7 +675,9 @@ until replay and live shadow parity pass.
   prior service/worker images and flag-off configuration, and recreated
   `fstworker` held with restart `no`. Post-cleanup nominal guards pass at about
   `48.78 GB` free, but scheduling remains held because the failed run proved
-  that model insufficient through publication.
+  that model insufficient through publication. The observed full-run model
+  requires `60,392,999,803` start bytes, `11,616,701,307` above current free
+  space.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T110731Z`.
 

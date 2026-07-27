@@ -213,6 +213,10 @@ baseline/candidate guards pass with only about `3.63/4.38 GB` of margin.
 Normal scheduling and another candidate remain blocked because `1265` proved
 that those start estimates do not preserve the declared floor through
 publication, and no successful post-publish capacity/parity window exists.
+The observed peak free-space consumption was `45,821,849,600` bytes,
+`1,427,020,667` (`3.21%`) above the candidate estimate. Keeping the same
+`14,571,150,203`-byte floor requires `60,392,999,803` free bytes at start,
+which is `11,616,701,307` above the stabilized current state.
 
 Destructive cleanup, irreversible migration, drop/truncate/repack/rewrite
 work, or active Postgres data movement may proceed automatically after a

@@ -73,6 +73,10 @@ The retry proves unchanged-scope physical skipping again, but it does not clear
 publication/source-map/API parity and cannot be promoted. The run also showed
 material ranking-phase variance while the filesystem was at 100% usage; this
 is additional rejection evidence, not a reason to weaken the capacity floor.
+Observed peak consumption was `45,821,849,600` bytes, which exceeded the
+candidate estimate by `1,427,020,667` bytes (`3.21%`). Preserving the same
+safety floor requires at least `60,392,999,803` free bytes at start. Current
+stable free space is short by `11,616,701,307` bytes.
 
 ## Candidate contract
 

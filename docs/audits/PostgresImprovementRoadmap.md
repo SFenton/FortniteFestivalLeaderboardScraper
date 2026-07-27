@@ -1147,7 +1147,9 @@ move to PG-7 after backup/restore and live-scrape parity.
   stabilized at about `48.78 GB`; nominal guards pass with only
   `3.63/4.38 GB` of baseline/candidate margin. The worker remains held because
   the live run breached its safety floor despite those guards and never
-  produced post-publish capacity/parity evidence. Evidence:
+  produced post-publish capacity/parity evidence. The corrected observed
+  start requirement is `60,392,999,803` bytes, leaving an
+  `11,616,701,307`-byte current shortfall. Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T110731Z`.
 
 ### PG-4.2 - Separate semantic score changes from derived rank changes
