@@ -1195,16 +1195,27 @@ move to PG-7 after backup/restore and live-scrape parity.
   `11.02%` to `4:54:57.902`.
 - A Band Duets schema-ensure deadlock was repaired in the same frozen window.
   Commit `6651ebd9` serializes future ensures and retries one PostgreSQL
-  deadlock; `130/130` ranking tests passed.
+  deadlock. Commit `4121e7e5` adds real concurrent rebuild coverage and makes
+  exhausted per-type ranking failures reject the publication-critical phase.
 - The old worker then entered an unbounded deferred-registration/rivals phase
-  and exited before publication. Recovery marked `1266` failed, removed the
-  freeze, retained published `1236`, and verified zero candidate mappings.
+  and exited before publication. Guarded recovery was dry-run/rollback proven,
+  then marked `1266` failed at
+  `post_process_no_progress_abandoned`, removed the freeze, retained published
+  `1236`, marked the worker offline, and verified zero candidate mappings,
+  active worker queries, ungranted/advisory locks, or maintenance work.
+- Worker liveness no longer updates the operation progress timestamp.
+  Post-process phases and deferred-registration items now advance durable
+  progress explicitly; deferred sync has a 30-minute best-effort timeout. The
+  autonomous watchdog defaults to 45 minutes without progress and defers while
+  a worker-owned PostgreSQL query is active.
 - Full logical fingerprints remained exact for `39,820,273` current and
   `194,171,215` version rows with zero scrape-`1266` logical touches. The
   destructive truncate gate remains `NOT_CLEARED_NO_PUBLICATION`.
-- Final free space is `32,491,429,888`; another corrected full scrape is
-  blocked. Production proxy settings reverted to `400 / 2 / 1`, and the fixed
-  worker image is held with restart `no`.
+- Final measured free space is `32,507,674,624`; another corrected full scrape
+  is blocked by `27,885,325,179` bytes. Production proxy settings reverted to
+  `400 / 2 / 1`; service and held worker image
+  `fstservice:scrape1266-recovery-4121e7e5` are deployed, and worker restart is
+  `no`.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/proxy-retune-disabled-writer-baseline-20260727T004228Z`
   and

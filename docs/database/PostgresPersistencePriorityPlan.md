@@ -6,24 +6,22 @@ This plan records the approved direction for improving FST Postgres persistence 
 
 - Production compose ownership: `/home/sfenton/Docker/FestivalServiceTracker`.
 - `fstservice`, `festivalweb`, and `fst-postgres` are healthy.
-  `fstservice` runs
-  `fstservice:band-song-retire-3ac2a7c9`. `fstworker` remains held
-  on `fstservice:worker0a-recovery-21bd5f56` with run-once scheduling and
-  restart disabled.
+  `fstservice` runs `fstservice:scrape1266-recovery-4121e7e5`.
+  `fstworker` is created-held on the same image with run-once scheduling and
+  restart `no`.
 - Scrape `1236` published `6,138` complete scopes and `39,588,650` rows with
-  the publication ledger unfrozen and remains authoritative. Scrape `1263` is
-  failed at `capacity_watchdog_abandoned`, owns zero published-source rows,
-  and scrape `1264` is failed at `capacity_postwriter_guard` after
-  `8,232/8,232` complete manifests. Both candidates own zero published-source
-  rows, and the worker ledger is offline.
+  the publication ledger unfrozen and remains authoritative. Scrape `1266` is
+  failed at `post_process_no_progress_abandoned`, owns zero published-source
+  rows, and the worker ledger is offline with no current operation. Earlier
+  failed candidates `1263` through `1265` remain unpublished.
 - Failed-candidate derived-read isolation keeps mapped solo leaderboards
   available while unversioned ranking/history/export and band-song cache
   misses fail closed until the next successful publication. This is separate
   from `scrape_publication_state.public_reads_frozen`, which is `false`.
 - `fstservice` and `festivalweb` may be restarted for maintenance and must be
   recovered promptly. `fstworker` remains held for this boundary; the next
-  scrape must use commit `8db72081` or newer so retired indexes are not
-  recreated.
+  scrape must use commit `4121e7e5` or newer and run the durable post-process
+  watchdog.
 - PG-3 dropped only `public.ix_crh_latest`, reclaiming exactly
   `20,890,148,864` database bytes. Free space rose from `78,549,483,520` to
   `99,439,702,016` bytes; the guard horizon improved from `2.61` to `3.31`
@@ -96,10 +94,14 @@ This plan records the approved direction for improving FST Postgres persistence 
   network/writer wall clock from `5:29:50` to `4:54:57.902`, but did not
   publish. A Band Duets schema-ensure deadlock was repaired before publication;
   the old worker later exited during an unbounded deferred-registration/rivals
-  phase. Recovery marked `1266` failed with zero published mappings and
+  phase. Recovery marked `1266` failed at
+  `post_process_no_progress_abandoned` with zero published mappings and
   preserved/unfroze `1236`. Full logical before/after hashes remained exact.
-  Final free space is `32,491,429,888`, so the corrected
-  `60,392,999,803`-byte scrape guard is blocked.
+  Commit `4121e7e5` separates liveness from progress heartbeats, bounds
+  best-effort deferred sync at 30 minutes, rejects exhausted band-type ranking
+  failures, and adds the DB-aware autonomous watchdog. Final free space is
+  `32,507,674,624`, so the corrected `60,392,999,803`-byte scrape guard is
+  blocked by `27,885,325,179` bytes.
 - STORAGE-OWNERSHIP completed continuous-safe P6/P8/P9 owner cards and exact
   manifests for `player_score_observations`, `scrape_dirty_*`, and legacy
   `leaderboard_entries_*`: `61,217,292,288` bytes total. Observation dual
@@ -288,8 +290,9 @@ path, and post-action validation are documented.
 | Worker scraping heal | Complete | Added worker-only startup schema-init skip, rebuilt the image, started `fstworker`, and held a 10-minute full-public-path watchdog while scrape `1219` began. |
 | Emergency `band_read_*` reclaim | Complete | At 44 MB free / 100% disk, stopped `fstworker`, froze public reads to published `1214`, truncated rollback-safe logical shadow tables, quarantined/validated/dropped unused derived `band_read_*` tables, restored about 435 GB free, and restarted `fstworker` as scrape `1222`. |
 | Autonomous scrape rollout | Rejected after scrape `1265`; worker held | Candidate `1265` passed start/post-writer guards, completed all manifests/writers and band maintenance, then crossed its declared capacity floor during ranking snapshots. It was stopped and reconciled failed with zero published mappings. Published `1236` remains safe. Post-cleanup nominal guards pass again, but the live run proved that model insufficient through publication. |
+| Scrape `1266` incident recovery | Complete / deployed / worker held | Exact rollback and guarded reconciliation preserved published `1236`; precise failed-candidate isolation remains active for derived reads. Commit `4121e7e5` adds critical band failure propagation, progress-only heartbeats, a 30-minute deferred-sync timeout, and DB-aware autonomous recovery. Service and held worker use `fstservice:scrape1266-recovery-4121e7e5`. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
-| Next implementation phase | Corrected start guard blocked / worker held | Failed scrape `1266` consumed the prior margin and left `32,491,429,888` free, `27,901,569,915` bytes below the corrected full-run requirement. Proxy tuning reverted to `400 / 2 / 1`; fixed image `fstservice:proxy-retune-6651ebd9` is held. Publication parity, logical truncate, another scrape, optional builds, rewrites, repacks, broad movement, and owner-rejected drops remain blocked. |
+| Next implementation phase | Corrected start guard blocked / worker held | Final measured free space is `32,507,674,624`, `27,885,325,179` bytes below the corrected full-run requirement. Proxy tuning remains reverted at `400 / 2 / 1`; image `fstservice:scrape1266-recovery-4121e7e5` is held with restart `no`. Publication parity, logical truncate, another scrape, optional builds, rewrites, repacks, broad movement, and owner-rejected drops remain blocked. |
 
 ## LOGICAL-RETIRE decision package (2026-07-25)
 

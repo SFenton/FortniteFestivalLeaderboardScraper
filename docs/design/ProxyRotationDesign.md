@@ -130,16 +130,23 @@ The full baseline did **not** publish. Concurrent ranking schema setup
 deadlocked Band Duets once; a bounded same-run repair rebuilt
 `4,477,133` Duets ranking rows before publication, and commit `6651ebd9`
 serializes future schema setup with an advisory transaction lock plus one
-deadlock retry. The old worker then spent more than six hours in deferred
-registration/rivals processing without a phase deadline and exited before a
-terminal publication decision. Recovery marked `1266` failed, preserved and
-unfroze published `1236`, and confirmed zero candidate published-source rows.
+deadlock retry. Commit `4121e7e5` additionally rejects exhausted per-type
+ranking failures as publication-critical. The old worker then spent more than
+six hours in deferred registration/rivals processing without a phase deadline.
+It was making slow item progress, but generic liveness heartbeats hid the lack
+of a terminal phase transition. Recovery marked `1266` failed at
+`post_process_no_progress_abandoned`, preserved and unfroze published `1236`,
+and confirmed zero candidate published-source rows, active worker queries, or
+locks.
 
 Decision: the `800 / 32 / 4` network result is a research win but is not
 promoted without a successful publication. Production reverted to
-`400 / 2 / 1`; `fstworker` is held on fixed image
-`fstservice:proxy-retune-6651ebd9`, restart `no`. A corrected full-scrape guard
-now fails at `32,491,429,888` free bytes, so another scrape is capacity-blocked.
+`400 / 2 / 1`; `fstservice` and the created-held `fstworker` use
+`fstservice:scrape1266-recovery-4121e7e5`, and worker restart is `no`.
+Post-process now has explicit progress heartbeats, a 30-minute
+deferred-registration timeout, and a DB-aware 45-minute autonomous no-progress
+watchdog. A corrected full-scrape guard fails at `32,507,674,624` free bytes
+versus `60,392,999,803` required, so another scrape is capacity-blocked.
 
 Internal curl timeouts are classified as transient transport failures and
 retried; only the caller/host cancellation token ends the pass. Controlled

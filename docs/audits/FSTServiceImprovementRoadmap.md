@@ -399,6 +399,31 @@ and old cache artifacts.
   baseline failures and one load-sensitive failure that passed alone.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/stale-scrape-1263-recovery-20260725T153938Z`.
+
+**Scrape 1266 no-progress recovery - accepted and deployed 2026-07-27**
+
+- A guarded, rollback-proven transaction marked scrape `1266` failed at
+  `post_process_no_progress_abandoned`, preserved and unfroze published `1236`,
+  cleared the worker operation, and marked the worker offline only after
+  proving zero worker-owned queries, candidate-publication DML, locks,
+  maintenance tasks, or candidate published-source rows.
+- Failed-candidate isolation now recognizes both the historical
+  `capacity_watchdog_abandoned` marker and the precise no-progress marker.
+  After service deployment, the mapped published leaderboard remained
+  byte-exact HTTP `200`; player ranking, rank history, and band-song derived
+  routes remained fail-closed HTTP `503`.
+- Worker liveness no longer refreshes the operation progress timestamp.
+  `/api/service-info` derives current elapsed time independently, while
+  post-process phases/items explicitly advance durable operation detail and
+  progress. The autonomous watchdog uses that timestamp plus worker-owned
+  PostgreSQL activity and configurable idle/hard thresholds.
+- `fstservice` now runs
+  `fstservice:scrape1266-recovery-4121e7e5`; `/readyz`, festivalweb shell,
+  `/api/service-info`, and Postgres recovered within six seconds. The same image
+  is deployed to a created-held `fstworker` with restart `no`.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/stale-scrape-1266-recovery-20260727T184133Z`.
+
 - The subsequent residual capacity phase changed no public read contract.
   Mapped leaderboard output stayed byte-exact HTTP `200`; player ranking,
   history, export, composite/band ranking, and band-song routes stayed on the

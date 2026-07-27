@@ -744,16 +744,34 @@ publication rejected 2026-07-27**
 - Band Duets ranking hit PostgreSQL `40P01` when two ranking paths concurrently
   ran the same schema ensure. A same-run repair rebuilt `4,477,133` Duets
   ranking rows before publication. Commit `6651ebd9` adds a transaction-scoped
-  advisory schema lock and one deadlock retry; `130/130` ranking tests and the
-  fixed image build passed.
+  advisory schema lock and one deadlock retry. Commit `4121e7e5` adds a real
+  concurrent rebuild test and makes retry exhaustion fail the
+  publication-critical `ComputeRankings` phase after remaining band types are
+  observed, rather than leaving a success-shaped partial result.
 - The worker later remained in deferred registration/rivals processing for
   more than six hours without a phase deadline or terminal publication
-  decision and exited `137` with `OOMKilled=false`. Incident recovery marked
-  `1266` failed at `capacity_watchdog_abandoned`, preserved/unfroze `1236`,
-  and confirmed zero candidate published-source rows.
-- Production reverted to `400 / 2 / 1`. The fixed worker image
-  `fstservice:proxy-retune-6651ebd9` is created-held with restart `no`.
-  Corrected scrape capacity is blocked at `32,491,429,888` free bytes.
+  decision. It completed 22 deferred rival computations and 16 deferred
+  backfills, so it was progressing but unbounded; the generic 15-second
+  liveness heartbeat also masked the absence of a phase transition. Incident
+  recovery stopped it at `18:39:11 UTC`, dry-ran an exact rollback, marked
+  `1266` failed at `post_process_no_progress_abandoned`, preserved/unfroze
+  `1236`, cleared the worker operation, and confirmed zero candidate
+  published-source rows, active queries, or locks.
+- Explicit post-process phase/item heartbeats now advance independently from
+  liveness, deferred registration sync is best-effort and bounded to 30
+  minutes by default, and
+  `tools/fst-worker-no-progress-watchdog.mjs` applies a configurable 45-minute
+  idle gate while deferring for worker-owned PostgreSQL activity. On timeout it
+  stops the worker, writes rollback SQL, performs guarded fail/unfreeze/offline
+  recovery, and sends/renders a visible report.
+- Validation passed `261/261` changed-surface tests, `12/12` focused incident
+  tests, `7/7` watchdog/e-mail tool tests, and the Release build. The full
+  suite passed `2,082/2,087`; all five failures exactly matched the prior
+  scrape-1263 baseline, and the one load-sensitive failure passed on rerun.
+- Production reverted to `400 / 2 / 1`. `fstservice` runs and `fstworker` is
+  created-held on `fstservice:scrape1266-recovery-4121e7e5`; restart remains
+  `no`. The corrected guard blocks another scrape at `32,507,674,624` free
+  bytes versus `60,392,999,803` required (`27,885,325,179` short).
   The tuning candidate is not promoted without successful publication.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/proxy-retune-disabled-writer-baseline-20260727T004228Z`
