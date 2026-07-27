@@ -71,6 +71,45 @@ per-exit concurrency, cooldown, and global 400-RPS accounting. Request and
 response scratch files use `/app/data/curl-transport` on the FST drive and are
 deleted after each request.
 
+## July 27, 2026 publication-disabled throughput retune
+
+The recovery configuration of 400 global RPS, 2 RPS per exit, and one
+simultaneous request per exit remained the full-scrape baseline through scrape
+`1265`. A new publication-disabled matched matrix used the same 225 page-zero
+scopes across all nine instruments, all 25 qualified unique PIA exits, curl
+primary transport, HTTP/1.1, fresh connections, and 1,500 sends per stage.
+Lower stages passed before higher limits were attempted.
+
+| Per-exit RPS | Per-exit concurrency | Global ceiling | Valid JSON | Useful pages/s | p95 / p99 | Block / timeout / 503 / 429 | Wire sends/useful |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2 | 1 | 400 | 100.00% | 7.86 | 2.502 / 4.523 s | 0 / 0 / 0 / 0 | 1.0000 |
+| 4 | 1 | 400 | 100.00% | 7.99 | 2.518 / 4.054 s | 0 / 0 / 0 / 0 | 1.0000 |
+| 8 | 1 | 400 | 100.00% | 8.51 | 2.519 / 4.077 s | 0 / 0 / 0 / 0 | 1.0000 |
+| 16 | 1 | 400 | 100.00% | 7.59 | 2.571 / 4.137 s | 0 / 0 / 0 / 0 | 1.0000 |
+| 16 | 2 | 400 | 100.00% | 12.58 | 2.804 / 5.773 s | 0 / 0 / 0 / 0 | 1.0000 |
+| 16 | 4 | 400 | 99.87% | 15.47 | 2.569 / 7.828 s | 0 / 1 / 0 / 0 | 1.0013 |
+| 32 | 1 | 800 | 99.93% | 5.02 | 2.611 / 6.352 s | 0 / 1 / 0 / 0 | 1.0007 |
+| 32 | 2 | 800 | 99.93% | 12.02 | 2.766 / 5.459 s | 0 / 0 / 0 / 0 | 1.0007 |
+| 32 | 4 | 400 | 99.93% | 31.83 | 2.608 / 4.130 s | 0 / 0 / 0 / 0 | 1.0007 |
+| 32 | 4 | 800 | 100.00% | 34.80 | 2.539 / 3.845 s | 0 / 0 / 0 / 0 | 1.0000 |
+| 32 | 4 | 1600 | 99.93% | 34.45 | 2.686 / 4.386 s | 0 / 0 / 0 / 0 | 1.0007 |
+
+The selected one-scrape candidate is 800 global RPS, 32 RPS per exit, and four
+simultaneous requests per exit. A doubled 3,000-send repeat returned 100% valid
+JSON at 32.04 useful pages/s, 2.496 s p95, 4.491 s p99, zero blocks, timeouts,
+503s, or 429s, and 1.0000 wire sends per useful response. The 1,600 ceiling was
+non-binding because 25 exits at 32 RPS can start at most 800 requests/s.
+
+All 25 exits remained qualified; no additional exit was quarantined. Public
+service health, Postgres locks/long queries, authentication, and matched
+direct/proxy entry parity remained safe. This selects the candidate for exactly
+one full disabled-logical-writer baseline; it is not a production acceptance
+until that scrape completes strict manifests, post-processing, rankings,
+publication, unfreeze, and public/logical parity.
+
+Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/proxy-retune-disabled-writer-baseline-20260727T004228Z`.
+
 Internal curl timeouts are classified as transient transport failures and
 retried; only the caller/host cancellation token ends the pass. Controlled
 run-once compose also sets `restart: "no"` so Docker cannot restart a completed
@@ -108,7 +147,7 @@ tools/fst-worker-compose-guard.sh --recreate-runonce
 
 The guard resolves only the canonical PIA overlay, verifies 30 canonical
 services and the configured effective count, enforces aligned metadata and the
-16-RPS-per-exit cap, then proves live DNS, control, HTTP proxy, and unique
+32-RPS-per-exit qualified cap, then proves live DNS, control, HTTP proxy, and unique
 hashed egress before recreation. It never prints public addresses or
 credentials.
 

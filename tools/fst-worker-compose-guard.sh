@@ -15,7 +15,7 @@ Usage: tools/fst-worker-compose-guard.sh [options]
 Validates the canonical production PIA overlay before any fstworker recreate.
 The resolved compose config must declare the expected effective proxy arrays,
 all 30 canonical PIA services, aligned provider/control/container metadata,
-healthy unique egresses, and no more than 16 Epic requests/s per effective exit.
+healthy unique egresses, and no more than 32 Epic requests/s per effective exit.
 
 Options:
   --check                  Validate only (default)
@@ -191,13 +191,13 @@ if unexpected_pia_dependencies:
         "ERROR: fstworker still depends on quarantined PIA services: "
         + ",".join(sorted(unexpected_pia_dependencies)))
 
-if max_rps > expected * 16:
+if max_rps > expected * 32:
     raise SystemExit(
-        f"ERROR: aggregate Epic rate {max_rps} exceeds 16 RPS across "
+        f"ERROR: aggregate Epic rate {max_rps} exceeds 32 RPS across "
         f"{expected} effective exits")
-if per_endpoint_rps > 16:
+if per_endpoint_rps > 32:
     raise SystemExit(
-        f"ERROR: per-endpoint Epic rate {per_endpoint_rps} exceeds the 16 RPS ceiling")
+        f"ERROR: per-endpoint Epic rate {per_endpoint_rps} exceeds the 32 RPS ceiling")
 if per_endpoint_concurrency > 4:
     raise SystemExit(
         f"ERROR: per-endpoint concurrency {per_endpoint_concurrency} exceeds the qualified ceiling of 4")

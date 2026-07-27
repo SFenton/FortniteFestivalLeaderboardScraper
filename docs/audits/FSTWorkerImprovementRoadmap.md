@@ -699,6 +699,32 @@ until replay and live shadow parity pass.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-scrape-1265-capacity-recovery-20260727T0011Z`.
 
+**PROXY-RETUNE publication-disabled tuning - candidate selected 2026-07-27**
+
+- Preflight preserved published `1236` unfrozen with no active scrape,
+  ungranted lock, or long query. The corrected
+  `60,392,999,803`-byte start guard passed at `67,147,284,480` free bytes,
+  leaving `6,754,284,677` bytes of margin. Auth refresh, `25/25` unique PIA
+  guard, and paired direct/proxy entry parity passed.
+- Eleven lower-to-higher matched stages each used the same 225 published
+  page-zero scopes across all nine instruments and 1,500 curl-primary sends.
+  The matrix covered per-exit RPS `2/4/8/16/32`, concurrency `1/2/4`, and
+  global ceilings `400/800/1600`.
+- The selected `800 / 32 / 4` candidate returned `1,500/1,500` valid JSON,
+  `34.80` useful pages/s, `2.539/3.845 s` p95/p99, zero block, timeout, 503, or
+  429 responses, and `1.0000` wire sends per useful response. Its doubled
+  `3,000`-send repeat was also 100% valid with zero classified failures and
+  `32.04` useful pages/s.
+- The `1600` global ceiling was non-binding because 25 exits at 32 RPS cap
+  effective starts at 800. All 25 exits remained qualified; no new exit was
+  quarantined. Peak isolated canary memory/PIDs were about `360 MB / 121`.
+- Decision: deploy only `800` global RPS, `32` RPS per exit, and concurrency
+  `4` for exactly one full scrape with snapshot reuse and logical writes off.
+  Acceptance remains pending complete manifests, writers, post-process,
+  rankings, publication/unfreeze, public parity, and unchanged logical hashes.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/proxy-retune-disabled-writer-baseline-20260727T004228Z`.
+
 ### WORKER-0.5 - Separate solo and band completion
 
 A band timeout must not mark `LeaderboardScrapeCompleted=true`. A task still
