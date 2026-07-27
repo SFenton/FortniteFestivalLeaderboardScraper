@@ -505,25 +505,53 @@ remains live-scrape parity-gated.
    step leaves the prior published generation active and explicitly unfreezes
    it after the failed pass is finalized.
 
-If a capacity watchdog must stop a worker after unversioned derived tables
-have changed, finalize the scrape with
-`failure_phase='capacity_watchdog_abandoned'`. The publication ledger may then
-be unfrozen on the prior published scrape after active-query/lock/maintenance
-proof, but the service treats that durable failure marker as a separate
-published-read isolation state. Persistent published cache hits and explicitly
-mapped solo leaderboard reads remain available; unversioned derived cache
-misses and exports return `503` until a later successful publication advances
-past the abandoned scrape. This prevents ranking, history, export, band-song,
-or fallback reads from exposing the failed candidate while keeping
+If a watchdog must stop a worker after unversioned derived tables have
+changed, finalize the scrape with an explicit isolation marker:
+`capacity_watchdog_abandoned` for disk-capacity stops or
+`post_process_no_progress_abandoned` for a stale post-process operation. The
+publication ledger may then be unfrozen on the prior published scrape only
+after proving that the worker process, worker-owned query/transaction,
+candidate-publication DML, ungranted/advisory lock, maintenance task, and
+candidate published-source rows are all absent. The service treats either
+durable marker as a separate published-read isolation state. Persistent
+published cache hits and explicitly mapped solo leaderboard reads remain
+available; unversioned derived cache misses and exports return `503` until a
+later successful publication advances past the abandoned scrape. This prevents
+ranking, history, export, band-song, or fallback reads from exposing the failed
+candidate while keeping
 `scrape_publication_state.public_reads_frozen=false` and service status
 truthful.
+
+For autonomous live windows, run:
+
+```bash
+node tools/fst-worker-no-progress-watchdog.mjs \
+  --monitor \
+  --evidence-dir /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/<session>/watchdog \
+  --idle-seconds 2700 \
+  --poll-seconds 60 \
+  --send-report
+```
+
+The default idle gate is 45 minutes without an explicit operation/phase
+advance. A worker-owned active PostgreSQL query defers the timeout, and an
+optional `--max-phase-seconds` adds a measured hard bound. Recovery stops the
+worker, writes exact rollback SQL, performs the guarded fail/unfreeze/offline
+transaction, and sends or renders the incident report. Exit code `42` means
+the recovery committed and autonomous repair must continue.
 
 `/api/service-info` reads latest scrape, published scrape, publication/freeze,
 and worker operation state in one PostgreSQL statement. It exposes active and
 published scrape IDs, freeze reason/ID, network/post-process/publication
 phases, failed or stalled states, and only a future scheduler timestamp.
-Worker heartbeats refresh the active operation timestamp and elapsed time
-during long phases.
+Worker liveness updates only `last_heartbeat_at`. The operation
+`UpdatedAtUtc` field advances only for explicit operation, phase,
+sub-operation, item, or progress changes, so a liveness loop cannot hide a
+stalled post-process phase. `/api/service-info` derives live elapsed time from
+the operation start even when the progress timestamp is intentionally stable.
+The best-effort deferred-registration phase has a separate 30-minute default
+timeout; it records a visible best-effort failure and leaves queued users for a
+later pass instead of delaying publication indefinitely.
 
 The PG-1 schema is additive and creates no startup secondary-index build. The
 primary key is ordered for current-publication instrument reads. Initial

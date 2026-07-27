@@ -99,11 +99,11 @@ public static partial class ApiEndpoints
             var currentStartedAt = activeScrape?.StartedAt
                 ?? FormatUtc(durableCurrent?.StartedAtUtc)
                 ?? localCurrent?.StartedAtUtc?.ToUniversalTime().ToString("o");
-            var currentElapsedSeconds = durableCurrent?.ElapsedSeconds
-                ?? (durableCurrent is null
-                    ? (double?)null
-                    : Math.Max(0, (nowUtc - durableCurrent.StartedAtUtc).TotalSeconds))
-                ?? localCurrent?.ElapsedSeconds;
+            var currentElapsedSeconds = durableCurrent is null
+                ? localCurrent?.ElapsedSeconds
+                : Math.Max(
+                    durableCurrent.ElapsedSeconds ?? 0,
+                    Math.Max(0, (nowUtc - durableCurrent.StartedAtUtc).TotalSeconds));
             var nextScheduledUpdateAt = GetNextScheduledUpdateAt(
                 runtime,
                 currentStatus,

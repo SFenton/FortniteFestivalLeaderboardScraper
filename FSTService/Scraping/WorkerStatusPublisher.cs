@@ -34,15 +34,6 @@ public sealed class WorkerStatusPublisher
         lock (_gate)
         {
             currentOperation = _currentOperation;
-            if (currentOperation is not null)
-            {
-                currentOperation = CopyOperation(
-                    currentOperation,
-                    updatedAtUtc: now,
-                    elapsedSeconds: (now - currentOperation.StartedAtUtc).TotalSeconds);
-                _currentOperation = currentOperation;
-                _activeOperations[currentOperation.OperationKey] = currentOperation;
-            }
         }
 
         TryPublish(() => _metaDb.UpsertWorkerHeartbeat(

@@ -185,6 +185,52 @@ Use this loop for every `scrape-boundary-deploy` or `full-scrape-ab` candidate:
 - If a worker/service/web restart or scrape start is attempted and then rolled back for public-path health, continue into a safer repair path before finalizing. A rollback restores service but does not complete the task unless no safe repair remains.
 - Stop counters do not apply while new evidence is accruing from live scrape progress, monitor ticks, resource readings, logs, or parity artifacts. Count only iterations with no accepted improvement, no new evidence, no useful narrowing, and no validated plan progress.
 
+## Required post-process no-progress watchdog
+
+Every live candidate window that can enter post-process must run the durable
+watchdog beside the 60-second public-health monitor:
+
+```bash
+node tools/fst-worker-no-progress-watchdog.mjs \
+  --monitor \
+  --evidence-dir /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/<session>/watchdog \
+  --idle-seconds 2700 \
+  --poll-seconds 60 \
+  --send-report
+```
+
+Pass `--fallback-env-file` only through the secure SMTP fallback contract when
+real delivery needs it. Watchdog evidence and outbox files must stay on the FST
+drive.
+
+- `service_worker_status.last_heartbeat_at` proves process liveness.
+  `current_operation_json.UpdatedAtUtc` is a progress heartbeat and must change
+  only when an operation, post-process phase, sub-operation, item count, or
+  progress value advances. A generic liveness heartbeat must not reset the
+  no-progress clock.
+- The default no-new-progress interval is 45 minutes. A task may set a larger
+  `--idle-seconds` only from measured phase evidence. Use
+  `--max-phase-seconds` when a phase has an approved hard wall-clock bound;
+  zero leaves the hard bound disabled.
+- A worker-owned active PostgreSQL query defers the timeout. Do not terminate a
+  legitimately progressing long query merely because the phase heartbeat is
+  old. The worker connection application name and container client address are
+  both checked.
+- A recorded publication-critical phase/type failure is an immediate candidate
+  rejection. Stop and reconcile without waiting for the idle threshold. The
+  watchdog is a backstop for missing terminal transitions, not permission to
+  ignore a known critical failure.
+- On timeout the tool stops `fstworker`, verifies no worker query remains,
+  records exact rollback SQL, marks the candidate failed at
+  `post_process_no_progress_abandoned`, preserves and unfreezes the prior
+  publication, marks the worker offline, and sends/renders a visible report.
+  Exit code `42` means recovery succeeded. Treat it as incident evidence and
+  continue directly into root-cause repair; it is never a workflow stopping
+  point.
+- If any pointer, candidate mapping, active query, or lock guard fails, the tool
+  refuses mutation. Keep the publication frozen, repair or narrow that exact
+  blocker, and rerun the guarded recovery.
+
 ## Autonomous blocker triage
 
 | Class | Meaning | Required autonomous action |

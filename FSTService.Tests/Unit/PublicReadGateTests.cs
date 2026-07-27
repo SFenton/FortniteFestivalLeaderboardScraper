@@ -71,8 +71,11 @@ public class PublicReadGateTests
         Assert.True(cache.IsFrozen);
     }
 
-    [Fact]
-    public void MetaDatabase_FailedCandidateReadIsolation_PersistsUntilLaterPublication()
+    [Theory]
+    [InlineData(MetaDatabase.FailedCandidateReadIsolationFailurePhase)]
+    [InlineData(MetaDatabase.NoProgressReadIsolationFailurePhase)]
+    public void MetaDatabase_FailedCandidateReadIsolation_PersistsUntilLaterPublication(
+        string failurePhase)
     {
         using var fixture = new InMemoryMetaDatabase();
         var metaDb = fixture.Db;
@@ -83,7 +86,7 @@ public class PublicReadGateTests
         var failedId = metaDb.StartScrapeRun();
         metaDb.FailScrapeRun(
             failedId,
-            MetaDatabase.FailedCandidateReadIsolationFailurePhase,
+            failurePhase,
             "derived state changed before the candidate was abandoned");
 
         var isolation = metaDb.GetFailedCandidateReadIsolationState();

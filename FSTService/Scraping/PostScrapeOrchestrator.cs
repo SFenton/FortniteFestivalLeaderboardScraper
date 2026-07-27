@@ -56,6 +56,7 @@ public sealed class PostScrapeOrchestrator
     private readonly IOptions<ScraperOptions> _options;
     private readonly ILogger<PostScrapeOrchestrator> _log;
     private readonly IPostScrapePhaseFaultInjector? _phaseFaultInjector;
+    private readonly WorkerStatusPublisher? _workerStatus;
 
     public PostScrapeOrchestrator(
         GlobalLeaderboardPersistence persistence,
@@ -91,7 +92,8 @@ public sealed class PostScrapeOrchestrator
         IOptions<DatabaseMaintenanceOptions>? databaseMaintenanceOptions = null,
         IDatabasePressureMonitor? databasePressureMonitor = null,
         IDatabaseRetentionMaintenanceService? retentionMaintenanceService = null,
-        IPostScrapePhaseFaultInjector? phaseFaultInjector = null)
+        IPostScrapePhaseFaultInjector? phaseFaultInjector = null,
+        WorkerStatusPublisher? workerStatus = null)
     {
         _persistence = persistence;
         _firstSeenCalculator = firstSeenCalculator;
@@ -127,6 +129,7 @@ public sealed class PostScrapeOrchestrator
         _options = options;
         _log = log;
         _phaseFaultInjector = phaseFaultInjector;
+        _workerStatus = workerStatus;
     }
 
     /// <summary>
@@ -435,7 +438,41 @@ public sealed class PostScrapeOrchestrator
         RunPhaseAsync(
             ctx,
             "DeferredRegistrationSync",
-            () => RunDeferredRegistrationSyncCoreAsync(ctx, service, resolvedPhases, ct));
+            () => RunDeferredRegistrationSyncWithTimeoutAsync(
+                phaseCt => RunDeferredRegistrationSyncCoreAsync(ctx, service, resolvedPhases, phaseCt),
+                ct));
+
+    private async Task RunDeferredRegistrationSyncWithTimeoutAsync(
+        Func<CancellationToken, Task> operation,
+        CancellationToken ct)
+    {
+        var timeout = _options.Value.DeferredRegistrationSyncTimeout;
+        using var timeoutCts = timeout > TimeSpan.Zero
+            ? CancellationTokenSource.CreateLinkedTokenSource(ct)
+            : null;
+        if (timeoutCts is not null)
+            timeoutCts.CancelAfter(timeout);
+
+        try
+        {
+            await operation(timeoutCts?.Token ?? ct);
+        }
+        catch (OperationCanceledException) when (
+            timeoutCts?.IsCancellationRequested == true
+            && !ct.IsCancellationRequested)
+        {
+            _log.LogWarning(
+                "Deferred registration sync timed out after {Timeout}. Publication will continue and queued users will retry on a later pass.",
+                timeout);
+            throw new TimeoutException(
+                $"Deferred registration sync timed out after {timeout}.");
+        }
+    }
+
+    internal Task RunDeferredRegistrationSyncTimeoutForTestAsync(
+        Func<CancellationToken, Task> operation,
+        CancellationToken ct) =>
+        RunDeferredRegistrationSyncWithTimeoutAsync(operation, ct);
 
     private async Task RunDeferredRegistrationSyncCoreAsync(
         ScrapePassContext ctx,
@@ -534,6 +571,10 @@ public sealed class PostScrapeOrchestrator
         _log.LogInformation(
             "Running deferred registration sync for {Count} user(s) after current-cycle derived publication.",
             users.Count);
+        UpdatePostProcessOperation(
+            "DeferredRegistrationSync",
+            $"Backfilling {users.Count} deferred registration(s)",
+            progressPercent: 0);
 
         var result = await _cyclicalMachine.AttachAsync(
             users,
@@ -548,8 +589,13 @@ public sealed class PostScrapeOrchestrator
             _log.LogInformation("Deferred registration sync updated {Entries} entries, {Sessions} sessions for {Users} users.",
                 result.EntriesUpdated, result.SessionsInserted, result.UsersProcessed);
 
-        foreach (var user in users)
+        for (var index = 0; index < users.Count; index++)
         {
+            var user = users[index];
+            UpdatePostProcessOperation(
+                "DeferredRegistrationSync",
+                $"Computing deferred rivals {index + 1}/{users.Count}",
+                progressPercent: users.Count == 0 ? 100 : 100d * index / users.Count);
             try
             {
                 _persistence.Meta.CompleteBackfill(user.AccountId, rankingsPending: true);
@@ -567,6 +613,11 @@ public sealed class PostScrapeOrchestrator
             {
                 _log.LogWarning(ex, "Deferred registration post-sync actions failed for {AccountId}.", user.AccountId);
             }
+
+            UpdatePostProcessOperation(
+                "DeferredRegistrationSync",
+                $"Completed deferred rivals {index + 1}/{users.Count}",
+                progressPercent: 100d * (index + 1) / users.Count);
         }
     }
 
@@ -1310,15 +1361,21 @@ public sealed class PostScrapeOrchestrator
         var heapBefore = GC.GetTotalMemory(false);
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var startedAt = DateTime.UtcNow;
+        UpdatePostProcessOperation(phaseName, $"Running {phaseName}");
         try
         {
             _phaseFaultInjector?.BeforePhase(phaseName);
             await phase();
         }
-        catch (OperationCanceledException) { throw; }
+        catch (OperationCanceledException)
+        {
+            UpdatePostProcessOperation(phaseName, $"Cancelled {phaseName}");
+            throw;
+        }
         catch (Exception ex)
         {
             sw.Stop();
+            UpdatePostProcessOperation(phaseName, $"Failed {phaseName}: {ex.Message}");
             RecordPhaseOutcome(ctx, phaseName, criticality, false, startedAt, sw.Elapsed, ex.Message);
             _log.LogWarning(
                 ex,
@@ -1337,6 +1394,7 @@ public sealed class PostScrapeOrchestrator
             return;
         }
         sw.Stop();
+        UpdatePostProcessOperation(phaseName, $"Completed {phaseName}");
         RecordPhaseOutcome(ctx, phaseName, criticality, true, startedAt, sw.Elapsed, null);
         var heapAfter = GC.GetTotalMemory(false);
         _log.LogInformation(
@@ -1358,15 +1416,21 @@ public sealed class PostScrapeOrchestrator
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var startedAt = DateTime.UtcNow;
         T result = defaultValue;
+        UpdatePostProcessOperation(phaseName, $"Running {phaseName}");
         try
         {
             _phaseFaultInjector?.BeforePhase(phaseName);
             result = await phase();
         }
-        catch (OperationCanceledException) { throw; }
+        catch (OperationCanceledException)
+        {
+            UpdatePostProcessOperation(phaseName, $"Cancelled {phaseName}");
+            throw;
+        }
         catch (Exception ex)
         {
             sw.Stop();
+            UpdatePostProcessOperation(phaseName, $"Failed {phaseName}: {ex.Message}");
             RecordPhaseOutcome(ctx, phaseName, criticality, false, startedAt, sw.Elapsed, ex.Message);
             _log.LogWarning(
                 ex,
@@ -1385,12 +1449,26 @@ public sealed class PostScrapeOrchestrator
             return result;
         }
         sw.Stop();
+        UpdatePostProcessOperation(phaseName, $"Completed {phaseName}");
         RecordPhaseOutcome(ctx, phaseName, criticality, true, startedAt, sw.Elapsed, null);
         var heapAfter = GC.GetTotalMemory(false);
         _log.LogInformation(
             "PostScrape phase [{Phase}] completed in {Elapsed}. Heap: {Before:N0} → {After:N0} ({Delta:+#,0;-#,0;0} bytes).",
             phaseName, sw.Elapsed, heapBefore, heapAfter, heapAfter - heapBefore);
         return result;
+    }
+
+    private void UpdatePostProcessOperation(
+        string phaseName,
+        string detail,
+        double? progressPercent = null)
+    {
+        _workerStatus?.UpdateOperation(
+            "scrape.post_process",
+            phase: "PostScrapeEnrichment",
+            subOperation: phaseName,
+            detail: detail,
+            progressPercent: progressPercent);
     }
 
     internal Task RunClassifiedPhaseForTestAsync(

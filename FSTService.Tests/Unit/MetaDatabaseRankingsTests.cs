@@ -557,6 +557,34 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
+    public async Task BandTeamRankingRebuilds_ConcurrentSchemaSetupAreSerialized()
+    {
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<Microsoft.Extensions.Logging.ILogger<BandLeaderboardPersistence>>());
+        persistence.UpsertBandEntries("song_0", "Band_Duets",
+        [
+            MakeBandEntry(["p1", "p2"], "0:1", 1000),
+            MakeBandEntry(["p3", "p4"], "0:3", 900),
+        ]);
+        persistence.UpsertBandEntries("song_0", "Band_Trios",
+        [
+            MakeBandEntry(["p1", "p2", "p3"], "0:1:3", 1200),
+            MakeBandEntry(["p4", "p5", "p6"], "0:2:3", 1100),
+        ]);
+
+        for (var wave = 0; wave < 3; wave++)
+        {
+            await Task.WhenAll(
+                Task.Run(() => Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 1)),
+                Task.Run(() => Db.RebuildBandTeamRankings("Band_Trios", totalChartedSongs: 1)));
+        }
+
+        Assert.Equal(2, Db.GetBandTeamRankings("Band_Duets").TotalTeams);
+        Assert.Equal(2, Db.GetBandTeamRankings("Band_Trios").TotalTeams);
+    }
+
+    [Fact]
     public void BandRankHistoryV2Schema_DoesNotRecreateRetiredLatestSnapshotLookupIndexes()
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);

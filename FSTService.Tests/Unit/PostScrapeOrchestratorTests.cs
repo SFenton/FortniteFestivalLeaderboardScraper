@@ -39,6 +39,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     private readonly TestLogger<PostScrapeOrchestrator> _log;
     private readonly SoloCurrentProjectionBuilder _soloCurrentProjectionBuilder;
     private readonly IDatabasePressureMonitor _databasePressureMonitor;
+    private readonly WorkerStatusPublisher _workerStatus;
 
     private readonly PostScrapeOrchestrator _sut;
 
@@ -116,6 +117,9 @@ public class PostScrapeOrchestratorTests : IDisposable
         _databasePressureMonitor = Substitute.For<IDatabasePressureMonitor>();
         _databasePressureMonitor.GetPressureSnapshotAsync(Arg.Any<DatabaseMaintenanceOptions>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(DatabasePressureSnapshot.None));
+        _workerStatus = new WorkerStatusPublisher(
+            _metaDb,
+            NullLogger<WorkerStatusPublisher>.Instance);
 
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), _progress, new UserSyncProgressTracker(new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), new Api.ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
@@ -141,9 +145,13 @@ public class PostScrapeOrchestratorTests : IDisposable
                 _pathDataStore, _pool, _progress, Options.Create(new ScraperOptions()),
                 Substitute.For<ILogger<BandScrapePhase>>()),
             new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
-            Options.Create(new ScraperOptions()), _log, null,
+            Options.Create(new ScraperOptions
+            {
+                DeferredRegistrationSyncTimeout = TimeSpan.FromMilliseconds(50),
+            }), _log, null,
             soloCurrentProjectionBuilder: _soloCurrentProjectionBuilder,
-            databasePressureMonitor: _databasePressureMonitor);
+            databasePressureMonitor: _databasePressureMonitor,
+            workerStatus: _workerStatus);
     }
 
     public void Dispose()
@@ -1568,6 +1576,48 @@ public class PostScrapeOrchestratorTests : IDisposable
                 ctx.PostScrapeOutcomes,
                 enforcePublicationCriticalPhases: true);
         }
+    }
+
+    [Fact]
+    public async Task ClassifiedPhaseAdvancesDurablePostProcessHeartbeat()
+    {
+        _workerStatus.BeginOperation(
+            "scrape.post_process",
+            "Post-processing leaderboard update",
+            phase: "PostScrapeEnrichment");
+        var before = _metaDb.GetWorkerStatus(WorkerStatusPublisher.ScraperWorkerKey)!
+            .CurrentOperation!;
+
+        await _sut.RunClassifiedPhaseForTestAsync(
+            CreateContext(),
+            "Checkpoint",
+            () => Task.CompletedTask);
+
+        var after = _metaDb.GetWorkerStatus(WorkerStatusPublisher.ScraperWorkerKey)!
+            .CurrentOperation!;
+        Assert.Equal("Checkpoint", after.SubOperation);
+        Assert.Equal("Completed Checkpoint", after.Detail);
+        Assert.True(after.UpdatedAtUtc >= before.UpdatedAtUtc);
+    }
+
+    [Fact]
+    public async Task DeferredRegistrationSyncTimeoutIsBoundedAndVisible()
+    {
+        var sw = Stopwatch.StartNew();
+
+        var error = await Assert.ThrowsAsync<TimeoutException>(() =>
+            _sut.RunDeferredRegistrationSyncTimeoutForTestAsync(
+                WaitUntilCancelledAsync,
+                CancellationToken.None));
+        sw.Stop();
+
+        Assert.Contains("Deferred registration sync timed out", error.Message);
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5), $"Deferred sync timeout took {sw.Elapsed}.");
+        Assert.Contains(
+            _log.Entries,
+            entry => entry.Message.Contains(
+                "Deferred registration sync timed out",
+                StringComparison.Ordinal));
     }
 
     [Fact]

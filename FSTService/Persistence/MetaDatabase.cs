@@ -26,7 +26,13 @@ public sealed class MetaDatabase : IMetaDatabase
     internal const string LegacyLeaderboardStagingTable = "leaderboard_staging";
     internal const string LeaderboardStagingTable = "leaderboard_staging_v2";
     internal const string FailedCandidateReadIsolationFailurePhase = "capacity_watchdog_abandoned";
+    internal const string NoProgressReadIsolationFailurePhase = "post_process_no_progress_abandoned";
     internal const string FailedCandidateReadIsolationReason = "failed-candidate";
+    private static readonly string[] FailedCandidateReadIsolationFailurePhases =
+    [
+        FailedCandidateReadIsolationFailurePhase,
+        NoProgressReadIsolationFailurePhase,
+    ];
     private const string LeaderboardStagingReadColumns = "scrape_id, song_id, instrument, page_num, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, staged_at";
 
     public MetaDatabase(
@@ -611,11 +617,14 @@ public sealed class MetaDatabase : IMetaDatabase
                 CROSS JOIN publication
                 WHERE scrape.id > COALESCE(publication.published_scrape_id, 0)
                   AND scrape.status = 'failed'
-                  AND scrape.failure_phase = @failurePhase
+                  AND scrape.failure_phase = ANY(@failurePhases)
                 ORDER BY scrape.id DESC
                 LIMIT 1
                 """;
-            cmd.Parameters.AddWithValue("failurePhase", FailedCandidateReadIsolationFailurePhase);
+            cmd.Parameters.AddWithValue(
+                "failurePhases",
+                NpgsqlDbType.Array | NpgsqlDbType.Text,
+                FailedCandidateReadIsolationFailurePhases);
 
             using var reader = cmd.ExecuteReader();
             if (!reader.Read())

@@ -288,7 +288,18 @@ builder.Services.AddSingleton<TokenManager>();
 
 var pgConnStr = builder.Configuration.GetConnectionString("PostgreSQL")
     ?? throw new InvalidOperationException("ConnectionStrings:PostgreSQL is required.");
-var pgDataSource = NpgsqlDataSource.Create(pgConnStr);
+var pgConnectionStringBuilder = new NpgsqlConnectionStringBuilder(pgConnStr)
+{
+    ApplicationName = hostedWorkerMode switch
+    {
+        HostedWorkerMode.FullWorker => "fstworker-scraper",
+        HostedWorkerMode.RegistrationSyncWorker => "fstworker-registration",
+        HostedWorkerMode.ApiOnly => "fstservice-api",
+        HostedWorkerMode.FrontendOnly => "fstservice-frontend",
+        _ => "fstservice",
+    },
+};
+var pgDataSource = NpgsqlDataSource.Create(pgConnectionStringBuilder.ConnectionString);
 builder.Services.AddSingleton(pgDataSource);
 
 builder.Services.AddSingleton<IMetaDatabase>(sp =>

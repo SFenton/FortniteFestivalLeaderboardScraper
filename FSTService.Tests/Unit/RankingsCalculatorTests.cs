@@ -945,7 +945,8 @@ public sealed class RankingsCalculatorTests : IDisposable
         var failingMetaDb = CreateBandFailingMetaDatabase(_metaFixture.Db, ["Band_Duets"], attemptedBandTypes);
         var sut = CreateSut(failingMetaDb);
 
-        await sut.ComputeAllAsync(CreateFestivalServiceWithSongs(2), CancellationToken.None);
+        await Assert.ThrowsAsync<AggregateException>(
+            () => sut.ComputeAllAsync(CreateFestivalServiceWithSongs(2), CancellationToken.None));
 
         var history = guitarDb.GetRankHistory("p1", 10);
         Assert.Single(history);
@@ -971,9 +972,11 @@ public sealed class RankingsCalculatorTests : IDisposable
         var failingMetaDb = CreateBandFailingMetaDatabase(_metaFixture.Db, ["Band_Duets"], attemptedBandTypes);
         var sut = CreateSut(failingMetaDb);
 
-        sut.ComputeBandRankings(BandInstrumentMapping.AllBandTypes, totalChartedSongs: 1);
+        var error = Assert.Throws<AggregateException>(() =>
+            sut.ComputeBandRankings(BandInstrumentMapping.AllBandTypes, totalChartedSongs: 1));
 
         Assert.Equal(BandInstrumentMapping.AllBandTypes, attemptedBandTypes);
+        Assert.Contains("Band_Duets", error.Message);
         Assert.Empty(_metaFixture.Db.GetBandTeamRankings("Band_Duets").Entries);
 
         var (trioEntries, trioTotalTeams) = _metaFixture.Db.GetBandTeamRankings("Band_Trios");
@@ -1025,6 +1028,59 @@ public sealed class RankingsCalculatorTests : IDisposable
 
         Assert.Equal(2, attempts);
         Assert.Equal(2, _metaFixture.Db.GetBandTeamRankings("Band_Duets").TotalTeams);
+    }
+
+    [Fact]
+    public void ComputeBandRankings_DeadlockRetryExhaustionFailsAfterLaterBandTypes()
+    {
+        var bandPersistence = new BandLeaderboardPersistence(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+        bandPersistence.UpsertBandEntries("song_0", "Band_Trios",
+        [
+            MakeBandEntry(["p1", "p2", "p3"], "0:1:3", 1200),
+            MakeBandEntry(["p4", "p5", "p6"], "0:2:3", 1100),
+        ]);
+
+        var duetAttempts = 0;
+        var attemptedBandTypes = new List<string>();
+        var retryingMetaDb = CreateBandFailingMetaDatabase(_metaFixture.Db, []);
+        retryingMetaDb.When(x => x.RebuildBandTeamRankings(
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<int>(),
+                Arg.Any<double>(),
+                Arg.Any<BandTeamRankingRebuildOptions?>()))
+            .Do(call =>
+            {
+                var bandType = call.Arg<string>();
+                attemptedBandTypes.Add(bandType);
+                if (bandType == "Band_Duets")
+                {
+                    Interlocked.Increment(ref duetAttempts);
+                    throw new PostgresException(
+                        "synthetic persistent deadlock",
+                        "ERROR",
+                        "ERROR",
+                        PostgresErrorCodes.DeadlockDetected);
+                }
+
+                _metaFixture.Db.RebuildBandTeamRankings(
+                    bandType,
+                    call.ArgAt<int>(1),
+                    call.ArgAt<int>(2),
+                    call.ArgAt<double>(3),
+                    call.ArgAt<BandTeamRankingRebuildOptions?>(4));
+            });
+
+        var sut = CreateSut(retryingMetaDb);
+        var error = Assert.Throws<AggregateException>(() =>
+            sut.ComputeBandRankings(["Band_Duets", "Band_Trios"], totalChartedSongs: 1));
+
+        Assert.Equal(2, duetAttempts);
+        Assert.Equal(["Band_Duets", "Band_Duets", "Band_Trios"], attemptedBandTypes);
+        Assert.Contains("Band_Duets", error.Message);
+        Assert.Equal(2, _metaFixture.Db.GetBandTeamRankings("Band_Trios").TotalTeams);
     }
 
     [Fact]

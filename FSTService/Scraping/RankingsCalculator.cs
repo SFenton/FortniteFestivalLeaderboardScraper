@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Services;
 using FSTService;
@@ -705,6 +706,7 @@ public sealed class RankingsCalculator
         }
 
         var successfulBandTypes = 0;
+        var failures = new ConcurrentQueue<(string BandType, Exception Error)>();
         var maxParallelBandTypes = Math.Clamp(_bandTeamRankingOptions.MaxParallelBandTypes, 1, Math.Max(1, bandTypes.Count));
         Parallel.ForEach(
             bandTypes,
@@ -764,6 +766,7 @@ public sealed class RankingsCalculator
                     "Band team ranking rebuild failed for {BandType}. Continuing with remaining band types.",
                     bandType);
                 LogPhase("band_rankings.per_type.failed", bandType, perBandSw.Elapsed);
+                failures.Enqueue((bandType, ex));
             }
             finally
             {
@@ -775,6 +778,20 @@ public sealed class RankingsCalculator
 
         _log.LogInformation("Computed band rankings for {SuccessfulBandTypeCount}/{BandTypeCount} band types.",
             successfulBandTypes, bandTypes.Count);
+
+        if (!failures.IsEmpty)
+        {
+            var orderedFailures = failures
+                .OrderBy(static failure => failure.BandType, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            throw new AggregateException(
+                $"Band team ranking rebuild failed for {orderedFailures.Length}/{bandTypes.Count} band type(s): " +
+                string.Join(", ", orderedFailures.Select(static failure => failure.BandType)),
+                orderedFailures.Select(static failure =>
+                    new InvalidOperationException(
+                        $"{failure.BandType}: {failure.Error.Message}",
+                        failure.Error)));
+        }
     }
 
     private void RebuildBandTeamRankingsWithDeadlockRetry(

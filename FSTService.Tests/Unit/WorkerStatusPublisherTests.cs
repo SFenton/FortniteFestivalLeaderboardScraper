@@ -8,16 +8,26 @@ namespace FSTService.Tests.Unit;
 public sealed class WorkerStatusPublisherTests
 {
     [Fact]
-    public void Heartbeat_refreshes_active_operation_timestamp_and_elapsed_time()
+    public void Heartbeat_preserves_operation_progress_timestamp()
     {
         var metaDb = Substitute.For<IMetaDatabase>();
         var publisher = new WorkerStatusPublisher(
             metaDb,
             NullLogger<WorkerStatusPublisher>.Instance);
+        WorkerOperationInfo? startedOperation = null;
+        metaDb.When(x => x.UpdateWorkerActivity(
+                WorkerStatusPublisher.ScraperWorkerKey,
+                Arg.Any<WorkerOperationInfo>(),
+                Arg.Any<WorkerOperationInfo?>(),
+                Arg.Any<string?>(),
+                Arg.Any<string?>(),
+                Arg.Any<DateTime?>()))
+            .Do(call => startedOperation = call.ArgAt<WorkerOperationInfo>(1));
         publisher.BeginOperation(
             "scrape.post_process",
             "Post-processing leaderboard update",
             phase: "PostScrapeEnrichment");
+        Assert.NotNull(startedOperation);
         metaDb.ClearReceivedCalls();
 
         publisher.PublishHeartbeat();
@@ -32,7 +42,40 @@ public sealed class WorkerStatusPublisherTests
             null,
             Arg.Is<WorkerOperationInfo>(operation =>
                 operation.OperationKey == "scrape.post_process"
-                && operation.UpdatedAtUtc >= operation.StartedAtUtc
-                && operation.ElapsedSeconds >= 0));
+                && operation.UpdatedAtUtc == startedOperation.UpdatedAtUtc
+                && operation.ElapsedSeconds == startedOperation.ElapsedSeconds));
+    }
+
+    [Fact]
+    public void Explicit_operation_update_advances_progress_timestamp()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        var publisher = new WorkerStatusPublisher(
+            metaDb,
+            NullLogger<WorkerStatusPublisher>.Instance);
+        publisher.BeginOperation(
+            "scrape.post_process",
+            "Post-processing leaderboard update",
+            phase: "PostScrapeEnrichment");
+        metaDb.ClearReceivedCalls();
+
+        publisher.UpdateOperation(
+            "scrape.post_process",
+            subOperation: "DeferredRegistrationSync",
+            detail: "Computing deferred rivals 1/2",
+            progressPercent: 50);
+
+        metaDb.Received(1).UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            Arg.Is<WorkerOperationInfo>(operation =>
+                operation.OperationKey == "scrape.post_process"
+                && operation.SubOperation == "DeferredRegistrationSync"
+                && operation.Detail == "Computing deferred rivals 1/2"
+                && operation.ProgressPercent == 50
+                && operation.UpdatedAtUtc >= operation.StartedAtUtc),
+            Arg.Any<WorkerOperationInfo?>(),
+            Arg.Any<string?>(),
+            Arg.Any<string?>(),
+            Arg.Any<DateTime?>());
     }
 }
