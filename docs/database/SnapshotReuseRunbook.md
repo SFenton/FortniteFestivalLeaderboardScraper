@@ -18,9 +18,12 @@ Scrape `1265` was reconciled failed at
 `capacity_during_ranking_snapshots`. It owns zero published-source rows,
 published `1236` remains authoritative and unfrozen, all 13 rollback
 route/export/history/ranking fingerprints are exact, and production service,
-worker, flag, and compose configuration were restored. Final free space is
-about `33.48 GB`, so both measured scrape guards block and scheduling remains
-held.
+worker, flag, and compose configuration were restored. After transient ranking
+files and three post-run autovacuums completed, free space stabilized at about
+`48.78 GB`; the nominal guards pass with only `3.63/4.38 GB` of
+baseline/candidate margin. Scheduling remains held because no successful
+post-publish guard/parity window exists and this run breached its declared
+capacity floor despite passing the nominal preflight model.
 
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T110731Z`.
@@ -64,7 +67,7 @@ Evidence:
 | Post-process | Band maintenance completed `29,145/29,145` selected scopes and `32,651,304` rows with zero failures in `5:16:46.669` |
 | Capacity stop | Ranking snapshots reached `13,144,125,440` free bytes, below the `14,571,150,203` safety floor; worker stopped before global publication |
 | Publication / rollback | No candidate mappings; published `1236` unfrozen; `13/13` rollback fingerprints exact; baseline images/config restored |
-| Final capacity | About `33.48 GB`; baseline shortfall `11,671,126,016`, candidate shortfall `10,917,729,413`; worker held |
+| Stabilized capacity | `48,776,298,496` free; nominal baseline/candidate margins about `3.63/4.38 GB`; worker held because the run proved that model insufficient through publication |
 
 The retry proves unchanged-scope physical skipping again, but it does not clear
 publication/source-map/API parity and cannot be promoted. The run also showed

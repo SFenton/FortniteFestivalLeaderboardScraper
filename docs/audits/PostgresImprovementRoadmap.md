@@ -1143,8 +1143,11 @@ move to PG-7 after backup/restore and live-scrape parity.
   not clear candidate-source API or logical-retirement publication parity.
   Production images/config and the default-off flag were restored; all `13/13`
   public fingerprints matched and published `1236` remains unfrozen.
-- Final free space is about `33.48 GB`; both measured scrape guards block and
-  the worker remains held. Evidence:
+- After ranking temp cleanup and three post-run autovacuums, free space
+  stabilized at about `48.78 GB`; nominal guards pass with only
+  `3.63/4.38 GB` of baseline/candidate margin. The worker remains held because
+  the live run breached its safety floor despite those guards and never
+  produced post-publish capacity/parity evidence. Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T110731Z`.
 
 ### PG-4.2 - Separate semantic score changes from derived rank changes

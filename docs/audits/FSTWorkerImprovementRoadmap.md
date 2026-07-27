@@ -673,7 +673,9 @@ until replay and live shadow parity pass.
   The monitor stopped the worker before global publication.
 - Recovery reconciled `1265` failed, unfroze published `1236`, restored the
   prior service/worker images and flag-off configuration, and recreated
-  `fstworker` held with restart `no`. Both final scrape guards block.
+  `fstworker` held with restart `no`. Post-cleanup nominal guards pass at about
+  `48.78 GB` free, but scheduling remains held because the failed run proved
+  that model insufficient through publication.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-live-ab-20260726T110731Z`.
 

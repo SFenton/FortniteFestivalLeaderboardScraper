@@ -207,10 +207,12 @@ The capacity-ready retry proved that start and post-writer margin alone were
 insufficient. Scrape `1265` passed the post-writer guard at
 `48,613,908,480` free bytes, completed band maintenance, and entered ranking
 snapshots before the 60-second monitor stopped it at `13,144,125,440` free.
-After rollback and transient cleanup, final free space is about
-`33,477,099,520` bytes. The baseline guard is short `11,671,126,016` bytes
-and the SNAPSHOT-REUSE estimate is short `10,917,729,413`; normal scheduling
-and another candidate remain blocked.
+After rollback, ranking temp cleanup, and completion of three post-run
+autovacuums, free space stabilized at `48,776,298,496` bytes. The nominal
+baseline/candidate guards pass with only about `3.63/4.38 GB` of margin.
+Normal scheduling and another candidate remain blocked because `1265` proved
+that those start estimates do not preserve the declared floor through
+publication, and no successful post-publish capacity/parity window exists.
 
 Destructive cleanup, irreversible migration, drop/truncate/repack/rewrite
 work, or active Postgres data movement may proceed automatically after a
@@ -251,9 +253,9 @@ path, and post-action validation are documented.
 | Worker validation start | Rejected / blocked | Starting `fstworker` with safer defaults caused `fstservice` and `/api/service-info` through `festivalweb` to time out; `fstworker` was stopped immediately and public API/web health recovered. |
 | Worker scraping heal | Complete | Added worker-only startup schema-init skip, rebuilt the image, started `fstworker`, and held a 10-minute full-public-path watchdog while scrape `1219` began. |
 | Emergency `band_read_*` reclaim | Complete | At 44 MB free / 100% disk, stopped `fstworker`, froze public reads to published `1214`, truncated rollback-safe logical shadow tables, quarantined/validated/dropped unused derived `band_read_*` tables, restored about 435 GB free, and restarted `fstworker` as scrape `1222`. |
-| Autonomous scrape rollout | Rejected after scrape `1265`; capacity blocked | Candidate `1265` passed start/post-writer guards, completed all manifests/writers and band maintenance, then crossed its declared capacity floor during ranking snapshots. It was stopped and reconciled failed with zero published mappings. Published `1236` remains safe; final free space is below both scrape requirements. |
+| Autonomous scrape rollout | Rejected after scrape `1265`; worker held | Candidate `1265` passed start/post-writer guards, completed all manifests/writers and band maintenance, then crossed its declared capacity floor during ranking snapshots. It was stopped and reconciled failed with zero published mappings. Published `1236` remains safe. Post-cleanup nominal guards pass again, but the live run proved that model insufficient through publication. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
-| Next implementation phase | Additional same-drive capacity required / worker held | Do not rerun SNAPSHOT-REUSE or restore scheduling while both measured scrape guards block. Publication parity, logical truncate, optional builds, rewrites, repacks, broad movement, and owner-rejected drops remain blocked. |
+| Next implementation phase | Additional same-drive capacity or corrected full-run model required / worker held | Do not rerun SNAPSHOT-REUSE or restore scheduling from the nominal start guards alone. Publication parity, logical truncate, optional builds, rewrites, repacks, broad movement, and owner-rejected drops remain blocked. |
 
 ## LOGICAL-RETIRE decision package (2026-07-25)
 
