@@ -3,6 +3,7 @@ using FortniteFestival.Core.Services;
 using FSTService;
 using FSTService.Persistence;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace FSTService.Scraping;
 
@@ -717,11 +718,9 @@ public sealed class RankingsCalculator
                 phase: "ComputingRankings", subOperation: "band_rankings", detail: bandType);
             try
             {
-                _metaDb.RebuildBandTeamRankings(
+                RebuildBandTeamRankingsWithDeadlockRetry(
                     bandType,
                     totalChartedSongs,
-                    CredibilityThreshold,
-                    PopulationMedian,
                     _bandTeamRankingOptions);
 
                 if (_bandTeamRankingOptions.RebuildBandSongTeamRankings)
@@ -776,6 +775,39 @@ public sealed class RankingsCalculator
 
         _log.LogInformation("Computed band rankings for {SuccessfulBandTypeCount}/{BandTypeCount} band types.",
             successfulBandTypes, bandTypes.Count);
+    }
+
+    private void RebuildBandTeamRankingsWithDeadlockRetry(
+        string bandType,
+        int totalChartedSongs,
+        BandTeamRankingRebuildOptions options)
+    {
+        const int maxAttempts = 2;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                _metaDb.RebuildBandTeamRankings(
+                    bandType,
+                    totalChartedSongs,
+                    CredibilityThreshold,
+                    PopulationMedian,
+                    options);
+                return;
+            }
+            catch (PostgresException ex) when (
+                ex.SqlState == PostgresErrorCodes.DeadlockDetected &&
+                attempt < maxAttempts)
+            {
+                _log.LogWarning(
+                    ex,
+                    "Band team ranking rebuild deadlocked for {BandType}; retrying attempt {Attempt}/{MaxAttempts}.",
+                    bandType,
+                    attempt + 1,
+                    maxAttempts);
+                Thread.Sleep(TimeSpan.FromMilliseconds(250));
+            }
+        }
     }
 
     private void HandleBandRankHistoryAfterPublish(string bandType, long scrapeId, CancellationToken ct)

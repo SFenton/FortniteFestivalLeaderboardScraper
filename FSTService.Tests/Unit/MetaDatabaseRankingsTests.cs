@@ -539,6 +539,24 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
+    public async Task BandRankHistoryV2Schema_ConcurrentEnsuresAreSerialized()
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        var tasks = Enumerable.Range(0, 8)
+            .Select(index => Task.Run(() =>
+                Db.GetBandRankHistoryV2Parity(
+                    index % 2 == 0 ? "Band_Duets" : "Band_Trios",
+                    today)))
+            .ToArray();
+
+        await Task.WhenAll(tasks);
+
+        Assert.True(ColumnExists("band_rank_history_jobs", "source_generation"));
+        Assert.True(ColumnExists("band_rank_history_job_chunks", "source_generation"));
+    }
+
+    [Fact]
     public void BandRankHistoryV2Schema_DoesNotRecreateRetiredLatestSnapshotLookupIndexes()
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);

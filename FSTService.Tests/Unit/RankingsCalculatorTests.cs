@@ -982,6 +982,52 @@ public sealed class RankingsCalculatorTests : IDisposable
     }
 
     [Fact]
+    public void ComputeBandRankings_DeadlockRetriesOnce()
+    {
+        var bandPersistence = new BandLeaderboardPersistence(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+        bandPersistence.UpsertBandEntries("song_0", "Band_Duets",
+        [
+            MakeBandEntry(["p1", "p2"], "0:1", 1000),
+            MakeBandEntry(["p3", "p4"], "0:3", 900),
+        ]);
+
+        var attempts = 0;
+        var retryingMetaDb = CreateBandFailingMetaDatabase(_metaFixture.Db, []);
+        retryingMetaDb.When(x => x.RebuildBandTeamRankings(
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<int>(),
+                Arg.Any<double>(),
+                Arg.Any<BandTeamRankingRebuildOptions?>()))
+            .Do(call =>
+            {
+                if (Interlocked.Increment(ref attempts) == 1)
+                {
+                    throw new PostgresException(
+                        "synthetic deadlock",
+                        "ERROR",
+                        "ERROR",
+                        PostgresErrorCodes.DeadlockDetected);
+                }
+
+                _metaFixture.Db.RebuildBandTeamRankings(
+                    call.Arg<string>(),
+                    call.ArgAt<int>(1),
+                    call.ArgAt<int>(2),
+                    call.ArgAt<double>(3),
+                    call.ArgAt<BandTeamRankingRebuildOptions?>(4));
+            });
+
+        var sut = CreateSut(retryingMetaDb);
+        sut.ComputeBandRankings(["Band_Duets"], totalChartedSongs: 1);
+
+        Assert.Equal(2, attempts);
+        Assert.Equal(2, _metaFixture.Db.GetBandTeamRankings("Band_Duets").TotalTeams);
+    }
+
+    [Fact]
     public void ComputeBandRankings_BandHistorySnapshotFailure_DoesNotBlockLaterBandTypes()
     {
         var bandPersistence = new BandLeaderboardPersistence(_metaFixture.DataSource, Substitute.For<ILogger<BandLeaderboardPersistence>>());

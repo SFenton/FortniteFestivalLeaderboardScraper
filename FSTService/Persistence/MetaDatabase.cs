@@ -9965,6 +9965,8 @@ public sealed class MetaDatabase : IMetaDatabase
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = @"
+            SELECT pg_advisory_xact_lock(hashtextextended('fst.band_rank_history_schema', 0));
+
             CREATE TABLE IF NOT EXISTS band_team_rank_history (
                 band_type             TEXT             NOT NULL,
                 ranking_scope         TEXT             NOT NULL,
