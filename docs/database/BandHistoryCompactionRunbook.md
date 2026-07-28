@@ -3,7 +3,9 @@
 ## Current decision
 
 **Tier:** compact v3 accepted and promoted for Band Duets on 2026-07-28.
-Trios and Quad remain on v2 and require separate capacity guards.
+The incomplete, unpromoted Trios v3 build was reclaimed independently on the
+same date. Trios and Quad remain on v2 and require separate future candidates
+and capacity guards.
 
 BAND-HISTORY-COMPACT ran with runtime `gpt-5.6-sol`, reasoning `max`, and
 context `long_context`. Published scrape `1267` remained authoritative and
@@ -15,7 +17,9 @@ Evidence:
 - initial design/pilot:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-history-compact-20260728T100500Z`;
 - lower-scratch build/cutover:
-  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-history-compact-lowscratch-20260728T113000Z`.
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-history-compact-lowscratch-20260728T113000Z`;
+- incomplete Trios candidate evaluation/reclaim:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/trios-incomplete-candidate-reclaim-20260728T1914Z`.
 
 ## Source inventory
 
@@ -172,10 +176,71 @@ The filesystem gain from the phase start is larger than the net relation
 reduction because retained WAL also fell from 23,890,755,584 to
 14,562,623,488 bytes.
 
+## Incomplete Trios candidate reclaim
+
+A follow-on offline build created a compact Trios candidate but stopped before
+validation, index construction, or promotion:
+
+| Candidate property | Exact evidence |
+|---|---:|
+| Point rows | 335,757,940 |
+| Authoritative v2 rows | 343,275,419 |
+| Missing rows | 7,517,479 |
+| Candidate dates | 49 / 51 |
+| Missing dates | 2026-07-01 and 2026-07-05 |
+| Point-table indexes | 0 |
+| Candidate bytes | 73,478,529,024 |
+
+The candidate covered 2026-04-26 through 2026-06-30. Every included date had
+the same row count as v2, but the July partition was empty. Its
+`band_rank_history_compact_v3_state` row remained `building`, with
+`row_count=0`, no validation timestamp, and no promotion timestamp.
+
+Ownership proof found:
+
+- no exact repository or deployed-binary reference to the Trios v3 objects;
+- no view, materialized view, routine, trigger, policy, publication, prepared
+  statement, API reader, or runtime writer;
+- only manual build `INSERT` statements in `pg_stat_statements`;
+- production `BandRankHistory__Mode=Disabled`,
+  `WriteMode=V2Only`, and `ApiReadSource=V2NarrowOnly`;
+- the only compact runtime switch and SQL implementation are Duets-specific.
+
+The public Trios plan continued to use the v2 team/date index. Three
+representative Trios history payloads were byte-identical to the prior v2
+baseline, while Duets retained its `ready` compact state and v3 index plan.
+Two pre-action public captures were `13/13` exact.
+
+A 256 MB bounded full v2/v3 checksum probe was rejected when its parallel plan
+hit `temp_file_limit`; no mutation or lock remained and public health stayed
+HTTP 200. Exact candidate manifests, the existing exact v2 date manifest,
+authoritative query plans, and live payload parity provided the replacement
+proof.
+
+The rollback-only drop rehearsal completed in 0.15 seconds and restored all
+objects. The committed 0.70-second transaction then deleted only the
+fail-closed Trios `building` state row and dropped the compact Trios parent,
+its four monthly leaves, both dictionaries, and their owned sequences without
+`CASCADE`.
+
+| Reclaim metric | Result |
+|---|---:|
+| Database bytes reclaimed | 73,478,529,024 |
+| Stable filesystem gain | 73,477,279,744 |
+| Final filesystem free | about 285.49 GB |
+| Final modeled full-scrape margin | 225,098,810,501 bytes |
+
+Immediate and 60-second public captures were `13/13` exact; all three Trios
+payloads were also exact. Published scrape `1267` remained unfrozen,
+notifications remained complete, Duets v3 stayed `ready`, Trios v2 stayed
+intact, and no lock, query, vacuum, index build, or maintenance operation
+remained.
+
 ## Final state
 
 - Duets API/export reads use compact v3.
 - The v2 Duets leaf no longer exists.
+- No Trios v3 candidate object or readiness row remains.
 - Trios and Quad v2 remain authoritative and unchanged.
 - Published scrape `1267` remains unfrozen.
 - Postgres, `fstservice`, and `festivalweb` are healthy.
@@ -184,7 +249,10 @@ reduction because retained WAL also fell from 23,890,755,584 to
 
 ## Next storage phase
 
-Re-run this measured chunk/deferred-index design for Trios only after a fresh
-guard. Its source is 305,843,961,856 bytes, while Duets reclaim raises
-same-drive headroom materially. Do not start Quad until Trios has completed,
-released its source, and the guard has been recalculated.
+Any future Trios v3 attempt starts from a clean schema and must be a new,
+independently switchable data candidate after the active production scrape
+window. Re-run the measured guard, copy all 51 dates, build the deferred local
+unique indexes, prove full parity, and promote a Trios-specific read switch
+before retaining the candidate or releasing its 305,843,961,856-byte v2
+source. Do not start Quad until Trios has completed, released its source, and
+the guard has been recalculated.

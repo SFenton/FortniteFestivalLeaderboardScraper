@@ -17,10 +17,11 @@ This plan records the approved direction for improving FST Postgres persistence 
   leaderboard, export, ranking, history, composite, band, and band-song
   validation routes now return stable HTTP `200`.
 - `fstservice` and `festivalweb` may be restarted for maintenance and must be
-  recovered promptly. The stable OBSERVATION-RETIRE capture left
-  `212,034,514,944` bytes free; the scrape guard passes with about 151.64 GB of
-  one-run margin, while the seven-day alert remains active. Any later scrape
-  must use commit `4121e7e5` or newer and run the durable post-process watchdog.
+  recovered promptly. The incomplete Trios candidate reclaim left about
+  `285,491,810,304` bytes free; the scrape guard passes with
+  `225,098,810,501` bytes of modeled one-run margin, while the seven-day alert
+  remains active. Any later scrape must use commit `4121e7e5` or newer and run
+  the durable post-process watchdog.
 - PG-3 dropped only `public.ix_crh_latest`, reclaiming exactly
   `20,890,148,864` database bytes. Free space rose from `78,549,483,520` to
   `99,439,702,016` bytes; the guard horizon improved from `2.61` to `3.31`
@@ -138,11 +139,14 @@ This plan records the approved direction for improving FST Postgres persistence 
   parity and an 11.827 ms reattach proof, then dropped without `CASCADE`.
   Net database reduction is `102,101,475,328` bytes. Trios and Quad remain
   v2; the worker stayed held and published `1267` remained unfrozen.
-- A follow-on Trios compact build created `73,478,512,640` bytes of v3 Trios
-  partitions/dictionaries without releasing the v2 source. This explains
-  `95.56%` of the subsequent fall from `276,251,983,872` to
-  `199,359,766,528` free bytes; WAL growth explains about another `3.31 GB`.
-  OBSERVATION-RETIRE did not alter or claim that candidate.
+- A follow-on Trios compact build created `335,757,940` rows across `49/51`
+  dates but stopped before July, local point indexes, validation, or
+  promotion. The `73,478,529,024`-byte candidate had no runtime reader/writer,
+  while Trios v2 remained authoritative. A separate rollback-rehearsed
+  no-`CASCADE` transaction dropped only those objects and their `building`
+  state row. Database size fell by exactly `73,478,529,024` bytes; immediate
+  and 60-second public fingerprints were `13/13` exact, and all three sampled
+  Trios history payloads remained byte-identical.
 - OBSERVATION-RETIRE then proved the two observation writers were off for
   published scrape `1267`, found no true production reader, and truncated only
   `public.player_score_observations` without `CASCADE` after a rollback
@@ -339,7 +343,7 @@ path, and post-action validation are documented.
 | Phase 7 logical write metrics | Complete | Implemented, deployed, committed as `2ac02445`; production metrics captured from failed scrape `1218`. |
 | LOGICAL-RETIRE ownership/rebuild package | Accepted and executed | Scrape `1267` cleared parity; independent revalidation matched all rows/hashes and found no runtime reader or database dependency. The monitored no-`CASCADE` truncate reclaimed `123,173,593,088` database bytes, retained empty schemas/20 primary keys/108 metrics rows, and preserved `13/13` public fingerprints. |
 | SOLO-DYNAMIC-AB compact published solo read model | Accepted research/implementation candidate / optional build still blocked | Full owner/query matrix, service-cold and warm baseline, bounded unlogged samples, exact c1/c8 fingerprints, storage math, rollback DDL, and default-off rank-offset code are complete. Conservative compact-plus-hot projection is <=`20,215,010,912` bytes, reclaiming >=`26,418,448,800` bytes (`56.65%`). Raw one-run space now exists, but the optional-build/rewrite guard remains below the seven-day threshold. |
-| BAND-HISTORY-COMPACT v3 | Duets accepted and executed; Trios/Quad pending | Chunked copy and deferred local indexes reduced Duets from `154,235,944,960` to `52,134,436,864` bytes. Net database reduction is `102,101,475,328` bytes; repeated `9/9` API payload parity passed. Trios and Quad remain v2. |
+| BAND-HISTORY-COMPACT v3 | Duets accepted; incomplete Trios attempt reclaimed; clean Trios/Quad candidates pending | Chunked copy and deferred local indexes reduced Duets from `154,235,944,960` to `52,134,436,864` bytes. The unpromoted Trios attempt stopped at `335,757,940 / 343,275,419` rows and was dropped for `73,478,529,024` database bytes after exact public/API parity. Trios and Quad remain v2. |
 | Experimental logical shadow cleanup | Complete | Approved cleanup truncated experimental logical shadow tables and removed incomplete scrape `1218`. |
 | Database architecture evaluation | Complete | Read-only code review and production probes completed on 2026-07-06. |
 | History/index owner cards | Complete | Refreshed band v2, composite history, observation, dirty-work, and latest-state owner cards on 2026-07-13. Public team/date and retention indexes were retained from plan/caller proof. |
@@ -371,7 +375,7 @@ path, and post-action validation are documented.
 | Autonomous scrape rollout | Rejected after scrape `1265`; worker held | Candidate `1265` passed start/post-writer guards, completed all manifests/writers and band maintenance, then crossed its declared capacity floor during ranking snapshots. It was stopped and reconciled failed with zero published mappings. Published `1236` remains safe. Post-cleanup nominal guards pass again, but the live run proved that model insufficient through publication. |
 | Scrape `1266` incident recovery | Complete / deployed / worker held | Exact rollback and guarded reconciliation preserved published `1236`; precise failed-candidate isolation remains active for derived reads. Commit `4121e7e5` adds critical band failure propagation, progress-only heartbeats, a 30-minute deferred-sync timeout, and DB-aware autonomous recovery. Service and held worker use `fstservice:scrape1266-recovery-4121e7e5`. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
-| Next implementation phase | BAND-HISTORY-COMPACT Trios / worker held | Re-run the measured chunk/deferred-index guard for the `305,843,961,856`-byte Trios source. Do not start Quad until Trios releases its source and capacity is recalculated. |
+| Next implementation phase | Scrape `1268` dual-lane run; future Trios starts clean | The storage lane is quiescent and has cleared the run-once boundary. A later Trios candidate must recreate from v2, copy all 51 dates, build indexes, and pass an independent promotion gate. Do not start Quad until Trios releases its source and capacity is recalculated. |
 
 ## LOGICAL-RETIRE decision and execution package (2026-07-25 to 2026-07-28)
 

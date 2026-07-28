@@ -63,6 +63,40 @@ safety model versus 314,856,988,672 free at the drill start.
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-history-compact-lowscratch-20260728T113000Z`.
 - Runbook: `docs/database/BandHistoryCompactionRunbook.md`.
 
+## INCOMPLETE-TRIOS-V3-RECLAIM execution update — 2026-07-28
+
+- The manually built compact Trios candidate contained `335,757,940` rows
+  across 49 dates from 2026-04-26 through 2026-06-30. Authoritative v2 contains
+  `343,275,419` rows across 51 dates through 2026-07-05; the candidate omitted
+  July 1 and July 5, totaling `7,517,479` rows.
+- Its point partitions had no indexes. The readiness row remained
+  `building`, with `row_count=0` and no validation or promotion timestamp.
+- Repository, deployed-binary, runtime-config, catalog-dependency, and
+  `pg_stat_statements` audits found no production reader or writer. Production
+  supports compact reads only for Duets; Trios remained
+  `V2NarrowOnly` while band-history writes were disabled.
+- Duets v3 remained `ready` and its direct plan used the compact local indexes.
+  The live Trios plan used the v2 team/date index. Three sampled Trios payloads
+  were byte-identical to the prior v2 baseline, and two public suites were
+  `13/13` exact.
+- One full v2/v3 checksum attempt was rejected at the bounded 256 MB temp
+  limit. It left no query, lock, or health regression. Exact candidate
+  manifests, the existing exact v2 date manifest, query-plan ownership, and
+  live payload parity replaced that unsafe shape.
+- The rollback-only drop rehearsal completed in 0.15 seconds. The committed
+  0.70-second transaction removed only the compact Trios parent/four leaves,
+  both dictionaries/owned sequences, and the fail-closed `building` state row,
+  without `CASCADE`.
+- Database size fell from `3,659,422,447,283` to `3,585,943,918,259` bytes,
+  an exact `73,478,529,024`-byte reclaim. Stable filesystem free space reached
+  about `285.49 GB`.
+- Immediate and 60-second public captures were `13/13` exact; all three Trios
+  payloads were exact. Published `1267` remained unfrozen, notifications
+  remained complete, Duets v3 and Trios v2 remained authoritative, and no
+  query, lock, vacuum, or index build remained.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/trios-incomplete-candidate-reclaim-20260728T1914Z`.
+
 ## OBSERVATION-RETIRE execution update — 2026-07-28
 
 - Published scrape `1267` proved both `player_score_observations` writers were
@@ -89,7 +123,7 @@ safety model versus 314,856,988,672 free at the drill start.
   Published `1267` remained unfrozen, notifications remained completed, the
   worker stayed held, and no query, lock, vacuum, or index build remained.
 - The preceding drop from about `276.25 GB` to `199.36 GB` free was not
-  observation growth: `73,478,512,640` bytes (`95.56%`) belonged to the
+  observation growth: `73,478,529,024` bytes (about `95.56%`) belonged to the
   incomplete v3 Trios candidate, with about `3.31 GB` of WAL growth.
 - Legacy `leaderboard_entries_*` remains retained at `36,769,051` rows /
   `40,825,225,216` bytes. Supplemental writes added `970` backfill rows, the
@@ -103,8 +137,9 @@ safety model versus 314,856,988,672 free at the drill start.
 PostgreSQL remains the correct durable source of truth. The urgent issue is
 capacity and write amplification, not platform replacement.
 
-The database is 3.324 TB on a 3.6 TB FST filesystem that is 93% used, leaving
-275 GB. Physical solo snapshots consume about 1.665 TB and add an estimated
+The database is `3,585,943,918,259` bytes on the 3.6 TB FST filesystem, which
+is 93% used with about 285.49 GB free. Physical solo snapshots consume about
+1.665 TB and add an estimated
 14 GB per full scrape. Band v2 history points consume about 799 GB. Together
 they account for about 74% of the database. The current scrape also generated
 15.39M logical version opens even though 61.03% of observed rows were unchanged.
@@ -1563,9 +1598,9 @@ Do not blindly increase buffers. Measure:
    after every object.
 
 The largest snapshot/history tables cannot currently be safely repacked with
-about 212 GB free after OBSERVATION-RETIRE. Repack remains blocked; the
-incomplete v3 Trios candidate owns about 73.48 GB until its separate
-accept/reject cleanup decision.
+about 285.49 GB free after incomplete Trios candidate reclaim. The candidate
+is no longer retained; optional rewrites remain blocked below the seven-day
+headroom threshold.
 
 The same 2026-07-26 owner phase added checksum-guarded packages for
 `8,706,752,512` bytes of stale `scrape_dirty_*` work state and
