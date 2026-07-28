@@ -41,18 +41,26 @@ safety model versus 314,856,988,672 free at the drill start.
   representative overall/combo 30-day/full-range HTTP cases returned 200.
 - The accepted v3 schema normalizes team/combo text, uses typed scope IDs and
   `BYTEA(16)` fingerprints, subpartitions by month, and uses one compact
-  primary key for both identity and API date reads.
+  unique index family for both identity and API date reads.
 - A same-drive `4,651,508`-row Duets pilot passed zero bidirectional row
   differences. Compact heap + primary key used `251.98` bytes/row versus
   `716.93` current; matched warm p50/p95 did not regress.
 - Retention deletion and Parquet-as-live-source were rejected because all
   history remains served and no runtime rehydration tier exists.
-- No production rewrite ran. The conservative `57,273,958,281`-byte Duets
-  candidate fails the rewrite guard: `902,775,955,523` required versus
-  `164,830,613,504` free. Trios and Quad were not attempted because Duets
-  must complete and release space first.
+- Lower-scratch calibration proved the `902,775,955,523` figure was dominated
+  by the generic seven-day reserve. Chunked copy, explicit checkpoints, and
+  deferred one-index-per-leaf construction required `138,328,191,167` bytes
+  and passed with `26,497,974,081` bytes of margin.
+- Duets v3 was promoted at `215,134,574` rows /
+  `52,134,436,864` bytes. The retired `154,235,944,960`-byte v2 leaf was
+  detached after exact parity and an 11.827 ms reattach rehearsal, then
+  dropped without `CASCADE`.
+- Net database reduction is `102,101,475,328` bytes. Repeated `9/9` API
+  payload captures remained byte-identical. Trios and Quad remain v2.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-history-compact-20260728T100500Z`.
+- Execution evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-history-compact-lowscratch-20260728T113000Z`.
 - Runbook: `docs/database/BandHistoryCompactionRunbook.md`.
 
 ## Executive decision
@@ -1391,10 +1399,10 @@ Work:
 Execution decision:
 
 - owner/read/coverage proof complete;
-- compact v3 design and bounded Duets pilot accepted;
+- compact v3 design, bounded pilot, and Duets production promotion accepted;
 - keep all dates and PostgreSQL public ownership;
-- production Duets/Trios/Quad rewrite blocked by same-drive headroom, with v2
-  retained authoritative and zero production bytes reclaimed.
+- Duets v2 retired for `102,101,475,328` net database bytes; Trios and Quad
+  remain v2 and must execute in that order under fresh guards.
 
 ### PG-5.2 - Rank-history latest-state redesign
 
