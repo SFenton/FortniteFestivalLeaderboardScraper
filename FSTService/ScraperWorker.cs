@@ -175,6 +175,31 @@ public sealed class ScraperWorker : BackgroundService
             PrimeSongsCache(); // Rebuild with population tiers
         }
 
+        if (!opts.ApiOnly)
+        {
+            try
+            {
+                _workerStatus?.BeginOperation(
+                    "notifications.recovery",
+                    "Recovering pending improvement notifications",
+                    phase: "StartupRecovery");
+                await _postScrapeOrchestrator.RecoverPendingImprovementNotificationsOnStartupAsync(stoppingToken);
+                _workerStatus?.CompleteOperation("notifications.recovery");
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                _workerStatus?.CompleteOperation("notifications.recovery", "deferred");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _workerStatus?.FailOperation("notifications.recovery", ex);
+                _log.LogWarning(
+                    ex,
+                    "Pending improvement notification recovery failed during startup. The published scrape remains available and recovery will retry.");
+            }
+        }
+
         // --api-only mode: skip scrape work. Song catalog freshness is owned by
         // SongCatalogRefreshWorker, which is registered directly by Program.cs.
         if (opts.ApiOnly)
@@ -755,7 +780,9 @@ public sealed class ScraperWorker : BackgroundService
                             result.EpicReportedOver100Pages);
                         _persistence.Meta.PublishScrapeRun(
                             result.ScrapeId,
-                            expectedPublishedScopeCount: expectedPublishedScopeCount);
+                            expectedPublishedScopeCount: expectedPublishedScopeCount,
+                            queueImprovementNotifications:
+                                _postScrapeOrchestrator.ShouldQueueImprovementNotifications(ctx, postScrapePhases));
                         publishedScrapeId = result.ScrapeId;
                         publishedNewState = true;
                         passStatus = "completed";

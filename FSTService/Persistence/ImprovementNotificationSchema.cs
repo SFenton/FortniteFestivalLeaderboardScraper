@@ -10,6 +10,7 @@ public static class ImprovementNotificationSchema
 
         CREATE TABLE IF NOT EXISTS improvement_detection_runs (
             run_id                       BIGSERIAL PRIMARY KEY,
+            published_scrape_id          INTEGER     REFERENCES scrape_log(id) ON DELETE SET NULL,
             started_at                   TIMESTAMPTZ NOT NULL DEFAULT now(),
             completed_at                 TIMESTAMPTZ,
             status                       TEXT        NOT NULL DEFAULT 'running',
@@ -37,11 +38,42 @@ public static class ImprovementNotificationSchema
             band_rank_state_upserts      BIGINT      NOT NULL DEFAULT 0,
             expired_player_events_deleted BIGINT     NOT NULL DEFAULT 0,
             expired_band_events_deleted  BIGINT      NOT NULL DEFAULT 0,
+            player_song_baseline_rows    BIGINT      NOT NULL DEFAULT 0,
+            player_rank_baseline_rows    BIGINT      NOT NULL DEFAULT 0,
+            band_song_baseline_rows      BIGINT      NOT NULL DEFAULT 0,
+            band_rank_baseline_rows      BIGINT      NOT NULL DEFAULT 0,
             error_message                TEXT
         );
 
         ALTER TABLE improvement_detection_runs
             ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'precompute';
+        ALTER TABLE improvement_detection_runs
+            ADD COLUMN IF NOT EXISTS published_scrape_id INTEGER REFERENCES scrape_log(id) ON DELETE SET NULL;
+        ALTER TABLE improvement_detection_runs
+            ADD COLUMN IF NOT EXISTS player_song_baseline_rows BIGINT NOT NULL DEFAULT 0;
+        ALTER TABLE improvement_detection_runs
+            ADD COLUMN IF NOT EXISTS player_rank_baseline_rows BIGINT NOT NULL DEFAULT 0;
+        ALTER TABLE improvement_detection_runs
+            ADD COLUMN IF NOT EXISTS band_song_baseline_rows BIGINT NOT NULL DEFAULT 0;
+        ALTER TABLE improvement_detection_runs
+            ADD COLUMN IF NOT EXISTS band_rank_baseline_rows BIGINT NOT NULL DEFAULT 0;
+
+        CREATE INDEX IF NOT EXISTS ix_improvement_detection_runs_published_scrape
+            ON improvement_detection_runs (published_scrape_id, completed_at DESC)
+            WHERE status = 'completed';
+
+        ALTER TABLE scrape_publication_state
+            ADD COLUMN IF NOT EXISTS improvement_notifications_scrape_id INTEGER REFERENCES scrape_log(id);
+        ALTER TABLE scrape_publication_state
+            ADD COLUMN IF NOT EXISTS improvement_notifications_status TEXT;
+        ALTER TABLE scrape_publication_state
+            ADD COLUMN IF NOT EXISTS improvement_notifications_attempt_count INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE scrape_publication_state
+            ADD COLUMN IF NOT EXISTS improvement_notifications_started_at TIMESTAMPTZ;
+        ALTER TABLE scrape_publication_state
+            ADD COLUMN IF NOT EXISTS improvement_notifications_completed_at TIMESTAMPTZ;
+        ALTER TABLE scrape_publication_state
+            ADD COLUMN IF NOT EXISTS improvement_notifications_error TEXT;
 
         CREATE TABLE IF NOT EXISTS player_improvement_state (
             account_id       TEXT        NOT NULL,

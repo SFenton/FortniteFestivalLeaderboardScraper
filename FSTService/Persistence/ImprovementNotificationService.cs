@@ -19,6 +19,170 @@ public sealed class ImprovementNotificationService
         _log = log;
     }
 
+    public ImprovementNotificationPublicationStatus GetPublicationStatus()
+    {
+        using var conn = _dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            WITH publication AS (
+                SELECT published_scrape_id,
+                       published_at,
+                       public_reads_frozen,
+                       improvement_notifications_scrape_id,
+                       improvement_notifications_status,
+                       improvement_notifications_attempt_count,
+                       improvement_notifications_started_at,
+                       improvement_notifications_completed_at,
+                       improvement_notifications_error
+                FROM scrape_publication_state
+                WHERE id = TRUE
+            ), player_run AS (
+                SELECT published_scrape_id, run_id, completed_at
+                FROM improvement_detection_runs
+                WHERE status = 'completed'
+                  AND include_players
+                ORDER BY completed_at DESC, run_id DESC
+                LIMIT 1
+            ), band_run AS (
+                SELECT published_scrape_id, run_id, completed_at
+                FROM improvement_detection_runs
+                WHERE status = 'completed'
+                  AND include_bands
+                ORDER BY completed_at DESC, run_id DESC
+                LIMIT 1
+            )
+            SELECT publication.published_scrape_id,
+                   publication.published_at,
+                   publication.public_reads_frozen,
+                   publication.improvement_notifications_scrape_id,
+                   publication.improvement_notifications_status,
+                   publication.improvement_notifications_attempt_count,
+                   publication.improvement_notifications_started_at,
+                   publication.improvement_notifications_completed_at,
+                   publication.improvement_notifications_error,
+                   player_run.published_scrape_id,
+                   player_run.run_id,
+                   player_run.completed_at,
+                   band_run.published_scrape_id,
+                   band_run.run_id,
+                   band_run.completed_at
+            FROM publication
+            LEFT JOIN player_run ON TRUE
+            LEFT JOIN band_run ON TRUE;
+            """;
+
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return ImprovementNotificationPublicationStatus.Empty;
+
+        return new ImprovementNotificationPublicationStatus(
+            PublishedScrapeId: reader.IsDBNull(0) ? null : reader.GetInt32(0),
+            PublishedAtUtc: reader.IsDBNull(1) ? null : reader.GetDateTime(1),
+            PublicReadsFrozen: !reader.IsDBNull(2) && reader.GetBoolean(2),
+            MarkerScrapeId: reader.IsDBNull(3) ? null : reader.GetInt32(3),
+            MarkerStatus: reader.IsDBNull(4) ? null : reader.GetString(4),
+            AttemptCount: reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
+            StartedAtUtc: reader.IsDBNull(6) ? null : reader.GetDateTime(6),
+            CompletedAtUtc: reader.IsDBNull(7) ? null : reader.GetDateTime(7),
+            ErrorMessage: reader.IsDBNull(8) ? null : reader.GetString(8),
+            LatestPlayerScrapeId: reader.IsDBNull(9) ? null : reader.GetInt32(9),
+            LatestPlayerRunId: reader.IsDBNull(10) ? null : reader.GetInt64(10),
+            LatestPlayerCompletedAtUtc: reader.IsDBNull(11) ? null : reader.GetDateTime(11),
+            LatestBandScrapeId: reader.IsDBNull(12) ? null : reader.GetInt32(12),
+            LatestBandRunId: reader.IsDBNull(13) ? null : reader.GetInt64(13),
+            LatestBandCompletedAtUtc: reader.IsDBNull(14) ? null : reader.GetDateTime(14));
+    }
+
+    public void EnsurePublicationPending(long scrapeId)
+    {
+        using var conn = _dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE scrape_publication_state
+            SET improvement_notifications_scrape_id = @scrapeId,
+                improvement_notifications_status = CASE
+                    WHEN improvement_notifications_scrape_id = @scrapeId
+                     AND improvement_notifications_status = 'completed'
+                        THEN improvement_notifications_status
+                    ELSE 'pending'
+                END,
+                improvement_notifications_error = CASE
+                    WHEN improvement_notifications_scrape_id = @scrapeId
+                     AND improvement_notifications_status = 'completed'
+                        THEN improvement_notifications_error
+                    ELSE NULL
+                END,
+                updated_at = now()
+            WHERE id = TRUE
+              AND published_scrape_id = @scrapeId;
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+        cmd.ExecuteNonQuery();
+    }
+
+    public void MarkPublicationRunning(long scrapeId)
+    {
+        using var conn = _dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE scrape_publication_state
+            SET improvement_notifications_scrape_id = @scrapeId,
+                improvement_notifications_status = 'running',
+                improvement_notifications_attempt_count = improvement_notifications_attempt_count + 1,
+                improvement_notifications_started_at = now(),
+                improvement_notifications_completed_at = NULL,
+                improvement_notifications_error = NULL,
+                updated_at = now()
+            WHERE id = TRUE
+              AND published_scrape_id = @scrapeId;
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+        cmd.ExecuteNonQuery();
+    }
+
+    public void MarkPublicationCompleted(long scrapeId)
+    {
+        using var conn = _dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE scrape_publication_state
+            SET improvement_notifications_scrape_id = @scrapeId,
+                improvement_notifications_status = 'completed',
+                improvement_notifications_completed_at = now(),
+                improvement_notifications_error = NULL,
+                updated_at = now()
+            WHERE id = TRUE
+              AND published_scrape_id = @scrapeId;
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+        cmd.ExecuteNonQuery();
+    }
+
+    public void MarkPublicationDeferred(long scrapeId, string? detail = null)
+        => MarkPublicationIncomplete(scrapeId, "pending", detail);
+
+    public void MarkPublicationFailed(long scrapeId, string detail)
+        => MarkPublicationIncomplete(scrapeId, "failed", detail);
+
+    private void MarkPublicationIncomplete(long scrapeId, string status, string? detail)
+    {
+        using var conn = _dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE scrape_publication_state
+            SET improvement_notifications_scrape_id = @scrapeId,
+                improvement_notifications_status = @status,
+                improvement_notifications_error = @detail,
+                updated_at = now()
+            WHERE id = TRUE
+              AND published_scrape_id = @scrapeId;
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+        cmd.Parameters.AddWithValue("status", status);
+        cmd.Parameters.Add("detail", NpgsqlDbType.Text).Value = NullableValue(detail);
+        cmd.ExecuteNonQuery();
+    }
+
     public ImprovementNotificationsEnvelope GetPlayerNotifications(
         string accountId,
         int limit = 50,
@@ -216,6 +380,18 @@ public sealed class ImprovementNotificationService
         long? runId = null;
 
         using var conn = _dataSource.OpenConnection();
+        var previousPlayerSongCompletedAt = options.IncludePlayers && options.IncludeSongEvents
+            ? ReadLatestCompletedRunAt(conn, includePlayers: true, includeSongEvents: true)
+            : null;
+        var previousPlayerRankCompletedAt = options.IncludePlayers && options.IncludeRankings
+            ? ReadLatestCompletedRunAt(conn, includePlayers: true, includeSongEvents: false)
+            : null;
+        var previousBandSongCompletedAt = options.IncludeBands && options.IncludeSongEvents
+            ? ReadLatestCompletedRunAt(conn, includePlayers: false, includeSongEvents: true)
+            : null;
+        var previousBandRankCompletedAt = options.IncludeBands && options.IncludeRankings
+            ? ReadLatestCompletedRunAt(conn, includePlayers: false, includeSongEvents: false)
+            : null;
         NpgsqlTransaction? tx = null;
 
         var report = new ImprovementNotificationPrecomputeReport(
@@ -246,6 +422,10 @@ public sealed class ImprovementNotificationService
             BandRankStateUpserts: 0,
             ExpiredPlayerEventsDeleted: 0,
             ExpiredBandEventsDeleted: 0,
+            PlayerSongBaselineRows: 0,
+            PlayerRankBaselineRows: 0,
+            BandSongBaselineRows: 0,
+            BandRankBaselineRows: 0,
             ErrorMessage: null);
 
         try
@@ -278,6 +458,15 @@ public sealed class ImprovementNotificationService
             if (options.IncludePlayers && options.IncludeSongEvents)
             {
                 var rows = ExecuteScalarLong(conn, tx, CountPlayerSongRowsSql(registeredOnly), options.CommandTimeoutSeconds);
+                var baselineRows = execute && !options.BaselineOnly && registeredOnly
+                    ? ExecuteScalarLong(
+                        conn,
+                        tx,
+                        BaselineNewPlayerSongSubjectsSql(),
+                        options.CommandTimeoutSeconds,
+                        detectedAt: detectedAt,
+                        previousCompletedAt: previousPlayerSongCompletedAt)
+                    : 0;
                 var events = options.BaselineOnly
                     ? 0
                     : ExecuteScalarLong(conn, tx, PlayerSongEventsSql(registeredOnly, execute), options.CommandTimeoutSeconds, runId, detectedAt, expiresAt, source);
@@ -290,12 +479,22 @@ public sealed class ImprovementNotificationService
                     PlayerSongRowsScanned = rows,
                     PlayerSongEventsInserted = events,
                     PlayerSongStateUpserts = stateRows,
+                    PlayerSongBaselineRows = baselineRows,
                 };
             }
 
             if (options.IncludePlayers && options.IncludeRankings)
             {
                 var rows = ExecuteScalarLong(conn, tx, CountPlayerRankRowsSql(registeredOnly), options.CommandTimeoutSeconds);
+                var baselineRows = execute && !options.BaselineOnly && registeredOnly
+                    ? ExecuteScalarLong(
+                        conn,
+                        tx,
+                        BaselineNewPlayerRankSubjectsSql(),
+                        options.CommandTimeoutSeconds,
+                        detectedAt: detectedAt,
+                        previousCompletedAt: previousPlayerRankCompletedAt)
+                    : 0;
                 var events = options.BaselineOnly
                     ? 0
                     : ExecuteScalarLong(conn, tx, PlayerRankEventsSql(registeredOnly, execute), options.CommandTimeoutSeconds, runId, detectedAt, expiresAt, source);
@@ -308,6 +507,7 @@ public sealed class ImprovementNotificationService
                     PlayerRankRowsScanned = rows,
                     PlayerRankEventsInserted = events,
                     PlayerRankStateUpserts = stateRows,
+                    PlayerRankBaselineRows = baselineRows,
                 };
             }
 
@@ -322,6 +522,15 @@ public sealed class ImprovementNotificationService
             if (options.IncludeBands && options.IncludeSongEvents)
             {
                 var rows = ExecuteScalarLong(conn, tx, CountBandSongRowsSql(registeredOnly), options.CommandTimeoutSeconds);
+                var baselineRows = execute && !options.BaselineOnly && registeredOnly
+                    ? ExecuteScalarLong(
+                        conn,
+                        tx,
+                        BaselineNewBandSongSubjectsSql(),
+                        options.CommandTimeoutSeconds,
+                        detectedAt: detectedAt,
+                        previousCompletedAt: previousBandSongCompletedAt)
+                    : 0;
                 var events = options.BaselineOnly
                     ? 0
                     : ExecuteScalarLong(conn, tx, BandSongEventsSql(registeredOnly, execute), options.CommandTimeoutSeconds, runId, detectedAt, expiresAt, source);
@@ -334,12 +543,22 @@ public sealed class ImprovementNotificationService
                     BandSongRowsScanned = rows,
                     BandSongEventsInserted = events,
                     BandSongStateUpserts = stateRows,
+                    BandSongBaselineRows = baselineRows,
                 };
             }
 
             if (options.IncludeBands && options.IncludeRankings)
             {
                 var rows = ExecuteScalarLong(conn, tx, CountBandRankRowsSql(registeredOnly), options.CommandTimeoutSeconds);
+                var baselineRows = execute && !options.BaselineOnly && registeredOnly
+                    ? ExecuteScalarLong(
+                        conn,
+                        tx,
+                        BaselineNewBandRankSubjectsSql(),
+                        options.CommandTimeoutSeconds,
+                        detectedAt: detectedAt,
+                        previousCompletedAt: previousBandRankCompletedAt)
+                    : 0;
                 var events = options.BaselineOnly
                     ? 0
                     : ExecuteScalarLong(conn, tx, BandRankEventsSql(registeredOnly, execute), options.CommandTimeoutSeconds, runId, detectedAt, expiresAt, source);
@@ -352,6 +571,7 @@ public sealed class ImprovementNotificationService
                     BandRankRowsScanned = rows,
                     BandRankEventsInserted = events,
                     BandRankStateUpserts = stateRows,
+                    BandRankBaselineRows = baselineRows,
                 };
             }
 
@@ -599,18 +819,46 @@ public sealed class ImprovementNotificationService
         return items;
     }
 
+    private static DateTime? ReadLatestCompletedRunAt(
+        NpgsqlConnection conn,
+        bool includePlayers,
+        bool includeSongEvents)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT completed_at
+            FROM improvement_detection_runs
+            WHERE status = 'completed'
+              AND (
+                  (@includePlayers AND include_players)
+                  OR (NOT @includePlayers AND include_bands)
+              )
+              AND (
+                  (@includeSongEvents AND include_song_events)
+                  OR (NOT @includeSongEvents AND include_rankings)
+              )
+            ORDER BY completed_at DESC, run_id DESC
+            LIMIT 1;
+            """;
+        cmd.Parameters.AddWithValue("includePlayers", includePlayers);
+        cmd.Parameters.AddWithValue("includeSongEvents", includeSongEvents);
+        return cmd.ExecuteScalar() is DateTime completedAt ? completedAt : null;
+    }
+
     private static long InsertRun(NpgsqlConnection conn, NpgsqlTransaction? tx, ImprovementNotificationPrecomputeOptions options, string mode, bool registeredOnly, string source)
     {
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = """
             INSERT INTO improvement_detection_runs (
-                scope, mode, source, baseline_only, include_players, include_bands,
+                published_scrape_id, scope, mode, source, baseline_only, include_players, include_bands,
                 include_song_events, include_rankings, prune_expired)
-            VALUES (@scope, @mode, @source, @baselineOnly, @includePlayers, @includeBands,
+            VALUES (@publishedScrapeId, @scope, @mode, @source, @baselineOnly, @includePlayers, @includeBands,
                     @includeSongEvents, @includeRankings, @pruneExpired)
             RETURNING run_id;
             """;
+        cmd.Parameters.Add("publishedScrapeId", NpgsqlDbType.Integer).Value =
+            options.PublishedScrapeId.HasValue ? checked((int)options.PublishedScrapeId.Value) : DBNull.Value;
         cmd.Parameters.AddWithValue("scope", registeredOnly ? "registered" : "all");
         cmd.Parameters.AddWithValue("mode", mode);
         cmd.Parameters.AddWithValue("source", source);
@@ -645,7 +893,11 @@ public sealed class ImprovementNotificationService
                 band_rank_events_inserted = @bandRankEventsInserted,
                 band_rank_state_upserts = @bandRankStateUpserts,
                 expired_player_events_deleted = @expiredPlayerEventsDeleted,
-                expired_band_events_deleted = @expiredBandEventsDeleted
+                expired_band_events_deleted = @expiredBandEventsDeleted,
+                player_song_baseline_rows = @playerSongBaselineRows,
+                player_rank_baseline_rows = @playerRankBaselineRows,
+                band_song_baseline_rows = @bandSongBaselineRows,
+                band_rank_baseline_rows = @bandRankBaselineRows
             WHERE run_id = @runId;
             """;
         AddReportParameters(cmd, report);
@@ -684,6 +936,10 @@ public sealed class ImprovementNotificationService
         cmd.Parameters.AddWithValue("bandRankStateUpserts", report.BandRankStateUpserts);
         cmd.Parameters.AddWithValue("expiredPlayerEventsDeleted", report.ExpiredPlayerEventsDeleted);
         cmd.Parameters.AddWithValue("expiredBandEventsDeleted", report.ExpiredBandEventsDeleted);
+        cmd.Parameters.AddWithValue("playerSongBaselineRows", report.PlayerSongBaselineRows);
+        cmd.Parameters.AddWithValue("playerRankBaselineRows", report.PlayerRankBaselineRows);
+        cmd.Parameters.AddWithValue("bandSongBaselineRows", report.BandSongBaselineRows);
+        cmd.Parameters.AddWithValue("bandRankBaselineRows", report.BandRankBaselineRows);
     }
 
     private static long PruneExpiredEvents(NpgsqlConnection conn, NpgsqlTransaction? tx, string tableName, bool execute, DateTime detectedAt)
@@ -705,7 +961,8 @@ public sealed class ImprovementNotificationService
         long? runId = null,
         DateTime? detectedAt = null,
         DateTime? expiresAt = null,
-        string? source = null)
+        string? source = null,
+        DateTime? previousCompletedAt = null)
     {
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
@@ -719,6 +976,9 @@ public sealed class ImprovementNotificationService
             cmd.Parameters.AddWithValue("expiresAt", expiresAt.Value);
         if (source is not null && sql.Contains("@source", StringComparison.Ordinal))
             cmd.Parameters.AddWithValue("source", NormalizeSource(source));
+        if (sql.Contains("@previousCompletedAt", StringComparison.Ordinal))
+            cmd.Parameters.Add("previousCompletedAt", NpgsqlDbType.TimestampTz).Value =
+                previousCompletedAt.HasValue ? previousCompletedAt.Value : DBNull.Value;
         return Convert.ToInt64(cmd.ExecuteScalar() ?? 0L);
     }
 
@@ -867,6 +1127,138 @@ public sealed class ImprovementNotificationService
             FROM ({BandRankUnionSql(registeredOnly)}) r
         )
         SELECT COUNT(*) FROM subject_rows;
+        """;
+
+    private static string BaselineNewPlayerSongSubjectsSql() => """
+        WITH new_subjects AS (
+            SELECT ru.account_id
+            FROM (
+                SELECT account_id, MIN(registered_at) AS registered_at
+                FROM registered_users
+                GROUP BY account_id
+            ) ru
+            WHERE (@previousCompletedAt IS NULL OR ru.registered_at > @previousCompletedAt)
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM player_improvement_state existing
+                  WHERE existing.account_id = ru.account_id
+              )
+        ), inserted AS (
+            INSERT INTO player_improvement_state (
+                account_id, song_id, instrument, score, rank, stars, is_full_combo,
+                difficulty, percentile, season, first_seen_at, last_updated_at, observed_at, updated_at)
+            SELECT c.account_id, c.song_id, c.instrument, c.score, c.rank, c.stars, c.is_full_combo,
+                   c.difficulty, c.percentile, c.season, c.first_seen_at, c.last_updated_at, @detectedAt, now()
+            FROM current_leaderboard_entries c
+            JOIN new_subjects subject ON subject.account_id = c.account_id
+            ON CONFLICT (account_id, song_id, instrument) DO NOTHING
+            RETURNING 1
+        )
+        SELECT COUNT(*) FROM inserted;
+        """;
+
+    private static string BaselineNewPlayerRankSubjectsSql() => """
+        WITH new_subjects AS (
+            SELECT ru.account_id
+            FROM (
+                SELECT account_id, MIN(registered_at) AS registered_at
+                FROM registered_users
+                GROUP BY account_id
+            ) ru
+            WHERE (@previousCompletedAt IS NULL OR ru.registered_at > @previousCompletedAt)
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM player_rank_improvement_state existing
+                  WHERE existing.account_id = ru.account_id
+              )
+        ), inserted AS (
+            INSERT INTO player_rank_improvement_state (
+                account_id, instrument, adjusted_skill_rank, weighted_rank, fc_rate_rank,
+                total_score_rank, max_score_percent_rank, total_score, full_combo_count,
+                computed_at, observed_at, updated_at)
+            SELECT c.account_id, c.instrument, c.adjusted_skill_rank, c.weighted_rank, c.fc_rate_rank,
+                   c.total_score_rank, c.max_score_percent_rank, c.total_score, c.full_combo_count,
+                   c.computed_at, @detectedAt, now()
+            FROM account_rankings c
+            JOIN new_subjects subject ON subject.account_id = c.account_id
+            ON CONFLICT (account_id, instrument) DO NOTHING
+            RETURNING 1
+        )
+        SELECT COUNT(*) FROM inserted;
+        """;
+
+    private static string BaselineNewBandSongSubjectsSql() => $"""
+        WITH new_subjects AS (
+            SELECT subject.band_subject_id
+            FROM registered_bands rb
+            JOIN band_improvement_subjects subject
+              ON subject.band_type = rb.band_type
+             AND subject.team_key = rb.team_key
+            GROUP BY subject.band_subject_id
+            HAVING (@previousCompletedAt IS NULL OR MIN(rb.registered_at) > @previousCompletedAt)
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM band_improvement_state existing
+                   WHERE existing.band_subject_id = subject.band_subject_id
+               )
+        ), current_rows AS (
+            SELECT c.*, subject.band_subject_id
+            {BandCurrentRowsFromSql(registeredOnly: true)}
+            JOIN band_improvement_subjects subject
+              ON subject.band_type = c.band_type
+             AND subject.team_key = c.team_key
+            JOIN new_subjects new_subject
+              ON new_subject.band_subject_id = subject.band_subject_id
+        ), inserted AS (
+            INSERT INTO band_improvement_state (
+                band_subject_id, song_id, ranking_scope, scope_combo_id, entry_combo_id,
+                entry_instrument_combo, score, rank, stars, is_full_combo, difficulty,
+                percentile, season, total_entries, first_seen_at, last_updated_at, observed_at, updated_at)
+            SELECT band_subject_id, song_id, ranking_scope, COALESCE(scope_combo_id, ''), entry_combo_id,
+                   entry_instrument_combo, score, rank, stars, is_full_combo, difficulty,
+                   percentile, season, total_entries, first_seen_at, last_updated_at, @detectedAt, now()
+            FROM current_rows
+            ON CONFLICT (band_subject_id, song_id, ranking_scope, scope_combo_id) DO NOTHING
+            RETURNING 1
+        )
+        SELECT COUNT(*) FROM inserted;
+        """;
+
+    private static string BaselineNewBandRankSubjectsSql() => $"""
+        WITH new_subjects AS (
+            SELECT subject.band_subject_id
+            FROM registered_bands rb
+            JOIN band_improvement_subjects subject
+              ON subject.band_type = rb.band_type
+             AND subject.team_key = rb.team_key
+            GROUP BY subject.band_subject_id
+            HAVING (@previousCompletedAt IS NULL OR MIN(rb.registered_at) > @previousCompletedAt)
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM band_rank_improvement_state existing
+                   WHERE existing.band_subject_id = subject.band_subject_id
+               )
+        ), current_rows AS (
+            SELECT r.*, subject.band_subject_id
+            FROM ({BandRankUnionSql(registeredOnly: true)}) r
+            JOIN band_improvement_subjects subject
+              ON subject.band_type = r.band_type
+             AND subject.team_key = r.team_key
+            JOIN new_subjects new_subject
+              ON new_subject.band_subject_id = subject.band_subject_id
+        ), inserted AS (
+            INSERT INTO band_rank_improvement_state (
+                band_subject_id, ranking_scope, combo_id, adjusted_skill_rank, weighted_rank,
+                fc_rate_rank, total_score_rank, total_score, full_combo_count,
+                computed_at, observed_at, updated_at)
+            SELECT band_subject_id, ranking_scope, COALESCE(combo_id, ''), adjusted_skill_rank, weighted_rank,
+                   fc_rate_rank, total_score_rank, total_score, full_combo_count,
+                   computed_at, @detectedAt, now()
+            FROM current_rows
+            ON CONFLICT (band_subject_id, ranking_scope, combo_id) DO NOTHING
+            RETURNING 1
+        )
+        SELECT COUNT(*) FROM inserted;
         """;
 
     private static string PlayerSongEventsSql(bool registeredOnly, bool execute) => $"""
@@ -1842,7 +2234,8 @@ public sealed record ImprovementNotificationPrecomputeOptions(
     bool PruneExpired,
     int CommandTimeoutSeconds = 0,
     DateTime? DetectedAtUtc = null,
-    string Source = "precompute");
+    string Source = "precompute",
+    long? PublishedScrapeId = null);
 
 public sealed record ImprovementNotificationPrecomputeReport(
     DateTime StartedAtUtc,
@@ -1872,4 +2265,38 @@ public sealed record ImprovementNotificationPrecomputeReport(
     long BandRankStateUpserts,
     long ExpiredPlayerEventsDeleted,
     long ExpiredBandEventsDeleted,
+    long PlayerSongBaselineRows,
+    long PlayerRankBaselineRows,
+    long BandSongBaselineRows,
+    long BandRankBaselineRows,
     string? ErrorMessage);
+
+public sealed record ImprovementNotificationPublicationStatus(
+    long? PublishedScrapeId,
+    DateTime? PublishedAtUtc,
+    bool PublicReadsFrozen,
+    long? MarkerScrapeId,
+    string? MarkerStatus,
+    int AttemptCount,
+    DateTime? StartedAtUtc,
+    DateTime? CompletedAtUtc,
+    string? ErrorMessage,
+    long? LatestPlayerScrapeId,
+    long? LatestPlayerRunId,
+    DateTime? LatestPlayerCompletedAtUtc,
+    long? LatestBandScrapeId,
+    long? LatestBandRunId,
+    DateTime? LatestBandCompletedAtUtc)
+{
+    public static ImprovementNotificationPublicationStatus Empty { get; } = new(
+        null, null, false, null, null, 0, null, null, null, null, null, null, null, null, null);
+
+    public bool IsCompleteForPublishedScrape(bool includePlayers, bool includeBands)
+    {
+        if (!PublishedScrapeId.HasValue)
+            return false;
+
+        return (!includePlayers || LatestPlayerScrapeId == PublishedScrapeId)
+            && (!includeBands || LatestBandScrapeId == PublishedScrapeId);
+    }
+}

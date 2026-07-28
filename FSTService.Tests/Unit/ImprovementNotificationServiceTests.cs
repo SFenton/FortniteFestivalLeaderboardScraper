@@ -43,6 +43,123 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
     }
 
     [Fact]
+    public void Precompute_BaselinesNewRegisteredPlayerBeforeEmittingLaterImprovements()
+    {
+        const string newAccountId = "account-new";
+        _metaFixture.Db.RegisterUser("device-existing", AccountId);
+        InsertCurrentEntry(score: 100000, rank: 100);
+        _sut.Precompute(new ImprovementNotificationPrecomputeOptions(
+            Execute: true,
+            BaselineOnly: true,
+            Scope: "registered",
+            IncludePlayers: true,
+            IncludeBands: false,
+            IncludeSongEvents: true,
+            IncludeRankings: false,
+            PruneExpired: false));
+
+        _metaFixture.Db.RegisterUser("device-new", newAccountId);
+        InsertCurrentEntry(score: 200000, rank: 200, accountId: newAccountId);
+
+        var baselineReport = _sut.Precompute(new ImprovementNotificationPrecomputeOptions(
+            Execute: true,
+            BaselineOnly: false,
+            Scope: "registered",
+            IncludePlayers: true,
+            IncludeBands: false,
+            IncludeSongEvents: true,
+            IncludeRankings: false,
+            PruneExpired: false));
+
+        Assert.Equal(1, baselineReport.PlayerSongBaselineRows);
+        Assert.Equal(0, baselineReport.PlayerSongEventsInserted);
+        Assert.Empty(_sut.GetPlayerNotifications(newAccountId, includeExpired: true).Items);
+
+        UpdateCurrentEntry(score: 201000, rank: 190, accountId: newAccountId);
+        var improvementReport = _sut.Precompute(new ImprovementNotificationPrecomputeOptions(
+            Execute: true,
+            BaselineOnly: false,
+            Scope: "registered",
+            IncludePlayers: true,
+            IncludeBands: false,
+            IncludeSongEvents: true,
+            IncludeRankings: false,
+            PruneExpired: false));
+
+        Assert.Equal(0, improvementReport.PlayerSongBaselineRows);
+        Assert.Equal(1, improvementReport.PlayerSongEventsInserted);
+        Assert.Single(_sut.GetPlayerNotifications(newAccountId, includeExpired: true).Items);
+    }
+
+    [Fact]
+    public void Precompute_BaselinesNewRegisteredBandBeforeEmittingLaterImprovements()
+    {
+        const string newTeamKey = "account-new-1:account-new-2";
+        _metaFixture.Db.RegisterDiscoveredBandActivity(
+            BandType,
+            TeamKey,
+            ["account-1", "account-2"]);
+        InsertCurrentBandEntry(score: 200000, rank: 100);
+        _sut.Precompute(new ImprovementNotificationPrecomputeOptions(
+            Execute: true,
+            BaselineOnly: true,
+            Scope: "registered",
+            IncludePlayers: false,
+            IncludeBands: true,
+            IncludeSongEvents: true,
+            IncludeRankings: false,
+            PruneExpired: false));
+
+        _metaFixture.Db.RegisterDiscoveredBandActivity(
+            BandType,
+            newTeamKey,
+            ["account-new-1", "account-new-2"]);
+        InsertCurrentBandEntry(
+            score: 300000,
+            rank: 200,
+            teamKey: newTeamKey,
+            teamMembers: ["account-new-1", "account-new-2"]);
+
+        var baselineReport = _sut.Precompute(new ImprovementNotificationPrecomputeOptions(
+            Execute: true,
+            BaselineOnly: false,
+            Scope: "registered",
+            IncludePlayers: false,
+            IncludeBands: true,
+            IncludeSongEvents: true,
+            IncludeRankings: false,
+            PruneExpired: false));
+
+        Assert.Equal(1, baselineReport.BandSongBaselineRows);
+        Assert.Equal(0, baselineReport.BandSongEventsInserted);
+        Assert.Empty(_sut.GetBandNotificationsByTeamKey(
+            BandType,
+            newTeamKey,
+            includeExpired: true).Items);
+
+        UpdateCurrentBandEntry(
+            score: 301000,
+            rank: 190,
+            teamKey: newTeamKey);
+        var improvementReport = _sut.Precompute(new ImprovementNotificationPrecomputeOptions(
+            Execute: true,
+            BaselineOnly: false,
+            Scope: "registered",
+            IncludePlayers: false,
+            IncludeBands: true,
+            IncludeSongEvents: true,
+            IncludeRankings: false,
+            PruneExpired: false));
+
+        Assert.Equal(0, improvementReport.BandSongBaselineRows);
+        Assert.Equal(1, improvementReport.BandSongEventsInserted);
+        Assert.Single(_sut.GetBandNotificationsByTeamKey(
+            BandType,
+            newTeamKey,
+            includeExpired: true).Items);
+    }
+
+    [Fact]
     public void Precompute_CoalescesPlayerSongImprovements_FromSameScoreRun()
     {
         InsertCurrentEntry(score: 100000, rank: 100, stars: 5, isFullCombo: false);
@@ -1000,7 +1117,13 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
         _ => throw new ArgumentOutOfRangeException(nameof(bandType), bandType, "Unknown band type."),
     };
 
-    private void InsertCurrentEntry(int score, int rank, int stars = 6, bool isFullCombo = true, string instrument = Instrument)
+    private void InsertCurrentEntry(
+        int score,
+        int rank,
+        int stars = 6,
+        bool isFullCombo = true,
+        string instrument = Instrument,
+        string accountId = AccountId)
     {
         using var conn = _metaFixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -1016,7 +1139,7 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
             """;
         cmd.Parameters.AddWithValue("songId", SongId);
         cmd.Parameters.AddWithValue("instrument", instrument);
-        cmd.Parameters.AddWithValue("accountId", AccountId);
+        cmd.Parameters.AddWithValue("accountId", accountId);
         cmd.Parameters.AddWithValue("score", score);
         cmd.Parameters.AddWithValue("rank", rank);
         cmd.Parameters.AddWithValue("stars", stars);
@@ -1025,7 +1148,13 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
 
     }
 
-    private void UpdateCurrentEntry(int score, int rank, int stars = 6, bool isFullCombo = true, string instrument = Instrument)
+    private void UpdateCurrentEntry(
+        int score,
+        int rank,
+        int stars = 6,
+        bool isFullCombo = true,
+        string instrument = Instrument,
+        string accountId = AccountId)
     {
         using var conn = _metaFixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -1044,7 +1173,7 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
             """;
         cmd.Parameters.AddWithValue("songId", SongId);
         cmd.Parameters.AddWithValue("instrument", instrument);
-        cmd.Parameters.AddWithValue("accountId", AccountId);
+        cmd.Parameters.AddWithValue("accountId", accountId);
         cmd.Parameters.AddWithValue("score", score);
         cmd.Parameters.AddWithValue("rank", rank);
         cmd.Parameters.AddWithValue("stars", stars);
@@ -1059,7 +1188,10 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
         bool isFullCombo = true,
         string rankingScope = "overall",
         string scopeComboId = "",
-        string entryComboId = "Solo_Guitar+Solo_Bass")
+        string entryComboId = "Solo_Guitar+Solo_Bass",
+        string bandType = BandType,
+        string teamKey = TeamKey,
+        string[]? teamMembers = null)
     {
         using var conn = _metaFixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -1076,12 +1208,12 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
                 500, -1, now(), now(), now());
             """;
         cmd.Parameters.AddWithValue("songId", SongId);
-        cmd.Parameters.AddWithValue("bandType", BandType);
+        cmd.Parameters.AddWithValue("bandType", bandType);
         cmd.Parameters.AddWithValue("rankingScope", rankingScope);
         cmd.Parameters.AddWithValue("scopeComboId", scopeComboId);
-        cmd.Parameters.AddWithValue("teamKey", TeamKey);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
         cmd.Parameters.AddWithValue("entryComboId", entryComboId);
-        cmd.Parameters.AddWithValue("teamMembers", new[] { "account-1", "account-2" });
+        cmd.Parameters.AddWithValue("teamMembers", teamMembers ?? ["account-1", "account-2"]);
         cmd.Parameters.AddWithValue("score", score);
         cmd.Parameters.AddWithValue("rank", rank);
         cmd.Parameters.AddWithValue("stars", stars);
@@ -1108,7 +1240,7 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
                 updated_at = EXCLUDED.updated_at;
             """;
         scopeCmd.Parameters.AddWithValue("songId", SongId);
-        scopeCmd.Parameters.AddWithValue("bandType", BandType);
+        scopeCmd.Parameters.AddWithValue("bandType", bandType);
         scopeCmd.Parameters.AddWithValue("rankingScope", rankingScope);
         scopeCmd.Parameters.AddWithValue("scopeComboId", scopeComboId);
         scopeCmd.ExecuteNonQuery();
@@ -1120,7 +1252,9 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
         int stars = 6,
         bool isFullCombo = true,
         string rankingScope = "overall",
-        string scopeComboId = "")
+        string scopeComboId = "",
+        string bandType = BandType,
+        string teamKey = TeamKey)
     {
         using var conn = _metaFixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -1139,10 +1273,10 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
               AND team_key = @teamKey;
             """;
         cmd.Parameters.AddWithValue("songId", SongId);
-        cmd.Parameters.AddWithValue("bandType", BandType);
-                cmd.Parameters.AddWithValue("rankingScope", rankingScope);
-                cmd.Parameters.AddWithValue("scopeComboId", scopeComboId);
-        cmd.Parameters.AddWithValue("teamKey", TeamKey);
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("rankingScope", rankingScope);
+        cmd.Parameters.AddWithValue("scopeComboId", scopeComboId);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
         cmd.Parameters.AddWithValue("score", score);
         cmd.Parameters.AddWithValue("rank", rank);
         cmd.Parameters.AddWithValue("stars", stars);

@@ -72,7 +72,10 @@ builder.Services.Configure<Microsoft.AspNetCore.ResponseCompression.BrotliCompre
 
 // ─── Configuration ──────────────────────────────────────────
 
-var apiOnlyRequested = args.Any(arg => arg.Equals("--api-only", StringComparison.OrdinalIgnoreCase))
+var improvementNotificationRecoveryRequested = args.Any(
+    arg => arg.Equals("--recover-improvement-notifications", StringComparison.OrdinalIgnoreCase));
+var apiOnlyRequested = improvementNotificationRecoveryRequested
+    || args.Any(arg => arg.Equals("--api-only", StringComparison.OrdinalIgnoreCase))
     || builder.Configuration.GetValue<bool>($"{ScraperOptions.Section}:ApiOnly");
 var scraperWorkerDisabled = args.Any(arg => arg.Equals("--no-scraper-worker", StringComparison.OrdinalIgnoreCase))
     || builder.Configuration.GetValue<bool>($"{ScraperOptions.Section}:DisableScraperWorker");
@@ -322,6 +325,7 @@ builder.Services.AddSingleton<FSTService.Persistence.Maintenance.DatabaseMainten
 builder.Services.AddSingleton<FSTService.Persistence.Maintenance.IDatabaseRetentionMaintenanceService, FSTService.Persistence.Maintenance.DatabaseRetentionMaintenanceService>();
 builder.Services.AddSingleton<FSTService.Persistence.Maintenance.DeferredRetentionMaintenanceRunner>();
 builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationService>();
+builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationRecoveryService>();
 
 // ─── Shared services ────────────────────────────────────────
 
@@ -626,6 +630,55 @@ else if (hostedWorkerMode == HostedWorkerMode.RegistrationSyncWorker)
         precompLog.LogInformation("--precompute: precomputed responses persisted to PostgreSQL. Exiting.");
         return;
     }
+}
+
+// One-shot published-scrape improvement notification recovery.
+if (improvementNotificationRecoveryRequested)
+{
+    var recoveryLog = app.Services.GetRequiredService<ILoggerFactory>()
+        .CreateLogger("ImprovementNotificationRecovery");
+    var pgDs = app.Services.GetRequiredService<NpgsqlDataSource>();
+    await FSTService.Persistence.DatabaseInitializer.EnsureSchemaAsync(pgDs);
+
+    long? expectedPublishedScrapeId = null;
+    for (var i = 0; i < args.Length; i++)
+    {
+        if (!args[i].Equals("--published-scrape-id", StringComparison.OrdinalIgnoreCase))
+            continue;
+
+        if (i + 1 >= args.Length || !long.TryParse(args[i + 1], out var parsedScrapeId) || parsedScrapeId <= 0)
+            throw new ArgumentException("--published-scrape-id requires a positive integer.");
+
+        expectedPublishedScrapeId = parsedScrapeId;
+        break;
+    }
+
+    var execute = !args.Any(arg => arg.Equals("--notification-dry-run", StringComparison.OrdinalIgnoreCase));
+    var baselineOnly = args.Any(arg => arg.Equals("--notification-baseline-only", StringComparison.OrdinalIgnoreCase));
+    var refreshProjection = !args.Any(
+        arg => arg.Equals("--notification-skip-projection-refresh", StringComparison.OrdinalIgnoreCase));
+    var force = args.Any(arg => arg.Equals("--notification-force", StringComparison.OrdinalIgnoreCase));
+
+    recoveryLog.LogInformation(
+        "Recovering improvement notifications for published scrape {ExpectedScrapeId}; execute={Execute}, baselineOnly={BaselineOnly}, refreshProjection={RefreshProjection}.",
+        expectedPublishedScrapeId,
+        execute,
+        baselineOnly,
+        refreshProjection);
+
+    var recovery = app.Services.GetRequiredService<FSTService.Persistence.ImprovementNotificationRecoveryService>();
+    var report = await recovery.RunPublishedScrapeAsync(
+        expectedPublishedScrapeId,
+        execute,
+        baselineOnly,
+        refreshProjection,
+        projectionScopes: null,
+        force,
+        source: "operator-recovery",
+        CancellationToken.None);
+
+    Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(report));
+    return;
 }
 
 // Security: block path traversal attempts first

@@ -18,5 +18,8 @@ public sealed class ScrapePassContext
     public bool EpicReportedOver100Pages { get; init; }
     public bool LeaderboardScrapeCompleted { get; init; } = true;
     public bool RankingsComputedSuccessfully { get; set; }
+    public bool SoloCurrentProjectionRefreshedForPublication { get; set; }
+    public bool NotificationProjectionRequiresFullRefresh { get; set; }
+    public HashSet<SoloCurrentProjectionScopeKey> NotificationProjectionScopes { get; } = [];
     public PostScrapeExecutionLedger PostScrapeOutcomes { get; } = new();
 }

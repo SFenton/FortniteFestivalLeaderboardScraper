@@ -78,6 +78,21 @@ initialized. Rollback sets them to `false`; failed candidates and replay
 artifacts remain diagnostic-only, and public reads stay on the prior mapped
 published scrape.
 
+Improvement notifications can be recovered for the already-published scrape
+without starting a full scrape:
+
+```bash
+docker compose run --rm --no-deps --entrypoint dotnet fstservice \
+  FSTService.dll --recover-improvement-notifications \
+  --published-scrape-id <id>
+```
+
+The command defaults to executing player and band detection and safely retries
+an interrupted pending publication. `--notification-dry-run` previews without
+writing, `--notification-baseline-only` updates state without events, and
+`--notification-skip-projection-refresh` is only for an operator who has
+separately proved the published solo projection is already current.
+
 # How to run the app
 
 Log in to Epic Games on your web browser of choice. Then, in the app, click "Generate Exchange Code" and that link will open in your browser. Copy the "code" value over to the app, and then click Run. You will see the console output with all the information that the app is querying. The app will run, and drop a file called "FortniteFestivalScores.xlsx" in the executing directory. These are all your scores- including scores on songs you don't own!

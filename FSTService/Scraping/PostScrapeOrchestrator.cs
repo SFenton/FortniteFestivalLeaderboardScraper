@@ -47,6 +47,7 @@ public sealed class PostScrapeOrchestrator
     private readonly BandSearchProjectionBuilder? _bandSearchProjectionBuilder;
     private readonly BandCurrentProjectionBuilder? _bandCurrentProjectionBuilder;
     private readonly ImprovementNotificationService? _improvementNotifications;
+    private readonly ImprovementNotificationRecoveryService? _improvementNotificationRecovery;
     private readonly SoloCurrentProjectionBuilder? _soloCurrentProjectionBuilder;
     private readonly IOptions<ImprovementNotificationOptions> _improvementNotificationOptions;
     private readonly IOptions<BandRankHistoryOptions> _bandRankHistoryOptions;
@@ -93,7 +94,8 @@ public sealed class PostScrapeOrchestrator
         IDatabasePressureMonitor? databasePressureMonitor = null,
         IDatabaseRetentionMaintenanceService? retentionMaintenanceService = null,
         IPostScrapePhaseFaultInjector? phaseFaultInjector = null,
-        WorkerStatusPublisher? workerStatus = null)
+        WorkerStatusPublisher? workerStatus = null,
+        ImprovementNotificationRecoveryService? improvementNotificationRecovery = null)
     {
         _persistence = persistence;
         _firstSeenCalculator = firstSeenCalculator;
@@ -120,6 +122,7 @@ public sealed class PostScrapeOrchestrator
         _bandSearchProjectionBuilder = bandSearchProjectionBuilder;
         _bandCurrentProjectionBuilder = bandCurrentProjectionBuilder;
         _improvementNotifications = improvementNotifications;
+        _improvementNotificationRecovery = improvementNotificationRecovery;
         _soloCurrentProjectionBuilder = soloCurrentProjectionBuilder;
         _improvementNotificationOptions = improvementNotificationOptions ?? Options.Create(new ImprovementNotificationOptions());
         _bandRankHistoryOptions = bandRankHistoryOptions ?? Options.Create(new BandRankHistoryOptions());
@@ -415,6 +418,9 @@ public sealed class PostScrapeOrchestrator
         if (refreshSoloCurrentProjection)
         {
             await RunPhaseAsync(ctx, "Cleanup.SoloCurrentProjection", () => RefreshSoloCurrentProjectionForCleanupAsync(ct));
+            ctx.SoloCurrentProjectionRefreshedForPublication =
+                ctx.PostScrapeOutcomes.Outcomes.Any(static outcome =>
+                    outcome.Phase == "Cleanup.SoloCurrentProjection" && outcome.Success);
         }
 
         if (precomputeApiResponses)
@@ -430,21 +436,31 @@ public sealed class PostScrapeOrchestrator
     /// and song-rivals become visible, while global rank-derived outputs remain
     /// flagged as pending until the next ranking pass includes them in ctx.RegisteredIds.
     /// </summary>
-    public Task RunDeferredRegistrationSyncAsync(
+    public async Task RunDeferredRegistrationSyncAsync(
         ScrapePassContext ctx,
         FestivalService service,
         ScrapePhase resolvedPhases,
-        CancellationToken ct) =>
-        RunPhaseAsync(
+        CancellationToken ct)
+    {
+        await RunPhaseAsync(
             ctx,
             "DeferredRegistrationSync",
             () => RunDeferredRegistrationSyncWithTimeoutAsync(
                 phaseCt => RunDeferredRegistrationSyncCoreAsync(ctx, service, resolvedPhases, phaseCt),
-                ct));
+                ct,
+                ctx));
+
+        if (ctx.PostScrapeOutcomes.Outcomes.Any(static outcome =>
+                outcome.Phase == "DeferredRegistrationSync" && !outcome.Success))
+        {
+            ctx.NotificationProjectionRequiresFullRefresh = true;
+        }
+    }
 
     private async Task RunDeferredRegistrationSyncWithTimeoutAsync(
         Func<CancellationToken, Task> operation,
-        CancellationToken ct)
+        CancellationToken ct,
+        ScrapePassContext? ctx = null)
     {
         var timeout = _options.Value.DeferredRegistrationSyncTimeout;
         using var timeoutCts = timeout > TimeSpan.Zero
@@ -461,6 +477,8 @@ public sealed class PostScrapeOrchestrator
             timeoutCts?.IsCancellationRequested == true
             && !ct.IsCancellationRequested)
         {
+            if (ctx is not null)
+                ctx.NotificationProjectionRequiresFullRefresh = true;
             _log.LogWarning(
                 "Deferred registration sync timed out after {Timeout}. Publication will continue and queued users will retry on a later pass.",
                 timeout);
@@ -585,6 +603,9 @@ public sealed class PostScrapeOrchestrator
             ct: ct,
             preserveProgressPhaseOnIdle: true);
 
+        foreach (var scope in result.UpdatedScopes)
+            ctx.NotificationProjectionScopes.Add(scope);
+
         if (result.EntriesUpdated > 0 || result.SessionsInserted > 0)
             _log.LogInformation("Deferred registration sync updated {Entries} entries, {Sessions} sessions for {Users} users.",
                 result.EntriesUpdated, result.SessionsInserted, result.UsersProcessed);
@@ -639,10 +660,71 @@ public sealed class PostScrapeOrchestrator
         if (!ShouldRunImprovementNotifications(ctx, resolvedPhases))
             return;
 
+        if (_improvementNotificationRecovery is null)
+        {
+            _log.LogWarning("Improvement notifications skipped because the recovery service is unavailable.");
+            return;
+        }
+
+        var scopes = await BuildSoloProjectionScopesForNotificationsAsync(
+            ctx,
+            new SongProcessingMachine.MachineResult(),
+            _improvementNotificationOptions.Value,
+            ct);
+
         await RunPhaseAsync(
             ctx,
             "ImprovementNotifications",
-            () => RunImprovementNotificationDetectionAsync(ctx, new SongProcessingMachine.MachineResult(), ct));
+            async () =>
+            {
+                await _improvementNotificationRecovery.RunPublishedScrapeAsync(
+                    expectedPublishedScrapeId: ctx.ScrapeId,
+                    execute: true,
+                    baselineOnly: false,
+                    refreshSoloProjection: true,
+                    projectionScopes: scopes,
+                    force: false,
+                    source: "post-scrape",
+                    ct);
+                await _notifications.NotifyNotificationFeedChangedAsync();
+            });
+    }
+
+    public bool ShouldQueueImprovementNotifications(
+        ScrapePassContext ctx,
+        ScrapePhase resolvedPhases) =>
+        resolvedPhases.HasFlag(ScrapePhase.SoloRankings)
+        && ctx.RankingsComputedSuccessfully
+        && ShouldRunImprovementNotifications(ctx, resolvedPhases);
+
+    public async Task RecoverPendingImprovementNotificationsOnStartupAsync(CancellationToken ct)
+    {
+        var options = _improvementNotificationOptions.Value;
+        if (_improvementNotificationRecovery is null || _improvementNotifications is null || !options.Enabled)
+            return;
+
+        var status = _improvementNotifications.GetPublicationStatus();
+        if (!status.PublishedScrapeId.HasValue
+            || status.PublicReadsFrozen
+            || status.IsCompleteForPublishedScrape(options.IncludePlayers, options.IncludeBands))
+        {
+            return;
+        }
+
+        _log.LogWarning(
+            "Published scrape {ScrapeId} has incomplete improvement notification detection; running startup recovery before the next scrape.",
+            status.PublishedScrapeId);
+
+        await _improvementNotificationRecovery.RunPublishedScrapeAsync(
+            expectedPublishedScrapeId: status.PublishedScrapeId,
+            execute: true,
+            baselineOnly: false,
+            refreshSoloProjection: true,
+            projectionScopes: null,
+            force: false,
+            source: "startup-recovery",
+            ct);
+        await _notifications.NotifyNotificationFeedChangedAsync();
     }
 
     /// <summary>
@@ -1905,114 +1987,6 @@ public sealed class PostScrapeOrchestrator
             _persistence.Meta.EnqueueHistoryRecon(accountId, totalSongsToProcess);
     }
 
-    private async Task RunImprovementNotificationDetectionAsync(
-        ScrapePassContext ctx,
-        SongProcessingMachine.MachineResult registeredUserRefreshResult,
-        CancellationToken ct)
-    {
-        var service = _improvementNotifications;
-        if (service is null)
-            return;
-
-        var options = _improvementNotificationOptions.Value;
-        if (options.IncludePlayers && options.IncludeSongEvents && options.RefreshSoloProjection)
-        {
-            if (_soloCurrentProjectionBuilder is null)
-            {
-                _log.LogWarning("Improvement notifications skipped because solo current projection builder is unavailable.");
-                return;
-            }
-
-            var scopes = await BuildSoloProjectionScopesForNotificationsAsync(ctx, registeredUserRefreshResult, options, ct);
-            if (scopes.Count > 0)
-            {
-                await _soloCurrentProjectionBuilder.EnsureSchemaAsync(ct);
-                var refreshResult = await _soloCurrentProjectionBuilder.RefreshScopesAsync(
-                    scopes,
-                    new SoloCurrentProjectionRebuildOptions
-                    {
-                        CommandTimeoutSeconds = options.SoloProjectionCommandTimeoutSeconds,
-                    },
-                    ct);
-
-                _log.LogInformation(
-                    "Solo current projection refreshed for notifications: {Scopes:N0} scope(s), {Succeeded:N0} succeeded, {Failed:N0} failed, rows {Deleted:N0}->{Inserted:N0}, elapsed {ElapsedMs:N0}ms.",
-                    refreshResult.ScopeCount,
-                    refreshResult.SucceededScopeCount,
-                    refreshResult.FailedScopeCount,
-                    refreshResult.DeletedRows,
-                    refreshResult.InsertedRows,
-                    refreshResult.TotalElapsedMs);
-
-                if (refreshResult.FailedScopeCount > 0)
-                    throw new InvalidOperationException($"Solo current projection refresh failed for {refreshResult.FailedScopeCount} notification scope(s).");
-            }
-            else
-            {
-                _log.LogInformation("Solo current projection refresh for notifications skipped because no impacted scopes were found.");
-            }
-        }
-
-        ct.ThrowIfCancellationRequested();
-        ImprovementNotificationPrecomputeReport? playerReport = null;
-        ImprovementNotificationPrecomputeReport? bandReport = null;
-
-        if (options.IncludePlayers)
-        {
-            playerReport = await Task.Run(() => service.Precompute(new ImprovementNotificationPrecomputeOptions(
-                Scope: options.Scope,
-                Execute: true,
-                BaselineOnly: false,
-                IncludePlayers: true,
-                IncludeBands: false,
-                IncludeSongEvents: options.IncludeSongEvents,
-                IncludeRankings: options.IncludeRankings,
-                PruneExpired: options.PruneExpired,
-                CommandTimeoutSeconds: options.CommandTimeoutSeconds,
-                Source: "post-scrape-player")), ct);
-
-            _log.LogInformation(
-                "Player improvement notification detection complete: run={RunId}, scope={Scope}, events song={PlayerSongEvents:N0}/rank={PlayerRankEvents:N0}, expired pruned={ExpiredPlayer:N0}.",
-                playerReport.RunId,
-                playerReport.Scope,
-                playerReport.PlayerSongEventsInserted,
-                playerReport.PlayerRankEventsInserted,
-                playerReport.ExpiredPlayerEventsDeleted);
-        }
-
-        if (options.IncludeBands)
-        {
-            bandReport = await Task.Run(() => service.Precompute(new ImprovementNotificationPrecomputeOptions(
-                Scope: options.Scope,
-                Execute: true,
-                BaselineOnly: false,
-                IncludePlayers: false,
-                IncludeBands: true,
-                IncludeSongEvents: options.IncludeSongEvents,
-                IncludeRankings: options.IncludeRankings,
-                PruneExpired: options.PruneExpired,
-                CommandTimeoutSeconds: options.CommandTimeoutSeconds,
-                Source: "post-scrape-band")), ct);
-
-            _log.LogInformation(
-                "Band improvement notification detection complete: run={RunId}, scope={Scope}, events song={BandSongEvents:N0}/rank={BandRankEvents:N0}, expired pruned={ExpiredBand:N0}.",
-                bandReport.RunId,
-                bandReport.Scope,
-                bandReport.BandSongEventsInserted,
-                bandReport.BandRankEventsInserted,
-                bandReport.ExpiredBandEventsDeleted);
-        }
-
-        _log.LogInformation(
-            "Improvement notification detection complete: player run={PlayerRunId}, band run={BandRunId}, player events song={PlayerSongEvents:N0}/rank={PlayerRankEvents:N0}, band events song={BandSongEvents:N0}/rank={BandRankEvents:N0}.",
-            playerReport?.RunId,
-            bandReport?.RunId,
-            playerReport?.PlayerSongEventsInserted ?? 0,
-            playerReport?.PlayerRankEventsInserted ?? 0,
-            bandReport?.BandSongEventsInserted ?? 0,
-            bandReport?.BandRankEventsInserted ?? 0);
-    }
-
     private async Task<IReadOnlyCollection<SoloCurrentProjectionScopeKey>> BuildSoloProjectionScopesForNotificationsAsync(
         ScrapePassContext ctx,
         SongProcessingMachine.MachineResult registeredUserRefreshResult,
@@ -2020,6 +1994,16 @@ public sealed class PostScrapeOrchestrator
         CancellationToken ct)
     {
         var scopes = new HashSet<SoloCurrentProjectionScopeKey>();
+
+        if (ctx.SoloCurrentProjectionRefreshedForPublication
+            && !ctx.NotificationProjectionRequiresFullRefresh)
+        {
+            foreach (var scope in ctx.NotificationProjectionScopes)
+                scopes.Add(scope);
+            foreach (var scope in registeredUserRefreshResult.UpdatedScopes)
+                scopes.Add(scope);
+            return scopes.ToArray();
+        }
 
         foreach (var request in ctx.ScrapeRequests)
         {

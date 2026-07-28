@@ -211,6 +211,17 @@ public class PostScrapeOrchestratorTests : IDisposable
         };
     }
 
+    private long PublishCompletedScrape(bool queueImprovementNotifications = true)
+    {
+        var scrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        _metaDb.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false,
+            queueImprovementNotifications: queueImprovementNotifications);
+        return scrapeId;
+    }
+
     private PostScrapeOrchestrator CreateOrchestratorWithImprovementNotifications(
         ImprovementNotificationOptions? improvementOptions = null)
     {
@@ -229,6 +240,22 @@ public class PostScrapeOrchestratorTests : IDisposable
             Substitute.For<ILogger<RivalsOrchestrator>>());
         var rankingsCalculator = new RankingsCalculator(_persistence, _metaDb, _pathDataStore, _progress, Options.Create(new FeatureOptions()), Substitute.For<ILogger<RankingsCalculator>>());
         var leaderboardRivalsCalculator = new LeaderboardRivalsCalculator(_persistence, _metaDb, Options.Create(new ScraperOptions()), Substitute.For<ILogger<LeaderboardRivalsCalculator>>());
+        var notificationOptions = Options.Create(improvementOptions ?? new ImprovementNotificationOptions
+        {
+            Enabled = true,
+            IncludePlayers = false,
+            IncludeBands = false,
+            IncludeSongEvents = false,
+            IncludeRankings = false,
+        });
+        var improvementNotifications = new ImprovementNotificationService(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<ImprovementNotificationService>>());
+        var improvementRecovery = new ImprovementNotificationRecoveryService(
+            improvementNotifications,
+            _soloCurrentProjectionBuilder,
+            notificationOptions,
+            Substitute.For<ILogger<ImprovementNotificationRecoveryService>>());
 
         return new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
@@ -248,16 +275,10 @@ public class PostScrapeOrchestratorTests : IDisposable
                 Substitute.For<ILogger<BandScrapePhase>>()),
             new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
             Options.Create(new ScraperOptions()), _log, null,
-            improvementNotifications: new ImprovementNotificationService(_metaFixture.DataSource, Substitute.For<ILogger<ImprovementNotificationService>>()),
+            improvementNotifications: improvementNotifications,
             soloCurrentProjectionBuilder: _soloCurrentProjectionBuilder,
-            improvementNotificationOptions: Options.Create(improvementOptions ?? new ImprovementNotificationOptions
-            {
-                Enabled = true,
-                IncludePlayers = false,
-                IncludeBands = false,
-                IncludeSongEvents = false,
-                IncludeRankings = false,
-            }));
+            improvementNotificationOptions: notificationOptions,
+            improvementNotificationRecovery: improvementRecovery);
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -703,12 +724,13 @@ public class PostScrapeOrchestratorTests : IDisposable
     public async Task RunImprovementNotificationsAfterPublicationAsync_RunsAfterDerivedSoloPhases()
     {
         var sut = CreateOrchestratorWithImprovementNotifications();
+        var publishedScrapeId = PublishCompletedScrape();
         var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
         var aggregates = new GlobalLeaderboardPersistence.PipelineAggregates();
         aggregates.IncrementSoloLeaderboardsWithData();
         aggregates.IncrementSongsWithData();
         var ctx = CreateContext(
-            scrapeId: 43,
+            scrapeId: publishedScrapeId,
             aggregates: aggregates,
             scrapeRequests:
             [
@@ -821,13 +843,14 @@ public class PostScrapeOrchestratorTests : IDisposable
     public async Task RunImprovementNotificationsAfterPublicationAsync_RunsWhenSoloScrapeCoverageIsHealthy()
     {
         var sut = CreateOrchestratorWithImprovementNotifications();
+        var publishedScrapeId = PublishCompletedScrape();
         var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
         var aggregates = new GlobalLeaderboardPersistence.PipelineAggregates();
         aggregates.IncrementSoloLeaderboardsWithData();
         aggregates.IncrementSoloLeaderboardsWithData();
         aggregates.IncrementSongsWithData();
         var ctx = CreateContext(
-            scrapeId: 45,
+            scrapeId: publishedScrapeId,
             aggregates: aggregates,
             scrapeRequests:
             [

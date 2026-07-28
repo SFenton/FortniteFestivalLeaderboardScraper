@@ -85,6 +85,35 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void PublishScrapeRun_AtomicallyQueuesImprovementNotifications()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+
+        Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false,
+            queueImprovementNotifications: true);
+
+        using var conn = DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT published_scrape_id,
+                   improvement_notifications_scrape_id,
+                   improvement_notifications_status,
+                   improvement_notifications_attempt_count
+            FROM scrape_publication_state
+            WHERE id = TRUE;
+            """;
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal((int)scrapeId, reader.GetInt32(0));
+        Assert.Equal((int)scrapeId, reader.GetInt32(1));
+        Assert.Equal("pending", reader.GetString(2));
+        Assert.Equal(0, reader.GetInt32(3));
+    }
+
+    [Fact]
     public void FailedCandidateRemainsVisibleAndCannotReplacePublishedScrape()
     {
         var publishedId = Db.StartScrapeRun();

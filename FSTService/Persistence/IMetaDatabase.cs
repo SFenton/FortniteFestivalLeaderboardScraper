@@ -21,7 +21,8 @@ public interface IMetaDatabase : IDisposable
     void PublishScrapeRun(
         long scrapeId,
         bool promoteCachedResponses = true,
-        int? expectedPublishedScopeCount = null);
+        int? expectedPublishedScopeCount = null,
+        bool queueImprovementNotifications = false);
     void SetPublicReadFreeze(bool frozen, long? scrapeId = null, string? reason = null);
     PublicReadFreezeState GetPublicReadFreezeState();
     PublicReadFreezeState GetFailedCandidateReadIsolationState();

@@ -380,7 +380,8 @@ public sealed class MetaDatabase : IMetaDatabase
     public void PublishScrapeRun(
         long scrapeId,
         bool promoteCachedResponses = true,
-        int? expectedPublishedScopeCount = null)
+        int? expectedPublishedScopeCount = null,
+        bool queueImprovementNotifications = false)
     {
         using var conn = _ds.OpenConnection();
         EnsureScrapePublicationStateTable(conn);
@@ -507,15 +508,34 @@ public sealed class MetaDatabase : IMetaDatabase
             publish.CommandText = """
                 INSERT INTO scrape_publication_state (
                     id, published_scrape_id, published_at,
-                    band_projection_generation, updated_at)
+                    band_projection_generation,
+                    improvement_notifications_scrape_id,
+                    improvement_notifications_status,
+                    improvement_notifications_attempt_count,
+                    improvement_notifications_started_at,
+                    improvement_notifications_completed_at,
+                    improvement_notifications_error,
+                    updated_at)
                 VALUES (
                     TRUE, @scrapeId, @now,
                     (SELECT current_generation FROM band_current_projection_state WHERE id = TRUE),
+                    CASE WHEN @queueImprovementNotifications THEN @scrapeId ELSE NULL END,
+                    CASE WHEN @queueImprovementNotifications THEN 'pending' ELSE 'disabled' END,
+                    0,
+                    NULL,
+                    NULL,
+                    NULL,
                     @now)
                 ON CONFLICT (id) DO UPDATE SET
                     published_scrape_id = EXCLUDED.published_scrape_id,
                     published_at = EXCLUDED.published_at,
                     band_projection_generation = EXCLUDED.band_projection_generation,
+                    improvement_notifications_scrape_id = EXCLUDED.improvement_notifications_scrape_id,
+                    improvement_notifications_status = EXCLUDED.improvement_notifications_status,
+                    improvement_notifications_attempt_count = 0,
+                    improvement_notifications_started_at = NULL,
+                    improvement_notifications_completed_at = NULL,
+                    improvement_notifications_error = NULL,
                     public_reads_frozen = FALSE,
                     public_reads_frozen_at = NULL,
                     public_reads_frozen_scrape_id = NULL,
@@ -524,6 +544,7 @@ public sealed class MetaDatabase : IMetaDatabase
                 """;
             publish.Parameters.AddWithValue("scrapeId", (int)scrapeId);
             publish.Parameters.AddWithValue("now", DateTime.UtcNow);
+            publish.Parameters.AddWithValue("queueImprovementNotifications", queueImprovementNotifications);
             publish.ExecuteNonQuery();
         }
 
@@ -676,7 +697,7 @@ public sealed class MetaDatabase : IMetaDatabase
             probe.CommandText = """
                 SELECT to_regclass('public.scrape_publication_state') IS NOT NULL
                    AND (
-                       SELECT COUNT(*) = 5
+                       SELECT COUNT(*) = 11
                        FROM information_schema.columns
                        WHERE table_schema = 'public'
                          AND table_name = 'scrape_publication_state'
@@ -685,7 +706,13 @@ public sealed class MetaDatabase : IMetaDatabase
                              'public_reads_frozen_at',
                              'public_reads_frozen_scrape_id',
                              'public_reads_frozen_reason',
-                             'band_projection_generation')
+                             'band_projection_generation',
+                             'improvement_notifications_scrape_id',
+                             'improvement_notifications_status',
+                             'improvement_notifications_attempt_count',
+                             'improvement_notifications_started_at',
+                             'improvement_notifications_completed_at',
+                             'improvement_notifications_error')
                    )
                 """;
             if (Convert.ToBoolean(probe.ExecuteScalar()))
@@ -712,6 +739,12 @@ public sealed class MetaDatabase : IMetaDatabase
                 public_reads_frozen_scrape_id INTEGER REFERENCES scrape_log(id),
                 public_reads_frozen_reason TEXT,
                 band_projection_generation BIGINT,
+                improvement_notifications_scrape_id INTEGER REFERENCES scrape_log(id),
+                improvement_notifications_status TEXT,
+                improvement_notifications_attempt_count INTEGER NOT NULL DEFAULT 0,
+                improvement_notifications_started_at TIMESTAMPTZ,
+                improvement_notifications_completed_at TIMESTAMPTZ,
+                improvement_notifications_error TEXT,
                 updated_at          TIMESTAMPTZ NOT NULL
             )
             """;
@@ -725,6 +758,12 @@ public sealed class MetaDatabase : IMetaDatabase
             ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS public_reads_frozen_scrape_id INTEGER REFERENCES scrape_log(id);
             ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS public_reads_frozen_reason TEXT;
             ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS band_projection_generation BIGINT;
+            ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS improvement_notifications_scrape_id INTEGER REFERENCES scrape_log(id);
+            ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS improvement_notifications_status TEXT;
+            ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS improvement_notifications_attempt_count INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS improvement_notifications_started_at TIMESTAMPTZ;
+            ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS improvement_notifications_completed_at TIMESTAMPTZ;
+            ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS improvement_notifications_error TEXT;
             """;
         alter.ExecuteNonQuery();
         tx.Commit();
