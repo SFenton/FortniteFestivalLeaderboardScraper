@@ -15,6 +15,9 @@ changes were made during this audit.
 - The API service logs a visible error when required player/band detection is
   behind the configured scrape or age threshold. Defaults are one published
   scrape or 24 hours, checked every 15 minutes.
+- Deployment parity exposed nondeterministic `/api/songs` ordering from the
+  in-memory song dictionary. The response now orders by song ID, keeping bytes
+  and ETags stable across service restarts without changing song content.
 - Existing public routes and notification feed contracts are unchanged.
 - Recovery/verification commands and rollback-safe settings are documented in
   `docs/database/ImprovementNotificationRecoveryRunbook.md`.

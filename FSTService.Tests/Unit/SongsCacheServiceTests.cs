@@ -1,4 +1,5 @@
 using FSTService.Api;
+using FortniteFestival.Core;
 
 namespace FSTService.Tests.Unit;
 
@@ -86,5 +87,22 @@ public class SongsCacheServiceTests
         Assert.NotNull(stale);
         Assert.Equal(data, stale!.Value.Json);
         Assert.Equal(etag, stale.Value.ETag);
+    }
+
+    [Fact]
+    public void OrderSongsForPublicResponse_IsStableAcrossSourceOrder()
+    {
+        var first = new Song { track = new Track { su = "song-b" } };
+        var second = new Song { track = new Track { su = "song-a" } };
+
+        var forward = SongsCacheService.OrderSongsForPublicResponse([first, second])
+            .Select(song => song.track.su)
+            .ToArray();
+        var reverse = SongsCacheService.OrderSongsForPublicResponse([second, first])
+            .Select(song => song.track.su)
+            .ToArray();
+
+        Assert.Equal(["song-a", "song-b"], forward);
+        Assert.Equal(forward, reverse);
     }
 }

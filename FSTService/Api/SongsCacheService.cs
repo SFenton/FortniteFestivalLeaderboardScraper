@@ -129,8 +129,7 @@ public sealed class SongsCacheService
                 Console.Error.WriteLine($"[SongsCache] Dropped song from /api/songs: _title='{d._title}', track={(d.track is null ? "null" : "present")}, su={(d.track?.su is null ? "null" : $"'{d.track.su}'")}");
         }
         Console.Error.WriteLine($"[SongsCache] BuildSongsJson: {allSongs.Count} total songs, {droppedSongs.Count} dropped, {allSongs.Count - droppedSongs.Count} returned");
-        var songs = allSongs
-            .Where(s => s.track?.su is not null)
+        var songs = OrderSongsForPublicResponse(allSongs)
             .Select(s =>
             {
                 maxScoresMap.TryGetValue(s.track.su, out var ms);
@@ -193,6 +192,11 @@ public sealed class SongsCacheService
         var payload = new { count = songs.Count, currentSeason, songs };
         return JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
     }
+
+    internal static IEnumerable<Song> OrderSongsForPublicResponse(IEnumerable<Song> songs) =>
+        songs
+            .Where(static song => song.track?.su is not null)
+            .OrderBy(static song => song.track.su, StringComparer.Ordinal);
 
     private static string? TrimAlbumArt(string? url)
         => url is not null && url.StartsWith(ApiEndpoints.AlbumArtPrefix, StringComparison.Ordinal)
