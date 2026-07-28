@@ -28,6 +28,10 @@ public sealed class MetaDatabase : IMetaDatabase
     internal const string FailedCandidateReadIsolationFailurePhase = "capacity_watchdog_abandoned";
     internal const string NoProgressReadIsolationFailurePhase = "post_process_no_progress_abandoned";
     internal const string FailedCandidateReadIsolationReason = "failed-candidate";
+    private const string BandRankHistoryCompactV3StateTable = "band_rank_history_compact_v3_state";
+    private const string BandRankHistoryCompactV3DuetsTable = "band_team_rank_history_points_v3_duets";
+    private const string BandRankHistoryCompactV3DuetsTeamTable = "band_rank_history_team_v3_duets";
+    private const string BandRankHistoryCompactV3DuetsComboTable = "band_rank_history_combo_v3_duets";
     private static readonly string[] FailedCandidateReadIsolationFailurePhases =
     [
         FailedCandidateReadIsolationFailurePhase,
@@ -7758,6 +7762,13 @@ public sealed class MetaDatabase : IMetaDatabase
 
         using var conn = _ds.OpenConnection();
 
+        if (_bandRankHistoryOptions.CompactV3DuetsReadEnabled
+            && string.Equals(bandType, "Band_Duets", StringComparison.Ordinal)
+            && IsBandRankHistoryCompactV3Ready(conn, bandType))
+        {
+            return GetBandRankHistoryFromCompactV3Duets(conn, teamKey, rankingScope, normalizedComboId, cutoff);
+        }
+
         if (readSource is BandRankHistoryApiReadSource.V2NarrowOnly or BandRankHistoryApiReadSource.V2NarrowWithLegacyFallback
             && TableExists(conn, null, "band_team_rank_history_points_v2"))
         {
@@ -7911,6 +7922,81 @@ public sealed class MetaDatabase : IMetaDatabase
             normalizedComboId,
             cutoff);
 
+    private static bool IsBandRankHistoryCompactV3Ready(NpgsqlConnection conn, string bandType)
+    {
+        if (!TableExists(conn, null, BandRankHistoryCompactV3StateTable)
+            || !TableExists(conn, null, BandRankHistoryCompactV3DuetsTable)
+            || !TableExists(conn, null, BandRankHistoryCompactV3DuetsTeamTable)
+            || !TableExists(conn, null, BandRankHistoryCompactV3DuetsComboTable))
+        {
+            return false;
+        }
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT EXISTS (
+                SELECT 1
+                FROM {BandRankHistoryCompactV3StateTable}
+                WHERE band_type = @bandType
+                  AND status = 'ready'
+            )
+            """;
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        return Convert.ToBoolean(cmd.ExecuteScalar() ?? false);
+    }
+
+    private static List<BandRankHistoryDto> GetBandRankHistoryFromCompactV3Duets(
+        NpgsqlConnection conn,
+        string teamKey,
+        string rankingScope,
+        string normalizedComboId,
+        DateOnly cutoff)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT
+                points.snapshot_date,
+                points.snapshot_taken_at,
+                points.adjusted_skill_rank,
+                points.weighted_rank,
+                points.fc_rate_rank,
+                points.total_score_rank,
+                points.adjusted_skill_rating,
+                points.weighted_rating,
+                points.fc_rate,
+                points.total_score,
+                points.songs_played,
+                points.coverage,
+                points.full_combo_count,
+                points.raw_weighted_rating,
+                points.raw_skill_rating,
+                points.total_charted_songs,
+                points.total_ranked_teams
+            FROM {BandRankHistoryCompactV3DuetsTable} points
+            WHERE points.team_id = (
+                    SELECT team_id
+                    FROM {BandRankHistoryCompactV3DuetsTeamTable}
+                    WHERE team_key = @teamKey
+                )
+              AND points.scope_id = @scopeId
+              AND points.combo_ref = CASE
+                    WHEN @scopeId = 0 THEN 0
+                    ELSE COALESCE((
+                        SELECT combo_ref
+                        FROM {BandRankHistoryCompactV3DuetsComboTable}
+                        WHERE combo_id = @comboId
+                    ), -1)
+                END
+              AND points.snapshot_date >= @cutoff
+            ORDER BY points.snapshot_date DESC, points.snapshot_taken_at DESC
+            """;
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+        cmd.Parameters.AddWithValue("scopeId", rankingScope == "overall" ? (short)0 : (short)1);
+        cmd.Parameters.AddWithValue("comboId", normalizedComboId);
+        cmd.Parameters.AddWithValue("cutoff", cutoff);
+        return ReadBandRankHistoryPoints(cmd);
+    }
+
     private static List<BandRankHistoryDto> GetBandRankHistoryFromPointsTable(
         NpgsqlConnection conn,
         string tableName,
@@ -7953,6 +8039,11 @@ public sealed class MetaDatabase : IMetaDatabase
         cmd.Parameters.AddWithValue("teamKey", teamKey);
         cmd.Parameters.AddWithValue("cutoff", cutoff);
 
+        return ReadBandRankHistoryPoints(cmd);
+    }
+
+    private static List<BandRankHistoryDto> ReadBandRankHistoryPoints(NpgsqlCommand cmd)
+    {
         var history = new List<BandRankHistoryDto>();
         using var reader = cmd.ExecuteReader();
         while (reader.Read())

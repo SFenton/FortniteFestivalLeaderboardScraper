@@ -31,6 +31,9 @@ public sealed class BandRankHistoryOptions
     /// <summary>Preferred source for band rank-history API reads.</summary>
     public BandRankHistoryApiReadSource ApiReadSource { get; set; } = BandRankHistoryApiReadSource.NarrowWithWideFallback;
 
+    /// <summary>Read Band Duets history from the validated compact v3 projection when its readiness row is present.</summary>
+    public bool CompactV3DuetsReadEnabled { get; set; } = false;
+
     /// <summary>Maximum number of chunk rows to process at once when chunking by row count is needed.</summary>
     public int ChunkSize { get; set; } = 250_000;
 

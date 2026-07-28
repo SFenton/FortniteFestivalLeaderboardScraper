@@ -188,6 +188,7 @@ services:
       - BandRankHistory__Mode=${BAND_RANK_HISTORY_MODE:-Background}
       - BandRankHistory__WriteMode=${BAND_RANK_HISTORY_WRITE_MODE:-V2Only}
       - BandRankHistory__ApiReadSource=${BAND_RANK_HISTORY_API_READ_SOURCE:-V2NarrowOnly}
+      - BandRankHistory__CompactV3DuetsReadEnabled=${BAND_RANK_HISTORY_COMPACT_V3_DUETS_READ_ENABLED:-false}
       - BandRankHistory__UseWideHistoryCompatibilityWrite=${BAND_RANK_HISTORY_USE_WIDE_HISTORY_COMPATIBILITY_WRITE:-false}
       - BandRankHistory__ChunkSize=${BAND_RANK_HISTORY_CHUNK_SIZE:-250000}
       - BandRankHistory__RangeChunkingEnabled=${BAND_RANK_HISTORY_RANGE_CHUNKING_ENABLED:-true}

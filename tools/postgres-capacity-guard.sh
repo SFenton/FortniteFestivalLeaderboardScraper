@@ -14,6 +14,7 @@ EXPECTED_RECLAIM_BYTES="${EXPECTED_RECLAIM_BYTES:-0}"
 ESTIMATED_FULL_SCRAPE_GROWTH_BYTES="${ESTIMATED_FULL_SCRAPE_GROWTH_BYTES:-60392999803}"
 EXPECTED_FULL_SCRAPES_PER_DAY="${EXPECTED_FULL_SCRAPES_PER_DAY:-2}"
 MINIMUM_HEADROOM_DAYS="${MINIMUM_HEADROOM_DAYS:-7}"
+MINIMUM_HEADROOM_BYTES_OVERRIDE="${MINIMUM_HEADROOM_BYTES_OVERRIDE:-0}"
 
 usage() {
     cat <<'EOF'
@@ -29,6 +30,8 @@ Options:
   --required-scratch-bytes N    Additional rewrite/repack scratch bytes
   --expected-reclaim-bytes N    Explicit reclaim estimate used only to prove
                                 the action restores one emergency window
+  --minimum-headroom-bytes N    Explicit maintenance/rewrite floor replacing
+                                the default days-based alert threshold
   --output FILE                 Also persist the JSON report to FILE
   --compose-dir DIR             Production compose directory
   --pg-container NAME           PostgreSQL container name
@@ -60,6 +63,7 @@ while [[ $# -gt 0 ]]; do
         --transient-build-bytes) TRANSIENT_BUILD_BYTES="$2"; shift 2 ;;
         --required-scratch-bytes) REQUIRED_SCRATCH_BYTES="$2"; shift 2 ;;
         --expected-reclaim-bytes) EXPECTED_RECLAIM_BYTES="$2"; shift 2 ;;
+        --minimum-headroom-bytes) MINIMUM_HEADROOM_BYTES_OVERRIDE="$2"; shift 2 ;;
         --output) OUTPUT_FILE="$2"; shift 2 ;;
         --compose-dir) COMPOSE_DIR="$2"; shift 2 ;;
         --pg-container) PG_CONTAINER="$2"; shift 2 ;;
@@ -98,7 +102,8 @@ done
 for pair in \
     "TRANSIENT_BUILD_BYTES:$TRANSIENT_BUILD_BYTES" \
     "REQUIRED_SCRATCH_BYTES:$REQUIRED_SCRATCH_BYTES" \
-    "EXPECTED_RECLAIM_BYTES:$EXPECTED_RECLAIM_BYTES"
+    "EXPECTED_RECLAIM_BYTES:$EXPECTED_RECLAIM_BYTES" \
+    "MINIMUM_HEADROOM_BYTES_OVERRIDE:$MINIMUM_HEADROOM_BYTES_OVERRIDE"
 do
     require_non_negative_integer "${pair%%:*}" "${pair#*:}"
 done
@@ -127,6 +132,19 @@ fi
 
 if [[ "$ACTION_CLASS" != "reclaim" ]] && (( EXPECTED_RECLAIM_BYTES != 0 )); then
     printf 'ERROR: expected-reclaim-bytes is only valid for reclaim actions\n' >&2
+    exit 64
+fi
+
+if (( MINIMUM_HEADROOM_BYTES_OVERRIDE != 0 )) \
+    && [[ "$ACTION_CLASS" != "maintenance" && "$ACTION_CLASS" != "rewrite" ]]; then
+    printf 'ERROR: minimum-headroom-bytes is only valid for maintenance or rewrite actions\n' >&2
+    exit 64
+fi
+
+if (( MINIMUM_HEADROOM_BYTES_OVERRIDE != 0 \
+      && MINIMUM_HEADROOM_BYTES_OVERRIDE < ESTIMATED_FULL_SCRAPE_GROWTH_BYTES )); then
+    printf 'ERROR: minimum-headroom-bytes cannot be below one full-scrape emergency window (%s)\n' \
+        "$ESTIMATED_FULL_SCRAPE_GROWTH_BYTES" >&2
     exit 64
 fi
 
@@ -210,7 +228,8 @@ python3 - \
     "$public_reads_frozen" "$public_reads_frozen_reason" "$active_vacuums" "$active_index_builds" \
     "$active_rewrites" "$ungranted_locks" "$TRANSIENT_BUILD_BYTES" "$REQUIRED_SCRATCH_BYTES" \
     "$EXPECTED_RECLAIM_BYTES" \
-    "$ESTIMATED_FULL_SCRAPE_GROWTH_BYTES" "$EXPECTED_FULL_SCRAPES_PER_DAY" "$MINIMUM_HEADROOM_DAYS" <<'PY'
+    "$ESTIMATED_FULL_SCRAPE_GROWTH_BYTES" "$EXPECTED_FULL_SCRAPES_PER_DAY" "$MINIMUM_HEADROOM_DAYS" \
+    "$MINIMUM_HEADROOM_BYTES_OVERRIDE" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
@@ -246,6 +265,7 @@ from pathlib import Path
     estimated_growth_bytes,
     expected_scrapes_per_day,
     minimum_headroom_days,
+    minimum_headroom_bytes_override,
 ) = sys.argv[1:]
 
 numeric = {
@@ -267,10 +287,14 @@ numeric = {
     "estimatedFullScrapeGrowthBytes": int(estimated_growth_bytes),
     "expectedFullScrapesPerDay": int(expected_scrapes_per_day),
     "minimumHeadroomDays": int(minimum_headroom_days),
+    "minimumHeadroomBytesOverride": int(minimum_headroom_bytes_override),
 }
 
 daily_growth = numeric["estimatedFullScrapeGrowthBytes"] * numeric["expectedFullScrapesPerDay"]
-minimum_headroom_bytes = daily_growth * numeric["minimumHeadroomDays"]
+minimum_headroom_bytes = (
+    numeric["minimumHeadroomBytesOverride"]
+    or daily_growth * numeric["minimumHeadroomDays"]
+)
 free_bytes = numeric["filesystemFreeBytes"]
 headroom_days = (free_bytes / daily_growth) if daily_growth else None
 emergency_required_bytes = numeric["estimatedFullScrapeGrowthBytes"] + numeric["transientBuildBytes"]
@@ -297,8 +321,13 @@ reasons = []
 exit_code = 0
 
 if capacity_alert:
+    threshold_description = (
+        "explicit minimum-headroom threshold"
+        if numeric["minimumHeadroomBytesOverride"]
+        else f"{numeric['minimumHeadroomDays']}-day alert threshold"
+    )
     reasons.append(
-        f"free space is below the {numeric['minimumHeadroomDays']}-day alert threshold "
+        f"free space is below the {threshold_description} "
         f"({free_bytes} < {minimum_headroom_bytes} bytes)"
     )
 
@@ -367,6 +396,7 @@ report = {
             "estimatedFullScrapeGrowthBytes",
             "expectedFullScrapesPerDay",
             "minimumHeadroomDays",
+            "minimumHeadroomBytesOverride",
             "transientBuildBytes",
             "requiredScratchBytes",
             "expectedReclaimBytes",
