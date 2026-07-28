@@ -36,9 +36,5 @@ ALTER INDEX public.band_team_rank_history_points_v3_duets_uidx
 ALTER INDEX public.band_team_rank_history_points_v3_duets_uidx
     ATTACH PARTITION public.band_team_rank_history_points_v3_duets_202607_uidx;
 
-ALTER TABLE public.band_team_rank_history_points_v3_duets
-    ADD CONSTRAINT band_team_rank_history_points_v3_duets_pkey
-    PRIMARY KEY USING INDEX band_team_rank_history_points_v3_duets_uidx;
-
 ANALYZE public.band_team_rank_history_points_v3_duets;
 CHECKPOINT;

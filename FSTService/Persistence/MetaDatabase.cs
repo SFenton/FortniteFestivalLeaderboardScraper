@@ -19,6 +19,7 @@ public sealed class MetaDatabase : IMetaDatabase
     private readonly FeatureOptions _features;
     private readonly object _bandRankHistoryPollingSchemaLock = new();
     private bool _bandRankHistoryPollingSchemaEnsured;
+    private int _bandRankHistoryCompactV3DuetsReady;
 
     internal const int DataCollectionVersion = 3;
     internal const string WebTrackerDeviceId = "web-tracker";
@@ -7922,8 +7923,11 @@ public sealed class MetaDatabase : IMetaDatabase
             normalizedComboId,
             cutoff);
 
-    private static bool IsBandRankHistoryCompactV3Ready(NpgsqlConnection conn, string bandType)
+    private bool IsBandRankHistoryCompactV3Ready(NpgsqlConnection conn, string bandType)
     {
+        if (Volatile.Read(ref _bandRankHistoryCompactV3DuetsReady) == 1)
+            return true;
+
         if (!TableExists(conn, null, BandRankHistoryCompactV3StateTable)
             || !TableExists(conn, null, BandRankHistoryCompactV3DuetsTable)
             || !TableExists(conn, null, BandRankHistoryCompactV3DuetsTeamTable)
@@ -7942,7 +7946,10 @@ public sealed class MetaDatabase : IMetaDatabase
             )
             """;
         cmd.Parameters.AddWithValue("bandType", bandType);
-        return Convert.ToBoolean(cmd.ExecuteScalar() ?? false);
+        var ready = Convert.ToBoolean(cmd.ExecuteScalar() ?? false);
+        if (ready)
+            Volatile.Write(ref _bandRankHistoryCompactV3DuetsReady, 1);
+        return ready;
     }
 
     private static List<BandRankHistoryDto> GetBandRankHistoryFromCompactV3Duets(
