@@ -124,10 +124,14 @@ Do not truncate the table before that gate passes.
 
 Scrape `1267` completed with the current recovery image and durable no-progress
 watchdog. It published/unfroze and cleared the logical leaderboard shadow's
-destructive parity gate. The logical truncate remains deferred to a separate
-monitored phase and must not be combined with
-`player_score_observations`.
+destructive parity gate. The separate LOGICAL-RETIRE phase then truncated the
+two logical parents and all 18 leaves without `CASCADE`, reclaimed
+`123,173,593,088` database bytes, retained the empty schemas/primary keys and
+metrics table, and preserved `13/13` public fingerprints through the
+60-second monitor.
 
 Observation reclaim remains a distinct decision: verify both observation
 writers were off for scrape `1267`, capture exact pre/post table evidence, and
 apply its own public parity and rollback package before any truncate.
+LOGICAL-RETIRE evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/logical-retire-executed-20260728T092804Z`.

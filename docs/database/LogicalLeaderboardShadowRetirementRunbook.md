@@ -2,8 +2,7 @@
 
 ## Current decision
 
-**Tier:** destructive parity gate cleared; table-data truncate deferred to a
-separate phase.
+**Tier:** destructive reclaim accepted and executed on 2026-07-28.
 
 Scrape `1267` satisfied the repository's destructive live-scrape A/B gate with
 logical writes disabled. It completed all `8,232/8,232` solo and band
@@ -20,9 +19,23 @@ remained byte-identical for all `39,820,273` current rows and `194,171,215`
 version rows. Scrape `1267` touched zero logical rows, emitted zero logical
 write metrics, and produced no positive logical-table read counter delta.
 
-The destructive gate is **CLEARED**, but no truncate ran in SCRAPE-1267. The
-separate maintenance phase must still use the exact preconditions, SQL,
-rollback package, 60-second monitor, and post-action checks below.
+LOGICAL-RETIRE independently reverified that gate, refreshed the exact live
+manifest, completed a rollback-only rehearsal, and then transactionally
+truncated only `public.leaderboard_current_entries` and
+`public.leaderboard_entry_versions` without `CASCADE`. Their 18 leaf
+partitions are empty; all 20 primary-key constraints and indexes remain valid.
+`public.leaderboard_logical_write_metrics` remains intact at 108 rows.
+
+The production transaction reclaimed `123,173,593,088` database bytes. Stable
+filesystem free space increased from `41,158,270,976` to approximately
+`164,328,067,072` bytes, a measured gain of `123,169,796,096` bytes after
+evidence writes. Immediate and 60-second post-action captures were each
+HTTP `200` and `13/13` byte-exact against the pre-action public fingerprints.
+Published scrape `1267` remained unfrozen; Postgres, `fstservice`, and
+`festivalweb` remained healthy; `fstworker` remained held/offline.
+
+Execution evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/logical-retire-executed-20260728T092804Z`.
 
 Hashed clearance evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1267-guarded-publication-20260727T201218Z/parity/logical-shadow-retirement-live-gate.json`
@@ -86,18 +99,19 @@ rows and `194,171,215` version rows:
   `c9ab56adc1a983c62be0e3cc5dbe480ef6b6993a41de601638197cb394424313`.
 
 That observation left the gate `NOT_CLEARED_NO_PUBLICATION`; no truncate ran.
-Scrape `1267` subsequently cleared the gate as recorded above. The retained
-leaf tables currently occupy `123,173,888,000` bytes after the already accepted
-secondary-index retirement. Hashed evidence:
+Scrape `1267` subsequently cleared the gate as recorded above. Immediately
+before LOGICAL-RETIRE execution, the retained leaf tables occupied
+`123,173,888,000` bytes after the already accepted secondary-index retirement.
+Hashed evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/proxy-retune-disabled-writer-baseline-20260727T004228Z/parity/logical-shadow-retirement-live-gate.json`.
 
 ## Exact scope
 
-| Family | Parent | Leaf partitions | Rows | Bytes | Restore class |
-|---|---|---:|---:|---:|---|
-| Logical current | `public.leaderboard_current_entries` | 9 | 39,820,273 | 26,674,814,976 | Rebuild semantic current from published physical snapshots |
-| Logical versions | `public.leaderboard_entry_versions` | 9 | 194,171,215 | 96,499,073,024 | Experimental chronology; intentionally discardable |
-| Metrics | `public.leaderboard_logical_write_metrics` | none | 108 | 106,496 | Retain |
+| Family | Parent | Leaf partitions | Pre-action rows | Pre-action bytes | Post-action bytes | Restore class |
+|---|---|---:|---:|---:|---:|---|
+| Logical current | `public.leaderboard_current_entries` | 9 | 39,820,273 | 26,674,814,976 | 147,456 | Rebuild semantic current from published physical snapshots |
+| Logical versions | `public.leaderboard_entry_versions` | 9 | 194,171,215 | 96,499,073,024 | 147,456 | Experimental chronology; intentionally discardable |
+| Metrics | `public.leaderboard_logical_write_metrics` | none | 108 | 106,496 | 106,496 | Retained |
 
 Each target family has `bass`, `default`, `drums`, `guitar`, `solo_bass`,
 `solo_drums`, `solo_guitar`, `solo_vocals`, and `vocals` leaf partitions. The
@@ -126,60 +140,74 @@ Exact concurrent child rebuild, parent creation, and attach SQL is retained at:
 Run that package before any future versioned migration re-enables a logical
 writer or reader. `DatabaseInitializer` no longer recreates these indexes.
 
-## Preconditions
+## Executed preconditions
 
-1. Use runtime `gpt-5.6-sol`, reasoning `max`, context `long_context`.
-2. Keep all evidence and scratch on `/mnt/docker-storage`.
-3. Hold `fstworker`; verify no worker scrape/post-process/rank/publication query.
-4. Require healthy Postgres, `fstservice`, `festivalweb`, `/readyz`, web shell,
-   and `/api/service-info`.
-5. Require published reads unfrozen and a named published scrape.
-6. Run the measured reclaim capacity guard with zero transient/scratch bytes.
-7. Capture locks, long queries, vacuum/index/rewrite progress, exact target
-   sizes/counts/fingerprints, metrics count, and public fingerprints.
-8. Confirm production
-   `Features__WriteLogicalLeaderboardVersions=false`.
-9. Confirm the scrape-`1267` clearance evidence and SHA-256 above remain
-   available. Re-capture current publication, route, logical, lock, and
-   capacity baselines immediately before the separate truncate phase.
+All preconditions passed:
 
-## Future execution
+1. Runtime was `gpt-5.6-sol`, reasoning `max`, context `long_context`.
+2. Evidence and scratch remained on `/mnt/docker-storage`.
+3. `fstworker` was exited with restart `no`; its ledger was offline with no
+   operation, active scrape, worker query, lock, vacuum, or index build.
+4. Postgres, `fstservice`, `festivalweb`, `/readyz`, the web shell, and
+   `/api/service-info` were healthy.
+5. Published scrape `1267` was unfrozen.
+6. The zero-scratch reclaim guard passed using the conservative
+   `123,173,888,000`-byte estimate.
+7. Fresh counts and canonical fingerprints exactly matched readiness:
+   `39,820,273` current rows /
+   `054b9bbeb52d6670b4adee9fc7afcc101977132a20cecaf14fcc30690a69f3f2`
+   and `194,171,215` version rows /
+   `c9ab56adc1a983c62be0e3cc5dbe480ef6b6993a41de601638197cb394424313`.
+8. Production kept `Features__WriteLogicalLeaderboardVersions=false`.
+   Code inspection found no API reader; the remaining maintenance/writer
+   SELECTs are behind that startup-rejected flag. A controlled full public
+   fingerprint window produced zero target table or statement-counter delta.
+9. Database dependency recapture found zero inbound/outbound foreign keys,
+   non-internal triggers, views, materialized views, routines, rules,
+   publications, or prepared statements.
 
-Use a dedicated psql session and stop on any error:
+## Executed action
+
+The rollback-only rehearsal and committed action used the same guarded
+transaction:
 
 ```sql
 BEGIN;
 SET LOCAL lock_timeout = '5s';
-SET LOCAL statement_timeout = '5min';
+SET LOCAL statement_timeout = '10min';
 TRUNCATE TABLE
     public.leaderboard_current_entries,
     public.leaderboard_entry_versions;
 COMMIT;
 ```
 
-Do not add `CASCADE`. Do not include
-`public.leaderboard_logical_write_metrics`. Monitor the full public path,
-Postgres resources, locks, and free bytes every 60 seconds through the action
-and at least 60 seconds afterward.
+No statement used `CASCADE`; the metrics table was not included. Before
+commit, the transaction verified the exact rows, bytes, relation/index/
+constraint counts, publication, worker, scrape, query, and lock state. While
+the truncate remained uncommitted and held its locks, the public suite stayed
+HTTP `200` and `13/13` exact. The production transaction then committed.
+The 60-second monitor covered the action and four post-commit ticks.
 
 ## Validation
 
-- Both target parents and every leaf partition contain zero rows.
-- Metrics remain `108` rows unless later normal metadata retention changes
-  them explicitly.
-- Constraints and retained primary indexes remain valid; the retired
-  secondary family remains absent.
-- No new target query, ungranted lock, vacuum, index build, or rewrite remains.
-- Mapped leaderboard remains byte-exact HTTP `200`.
-- Export, ranking, history, composite/band, and band-song routes retain their
-  expected published or fail-closed fingerprints.
-- Filesystem free-byte gain is reconciled against
-  `141,462,937,600` candidate bytes; record database and filesystem deltas.
-- Capacity guard and full service/web/database health pass afterward.
+- Both target parents and all 18 leaves contain zero rows.
+- Metrics remain `108` rows / `106,496` bytes.
+- All 20 constraints and 20 retained primary indexes are valid, ready, and
+  live; the retired secondary family remains absent.
+- No target query, ungranted lock, vacuum, index build, rewrite, or active
+  scrape remains.
+- Pre-action, pre-commit, immediate post-action, and 60-second post-action
+  public suites are `13/13` exact HTTP `200`.
+- The target family fell from `123,173,888,000` to `294,912` bytes. Database
+  size fell from `3,823,878,641,331` to `3,700,705,048,243` bytes.
+- The final reclaim and scrape guards both pass. Free space remains below the
+  seven-day threshold, but one full scrape has `103,935,067,269` bytes of
+  margin above the corrected `60,392,999,803`-byte requirement.
 
 ## Rollback and rebuild
 
-A transaction rollback is the only exact rollback before commit. After commit:
+The rollback-only rehearsal proved transaction rollback before commit. After
+commit:
 
 - Rebuild `leaderboard_current_entries` from the current published physical map
   using `rebuild-current-from-published.sql` in the evidence root. The script
@@ -203,3 +231,13 @@ configuration. `FeatureOptionsValidator` rejects true at startup. No
 `UseLogicalLeaderboardVersions` read flag exists. Future writer or reader
 enablement requires a code/config change, versioned migration, rebuild/restore
 validation, tests, and a new full live-scrape promotion.
+
+## Next storage phase
+
+Keep `player_score_observations` separate from this completed phase. The next
+lowest-risk storage phase is to independently verify that both observation
+writers were disabled for published scrape `1267`, refresh its manifest and
+rehydration package, and apply the same pre/post public parity gate before any
+observation truncate. The compact solo projection remains an implementation
+candidate, but optional-build/rewrite work is still below the seven-day
+headroom threshold.

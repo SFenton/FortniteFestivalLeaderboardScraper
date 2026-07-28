@@ -76,12 +76,12 @@ limits.
 | Solo rank-history partitions | 174.47 GB |
 | Current band leaderboard partitions | 139.04 GB |
 | Composite rank history | 90.78 GB |
-| Solo logical version partitions | 65.94 GB |
+| Logical version partitions | 144 KB after LOGICAL-RETIRE |
 | `band_member_stats` | 59.79 GB |
 | Solo published/current projection partitions | 45.18 GB |
 | `band_members` | 44.55 GB |
 | Legacy mutable solo leaderboard partitions | 40.824 GB |
-| Logical current partitions | 27.30 GB |
+| Logical current partitions | 144 KB after LOGICAL-RETIRE |
 | Band source-entry partitions | 25.37 GB |
 | Band rank-history v2 latest partitions | 48 KB after ORPHAN-RECLAIM |
 | `rank_history_latest` | 16 KB after ORPHAN-RECLAIM |
@@ -146,12 +146,14 @@ published `1236`, failed-candidate route isolation, rows, and constraints were
 unchanged.
 
 The 2026-07-25 LOGICAL-RETIRE inventory measured the disabled experimental
-logical shadow exactly. `leaderboard_current_entries` has `39,820,273` rows
-and occupies `33,480,859,648` bytes; `leaderboard_entry_versions` has
-`194,171,215` rows and occupies `107,982,077,952` bytes. The combined
-`141,462,937,600` bytes remain allocated because the required full
-disabled-writer publish/parity window does not yet exist. The retained
-`leaderboard_logical_write_metrics` table has `108` rows and occupies
+logical shadow exactly. After its secondary-index retirement, the final
+pre-truncate state was `39,820,273` current rows / `26,674,814,976` bytes and
+`194,171,215` version rows / `96,499,073,024` bytes. Published scrape `1267`
+cleared the disabled-writer parity gate. On 2026-07-28 LOGICAL-RETIRE
+transactionally truncated the two partitioned parents without `CASCADE`.
+Their 18 leaves now contain zero rows and occupy `294,912` bytes combined;
+all 20 primary-key constraints and indexes remain valid. The retained
+`leaderboard_logical_write_metrics` table still has `108` rows and occupies
 `106,496` bytes.
 
 On 2026-07-27 POST-1265-LOW-SCRATCH retired only the logical shadow's four
@@ -194,8 +196,10 @@ fingerprints.
 Full logical current/version fingerprints remained byte-exact for
 `39,820,273` and `194,171,215` rows. Scrape `1267` touched zero logical rows,
 emitted zero logical metrics, and produced no positive logical read-counter
-delta. The logical-shadow destructive parity gate is therefore cleared, but
-the tables remain intact until the separate truncate runbook phase.
+delta. The logical-shadow destructive parity gate therefore cleared.
+LOGICAL-RETIRE then truncated the two logical parents and all 18 leaves on
+2026-07-28, reclaiming `123,173,593,088` database bytes while retaining empty
+schemas, 20 primary keys, and the metrics table.
 
 The 2026-07-25 SOLO-DYNAMIC-AB inventory measured the active solo current
 projection at `39,601,283` rows / `46,633,459,712` bytes:
@@ -286,8 +290,8 @@ All instrument-partitioned families use these nine keys:
 | `leaderboard_published_scope_source` | Durable published source selection | Worker candidate build and publication transaction | Service and export resolver when `Features:UsePublishedScopeSources=true`; supports physical snapshot and explicit empty sources |
 | `leaderboard_population`, `song_stats` | Durable derived metadata | Worker/post-process | Ranking totals/statistics; generation must match source |
 | `leaderboard_entries_overlay` | Durable corrective overlay | Controlled writes | Merged with selected base source; precedence is explicit |
-| `leaderboard_current_entries` | Retired experimental logical current shadow | Disabled worker dual-write | Never authoritative; primary-key family retained, dormant rank/change secondary trees retired; rebuild semantic current from the published physical map only after an explicit future migration/promotion |
-| `leaderboard_entry_versions` | Retired experimental logical chronology | Disabled worker dual-write | Non-authoritative scrape `1223`-`1237` chronology; primary-key family retained, dormant open/from-scrape secondary trees retired; intentionally discardable after the destructive gate |
+| `leaderboard_current_entries` | Empty retired logical current schema | Disabled worker dual-write | Never authoritative; rows truncated 2026-07-28, primary-key family retained, dormant rank/change secondary trees retired; rebuild semantic current from the published physical map only after an explicit future migration/promotion |
+| `leaderboard_entry_versions` | Empty retired logical chronology schema | Disabled worker dual-write | Non-authoritative scrape `1223`-`1237` chronology intentionally discarded 2026-07-28; primary-key family retained and dormant open/from-scrape secondary trees retired |
 | `leaderboard_logical_write_metrics` | Audit/artifact | Worker | Per-scrape changed/new/unchanged evidence |
 | `current_leaderboard_entries`, `solo_current_projection_scope`, `solo_current_projection_state` | Derived published/current projection | `SoloCurrentProjectionBuilder` | Preferred bounded current reads when scope state is ready |
 | `valid_score_overrides` | Durable operator/source metadata | Controlled writes | Threshold exception source; retain provenance |
@@ -620,8 +624,8 @@ cache and band-ranking publication work.
 
 ### Current promotion gate
 
-A full multi-terabyte duplicate restore is not safe with
-`64,001,667,072` bytes free. Full
+A full multi-terabyte duplicate restore is not safe with approximately
+`164,328,067,072` bytes free after LOGICAL-RETIRE. Full
 restore promotion remains blocked until same-drive reclaim creates the exact
 source database plus target data/WAL/index/scratch headroom.
 
@@ -694,11 +698,13 @@ rebuild statements are in `docs/database/OrphanReclaimRunbook.md`.
 
 ### Retired logical leaderboard shadow
 
-- Exact candidate truncate:
+- Executed truncate:
   `TRUNCATE TABLE public.leaderboard_current_entries,
   public.leaderboard_entry_versions;` without `CASCADE`. Truncating either
   partitioned parent includes its nine leaf partitions and their indexes; it
-  does not include `leaderboard_logical_write_metrics`.
+  does not include `leaderboard_logical_write_metrics`. LOGICAL-RETIRE ran this
+  transaction on 2026-07-28 after a rollback-only rehearsal and a successful
+  pre-commit public parity check.
 - Current-state rebuild uses the current
   `scrape_publication_state` row, complete
   `leaderboard_published_scope_source` snapshot mappings, and
@@ -710,13 +716,16 @@ rebuild statements are in `docs/database/OrphanReclaimRunbook.md`.
   fingerprints, schema DDL, and a bounded deterministic sample. A future
   promotion may seed one new open baseline version per rebuilt current row,
   but must not describe that as restoration of the discarded history.
-- Truncate remains blocked until one complete live scrape runs with the writer
-  disabled, globally publishes, and passes mapped route, export, ranking,
-  history, publication, health, and resource parity. Complete pre-publication
-  manifests from `1261`-`1263` are useful readiness evidence but do not waive
-  this gate.
-- Current evidence and exact rebuild SQL:
-  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/logical-retire-20260725T2306Z`.
+- Scrape `1267` completed with the writer disabled, globally published, and
+  passed mapped route, export, ranking, history, publication, health, and
+  resource parity. Independent recapture found zero database dependencies,
+  unchanged full logical fingerprints, and no production read path.
+- The committed truncate reclaimed `123,173,593,088` database bytes. All
+  target rows are zero, metrics remain 108 rows, public fingerprints stayed
+  `13/13` exact through the 60-second monitor, and the final scrape capacity
+  guard passes with more than 103.9 GB of margin.
+- Execution evidence and exact rebuild SQL:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/logical-retire-executed-20260728T092804Z`.
 
 ## Operational verification
 

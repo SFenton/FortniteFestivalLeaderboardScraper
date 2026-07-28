@@ -980,9 +980,11 @@ move to PG-7 after backup/restore and live-scrape parity.
   stored-rank offset flag reduced filtered-player p95 from `94.678` to
   `17.858 ms` at c1 and `190.519` to `59.291 ms` at c8.
 - No production schema/index/read cutover ran. Practical logged migration
-  headroom is `41.6-60.2 GB` while rollback is retained, versus only about
-  `3,812,061,184` bytes of current margin. The next live shadow waits for successful
-  disabled-writer publication and logical-shadow retirement.
+  headroom is `41.6-60.2 GB` while rollback is retained. LOGICAL-RETIRE later
+  completed the disabled-writer publication and shadow-retirement
+  prerequisite, but the optional-build/rewrite guard remains below the
+  seven-day threshold; a dedicated dual-build capacity model is still
+  required.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/solo-dynamic-ab-20260725T2346Z`.
 
@@ -1283,6 +1285,45 @@ move to PG-7 after backup/restore and live-scrape parity.
   optional builds, and rewrites remain blocked. The worker remains held.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1267-guarded-publication-20260727T201218Z`.
+
+### PG-3 LOGICAL-RETIRE destructive reclaim - accepted 2026-07-28
+
+- Independent live recapture reconfirmed published scrape `1267` unfrozen,
+  `8,232/8,232` complete manifests, zero writer failures, all 10
+  publication-critical phases complete, `6,174` complete published mappings,
+  and zero logical rows or metrics touched by scrape `1267`.
+- Fresh full-table manifests exactly matched readiness:
+  `39,820,273` current rows /
+  `054b9bbeb52d6670b4adee9fc7afcc101977132a20cecaf14fcc30690a69f3f2`
+  and `194,171,215` version rows /
+  `c9ab56adc1a983c62be0e3cc5dbe480ef6b6993a41de601638197cb394424313`.
+  A controlled 13-fingerprint public window produced no logical table or
+  statement-counter delta.
+- Dependency recapture found zero inbound/outbound foreign keys, non-internal
+  triggers, views, materialized views, routines, rules, publication tables,
+  or prepared statements. The exact live manifest retained 20 relations,
+  20 primary-key indexes, 20 constraints, schema DDL, deterministic samples,
+  and the fail-closed current rebuild/version-baseline package.
+- A rollback-only rehearsal and the production action each completed in about
+  130 seconds. The committed short-timeout transaction truncated only
+  `leaderboard_current_entries` and `leaderboard_entry_versions`, implicitly
+  including their 18 leaves, without `CASCADE`. It retained schemas, all
+  primary keys, and `leaderboard_logical_write_metrics`.
+- The target family fell from `123,173,888,000` to `294,912` bytes. Database
+  size fell from `3,823,878,641,331` to `3,700,705,048,243` bytes, an exact
+  `123,173,593,088`-byte database reclaim. Stable filesystem free space rose
+  from `41,158,270,976` to about `164,328,067,072` bytes.
+- Pre-commit, immediate post-commit, and 60-second post-commit public captures
+  were HTTP `200` and `13/13` byte-exact. Published `1267` remained unfrozen;
+  Postgres, service, and web stayed healthy; the worker remained offline; and
+  no query, ungranted lock, vacuum, or index build remained.
+- Final reclaim and scrape guards pass. One corrected full scrape has more
+  than `103.9 GB` of margin, while optional builds/rewrites remain below the
+  seven-day threshold. The next lowest-risk storage phase is an independent
+  scrape-`1267` writer-off gate evaluation for `player_score_observations`;
+  do not combine it with this completed reclaim.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/logical-retire-executed-20260728T092804Z`.
 
 ### PG-4.2 - Separate semantic score changes from derived rank changes
 
