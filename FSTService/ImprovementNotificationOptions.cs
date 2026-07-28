@@ -42,4 +42,16 @@ public sealed class ImprovementNotificationOptions
 
     /// <summary>When true, notification failures fail the post-scrape pass.</summary>
     public bool FailScrapeOnError { get; set; }
+
+    /// <summary>
+    /// Alert when a required detection lane has not completed for this many
+    /// newly completed/published scrapes.
+    /// </summary>
+    public int StaleAfterPublishedScrapes { get; set; } = 1;
+
+    /// <summary>Alert when the oldest required detection lane is this many hours old.</summary>
+    public int StaleAfterHours { get; set; } = 24;
+
+    /// <summary>How often the API service checks and logs notification staleness.</summary>
+    public TimeSpan StalenessCheckInterval { get; set; } = TimeSpan.FromMinutes(15);
 }

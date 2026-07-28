@@ -456,6 +456,24 @@ public sealed class ScraperOptions
     public TimeSpan PostScrapeRefreshTimeout { get; set; } = TimeSpan.FromMinutes(5);
 
     /// <summary>
+    /// Registered-player solo refresh timeout. When unset, the legacy
+    /// <see cref="PostScrapeRefreshTimeout"/> value is used.
+    /// </summary>
+    public TimeSpan? RegisteredUserRefreshTimeout { get; set; }
+
+    /// <summary>
+    /// Registered-player band-discovery timeout. When unset, the legacy
+    /// <see cref="PostScrapeRefreshTimeout"/> value is used.
+    /// </summary>
+    public TimeSpan? RegisteredPlayerBandDiscoveryTimeout { get; set; }
+
+    /// <summary>
+    /// Registered-band targeted-processing timeout. When unset, the legacy
+    /// <see cref="PostScrapeRefreshTimeout"/> value is used.
+    /// </summary>
+    public TimeSpan? RegisteredBandTargetedProcessingTimeout { get; set; }
+
+    /// <summary>
     /// Maximum time deferred registration backfill and rivals work may delay the
     /// publication boundary. This phase is best-effort and retries on a later pass.
     /// Set to <see cref="TimeSpan.Zero"/> to wait indefinitely.
@@ -488,6 +506,13 @@ public sealed class ScraperOptions
     public int RegisteredPlayerBandDiscoveryMaxLookupsPerAccount { get; set; } = 50;
 
     /// <summary>
+    /// Maximum band-discovery probes across all registered accounts in one pass.
+    /// Successful probes are checkpointed and later passes resume from the next
+    /// least-recently processed account. Set to 0 for no limit.
+    /// </summary>
+    public int RegisteredPlayerBandDiscoveryMaxLookupsPerPass { get; set; } = 80;
+
+    /// <summary>
     /// Maximum registered bands processed in one post-scrape pass. Set to 0 for no limit.
     /// </summary>
     public int RegisteredBandProcessingMaxBandsPerPass { get; set; } = 10;
@@ -496,6 +521,13 @@ public sealed class ScraperOptions
     /// Maximum direct lookups per registered band in one pass. Set to 0 for no limit.
     /// </summary>
     public int RegisteredBandProcessingMaxLookupsPerBand { get; set; } = 50;
+
+    /// <summary>
+    /// Maximum targeted lookups across all registered bands in one pass.
+    /// Successful probes are checkpointed and later passes resume from the next
+    /// least-recently processed band. Set to 0 for no limit.
+    /// </summary>
+    public int RegisteredBandProcessingMaxLookupsPerPass { get; set; } = 80;
 
     /// <summary>
     /// When true, the post-scrape refresh also queries the current season for each

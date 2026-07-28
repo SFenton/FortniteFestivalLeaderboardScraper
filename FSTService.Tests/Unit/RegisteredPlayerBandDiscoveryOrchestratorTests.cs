@@ -92,7 +92,32 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestratorTests : IDisposable
         Assert.Equal("Band_Trios", strategy.Calls[0].Intent.BandType);
     }
 
-    private RegisteredPlayerBandDiscoveryOrchestrator CreateOrchestrator(IRegisteredPlayerBandDiscoveryStrategy strategy, int maxLookupsPerAccount)
+    [Fact]
+    public async Task RunAsync_ResumesWithLeastRecentlyProcessedAccountWithinPassBudget()
+    {
+        Db.RegisterUser("device-1", "acct1");
+        Db.RegisterUser("device-2", "acct2");
+        var strategy = new FakeDiscoveryStrategy(null);
+        var orchestrator = CreateOrchestrator(
+            strategy,
+            maxLookupsPerAccount: 2,
+            maxLookupsPerPass: 2);
+        using var pool = new SharedDopPool(1, 1, 1, 100, Substitute.For<ILogger>());
+
+        var first = await orchestrator.RunAsync(["song-a"], [], "token", "caller", pool);
+        var second = await orchestrator.RunAsync(["song-a"], [], "token", "caller", pool);
+
+        Assert.Equal(2, first.LookupsChecked);
+        Assert.Equal(2, second.LookupsChecked);
+        Assert.Equal(["acct1", "acct1", "acct2", "acct2"], strategy.Calls.Select(call => call.AccountId));
+        Assert.Equal(2, Db.GetCheckedRegisteredPlayerBandDiscoveryLookups("acct1").Count);
+        Assert.Equal(2, Db.GetCheckedRegisteredPlayerBandDiscoveryLookups("acct2").Count);
+    }
+
+    private RegisteredPlayerBandDiscoveryOrchestrator CreateOrchestrator(
+        IRegisteredPlayerBandDiscoveryStrategy strategy,
+        int maxLookupsPerAccount,
+        int maxLookupsPerPass = 80)
     {
         var bandPersistence = new BandLeaderboardPersistence(
             _fixture.DataSource,
@@ -102,6 +127,7 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestratorTests : IDisposable
             EnableRegisteredPlayerBandDiscovery = true,
             RegisteredPlayerBandDiscoveryMaxAccountsPerPass = 10,
             RegisteredPlayerBandDiscoveryMaxLookupsPerAccount = maxLookupsPerAccount,
+            RegisteredPlayerBandDiscoveryMaxLookupsPerPass = maxLookupsPerPass,
         });
 
         return new RegisteredPlayerBandDiscoveryOrchestrator(

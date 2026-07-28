@@ -1953,6 +1953,26 @@ public sealed class MetaDatabase : IMetaDatabase
     // ── Registered users ─────────────────────────────────────────────
 
     public HashSet<string> GetRegisteredAccountIds() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT DISTINCT account_id FROM registered_users"; var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase); using var r = cmd.ExecuteReader(); while (r.Read()) ids.Add(r.GetString(0)); return ids; }
+    public List<string> GetRegisteredAccountIdsForBandDiscovery()
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT registered.account_id
+            FROM (SELECT DISTINCT account_id FROM registered_users) registered
+            LEFT JOIN (
+                SELECT account_id, MAX(checked_at) AS last_checked_at
+                FROM registered_player_band_discovery_progress
+                GROUP BY account_id
+            ) progress ON progress.account_id = registered.account_id
+            ORDER BY progress.last_checked_at NULLS FIRST, registered.account_id
+            """;
+        var ids = new List<string>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            ids.Add(reader.GetString(0));
+        return ids;
+    }
     public bool IsAccountRegistered(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT EXISTS (SELECT 1 FROM registered_users WHERE account_id = @accountId)"; cmd.Parameters.AddWithValue("accountId", accountId); return Convert.ToBoolean(cmd.ExecuteScalar() ?? false); }
     public bool RegisterUser(string deviceId, string accountId)
     {
@@ -2333,9 +2353,30 @@ public sealed class MetaDatabase : IMetaDatabase
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT source_id, band_type, team_key, band_id, registered_at, last_activity_at, last_member_sync_at
-            FROM registered_bands
-            ORDER BY source_id, band_type, team_key
+            SELECT band.source_id,
+                   band.band_type,
+                   band.team_key,
+                   band.band_id,
+                   band.registered_at,
+                   band.last_activity_at,
+                   band.last_member_sync_at
+            FROM registered_bands band
+            LEFT JOIN registered_band_processing_status status
+              ON status.source_id = band.source_id
+             AND status.band_type = band.band_type
+             AND status.team_key = band.team_key
+            ORDER BY CASE status.status
+                         WHEN 'pending' THEN 0
+                         WHEN 'failed' THEN 1
+                         WHEN 'in_progress' THEN 2
+                         WHEN 'complete' THEN 3
+                         ELSE 0
+                     END,
+                     status.last_resumed_at NULLS FIRST,
+                     band.registered_at,
+                     band.source_id,
+                     band.band_type,
+                     band.team_key
             """;
         var bands = new List<RegisteredBandInfo>();
         using var reader = cmd.ExecuteReader();

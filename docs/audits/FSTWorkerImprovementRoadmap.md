@@ -29,6 +29,28 @@ This roadmap and the service roadmap are accompanied by:
 Delivery requires rendered HTML/text plus SMTP acceptance, or a recorded SMTP
 blocker and exact outbox artifact paths.
 
+## NOTIFICATION-RECOVERY — accepted 2026-07-28
+
+- Verified that scrape `1267` published and unfroze before notification
+  detection, then the worker was stopped during a redundant full solo
+  projection refresh. PostgreSQL cancelled the active statement with `57014`;
+  no player/band detection run was created.
+- Published scrape `1267` was recovered without a new scrape. Player run `164`
+  inserted `995` notification rows; band run `165` inserted `3,996`.
+  Newly registered subjects were selectively baselined, suppressing `4,193`
+  player-song and `17,070` band/rank back-catalog rows.
+- Publication now atomically queues notification completion, detection runs
+  record the published scrape, interrupted work remains resumable, startup
+  catches up before the next scrape, and the normal path refreshes only scopes
+  changed after publication cleanup instead of all `6,174` solo scopes.
+- The six post-proxy-stabilization scrapes each hit the same three `300 s`
+  best-effort timeouts. Solo refresh now has a measured `10 min` budget; band
+  discovery and targeted processing checkpoint and fairly rotate through a
+  total budget of `80` lookups per pass. Accepted Epic proxy rates remain
+  unchanged.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/notification-recovery-20260728T1428Z`.
+
 ## Cross-container publication rollout
 
 Worker publication changes follow this order:

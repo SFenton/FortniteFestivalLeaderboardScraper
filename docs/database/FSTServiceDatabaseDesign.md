@@ -495,6 +495,12 @@ partial result.
 | `service_notifications` | Durable notification outbox/read model | `ImprovementNotificationService` | Expiry cleanup is bounded; future process split must preserve replay |
 | `api_response_cache`, `api_response_cache_staging` | Cache | Precompute/publication path | Staging swaps atomically; safe to clear and regenerate from published source |
 
+Notification recovery and registered-phase budget operations are documented in
+`docs/database/ImprovementNotificationRecoveryRunbook.md`. The protected
+`/api/diag/improvement-notifications` endpoint and API-side staleness monitor
+surface pending/failed publication markers, scrape lag, and time lag without
+changing public response contracts.
+
 ### Dirty, shadow, and audit-only surfaces
 
 `scrape_dirty_account`, `scrape_dirty_song_instrument`,

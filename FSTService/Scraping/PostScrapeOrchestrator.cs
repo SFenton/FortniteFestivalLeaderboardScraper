@@ -240,6 +240,8 @@ public sealed class PostScrapeOrchestrator
                     "RegisteredPlayerBandDiscovery",
                     () => RunWithPostScrapeNetworkTimeoutAsync(
                         "registered-player band discovery",
+                        _options.Value.RegisteredPlayerBandDiscoveryTimeout
+                            ?? _options.Value.PostScrapeRefreshTimeout,
                         phaseCt => registeredPlayerBandDiscoveryOrchestrator.RunAsync(
                             chartedSongIds,
                             seasonWindows,
@@ -277,6 +279,8 @@ public sealed class PostScrapeOrchestrator
                     "RegisteredBandTargetedProcessing",
                     () => RunWithPostScrapeNetworkTimeoutAsync(
                         "registered-band targeted processing",
+                        _options.Value.RegisteredBandTargetedProcessingTimeout
+                            ?? _options.Value.PostScrapeRefreshTimeout,
                         phaseCt => registeredBandProcessingOrchestrator.RunAsync(
                             chartedSongIds,
                             seasonWindows,
@@ -1609,10 +1613,10 @@ public sealed class PostScrapeOrchestrator
 
     private async Task<T> RunWithPostScrapeNetworkTimeoutAsync<T>(
         string operationName,
+        TimeSpan timeout,
         Func<CancellationToken, Task<T>> operation,
         CancellationToken ct)
     {
-        var timeout = _options.Value.PostScrapeRefreshTimeout;
         using var timeoutCts = timeout > TimeSpan.Zero
             ? CancellationTokenSource.CreateLinkedTokenSource(ct)
             : null;
@@ -1765,7 +1769,8 @@ public sealed class PostScrapeOrchestrator
     internal async Task<SongProcessingMachine.MachineResult> RefreshRegisteredUsersAsync(ScrapePassContext ctx, CancellationToken ct)
     {
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.SongMachine);
-        var refreshTimeout = _options.Value.PostScrapeRefreshTimeout;
+        var refreshTimeout = _options.Value.RegisteredUserRefreshTimeout
+            ?? _options.Value.PostScrapeRefreshTimeout;
         using var refreshTimeoutCts = refreshTimeout > TimeSpan.Zero
             ? CancellationTokenSource.CreateLinkedTokenSource(ct)
             : null;

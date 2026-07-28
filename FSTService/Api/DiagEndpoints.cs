@@ -1,5 +1,7 @@
 using System.Text.Json;
+using FSTService.Persistence;
 using FSTService.Scraping;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
 namespace FSTService.Api;
@@ -67,6 +69,21 @@ public static partial class ApiEndpoints
                 proxySlots,
                 inflightOperations = ops,
             });
+        })
+        .WithTags("Diagnostic")
+        .RequireAuthorization()
+        .RequireRateLimiting("protected");
+
+        app.MapGet("/api/diag/improvement-notifications", (
+            [FromServices] ImprovementNotificationService notifications,
+            [FromServices] IOptions<ImprovementNotificationOptions> notificationOptions) =>
+        {
+            var publication = notifications.GetPublicationStatus();
+            var staleness = ImprovementNotificationStalenessEvaluator.Evaluate(
+                publication,
+                notificationOptions.Value,
+                DateTime.UtcNow);
+            return Results.Ok(new { publication, staleness });
         })
         .WithTags("Diagnostic")
         .RequireAuthorization()

@@ -132,13 +132,13 @@ public sealed class RegisteredBandProcessingOrchestrator
         if (intents.Count == 0)
             return RegisteredBandProcessingResult.Empty;
 
-        var maxBands = _options.RegisteredBandProcessingMaxBandsPerPass;
-        if (maxBands > 0)
-            registeredBands = registeredBands.Take(maxBands).ToList();
-
         _progress.SetAdaptiveLimiter(pool.Limiter);
-        _progress.BeginPhaseProgress(registeredBands.Count);
-        _progress.SetPhaseAccounts(registeredBands.Count);
+        var maxBands = _options.RegisteredBandProcessingMaxBandsPerPass;
+        var plannedBandCount = maxBands > 0
+            ? Math.Min(maxBands, registeredBands.Count)
+            : registeredBands.Count;
+        _progress.BeginPhaseProgress(plannedBandCount);
+        _progress.SetPhaseAccounts(plannedBandCount);
 
         var impactedTeams = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         var impactedCurrentProjectionScopes = new HashSet<BandCurrentProjectionScopeKey>();
@@ -146,10 +146,19 @@ public sealed class RegisteredBandProcessingOrchestrator
         int lookupsCheckedTotal = 0;
         int entriesFoundTotal = 0;
         int entriesPersistedTotal = 0;
+        var maxLookupsPerPass = _options.RegisteredBandProcessingMaxLookupsPerPass;
 
         foreach (var registeredBand in registeredBands)
         {
             ct.ThrowIfCancellationRequested();
+            if (maxBands > 0 && bandsProcessed >= maxBands)
+                break;
+            if (maxLookupsPerPass > 0 && lookupsCheckedTotal >= maxLookupsPerPass)
+                break;
+
+            var remainingLookups = maxLookupsPerPass > 0
+                ? maxLookupsPerPass - lookupsCheckedTotal
+                : 0;
 
             var bandResult = await ProcessBandAsync(
                 registeredBand,
@@ -157,7 +166,11 @@ public sealed class RegisteredBandProcessingOrchestrator
                 accessToken,
                 callerAccountId,
                 pool,
+                remainingLookups,
                 ct);
+
+            if (bandResult.LookupsChecked == 0)
+                continue;
 
             bandsProcessed++;
             lookupsCheckedTotal += bandResult.LookupsChecked;
@@ -206,6 +219,7 @@ public sealed class RegisteredBandProcessingOrchestrator
         string accessToken,
         string callerAccountId,
         SharedDopPool pool,
+        int remainingPassLookups,
         CancellationToken ct)
     {
         _metaDb.EnsureRegisteredBandProcessingStatus(
@@ -230,6 +244,8 @@ public sealed class RegisteredBandProcessingOrchestrator
         var maxLookups = _options.RegisteredBandProcessingMaxLookupsPerBand;
         if (maxLookups > 0)
             pendingIntents = pendingIntents.Take(maxLookups).ToList();
+        if (remainingPassLookups > 0)
+            pendingIntents = pendingIntents.Take(remainingPassLookups).ToList();
 
         if (pendingIntents.Count == 0)
         {

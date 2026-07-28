@@ -10,7 +10,7 @@ namespace FSTService.Tests.Unit;
 public sealed class DiagEndpointSecurityTests
 {
     [Fact]
-    public void MapDiagEndpoints_RemovesTokenBackedRoutesAndProtectsInflightDiagnostics()
+    public void MapDiagEndpoints_RemovesTokenBackedRoutesAndProtectsDiagnostics()
     {
         var builder = WebApplication.CreateSlimBuilder();
         builder.Services.AddAuthorization();
@@ -34,5 +34,10 @@ public sealed class DiagEndpointSecurityTests
             endpoints,
             endpoint => endpoint.RoutePattern.RawText == "/api/diag/inflight");
         Assert.Contains(inflight.Metadata, metadata => metadata is IAuthorizeData);
+
+        var improvementNotifications = Assert.Single(
+            endpoints,
+            endpoint => endpoint.RoutePattern.RawText == "/api/diag/improvement-notifications");
+        Assert.Contains(improvementNotifications.Metadata, metadata => metadata is IAuthorizeData);
     }
 }

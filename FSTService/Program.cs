@@ -562,6 +562,7 @@ builder.Services.AddCors(opts =>
 // StartupInitializer must run before ScraperWorker (hosted services start in registration order)
 builder.Services.AddSingleton<StartupInitializer>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<StartupInitializer>());
+builder.Services.AddHostedService<FSTService.Persistence.ImprovementNotificationStalenessMonitor>();
 builder.Services.AddHealthChecks()
     .AddCheck<StartupInitializer>("database", tags: ["ready"]);
 if (hostedWorkerMode == HostedWorkerMode.ApiOnly)

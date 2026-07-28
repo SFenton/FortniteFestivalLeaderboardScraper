@@ -85,6 +85,7 @@ public interface IMetaDatabase : IDisposable
 
     // ── Registered users ─────────────────────────────────────────────
     HashSet<string> GetRegisteredAccountIds();
+    List<string> GetRegisteredAccountIdsForBandDiscovery();
     bool IsAccountRegistered(string accountId);
     bool RegisterUser(string deviceId, string accountId);
     bool UnregisterUser(string deviceId, string accountId);

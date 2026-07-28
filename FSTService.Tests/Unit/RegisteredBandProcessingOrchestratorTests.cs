@@ -115,7 +115,39 @@ public sealed class RegisteredBandProcessingOrchestratorTests : IDisposable
             });
     }
 
-    private RegisteredBandProcessingOrchestrator CreateOrchestrator(IRegisteredBandLookupStrategy strategy, int maxLookupsPerBand)
+    [Fact]
+    public async Task RunAsync_ResumesWithLeastRecentlyProcessedBandWithinPassBudget()
+    {
+        const string firstTeam = "acct1:acct2";
+        const string secondTeam = "acct3:acct4";
+        InsertBandProjection("Band_Duets", firstTeam, ["acct1", "acct2"]);
+        InsertBandProjection("Band_Duets", secondTeam, ["acct3", "acct4"]);
+        Db.RegisterSelectedBandActivity("Band_Duets", firstTeam);
+        Db.RegisterSelectedBandActivity("Band_Duets", secondTeam);
+
+        var strategy = new CapturingRegisteredBandLookupStrategy();
+        var orchestrator = CreateOrchestrator(
+            strategy,
+            maxLookupsPerBand: 2,
+            maxLookupsPerPass: 2);
+        using var pool = new SharedDopPool(1, 1, 1, 100, Substitute.For<ILogger>());
+
+        var first = await orchestrator.RunAsync(["song-a", "song-b"], [], "token", "caller", pool);
+        var second = await orchestrator.RunAsync(["song-a", "song-b"], [], "token", "caller", pool);
+
+        Assert.Equal(2, first.LookupsChecked);
+        Assert.Equal(2, second.LookupsChecked);
+        Assert.Equal(
+            [firstTeam, firstTeam, secondTeam, secondTeam],
+            strategy.Calls.Select(call => call.TeamKey));
+        Assert.Equal(2, Db.GetCheckedRegisteredBandLookups("web-band-tracker", "Band_Duets", firstTeam).Count);
+        Assert.Equal(2, Db.GetCheckedRegisteredBandLookups("web-band-tracker", "Band_Duets", secondTeam).Count);
+    }
+
+    private RegisteredBandProcessingOrchestrator CreateOrchestrator(
+        IRegisteredBandLookupStrategy strategy,
+        int maxLookupsPerBand,
+        int maxLookupsPerPass = 80)
     {
         var bandPersistence = new BandLeaderboardPersistence(
             _fixture.DataSource,
@@ -125,6 +157,7 @@ public sealed class RegisteredBandProcessingOrchestratorTests : IDisposable
             EnableRegisteredBandTargetedProcessing = true,
             RegisteredBandProcessingMaxBandsPerPass = 10,
             RegisteredBandProcessingMaxLookupsPerBand = maxLookupsPerBand,
+            RegisteredBandProcessingMaxLookupsPerPass = maxLookupsPerPass,
         });
 
         return new RegisteredBandProcessingOrchestrator(
@@ -180,6 +213,7 @@ public sealed class RegisteredBandProcessingOrchestratorTests : IDisposable
     private sealed class CapturingRegisteredBandLookupStrategy : IRegisteredBandLookupStrategy
     {
         public List<RegisteredBandLookupIntent> Intents { get; } = [];
+        public List<(string TeamKey, RegisteredBandLookupIntent Intent)> Calls { get; } = [];
 
         public Task<RegisteredBandLookupResult> FetchAsync(
             BandWorkItem band,
@@ -190,6 +224,7 @@ public sealed class RegisteredBandProcessingOrchestratorTests : IDisposable
             CancellationToken ct)
         {
             Intents.Add(intent);
+            Calls.Add((band.TeamKey, intent));
             return Task.FromResult(RegisteredBandLookupResult.Empty);
         }
     }

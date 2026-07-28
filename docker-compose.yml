@@ -88,6 +88,11 @@ services:
       - Scraper__MidiEncryptionKey=${MIDI_ENCRYPTION_KEY:-}
       - Scraper__SongMachineDop=${SONG_MACHINE_DOP:-10}
       - Scraper__PostScrapeRefreshTimeout=${POST_SCRAPE_REFRESH_TIMEOUT:-00:05:00}
+      - Scraper__RegisteredUserRefreshTimeout=${REGISTERED_USER_REFRESH_TIMEOUT:-00:10:00}
+      - Scraper__RegisteredPlayerBandDiscoveryTimeout=${REGISTERED_PLAYER_BAND_DISCOVERY_TIMEOUT:-00:05:00}
+      - Scraper__RegisteredBandTargetedProcessingTimeout=${REGISTERED_BAND_TARGETED_PROCESSING_TIMEOUT:-00:05:00}
+      - Scraper__RegisteredPlayerBandDiscoveryMaxLookupsPerPass=${REGISTERED_PLAYER_BAND_DISCOVERY_MAX_LOOKUPS_PER_PASS:-80}
+      - Scraper__RegisteredBandProcessingMaxLookupsPerPass=${REGISTERED_BAND_PROCESSING_MAX_LOOKUPS_PER_PASS:-80}
       - Scraper__DegreeOfParallelism=${SCRAPER_DOP:-64}
       - Scraper__DisableScraperWorker=${SCRAPER_DISABLE_SCRAPER_WORKER:-false}
       - Scraper__SkipStartupSchemaInitialization=${SKIP_STARTUP_SCHEMA_INITIALIZATION:-false}

@@ -65,7 +65,35 @@ public sealed class ImprovementNotificationService
                    player_run.completed_at,
                    band_run.published_scrape_id,
                    band_run.run_id,
-                   band_run.completed_at
+                   band_run.completed_at,
+                   (
+                       SELECT COUNT(*)::int
+                       FROM scrape_log scrape
+                       WHERE scrape.status = 'completed'
+                         AND scrape.id <= publication.published_scrape_id
+                         AND (
+                             (player_run.published_scrape_id IS NOT NULL
+                              AND scrape.id > player_run.published_scrape_id)
+                             OR (player_run.published_scrape_id IS NULL
+                                 AND player_run.completed_at IS NOT NULL
+                                 AND scrape.completed_at > player_run.completed_at)
+                             OR player_run.completed_at IS NULL
+                         )
+                   ) AS player_published_scrapes_behind,
+                   (
+                       SELECT COUNT(*)::int
+                       FROM scrape_log scrape
+                       WHERE scrape.status = 'completed'
+                         AND scrape.id <= publication.published_scrape_id
+                         AND (
+                             (band_run.published_scrape_id IS NOT NULL
+                              AND scrape.id > band_run.published_scrape_id)
+                             OR (band_run.published_scrape_id IS NULL
+                                 AND band_run.completed_at IS NOT NULL
+                                 AND scrape.completed_at > band_run.completed_at)
+                             OR band_run.completed_at IS NULL
+                         )
+                   ) AS band_published_scrapes_behind
             FROM publication
             LEFT JOIN player_run ON TRUE
             LEFT JOIN band_run ON TRUE;
@@ -90,7 +118,9 @@ public sealed class ImprovementNotificationService
             LatestPlayerCompletedAtUtc: reader.IsDBNull(11) ? null : reader.GetDateTime(11),
             LatestBandScrapeId: reader.IsDBNull(12) ? null : reader.GetInt32(12),
             LatestBandRunId: reader.IsDBNull(13) ? null : reader.GetInt64(13),
-            LatestBandCompletedAtUtc: reader.IsDBNull(14) ? null : reader.GetDateTime(14));
+            LatestBandCompletedAtUtc: reader.IsDBNull(14) ? null : reader.GetDateTime(14),
+            PlayerPublishedScrapesBehind: reader.IsDBNull(15) ? 0 : reader.GetInt32(15),
+            BandPublishedScrapesBehind: reader.IsDBNull(16) ? 0 : reader.GetInt32(16));
     }
 
     public void EnsurePublicationPending(long scrapeId)
@@ -2286,10 +2316,12 @@ public sealed record ImprovementNotificationPublicationStatus(
     DateTime? LatestPlayerCompletedAtUtc,
     long? LatestBandScrapeId,
     long? LatestBandRunId,
-    DateTime? LatestBandCompletedAtUtc)
+    DateTime? LatestBandCompletedAtUtc,
+    int PlayerPublishedScrapesBehind,
+    int BandPublishedScrapesBehind)
 {
     public static ImprovementNotificationPublicationStatus Empty { get; } = new(
-        null, null, false, null, null, 0, null, null, null, null, null, null, null, null, null);
+        null, null, false, null, null, 0, null, null, null, null, null, null, null, null, null, 0, 0);
 
     public bool IsCompleteForPublishedScrape(bool includePlayers, bool includeBands)
     {

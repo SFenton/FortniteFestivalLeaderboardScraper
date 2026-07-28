@@ -124,7 +124,7 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestrator
         if (songIds.Count == 0)
             return RegisteredPlayerBandDiscoveryResult.Empty;
 
-        var accounts = _metaDb.GetRegisteredAccountIds().ToList();
+        var accounts = _metaDb.GetRegisteredAccountIdsForBandDiscovery();
         if (accounts.Count == 0)
             return RegisteredPlayerBandDiscoveryResult.Empty;
 
@@ -144,13 +144,27 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestrator
         var entriesPersistedTotal = 0;
 
         var maxAccounts = _options.RegisteredPlayerBandDiscoveryMaxAccountsPerPass;
+        var maxLookupsPerPass = _options.RegisteredPlayerBandDiscoveryMaxLookupsPerPass;
         foreach (var accountId in accounts)
         {
             ct.ThrowIfCancellationRequested();
             if (maxAccounts > 0 && accountsProcessed >= maxAccounts)
                 break;
+            if (maxLookupsPerPass > 0 && lookupsCheckedTotal >= maxLookupsPerPass)
+                break;
 
-            var accountResult = await ProcessAccountAsync(accountId, intents, accessToken, callerAccountId, pool, ct);
+            var remainingLookups = maxLookupsPerPass > 0
+                ? maxLookupsPerPass - lookupsCheckedTotal
+                : 0;
+
+            var accountResult = await ProcessAccountAsync(
+                accountId,
+                intents,
+                accessToken,
+                callerAccountId,
+                pool,
+                remainingLookups,
+                ct);
             if (accountResult.LookupsChecked == 0)
                 continue;
 
@@ -228,6 +242,7 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestrator
         string accessToken,
         string callerAccountId,
         SharedDopPool pool,
+        int remainingPassLookups,
         CancellationToken ct)
     {
         var checkedProgress = _metaDb.GetCheckedRegisteredPlayerBandDiscoveryLookups(accountId);
@@ -242,6 +257,8 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestrator
         var maxLookups = _options.RegisteredPlayerBandDiscoveryMaxLookupsPerAccount;
         if (maxLookups > 0)
             pendingIntents = pendingIntents.Take(maxLookups).ToList();
+        if (remainingPassLookups > 0)
+            pendingIntents = pendingIntents.Take(remainingPassLookups).ToList();
 
         if (pendingIntents.Count == 0)
             return new AccountDiscoveryRunResult(0, 0, 0, new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase), []);

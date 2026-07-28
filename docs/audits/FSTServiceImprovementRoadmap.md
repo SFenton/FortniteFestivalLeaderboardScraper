@@ -8,6 +8,17 @@ changes were made during this audit.
 
 ## Autonomous execution update — 2026-07-10
 
+### NOTIFICATION-RECOVERY staleness visibility — accepted 2026-07-28
+
+- Added a protected `/api/diag/improvement-notifications` status surface backed
+  by the durable publication marker and published-scrape-linked detection runs.
+- The API service logs a visible error when required player/band detection is
+  behind the configured scrape or age threshold. Defaults are one published
+  scrape or 24 hours, checked every 15 minutes.
+- Existing public routes and notification feed contracts are unchanged.
+- Recovery/verification commands and rollback-safe settings are documented in
+  `docs/database/ImprovementNotificationRecoveryRunbook.md`.
+
 ### SERVICE-0.3 token-backed diagnostics
 
 **Decision:** Accepted and deployed.
