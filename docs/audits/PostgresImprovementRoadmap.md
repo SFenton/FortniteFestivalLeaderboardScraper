@@ -63,6 +63,41 @@ safety model versus 314,856,988,672 free at the drill start.
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-history-compact-lowscratch-20260728T113000Z`.
 - Runbook: `docs/database/BandHistoryCompactionRunbook.md`.
 
+## OBSERVATION-RETIRE execution update — 2026-07-28
+
+- Published scrape `1267` proved both `player_score_observations` writers were
+  disabled. The table's newest `observed_at` remained
+  `2026-07-26T10:17:21.087379Z`, with zero rows in the scrape-to-publication
+  window and zero later touches.
+- Fresh `pg_stat_statements` classification used only statements beginning
+  with `WITH` or `SELECT`; the two observed reads were ownership probes. The
+  repository, deployed binary, exports, replay/backfill paths, tools, views,
+  routines, triggers, policies, and publications contained no production
+  reader. The retained union view is the only database dependency.
+- The exact manifest covered `10,167,937` rows /
+  `12,682,354,688` bytes, including deterministic fingerprints, samples,
+  schema DDL, dependency DDL, and current-baseline-only rehydration limits.
+- Two pre-action public suites were `13/13` exact and created no observation
+  read/write delta. A rollback-only rehearsal restored all rows, then the
+  committed 1.23-second transaction truncated only
+  `public.player_score_observations` without `CASCADE`.
+- The retained empty relation is `24,576` bytes. Database size fell by
+  `12,682,330,112` bytes and stable filesystem free space gained
+  `12,680,921,088` bytes to about `212.04 GB`. Schema signatures, both indexes,
+  the primary key, union view, and sequence value stayed exact.
+- Immediate and 60-second captures were HTTP `200` and `13/13` byte-exact.
+  Published `1267` remained unfrozen, notifications remained completed, the
+  worker stayed held, and no query, lock, vacuum, or index build remained.
+- The preceding drop from about `276.25 GB` to `199.36 GB` free was not
+  observation growth: `73,478,512,640` bytes (`95.56%`) belonged to the
+  incomplete v3 Trios candidate, with about `3.31 GB` of WAL growth.
+- Legacy `leaderboard_entries_*` remains retained at `36,769,051` rows /
+  `40,825,225,216` bytes. Supplemental writes added `970` backfill rows, the
+  publication-critical band extractor still reads it, and all 27 bounded
+  published-`1267` comparisons differ in count and checksum.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/observation-retirement-20260728T184629Z`.
+
 ## Executive decision
 
 PostgreSQL remains the correct durable source of truth. The urgent issue is
@@ -647,8 +682,8 @@ Confirm exports/external tools and produce an owner decision:
 
 PG-3 performs no table-row deletion or table drop.
 
-**2026-07-27 decision:** ownership/code readiness accepted; maintenance
-blocked. The exact table is now `12,682,354,688` bytes and contains
+**2026-07-28 decision:** ownership, live parity, and destructive maintenance
+accepted and executed. The pre-action table was `12,682,354,688` bytes and contained
 `10,167,937` rows: `9,938,912` `band-member` and `229,025` `solo-history`.
 Repository, database-dependency, export, and production-tool audits found no
 production reader; the only view is test-owned
@@ -658,11 +693,11 @@ reconstructable from mutable current band facts.
 
 `WriteSoloScoreObservations` and `WriteBandMemberScoreObservations` now provide
 independent default-off rollback switches in deployed code/config; `28/28`
-targeted flag/writer tests pass. The table remained intact during
-ORPHAN-RECLAIM because no complete writer-off scrape has globally published.
-A complete writer-off live scrape must publish and pass
-API/export/ranking/history parity before the checksum-manifested truncate
-package may run.
+targeted flag/writer tests pass. Scrape `1267` supplied the complete writer-off
+publication, and the independent retirement phase passed exact public parity,
+rollback rehearsal, and post-action validation. The table is now empty at
+`24,576` bytes with its schema, union view, indexes, primary key, and sequence
+retained. Drop remains a separate future code/schema-removal decision.
 
 ### PG-3.3 - Resolve overlapping band member facts
 
@@ -1528,11 +1563,14 @@ Do not blindly increase buffers. Measure:
    after every object.
 
 The largest snapshot/history tables cannot currently be safely repacked with
-only 275 GB free. Repack is blocked until low-scratch reclaim creates headroom.
+about 212 GB free after OBSERVATION-RETIRE. Repack remains blocked; the
+incomplete v3 Trios candidate owns about 73.48 GB until its separate
+accept/reject cleanup decision.
 
 The same 2026-07-26 owner phase added checksum-guarded packages for
 `8,706,752,512` bytes of stale `scrape_dirty_*` work state and
-`40,824,340,480` bytes of legacy `leaderboard_entries_*`. ORPHAN-RECLAIM
+the legacy `leaderboard_entries_*` surface, now `40,825,225,216` bytes.
+ORPHAN-RECLAIM
 executed the dirty cleanup and retained all four empty schemas/primary keys.
 Legacy cleanup still requires migration of publication-critical
 `PostScrapeBandExtractor` and all direct legacy helpers before supplemental
@@ -1542,7 +1580,7 @@ dual writes can be disabled.
 
 | Outcome | Projection/target |
 |---|---|
-| Immediate capacity | 100-175 GB possible from proven unused secondary indexes; 11 GB additional observation-table decision |
+| Immediate capacity | Observation retirement reclaimed `12,682,330,112` bytes; legacy `leaderboard_entries_*` remains blocked at `40,825,225,216` bytes |
 | Physical growth | Up to about 14 GB/full scrape avoided when all scopes are reused; proportional savings for partially changed scrapes |
 | Logical growth | Substantial reduction if derived rank-only churn is separated from score-state versions |
 | Query latency | >=50% p95 reduction on published/current resolver A/Bs; >=90% read reduction on band membership |

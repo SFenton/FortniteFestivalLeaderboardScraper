@@ -6,9 +6,9 @@ This plan records the approved direction for improving FST Postgres persistence 
 
 - Production compose ownership: `/home/sfenton/Docker/FestivalServiceTracker`.
 - `fstservice`, `festivalweb`, and `fst-postgres` are healthy.
-  `fstservice` runs `fstservice:band-history-compact-bd88b0e4` with compact
-  Duets reads enabled. `fstworker` is exited-held on
-  `fstservice:scrape1266-recovery-4121e7e5` with restart `no`.
+  The observation retirement window used
+  `fstservice:notification-recovery-5de3ed3a`; `fstworker` was held with
+  restart `no`. The independent scrape-`1268` lane owns any later worker start.
 - Scrape `1267` published `6,174` complete solo scope mappings and
   `39,937,029` rows with the publication ledger unfrozen and is authoritative.
   Scrape `1266` remains failed at `post_process_no_progress_abandoned` with
@@ -17,13 +17,10 @@ This plan records the approved direction for improving FST Postgres persistence 
   leaderboard, export, ranking, history, composite, band, and band-song
   validation routes now return stable HTTP `200`.
 - `fstservice` and `festivalweb` may be restarted for maintenance and must be
-  recovered promptly. `fstworker` remained held throughout
-  BAND-HISTORY-COMPACT and no scrape was started. Final free space is
-  `276,272,840,704` bytes; the scrape guard passes with about 215.88 GB of
-  one-run margin, while the seven-day alert remains active. Effective PIA exit
-  `pia-gluetun-6` still needs requalification before a separately approved
-  worker start. Any later scrape must use commit `4121e7e5` or newer and run
-  the durable post-process watchdog.
+  recovered promptly. The stable OBSERVATION-RETIRE capture left
+  `212,034,514,944` bytes free; the scrape guard passes with about 151.64 GB of
+  one-run margin, while the seven-day alert remains active. Any later scrape
+  must use commit `4121e7e5` or newer and run the durable post-process watchdog.
 - PG-3 dropped only `public.ix_crh_latest`, reclaiming exactly
   `20,890,148,864` database bytes. Free space rose from `78,549,483,520` to
   `99,439,702,016` bytes; the guard horizon improved from `2.61` to `3.31`
@@ -141,6 +138,24 @@ This plan records the approved direction for improving FST Postgres persistence 
   parity and an 11.827 ms reattach proof, then dropped without `CASCADE`.
   Net database reduction is `102,101,475,328` bytes. Trios and Quad remain
   v2; the worker stayed held and published `1267` remained unfrozen.
+- A follow-on Trios compact build created `73,478,512,640` bytes of v3 Trios
+  partitions/dictionaries without releasing the v2 source. This explains
+  `95.56%` of the subsequent fall from `276,251,983,872` to
+  `199,359,766,528` free bytes; WAL growth explains about another `3.31 GB`.
+  OBSERVATION-RETIRE did not alter or claim that candidate.
+- OBSERVATION-RETIRE then proved the two observation writers were off for
+  published scrape `1267`, found no true production reader, and truncated only
+  `public.player_score_observations` without `CASCADE` after a rollback
+  rehearsal. Rows fell from `10,167,937` to zero, database size fell by
+  `12,682,330,112` bytes, and immediate plus 60-second public suites remained
+  `13/13` exact. The table, union view, indexes, primary key, and sequence stay
+  available for rollback.
+- The refreshed P9 evaluation retains legacy `leaderboard_entries_*`:
+  `36,769,051` rows / `40,825,225,216` bytes. Main scrape writes are off, but
+  supplemental writes added `970` backfill rows, `PostScrapeBandExtractor`
+  remains publication-critical, direct legacy helpers/tooling remain, and all
+  27 bounded comparisons against published `1267` differ in count and
+  checksum.
 - The earlier STORAGE-OWNERSHIP phase completed continuous-safe P6/P8/P9 owner cards and exact
   manifests for `player_score_observations`, `scrape_dirty_*`, and legacy
   `leaderboard_entries_*`: `61,217,292,288` bytes total. Observation dual
@@ -341,9 +356,9 @@ path, and post-action validation are documented.
 | Band rank-history retention policy draft | Complete | Semantics-first v2 retention options and parity gates documented on 2026-07-06. |
 | `band_read_*` quarantine parity package | Complete | Reversible, live-scrape A/B parity-gated quarantine package documented on 2026-07-06; no DDL executed. |
 | Phase 8 physical snapshot write skipping | Code/readiness accepted / two live A/Bs capacity-blocked and reverted | Scrape `1264` failed the post-writer guard. Capacity-ready scrape `1265` passed that guard, completed `8,232/8,232` manifests and band maintenance, and proved `273` scopes / `218,892` rows reusable with zero unexpected physical rows. Ranking snapshots crossed the `14,571,150,203` safety floor at `13,144,125,440` free before publication. Production was reverted, `1236` remains published, and the flag remains off. |
-| P6 player-score observation ownership | Code deployed / truncate blocked | Current table is `12,682,354,688` bytes and `10,167,937` rows. No production reader; solo and band-member writers are independently default-off in the deployed image and `28/28` targeted tests pass. A complete writer-off scrape must still publish/unfreeze and pass public parity. |
+| P6 player-score observation ownership | Accepted and executed | Scrape `1267` proved both writers off with zero touches. A rollback rehearsal and no-`CASCADE` truncate reclaimed `12,682,330,112` database bytes; zero rows remain, schema/view/indexes/sequence are intact, and immediate plus 60-second public fingerprints were `13/13` exact. |
 | P8 stale dirty-work ownership | Accepted and executed | ORPHAN-RECLAIM truncated all four tables without `CASCADE`, preserving empty schemas and primary keys. Their `19,836,661` rows from scrapes `926`-`1146` were non-authoritative work state; the family contributed `8,706,752,512` pre-action bytes. |
-| P9 legacy mutable leaderboard ownership | Mixed / reader migration blocked | Nine partitions total `40,824,340,480` bytes and `36,768,081` rows. Main scrape writer is off and mapped public reads bypass legacy, but supplemental dual writers and publication-critical band extraction remain owners. |
+| P9 legacy mutable leaderboard ownership | Retained / reader migration and parity blocked | Nine partitions total `40,825,225,216` bytes and `36,769,051` rows. Main scrape writer is off, but supplemental writes added `970` backfill rows; publication-critical band extraction, conditional projection fallback, direct helpers, diagnostics, and restore tooling remain owners. All 27 published-`1267` samples mismatch. |
 | Rank/temp spill write-mode reduction | Accepted config/code default | Switched band team ranking rebuild default from `Monolithic` to `ComboBatched` to reduce one-shot build-table insert pressure; all write modes already have parity coverage. |
 | Optional band-song projection pressure gate | Complete | Defaulted optional rebuilds to disabled, made published reads reject stale/missing rows, and retired `36,747,099` stale rows for `28,315,533,312` database bytes while retaining schema/state and an exact restore archive. |
 | BAND-SONG-PROJECTION retirement | Accepted | Truncated only `band_song_team_rankings` and the three `band_song_team_rankings_current_band_*` tables without `CASCADE`; 24/24 public route fingerprints remained exact, all nine indexes stayed valid, and both scrape guards now pass. Evidence: `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-song-projection-retirement-20260726T103231Z`. |
@@ -382,12 +397,12 @@ Evidence:
 
 | Surface | Rows | Bytes | Code/runtime ownership | Rebuild/rollback | Decision |
 |---|---:|---:|---|---|---|
-| `player_score_observations` | `10,167,937` | `12,682,354,688` | Two default-off dual writers; no production reader/export owner | Solo semantics from `score_history`; current band baseline from band facts; exact schema retained | Deployed writer-off readiness accepted; truncate/drop blocked on one complete writer-off live publication |
+| `player_score_observations` | `0` | `24,576` | Two default-off dual writers; no production reader/export owner | Solo semantics from `score_history`; current band baseline from band facts; exact schema retained | **Executed after scrape `1267` parity**; drop remains future-only |
 | `scrape_dirty_*` | `0` | `65,536` after truncate | No current repository caller, DB dependency, external tool, or writer since 2026-07-07 stats reset | Historical work state intentionally discarded; schema/checksum manifest retained | **Executed by ORPHAN-RECLAIM**; all four schemas and primary keys retained |
-| `leaderboard_entries_*` | `36,768,081` | `40,824,340,480` | Main scrape writer off; supplemental writer active; mapped public reads bypass; band extraction still reads legacy | Rebuild correct published baseline from scope map + physical snapshots; overlays remain separate | Do not disable supplemental writer or truncate until reader migration and full live A/B |
+| `leaderboard_entries_*` | `36,769,051` | `40,825,225,216` | Main scrape writer off; supplemental writer active; mapped public reads bypass; band extraction and direct helpers still read legacy | Rebuild correct published baseline from scope map + physical snapshots; overlays remain separate | Do not disable supplemental writer or truncate until reader/tool migration and full live A/B |
 
-The published map owns `39,588,650` rows, `2,820,569` more than the legacy
-table. All 27 bounded legacy-vs-published scope samples differed in count and
+The published `1267` map owns `39,937,029` rows, `3,167,978` more than the
+legacy table. All 27 refreshed bounded legacy-vs-published scope samples differed in count and
 checksum, so current legacy rows are not a byte-exact published rollback copy.
 An attempted exact all-row join was rejected after its read-only plan spilled
 temp and hit the capacity ceiling; public health recovered with no locks, and

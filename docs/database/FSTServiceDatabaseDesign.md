@@ -70,7 +70,7 @@ limits.
 
 | Surface | Live size |
 |---|---:|
-| Database | 3,805.58 GB |
+| Database | 3,659,422,447,283 bytes after observation retirement |
 | Solo physical snapshot partitions | 1,788.63 GB |
 | Band rank-history v2 point partitions | 857.72 GB |
 | Solo rank-history partitions | 174.47 GB |
@@ -80,12 +80,12 @@ limits.
 | `band_member_stats` | 59.79 GB |
 | Solo published/current projection partitions | 45.18 GB |
 | `band_members` | 44.55 GB |
-| Legacy mutable solo leaderboard partitions | 40.824 GB |
+| Legacy mutable solo leaderboard partitions | 40,825,225,216 bytes |
 | Logical current partitions | 144 KB after LOGICAL-RETIRE |
 | Band source-entry partitions | 25.37 GB |
 | Band rank-history v2 latest partitions | 48 KB after ORPHAN-RECLAIM |
 | `rank_history_latest` | 16 KB after ORPHAN-RECLAIM |
-| `player_score_observations` | 12.682 GB |
+| `player_score_observations` | 24 KB after OBSERVATION-RETIRE |
 | `scrape_dirty_*` | 64 KB after ORPHAN-RECLAIM |
 
 The PG-1 decision sample had `247.2GB` free on `/mnt/docker-storage`, published
@@ -316,7 +316,7 @@ All instrument-partitioned families use these nine keys:
 | Tables | Class | Write path | Read path / semantics |
 |---|---|---|---|
 | `leaderboard_staging`, `leaderboard_staging_meta`, `leaderboard_staging_v2` | Work state | Bounded/COPY writer | Never public; truncate/replay only after operation proof |
-| `leaderboard_entries` | Legacy mutable rollback/fallback source | Main scrape dual-write is disabled; backfill/refresh/neighbor writes still dual-write with overlays | Public mapped reads bypass it, but publication-critical `PostScrapeBandExtractor` and direct legacy helpers still own it |
+| `leaderboard_entries` | Legacy mutable rollback/fallback source | Main scrape dual-write is disabled; backfill/refresh/neighbor writes still dual-write with overlays. The refreshed owner card has `36,769,051` rows after `970` new backfill rows | Public mapped reads bypass it, but publication-critical `PostScrapeBandExtractor`, conditional projection fallback, direct legacy helpers, diagnostics, and restore tooling still own it |
 | `leaderboard_entries_snapshot` partitions | Durable physical source | Worker snapshot writer | Worker candidate reads use active state; service/exports use the mapped published snapshot after PG-1 cutover |
 | `leaderboard_snapshot_state` | Source-selection metadata | Worker finalization | Active source, not automatically a published source |
 | `leaderboard_scope_fingerprints` | Correctness/audit metadata | Worker observe/coverage dual-write | Content, reported entries/pages, completeness, source scrape, and published scrape must validate before publication |
@@ -440,7 +440,7 @@ and retained old-table rollback; bounded unlogged samples are evaluation-only.
 | Tables | Class | Owner/callers | Retention |
 |---|---|---|---|
 | `score_history` | Durable user-visible history | `MetaDatabase`, player/ranking services | Preserve score/rank/season/timestamp semantics; nullable-time uniqueness repair is PG-3/PG-7 |
-| `player_score_observations` | Non-authoritative duplicate/audit observation surface | Solo-history and band-member writers are independently default-off in deployed code/config; no production reader | `10,167,937` rows remain; truncate only after a complete writer-off scrape publishes and API/export/ranking/history parity passes |
+| `player_score_observations` | Empty retained rollback schema for the retired non-authoritative observation surface | Solo-history and band-member writers remain independently default-off in deployed code/config; no production reader | OBSERVATION-RETIRE truncated `10,167,937` rows after scrape `1267` parity, reclaiming `12,682,330,112` database bytes while preserving the table, union view, indexes, primary key, and sequence |
 | `player_stats`, `player_stats_tiers` | Derived projection | Player stats calculator/API | Rebuildable for a published generation |
 | `account_rankings`, `account_ranking_stats` | Derived ranking projection | Rankings pipeline | Rebuildable; generation/source must remain auditable |
 | `rank_history` partitions, `rank_history_snapshot_stats`, `rank_history_tracked_accounts` | Durable user-visible history and snapshot metadata | Ranking/history pipeline and API | Append only on meaningful change after PG-5 redesign |

@@ -93,19 +93,21 @@ window, the estimate must project enough post-action free space to restore the
 full window; default reclaim behavior remains fail-closed. Always rerun the
 guard without an estimate after the action.
 
-## Deferred `player_score_observations`
+## Completed `player_score_observations` retirement
 
-The table remains intact at `10,167,937` rows and `12,682,354,688` bytes.
-Current code and the deployed image contain independent default-off flags:
+The table was truncated on 2026-07-28 after published scrape `1267` cleared its
+independent writer-off and public-parity gate. Current code and the deployed
+image retain independent default-off flags:
 
 - `Features:WriteSoloScoreObservations=false`
 - `Features:WriteBandMemberScoreObservations=false`
 
-No production reader or export owner was found, and the union view is retained.
-However, no complete scrape with both writers off has globally published and
-unfrozen. The exact remaining gate is one complete writer-off scrape followed
-by exact API, export, ranking, history, publication, and public-health parity.
-Do not truncate the table before that gate passes.
+No production reader or export owner was found. The rollback rehearsal restored
+all `10,167,937` rows before the committed transaction. The committed
+no-`CASCADE` truncate reclaimed `12,682,330,112` database bytes and left zero
+rows in the table and union view. The table schema, both indexes, primary key,
+sequence value `210281757`, and union view remain intact. Immediate and
+60-second captures were `13/13` exact against the pre-action suite.
 
 ## Rollback and rebuild
 
@@ -130,8 +132,9 @@ two logical parents and all 18 leaves without `CASCADE`, reclaimed
 metrics table, and preserved `13/13` public fingerprints through the
 60-second monitor.
 
-Observation reclaim remains a distinct decision: verify both observation
-writers were off for scrape `1267`, capture exact pre/post table evidence, and
-apply its own public parity and rollback package before any truncate.
-LOGICAL-RETIRE evidence:
-`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/logical-retire-executed-20260728T092804Z`.
+Observation reclaim is complete. The next evaluated storage target is legacy
+`leaderboard_entries_*`, which remains populated and must not be retired:
+`PostScrapeBandExtractor` is publication-critical, supplemental backfill
+writes remain enabled, and all 27 refreshed legacy-versus-published `1267`
+scope samples differ in count and checksum. Observation execution evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/observation-retirement-20260728T184629Z`.
