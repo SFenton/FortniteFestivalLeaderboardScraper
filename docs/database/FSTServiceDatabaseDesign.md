@@ -3,7 +3,7 @@
 **Authoritative runtime:** PostgreSQL 17 in `fst-postgres`  
 **Production compose owner:** `/home/sfenton/Docker/FestivalServiceTracker`  
 **Production data root:** `/mnt/docker-storage/Docker/FestivalServiceTracker/pg-data`  
-**Last targeted live storage validation:** 2026-07-27 19:58 UTC
+**Last targeted live storage validation:** 2026-07-28 11:25 UTC
 
 This document defines FST PostgreSQL ownership, source-of-truth boundaries,
 publication behavior, retention, index posture, and restore paths. PostgreSQL
@@ -209,6 +209,27 @@ partitioned, generation-guarded row set and the account/rank/score indexes,
 removes the structural-only primary key and unowned per-row `computed_at`,
 and adds a bounded publication-hot tier. Conservative projected steady size is
 no more than `20,215,010,912` bytes. No production schema changed.
+
+The 2026-07-28 BAND-HISTORY-COMPACT phase refreshed the exact frozen v2 point
+inventory to `917,793,219` rows / `848,759,203,840` bytes:
+`154,235,944,960` Duets, `305,843,961,856` Trios, and
+`388,775,297,024` Quad. Production history writes remain disabled and the API
+still reads v2 narrow points. A bounded `4,651,508`-row Duets pilot proved
+zero bidirectional row differences with integer team/scope/combo IDs and
+`BYTEA(16)` fingerprints. Its compact heap plus primary key used
+`251.98` bytes/row versus `716.93` current Duets bytes/row, and the compact
+primary key served the public lookup without the duplicated full-width
+secondary tree.
+
+The accepted future layout keeps all history in PostgreSQL, subpartitions each
+band type monthly by `snapshot_date`, uses `fillfactor=100`, and retains exact
+text team/combo dictionaries for API reconstruction. Date deletion and
+Parquet-as-live-source were rejected because the API/export still serve this
+history and no rehydration/read tier exists. No production v3 build ran: the
+rewrite guard required `902,775,955,523` free bytes for the conservative
+`57,273,958,281`-byte Duets candidate but measured only
+`164,830,613,504`. Details and the future Duets/Trios/Quad swap sequence are
+in `docs/database/BandHistoryCompactionRunbook.md`.
 
 ## Data ownership and restore class
 
@@ -444,7 +465,7 @@ Band-partitioned source/current families use `Band_Duets`, `Band_Trios`, and
 | `band_team_ranking_generation` | Publication/audit metadata | Ranking pipeline | Tracks durable generation and source scrape |
 | `band_song_team_rankings`, `band_song_team_rankings_current_band_*`, `band_song_team_ranking_state` | Retired optional song/team ranking projection schema and audit state | Ranking pipeline only when explicitly re-enabled | Data tables are empty; rebuild defaults off; public reads use published current-band rows or fail closed |
 | `band_team_rank_history`, `band_team_rank_history_points`, `band_team_rank_history_latest`, `band_team_ranking_stats_history` | Legacy durable history/latest | `MetaDatabase`, history API | Retain until v2/read-source parity and restore prove removal |
-| `band_team_rank_history_points_v2` partitions | Durable compact public history | History worker through `MetaDatabase` | About 799 GiB; archive/prune only by exact range manifest |
+| `band_team_rank_history_points_v2` partitions | Durable public history | History worker through `MetaDatabase`; API and export readers | `917,793,219` rows / `848,759,203,840` bytes on 2026-07-28; v3 compact rewrite accepted but capacity-blocked, so v2 remains authoritative |
 | `band_team_rank_history_latest_v2` partitions | Empty derived latest delta schema | History worker only when mode is enabled | ORPHAN-RECLAIM truncated `21,403,363` rows while production mode was `Disabled`; rebuildable from retained v2 points |
 | `band_team_rank_history_snapshot_v2` | Durable history generation metadata | History worker/API status | Primary freshness/coverage ledger |
 | `band_rank_history_jobs`, `band_rank_history_job_chunks` | Durable resumability state | Background history worker | Keep incomplete/failed jobs for bounded retry/replay |
@@ -515,6 +536,11 @@ the original exact manifest or the fully empty retired state.
    retained team/date indexes, while primary keys retain point identity and
    conflict behavior. Its exact rollback follows the same concurrent-child,
    metadata-parent, attach sequence.
+   BAND-HISTORY-COMPACT proved the next replacement should not recreate both
+   wide trees: a typed dictionary-backed v3 primary key ordered by
+   team/scope/combo/date serves uniqueness and the public read. Build it only
+   one band type at a time after the same-drive rewrite guard passes, retaining
+   the complete old partition until API/checksum/latency validation succeeds.
 10. The retired logical shadow intentionally has no
     `ix_lce_scope_rank`, `ix_lce_last_changed`, `ix_lev_open_versions`, or
     `ix_lev_from_scrape` tree. The writer is startup-rejected and there is no

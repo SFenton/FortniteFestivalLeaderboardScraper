@@ -31,6 +31,30 @@ Full duplicate restore remains blocked by measured same-drive capacity:
 3,934,382,812,204 additional bytes are required for the streaming target/WAL/
 safety model versus 314,856,988,672 free at the drill start.
 
+## BAND-HISTORY-COMPACT execution update — 2026-07-28
+
+- Exact frozen v2 history is now `917,793,219` rows /
+  `848,759,203,840` bytes: Duets `154,235,944,960`, Trios
+  `305,843,961,856`, and Quad `388,775,297,024`.
+- The public history/export owner was reconfirmed. The production API read
+  statement recorded 474 calls, 7.398 ms mean, and no temp I/O; all nine
+  representative overall/combo 30-day/full-range HTTP cases returned 200.
+- The accepted v3 schema normalizes team/combo text, uses typed scope IDs and
+  `BYTEA(16)` fingerprints, subpartitions by month, and uses one compact
+  primary key for both identity and API date reads.
+- A same-drive `4,651,508`-row Duets pilot passed zero bidirectional row
+  differences. Compact heap + primary key used `251.98` bytes/row versus
+  `716.93` current; matched warm p50/p95 did not regress.
+- Retention deletion and Parquet-as-live-source were rejected because all
+  history remains served and no runtime rehydration tier exists.
+- No production rewrite ran. The conservative `57,273,958,281`-byte Duets
+  candidate fails the rewrite guard: `902,775,955,523` required versus
+  `164,830,613,504` free. Trios and Quad were not attempted because Duets
+  must complete and release space first.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-history-compact-20260728T100500Z`.
+- Runbook: `docs/database/BandHistoryCompactionRunbook.md`.
+
 ## Executive decision
 
 PostgreSQL remains the correct durable source of truth. The urgent issue is
@@ -1363,6 +1387,14 @@ Work:
 3. Establish retention and latest-state requirements.
 4. Evaluate UUID/integer team dictionary and binary fingerprints.
 5. Partition future points by date/range if retention is date-based.
+
+Execution decision:
+
+- owner/read/coverage proof complete;
+- compact v3 design and bounded Duets pilot accepted;
+- keep all dates and PostgreSQL public ownership;
+- production Duets/Trios/Quad rewrite blocked by same-drive headroom, with v2
+  retained authoritative and zero production bytes reclaimed.
 
 ### PG-5.2 - Rank-history latest-state redesign
 

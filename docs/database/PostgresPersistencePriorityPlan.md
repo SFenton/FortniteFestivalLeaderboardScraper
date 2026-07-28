@@ -315,6 +315,7 @@ path, and post-action validation are documented.
 | Phase 7 logical write metrics | Complete | Implemented, deployed, committed as `2ac02445`; production metrics captured from failed scrape `1218`. |
 | LOGICAL-RETIRE ownership/rebuild package | Accepted and executed | Scrape `1267` cleared parity; independent revalidation matched all rows/hashes and found no runtime reader or database dependency. The monitored no-`CASCADE` truncate reclaimed `123,173,593,088` database bytes, retained empty schemas/20 primary keys/108 metrics rows, and preserved `13/13` public fingerprints. |
 | SOLO-DYNAMIC-AB compact published solo read model | Accepted research/implementation candidate / optional build still blocked | Full owner/query matrix, service-cold and warm baseline, bounded unlogged samples, exact c1/c8 fingerprints, storage math, rollback DDL, and default-off rank-offset code are complete. Conservative compact-plus-hot projection is <=`20,215,010,912` bytes, reclaiming >=`26,418,448,800` bytes (`56.65%`). Raw one-run space now exists, but the optional-build/rewrite guard remains below the seven-day threshold. |
+| BAND-HISTORY-COMPACT v3 | Design/pilot accepted; production rewrite blocked | Exact v2 total is `917,793,219` rows / `848,759,203,840` bytes. A `4,651,508`-row Duets pilot had zero bidirectional differences and used `251.98` compact bytes/row versus `716.93` current. The projected `57,273,958,281`-byte Duets candidate fails the same-drive rewrite guard: `902,775,955,523` required versus `164,830,613,504` free. No production history row/table/index changed. |
 | Experimental logical shadow cleanup | Complete | Approved cleanup truncated experimental logical shadow tables and removed incomplete scrape `1218`. |
 | Database architecture evaluation | Complete | Read-only code review and production probes completed on 2026-07-06. |
 | History/index owner cards | Complete | Refreshed band v2, composite history, observation, dirty-work, and latest-state owner cards on 2026-07-13. Public team/date and retention indexes were retained from plan/caller proof. |
@@ -346,7 +347,7 @@ path, and post-action validation are documented.
 | Autonomous scrape rollout | Rejected after scrape `1265`; worker held | Candidate `1265` passed start/post-writer guards, completed all manifests/writers and band maintenance, then crossed its declared capacity floor during ranking snapshots. It was stopped and reconciled failed with zero published mappings. Published `1236` remains safe. Post-cleanup nominal guards pass again, but the live run proved that model insufficient through publication. |
 | Scrape `1266` incident recovery | Complete / deployed / worker held | Exact rollback and guarded reconciliation preserved published `1236`; precise failed-candidate isolation remains active for derived reads. Commit `4121e7e5` adds critical band failure propagation, progress-only heartbeats, a 30-minute deferred-sync timeout, and DB-aware autonomous recovery. Service and held worker use `fstservice:scrape1266-recovery-4121e7e5`. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
-| Next implementation phase | Observation-retirement gate evaluation / worker held | LOGICAL-RETIRE is complete and the full-scrape guard passes with more than `103.9 GB` of margin. Keep the worker held until a separate start decision and proxy requalification. Next, independently verify both observation writers were off for published scrape `1267`, refresh the `player_score_observations` manifest/rehydration package, and decide its own isolated truncate gate. |
+| Next implementation phase | Observation-retirement gate evaluation / worker held | BAND-HISTORY-COMPACT is the largest pending rewrite but its first Duets build is capacity-blocked. Next, independently verify both observation writers were off for published scrape `1267`, refresh the `player_score_observations` manifest/rehydration package, and decide its isolated zero-scratch truncate gate. |
 
 ## LOGICAL-RETIRE decision and execution package (2026-07-25 to 2026-07-28)
 
@@ -1111,6 +1112,29 @@ Design candidates:
 | S4.4 Promotion/retention | Promote compact reads or prune old v2 only after live A/B parity, restore, and rollback docs. | History route parity, storage win, no material processing cost. | Keep old reads/tables. |
 
 Decision tier: high future win; must be semantics-first.
+
+Execution update 2026-07-28:
+
+- S4.1 and S4.2 are accepted. The selected schema uses bigint team IDs,
+  integer combo IDs, typed band/scope IDs, `BYTEA(16)` fingerprints, monthly
+  date subpartitions, `fillfactor=100`, and one primary-key API access path.
+- Exact live totals are `215,134,574` Duets / `154,235,944,960` bytes,
+  `343,275,419` Trios / `305,843,961,856` bytes, and `359,383,226` Quad /
+  `388,775,297,024` bytes.
+- The bounded Duets pilot copied `4,651,508` rows with zero bidirectional
+  differences and projected `62.87%` Duets reduction. Matched compact and v2
+  warmed command p50/p95 tied; the compact cold SQL plan was faster.
+- Retain all dates. The public route accepts 3,650 days and exports consume
+  history; current band-type partitioning means row deletes do not return
+  filesystem space.
+- Parquet is rejected as the live source because no byte-identical runtime
+  rehydration/read tier exists and a same-drive archive increases peak space.
+- S4.3/S4.4 are blocked. The production rewrite guard needs
+  `902,775,955,523` free bytes for the conservative Duets candidate and
+  measured `164,830,613,504`. Resume Duets only after that guard passes, then
+  validate/swap/drop and remeasure before Trios and Quad.
+- Runbook:
+  `docs/database/BandHistoryCompactionRunbook.md`.
 
 ### Phase S5: current band projection compact layout
 
