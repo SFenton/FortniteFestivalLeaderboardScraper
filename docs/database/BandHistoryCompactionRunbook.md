@@ -166,7 +166,7 @@ metadata-only.
 | Compact replacement | 52,134,436,864 database bytes |
 | Net database reduction from phase start | 102,101,475,328 bytes |
 | Immediate filesystem gain from source drop | 154,236,563,456 bytes |
-| Terminal free space | 276,272,840,704 bytes |
+| Terminal sampled free space | 276,272,738,304 bytes |
 
 The filesystem gain from the phase start is larger than the net relation
 reduction because retained WAL also fell from 23,890,755,584 to
