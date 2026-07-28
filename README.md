@@ -88,10 +88,17 @@ docker compose run --rm --no-deps --entrypoint dotnet fstservice \
 ```
 
 The command defaults to executing player and band detection and safely retries
-an interrupted pending publication. `--notification-dry-run` previews without
-writing, `--notification-baseline-only` updates state without events, and
+an interrupted pending publication using the exact projection scope plan
+stored with that publication. It never silently expands recovery to every
+current scope. `--notification-dry-run` previews without writing,
+`--notification-baseline-only` updates state without events, and
 `--notification-skip-projection-refresh` is only for an operator who has
-separately proved the published solo projection is already current.
+separately proved the persisted plan is unnecessary.
+
+The worker holds before another scrape while the published scrape's
+notification marker is incomplete and retries recovery once per minute. The
+publication transaction independently refuses to replace an incomplete marker,
+so a later scrape cannot silently discard pending notification work.
 
 # How to run the app
 

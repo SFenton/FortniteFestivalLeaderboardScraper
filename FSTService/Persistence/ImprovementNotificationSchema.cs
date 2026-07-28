@@ -74,6 +74,61 @@ public static class ImprovementNotificationSchema
             ADD COLUMN IF NOT EXISTS improvement_notifications_completed_at TIMESTAMPTZ;
         ALTER TABLE scrape_publication_state
             ADD COLUMN IF NOT EXISTS improvement_notifications_error TEXT;
+        ALTER TABLE scrape_publication_state
+            ADD COLUMN IF NOT EXISTS improvement_notifications_projection_scopes JSONB NOT NULL DEFAULT '[]'::jsonb;
+        ALTER TABLE scrape_publication_state
+            ADD COLUMN IF NOT EXISTS improvement_notifications_projection_ready BOOLEAN NOT NULL DEFAULT false;
+        ALTER TABLE scrape_publication_state
+            ADD COLUMN IF NOT EXISTS improvement_notifications_projection_scrape_id INTEGER REFERENCES scrape_log(id);
+
+        UPDATE scrape_publication_state
+        SET improvement_notifications_projection_scopes = '[]'::jsonb,
+            improvement_notifications_projection_ready = true,
+            improvement_notifications_projection_scrape_id = published_scrape_id
+        WHERE improvement_notifications_status = 'completed'
+          AND improvement_notifications_scrape_id = published_scrape_id
+          AND (
+              NOT improvement_notifications_projection_ready
+              OR improvement_notifications_projection_scrape_id IS DISTINCT FROM published_scrape_id
+          );
+
+        UPDATE scrape_publication_state
+        SET improvement_notifications_scrape_id = NULL,
+            improvement_notifications_projection_scopes = '[]'::jsonb,
+            improvement_notifications_projection_ready = false,
+            improvement_notifications_projection_scrape_id = NULL
+        WHERE improvement_notifications_status = 'disabled';
+
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conrelid = 'scrape_publication_state'::regclass
+                  AND conname = 'ck_scrape_publication_notification_plan'
+            ) THEN
+                ALTER TABLE scrape_publication_state
+                ADD CONSTRAINT ck_scrape_publication_notification_plan
+                CHECK (
+                    improvement_notifications_status IS NULL
+                    OR (
+                        improvement_notifications_status = 'disabled'
+                        AND improvement_notifications_scrape_id IS NULL
+                        AND NOT improvement_notifications_projection_ready
+                        AND improvement_notifications_projection_scrape_id IS NULL
+                    )
+                    OR (
+                        improvement_notifications_status IN ('pending', 'running', 'failed', 'completed')
+                        AND published_scrape_id IS NOT NULL
+                        AND improvement_notifications_scrape_id IS NOT NULL
+                        AND improvement_notifications_projection_scrape_id IS NOT NULL
+                        AND improvement_notifications_scrape_id = published_scrape_id
+                        AND improvement_notifications_projection_ready
+                        AND improvement_notifications_projection_scrape_id = published_scrape_id
+                    )
+                ) NOT VALID;
+            END IF;
+        END $$;
 
         CREATE TABLE IF NOT EXISTS player_improvement_state (
             account_id       TEXT        NOT NULL,

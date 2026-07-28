@@ -54,6 +54,7 @@ public sealed class ScraperWorker : BackgroundService
 
     private static readonly TimeSpan WebRegistrationStartupProtection = TimeSpan.FromHours(4);
     private static readonly TimeSpan BestEffortCleanupTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan NotificationRecoveryRetryDelay = TimeSpan.FromMinutes(1);
 
     public ScraperWorker(
         TokenManager tokenManager,
@@ -175,31 +176,6 @@ public sealed class ScraperWorker : BackgroundService
             PrimeSongsCache(); // Rebuild with population tiers
         }
 
-        if (!opts.ApiOnly)
-        {
-            try
-            {
-                _workerStatus?.BeginOperation(
-                    "notifications.recovery",
-                    "Recovering pending improvement notifications",
-                    phase: "StartupRecovery");
-                await _postScrapeOrchestrator.RecoverPendingImprovementNotificationsOnStartupAsync(stoppingToken);
-                _workerStatus?.CompleteOperation("notifications.recovery");
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                _workerStatus?.CompleteOperation("notifications.recovery", "deferred");
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _workerStatus?.FailOperation("notifications.recovery", ex);
-                _log.LogWarning(
-                    ex,
-                    "Pending improvement notification recovery failed during startup. The published scrape remains available and recovery will retry.");
-            }
-        }
-
         // --api-only mode: skip scrape work. Song catalog freshness is owned by
         // SongCatalogRefreshWorker, which is registered directly by Program.cs.
         if (opts.ApiOnly)
@@ -223,6 +199,8 @@ public sealed class ScraperWorker : BackgroundService
         _log.LogInformation("ScraperWorker starting. Interval={Interval}, DOP={Dop}",
             opts.ScrapeInterval, opts.DegreeOfParallelism);
         _workerStatus?.PublishHeartbeat("running", "Worker ready");
+
+        await EnsureImprovementNotificationsCompleteBeforeNextScrapeAsync(stoppingToken);
 
         // Ensure we have a valid auth session before entering the loop
         _workerStatus?.BeginOperation("worker.authentication", "Checking Epic authentication", phase: "Starting");
@@ -290,6 +268,7 @@ public sealed class ScraperWorker : BackgroundService
         while (!stoppingToken.IsCancellationRequested)
         {
             await RunScrapePassAsync(_festivalService, opts, stoppingToken);
+            await EnsureImprovementNotificationsCompleteBeforeNextScrapeAsync(stoppingToken);
             lastScrapeEndUtc = DateTime.UtcNow;
 
             // Phase-selective flags only affect the first (launch) pass.
@@ -321,6 +300,39 @@ public sealed class ScraperWorker : BackgroundService
         _log.LogInformation("ScraperWorker stopping.");
         _workerStatus?.MarkOffline("ScraperWorker stopping");
 
+    }
+
+    private async Task EnsureImprovementNotificationsCompleteBeforeNextScrapeAsync(
+        CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                _workerStatus?.BeginOperation(
+                    "notifications.recovery",
+                    "Recovering pending improvement notifications before the next scrape",
+                    phase: "PreScrapeGate");
+                await _postScrapeOrchestrator.RecoverPendingImprovementNotificationsOnStartupAsync(
+                    stoppingToken);
+                _workerStatus?.CompleteOperation("notifications.recovery");
+                return;
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                _workerStatus?.CompleteOperation("notifications.recovery", "deferred");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _workerStatus?.FailOperation("notifications.recovery", ex);
+                _log.LogError(
+                    ex,
+                    "Pending improvement notification recovery failed. The next scrape is held and recovery will retry in {RetryDelay}.",
+                    NotificationRecoveryRetryDelay);
+                await Task.Delay(NotificationRecoveryRetryDelay, stoppingToken);
+            }
+        }
     }
 
     internal static void ValidateResumeScrape(
@@ -771,6 +783,25 @@ public sealed class ScraperWorker : BackgroundService
                         _workerStatus?.UpdateOperation(
                             "scrape.publication",
                             subOperation: "committing_publication");
+                        var queueImprovementNotifications =
+                            _postScrapeOrchestrator.ShouldQueueImprovementNotifications(
+                                ctx,
+                                postScrapePhases);
+                        IReadOnlyCollection<SoloCurrentProjectionScopeKey>?
+                            improvementNotificationProjectionScopes = null;
+                        if (queueImprovementNotifications)
+                        {
+                            _workerStatus?.UpdateOperation(
+                                "scrape.publication",
+                                subOperation: "preparing_notification_projection_plan");
+                            improvementNotificationProjectionScopes =
+                                await _postScrapeOrchestrator
+                                    .PrepareImprovementNotificationProjectionScopesAsync(
+                                        ctx,
+                                        postScrapePhases,
+                                        ct);
+                        }
+
                         _persistence.Meta.CompleteScrapeRun(
                             result.ScrapeId,
                             result.SongsScraped,
@@ -781,8 +812,9 @@ public sealed class ScraperWorker : BackgroundService
                         _persistence.Meta.PublishScrapeRun(
                             result.ScrapeId,
                             expectedPublishedScopeCount: expectedPublishedScopeCount,
-                            queueImprovementNotifications:
-                                _postScrapeOrchestrator.ShouldQueueImprovementNotifications(ctx, postScrapePhases));
+                            queueImprovementNotifications: queueImprovementNotifications,
+                            improvementNotificationProjectionScopes:
+                                improvementNotificationProjectionScopes);
                         publishedScrapeId = result.ScrapeId;
                         publishedNewState = true;
                         passStatus = "completed";

@@ -22,7 +22,7 @@ namespace FSTService.Tests.Unit;
 public abstract class ScraperWorkerTestBase : IDisposable
 {
     protected readonly string _tempDir;
-    private readonly InMemoryMetaDatabase _metaFixture = new();
+    protected readonly InMemoryMetaDatabase _metaFixture = new();
     protected readonly MetaDatabase _metaDb;
     protected readonly GlobalLeaderboardPersistence _persistence;
 
@@ -176,6 +176,26 @@ public abstract class ScraperWorkerTestBase : IDisposable
         var bandPersistence = new BandLeaderboardPersistence(
             _metaFixture.DataSource,
             Substitute.For<ILogger<BandLeaderboardPersistence>>());
+        var improvementNotificationOptions = Options.Create(
+            new ImprovementNotificationOptions
+            {
+                Enabled = true,
+                IncludePlayers = false,
+                IncludeBands = false,
+                IncludeSongEvents = false,
+                IncludeRankings = false,
+                RefreshSoloProjection = false,
+            });
+        var improvementNotifications = new ImprovementNotificationService(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<ImprovementNotificationService>>());
+        var improvementNotificationRecovery = new ImprovementNotificationRecoveryService(
+            improvementNotifications,
+            new SoloCurrentProjectionBuilder(
+                _metaFixture.DataSource,
+                Substitute.For<ILogger<SoloCurrentProjectionBuilder>>()),
+            improvementNotificationOptions,
+            Substitute.For<ILogger<ImprovementNotificationRecoveryService>>());
 
         var postScrapeOrchestrator = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
@@ -194,7 +214,10 @@ public abstract class ScraperWorkerTestBase : IDisposable
             bandPersistence,
             options,
             Substitute.For<ILogger<PostScrapeOrchestrator>>(),
-            null);
+            null,
+            improvementNotifications: improvementNotifications,
+            improvementNotificationOptions: improvementNotificationOptions,
+            improvementNotificationRecovery: improvementNotificationRecovery);
 
         var resultProcessor = new BatchResultProcessor(_persistence, Substitute.For<ILogger<BatchResultProcessor>>());
         var userSyncTracker = new UserSyncProgressTracker(

@@ -670,12 +670,6 @@ public sealed class PostScrapeOrchestrator
             return;
         }
 
-        var scopes = await BuildSoloProjectionScopesForNotificationsAsync(
-            ctx,
-            new SongProcessingMachine.MachineResult(),
-            _improvementNotificationOptions.Value,
-            ct);
-
         await RunPhaseAsync(
             ctx,
             "ImprovementNotifications",
@@ -686,7 +680,7 @@ public sealed class PostScrapeOrchestrator
                     execute: true,
                     baselineOnly: false,
                     refreshSoloProjection: true,
-                    projectionScopes: scopes,
+                    projectionScopes: null,
                     force: false,
                     source: "post-scrape",
                     ct);
@@ -701,26 +695,102 @@ public sealed class PostScrapeOrchestrator
         && ctx.RankingsComputedSuccessfully
         && ShouldRunImprovementNotifications(ctx, resolvedPhases);
 
+    public async Task<IReadOnlyCollection<SoloCurrentProjectionScopeKey>>
+        PrepareImprovementNotificationProjectionScopesAsync(
+            ScrapePassContext ctx,
+            ScrapePhase resolvedPhases,
+            CancellationToken ct)
+    {
+        if (!ShouldQueueImprovementNotifications(ctx, resolvedPhases))
+            return [];
+
+        return await BuildSoloProjectionScopesForNotificationsAsync(
+            ctx,
+            new SongProcessingMachine.MachineResult(),
+            _improvementNotificationOptions.Value,
+            ct);
+    }
+
     public async Task RecoverPendingImprovementNotificationsOnStartupAsync(CancellationToken ct)
     {
         var options = _improvementNotificationOptions.Value;
-        if (_improvementNotificationRecovery is null || _improvementNotifications is null || !options.Enabled)
+        if (_improvementNotifications is null)
             return;
 
         var status = _improvementNotifications.GetPublicationStatus();
-        if (!status.PublishedScrapeId.HasValue
-            || status.PublicReadsFrozen
-            || status.IsCompleteForPublishedScrape(options.IncludePlayers, options.IncludeBands))
+        if (!status.PublishedScrapeId.HasValue)
+            return;
+
+        var publishedScrapeId = status.PublishedScrapeId.Value;
+        var markerMatchesPublished = status.MarkerScrapeId == publishedScrapeId;
+        if (status.PublicReadsFrozen)
+        {
+            throw new InvalidOperationException(
+                $"Improvement notification recovery for published scrape {publishedScrapeId} is blocked while public reads are frozen.");
+        }
+        if (status.MarkerScrapeId is null
+            && (status.MarkerStatus is null or "disabled"))
         {
             return;
+        }
+        if (markerMatchesPublished && status.MarkerStatus == "disabled")
+            return;
+        if (status.MarkerScrapeId.HasValue && !markerMatchesPublished)
+        {
+            throw new InvalidOperationException(
+                $"Improvement notification marker {status.MarkerScrapeId} does not match published scrape {publishedScrapeId}.");
+        }
+        if (status.IsCompleteForPublishedScrape(
+                options.IncludePlayers,
+                options.IncludeBands,
+                options.IncludeSongEvents,
+                options.IncludeRankings))
+        {
+            if (!markerMatchesPublished || status.MarkerStatus != "completed")
+            {
+                using var recoveryLock =
+                    _improvementNotifications.AcquireRecoveryLock(publishedScrapeId);
+                status = _improvementNotifications.GetPublicationStatus();
+                markerMatchesPublished = status.MarkerScrapeId == publishedScrapeId;
+                if (status.PublicReadsFrozen)
+                {
+                    throw new InvalidOperationException(
+                        $"Improvement notification completion repair for published scrape {publishedScrapeId} " +
+                        "is blocked while public reads are frozen.");
+                }
+                if (!markerMatchesPublished)
+                {
+                    throw new InvalidOperationException(
+                        $"Improvement notification marker {status.MarkerScrapeId?.ToString() ?? "null"} " +
+                        $"does not match published scrape {publishedScrapeId}.");
+                }
+                if (!status.IsCompleteForPublishedScrape(
+                        options.IncludePlayers,
+                        options.IncludeBands,
+                        options.IncludeSongEvents,
+                        options.IncludeRankings))
+                {
+                    throw new InvalidOperationException(
+                        $"Improvement notification completion state changed while repairing published scrape {publishedScrapeId}.");
+                }
+                if (status.MarkerStatus != "completed")
+                    _improvementNotifications.MarkPublicationCompleted(publishedScrapeId);
+            }
+            return;
+        }
+
+        if (_improvementNotificationRecovery is null)
+        {
+            throw new InvalidOperationException(
+                "Improvement notification recovery is required before the next scrape, but the recovery service is unavailable.");
         }
 
         _log.LogWarning(
             "Published scrape {ScrapeId} has incomplete improvement notification detection; running startup recovery before the next scrape.",
-            status.PublishedScrapeId);
+            publishedScrapeId);
 
         await _improvementNotificationRecovery.RunPublishedScrapeAsync(
-            expectedPublishedScrapeId: status.PublishedScrapeId,
+            expectedPublishedScrapeId: publishedScrapeId,
             execute: true,
             baselineOnly: false,
             refreshSoloProjection: true,
@@ -2000,9 +2070,20 @@ public sealed class PostScrapeOrchestrator
     {
         var scopes = new HashSet<SoloCurrentProjectionScopeKey>();
 
-        if (ctx.SoloCurrentProjectionRefreshedForPublication
-            && !ctx.NotificationProjectionRequiresFullRefresh)
+        if (ctx.SoloCurrentProjectionRefreshedForPublication)
         {
+            if (ctx.NotificationProjectionRequiresFullRefresh)
+            {
+                if (options.RefreshAllSoloScopesWhenNoImpactedScopes
+                    && _soloCurrentProjectionBuilder is not null)
+                {
+                    return await _soloCurrentProjectionBuilder.LoadCurrentScopesAsync(ct);
+                }
+
+                throw new InvalidOperationException(
+                    "Improvement notification projection requires a full refresh, but unbounded scope fallback is disabled.");
+            }
+
             foreach (var scope in ctx.NotificationProjectionScopes)
                 scopes.Add(scope);
             foreach (var scope in registeredUserRefreshResult.UpdatedScopes)
@@ -2010,33 +2091,14 @@ public sealed class PostScrapeOrchestrator
             return scopes.ToArray();
         }
 
-        foreach (var request in ctx.ScrapeRequests)
+        if (options.RefreshAllSoloScopesWhenNoImpactedScopes
+            && _soloCurrentProjectionBuilder is not null)
         {
-            if (string.IsNullOrWhiteSpace(request.SongId))
-                continue;
-
-            foreach (var instrument in request.Instruments)
-            {
-                if (string.IsNullOrWhiteSpace(instrument) || ScrapeOrchestrator.IsBandInstrument(instrument))
-                    continue;
-
-                scopes.Add(new SoloCurrentProjectionScopeKey(request.SongId, instrument));
-            }
-        }
-
-        foreach (var entry in ctx.Aggregates.SeenRegisteredEntries)
-        {
-            if (!string.IsNullOrWhiteSpace(entry.SongId) && !string.IsNullOrWhiteSpace(entry.Instrument))
-                scopes.Add(new SoloCurrentProjectionScopeKey(entry.SongId, entry.Instrument));
-        }
-
-        foreach (var scope in registeredUserRefreshResult.UpdatedScopes)
-            scopes.Add(scope);
-
-        if (scopes.Count == 0 && options.RefreshAllSoloScopesWhenNoImpactedScopes && _soloCurrentProjectionBuilder is not null)
             return await _soloCurrentProjectionBuilder.LoadCurrentScopesAsync(ct);
+        }
 
-        return scopes.ToArray();
+        throw new InvalidOperationException(
+            "Improvement notification projection was not refreshed for publication, and unbounded scope fallback is disabled.");
     }
 
     /// <summary>

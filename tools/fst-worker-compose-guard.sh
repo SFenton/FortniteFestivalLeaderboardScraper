@@ -7,6 +7,8 @@ PIA_OVERLAY="${PIA_OVERLAY:-docker-compose.pia-30.yml}"
 RUNONCE_OVERLAY="${RUNONCE_OVERLAY:-docker-compose.runonce.yml}"
 RUNTIME_PROBES=true
 ACTION="check"
+THROUGHPUT_PROFILE="baseline-up-to-800-32-4"
+DATA_PROFILE="none"
 
 usage() {
     cat <<'EOF'
@@ -15,13 +17,23 @@ Usage: tools/fst-worker-compose-guard.sh [options]
 Validates the canonical production PIA overlay before any fstworker recreate.
 The resolved compose config must declare the expected effective proxy arrays,
 all 30 canonical PIA services, aligned provider/control/container metadata,
-healthy unique egresses, and no more than 32 Epic requests/s per effective exit.
+healthy unique egresses, and the selected fail-closed throughput profile.
 
 Options:
   --check                  Validate only (default)
+  --check-runonce          Validate the exact merged run-once config without starting
   --recreate               Validate, then recreate and start fstworker
   --recreate-runonce       Validate, then recreate fstworker with run-once overlay
   --config-only            Skip live DNS/control/egress probes
+  --throughput-profile P   Select a named throughput profile:
+                             baseline-up-to-800-32-4 (default)
+                             candidate-800-32-4
+                             candidate-1600-64-8
+                             candidate-2880-128-16
+                           Candidate profiles require --recreate-runonce for startup.
+  --data-profile P         Select the paired data profile:
+                             notification-db-only
+                           Every run-once config requires a data profile.
   --compose-dir DIR        Production compose directory
   -h, --help               Show help
 EOF
@@ -30,17 +42,72 @@ EOF
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --check) ACTION="check"; shift ;;
+        --check-runonce) ACTION="check-runonce"; shift ;;
         --recreate) ACTION="recreate"; shift ;;
         --recreate-runonce) ACTION="recreate-runonce"; shift ;;
         --config-only) RUNTIME_PROBES=false; shift ;;
+        --throughput-profile) THROUGHPUT_PROFILE="$2"; shift 2 ;;
+        --data-profile) DATA_PROFILE="$2"; shift 2 ;;
         --compose-dir) COMPOSE_DIR="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) printf 'ERROR: unknown option: %s\n' "$1" >&2; usage >&2; exit 64 ;;
     esac
 done
 
-if ! $RUNTIME_PROBES && [[ "$ACTION" != "check" ]]; then
+if ! $RUNTIME_PROBES && [[ "$ACTION" != "check" && "$ACTION" != "check-runonce" ]]; then
     printf 'ERROR: --config-only cannot be used with a worker recreate action\n' >&2
+    exit 64
+fi
+
+case "$THROUGHPUT_PROFILE" in
+    baseline-up-to-800-32-4)
+        PROFILE_MAX_AGGREGATE_RPS=800
+        PROFILE_MAX_PER_ENDPOINT_RPS=32
+        PROFILE_MAX_PER_ENDPOINT_CONCURRENCY=4
+        PROFILE_EXACT=false
+        ;;
+    candidate-800-32-4)
+        PROFILE_MAX_AGGREGATE_RPS=800
+        PROFILE_MAX_PER_ENDPOINT_RPS=32
+        PROFILE_MAX_PER_ENDPOINT_CONCURRENCY=4
+        PROFILE_EXACT=true
+        ;;
+    candidate-1600-64-8)
+        PROFILE_MAX_AGGREGATE_RPS=1600
+        PROFILE_MAX_PER_ENDPOINT_RPS=64
+        PROFILE_MAX_PER_ENDPOINT_CONCURRENCY=8
+        PROFILE_EXACT=true
+        ;;
+    candidate-2880-128-16)
+        PROFILE_MAX_AGGREGATE_RPS=2880
+        PROFILE_MAX_PER_ENDPOINT_RPS=128
+        PROFILE_MAX_PER_ENDPOINT_CONCURRENCY=16
+        PROFILE_EXACT=true
+        ;;
+    *)
+        printf 'ERROR: unknown throughput profile: %s\n' "$THROUGHPUT_PROFILE" >&2
+        usage >&2
+        exit 64
+        ;;
+esac
+
+case "$DATA_PROFILE" in
+    none|notification-db-only)
+        ;;
+    *)
+        printf 'ERROR: unknown data profile: %s\n' "$DATA_PROFILE" >&2
+        usage >&2
+        exit 64
+        ;;
+esac
+
+if [[ "$ACTION" =~ ^(check-runonce|recreate-runonce)$ && "$DATA_PROFILE" == "none" ]]; then
+    printf 'ERROR: run-once validation requires --data-profile\n' >&2
+    exit 64
+fi
+
+if [[ "$THROUGHPUT_PROFILE" == candidate-* && "$ACTION" == "recreate" ]]; then
+    printf 'ERROR: candidate throughput profiles require --recreate-runonce\n' >&2
     exit 64
 fi
 
@@ -66,12 +133,12 @@ for file in "$base_file" "$pia_overlay"; do
         exit 1
     fi
 done
-if [[ "$ACTION" == "recreate-runonce" && ! -f "$runonce_overlay" ]]; then
+if [[ "$ACTION" =~ ^(check-runonce|recreate-runonce)$ && ! -f "$runonce_overlay" ]]; then
     printf 'ERROR: run-once overlay not found: %s\n' "$runonce_overlay" >&2
     exit 1
 fi
 
-if [[ "$ACTION" == "recreate-runonce" ]]; then
+if [[ "$ACTION" =~ ^(check-runonce|recreate-runonce)$ ]]; then
     runonce_restart="$(
         cd "$compose_dir"
         docker compose -f "$base_file" -f "$pia_overlay" -f "$runonce_overlay" \
@@ -85,10 +152,20 @@ if [[ "$ACTION" == "recreate-runonce" ]]; then
     fi
 fi
 
-compose_json="$(
-    cd "$compose_dir"
-    docker compose -f "$base_file" -f "$pia_overlay" config --format json
-)"
+if [[ "$ACTION" =~ ^(check-runonce|recreate-runonce)$ ]]; then
+    compose_json="$(
+        cd "$compose_dir"
+        docker compose -f "$base_file" -f "$pia_overlay" -f "$runonce_overlay" \
+            config --format json
+    )"
+    REQUIRE_RUN_ONCE=true
+else
+    compose_json="$(
+        cd "$compose_dir"
+        docker compose -f "$base_file" -f "$pia_overlay" config --format json
+    )"
+    REQUIRE_RUN_ONCE=false
+fi
 
 validation="$(
     python3 -c '
@@ -96,6 +173,14 @@ import json
 import re
 import sys
 from urllib.parse import urlparse
+
+profile_name = sys.argv[1]
+profile_max_aggregate_rps = int(sys.argv[2])
+profile_max_per_endpoint_rps = int(sys.argv[3])
+profile_max_per_endpoint_concurrency = int(sys.argv[4])
+profile_exact = sys.argv[5].casefold() == "true"
+require_run_once = sys.argv[6].casefold() == "true"
+data_profile = sys.argv[7]
 
 config = json.load(sys.stdin)
 services = config.get("services") or {}
@@ -116,6 +201,23 @@ def boolean(name):
     if value not in {"true", "false"}:
         raise SystemExit(f"ERROR: {name} must be true or false")
     return value == "true"
+
+def nonnegative_integer(name):
+    try:
+        value = int(str(environment.get(name, "")))
+    except ValueError:
+        raise SystemExit(f"ERROR: {name} must be an integer")
+    if value < 0:
+        raise SystemExit(f"ERROR: {name} must be zero or greater")
+    return value
+
+def exact_value(name, expected_value):
+    actual = str(environment.get(name, "")).strip()
+    if actual != expected_value:
+        display_actual = actual if actual else "<empty>"
+        raise SystemExit(
+            f"ERROR: data profile {data_profile} requires "
+            f"{name}={expected_value}, found {display_actual}")
 
 def indexed(prefix):
     values = []
@@ -139,7 +241,48 @@ per_endpoint_rps = integer("Scraper__ProxyMaxRequestsPerSecondPerEndpoint")
 per_endpoint_concurrency = integer("Scraper__ProxyMaxConcurrentRequestsPerEndpoint")
 disable_connection_reuse = boolean("Scraper__ProxyDisableConnectionReuse")
 use_curl_transport = boolean("Scraper__ProxyUseCurlTransport")
+run_once = (
+    boolean("Scraper__RunOnce")
+    if "Scraper__RunOnce" in environment
+    else False
+)
 curl_temp_directory = str(environment.get("Scraper__ProxyCurlTempDirectory", "")).strip()
+if require_run_once and not run_once:
+    raise SystemExit("ERROR: merged run-once config must set Scraper__RunOnce=true")
+if data_profile == "notification-db-only":
+    exact_value("Scraper__EnabledPhases", "None")
+    if not boolean("ImprovementNotifications__Enabled"):
+        raise SystemExit(
+            "ERROR: data profile notification-db-only requires "
+            "ImprovementNotifications__Enabled=true")
+    exact_value("ImprovementNotifications__Scope", "registered")
+    for name in (
+        "ImprovementNotifications__IncludePlayers",
+        "ImprovementNotifications__IncludeBands",
+        "ImprovementNotifications__IncludeSongEvents",
+        "ImprovementNotifications__IncludeRankings",
+        "ImprovementNotifications__RefreshSoloProjection",
+    ):
+        if not boolean(name):
+            raise SystemExit(
+                f"ERROR: data profile notification-db-only requires {name}=true")
+    exact_value(
+        "ImprovementNotifications__RefreshAllSoloScopesWhenNoImpactedScopes",
+        "false")
+    if boolean("ImprovementNotifications__FailScrapeOnError"):
+        raise SystemExit(
+            "ERROR: data profile notification-db-only requires "
+            "ImprovementNotifications__FailScrapeOnError=false")
+    exact_value("Scraper__RegisteredUserRefreshTimeout", "00:10:00")
+    exact_value("Scraper__RegisteredPlayerBandDiscoveryTimeout", "00:05:00")
+    exact_value("Scraper__RegisteredBandTargetedProcessingTimeout", "00:05:00")
+    for name in (
+        "Scraper__RegisteredPlayerBandDiscoveryMaxLookupsPerPass",
+        "Scraper__RegisteredBandProcessingMaxLookupsPerPass",
+    ):
+        if nonnegative_integer(name) != 80:
+            raise SystemExit(
+                f"ERROR: data profile notification-db-only requires {name}=80")
 if canonical != 30:
     raise SystemExit(f"ERROR: canonical PIA service count must be 30, found {canonical}")
 if expected > canonical:
@@ -191,16 +334,28 @@ if unexpected_pia_dependencies:
         "ERROR: fstworker still depends on quarantined PIA services: "
         + ",".join(sorted(unexpected_pia_dependencies)))
 
-if max_rps > expected * 32:
+if max_rps > profile_max_aggregate_rps:
     raise SystemExit(
-        f"ERROR: aggregate Epic rate {max_rps} exceeds 32 RPS across "
-        f"{expected} effective exits")
-if per_endpoint_rps > 32:
+        f"ERROR: aggregate Epic rate {max_rps} exceeds profile "
+        f"{profile_name} ceiling {profile_max_aggregate_rps}")
+if per_endpoint_rps > profile_max_per_endpoint_rps:
     raise SystemExit(
-        f"ERROR: per-endpoint Epic rate {per_endpoint_rps} exceeds the 32 RPS ceiling")
-if per_endpoint_concurrency > 4:
+        f"ERROR: per-endpoint Epic rate {per_endpoint_rps} exceeds profile "
+        f"{profile_name} ceiling {profile_max_per_endpoint_rps}")
+if per_endpoint_concurrency > profile_max_per_endpoint_concurrency:
     raise SystemExit(
-        f"ERROR: per-endpoint concurrency {per_endpoint_concurrency} exceeds the qualified ceiling of 4")
+        f"ERROR: per-endpoint concurrency {per_endpoint_concurrency} exceeds profile "
+        f"{profile_name} ceiling {profile_max_per_endpoint_concurrency}")
+if profile_exact and (
+    max_rps != profile_max_aggregate_rps
+    or per_endpoint_rps != profile_max_per_endpoint_rps
+    or per_endpoint_concurrency != profile_max_per_endpoint_concurrency
+):
+    raise SystemExit(
+        f"ERROR: candidate profile {profile_name} requires exact "
+        f"{profile_max_aggregate_rps}/{profile_max_per_endpoint_rps}/"
+        f"{profile_max_per_endpoint_concurrency}, found "
+        f"{max_rps}/{per_endpoint_rps}/{per_endpoint_concurrency}")
 if not disable_connection_reuse:
     raise SystemExit("ERROR: canonical PIA worker must disable proxy connection reuse")
 if not use_curl_transport:
@@ -209,14 +364,21 @@ if curl_temp_directory != "/app/data/curl-transport":
     raise SystemExit(
         "ERROR: curl proxy scratch must be /app/data/curl-transport on the FST data mount")
 
-print(f"SUMMARY|{expected}|{canonical}|{max_rps}|{per_endpoint_rps}|{per_endpoint_concurrency}|true|true")
+print(
+    f"SUMMARY|{profile_name}|{data_profile}|{expected}|{canonical}|{max_rps}|"
+    f"{per_endpoint_rps}|{per_endpoint_concurrency}|true|true|"
+    f"{str(run_once).lower()}")
 for container in containers:
     print(f"NODE|{container}")
-' <<< "$compose_json"
+' "$THROUGHPUT_PROFILE" "$PROFILE_MAX_AGGREGATE_RPS" \
+        "$PROFILE_MAX_PER_ENDPOINT_RPS" \
+        "$PROFILE_MAX_PER_ENDPOINT_CONCURRENCY" "$PROFILE_EXACT" \
+        "$REQUIRE_RUN_ONCE" "$DATA_PROFILE" \
+        <<< "$compose_json"
 )"
 
 summary="$(head -n 1 <<< "$validation")"
-IFS='|' read -r _ expected_count canonical_count max_rps per_endpoint_rps per_endpoint_concurrency connection_reuse_disabled curl_transport_enabled <<< "$summary"
+IFS='|' read -r _ throughput_profile data_profile expected_count canonical_count max_rps per_endpoint_rps per_endpoint_concurrency connection_reuse_disabled curl_transport_enabled run_once <<< "$summary"
 mapfile -t effective_nodes < <(sed -n 's/^NODE|//p' <<< "$validation")
 
 if [[ "${#effective_nodes[@]}" -ne "$expected_count" ]]; then
@@ -224,8 +386,8 @@ if [[ "${#effective_nodes[@]}" -ne "$expected_count" ]]; then
     exit 1
 fi
 
-printf 'compose_guard config=ok overlay=%s effective=%s canonical=%s max_rps=%s per_endpoint_rps=%s per_endpoint_concurrency=%s connection_reuse=disabled transport=curl\n' \
-    "$(basename "$pia_overlay")" "$expected_count" "$canonical_count" "$max_rps" "$per_endpoint_rps" "$per_endpoint_concurrency"
+printf 'compose_guard config=ok overlay=%s throughput_profile=%s data_profile=%s effective=%s canonical=%s max_rps=%s per_endpoint_rps=%s per_endpoint_concurrency=%s connection_reuse=disabled transport=curl run_once=%s\n' \
+    "$(basename "$pia_overlay")" "$throughput_profile" "$data_profile" "$expected_count" "$canonical_count" "$max_rps" "$per_endpoint_rps" "$per_endpoint_concurrency" "$run_once"
 
 if $RUNTIME_PROBES; then
     if ! docker inspect fstservice >/dev/null 2>&1; then
@@ -323,7 +485,7 @@ print(hashlib.sha256(value.encode()).hexdigest())
 fi
 
 case "$ACTION" in
-    check)
+    check|check-runonce)
         ;;
     recreate)
         cd "$compose_dir"

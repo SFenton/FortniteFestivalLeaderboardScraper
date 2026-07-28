@@ -218,7 +218,9 @@ public class PostScrapeOrchestratorTests : IDisposable
         _metaDb.PublishScrapeRun(
             scrapeId,
             promoteCachedResponses: false,
-            queueImprovementNotifications: queueImprovementNotifications);
+            queueImprovementNotifications: queueImprovementNotifications,
+            improvementNotificationProjectionScopes:
+                queueImprovementNotifications ? [] : null);
         return scrapeId;
     }
 
@@ -875,6 +877,116 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         Assert.Contains(_log.Entries, e => e.Message.Contains("[ImprovementNotifications]", StringComparison.Ordinal));
         Assert.DoesNotContain(_log.Entries, e => e.Message.Contains("solo scrape coverage was below threshold", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RecoverPendingImprovementNotificationsOnStartupAsync_CompletesTerminalMarker()
+    {
+        var sut = CreateOrchestratorWithImprovementNotifications();
+        var publishedScrapeId = PublishCompletedScrape();
+
+        await sut.RecoverPendingImprovementNotificationsOnStartupAsync(CancellationToken.None);
+
+        var notifications = new ImprovementNotificationService(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<ImprovementNotificationService>>());
+        var status = notifications.GetPublicationStatus();
+        Assert.Equal(publishedScrapeId, status.MarkerScrapeId);
+        Assert.Equal("completed", status.MarkerStatus);
+    }
+
+    [Fact]
+    public async Task RecoverPendingImprovementNotificationsOnStartupAsync_PreservesDisabledMarker()
+    {
+        var sut = CreateOrchestratorWithImprovementNotifications();
+        var publishedScrapeId = PublishCompletedScrape();
+        var notifications = new ImprovementNotificationService(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<ImprovementNotificationService>>());
+        notifications.MarkPublicationDisabled(publishedScrapeId, "Disabled for test.");
+
+        await sut.RecoverPendingImprovementNotificationsOnStartupAsync(CancellationToken.None);
+
+        var status = notifications.GetPublicationStatus();
+        Assert.Null(status.MarkerScrapeId);
+        Assert.Equal("disabled", status.MarkerStatus);
+    }
+
+    [Fact]
+    public async Task RecoverPendingImprovementNotificationsOnStartupAsync_RejectsFrozenPublication()
+    {
+        var sut = CreateOrchestratorWithImprovementNotifications();
+        var publishedScrapeId = PublishCompletedScrape();
+        _metaDb.SetPublicReadFreeze(true, publishedScrapeId, "test");
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            sut.RecoverPendingImprovementNotificationsOnStartupAsync(CancellationToken.None));
+
+        Assert.Contains("public reads are frozen", exception.Message);
+    }
+
+    [Fact]
+    public async Task PrepareImprovementNotificationProjectionScopesAsync_RejectsUnboundedFallback()
+    {
+        var sut = CreateOrchestratorWithImprovementNotifications();
+        var aggregates = new GlobalLeaderboardPersistence.PipelineAggregates();
+        aggregates.IncrementSoloLeaderboardsWithData();
+        aggregates.IncrementSongsWithData();
+        var ctx = CreateContext(
+            aggregates: aggregates,
+            scrapeRequests:
+            [
+                new GlobalLeaderboardScraper.SongScrapeRequest
+                {
+                    SongId = "song-notify-plan",
+                    Instruments = ["Solo_Guitar"],
+                    Label = "Notification Plan",
+                },
+            ]);
+        ctx.RankingsComputedSuccessfully = true;
+        ctx.SoloCurrentProjectionRefreshedForPublication = true;
+        ctx.NotificationProjectionRequiresFullRefresh = true;
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            sut.PrepareImprovementNotificationProjectionScopesAsync(
+                ctx,
+                ScrapePhase.SoloScrape | ScrapePhase.SoloRankings,
+                CancellationToken.None));
+
+        Assert.Contains("unbounded scope fallback is disabled", exception.Message);
+    }
+
+    [Fact]
+    public async Task PrepareImprovementNotificationProjectionScopesAsync_ReturnsBoundedScopes()
+    {
+        var sut = CreateOrchestratorWithImprovementNotifications();
+        var aggregates = new GlobalLeaderboardPersistence.PipelineAggregates();
+        aggregates.IncrementSoloLeaderboardsWithData();
+        aggregates.IncrementSongsWithData();
+        var ctx = CreateContext(
+            aggregates: aggregates,
+            scrapeRequests:
+            [
+                new GlobalLeaderboardScraper.SongScrapeRequest
+                {
+                    SongId = "song-notify-plan",
+                    Instruments = ["Solo_Guitar"],
+                    Label = "Notification Plan",
+                },
+            ]);
+        ctx.RankingsComputedSuccessfully = true;
+        ctx.SoloCurrentProjectionRefreshedForPublication = true;
+        ctx.NotificationProjectionScopes.Add(
+            new SoloCurrentProjectionScopeKey("song-notify-plan", "Solo_Guitar"));
+
+        var scopes = await sut.PrepareImprovementNotificationProjectionScopesAsync(
+            ctx,
+            ScrapePhase.SoloScrape | ScrapePhase.SoloRankings,
+            CancellationToken.None);
+
+        Assert.Equal(
+            [new SoloCurrentProjectionScopeKey("song-notify-plan", "Solo_Guitar")],
+            scopes);
     }
 
     [Fact]

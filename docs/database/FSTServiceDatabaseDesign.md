@@ -256,7 +256,7 @@ still serve all history and no runtime rehydration tier exists. Details are in
 | Tables | Class | Writer | Readers | Publication/retention |
 |---|---|---|---|---|
 | `scrape_log` | Durable source | Worker via `MetaDatabase` | Service status, maintenance, evidence tooling | One row per scrape with durable `running`/`completed`/`failed` state; failed rows are never publishable |
-| `scrape_publication_state` | Publication ledger | Worker publish/freeze transaction | Public read resolvers, service status, notifications | Single row; preserve through every restore. Publication atomically queues the published scrape for improvement detection, and interrupted attempts remain pending for startup/operator recovery. |
+| `scrape_publication_state` | Publication ledger | Worker publish/freeze transaction | Public read resolvers, service status, notifications | Single row; preserve through every restore. Publication atomically queues the published scrape and its exact bounded notification projection scope plan. Interrupted attempts reuse that plan, the worker holds before another scrape, and the publication transaction refuses to replace an incomplete marker. |
 | `leaderboard_published_scope_source` | Durable per-scope publication ledger | Worker coverage/build/publish path | Service current-state readers and solo exports behind rollback flag | One validated snapshot or explicit empty source per published `(song_id, instrument, scope_kind)` |
 | `leaderboard_scope_manifests` | Durable candidate-integrity ledger | Solo and band page fetchers through worker persistence | Publication gate, replay/evidence tooling | One row per scrape and expected scope with exact page outcomes, boundaries, deep range, and fingerprints |
 | `scrape_writer_failures` | Durable failure/replay ledger | Solo, band, and online writer drains | Worker status and replay/evidence tooling | Exact failed scopes/pages/rows plus same-drive artifact path; retained with failed scrape |
@@ -274,7 +274,11 @@ complete. `PublishScrapeRun` then validates the expected mapping count, marks
 matching fingerprints published, swaps staged API cache rows, publishes current
 band ranking tables, advances `scrape_publication_state.published_scrape_id`,
 queues the same scrape in the improvement-notification marker when enabled,
-and clears the public-read freeze in one transaction.
+stores the exact bounded projection workset, and clears the public-read freeze
+in one transaction. Before doing so, it
+locks the existing publication row and rejects a newer publication unless the
+current published scrape's notification marker is `completed` or `disabled`
+(or no marker exists on a legacy row).
 
 | Rollout switch | Container | Default | Effect | Rollback |
 |---|---|---:|---|---|
@@ -499,7 +503,10 @@ Notification recovery and registered-phase budget operations are documented in
 `docs/database/ImprovementNotificationRecoveryRunbook.md`. The protected
 `/api/diag/improvement-notifications` endpoint and API-side staleness monitor
 surface pending/failed publication markers, scrape lag, and time lag without
-changing public response contracts.
+changing public response contracts. Recovery reads
+`improvement_notifications_projection_scopes` from the publication ledger and
+fails closed when the plan is absent or not ready; it never substitutes an
+all-current-scope rebuild implicitly.
 
 ### Dirty, shadow, and audit-only surfaces
 

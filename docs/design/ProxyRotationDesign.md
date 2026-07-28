@@ -212,19 +212,47 @@ Production's base worker env carries the expected count, so omitting the PIA
 overlay cannot silently start a direct or partial-pool worker on a guard-aware
 image.
 
-All production worker recreates must use:
+Inspect the held baseline without starting a worker:
 
 ```bash
 cd /home/sfenton/FortniteFestivalLeaderboardScraper
-tools/fst-worker-compose-guard.sh --check
-tools/fst-worker-compose-guard.sh --recreate-runonce
+tools/fst-worker-compose-guard.sh \
+  --throughput-profile baseline-up-to-800-32-4 \
+  --check
 ```
 
 The guard resolves only the canonical PIA overlay, verifies 30 canonical
-services and the configured effective count, enforces aligned metadata and the
-32-RPS-per-exit qualified cap, then proves live DNS, control, HTTP proxy, and unique
-hashed egress before recreation. It never prints public addresses or
-credentials.
+services and the configured effective count, enforces aligned metadata and a
+named fail-closed throughput profile, then proves live DNS, control, HTTP
+proxy, and unique hashed egress before recreation. Candidate profiles require
+exact values and may start only through the run-once path. Every run-once
+config also requires a named data profile. It never prints public addresses
+or credentials.
+
+The rollback image must retain the durable notification marker/scope-plan
+contract and database compatibility constraint. Revert candidate flags and
+network values, not to a pre-contract worker binary.
+
+`fst-worker-dual-lane-runonce.sh` atomically selects the exact network values,
+the `notification-db-only` data profile, `RunOnce=true`, and scrape-1267
+registered-phase budgets. The data profile also pins the full pipeline
+(`EnabledPhases=None`), registered notification scope, player/band song and
+ranking lanes, projection refresh, and bounded-scope-only recovery. Use it for
+both preflight and recreation:
+
+```bash
+tools/fst-worker-dual-lane-runonce.sh \
+  --network-profile candidate-800-32-4 \
+  --check
+tools/fst-worker-dual-lane-runonce.sh \
+  --network-profile candidate-800-32-4 \
+  --recreate
+```
+
+Advance the `--network-profile` sequentially to `candidate-1600-64-8`, then
+`candidate-2880-128-16`. Run only the next qualified profile. Stop at the
+first correctness or effective-throughput failure and restore the last
+accepted profile.
 
 Recovery evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/proxy-recovery-20260713T171754Z`.

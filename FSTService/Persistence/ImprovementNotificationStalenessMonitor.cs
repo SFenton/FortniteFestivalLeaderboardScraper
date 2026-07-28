@@ -41,7 +41,9 @@ public static class ImprovementNotificationStalenessEvaluator
             : TimeSpan.MaxValue;
         var incompletePublishedScrape = !publication.IsCompleteForPublishedScrape(
             options.IncludePlayers,
-            options.IncludeBands);
+            options.IncludeBands,
+            options.IncludeSongEvents,
+            options.IncludeRankings);
         var staleByScrape = options.StaleAfterPublishedScrapes > 0
             && publishedScrapesBehind >= options.StaleAfterPublishedScrapes;
         var staleByAge = options.StaleAfterHours > 0

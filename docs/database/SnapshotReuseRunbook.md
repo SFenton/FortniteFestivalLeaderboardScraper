@@ -220,7 +220,10 @@ post-writer capacity gate can pass on the FST drive.
    direct/PIA JSON parity, the `25/25` compose guard, public health, locks, and
    both start and post-writer capacity gates.
 5. Deploy only the snapshot-reuse flag while preserving all other writer
-   behavior, then use `tools/fst-worker-compose-guard.sh --recreate-runonce`.
+   behavior. Pair it with exactly one qualified network candidate, add an
+   explicit snapshot-reuse data profile to the dual-lane wrapper/guard, and do
+   not start until that named profile validates the exact merged run-once
+   config.
 6. Monitor every 60 seconds through one complete scrape, post-process,
    publication, unfreeze, and parity window. Hold the worker before another
    scrape.

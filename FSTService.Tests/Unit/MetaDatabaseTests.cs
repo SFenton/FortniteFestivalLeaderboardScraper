@@ -93,7 +93,11 @@ public sealed class MetaDatabaseTests : IDisposable
         Db.PublishScrapeRun(
             scrapeId,
             promoteCachedResponses: false,
-            queueImprovementNotifications: true);
+            queueImprovementNotifications: true,
+            improvementNotificationProjectionScopes:
+            [
+                new SoloCurrentProjectionScopeKey("song-1", "Solo_Guitar"),
+            ]);
 
         using var conn = DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -101,7 +105,9 @@ public sealed class MetaDatabaseTests : IDisposable
             SELECT published_scrape_id,
                    improvement_notifications_scrape_id,
                    improvement_notifications_status,
-                   improvement_notifications_attempt_count
+                   improvement_notifications_attempt_count,
+                   improvement_notifications_projection_ready,
+                   improvement_notifications_projection_scopes::text
             FROM scrape_publication_state
             WHERE id = TRUE;
             """;
@@ -111,6 +117,146 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal((int)scrapeId, reader.GetInt32(1));
         Assert.Equal("pending", reader.GetString(2));
         Assert.Equal(0, reader.GetInt32(3));
+        Assert.True(reader.GetBoolean(4));
+        Assert.Contains("\"SongId\": \"song-1\"", reader.GetString(5));
+        Assert.Contains("\"Instrument\": \"Solo_Guitar\"", reader.GetString(5));
+    }
+
+    [Fact]
+    public void PublishScrapeRun_RequiresProjectionPlanWhenNotificationsAreQueued()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            Db.PublishScrapeRun(
+                scrapeId,
+                promoteCachedResponses: false,
+                queueImprovementNotifications: true));
+
+        Assert.Contains("projection scope plan", exception.Message);
+        using var conn = DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT published_scrape_id
+            FROM scrape_publication_state
+            WHERE id = TRUE;
+            """;
+        Assert.True(cmd.ExecuteScalar() is null or DBNull);
+    }
+
+    [Fact]
+    public void PublishScrapeRun_BlocksNextPublicationUntilImprovementNotificationsComplete()
+    {
+        var publishedId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(publishedId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            publishedId,
+            promoteCachedResponses: false,
+            queueImprovementNotifications: true,
+            improvementNotificationProjectionScopes: []);
+
+        var candidateId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(candidateId, 1, 10, 1, 100);
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            Db.PublishScrapeRun(candidateId, promoteCachedResponses: false));
+
+        Assert.Contains("improvement notifications", exception.Message);
+        Assert.Equal(publishedId, Db.GetPublishedScrapeRun()?.Id);
+
+        var notifications = new ImprovementNotificationService(
+            DataSource,
+            Substitute.For<ILogger<ImprovementNotificationService>>());
+        notifications.MarkPublicationCompleted(publishedId);
+
+        Db.PublishScrapeRun(candidateId, promoteCachedResponses: false);
+
+        Assert.Equal(candidateId, Db.GetPublishedScrapeRun()?.Id);
+    }
+
+    [Fact]
+    public void PublicationConstraint_RejectsPreContractMarkerOverwrite()
+    {
+        var publishedId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(publishedId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            publishedId,
+            promoteCachedResponses: false,
+            queueImprovementNotifications: true,
+            improvementNotificationProjectionScopes:
+            [
+                new SoloCurrentProjectionScopeKey("song-1", "Solo_Guitar"),
+            ]);
+
+        var candidateId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(candidateId, 1, 10, 1, 100);
+
+        using var conn = DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE scrape_publication_state
+            SET published_scrape_id = @candidateId,
+                improvement_notifications_scrape_id = @candidateId,
+                improvement_notifications_status = 'pending',
+                updated_at = now()
+            WHERE id = TRUE;
+            """;
+        cmd.Parameters.AddWithValue("candidateId", (int)candidateId);
+
+        var exception = Assert.Throws<PostgresException>(() => cmd.ExecuteNonQuery());
+
+        Assert.Equal(PostgresErrorCodes.CheckViolation, exception.SqlState);
+        Assert.Equal(publishedId, Db.GetPublishedScrapeRun()?.Id);
+    }
+
+    [Fact]
+    public void PublicationConstraint_RejectsNullProjectionOwnerForActiveMarker()
+    {
+        var publishedId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(publishedId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            publishedId,
+            promoteCachedResponses: false,
+            queueImprovementNotifications: true,
+            improvementNotificationProjectionScopes: []);
+
+        using var conn = DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE scrape_publication_state
+            SET improvement_notifications_projection_scrape_id = NULL
+            WHERE id = TRUE;
+            """;
+
+        var exception = Assert.Throws<PostgresException>(() => cmd.ExecuteNonQuery());
+
+        Assert.Equal(PostgresErrorCodes.CheckViolation, exception.SqlState);
+    }
+
+    [Fact]
+    public void PublishScrapeRun_AllowsNextPublicationAfterNotificationsAreExplicitlyDisabled()
+    {
+        var publishedId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(publishedId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            publishedId,
+            promoteCachedResponses: false,
+            queueImprovementNotifications: true,
+            improvementNotificationProjectionScopes: []);
+
+        var notifications = new ImprovementNotificationService(
+            DataSource,
+            Substitute.For<ILogger<ImprovementNotificationService>>());
+        notifications.MarkPublicationDisabled(
+            publishedId,
+            "Disabled by test configuration.");
+
+        var candidateId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(candidateId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(candidateId, promoteCachedResponses: false);
+
+        Assert.Equal(candidateId, Db.GetPublishedScrapeRun()?.Id);
     }
 
     [Fact]

@@ -16,9 +16,10 @@ treated as successful. The active 30-node PIA fleet also spends substantial
 effort on retries, curl fallback, tarpits, restarts, and duplicate/unhealthy
 egress capacity.
 
-Correctness gates come before speed. Proxy and concurrency tuning must keep the
-same global Epic request budget and identical scrape scope while measuring
-useful rows per wire send.
+Correctness gates come before speed. Proxy and concurrency tuning must keep
+identical scrape scope and publication completeness while measuring useful
+rows per wire send. The Epic request budget, per-exit concurrency, and block
+rate may increase when that reduces wall clock without changing results.
 
 ## Audit report delivery
 
@@ -29,7 +30,7 @@ This roadmap and the service roadmap are accompanied by:
 Delivery requires rendered HTML/text plus SMTP acceptance, or a recorded SMTP
 blocker and exact outbox artifact paths.
 
-## NOTIFICATION-RECOVERY — accepted 2026-07-28
+## NOTIFICATION-RECOVERY — standalone recovery/code accepted; full-scrape qualification pending
 
 - Verified that scrape `1267` published and unfroze before notification
   detection, then the worker was stopped during a redundant full solo
@@ -50,6 +51,18 @@ blocker and exact outbox artifact paths.
   unchanged.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/notification-recovery-20260728T1428Z`.
+- The next full scrape must qualify the normal path in the data/query lane.
+  Rollback uses an image that retains this publication-marker/scope-plan state
+  contract while reverting only the candidate behavior/config. A pre-contract
+  worker image is not a valid rollback after the database constraint exists.
+  Interruption leaves the published scrape available, marks notification work
+  deferred/failed, and startup recovery resumes the same published scrape
+  before another scrape.
+- Registered-user/discovery/targeted budget changes share the Epic proxy pool
+  with the network candidate, so they are not part of the independently scored
+  data/query lane. The network lane owns their accepted bounded settings:
+  `00:10:00` solo refresh, `00:05:00` discovery/targeted timeouts, and `80`
+  lookups per discovery/targeted pass.
 
 ## Cross-container publication rollout
 
@@ -82,7 +95,7 @@ Worker publication changes follow this order:
 | Phase/task family | Execution class | Decision window |
 |---|---|---|
 | WORKER-0 completeness/publication correctness | `full-scrape-ab` | Wait for current terminal publish, stop worker, deploy one gate, run a complete scrape/post-process/publish, stop and compare manifests/parity |
-| WORKER-1 retry/cancellation/curl behavior | `full-scrape-ab` | One network candidate per complete scrape with identical scope and global Epic budget |
+| WORKER-1 retry/cancellation/curl behavior | `full-scrape-ab` | One sequentially qualified network candidate per dual-lane scrape with identical scope and explicit rate/error budgets |
 | WORKER-2 bounded canaries | `continuous-safe` isolated artifacts first, then `full-scrape-ab` for promotion | Canaries cannot publish or mutate shared state; accepted routing then gets one complete scrape window |
 | WORKER-3 queues/memory/CHOpt | `full-scrape-ab` | Compare peak RSS/GC/queue depth plus full publication parity |
 | WORKER-4 ranking/post-process | `full-scrape-ab` | Compare one complete post-process/publish window and stop before the next scrape |
@@ -91,9 +104,34 @@ Worker publication changes follow this order:
 
 For each full-scrape candidate, safe implementation and tests may proceed while
 the current scrape runs, but production mutation waits for completion. The
-worker is then held, one candidate is deployed, one complete scrape is
-monitored, and the worker is held again for iterate/reject/accept and
-commit/revert handling.
+worker is then held, one network candidate and one independently reversible
+database/storage/query candidate are deployed as a predeclared dual-lane
+package, one complete scrape is monitored, and the worker is held again for
+independent iterate/reject/accept and commit/revert handling.
+
+### Mandatory dual-lane scrape windows - effective 2026-07-28
+
+Every full scrape must carry a network lane and a data lane. The network lane
+owns proxy/rate/concurrency/retry/transport/request-count work. The data lane
+owns PostgreSQL query/write/storage/WAL/ranking/post-process work. Each lane
+gets its own baseline, target, rollback, metrics, and decision while sharing
+the same scope, manifest, API, publication, and notification correctness gate.
+
+The next candidate scrape pairs:
+
+| Lane | Candidate | Baseline | Target |
+|---|---|---|---|
+| Network | Highest sequentially qualified step from `800/32/4`, `1600/64/8`, and `2880/128/16` | Scrape 1267 core network + writer drain `5:02:22`; `629,426` wire sends; `32.67` useful pages/s under `800/32/4` | At least 10% higher useful pages/s and core network <=`4:30:00`; continue later dual-lane windows toward <=`1:00:00` |
+| Data/query | Fail-closed notification publication marker, pre-scrape recovery hold, and changed-scope-only solo projection/detection | Scrape 1267 published, then began a redundant all-`6,174`-scope projection refresh; the worker stop left no normal-path detection run | Notification status completed <=`10 min` after publication/unfreeze; refreshed scope set is bounded to changed scopes with no all-scope fallback; zero Epic sends owned by this lane; no >10% WAL/temp/CPU/memory/IO or public-route regression |
+
+Bounded network canaries may run while unrelated compaction/reclaim proceeds.
+Only the production scrape and resource-heavy/destructive windows require
+shared capacity/load coordination.
+
+For attribution, score registered-user, band-discovery, and targeted-band
+request/time deltas in the network lane, not the data lane. The executable
+profile pins `00:10:00`, `00:05:00`, `00:05:00`, and `80`/`80` total lookup
+budgets.
 
 ## Current live baseline
 
@@ -233,9 +271,10 @@ Evidence:
 
 **Next live A/B instruction:** keep the worker held, run the scrape capacity
 guard and proxy compose guard, deploy the accepted `b01d5c03` WORKER-0A
-candidate through `--recreate-runonce`, verify the full public path, then
-monitor exactly one complete scrape/post-process/publication decision and hold
-the worker again before another scrape.
+candidate only as part of a current dual-lane card through
+`tools/fst-worker-dual-lane-runonce.sh`, verify the full public path, then
+monitor exactly one complete scrape/post-process/publication/notification
+decision and hold the worker again before another scrape.
 
 ## Great / good / okay / poor / bad
 
@@ -929,7 +968,9 @@ One cancelled CDN waiter must not cancel shared CDN recovery. Use per-waiter
 
 **Decision:** Experimental until matched evidence  
 **Dependencies:** WORKER-0 and WORKER-1  
-**Provider rule:** Do not increase global Epic rate or widen entitlement use.
+**Provider rule:** Never widen entitlement use. Throughput may increase only
+through the sequential named guard profiles below, stopping at the first failed
+correctness or effective-throughput gate.
 
 ### WORKER-2.1 - Build real proxy health and capacity metrics
 
@@ -950,22 +991,34 @@ One cancelled CDN waiter must not cancel shared CDN recovery. Use per-waiter
 
 ### WORKER-2.3 - Run bounded pool-size and DOP canaries
 
-Do not run a full Cartesian matrix and do not send 480 RPS through one exit.
-Canaries run beside normal production only when the combined production plus
-canary budget remains at or below the configured global limit.
+Do not run a full Cartesian matrix. Escalate one step at a time and do not skip
+an unqualified step. Canaries run beside normal production only when the
+combined production plus canary budget remains at or below the active profile;
+otherwise run them while the worker is held.
 
 | Matrix | Values |
 |---|---|
 | Healthy unique exits | 1, 4, 8, 16, 26, then 30 only if actually unique/healthy |
-| Global DOP | 60, 90, 120, 180 |
-| Aggregate RPS | Start at no more than 16 RPS per healthy unique exit and never exceed 480 |
+| Guard profile | `candidate-800-32-4`, then `candidate-1600-64-8`, then `candidate-2880-128-16` |
+| Aggregate/per-exit/concurrency | `800/32/4`, `1600/64/8`, `2880/128/16` |
 | Assignment | current least-in-flight vs weighted sticky |
+
+Each step must pass all of these gates before the next step:
+
+- zero unrecovered scope failures, missing manifests, or payload differences;
+- at least 10% higher useful RPS than the previous qualified step;
+- wire-send retry amplification <=`1.50`;
+- combined `429` plus `503` <=`5%` of wire sends and no three consecutive
+  one-minute windows above `10%`;
+- at least `80%` of preflight-healthy unique exits remain usable;
+- CDN-block rate has no fixed ceiling, but a higher rate is accepted only when
+  useful RPS still improves and all correctness gates pass.
 
 **Execution sequence**
 
 1. Preflight Docker/Postgres/publication/freeze, proxy health, egress
    uniqueness, and current production request rate.
-2. Reserve the normal production request budget first; canaries may use only
+2. Reserve the active production profile first; canaries may use only
    unallocated capacity and must not displace production work.
 3. Run a small fixed song/instrument/page slice with publication disabled,
    isolated result artifacts, and no shared snapshot/projection/cache mutation.

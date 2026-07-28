@@ -121,6 +121,42 @@ The autonomous skill provides the shared wait-stop-deploy-run-stop-decision
 loop. This roadmap supplies the candidate-specific correctness, performance,
 headroom, rollback, and maintenance gates.
 
+### Mandatory dual-lane scrape windows - effective 2026-07-28
+
+Every full scrape must pair one independently reversible network candidate
+with one independently reversible PostgreSQL/storage/query candidate. This is
+an explicit exception to the former one-change-per-scrape rule; it is limited
+to one candidate per lane, with separate flags/config, metrics, rollback, and
+accept/reject decisions.
+
+The data lane must capture relation growth/reclaim, rows read/written/deleted,
+WAL/temp/checkpoint deltas, locks, CPU/memory/IO, query and phase latency, and
+published API parity. The shared scrape gate still requires complete scope
+manifests, historical correctness, successful ranking/post-process,
+publication/unfreeze, notification completion, and public-route health.
+
+For the next scrape, the data/query partner is the notification recovery
+package's DB-only surface: the fail-closed publication marker, pre-scrape
+recovery hold, and changed-scope-only solo projection/detection. Scrape 1267
+published and then began a redundant all-`6,174`-scope projection refresh; the
+worker stop left no normal-path detection run. The candidate requires
+notification status to complete within `10 min` after publication/unfreeze,
+no all-scope fallback, zero Epic sends owned by the data lane, and no more than
+a `10%` regression in WAL, temp, CPU, memory, IO, or public-route latency.
+
+Registered-user/discovery/targeted processing shares the proxy pool and cannot
+be attributed to the DB-only lane while the network profile changes. The
+network lane therefore owns the accepted bounded settings: `00:10:00` solo
+refresh, `00:05:00` discovery/targeted timeouts, and `80` lookups per
+discovery/targeted pass. The paired network lane selects the highest
+sequentially qualified named guard profile from `800/32/4`, `1600/64/8`, and
+`2880/128/16`.
+
+Bounded canaries, read-only query A/Bs, and unrelated-table compaction/reclaim
+may proceed concurrently when live preflight, disk headroom, locks, and shared
+IO remain safe. A production scrape still requires the normal capacity guard
+and coordinated hold/start boundary.
+
 ## Database management classification
 
 | Surface | Mode | Live-safety risk | Data/timing risk | Evidence | Change/proof plan | Rollback | Decision |

@@ -97,9 +97,13 @@ public sealed class ImprovementNotificationStalenessEvaluatorTests
         LatestPlayerScrapeId: playerScrapeId,
         LatestPlayerRunId: 1,
         LatestPlayerCompletedAtUtc: completedAt,
+        LatestPlayerIncludesSongEvents: true,
+        LatestPlayerIncludesRankings: true,
         LatestBandScrapeId: bandScrapeId,
         LatestBandRunId: 2,
         LatestBandCompletedAtUtc: completedAt,
+        LatestBandIncludesSongEvents: true,
+        LatestBandIncludesRankings: true,
         PlayerPublishedScrapesBehind: scrapesBehind,
         BandPublishedScrapesBehind: scrapesBehind);
 }

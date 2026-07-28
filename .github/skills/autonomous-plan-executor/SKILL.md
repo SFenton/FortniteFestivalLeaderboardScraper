@@ -110,6 +110,48 @@ scrape while only the production mutation waits for the boundary.
 - Preserve dependency order within each lane, but a time-accrual task in one
   container lane does not block independent ready work in another lane.
 
+## Dual-lane full-scrape improvement contract
+
+Every full scrape started during autonomous optimization must advance both
+primary optimization lanes in the same evidence window:
+
+| Lane | Candidate surfaces | Required scrape evidence |
+|---|---|---|
+| Network | Proxy pool, per-exit concurrency/rate, global rate, retry/backoff, transport, connection reuse, request count, and routing | Network wall clock, achieved/useful RPS, wire sends, retry amplification, block/429/403/503 rates, timeouts, per-exit health, and completed scope parity |
+| Data | PostgreSQL query/write/index/storage/retention, ranking/post-process, WAL/checkpoints/temp, projections, and publication persistence | Database growth/reclaim, rows read/written/deleted, WAL/temp/checkpoint and lock deltas, query/phase latency, CPU/memory/IO, and API/publication parity |
+
+- Before starting a scrape, create one dual-lane scrape card. Each lane must
+  name its hypothesis, baseline, numeric target, exact independently
+  switchable production candidate, rollback, metrics, and decision gate. Every
+  full scrape, including recovery and continuity scrapes, requires both
+  candidates. Keep one low-risk reserve candidate ready in each lane so this
+  rule does not interrupt normal scrape continuity.
+- A production window deploys exactly one coherent network candidate and
+  exactly one coherent data candidate. This paired package is the
+  operator-approved exception to the normal single-candidate rule. Do not add
+  an unrelated third change.
+- The two candidates must be independently switchable and reversible. Record
+  their commits, image/config values, expected interaction, and lane-specific
+  metrics separately so one can be accepted while the other is rejected.
+- Use one shared correctness gate: identical required scope/manifests,
+  published-source and route fingerprints, historical correctness, successful
+  post-process/publication, public-read health, and notification completion.
+  Speed or storage wins never excuse a parity failure.
+- Decide the lanes independently. If their interaction makes attribution
+  ambiguous, do not promote either ambiguous result. Revert to the accepted
+  baselines, run bounded no-publication isolation canaries, and prepare a new
+  two-candidate scrape card.
+- Do not enable automatic worker scheduling after a decision until the next
+  dual-lane card is armed with two ready candidates and rollback switches.
+- Bounded network canaries, query benchmarks, compaction, and reclaim
+  readiness may run concurrently when they use disjoint objects/resources and
+  live preflight remains healthy. Coordinate only the production scrape,
+  destructive maintenance, restarts, and resource-heavy windows that could
+  breach capacity or contaminate measurements.
+- Phase reports and e-mails must include a network row, a data row, combined
+  end-to-end wall clock, parity/publication outcome, and the independent
+  accept/reject/iterate decision for each lane.
+
 ## Scrape-boundary candidate loop
 
 Use this loop for every `scrape-boundary-deploy` or `full-scrape-ab` candidate:
@@ -120,38 +162,46 @@ Use this loop for every `scrape-boundary-deploy` or `full-scrape-ab` candidate:
    acceptance evidence is not coupled to this scrape, but do not mutate the
    worker-affecting production path or contaminate the candidate baseline.
 2. **Wait for a terminal boundary.** Monitor through network scrape,
-   post-process, publication, and public-read unfreeze or an explicit failed
-   decision. A failed/incomplete scrape is incident evidence, not a valid
-   performance baseline.
+   post-process, publication and public-read unfreeze, then notification
+   completion or an explicit failed decision. A failed/incomplete scrape is
+   incident evidence, not a valid performance baseline.
 3. **Hold the next scrape.** Stop `fstworker` or disable only its scheduler
    before the next automatic scrape starts. Confirm no worker-owned scrape,
    rank, post-process, publication, or maintenance query remains active.
-4. **Capture the final baseline.** Record commit/image/config, scrape and
-   published IDs, route fingerprints, counts/checksums, phase timings, disk,
-   WAL/temp, CPU, memory, locks, proxy metrics, and candidate-specific metrics.
-5. **Deploy exactly one candidate.** Finalize any runtime-coupled
-   implementation or migration while the worker is held, run targeted
-   validation, deploy behind the rollback switch, and verify Postgres,
+4. **Capture the final baseline.** Record the dual-lane scrape card,
+   commit/image/config, scrape and published IDs, route fingerprints,
+   counts/checksums, phase timings, disk, WAL/temp, CPU, memory, locks, proxy
+   metrics, and each lane's candidate-specific metrics.
+5. **Deploy one dual-lane package.** Finalize exactly one network candidate
+   and one data candidate while the worker is held, run targeted validation,
+   deploy each behind its own rollback switch, and verify Postgres,
    `fstservice`, `festivalweb`, static shell, and representative API health.
 6. **Run the candidate window.** Start `fstworker`, verify it does not degrade
    the public path, and keep the 60-second monitor active through one complete
-   scrape, post-process, publication, and parity/evaluation window.
+   scrape, post-process, publication/unfreeze, notification completion, and
+   parity/evaluation window. Capture both lane metric families throughout.
 7. **Hold before another scrape.** At the candidate decision point, stop
    `fstworker` before an unwanted next automatic scrape begins. Do not let a
    second scrape contaminate the single-candidate comparison unless the plan
    explicitly requires multiple observations.
 8. **Compare and decide.**
-   - **Iterate:** keep the worker held, insert the next smallest hypothesis,
-     change only that candidate, redeploy, verify health, and run the next
-     complete candidate window.
-   - **Accept/promote:** require correctness/publication parity, acceptable
-     resource cost, and target improvement; update docs/config, commit and
-     push accepted changes, then restore normal worker scheduling.
-   - **Reject/revert:** revert code/config/DDL, redeploy the baseline, validate
-     rollback and public health, record evidence, then restore normal worker
-     scheduling or continue immediately with the next safe hypothesis.
+   - **Iterate:** keep the worker held, insert the next smallest hypotheses,
+     use bounded no-publication canaries to isolate ambiguous interactions,
+     prepare a new two-candidate scrape card, redeploy, verify health, and run
+     the next complete candidate window.
+   - **Accept/promote:** decide each lane independently; require
+     correctness/publication parity, acceptable resource cost, and its target
+     improvement. Update docs/config, commit and push accepted changes, then
+     arm the next two-candidate card before restoring normal worker scheduling.
+   - **Reject/revert:** revert only the rejected lane's code/config/DDL when
+     attribution is sound. If attribution is ambiguous, revert both candidates
+     to their accepted baselines. Validate rollback and public health, record
+     evidence, then restore normal scheduling only after the next
+     two-candidate card is armed, or continue immediately with the next safe
+     dual-lane hypotheses.
    - **Block:** execute all safe readiness work, restore the accepted baseline
-     and normal scrape continuity, and block only the exact hard-gated action.
+     and public health, arm the next two-candidate card, restore normal scrape
+     continuity, and block only the exact hard-gated action.
 9. **Close the task boundary.** Send/render the phase report, update todo/plan
    state, verify the accepted commit/push or validated revert, and confirm the
    worker/public path is in the intended normal state before moving to the next
@@ -278,7 +328,11 @@ follow the stricter gate.
 1. Start each phase from a named candidate and rollback switch: feature flag, config value, SQL rollback DDL, table rename-back, index recreate DDL, restore/regeneration path, or git revert. Do not run an unbounded "optimize DB" phase without an exact surface and rollback.
 2. Capture the baseline before candidate deploy: current commit/image, compose overrides, published/frozen scrape, active scrape ID, Docker caps, disk free, relation/index sizes, WAL/temp counters, locks/long queries, representative endpoint responses, and any phase-specific row counts/checksums.
 3. Keep a visible CLI monitor running during deploy, scrape, post-process, and publication. At least every 60 seconds print or append: timestamp, active phase/task, current command or scrape phase, `fstworker`/`fstservice`/`festivalweb`/Postgres health, `/readyz`, `festivalweb` static route, `/api/service-info` through `festivalweb`, disk free/% used, CPU, memory, locks/long queries, scrape ID/status, WAL/temp deltas when relevant, and artifact/report paths. The monitor log must live in the session `files/` directory or another non-committed artifact path.
-4. Implement candidates behind rollback-safe flags or isolated DDL first. For code/config candidates, deploy only the candidate being evaluated; do not combine unrelated optimizations in one live A/B window.
+4. Implement candidates behind rollback-safe flags or isolated DDL first. The
+   only allowed paired production change is one independently reversible
+   network candidate plus one independently reversible database/storage/query
+   candidate under the dual-lane contract. Do not combine multiple data
+   candidates or any unrelated third optimization in one live A/B window.
 5. Run fixture/unit/integration checks before live deployment. Then run live A/B against the same scrape/publication window where possible: old path vs new path counts, ranges, fingerprints/checksums, representative API JSON parity, status/publication parity, route latency, phase timings, WAL/temp bytes, disk growth, CPU, and memory.
 6. When a live scrape is needed, start/recreate `fstworker` only after public path preflight passes. Keep `fstworker` running while it is healthy and scraping; if it breaks `fstservice` or `festivalweb` API routes, stop or roll it back immediately and classify the candidate as rejected/blocked unless a smaller safe repair exists.
 7. When the scrape/post-process/publish/eval window reaches its decision point, stop `fstworker` before an unwanted next automatic scrape starts unless the current plan explicitly requires continuous scraping and public health remains good.

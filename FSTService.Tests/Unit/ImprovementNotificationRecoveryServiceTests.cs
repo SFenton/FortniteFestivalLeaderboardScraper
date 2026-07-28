@@ -19,7 +19,8 @@ public sealed class ImprovementNotificationRecoveryServiceTests : IDisposable
         _fixture.Db.PublishScrapeRun(
             scrapeId,
             promoteCachedResponses: false,
-            queueImprovementNotifications: true);
+            queueImprovementNotifications: true,
+            improvementNotificationProjectionScopes: []);
 
         var notificationService = new ImprovementNotificationService(
             _fixture.DataSource,
@@ -59,7 +60,11 @@ public sealed class ImprovementNotificationRecoveryServiceTests : IDisposable
         var deferred = notificationService.GetPublicationStatus();
         Assert.Equal("pending", deferred.MarkerStatus);
         Assert.Equal(1, deferred.AttemptCount);
-        Assert.False(deferred.IsCompleteForPublishedScrape(includePlayers: true, includeBands: false));
+        Assert.False(deferred.IsCompleteForPublishedScrape(
+            includePlayers: true,
+            includeBands: false,
+            includeSongEvents: false,
+            includeRankings: false));
 
         var report = await recovery.RunPublishedScrapeAsync(
             expectedPublishedScrapeId: scrapeId,
@@ -78,6 +83,310 @@ public sealed class ImprovementNotificationRecoveryServiceTests : IDisposable
         var completed = notificationService.GetPublicationStatus();
         Assert.Equal("completed", completed.MarkerStatus);
         Assert.Equal(2, completed.AttemptCount);
-        Assert.True(completed.IsCompleteForPublishedScrape(includePlayers: true, includeBands: false));
+        Assert.True(completed.IsCompleteForPublishedScrape(
+            includePlayers: true,
+            includeBands: false,
+            includeSongEvents: false,
+            includeRankings: false));
+    }
+
+    [Fact]
+    public async Task RunPublishedScrapeAsync_BaselineOnlyDoesNotSatisfyDetectionCompletion()
+    {
+        var scrapeId = _fixture.Db.StartScrapeRun();
+        _fixture.Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        _fixture.Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false,
+            queueImprovementNotifications: true,
+            improvementNotificationProjectionScopes: []);
+
+        var notificationService = new ImprovementNotificationService(
+            _fixture.DataSource,
+            NullLogger<ImprovementNotificationService>.Instance);
+        var recovery = new ImprovementNotificationRecoveryService(
+            notificationService,
+            new SoloCurrentProjectionBuilder(
+                _fixture.DataSource,
+                NullLogger<SoloCurrentProjectionBuilder>.Instance),
+            Options.Create(new ImprovementNotificationOptions
+            {
+                Enabled = true,
+                Scope = "registered",
+                IncludePlayers = true,
+                IncludeBands = false,
+                IncludeSongEvents = false,
+                IncludeRankings = false,
+                RefreshSoloProjection = false,
+                PruneExpired = false,
+            }),
+            NullLogger<ImprovementNotificationRecoveryService>.Instance);
+
+        await recovery.RunPublishedScrapeAsync(
+            expectedPublishedScrapeId: scrapeId,
+            execute: true,
+            baselineOnly: true,
+            refreshSoloProjection: false,
+            projectionScopes: [],
+            force: false,
+            source: "test-baseline",
+            CancellationToken.None);
+
+        var baselineStatus = notificationService.GetPublicationStatus();
+        Assert.Equal("pending", baselineStatus.MarkerStatus);
+        Assert.False(baselineStatus.IsCompleteForPublishedScrape(
+            includePlayers: true,
+            includeBands: false,
+            includeSongEvents: false,
+            includeRankings: false));
+
+        await recovery.RunPublishedScrapeAsync(
+            expectedPublishedScrapeId: scrapeId,
+            execute: true,
+            baselineOnly: false,
+            refreshSoloProjection: false,
+            projectionScopes: [],
+            force: false,
+            source: "test-detection",
+            CancellationToken.None);
+
+        var completedStatus = notificationService.GetPublicationStatus();
+        Assert.Equal("completed", completedStatus.MarkerStatus);
+        Assert.True(completedStatus.IsCompleteForPublishedScrape(
+            includePlayers: true,
+            includeBands: false,
+            includeSongEvents: false,
+            includeRankings: false));
+    }
+
+    [Fact]
+    public async Task RunPublishedScrapeAsync_RejectsMismatchedMarkerWithoutRewritingIt()
+    {
+        var publishedScrapeId = _fixture.Db.StartScrapeRun();
+        _fixture.Db.CompleteScrapeRun(publishedScrapeId, 1, 10, 1, 100);
+        _fixture.Db.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false,
+            queueImprovementNotifications: true,
+            improvementNotificationProjectionScopes: []);
+        var otherScrapeId = _fixture.Db.StartScrapeRun();
+        _fixture.Db.CompleteScrapeRun(otherScrapeId, 1, 10, 1, 100);
+
+        using (var conn = _fixture.DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                ALTER TABLE scrape_publication_state
+                DROP CONSTRAINT ck_scrape_publication_notification_plan;
+
+                UPDATE scrape_publication_state
+                SET improvement_notifications_scrape_id = @otherScrapeId
+                WHERE id = TRUE;
+                """;
+            cmd.Parameters.AddWithValue("otherScrapeId", (int)otherScrapeId);
+            cmd.ExecuteNonQuery();
+        }
+
+        var notificationService = new ImprovementNotificationService(
+            _fixture.DataSource,
+            NullLogger<ImprovementNotificationService>.Instance);
+        var recovery = new ImprovementNotificationRecoveryService(
+            notificationService,
+            new SoloCurrentProjectionBuilder(
+                _fixture.DataSource,
+                NullLogger<SoloCurrentProjectionBuilder>.Instance),
+            Options.Create(new ImprovementNotificationOptions
+            {
+                Enabled = true,
+                IncludePlayers = false,
+                IncludeBands = false,
+            }),
+            NullLogger<ImprovementNotificationRecoveryService>.Instance);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            recovery.RunPublishedScrapeAsync(
+                expectedPublishedScrapeId: publishedScrapeId,
+                execute: true,
+                baselineOnly: false,
+                refreshSoloProjection: false,
+                projectionScopes: [],
+                force: false,
+                source: "test-mismatch",
+                CancellationToken.None));
+
+        Assert.Contains("does not match published scrape", exception.Message);
+        Assert.Equal(otherScrapeId, notificationService.GetPublicationStatus().MarkerScrapeId);
+    }
+
+    [Fact]
+    public async Task RunPublishedScrapeAsync_DoesNotReopenDisabledMarker()
+    {
+        var scrapeId = _fixture.Db.StartScrapeRun();
+        _fixture.Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        _fixture.Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false,
+            queueImprovementNotifications: true,
+            improvementNotificationProjectionScopes: []);
+
+        var notificationService = new ImprovementNotificationService(
+            _fixture.DataSource,
+            NullLogger<ImprovementNotificationService>.Instance);
+        notificationService.MarkPublicationDisabled(scrapeId, "Disabled for test.");
+        var recovery = new ImprovementNotificationRecoveryService(
+            notificationService,
+            new SoloCurrentProjectionBuilder(
+                _fixture.DataSource,
+                NullLogger<SoloCurrentProjectionBuilder>.Instance),
+            Options.Create(new ImprovementNotificationOptions
+            {
+                Enabled = true,
+                IncludePlayers = false,
+                IncludeBands = false,
+            }),
+            NullLogger<ImprovementNotificationRecoveryService>.Instance);
+
+        var report = await recovery.RunPublishedScrapeAsync(
+            expectedPublishedScrapeId: scrapeId,
+            execute: true,
+            baselineOnly: false,
+            refreshSoloProjection: false,
+            projectionScopes: [],
+            force: false,
+            source: "test-disabled",
+            CancellationToken.None);
+
+        Assert.True(report.Skipped);
+        Assert.Equal("disabled", notificationService.GetPublicationStatus().MarkerStatus);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            recovery.RunPublishedScrapeAsync(
+                expectedPublishedScrapeId: scrapeId,
+                execute: true,
+                baselineOnly: false,
+                refreshSoloProjection: false,
+                projectionScopes: [],
+                force: true,
+                source: "test-disabled-force",
+                CancellationToken.None));
+        Assert.Contains("terminal", exception.Message);
+        Assert.Equal("disabled", notificationService.GetPublicationStatus().MarkerStatus);
+    }
+
+    [Fact]
+    public async Task RunPublishedScrapeAsync_RejectsConcurrentRecoveryOwner()
+    {
+        var scrapeId = _fixture.Db.StartScrapeRun();
+        _fixture.Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        _fixture.Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false,
+            queueImprovementNotifications: true,
+            improvementNotificationProjectionScopes: []);
+
+        var notificationService = new ImprovementNotificationService(
+            _fixture.DataSource,
+            NullLogger<ImprovementNotificationService>.Instance);
+        var recovery = new ImprovementNotificationRecoveryService(
+            notificationService,
+            new SoloCurrentProjectionBuilder(
+                _fixture.DataSource,
+                NullLogger<SoloCurrentProjectionBuilder>.Instance),
+            Options.Create(new ImprovementNotificationOptions
+            {
+                Enabled = true,
+                IncludePlayers = false,
+                IncludeBands = false,
+            }),
+            NullLogger<ImprovementNotificationRecoveryService>.Instance);
+
+        using var owner = notificationService.AcquireRecoveryLock(scrapeId);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            recovery.RunPublishedScrapeAsync(
+                expectedPublishedScrapeId: scrapeId,
+                execute: true,
+                baselineOnly: false,
+                refreshSoloProjection: false,
+                projectionScopes: [],
+                force: false,
+                source: "test-concurrent",
+                CancellationToken.None));
+
+        Assert.Contains("already running", exception.Message);
+        Assert.Equal("pending", notificationService.GetPublicationStatus().MarkerStatus);
+    }
+
+    [Fact]
+    public async Task RunPublishedScrapeAsync_CompletedMarkerMustCoverNewlyRequiredLanes()
+    {
+        var scrapeId = _fixture.Db.StartScrapeRun();
+        _fixture.Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        _fixture.Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false,
+            queueImprovementNotifications: true,
+            improvementNotificationProjectionScopes: []);
+
+        var notificationService = new ImprovementNotificationService(
+            _fixture.DataSource,
+            NullLogger<ImprovementNotificationService>.Instance);
+        var baselineOptions = Options.Create(new ImprovementNotificationOptions
+        {
+            Enabled = true,
+            IncludePlayers = true,
+            IncludeBands = false,
+            IncludeSongEvents = false,
+            IncludeRankings = false,
+            RefreshSoloProjection = false,
+        });
+        var baselineRecovery = new ImprovementNotificationRecoveryService(
+            notificationService,
+            new SoloCurrentProjectionBuilder(
+                _fixture.DataSource,
+                NullLogger<SoloCurrentProjectionBuilder>.Instance),
+            baselineOptions,
+            NullLogger<ImprovementNotificationRecoveryService>.Instance);
+
+        await baselineRecovery.RunPublishedScrapeAsync(
+            expectedPublishedScrapeId: scrapeId,
+            execute: true,
+            baselineOnly: false,
+            refreshSoloProjection: false,
+            projectionScopes: [],
+            force: false,
+            source: "test-partial-lanes",
+            CancellationToken.None);
+        Assert.Equal("completed", notificationService.GetPublicationStatus().MarkerStatus);
+
+        var expandedRecovery = new ImprovementNotificationRecoveryService(
+            notificationService,
+            new SoloCurrentProjectionBuilder(
+                _fixture.DataSource,
+                NullLogger<SoloCurrentProjectionBuilder>.Instance),
+            Options.Create(new ImprovementNotificationOptions
+            {
+                Enabled = true,
+                IncludePlayers = true,
+                IncludeBands = false,
+                IncludeSongEvents = false,
+                IncludeRankings = true,
+                RefreshSoloProjection = false,
+            }),
+            NullLogger<ImprovementNotificationRecoveryService>.Instance);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            expandedRecovery.RunPublishedScrapeAsync(
+                expectedPublishedScrapeId: scrapeId,
+                execute: true,
+                baselineOnly: false,
+                refreshSoloProjection: false,
+                projectionScopes: [],
+                force: false,
+                source: "test-expanded-lanes",
+                CancellationToken.None));
+
+        Assert.Contains("does not satisfy the currently required lanes", exception.Message);
+        Assert.Equal("completed", notificationService.GetPublicationStatus().MarkerStatus);
     }
 }

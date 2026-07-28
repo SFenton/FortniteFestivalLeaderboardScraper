@@ -43,11 +43,62 @@ public sealed class ImprovementNotificationRecoveryService
                 $"Published scrape changed from expected {expectedPublishedScrapeId.Value} to {publishedScrapeId}.");
         }
 
+        using var recoveryLock = _notifications.AcquireRecoveryLock(publishedScrapeId);
+        status = _notifications.GetPublicationStatus();
+        if (status.PublishedScrapeId != publishedScrapeId)
+        {
+            throw new InvalidOperationException(
+                $"Published scrape changed from {publishedScrapeId} to " +
+                $"{status.PublishedScrapeId?.ToString() ?? "null"} while recovery was acquiring ownership.");
+        }
+
         if (status.PublicReadsFrozen)
             throw new InvalidOperationException("Improvement notification recovery is deferred while public reads are frozen.");
 
+        if (status.MarkerStatus == "disabled")
+        {
+            if (!force)
+            {
+                return ImprovementNotificationRecoveryReport.CreateSkipped(
+                    publishedScrapeId,
+                    "Improvement notification marker is already disabled.");
+            }
+
+            throw new InvalidOperationException(
+                $"Improvement notification marker for published scrape {publishedScrapeId} " +
+                "is terminal (disabled) and cannot be forced back to pending.");
+        }
+        if (status.MarkerScrapeId != publishedScrapeId)
+        {
+            throw new InvalidOperationException(
+                $"Improvement notification marker {status.MarkerScrapeId?.ToString() ?? "null"} " +
+                $"does not match published scrape {publishedScrapeId}.");
+        }
+        if (status.MarkerStatus == "completed")
+        {
+            var completedForRequiredLanes = status.IsCompleteForPublishedScrape(
+                options.IncludePlayers,
+                options.IncludeBands,
+                options.IncludeSongEvents,
+                options.IncludeRankings);
+            if (!force && completedForRequiredLanes)
+            {
+                return ImprovementNotificationRecoveryReport.CreateSkipped(
+                    publishedScrapeId,
+                    "Improvement notification marker is already completed for every required lane.");
+            }
+
+            throw new InvalidOperationException(
+                $"Improvement notification marker for published scrape {publishedScrapeId} " +
+                "is terminal (completed) but does not satisfy the currently required lanes; " +
+                "an explicit operator transition is required.");
+        }
+
         if (!options.Enabled)
         {
+            _notifications.MarkPublicationDisabled(
+                publishedScrapeId,
+                "Improvement notifications were disabled before pending recovery completed.");
             return ImprovementNotificationRecoveryReport.CreateSkipped(
                 publishedScrapeId,
                 "Improvement notifications are disabled.");
@@ -55,9 +106,28 @@ public sealed class ImprovementNotificationRecoveryService
 
         if (execute)
         {
+            if (projectionScopes is not null)
+            {
+                _notifications.AdoptProjectionPlanForRecovery(
+                    publishedScrapeId,
+                    projectionScopes);
+            }
+            else if (!refreshSoloProjection)
+            {
+                _notifications.AdoptProjectionPlanForRecovery(
+                    publishedScrapeId,
+                    []);
+            }
+
             _notifications.EnsurePublicationPending(publishedScrapeId);
             status = _notifications.GetPublicationStatus();
-            if (!force && !baselineOnly && status.IsCompleteForPublishedScrape(options.IncludePlayers, options.IncludeBands))
+            if (!force
+                && !baselineOnly
+                && status.IsCompleteForPublishedScrape(
+                    options.IncludePlayers,
+                    options.IncludeBands,
+                    options.IncludeSongEvents,
+                    options.IncludeRankings))
             {
                 _notifications.MarkPublicationCompleted(publishedScrapeId);
                 return ImprovementNotificationRecoveryReport.CreateSkipped(
@@ -76,8 +146,19 @@ public sealed class ImprovementNotificationRecoveryService
                 && options.IncludePlayers
                 && options.IncludeSongEvents)
             {
-                var scopes = projectionScopes
-                    ?? await _soloCurrentProjectionBuilder.LoadCurrentScopesAsync(ct);
+                var scopes = projectionScopes;
+                if (scopes is null)
+                {
+                    var plan = _notifications.GetProjectionPlan(publishedScrapeId);
+                    if (!plan.IsReady)
+                    {
+                        throw new InvalidOperationException(
+                            $"Improvement notification projection plan for published scrape {publishedScrapeId} is not ready.");
+                    }
+
+                    scopes = plan.Scopes;
+                }
+
                 if (scopes.Count > 0)
                 {
                     await _soloCurrentProjectionBuilder.EnsureSchemaAsync(ct);

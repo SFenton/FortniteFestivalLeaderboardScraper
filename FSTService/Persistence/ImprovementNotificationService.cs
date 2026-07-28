@@ -9,6 +9,7 @@ public sealed class ImprovementNotificationService
 {
     public const int DefaultLiveHours = 72;
     public const string ServiceNewShopSongKind = "service_new_shop_song";
+    private const int RecoveryAdvisoryLockNamespace = 1179866190;
 
     private readonly NpgsqlDataSource _dataSource;
     private readonly ILogger<ImprovementNotificationService> _log;
@@ -37,16 +38,22 @@ public sealed class ImprovementNotificationService
                 FROM scrape_publication_state
                 WHERE id = TRUE
             ), player_run AS (
-                SELECT published_scrape_id, run_id, completed_at
+                SELECT published_scrape_id, run_id, completed_at,
+                       include_song_events, include_rankings
                 FROM improvement_detection_runs
                 WHERE status = 'completed'
+                  AND mode = 'execute'
+                  AND NOT baseline_only
                   AND include_players
                 ORDER BY completed_at DESC, run_id DESC
                 LIMIT 1
             ), band_run AS (
-                SELECT published_scrape_id, run_id, completed_at
+                SELECT published_scrape_id, run_id, completed_at,
+                       include_song_events, include_rankings
                 FROM improvement_detection_runs
                 WHERE status = 'completed'
+                  AND mode = 'execute'
+                  AND NOT baseline_only
                   AND include_bands
                 ORDER BY completed_at DESC, run_id DESC
                 LIMIT 1
@@ -63,9 +70,13 @@ public sealed class ImprovementNotificationService
                    player_run.published_scrape_id,
                    player_run.run_id,
                    player_run.completed_at,
+                   player_run.include_song_events,
+                   player_run.include_rankings,
                    band_run.published_scrape_id,
                    band_run.run_id,
                    band_run.completed_at,
+                   band_run.include_song_events,
+                   band_run.include_rankings,
                    (
                        SELECT COUNT(*)::int
                        FROM scrape_log scrape
@@ -116,11 +127,119 @@ public sealed class ImprovementNotificationService
             LatestPlayerScrapeId: reader.IsDBNull(9) ? null : reader.GetInt32(9),
             LatestPlayerRunId: reader.IsDBNull(10) ? null : reader.GetInt64(10),
             LatestPlayerCompletedAtUtc: reader.IsDBNull(11) ? null : reader.GetDateTime(11),
-            LatestBandScrapeId: reader.IsDBNull(12) ? null : reader.GetInt32(12),
-            LatestBandRunId: reader.IsDBNull(13) ? null : reader.GetInt64(13),
-            LatestBandCompletedAtUtc: reader.IsDBNull(14) ? null : reader.GetDateTime(14),
-            PlayerPublishedScrapesBehind: reader.IsDBNull(15) ? 0 : reader.GetInt32(15),
-            BandPublishedScrapesBehind: reader.IsDBNull(16) ? 0 : reader.GetInt32(16));
+            LatestPlayerIncludesSongEvents: !reader.IsDBNull(12) && reader.GetBoolean(12),
+            LatestPlayerIncludesRankings: !reader.IsDBNull(13) && reader.GetBoolean(13),
+            LatestBandScrapeId: reader.IsDBNull(14) ? null : reader.GetInt32(14),
+            LatestBandRunId: reader.IsDBNull(15) ? null : reader.GetInt64(15),
+            LatestBandCompletedAtUtc: reader.IsDBNull(16) ? null : reader.GetDateTime(16),
+            LatestBandIncludesSongEvents: !reader.IsDBNull(17) && reader.GetBoolean(17),
+            LatestBandIncludesRankings: !reader.IsDBNull(18) && reader.GetBoolean(18),
+            PlayerPublishedScrapesBehind: reader.IsDBNull(19) ? 0 : reader.GetInt32(19),
+            BandPublishedScrapesBehind: reader.IsDBNull(20) ? 0 : reader.GetInt32(20));
+    }
+
+    public ImprovementNotificationProjectionPlan GetProjectionPlan(long publishedScrapeId)
+    {
+        using var conn = _dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT improvement_notifications_projection_ready,
+                   improvement_notifications_projection_scopes::text
+            FROM scrape_publication_state
+            WHERE id = TRUE
+              AND published_scrape_id = @scrapeId
+              AND improvement_notifications_scrape_id = @scrapeId
+              AND improvement_notifications_projection_scrape_id = @scrapeId;
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", (int)publishedScrapeId);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+        {
+            throw new InvalidOperationException(
+                $"No improvement notification projection plan exists for published scrape {publishedScrapeId}.");
+        }
+
+        var isReady = reader.GetBoolean(0);
+        var scopes = JsonSerializer.Deserialize<SoloCurrentProjectionScopeKey[]>(
+            reader.GetString(1)) ?? [];
+        return new ImprovementNotificationProjectionPlan(
+            publishedScrapeId,
+            isReady,
+            scopes);
+    }
+
+    public void AdoptProjectionPlanForRecovery(
+        long publishedScrapeId,
+        IReadOnlyCollection<SoloCurrentProjectionScopeKey> scopes)
+    {
+        var canonicalScopes = scopes
+            .Where(static scope =>
+                !string.IsNullOrWhiteSpace(scope.SongId)
+                && !string.IsNullOrWhiteSpace(scope.Instrument))
+            .Distinct()
+            .OrderBy(static scope => scope.SongId, StringComparer.Ordinal)
+            .ThenBy(static scope => scope.Instrument, StringComparer.Ordinal)
+            .ToArray();
+
+        using var conn = _dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE scrape_publication_state
+            SET improvement_notifications_projection_scopes = @scopes,
+                improvement_notifications_projection_ready = true,
+                improvement_notifications_projection_scrape_id = @scrapeId,
+                updated_at = now()
+            WHERE id = TRUE
+              AND published_scrape_id = @scrapeId
+              AND improvement_notifications_scrape_id = @scrapeId
+              AND improvement_notifications_status IN ('pending', 'running', 'failed')
+              AND (
+                  NOT improvement_notifications_projection_ready
+                  OR improvement_notifications_projection_scrape_id IS DISTINCT FROM @scrapeId
+              );
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", (int)publishedScrapeId);
+        cmd.Parameters.Add(
+            "scopes",
+            NpgsqlDbType.Jsonb).Value = JsonSerializer.Serialize(canonicalScopes);
+        if (cmd.ExecuteNonQuery() == 1)
+            return;
+
+        var existing = GetProjectionPlan(publishedScrapeId);
+        if (!existing.IsReady)
+        {
+            throw new InvalidOperationException(
+                $"Improvement notification projection plan for published scrape {publishedScrapeId} " +
+                "could not be adopted.");
+        }
+    }
+
+    public IDisposable AcquireRecoveryLock(long publishedScrapeId)
+    {
+        var scrapeId = checked((int)publishedScrapeId);
+        var conn = _dataSource.OpenConnection();
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT pg_try_advisory_lock(@namespace, @scrapeId);";
+            cmd.Parameters.AddWithValue("namespace", RecoveryAdvisoryLockNamespace);
+            cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+            if (cmd.ExecuteScalar() is not bool acquired || !acquired)
+            {
+                throw new InvalidOperationException(
+                    $"Improvement notification recovery for published scrape {publishedScrapeId} is already running.");
+            }
+
+            return new RecoveryLockLease(
+                conn,
+                RecoveryAdvisoryLockNamespace,
+                scrapeId);
+        }
+        catch
+        {
+            conn.Dispose();
+            throw;
+        }
     }
 
     public void EnsurePublicationPending(long scrapeId)
@@ -144,10 +263,19 @@ public sealed class ImprovementNotificationService
                 END,
                 updated_at = now()
             WHERE id = TRUE
-              AND published_scrape_id = @scrapeId;
+              AND published_scrape_id = @scrapeId
+              AND improvement_notifications_scrape_id = @scrapeId
+              AND improvement_notifications_projection_ready
+              AND improvement_notifications_projection_scrape_id = @scrapeId
+              AND improvement_notifications_status IN ('pending', 'running', 'failed');
             """;
         cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
-        cmd.ExecuteNonQuery();
+        if (cmd.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException(
+                $"Improvement notification marker for published scrape {scrapeId} " +
+                "is missing, mismatched, terminal, or lacks a ready projection plan.");
+        }
     }
 
     public void MarkPublicationRunning(long scrapeId)
@@ -164,10 +292,19 @@ public sealed class ImprovementNotificationService
                 improvement_notifications_error = NULL,
                 updated_at = now()
             WHERE id = TRUE
-              AND published_scrape_id = @scrapeId;
+              AND published_scrape_id = @scrapeId
+              AND improvement_notifications_scrape_id = @scrapeId
+              AND improvement_notifications_projection_ready
+              AND improvement_notifications_projection_scrape_id = @scrapeId
+              AND improvement_notifications_status IN ('pending', 'running', 'failed');
             """;
         cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
-        cmd.ExecuteNonQuery();
+        if (cmd.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException(
+                $"Improvement notification marker for published scrape {scrapeId} " +
+                "cannot transition to running.");
+        }
     }
 
     public void MarkPublicationCompleted(long scrapeId)
@@ -182,10 +319,19 @@ public sealed class ImprovementNotificationService
                 improvement_notifications_error = NULL,
                 updated_at = now()
             WHERE id = TRUE
-              AND published_scrape_id = @scrapeId;
+              AND published_scrape_id = @scrapeId
+              AND improvement_notifications_scrape_id = @scrapeId
+              AND improvement_notifications_projection_ready
+              AND improvement_notifications_projection_scrape_id = @scrapeId
+              AND improvement_notifications_status IN ('pending', 'running', 'failed', 'completed');
             """;
         cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
-        cmd.ExecuteNonQuery();
+        if (cmd.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException(
+                $"Improvement notification marker for published scrape {scrapeId} " +
+                "cannot transition to completed.");
+        }
     }
 
     public void MarkPublicationDeferred(long scrapeId, string? detail = null)
@@ -193,6 +339,34 @@ public sealed class ImprovementNotificationService
 
     public void MarkPublicationFailed(long scrapeId, string detail)
         => MarkPublicationIncomplete(scrapeId, "failed", detail);
+
+    public void MarkPublicationDisabled(long scrapeId, string? detail = null)
+    {
+        using var conn = _dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE scrape_publication_state
+            SET improvement_notifications_scrape_id = NULL,
+                improvement_notifications_status = 'disabled',
+                improvement_notifications_error = @detail,
+                improvement_notifications_projection_scopes = '[]'::jsonb,
+                improvement_notifications_projection_ready = false,
+                improvement_notifications_projection_scrape_id = NULL,
+                updated_at = now()
+            WHERE id = TRUE
+              AND published_scrape_id = @scrapeId
+              AND improvement_notifications_scrape_id = @scrapeId
+              AND improvement_notifications_status IN ('pending', 'running', 'failed');
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+        cmd.Parameters.Add("detail", NpgsqlDbType.Text).Value = NullableValue(detail);
+        if (cmd.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException(
+                $"Improvement notification marker for published scrape {scrapeId} " +
+                "cannot transition to disabled.");
+        }
+    }
 
     private void MarkPublicationIncomplete(long scrapeId, string status, string? detail)
     {
@@ -205,12 +379,49 @@ public sealed class ImprovementNotificationService
                 improvement_notifications_error = @detail,
                 updated_at = now()
             WHERE id = TRUE
-              AND published_scrape_id = @scrapeId;
+              AND published_scrape_id = @scrapeId
+              AND improvement_notifications_scrape_id = @scrapeId
+              AND improvement_notifications_projection_ready
+              AND improvement_notifications_projection_scrape_id = @scrapeId
+              AND improvement_notifications_status IN ('pending', 'running', 'failed');
             """;
         cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
         cmd.Parameters.AddWithValue("status", status);
         cmd.Parameters.Add("detail", NpgsqlDbType.Text).Value = NullableValue(detail);
-        cmd.ExecuteNonQuery();
+        if (cmd.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException(
+                $"Improvement notification marker for published scrape {scrapeId} " +
+                $"cannot transition to {status}.");
+        }
+    }
+
+    private sealed class RecoveryLockLease(
+        NpgsqlConnection connection,
+        int lockNamespace,
+        int scrapeId) : IDisposable
+    {
+        private NpgsqlConnection? _connection = connection;
+
+        public void Dispose()
+        {
+            var conn = Interlocked.Exchange(ref _connection, null);
+            if (conn is null)
+                return;
+
+            try
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = "SELECT pg_advisory_unlock(@namespace, @scrapeId);";
+                cmd.Parameters.AddWithValue("namespace", lockNamespace);
+                cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+                cmd.ExecuteNonQuery();
+            }
+            finally
+            {
+                conn.Dispose();
+            }
+        }
     }
 
     public ImprovementNotificationsEnvelope GetPlayerNotifications(
@@ -2314,21 +2525,45 @@ public sealed record ImprovementNotificationPublicationStatus(
     long? LatestPlayerScrapeId,
     long? LatestPlayerRunId,
     DateTime? LatestPlayerCompletedAtUtc,
+    bool LatestPlayerIncludesSongEvents,
+    bool LatestPlayerIncludesRankings,
     long? LatestBandScrapeId,
     long? LatestBandRunId,
     DateTime? LatestBandCompletedAtUtc,
+    bool LatestBandIncludesSongEvents,
+    bool LatestBandIncludesRankings,
     int PlayerPublishedScrapesBehind,
     int BandPublishedScrapesBehind)
 {
     public static ImprovementNotificationPublicationStatus Empty { get; } = new(
-        null, null, false, null, null, 0, null, null, null, null, null, null, null, null, null, 0, 0);
+        null, null, false, null, null, 0, null, null, null,
+        null, null, null, false, false,
+        null, null, null, false, false,
+        0, 0);
 
-    public bool IsCompleteForPublishedScrape(bool includePlayers, bool includeBands)
+    public bool IsCompleteForPublishedScrape(
+        bool includePlayers,
+        bool includeBands,
+        bool includeSongEvents,
+        bool includeRankings)
     {
         if (!PublishedScrapeId.HasValue)
             return false;
 
-        return (!includePlayers || LatestPlayerScrapeId == PublishedScrapeId)
-            && (!includeBands || LatestBandScrapeId == PublishedScrapeId);
+        var playerComplete = !includePlayers
+            || LatestPlayerScrapeId == PublishedScrapeId
+            && (!includeSongEvents || LatestPlayerIncludesSongEvents)
+            && (!includeRankings || LatestPlayerIncludesRankings);
+        var bandComplete = !includeBands
+            || LatestBandScrapeId == PublishedScrapeId
+            && (!includeSongEvents || LatestBandIncludesSongEvents)
+            && (!includeRankings || LatestBandIncludesRankings);
+        return playerComplete && bandComplete;
     }
+
 }
+
+public sealed record ImprovementNotificationProjectionPlan(
+    long PublishedScrapeId,
+    bool IsReady,
+    IReadOnlyList<SoloCurrentProjectionScopeKey> Scopes);

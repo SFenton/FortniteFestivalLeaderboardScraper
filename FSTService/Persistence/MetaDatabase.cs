@@ -381,8 +381,25 @@ public sealed class MetaDatabase : IMetaDatabase
         long scrapeId,
         bool promoteCachedResponses = true,
         int? expectedPublishedScopeCount = null,
-        bool queueImprovementNotifications = false)
+        bool queueImprovementNotifications = false,
+        IReadOnlyCollection<SoloCurrentProjectionScopeKey>? improvementNotificationProjectionScopes = null)
     {
+        if (queueImprovementNotifications && improvementNotificationProjectionScopes is null)
+        {
+            throw new InvalidOperationException(
+                "Improvement notification publication requires a persisted projection scope plan.");
+        }
+
+        var notificationProjectionScopes = (improvementNotificationProjectionScopes ?? [])
+            .Where(static scope =>
+                !string.IsNullOrWhiteSpace(scope.SongId)
+                && !string.IsNullOrWhiteSpace(scope.Instrument))
+            .Distinct()
+            .OrderBy(static scope => scope.SongId, StringComparer.Ordinal)
+            .ThenBy(static scope => scope.Instrument, StringComparer.Ordinal)
+            .ToArray();
+        var notificationProjectionScopesJson = JsonSerializer.Serialize(notificationProjectionScopes);
+
         using var conn = _ds.OpenConnection();
         EnsureScrapePublicationStateTable(conn);
         using var tx = conn.BeginTransaction();
@@ -398,6 +415,40 @@ public sealed class MetaDatabase : IMetaDatabase
             verify.Parameters.AddWithValue("id", (int)scrapeId);
             if (verify.ExecuteScalar() is not bool isCompleted || !isCompleted)
                 throw new InvalidOperationException($"Scrape run {scrapeId} cannot be published before it is completed.");
+        }
+
+        using (var notificationGate = conn.CreateCommand())
+        {
+            notificationGate.Transaction = tx;
+            notificationGate.CommandText = """
+                SELECT published_scrape_id,
+                       improvement_notifications_scrape_id,
+                       improvement_notifications_status
+                FROM scrape_publication_state
+                WHERE id = TRUE
+                FOR UPDATE
+                """;
+            using var reader = notificationGate.ExecuteReader();
+            if (reader.Read() && !reader.IsDBNull(0))
+            {
+                var publishedScrapeId = reader.GetInt32(0);
+                var notificationScrapeId = reader.IsDBNull(1) ? (int?)null : reader.GetInt32(1);
+                var notificationStatus = reader.IsDBNull(2) ? null : reader.GetString(2);
+                var notificationComplete =
+                    notificationScrapeId is null
+                    && (notificationStatus is null or "disabled")
+                    || notificationScrapeId == publishedScrapeId
+                    && (notificationStatus is "completed" or "disabled");
+
+                if (!notificationComplete)
+                {
+                    throw new InvalidOperationException(
+                        $"Scrape {scrapeId} cannot be published while improvement notifications " +
+                        $"for published scrape {publishedScrapeId} are incomplete " +
+                        $"(marker={notificationScrapeId?.ToString() ?? "null"}, " +
+                        $"status={notificationStatus ?? "null"}).");
+                }
+            }
         }
 
         if (expectedPublishedScopeCount.HasValue)
@@ -515,6 +566,9 @@ public sealed class MetaDatabase : IMetaDatabase
                     improvement_notifications_started_at,
                     improvement_notifications_completed_at,
                     improvement_notifications_error,
+                    improvement_notifications_projection_scopes,
+                    improvement_notifications_projection_ready,
+                    improvement_notifications_projection_scrape_id,
                     updated_at)
                 VALUES (
                     TRUE, @scrapeId, @now,
@@ -525,6 +579,9 @@ public sealed class MetaDatabase : IMetaDatabase
                     NULL,
                     NULL,
                     NULL,
+                    @notificationProjectionScopes,
+                    @queueImprovementNotifications,
+                    CASE WHEN @queueImprovementNotifications THEN @scrapeId ELSE NULL END,
                     @now)
                 ON CONFLICT (id) DO UPDATE SET
                     published_scrape_id = EXCLUDED.published_scrape_id,
@@ -536,6 +593,9 @@ public sealed class MetaDatabase : IMetaDatabase
                     improvement_notifications_started_at = NULL,
                     improvement_notifications_completed_at = NULL,
                     improvement_notifications_error = NULL,
+                    improvement_notifications_projection_scopes = EXCLUDED.improvement_notifications_projection_scopes,
+                    improvement_notifications_projection_ready = EXCLUDED.improvement_notifications_projection_ready,
+                    improvement_notifications_projection_scrape_id = EXCLUDED.improvement_notifications_projection_scrape_id,
                     public_reads_frozen = FALSE,
                     public_reads_frozen_at = NULL,
                     public_reads_frozen_scrape_id = NULL,
@@ -545,6 +605,9 @@ public sealed class MetaDatabase : IMetaDatabase
             publish.Parameters.AddWithValue("scrapeId", (int)scrapeId);
             publish.Parameters.AddWithValue("now", DateTime.UtcNow);
             publish.Parameters.AddWithValue("queueImprovementNotifications", queueImprovementNotifications);
+            publish.Parameters.Add(
+                "notificationProjectionScopes",
+                NpgsqlDbType.Jsonb).Value = notificationProjectionScopesJson;
             publish.ExecuteNonQuery();
         }
 
@@ -697,7 +760,7 @@ public sealed class MetaDatabase : IMetaDatabase
             probe.CommandText = """
                 SELECT to_regclass('public.scrape_publication_state') IS NOT NULL
                    AND (
-                       SELECT COUNT(*) = 11
+                       SELECT COUNT(*) = 14
                        FROM information_schema.columns
                        WHERE table_schema = 'public'
                          AND table_name = 'scrape_publication_state'
@@ -712,7 +775,10 @@ public sealed class MetaDatabase : IMetaDatabase
                              'improvement_notifications_attempt_count',
                              'improvement_notifications_started_at',
                              'improvement_notifications_completed_at',
-                             'improvement_notifications_error')
+                             'improvement_notifications_error',
+                             'improvement_notifications_projection_scopes',
+                             'improvement_notifications_projection_ready',
+                             'improvement_notifications_projection_scrape_id')
                    )
                 """;
             if (Convert.ToBoolean(probe.ExecuteScalar()))
@@ -745,6 +811,9 @@ public sealed class MetaDatabase : IMetaDatabase
                 improvement_notifications_started_at TIMESTAMPTZ,
                 improvement_notifications_completed_at TIMESTAMPTZ,
                 improvement_notifications_error TEXT,
+                improvement_notifications_projection_scopes JSONB NOT NULL DEFAULT '[]'::jsonb,
+                improvement_notifications_projection_ready BOOLEAN NOT NULL DEFAULT FALSE,
+                improvement_notifications_projection_scrape_id INTEGER REFERENCES scrape_log(id),
                 updated_at          TIMESTAMPTZ NOT NULL
             )
             """;
@@ -764,6 +833,58 @@ public sealed class MetaDatabase : IMetaDatabase
             ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS improvement_notifications_started_at TIMESTAMPTZ;
             ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS improvement_notifications_completed_at TIMESTAMPTZ;
             ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS improvement_notifications_error TEXT;
+            ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS improvement_notifications_projection_scopes JSONB NOT NULL DEFAULT '[]'::jsonb;
+            ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS improvement_notifications_projection_ready BOOLEAN NOT NULL DEFAULT FALSE;
+            ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS improvement_notifications_projection_scrape_id INTEGER REFERENCES scrape_log(id);
+
+            UPDATE scrape_publication_state
+            SET improvement_notifications_projection_scopes = '[]'::jsonb,
+                improvement_notifications_projection_ready = true,
+                improvement_notifications_projection_scrape_id = published_scrape_id
+            WHERE improvement_notifications_status = 'completed'
+              AND improvement_notifications_scrape_id = published_scrape_id
+              AND (
+                  NOT improvement_notifications_projection_ready
+                  OR improvement_notifications_projection_scrape_id IS DISTINCT FROM published_scrape_id
+              );
+
+            UPDATE scrape_publication_state
+            SET improvement_notifications_scrape_id = NULL,
+                improvement_notifications_projection_scopes = '[]'::jsonb,
+                improvement_notifications_projection_ready = false,
+                improvement_notifications_projection_scrape_id = NULL
+            WHERE improvement_notifications_status = 'disabled';
+
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conrelid = 'scrape_publication_state'::regclass
+                      AND conname = 'ck_scrape_publication_notification_plan'
+                ) THEN
+                    ALTER TABLE scrape_publication_state
+                    ADD CONSTRAINT ck_scrape_publication_notification_plan
+                    CHECK (
+                        improvement_notifications_status IS NULL
+                        OR (
+                            improvement_notifications_status = 'disabled'
+                            AND improvement_notifications_scrape_id IS NULL
+                            AND NOT improvement_notifications_projection_ready
+                            AND improvement_notifications_projection_scrape_id IS NULL
+                        )
+                        OR (
+                            improvement_notifications_status IN ('pending', 'running', 'failed', 'completed')
+                            AND published_scrape_id IS NOT NULL
+                            AND improvement_notifications_scrape_id IS NOT NULL
+                            AND improvement_notifications_projection_scrape_id IS NOT NULL
+                            AND improvement_notifications_scrape_id = published_scrape_id
+                            AND improvement_notifications_projection_ready
+                            AND improvement_notifications_projection_scrape_id = published_scrape_id
+                        )
+                    ) NOT VALID;
+                END IF;
+            END $$;
             """;
         alter.ExecuteNonQuery();
         tx.Commit();

@@ -16,6 +16,46 @@ namespace FSTService.Tests.Unit;
 /// </summary>
 public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
 {
+    [Fact]
+    public async Task ExecuteAsync_RecoversPendingNotificationsBeforeAuthenticationFailure()
+    {
+        var scrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        _metaDb.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false,
+            queueImprovementNotifications: true,
+            improvementNotificationProjectionScopes: []);
+
+        var authenticationAttempted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                authenticationAttempted.TrySetResult();
+                return Task.FromResult<string?>(null);
+            });
+        _tokenManager.PerformDeviceCodeSetupAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(false));
+
+        var worker = CreateWorker(new ScraperOptions
+        {
+            DataDirectory = _tempDir,
+            RunOnce = true,
+        });
+
+        await worker.StartAsync(CancellationToken.None);
+        await authenticationAttempted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await worker.StopAsync(CancellationToken.None);
+
+        var notifications = new ImprovementNotificationService(
+            _metaFixture.DataSource,
+            Substitute.For<Microsoft.Extensions.Logging.ILogger<ImprovementNotificationService>>());
+        var status = notifications.GetPublicationStatus();
+        Assert.Equal("completed", status.MarkerStatus);
+        Assert.Equal(scrapeId, status.MarkerScrapeId);
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // RunResolveOnlyAsync (DB-mutating: InsertAccountIds)
     // ═══════════════════════════════════════════════════════════════
