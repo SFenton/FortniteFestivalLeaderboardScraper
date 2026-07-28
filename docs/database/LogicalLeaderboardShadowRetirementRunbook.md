@@ -2,19 +2,36 @@
 
 ## Current decision
 
-**Tier:** secondary-index retirement accepted; table-data truncate blocked.
+**Tier:** destructive parity gate cleared; table-data truncate deferred to a
+separate phase.
 
-The logical leaderboard shadow is disabled and non-authoritative, but the
-repository's destructive live-scrape A/B gate is not yet satisfied. Scrapes
-`1261`, `1262`, and `1263` completed all `8,208` manifests with logical writes
-disabled, zero writer failures, and zero publication-critical failures. Each
-failed on capacity before global publication. SNAPSHOT-REUSE candidate `1264`
-then completed `8,232/8,232` manifests with logical writes disabled and zero
-writer failures, but its post-writer capacity guard failed before rankings or
-publication. Do not truncate until one disabled-writer scrape completes
-post-process, publishes, unfreezes, and passes the full public parity suite.
+Scrape `1267` satisfied the repository's destructive live-scrape A/B gate with
+logical writes disabled. It completed all `8,232/8,232` solo and band
+manifests, zero writer failures, all 10 publication-critical phases, atomic
+publication, and public-read unfreeze. The new publication owns `6,174`
+complete solo scope mappings: `6,132` snapshot scopes owning `39,937,029`
+physical rows from scrape/snapshot `1267`, plus 42 explicit-empty mappings
+with no physical snapshot.
 
-Evidence:
+Two post-publish captures each returned HTTP `200` for all 13 normalized
+leaderboard, export, player, ranking, history, composite, band, and band-song
+fingerprints; the captures were `13/13` byte-exact. Full logical fingerprints
+remained byte-identical for all `39,820,273` current rows and `194,171,215`
+version rows. Scrape `1267` touched zero logical rows, emitted zero logical
+write metrics, and produced no positive logical-table read counter delta.
+
+The destructive gate is **CLEARED**, but no truncate ran in SCRAPE-1267. The
+separate maintenance phase must still use the exact preconditions, SQL,
+rollback package, 60-second monitor, and post-action checks below.
+
+Hashed clearance evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1267-guarded-publication-20260727T201218Z/parity/logical-shadow-retirement-live-gate.json`
+(`95c55fb66bb33f07eccbfe01b45957ab6ad96439c2a96f41a16dd8a0519e2ae7`).
+
+SCRAPE-1267 evidence root:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1267-guarded-publication-20260727T201218Z`.
+
+Original readiness evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/logical-retire-20260725T2306Z`.
 
 SNAPSHOT-REUSE preflight on 2026-07-26 did not clear this prerequisite. Its
@@ -52,7 +69,7 @@ sample fingerprints remained intact. Immediate free space reached
 passed with about `6.75 GB` of margin. Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/post-scrape-1265-capacity-recovery-20260727T0011Z`.
 
-The proxy-retuned disabled-writer baseline ran scrape `1266`. It completed
+The prior proxy-retuned disabled-writer baseline ran scrape `1266`. It completed
 `8,232/8,232` manifests and every recorded publication-critical phase with zero
 writer failures, but it exited during unbounded deferred registration/rivals
 processing before global publication. Recovery marked `1266` failed and
@@ -68,7 +85,8 @@ rows and `194,171,215` version rows:
 - version fingerprint file:
   `c9ab56adc1a983c62be0e3cc5dbe480ef6b6993a41de601638197cb394424313`.
 
-The gate remains `NOT_CLEARED_NO_PUBLICATION`; no truncate ran. The retained
+That observation left the gate `NOT_CLEARED_NO_PUBLICATION`; no truncate ran.
+Scrape `1267` subsequently cleared the gate as recorded above. The retained
 leaf tables currently occupy `123,173,888,000` bytes after the already accepted
 secondary-index retirement. Hashed evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/proxy-retune-disabled-writer-baseline-20260727T004228Z/parity/logical-shadow-retirement-live-gate.json`.
@@ -121,9 +139,9 @@ writer or reader. `DatabaseInitializer` no longer recreates these indexes.
    sizes/counts/fingerprints, metrics count, and public fingerprints.
 8. Confirm production
    `Features__WriteLogicalLeaderboardVersions=false`.
-9. Require one complete disabled-writer scrape to have published with exact
-   route/export/ranking/history/publication parity. Pre-publication manifest
-   completion alone is insufficient.
+9. Confirm the scrape-`1267` clearance evidence and SHA-256 above remain
+   available. Re-capture current publication, route, logical, lock, and
+   capacity baselines immediately before the separate truncate phase.
 
 ## Future execution
 

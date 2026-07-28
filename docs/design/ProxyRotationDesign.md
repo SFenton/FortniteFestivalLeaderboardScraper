@@ -153,6 +153,43 @@ retried; only the caller/host cancellation token ends the pass. Controlled
 run-once compose also sets `restart: "no"` so Docker cannot restart a completed
 or failed one-shot worker into a second scrape.
 
+### Scrape 1267 publishing qualification
+
+Scrape `1267` reran the accepted `800 / 32 / 4` candidate exactly once with
+curl primary transport, 25 qualified unique PIA exits at start, snapshot reuse
+off, logical writes off, and restart `no`. It published successfully and
+unfroze public reads.
+
+- Network plus writer drain completed `8,232/8,232` manifests,
+  `592,731` pages, and `59,105,529` reported entries in `5:02:22.661`.
+  This was `8.79%` faster than scrape `1265` (`5:29:50`) and `2.51%` slower
+  than scrape `1266` (`4:54:57.902`). Useful pages/s was `32.67`, `9.67%`
+  above `1265` and `2.43%` below `1266`.
+- Final transport counters recorded `629,426` wire sends and `19,202` isolated
+  CDN blocks (`3.05%`), with zero HTTP `429` or `503` primary responses.
+- The advisory schema lock serialized concurrent band ranking schema setup;
+  no PostgreSQL `40P01` or band-type ranking failure occurred. All 10
+  publication-critical phases completed.
+- The bounded deferred-registration phase advanced through two rival items
+  and completed in `2,653.1 s`, below the configured 45-minute no-progress
+  backstop. The watchdog reached terminal scrape completion without recovery.
+- The 60-second monitor captured `721` samples with zero public-health or
+  capacity-stop ticks. Minimum free space was `18,203,201,536` bytes,
+  `3,632,051,333` above the declared safety floor.
+- Atomic publication advanced to `1267`; two public captures returned HTTP
+  `200` and matched `13/13` normalized fingerprints.
+
+Decision: the `800 / 32 / 4` candidate is **accepted for full publishing
+throughput**. Scheduling remains held because the post-publish scrape capacity
+guard is blocked at `41,145,516,032 < 60,392,999,803` bytes. Production
+rate settings were restored to the held `400 / 2 / 1` baseline so no later
+worker start can occur accidentally. Effective exit `pia-gluetun-6` also
+failed PIA TLS health after the run and remains stopped pending provider-exit
+requalification; the published result and public path are unaffected.
+
+Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1267-guarded-publication-20260727T201218Z`.
+
 Transport fallback responses are only treated as recovered when they are not
 another CDN block and not retryable `429`/`5xx` status. This prevents a curl
 `503` observed after a transient process/tunnel failure from becoming a final

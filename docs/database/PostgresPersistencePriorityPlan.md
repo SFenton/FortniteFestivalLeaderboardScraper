@@ -7,21 +7,20 @@ This plan records the approved direction for improving FST Postgres persistence 
 - Production compose ownership: `/home/sfenton/Docker/FestivalServiceTracker`.
 - `fstservice`, `festivalweb`, and `fst-postgres` are healthy.
   `fstservice` runs `fstservice:scrape1266-recovery-4121e7e5`.
-  `fstworker` is created-held on the same image with run-once scheduling and
+  `fstworker` is exited-held on the same image with run-once scheduling and
   restart `no`.
-- Scrape `1236` published `6,138` complete scopes and `39,588,650` rows with
-  the publication ledger unfrozen and remains authoritative. Scrape `1266` is
-  failed at `post_process_no_progress_abandoned`, owns zero published-source
-  rows, and the worker ledger is offline with no current operation. Earlier
-  failed candidates `1263` through `1265` remain unpublished.
-- Failed-candidate derived-read isolation keeps mapped solo leaderboards
-  available while unversioned ranking/history/export and band-song cache
-  misses fail closed until the next successful publication. This is separate
-  from `scrape_publication_state.public_reads_frozen`, which is `false`.
+- Scrape `1267` published `6,174` complete solo scope mappings and
+  `39,937,029` rows with the publication ledger unfrozen and is authoritative.
+  Scrape `1266` remains failed at `post_process_no_progress_abandoned` with
+  zero published-source rows. No scrape later than `1267` exists.
+- The successful publication removed failed-candidate derived-read isolation:
+  leaderboard, export, ranking, history, composite, band, and band-song
+  validation routes now return stable HTTP `200`.
 - `fstservice` and `festivalweb` may be restarted for maintenance and must be
-  recovered promptly. `fstworker` remains held for this boundary; the next
-  scrape must use commit `4121e7e5` or newer and run the durable post-process
-  watchdog.
+  recovered promptly. `fstworker` remains held because the post-publish scrape
+  capacity guard is blocked and effective PIA exit `pia-gluetun-6` failed
+  requalification. Any later scrape must use commit `4121e7e5` or newer and
+  run the durable post-process watchdog.
 - PG-3 dropped only `public.ix_crh_latest`, reclaiming exactly
   `20,890,148,864` database bytes. Free space rose from `78,549,483,520` to
   `99,439,702,016` bytes; the guard horizon improved from `2.61` to `3.31`
@@ -112,6 +111,19 @@ This plan records the approved direction for improving FST Postgres persistence 
   bytes, `3,608,667,269` above the corrected full-run requirement.
   Pre/post public route, export, history, and ranking fingerprints matched
   `13/13`; published `1236` remains unfrozen and the worker remains offline.
+- Guarded scrape `1267` then completed `8,232/8,232` manifests and all 10
+  publication-critical phases with logical writes and snapshot reuse off.
+  It atomically published/unfroze `1267`, promoted `6,174` complete scope
+  mappings and `39,937,029` physical rows, and passed two exact HTTP `200`
+  `13/13` public fingerprint suites. Full logical current/version hashes
+  remained exact with zero logical touches, metrics, or positive read-counter
+  deltas. The logical-shadow destructive parity gate is now **CLEARED**; no
+  truncate ran in this phase.
+- Scrape `1267` network plus writer drain was `5:02:22.661`, `8.79%` faster
+  than scrape `1265` and `2.51%` slower than scrape `1266`. Minimum free space
+  was `18,203,201,536`, above the safety floor by `3,632,051,333`. Final
+  measured free space was `41,145,516,032`, so normal scheduling remains held
+  and the proxy rates were restored to `400 / 2 / 1`.
 - The earlier STORAGE-OWNERSHIP phase completed continuous-safe P6/P8/P9 owner cards and exact
   manifests for `player_score_observations`, `scrape_dirty_*`, and legacy
   `leaderboard_entries_*`: `61,217,292,288` bytes total. Observation dual
@@ -269,6 +281,12 @@ owner-proven orphan/derived state. Final filesystem free space is
 passes with `3,608,667,269` bytes of margin; optional builds and rewrites still
 fail the seven-day headroom gate.
 
+Scrape `1267` then consumed one guarded full-run window and published. Minimum
+free space was `18,203,201,536` bytes, above the safety floor by
+`3,632,051,333`. After publication, cleanup, and worker hold, the final
+measured guard sampled `41,145,516,032` free bytes. This is below the
+`60,392,999,803` full-run requirement, so normal scheduling remains held.
+
 Destructive cleanup, irreversible migration, drop/truncate/repack/rewrite
 work, or active Postgres data movement may proceed automatically after a
 live-scrape A/B proves old-vs-new data parity and the exact objects, rollback
@@ -280,7 +298,7 @@ path, and post-action validation are documented.
 |---|---|---|
 | Phase 6 logical current/version dual-write | Complete | Implemented, deployed, evaluated on scrape `1214`, committed as `02460b13`. |
 | Phase 7 logical write metrics | Complete | Implemented, deployed, committed as `2ac02445`; production metrics captured from failed scrape `1218`. |
-| LOGICAL-RETIRE ownership/rebuild package | Secondary indexes retired / truncate blocked | Exact rows, integrity, stale-1237/public-1236 divergence proof, schema/rebuild SQL, and bounded regeneration remain preserved. POST-1265-LOW-SCRATCH removed only four dormant secondary index trees for `18,289,049,600` database bytes; `39,820,273` current rows, `194,171,215` version rows, 20 primary-key constraints, and table heaps remain intact. Scrape `1266` added exact full-table before/after hashes and zero logical touches, but did not globally publish, so no truncate ran. |
+| LOGICAL-RETIRE ownership/rebuild package | Destructive parity gate cleared / truncate deferred | Exact rows, integrity, schema/rebuild SQL, and bounded regeneration remain preserved. POST-1265-LOW-SCRATCH removed only four dormant secondary index trees for `18,289,049,600` database bytes. Scrape `1267` globally published/unfroze with exact full-table hashes, zero logical touches/metrics/positive reads, and two HTTP `200` `13/13` public parity captures. No truncate ran in SCRAPE-1267; execute it only as a separate monitored maintenance phase. |
 | SOLO-DYNAMIC-AB compact published solo read model | Accepted research/implementation candidate / migration blocked | Full owner/query matrix, service-cold and warm baseline, bounded unlogged samples, exact c1/c8 fingerprints, storage math, rollback DDL, and default-off rank-offset code are complete. Conservative compact-plus-hot projection is <=`20,215,010,912` bytes, reclaiming >=`26,418,448,800` bytes (`56.65%`). Final `3,812,061,184`-byte margin cannot safely build it. |
 | Experimental logical shadow cleanup | Complete | Approved cleanup truncated experimental logical shadow tables and removed incomplete scrape `1218`. |
 | Database architecture evaluation | Complete | Read-only code review and production probes completed on 2026-07-06. |
@@ -313,7 +331,7 @@ path, and post-action validation are documented.
 | Autonomous scrape rollout | Rejected after scrape `1265`; worker held | Candidate `1265` passed start/post-writer guards, completed all manifests/writers and band maintenance, then crossed its declared capacity floor during ranking snapshots. It was stopped and reconciled failed with zero published mappings. Published `1236` remains safe. Post-cleanup nominal guards pass again, but the live run proved that model insufficient through publication. |
 | Scrape `1266` incident recovery | Complete / deployed / worker held | Exact rollback and guarded reconciliation preserved published `1236`; precise failed-candidate isolation remains active for derived reads. Commit `4121e7e5` adds critical band failure propagation, progress-only heartbeats, a 30-minute deferred-sync timeout, and DB-aware autonomous recovery. Service and held worker use `fstservice:scrape1266-recovery-4121e7e5`. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
-| Next implementation phase | Scrape-capacity gate cleared / worker held | Final measured free space is `64,001,667,072`, `3,608,667,269` bytes above the corrected full-run requirement. Proxy tuning remains reverted at `400 / 2 / 1`; image `fstservice:scrape1266-recovery-4121e7e5` remains held with restart `no`. Scrape `1267` may proceed under the durable watchdog, while optional builds, rewrites, repacks, broad movement, logical truncate, and observation truncate retain their separate gates. |
+| Next implementation phase | Logical truncate parity-authorized / worker held | Scrape `1267` published and cleared the logical-shadow destructive parity gate. Final measured free space is `41,145,516,032`, below the `60,392,999,803` full-run requirement, so scheduling remains held and rates are restored to `400 / 2 / 1`. The next storage phase may execute the separately monitored logical-shadow truncate; no truncate ran in SCRAPE-1267. |
 
 ## LOGICAL-RETIRE decision package (2026-07-25)
 
@@ -324,15 +342,15 @@ path, and post-action validation are documented.
 | Integrity | `39,820,273` current rows match `39,820,273` open versions with zero duplicate/missing/fingerprint errors | Pass |
 | Current rebuild | Published snapshot sample rebuilt `139,264` rows across 27 scopes/all nine instruments with zero count mismatches | Pass |
 | Version retention | Chronology is experimental/non-authoritative; preserve metadata/fingerprints and a deterministic sample, not a full duplicate | Pass |
-| Live destructive parity | Disabled-write scrapes `1261`-`1263` completed manifests but failed before global publication | **Blocked** |
+| Live destructive parity | Disabled-write scrape `1267` completed `8,232/8,232` manifests, all critical phases, atomic publication/unfreeze, two exact HTTP `200` public suites, and unchanged full logical hashes | **Pass** |
 
 The exact future action is a short-timeout transaction truncating only the two
 partitioned parents without `CASCADE`; schema and metrics remain. Do not run it
-until a complete disabled-writer scrape publishes and the route/export/
-ranking/history/publication fingerprints pass.
+inside SCRAPE-1267. Execute it as a separate monitored maintenance phase using
+the runbook's rollback and post-action validation.
 
 Evidence:
-`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/logical-retire-20260725T2306Z`.
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1267-guarded-publication-20260727T201218Z`.
 
 ## STORAGE-OWNERSHIP P6/P8/P9 decision package (2026-07-26)
 

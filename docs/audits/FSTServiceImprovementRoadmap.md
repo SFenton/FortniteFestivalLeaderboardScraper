@@ -424,6 +424,24 @@ and old cache artifacts.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/stale-scrape-1266-recovery-20260727T184133Z`.
 
+**Scrape 1267 publication recovery - accepted 2026-07-28**
+
+- The recovery image completed one guarded run-once scrape and atomically
+  published/unfroze `1267`. No later scrape was allocated; the worker is
+  exited-held with restart `no`.
+- Two independent route suites returned HTTP `200` and matched `13/13`
+  normalized leaderboard, export, player, ranking, history, composite, band,
+  and band-song fingerprints. Failed-candidate derived-read isolation is no
+  longer active for the current publication.
+- `/readyz`, festivalweb shell, `/api/service-info`, the mapped leaderboard,
+  and Postgres stayed healthy for all `721` monitor samples. The publication
+  owns `6,174` complete source mappings and `39,937,029` rows.
+- Final free space is below the next full-scrape requirement, so normal worker
+  scheduling remains held. Effective PIA exit `pia-gluetun-6` also failed TLS
+  health after the run and remains stopped pending requalification.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1267-guarded-publication-20260727T201218Z`.
+
 - The subsequent residual capacity phase changed no public read contract.
   Mapped leaderboard output stayed byte-exact HTTP `200`; player ranking,
   history, export, composite/band ranking, and band-song routes stayed on the

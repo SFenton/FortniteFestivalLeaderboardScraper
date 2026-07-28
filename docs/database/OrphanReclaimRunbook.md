@@ -122,7 +122,12 @@ Do not truncate the table before that gate passes.
 
 ## Next storage phase
 
-Run scrape `1267` with the current recovery image and durable no-progress
-watchdog. If it publishes and the writer-off/public parity gates pass, the next
-storage phase should evaluate `player_score_observations` and the separately
-blocked logical leaderboard shadow as distinct reclaim decisions.
+Scrape `1267` completed with the current recovery image and durable no-progress
+watchdog. It published/unfroze and cleared the logical leaderboard shadow's
+destructive parity gate. The logical truncate remains deferred to a separate
+monitored phase and must not be combined with
+`player_score_observations`.
+
+Observation reclaim remains a distinct decision: verify both observation
+writers were off for scrape `1267`, capture exact pre/post table evidence, and
+apply its own public parity and rollback package before any truncate.

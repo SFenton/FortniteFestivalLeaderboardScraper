@@ -5,6 +5,21 @@
 **Tier:** code/readiness accepted; capacity-ready retry rejected and reverted;
 the production flag remains off.
 
+Scrape `1267` subsequently published successfully with snapshot reuse still
+off. It completed `8,232/8,232` manifests and all publication-critical phases,
+then atomically published/unfroze `1267` with exact public and logical-shadow
+parity. This clears the separate logical-shadow prerequisite but does not
+promote or re-enable snapshot reuse. The flag remains rejected/default-off.
+
+The publishing run used the accepted proxy throughput settings only for its
+single candidate window. Network plus writer drain was `5:02:22.661`, `8.79%`
+faster than scrape `1265` and `2.51%` slower than scrape `1266`. Minimum free
+space was `18,203,201,536`; final measured free space was `41,145,516,032`,
+so another full scrape is blocked and the worker remains held.
+
+Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1267-guarded-publication-20260727T201218Z`.
+
 `Features:SkipUnchangedPhysicalLeaderboardSnapshots` remains default-off. The
 refreshed Epic credential, authenticated `25/25` direct/PIA canary, canonical
 PIA guard, current-source image, public health, and both start guards passed.
@@ -223,11 +238,9 @@ post-writer capacity gate can pass on the FST drive.
 
 ## Logical-shadow prerequisite
 
-Scrapes `1264` and `1265` do **not** clear the logical-shadow live-publication
-prerequisite. Both disabled-writer candidates failed before global
-publication, so
-`leaderboard_current_entries*` and `leaderboard_entry_versions*` must not be
-truncated. The hashed decision is
-`parity/logical-shadow-retirement-live-gate.json` in the live A/B evidence
-root, SHA-256
-`35723055c9439e2d75b4ba06e630d8c5bfc4a89aaa70c9ecced1e6fff3b4bc2f`.
+Scrapes `1264` and `1265` did not clear the prerequisite, but scrape `1267`
+did. Its disabled-logical-writer publication completed and passed exact
+public/logical parity. No truncate ran in SCRAPE-1267; the separate logical
+retirement runbook now owns the parity-authorized maintenance action. The
+clearance SHA-256 is
+`95c55fb66bb33f07eccbfe01b45957ab6ad96439c2a96f41a16dd8a0519e2ae7`.

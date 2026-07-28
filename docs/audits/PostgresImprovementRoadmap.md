@@ -1263,6 +1263,27 @@ move to PG-7 after backup/restore and live-scrape parity.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/orphan-reclaim-20260727T193224Z`.
 
+### PG-3 scrape 1267 disabled-writer publication - accepted 2026-07-28
+
+- Scrape `1267` completed `8,232/8,232` manifests, `592,731` pages,
+  `59,105,529` reported entries, zero writer failures, and all 10
+  publication-critical phases on the accepted `800 / 32 / 4` proxy candidate.
+- Network plus writer drain was `5:02:22.661`, `8.79%` faster than scrape
+  `1265` and `2.51%` slower than scrape `1266`. The full publication wall
+  clock was `11:57:09.997`.
+- Publication advanced atomically to `1267`, public reads unfroze, and
+  `6,174` complete source mappings own `39,937,029` physical rows. Two
+  post-publish suites were HTTP `200` and `13/13` fingerprint-exact.
+- Full logical hashes remained exact for `39,820,273` current rows and
+  `194,171,215` version rows. Scrape `1267` touched zero logical rows, wrote
+  zero logical metrics, and produced no positive logical read counter delta.
+  The logical-shadow destructive parity gate is **CLEARED**; no truncate ran.
+- Minimum free space was `18,203,201,536`, `3,632,051,333` above the floor.
+  Final measured free space was `41,145,516,032`, so the next full scrape,
+  optional builds, and rewrites remain blocked. The worker remains held.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1267-guarded-publication-20260727T201218Z`.
+
 ### PG-4.2 - Separate semantic score changes from derived rank changes
 
 The current logical version volume is 15.39M rows for one scrape. Evaluate

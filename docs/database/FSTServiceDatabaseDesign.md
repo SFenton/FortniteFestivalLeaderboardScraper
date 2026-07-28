@@ -183,6 +183,20 @@ valid, `13/13` normalized public fingerprints matched, and final filesystem
 free space reached `64,001,667,072` bytes. Exact evidence and rebuild limits
 are in `docs/database/OrphanReclaimRunbook.md`.
 
+Scrape `1267` supplied the missing disabled-logical-writer publication proof.
+It completed `8,232/8,232` manifests and all 10 publication-critical phases,
+then atomically published/unfroze `1267`. The publication owns `6,174`
+complete source mappings and `39,937,029` physical rows. Two independent
+post-publish captures returned HTTP `200` and matched `13/13` normalized
+leaderboard, export, player, ranking, history, composite, band, and band-song
+fingerprints.
+
+Full logical current/version fingerprints remained byte-exact for
+`39,820,273` and `194,171,215` rows. Scrape `1267` touched zero logical rows,
+emitted zero logical metrics, and produced no positive logical read-counter
+delta. The logical-shadow destructive parity gate is therefore cleared, but
+the tables remain intact until the separate truncate runbook phase.
+
 The 2026-07-25 SOLO-DYNAMIC-AB inventory measured the active solo current
 projection at `39,601,283` rows / `46,633,459,712` bytes:
 `17,821,523,968` heap and `28,806,701,056` indexes. The accepted replacement

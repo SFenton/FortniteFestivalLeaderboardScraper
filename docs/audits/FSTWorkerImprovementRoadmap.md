@@ -778,6 +778,45 @@ publication rejected 2026-07-27**
   and
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/stale-scrape-1266-recovery-20260727T184133Z`.
 
+**SCRAPE-1267 guarded publication - accepted 2026-07-28**
+
+- The current recovery image `fstservice:scrape1266-recovery-4121e7e5`
+  contains commits `6651ebd9` and `4121e7e5`. Scrape `1267` used the accepted
+  `800` global RPS, `32` RPS per exit, concurrency `4`, curl primary transport,
+  snapshot reuse off, logical writes off, and restart `no`.
+- Auth refresh preserved mode `0600`; `25/25` direct and `25/25` PIA Epic
+  responses were valid and entry-exact before start. The canonical compose
+  guard passed with 25 healthy unique exits.
+- The run completed `8,232/8,232` manifests, `592,731` pages, and
+  `59,105,529` reported entries with zero incomplete, parse, retry-exhausted,
+  writer, or publication-critical failures. Three five-minute enrichment
+  timeouts remained correctly classified best-effort.
+- Network plus writer drain was `5:02:22.661`: `8.79%` faster than scrape
+  `1265` and `2.51%` slower than scrape `1266`. Useful pages/s was `32.67`.
+  Transport recorded `629,426` wire sends and `19,202` blocks (`3.05%`),
+  zero `429`, and zero primary `503`.
+- The serialized band schema setup completed with no `40P01`. The
+  deferred-registration/rivals phase completed two rival items in `2,653.1 s`
+  and did not silently stall. The DB-aware watchdog ended terminal without
+  recovery.
+- Scrape `1267` published atomically and unfroze. It owns `6,174` complete
+  published mappings and `39,937,029` mapped rows. Two post-publish captures
+  were HTTP `200` and `13/13` byte-exact.
+- The 60-second monitor captured `721` samples and zero public-health failures.
+  Minimum free space was `18,203,201,536`, retaining
+  `3,632,051,333` bytes above the floor. Final measured free space was
+  `41,145,516,032`, so another full scrape is capacity-blocked.
+- The logical shadow retained exact hashes for `39,820,273` current and
+  `194,171,215` version rows, zero scrape-`1267` touches, zero metric rows,
+  and zero positive read-counter deltas. Its destructive parity gate is
+  **CLEARED**; no truncate ran in this phase.
+- The worker is held exited with restart `no`. Production rate settings were
+  restored to `400 / 2 / 1`. `pia-gluetun-6` failed PIA TLS requalification
+  after the run and remains stopped; service, web, Postgres, and published
+  `1267` remain healthy.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1267-guarded-publication-20260727T201218Z`.
+
 ### WORKER-0.5 - Separate solo and band completion
 
 A band timeout must not mark `LeaderboardScrapeCompleted=true`. A task still
