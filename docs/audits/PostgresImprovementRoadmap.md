@@ -167,7 +167,9 @@ safety model versus 314,856,988,672 free at the drill start.
   performs all long band snapshot copy/index work and fingerprint validation
   before truncating/promoting `api_response_cache`. A concurrency regression
   test holds a band ranking source lock and proves the old public cache remains
-  readable while publication waits. The next live window must pair this
+  readable while publication waits. Commit `44a1fe9a` is built as
+  `fstservice:publication-lock-44a1fe9a` and selected in compose without
+  recreating the exited run-once worker. The next live window must pair this
   independently reversible query-order candidate with a new qualified network
   candidate; the worker remains held.
 - Other measured regressions remain separate next-candidate evidence:

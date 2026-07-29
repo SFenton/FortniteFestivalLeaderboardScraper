@@ -70,8 +70,10 @@ blocker and exact outbox artifact paths.
   snapshot copies/index builds in `MetaDatabase.PublishScrapeRun`.
   The follow-up repair moves cache promotion to the end of the transaction and
   adds a concurrent-read regression test plus a real leaderboard probe to the
-  60-second monitor. Neither lane is promoted until that repair receives its
-  own dual-lane full-scrape window.
+  60-second monitor. Commit `44a1fe9a` is built as
+  `fstservice:publication-lock-44a1fe9a` and is selected in the held production
+  compose config without recreating the worker. Neither lane is promoted until
+  that repair receives its own dual-lane full-scrape window.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1268-dual-lane-20260728T184812Z`.
 

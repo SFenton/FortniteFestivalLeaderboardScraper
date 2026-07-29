@@ -135,7 +135,10 @@ and fingerprint validation before the cache truncate/insert. A concurrent
 regression test locks a band ranking source table and proves the old public
 cache remains readable while publication waits. The 60-second monitor now
 selects and probes a real leaderboard route so this class of failure cannot be
-hidden by a healthy `/api/service-info` fast path.
+hidden by a healthy `/api/service-info` fast path. The repair is commit
+`44a1fe9a`, built as `fstservice:publication-lock-44a1fe9a`; production compose
+selects it for the next explicitly armed card, but the exited worker was not
+recreated.
 
 Do not promote the notification lane or enable another scheduled scrape until
 that contract-bearing repair passes a new dual-lane full-scrape window.

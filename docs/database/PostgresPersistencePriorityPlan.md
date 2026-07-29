@@ -137,7 +137,9 @@ This plan records the approved direction for improving FST Postgres persistence 
   publication with zero projection fallback and zero Epic sends, but the
   shared public-route lock failure forces another isolation window. The
   prepared next query candidate moves cache promotion after long band ranking
-  snapshot work while retaining one atomic transaction.
+  snapshot work while retaining one atomic transaction. Commit `44a1fe9a` is
+  built as `fstservice:publication-lock-44a1fe9a` and selected for the next
+  held worker recreation; no worker was started.
 - LOGICAL-RETIRE then independently reverified the gate and transactionally
   truncated the two logical parents and all 18 leaves. Database size fell by
   `123,173,593,088` bytes; stable free space rose to about
