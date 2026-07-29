@@ -70,7 +70,7 @@ limits.
 
 | Surface | Live size |
 |---|---:|
-| Database | 3,585,943,918,259 bytes after incomplete Trios v3 reclaim |
+| Database | 3,389,362,312,883 bytes after compact Trios promotion |
 | Solo physical snapshot partitions | 1,788.63 GB |
 | Band rank-history v2 point partitions | 857.72 GB |
 | Solo rank-history partitions | 174.47 GB |
@@ -229,11 +229,11 @@ occupy `52,134,436,864` bytes. Exact counts/ranges/groups, monthly checksums,
 a deterministic exact team sample, and repeated `9/9` HTTP payload parity
 passed.
 
-Production now enables `BandRankHistory:CompactV3DuetsReadEnabled`; only
-Duets reads v3. Trios and Quad remain on v2 narrow points. The retired Duets
-leaf was detached with a proven 11.827 ms reattach path and then dropped
-without `CASCADE`. The source drop released `154,235,944,960` bytes and the
-net database reduction from phase start is `102,101,475,328` bytes. Date
+Production now enables the independent compact v3 flags for Duets and Trios;
+only Quad remains on v2 narrow points. The retired Duets leaf was detached
+with a proven 11.827 ms reattach path and then dropped without `CASCADE`. The
+Duets source drop released `154,235,944,960` bytes and its net database
+reduction is `102,101,475,328` bytes. Date
 deletion and Parquet-as-live-source remain rejected because the API/export
 still serve all history and no runtime rehydration tier exists. Details are in
 `docs/database/BandHistoryCompactionRunbook.md`.
@@ -247,11 +247,11 @@ referenced it; Trios reads continued through v2. The exact
 a rollback rehearsal, `13/13` public parity, and explicit scrape-boundary
 coordination. Duets compact v3 and the Trios/Quad v2 sources were unchanged.
 
-A clean 2026-07-29 rebuild now has all `343,275,419` Trios rows, all 51 dates,
+A clean 2026-07-29 rebuild has all `343,275,419` Trios rows, all 51 dates,
 four exact monthly multiset-hash matches, and a valid partitioned unique index
-family. `CompactV3TriosReadEnabled` is independently default-off; v2 remains
-authoritative until the service A/B, readiness promotion, detach/reattach
-rollback, and source-drop checks pass.
+family. Production enables the independently reversible
+`CompactV3TriosReadEnabled` flag. The service A/B, readiness promotion,
+detach/reattach rollback, and source drop passed; Trios v2 no longer exists.
 
 ## Data ownership and restore class
 
@@ -495,9 +495,9 @@ Band-partitioned source/current families use `Band_Duets`, `Band_Trios`, and
 | `band_team_ranking_generation` | Publication/audit metadata | Ranking pipeline | Tracks durable generation and source scrape |
 | `band_song_team_rankings`, `band_song_team_rankings_current_band_*`, `band_song_team_ranking_state` | Retired optional song/team ranking projection schema and audit state | Ranking pipeline only when explicitly re-enabled | Data tables are empty; rebuild defaults off; public reads use published current-band rows or fail closed |
 | `band_team_rank_history`, `band_team_rank_history_points`, `band_team_rank_history_latest`, `band_team_ranking_stats_history` | Legacy durable history/latest | `MetaDatabase`, history API | Retain until v2/read-source parity and restore prove removal |
-| `band_team_rank_history_points_v2` partitions | Durable public history for Trios/Quad | Disabled history writer; API/export for non-promoted band types | Duets leaf retired; Trios/Quad remain `702,658,645` rows / `694,619,258,880` bytes |
+| `band_team_rank_history_points_v2` partitions | Durable public history for Quad | Disabled history writer; API/export for non-promoted band types | Duets and Trios leaves retired; Quad remains `359,383,226` rows / `388,775,297,024` bytes |
 | `band_team_rank_history_points_v3_duets` monthly partitions and dictionaries | Durable compact Duets public history | `MetaDatabase` when the default-off compact flag and ready state are enabled | `215,134,574` rows / `52,134,436,864` bytes; rebuilds v2 through checked-in SQL |
-| `band_team_rank_history_points_v3_trios` monthly partitions and dictionaries | Validated compact Trios candidate | Read only when the independently default-off Trios flag and ready state are enabled | Clean rebuild has `343,275,419` rows / 51 dates; v2 remains authoritative pending live cutover |
+| `band_team_rank_history_points_v3_trios` monthly partitions and dictionaries | Durable compact Trios public history | `MetaDatabase` when the independently default-off compact flag and ready state are enabled | `343,275,419` rows / `83,664,461,824` bytes; rebuilds v2 through checked-in SQL |
 | `band_team_rank_history_latest_v2` partitions | Empty derived latest delta schema | History worker only when mode is enabled | ORPHAN-RECLAIM truncated `21,403,363` rows while production mode was `Disabled`; rebuildable from retained v2 points |
 | `band_team_rank_history_snapshot_v2` | Durable history generation metadata | History worker/API status | Primary freshness/coverage ledger |
 | `band_rank_history_jobs`, `band_rank_history_job_chunks` | Durable resumability state | Background history worker | Keep incomplete/failed jobs for bounded retry/replay |

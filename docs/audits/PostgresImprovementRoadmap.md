@@ -56,7 +56,8 @@ safety model versus 314,856,988,672 free at the drill start.
   detached after exact parity and an 11.827 ms reattach rehearsal, then
   dropped without `CASCADE`.
 - Net database reduction is `102,101,475,328` bytes. Repeated `9/9` API
-  payload captures remained byte-identical. Trios and Quad remain v2.
+  payload captures remained byte-identical. At this checkpoint Trios and Quad
+  remained v2; Trios was promoted in the later clean-rebuild phase below.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-history-compact-20260728T100500Z`.
 - Execution evidence:
@@ -106,9 +107,14 @@ safety model versus 314,856,988,672 free at the drill start.
   hashes against v2.
 - All four local unique indexes and the attached parent index are valid and
   ready. Direct overall/combo plans use the compact indexes.
-- A separately reversible, default-off `CompactV3TriosReadEnabled` path is
-  implemented with focused tests; production cutover and v2 retirement remain
-  pending live API/public parity and rollback rehearsal.
+- A separately reversible, default-off `CompactV3TriosReadEnabled` path passed
+  focused tests and was deployed. Matched live payloads were exact; every v3
+  p95 remained below 5 ms.
+- Detach rollback completed in 5.132 ms and metadata-only reattach in 3.306 ms.
+  The `305,843,961,856`-byte source was dropped without `CASCADE`.
+- Final compact size is `83,664,461,824` bytes, producing
+  `222,179,500,032` net database reduction. Stable free space is about
+  `483.72 GB`; immediate and 60-second public captures remained `13/13` exact.
 
 ## OBSERVATION-RETIRE execution update — 2026-07-28
 

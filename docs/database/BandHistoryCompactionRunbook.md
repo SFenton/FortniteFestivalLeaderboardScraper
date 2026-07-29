@@ -2,17 +2,16 @@
 
 ## Current decision
 
-**Tier:** compact v3 accepted and promoted for Band Duets on 2026-07-28.
-The incomplete, unpromoted Trios v3 build was reclaimed independently on the
-same date. Trios and Quad remain on v2 and require separate future candidates
-and capacity guards.
+**Tier:** compact v3 accepted and promoted for Band Duets on 2026-07-28 and
+Band Trios on 2026-07-29. The incomplete first Trios build was reclaimed
+before the clean rebuild. Quad remains on v2 and requires a separate future
+candidate and capacity guard.
 
-**2026-07-29 clean Trios readiness:** a clean candidate now contains all
+**2026-07-29 clean Trios execution:** the compact relation contains all
 `343,275,419` rows / 51 dates with exact monthly full-row multiset hashes and
-valid local/parent unique indexes. The default-off
-`CompactV3TriosReadEnabled` switch and tests are implemented, but production
-still reads Trios v2 until the live service A/B and source detach/drop gate
-complete.
+valid local/parent unique indexes. Production enables the independently
+reversible `CompactV3TriosReadEnabled` switch. The live service A/B, source
+detach/reattach rollback, and v2 source drop all passed.
 
 BAND-HISTORY-COMPACT ran with runtime `gpt-5.6-sol`, reasoning `max`, and
 context `long_context`. Published scrape `1267` remained authoritative and
@@ -133,10 +132,11 @@ zero temp files.
 
 ## Read cutover and performance
 
-`BandRankHistory:CompactV3DuetsReadEnabled` is default-off. Production enables
-it only for Duets; Trios and Quad continue through `V2NarrowOnly`. A readiness
-row prevents candidate reads before validation, and successful readiness is
-cached for the service lifetime.
+`BandRankHistory:CompactV3DuetsReadEnabled` and
+`BandRankHistory:CompactV3TriosReadEnabled` are independently default-off.
+Production enables both after their readiness rows pass. Quad continues
+through `V2NarrowOnly`. A readiness row prevents candidate reads before
+validation, and successful readiness is cached for the service lifetime.
 
 Matched 40-call HTTP A/B:
 
@@ -150,6 +150,18 @@ Combo p95 increased 24.93%, but the absolute increase was 0.888 ms and stayed
 below 5 ms. It is accepted for the exact 102.10 GB net database reduction.
 The direct full-range v3 plans returned 50 rows in 0.332 ms overall and
 0.180 ms combo, with no temp I/O.
+
+Matched Trios 20-call warm A/B after removing an incremental-sort query shape:
+
+| Case | v2 p50/p95 | v3 p50/p95 | Decision |
+|---|---:|---:|---|
+| Trios overall, 30 days | 2.996 / 3.372 ms | 3.010 / 4.227 ms | Accepted with explicit 0.855 ms tradeoff |
+| Trios overall, full | 2.848 / 4.136 ms | 2.790 / 3.315 ms | Accepted |
+| Trios combo, full | 2.692 / 4.465 ms | 2.723 / 3.780 ms | Accepted |
+
+All v3 p95 values remained below 5 ms, two slices improved, and all three
+payloads were exact. The small 30-day regression is accepted for the
+222.18 GB net database reduction.
 
 ## Detach, rollback, and drop
 
@@ -243,12 +255,51 @@ notifications remained complete, Duets v3 stayed `ready`, Trios v2 stayed
 intact, and no lock, query, vacuum, index build, or maintenance operation
 remained.
 
+## Clean Trios promotion and reclaim
+
+After scrape `1268` published/unfroze, the clean rebuild ran under a calibrated
+rewrite guard:
+
+- six committed date chunks copied all `343,275,419` rows;
+- four monthly source/candidate comparisons each matched row count plus five
+  full-row multiset hashes;
+- four local unique indexes and the attached parent index were valid/ready;
+- `118/118` focused tests and the Release build passed;
+- the default-off Trios read switch was deployed to `fstservice` only;
+- baseline, candidate, optimized, post-detach, and post-drop public captures
+  remained `13/13` exact, while all nine Duets/Trios/Quad history payloads
+  remained exact.
+
+The v2 source received a validated band-type constraint. Detach rollback
+completed in 5.132 ms. After committed detach and public parity, a metadata-only
+reattach rehearsal completed in 3.306 ms and rolled back to the detached state.
+The source was then dropped without `CASCADE` in 1.11 seconds.
+
+| Trios promotion metric | Result |
+|---|---:|
+| Compact v3 bytes | 83,664,461,824 |
+| Retired v2 source bytes | 305,843,961,856 |
+| Net database reduction | 222,179,500,032 |
+| Stable filesystem gain | 227,630,555,136 |
+| Final database size | 3,389,362,312,883 |
+| Final filesystem free | about 483.72 GB |
+
+The first reclaim guard correctly blocked while three legitimate candidate
+autovacuums ran. No backend was terminated; the workflow waited until all
+vacuums completed, reran the guard, and then dropped the source. Post-drop
+immediate and 60-second checks retained exact parity, zero locks/queries, and
+healthy public paths.
+
+Post-drop rebuild SQL is
+`tools/sql/postgres-band-history-compact-v3/trios-rebuild-v2.sql`.
+
 ## Final state
 
 - Duets API/export reads use compact v3.
+- Trios API/export reads use compact v3.
 - The v2 Duets leaf no longer exists.
-- The clean Trios v3 candidate is `ready`, but its runtime flag remains off.
-- Trios and Quad v2 remain authoritative and unchanged.
+- The v2 Trios leaf no longer exists.
+- Quad v2 remains authoritative and unchanged.
 - Published scrape `1268` remains unfrozen.
 - Postgres, `fstservice`, and `festivalweb` are healthy.
 - `fstworker` remains held/offline with restart `no`.
@@ -256,8 +307,6 @@ remained.
 
 ## Next storage phase
 
-Deploy the independently reversible Trios read flag to `fstservice` only,
-compare v2/v3 API payloads and latency, then rehearse v2 detach/reattach.
-Release the `305,843,961,856`-byte v2 source only after those gates pass.
-Do not start Quad until Trios has completed, released its source, and the
-guard has been recalculated.
+Recalculate the clean compact guard for Quad after coordinating the next
+production scrape boundary. Quad remains a separate candidate; do not combine
+its build/cutover with an unrelated data-lane change.

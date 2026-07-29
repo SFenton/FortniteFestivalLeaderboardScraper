@@ -6,7 +6,8 @@ This plan records the approved direction for improving FST Postgres persistence 
 
 - Production compose ownership: `/home/sfenton/Docker/FestivalServiceTracker`.
 - `fstservice`, `festivalweb`, and `fst-postgres` are healthy.
-  `fstworker` exited cleanly on
+  `fstservice` runs `fstservice:band-history-trios-ad015ca7` with compact
+  Duets and Trios reads enabled. `fstworker` exited cleanly on
   `fstservice:scrape1268-dual-4ae6c171` with restart `no`; normal scheduling
   remains held pending the next complete dual-lane card.
 - Scrape `1268` is authoritative and unfrozen with `6,174` complete solo
@@ -20,15 +21,16 @@ This plan records the approved direction for improving FST Postgres persistence 
   `504` and `20` `499` responses while publication retained the public cache
   lock across long band ranking snapshot work.
 - `fstservice` and `festivalweb` may be restarted for maintenance and must be
-  recovered promptly. Final free space is `256,077,381,632` bytes and the
-  scrape guard passes with `195,684,381,829` bytes of modeled one-run margin;
+  recovered promptly. Final free space is about `483,724,476,416` bytes and
+  the scrape guard passes with `423,331,476,613` bytes of modeled one-run margin;
   the seven-day alert remains active. Any later scrape must use a
   contract-bearing image at or after `05d6e820`, include the publication cache
   lock-order repair, and run the durable post-process watchdog.
-- The post-`1268` clean Trios compact rebuild is validated at
-  `343,275,419` rows / 51 dates with exact monthly hashes and valid unique
-  indexes. Its read flag remains default-off and Trios v2 remains
-  authoritative while the service A/B and rollback gate are pending.
+- The post-`1268` clean Trios compact rebuild is promoted at
+  `343,275,419` rows / `83,664,461,824` bytes. Exact monthly hashes, live
+  service A/B, detach/reattach rollback, and post-drop parity passed. The
+  `305,843,961,856`-byte v2 source was dropped without `CASCADE`, producing a
+  `222,179,500,032`-byte net database reduction.
 - PG-3 dropped only `public.ix_crh_latest`, reclaiming exactly
   `20,890,148,864` database bytes. Free space rose from `78,549,483,520` to
   `99,439,702,016` bytes; the guard horizon improved from `2.61` to `3.31`
@@ -155,8 +157,9 @@ This plan records the approved direction for improving FST Postgres persistence 
   `215,134,574` exact compact rows in `52,134,436,864` bytes. The
   `154,235,944,960`-byte source leaf was detached after repeated `9/9` API
   parity and an 11.827 ms reattach proof, then dropped without `CASCADE`.
-  Net database reduction is `102,101,475,328` bytes. Trios and Quad remain
-  v2; the worker stayed held and published `1267` remained unfrozen.
+  Net database reduction is `102,101,475,328` bytes. At this checkpoint Trios
+  and Quad remained v2; the worker stayed held and published `1267` remained
+  unfrozen. Trios was promoted after scrape `1268`, as recorded below.
 - A follow-on Trios compact build created `335,757,940` rows across `49/51`
   dates but stopped before July, local point indexes, validation, or
   promotion. The `73,478,529,024`-byte candidate had no runtime reader/writer,
@@ -361,7 +364,7 @@ path, and post-action validation are documented.
 | Phase 7 logical write metrics | Complete | Implemented, deployed, committed as `2ac02445`; production metrics captured from failed scrape `1218`. |
 | LOGICAL-RETIRE ownership/rebuild package | Accepted and executed | Scrape `1267` cleared parity; independent revalidation matched all rows/hashes and found no runtime reader or database dependency. The monitored no-`CASCADE` truncate reclaimed `123,173,593,088` database bytes, retained empty schemas/20 primary keys/108 metrics rows, and preserved `13/13` public fingerprints. |
 | SOLO-DYNAMIC-AB compact published solo read model | Accepted research/implementation candidate / optional build still blocked | Full owner/query matrix, service-cold and warm baseline, bounded unlogged samples, exact c1/c8 fingerprints, storage math, rollback DDL, and default-off rank-offset code are complete. Conservative compact-plus-hot projection is <=`20,215,010,912` bytes, reclaiming >=`26,418,448,800` bytes (`56.65%`). Raw one-run space now exists, but the optional-build/rewrite guard remains below the seven-day threshold. |
-| BAND-HISTORY-COMPACT v3 | Duets accepted; incomplete Trios attempt reclaimed; clean Trios/Quad candidates pending | Chunked copy and deferred local indexes reduced Duets from `154,235,944,960` to `52,134,436,864` bytes. The unpromoted Trios attempt stopped at `335,757,940 / 343,275,419` rows and was dropped for `73,478,529,024` database bytes after exact public/API parity. Trios and Quad remain v2. |
+| BAND-HISTORY-COMPACT v3 | Duets and Trios accepted/promoted; Quad pending | Duets net reduction is `102,101,475,328` bytes. The clean Trios rebuild is `83,664,461,824` bytes; its `305,843,961,856`-byte v2 source was retired for `222,179,500,032` net database bytes. Public/API parity remained exact. |
 | Experimental logical shadow cleanup | Complete | Approved cleanup truncated experimental logical shadow tables and removed incomplete scrape `1218`. |
 | Database architecture evaluation | Complete | Read-only code review and production probes completed on 2026-07-06. |
 | History/index owner cards | Complete | Refreshed band v2, composite history, observation, dirty-work, and latest-state owner cards on 2026-07-13. Public team/date and retention indexes were retained from plan/caller proof. |
@@ -393,7 +396,7 @@ path, and post-action validation are documented.
 | Autonomous scrape rollout | Rejected after scrape `1265`; worker held | Candidate `1265` passed start/post-writer guards, completed all manifests/writers and band maintenance, then crossed its declared capacity floor during ranking snapshots. It was stopped and reconciled failed with zero published mappings. Published `1236` remains safe. Post-cleanup nominal guards pass again, but the live run proved that model insufficient through publication. |
 | Scrape `1266` incident recovery | Complete / deployed / worker held | Exact rollback and guarded reconciliation preserved published `1236`; precise failed-candidate isolation remains active for derived reads. Commit `4121e7e5` adds critical band failure propagation, progress-only heartbeats, a 30-minute deferred-sync timeout, and DB-aware autonomous recovery. Service and held worker use `fstservice:scrape1266-recovery-4121e7e5`. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
-| Next implementation phase | Trios compact-v3 live read A/B | Deploy the default-off Trios read switch independently, prove exact API/public parity and detach/reattach rollback, then drop v2 only if the gate passes. Do not start Quad until Trios releases its source and capacity is recalculated. |
+| Next implementation phase | Quad compact-v3 guard / next scrape coordination | Recalculate the clean compact build guard for the `388,775,297,024`-byte Quad source, but do not overlap its heavy build/cutover with the next production scrape or an unrelated data candidate. |
 
 ## LOGICAL-RETIRE decision and execution package (2026-07-25 to 2026-07-28)
 
@@ -1189,7 +1192,7 @@ Execution update 2026-07-28:
   is `102,101,475,328` bytes.
 - Matched v3 p50 stayed within 9%. Combo p95 increased 0.888 ms to 4.450 ms;
   that explicit sub-5-ms tradeoff is accepted for the 102.10 GB reduction.
-- Trios and Quad remain pending and must run in that order with fresh guards.
+- Trios is promoted; Quad remains pending with a fresh guard.
 - Runbook:
   `docs/database/BandHistoryCompactionRunbook.md`.
 
