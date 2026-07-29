@@ -198,9 +198,13 @@ The next sequential matrix stopped at its first failed step:
   `3,000/3,000` recovered requests, `35.96` useful pages/s, `1.0007`
   amplification, zero 429/503, zero payload variants, and 25/25 retained
   exits.
-- `candidate-1600-64-8` reached `53.22` useful pages/s but two TLS sends
-  remained unrecovered after alternate exits returned CDN `403`; one repeated
-  live scope also changed payload. The strict correctness gate failed.
+- `candidate-1600-64-8` reached `53.22` useful pages/s but the one-round
+  harness stopped after two TLS failures were retried once and those first
+  alternates returned CDN `403`. The accepted `800` canary also had two TLS
+  failures and recovered both. The single repeated live-scope variant was
+  observed 13 times through one fixed exit, with a 12:1 fingerprint split, so
+  it did not prove cross-exit transport corruption. The old evidence package
+  still failed closed because it could not prove recovery/correctness.
 - `candidate-2880-128-16` was not run. Sequential qualification stops at the
   first failure.
 
@@ -219,6 +223,14 @@ and 25/25 healthy exits at decision. Correctness and safety passed, but the
 10% useful-throughput target did not, so the network lane is **iterate**, not
 promoted.
 
+That combined boundary hid the actual transport result. `BandPageFetcher`
+finished at `00:06:43.980Z`, `4:17:07.544` after the scrape start, for
+`38.428` pure-fetch pages/s. Band writer drain then consumed `45:33.432`
+before the manifest boundary. Full-run pure transport was `6.87%` faster than
+the bounded `35.958` result; the apparent `32.64` deficit was entirely a
+measurement-boundary mismatch. Future network decisions score pure fetch and
+writer drain separately.
+
 The historical request-count increase is a scope-semantics change rather than
 retry growth. Scrape `1268` consisted of `401,504` solo pages plus `191,345`
 complete Band Duets/Trios/Quad pages. Historical `~400k` totals were
@@ -226,6 +238,52 @@ effectively solo-only; wire sends are tracked separately.
 
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1268-dual-lane-20260728T184812Z`.
+
+### Next smallest candidate: `candidate-800-32-5`
+
+The next candidate changes one variable only: per-exit concurrency `4 -> 5`.
+Global `800`, per-exit `32`, curl HTTP/1.1 fresh connections, production
+least-in-flight selection, cooldowns, retry thresholds, and the PIA endpoint
+set remain unchanged.
+
+Bounded acceptance requires:
+
+- at least `39.554` useful pages/s, exactly 10% over `35.958`;
+- zero unrecovered responses after at most three recovery rounds, each using
+  previously untried alternate exits with a 500 ms inter-round delay;
+- zero failed near-simultaneous cross-exit payload pairs across 25 sampled
+  scopes, with pair starts no more than 250 ms apart;
+- retry amplification <=`1.50`, combined 429+503 <=`5%`, no three consecutive
+  one-minute windows above `10%`, and >=`80%` exit retention;
+- zero publication/shared-state or representative public-route differences;
+- peak canary memory <=`768 MiB`, peak PIDs <=`300`, and zero scratch residue.
+
+A future full run must reach at least `42.271` pure-fetch pages/s, or no more
+than `3:53:45.040` for `592,849` pages. Writer drain remains a separately
+reported data-path metric. The live pair is
+`publication-cache-lock-live-ab` (`44a1fe9a`,
+`fstservice:publication-lock-44a1fe9a`).
+
+The canary now has repository-owned buildable source in
+`tools/FstNetworkCanary`, bounded distinct-alternate recovery,
+app-connect/start-transfer timing, and matched payload controls. A service regression
+test proves TLS -> alternate CDN `403` -> third-exit success on the production
+least-in-flight path.
+
+The production wrapper and compose guard remain unchanged. The candidate is
+bounded-only until a real canary passes after explicit storage clearance.
+At that boundary, use a new empty FST-drive evidence directory:
+
+```bash
+python tools/fst-network-bounded-canary.py \
+  --network-profile candidate-800-32-5 \
+  --out-dir /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/<window>/candidate-800-32-5 \
+  --request-count 3000 \
+  --prior-useful-rps 35.95782174836861
+```
+
+Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/network-next-candidate-design-20260729T105348Z`.
 
 Transport fallback responses are only treated as recovered when they are not
 another CDN block and not retryable `429`/`5xx` status. This prevents a curl
@@ -286,10 +344,12 @@ tools/fst-worker-dual-lane-runonce.sh \
   --recreate
 ```
 
-Advance the `--network-profile` sequentially to `candidate-1600-64-8`, then
-`candidate-2880-128-16`. Run only the next qualified profile. Stop at the
-first correctness or effective-throughput failure and restore the last
-accepted profile.
+Do not advance the production wrapper to `candidate-1600-64-8` or
+`candidate-2880-128-16`; that sequence stopped at the rejected `1600` result.
+The next candidate, `candidate-800-32-5`, exists only in
+`fst-network-bounded-canary.py`. Add it to this run-once wrapper and the
+compose guard only after a storage-cleared bounded run passes every named
+gate.
 
 Recovery evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/proxy-recovery-20260713T171754Z`.

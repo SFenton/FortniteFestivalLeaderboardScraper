@@ -170,8 +170,10 @@ safety model versus 314,856,988,672 free at the drill start.
   readable while publication waits. Commit `44a1fe9a` is built as
   `fstservice:publication-lock-44a1fe9a` and selected in compose without
   recreating the exited run-once worker. The next live window must pair this
-  independently reversible query-order candidate with a new qualified network
-  candidate; the worker remains held.
+  independently reversible query-order candidate with bounded-only
+  `candidate-800-32-5` after that network profile earns storage-cleared proof.
+  The network wrapper/guard are intentionally unchanged and the worker remains
+  held.
 - Other measured regressions remain separate next-candidate evidence:
   `BandMaintenance` was `4:04:02.864` versus `3:12:28.804` on `1267`,
   `ComputeRankings` was `2:49:50.942` versus `1:18:21.810`, and solo

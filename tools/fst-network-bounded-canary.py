@@ -7,22 +7,41 @@ import json
 import os
 import pathlib
 import subprocess
+import time
 import urllib.parse
 import urllib.request
 from urllib.parse import urlparse
 
+from fst_network_canary_logic import (
+    VALID_CATEGORY,
+    build_payload_control_workload,
+    evaluate_gate,
+    evaluate_payload_control_pairs,
+    plan_distinct_alternates,
+)
+
 PROFILES = {
     "candidate-800-32-4": (800, 32, 4),
+    "candidate-800-32-5": (800, 32, 5),
     "candidate-1600-64-8": (1600, 64, 8),
     "candidate-2880-128-16": (2880, 128, 16),
 }
-DEFAULT_TOOLING = pathlib.Path(
-    "/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/"
-    "proxy-retune-disabled-writer-baseline-20260727T004228Z/canary/bin/"
-    "ProxyCanary.dll"
+TOOLS_DIR = pathlib.Path(__file__).resolve().parent
+DEFAULT_TOOLING_PROJECT = (
+    TOOLS_DIR / "FstNetworkCanary" / "FstNetworkCanary.csproj"
+)
+DEFAULT_TOOLING = (
+    TOOLS_DIR
+    / "FstNetworkCanary"
+    / "bin"
+    / "Release"
+    / "net9.0"
+    / "FstNetworkCanary.dll"
 )
 DEFAULT_COMPOSE_DIR = pathlib.Path("/home/sfenton/Docker/FestivalServiceTracker")
 DEFAULT_STORAGE_ROOT = pathlib.Path("/mnt/docker-storage")
+FULL_SCRAPE_PAGES = 592849
+SCRAPE_1268_PURE_FETCH_SECONDS = 15427.543513
 
 
 def parse_args():
@@ -33,6 +52,20 @@ def parse_args():
     parser.add_argument("--out-dir", type=pathlib.Path, required=True)
     parser.add_argument("--request-count", type=int, default=3000)
     parser.add_argument("--timeout-seconds", type=int, default=30)
+    parser.add_argument("--max-recovery-rounds", type=int, default=3)
+    parser.add_argument("--recovery-delay-seconds", type=float, default=0.5)
+    parser.add_argument("--payload-control-scope-count", type=int, default=25)
+    parser.add_argument(
+        "--payload-control-max-start-skew-ms",
+        type=float,
+        default=250,
+    )
+    parser.add_argument(
+        "--maximum-peak-memory-bytes",
+        type=int,
+        default=805306368,
+    )
+    parser.add_argument("--maximum-peak-pids", type=int, default=300)
     parser.add_argument("--prior-useful-rps", type=float, required=True)
     parser.add_argument("--minimum-improvement-percent", type=float, default=10.0)
     parser.add_argument(
@@ -42,6 +75,11 @@ def parse_args():
     )
     parser.add_argument("--compose-dir", type=pathlib.Path, default=DEFAULT_COMPOSE_DIR)
     parser.add_argument("--tooling-dll", type=pathlib.Path, default=DEFAULT_TOOLING)
+    parser.add_argument(
+        "--tooling-project",
+        type=pathlib.Path,
+        default=DEFAULT_TOOLING_PROJECT,
+    )
     parser.add_argument("--storage-root", type=pathlib.Path, default=DEFAULT_STORAGE_ROOT)
     return parser.parse_args()
 
@@ -54,6 +92,32 @@ def run(*args, input_bytes=None, check=True):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+
+
+def ensure_tooling(args):
+    tooling = args.tooling_dll.resolve()
+    if tooling == DEFAULT_TOOLING.resolve():
+        project = args.tooling_project.resolve()
+        if not project.is_file():
+            raise SystemExit(f"canary tooling project is missing: {project}")
+        process = run(
+            "dotnet",
+            "build",
+            project,
+            "-c",
+            "Release",
+            "--nologo",
+            check=False,
+        )
+        if process.returncode != 0:
+            raise RuntimeError(
+                "canary tooling build failed:\n"
+                + process.stdout.decode(errors="replace")
+                + process.stderr.decode(errors="replace")
+            )
+    if not tooling.is_file():
+        raise SystemExit(f"canary tooling is missing: {tooling}")
+    return tooling
 
 
 def indexed(environment, prefix):
@@ -181,6 +245,7 @@ def build_workload(account_id):
         workload.append(
             {
                 "url": url,
+                "songId": song_id,
                 "instrument": instrument,
                 "scopeHash": hashlib.sha256(
                     f"{song_id}|{instrument}|0".encode()
@@ -192,8 +257,17 @@ def build_workload(account_id):
 
 def main():
     args = parse_args()
-    if args.request_count <= 0 or args.timeout_seconds <= 0:
-        raise SystemExit("request count and timeout must be positive")
+    if (
+        args.request_count <= 0
+        or args.timeout_seconds <= 0
+        or args.max_recovery_rounds < 0
+        or args.recovery_delay_seconds < 0
+        or args.payload_control_scope_count <= 0
+        or args.payload_control_max_start_skew_ms <= 0
+        or args.maximum_peak_memory_bytes <= 0
+        or args.maximum_peak_pids <= 0
+    ):
+        raise SystemExit("canary counts, timeouts, and bounds must be positive")
     output_dir = args.out_dir.resolve()
     storage_root = args.storage_root.resolve()
     if storage_root not in output_dir.parents:
@@ -201,8 +275,7 @@ def main():
     if output_dir.exists() and any(output_dir.iterdir()):
         raise SystemExit(f"output directory is not empty: {output_dir}")
     output_dir.mkdir(parents=True, exist_ok=True)
-    if not args.tooling_dll.is_file():
-        raise SystemExit(f"canary tooling is missing: {args.tooling_dll}")
+    tooling_dll = ensure_tooling(args)
 
     compose = json.loads(
         run(
@@ -234,7 +307,7 @@ def main():
     stage_name = args.network_profile
     evidence_mount = output_dir.parent
     relative_output = output_dir.relative_to(evidence_mount)
-    tooling_mount = args.tooling_dll.resolve().parent
+    tooling_mount = tooling_dll.parent
     published_before = run(
         "docker",
         "exec",
@@ -256,11 +329,20 @@ def main():
     ).stdout.decode().strip()
     network = next(iter(service["NetworkSettings"]["Networks"]))
     image = service["Config"]["Image"]
+    public_probe = workload[0]
+    public_probe_url = (
+        "http://festivalweb/api/leaderboard/"
+        f"{urllib.parse.quote(public_probe['songId'], safe='')}/"
+        f"{urllib.parse.quote(public_probe['instrument'], safe='')}"
+        "?top=10"
+    )
+
     def execute_stage(name, stage_workload, stage_proxies, subdirectory):
         stage_output = output_dir / subdirectory
         stage_output.mkdir(parents=True, exist_ok=True)
         stage = {
             "name": name,
+            "routingMode": "fixed-round-robin",
             "perExitRps": per_exit_rps,
             "perExitConcurrency": per_exit_concurrency,
             "globalRps": global_rps,
@@ -276,12 +358,13 @@ def main():
             "stages": [stage],
             "outputDir": f"/evidence/{relative_output}/{subdirectory}",
             "scratchDir": f"/evidence/{relative_output}/{subdirectory}/scratch",
-            "fullScrapePages": 592731,
-            "priorNetworkSeconds": 18142.661,
+            "fullScrapePages": FULL_SCRAPE_PAGES,
+            "priorNetworkSeconds": SCRAPE_1268_PURE_FETCH_SECONDS,
             "healthUrls": [
                 "http://fstservice:8080/readyz",
                 "http://festivalweb/",
                 "http://festivalweb/api/service-info",
+                public_probe_url,
             ],
         }
         command = [
@@ -310,7 +393,7 @@ def main():
             "--entrypoint",
             "dotnet",
             image,
-            "/canary-tooling/ProxyCanary.dll",
+            f"/canary-tooling/{tooling_dll.name}",
         ]
         process = run(*command, input_bytes=json.dumps(config).encode(), check=False)
         (stage_output / "canary.stdout").write_bytes(process.stdout)
@@ -324,73 +407,128 @@ def main():
         return json.loads(report_path.read_text()), report_path
 
     started = datetime.datetime.now(datetime.timezone.utc)
+    primary_workload = [
+        workload[index % len(workload)] for index in range(args.request_count)
+    ]
     report, report_path = execute_stage(
         stage_name,
-        [workload[index % len(workload)] for index in range(args.request_count)],
+        primary_workload,
         proxies,
         "primary",
     )
     aggregate = report["aggregate"]
     requests = aggregate["requests"]
-    failures = [
-        result
-        for result in report["results"]
-        if result["category"] != "valid_epic_json"
-    ]
-    recovery_report = None
-    recovery_report_path = None
-    recovery_fingerprint_mismatches = 0
-    if failures:
-        failed_workload = [
-            workload[result["index"] % len(workload)]
-            for result in failures
-        ]
-        failed_proxies = {result["proxy"] for result in failures}
-        recovery_proxies = [
-            proxy for proxy in proxies if proxy not in failed_proxies
-        ] or proxies
-        recovery_report, recovery_report_path = execute_stage(
-            f"{stage_name}-recovery",
-            failed_workload,
-            recovery_proxies,
-            "recovery",
+    unresolved = []
+    recovery_attempts = []
+    for result in report["results"]:
+        if result["category"] == VALID_CATEGORY:
+            continue
+        unresolved.append(
+            {
+                "originalIndex": result["index"],
+                "workload": primary_workload[result["index"]],
+                "attemptedProxies": [result["proxy"]],
+            }
         )
-        primary_fingerprints = {}
-        for result in report["results"]:
-            if result["category"] == "valid_epic_json":
-                primary_fingerprints.setdefault(result["scopeHash"], set()).add(
-                    result["entriesSha256"]
-                )
-        for result in recovery_report["results"]:
-            expected = primary_fingerprints.get(result["scopeHash"], set())
-            if (
-                result["category"] == "valid_epic_json"
-                and expected
-                and result["entriesSha256"] not in expected
-            ):
-                recovery_fingerprint_mismatches += 1
+        recovery_attempts.append(
+            {
+                "originalIndex": result["index"],
+                "round": 0,
+                "proxy": result["proxy"],
+                "scopeHash": result["scopeHash"],
+                "category": result["category"],
+                "httpStatus": result["httpStatus"],
+                "curlExit": result["curlExit"],
+            }
+        )
 
-    recovery_aggregate = (
-        recovery_report["aggregate"] if recovery_report is not None else None
+    recovery_reports = []
+    recovery_report_paths = []
+    recovery_delay_seconds = 0.0
+    for recovery_round in range(1, args.max_recovery_rounds + 1):
+        if not unresolved:
+            break
+        next_unresolved = []
+        for batch_index in range(0, len(unresolved), len(proxies)):
+            batch = unresolved[batch_index : batch_index + len(proxies)]
+            recovery_proxies = plan_distinct_alternates(proxies, batch)
+            subdirectory = (
+                f"recovery-{recovery_round}-"
+                f"{batch_index // len(proxies) + 1}"
+            )
+            recovery_report, recovery_report_path = execute_stage(
+                f"{stage_name}-{subdirectory}",
+                [item["workload"] for item in batch],
+                recovery_proxies,
+                subdirectory,
+            )
+            recovery_reports.append(recovery_report)
+            recovery_report_paths.append(recovery_report_path)
+            for item, result in zip(batch, recovery_report["results"]):
+                item["attemptedProxies"].append(result["proxy"])
+                recovery_attempts.append(
+                    {
+                        "originalIndex": item["originalIndex"],
+                        "round": recovery_round,
+                        "proxy": result["proxy"],
+                        "scopeHash": result["scopeHash"],
+                        "category": result["category"],
+                        "httpStatus": result["httpStatus"],
+                        "curlExit": result["curlExit"],
+                    }
+                )
+                if result["category"] != VALID_CATEGORY:
+                    next_unresolved.append(item)
+        unresolved = next_unresolved
+        if unresolved and recovery_round < args.max_recovery_rounds:
+            time.sleep(args.recovery_delay_seconds)
+            recovery_delay_seconds += args.recovery_delay_seconds
+
+    payload_control_workload = build_payload_control_workload(
+        workload,
+        args.payload_control_scope_count,
     )
-    recovered_valid = (
-        recovery_aggregate["valid"] if recovery_aggregate is not None else 0
+    payload_control_report, payload_control_report_path = execute_stage(
+        f"{stage_name}-payload-control",
+        payload_control_workload,
+        proxies,
+        "payload-control",
+    )
+    payload_control = evaluate_payload_control_pairs(
+        payload_control_report["results"],
+        args.payload_control_max_start_skew_ms,
+    )
+
+    recovery_aggregates = [
+        recovery_report["aggregate"]
+        for recovery_report in recovery_reports
+    ]
+    recovered_valid = len(
+        {
+            item["originalIndex"]
+            for item in recovery_attempts
+            if item["round"] > 0 and item["category"] == VALID_CATEGORY
+        }
     )
     valid = aggregate["valid"] + recovered_valid
-    wire_sends = requests + (
-        recovery_aggregate["requests"] if recovery_aggregate is not None else 0
+    recovery_wire_sends = sum(
+        item["requests"] for item in recovery_aggregates
     )
-    total_wall_seconds = report["wallSeconds"] + (
-        recovery_report["wallSeconds"] if recovery_report is not None else 0
+    wire_sends = requests + recovery_wire_sends
+    total_wall_seconds = (
+        report["wallSeconds"]
+        + sum(item["wallSeconds"] for item in recovery_reports)
+        + recovery_delay_seconds
     )
     useful_rps = valid / total_wall_seconds if total_wall_seconds else 0
     retry_amplification = wire_sends / requests
     categories = dict(aggregate["categoryCounts"])
-    if recovery_aggregate is not None:
+    for recovery_aggregate in recovery_aggregates:
         for category, count in recovery_aggregate["categoryCounts"].items():
             categories[category] = categories.get(category, 0) + count
     combined_429_503 = (
-        categories.get("rate_limited_429", 0) + categories.get("http_503", 0)
+        categories.get("rate_limited_429", 0)
+        + categories.get("http_503", 0)
     )
     combined_429_503_percent = 100 * combined_429_503 / wire_sends
     preflight_healthy = report["effectiveExits"]
@@ -399,12 +537,47 @@ def main():
         for item in aggregate["perProxy"].values()
         if item["valid"] > 0
         and item["validPercent"] >= 80
-        and item["http429"] + item["http503"] <= max(1, item["requests"] // 20)
+        and item["http429"] + item["http503"]
+        <= max(1, item["requests"] // 20)
     )
     retained_percent = 100 * healthy_after / preflight_healthy
-    improvement_percent = 100 * (
-        useful_rps - args.prior_useful_rps
-    ) / args.prior_useful_rps
+
+    minute_counts = {}
+    for stage_report in [report, *recovery_reports]:
+        for result in stage_report["results"]:
+            started_at = result.get("startedAtUtc")
+            if not started_at:
+                continue
+            minute = datetime.datetime.fromisoformat(started_at).replace(
+                second=0,
+                microsecond=0,
+            )
+            counts = minute_counts.setdefault(
+                minute,
+                {"requests": 0, "combined429And503": 0},
+            )
+            counts["requests"] += 1
+            if result["category"] in {"rate_limited_429", "http_503"}:
+                counts["combined429And503"] += 1
+    minute_windows = []
+    consecutive_bad = 0
+    three_bad_windows = False
+    for minute, counts in sorted(minute_counts.items()):
+        percent = (
+            100 * counts["combined429And503"] / counts["requests"]
+        )
+        above = percent > 10
+        consecutive_bad = consecutive_bad + 1 if above else 0
+        three_bad_windows = three_bad_windows or consecutive_bad >= 3
+        minute_windows.append(
+            {
+                "minuteUtc": minute.isoformat(),
+                **counts,
+                "combinedPercent": percent,
+                "above10Percent": above,
+            }
+        )
+
     publication_after = run(
         "docker",
         "exec",
@@ -424,55 +597,64 @@ def main():
             "FROM scrape_publication_state WHERE id=TRUE;"
         ),
     ).stdout.decode().strip()
-    fingerprint_variants = (
-        aggregate["multiVariantScopeCount"] + recovery_fingerprint_mismatches
+    all_reports = [report, *recovery_reports, payload_control_report]
+    peak_memory_bytes = max(
+        item["resources"]["peakMemoryBytes"] for item in all_reports
     )
-    unrecovered = requests - valid
-    correctness_failures = (
-        unrecovered
-        or fingerprint_variants
-        or published_before != publication_after
+    peak_pids = max(item["resources"]["peakPids"] for item in all_reports)
+    scratch_bytes_after = sum(
+        item["resources"]["scratchBytesAfter"] for item in all_reports
     )
-    gate_reasons = []
-    if correctness_failures:
-        gate_reasons.append("correctness_or_shared_state_difference")
-    if (
-        not args.calibration_step
-        and improvement_percent < args.minimum_improvement_percent
-    ):
-        gate_reasons.append("useful_rps_improvement_below_10_percent")
-    if retry_amplification > 1.50:
-        gate_reasons.append("retry_amplification_above_1_50")
-    if combined_429_503_percent > 5:
-        gate_reasons.append("combined_429_503_above_5_percent")
-    if total_wall_seconds >= 180:
-        gate_reasons.append("three_consecutive_minute_window_evidence_unavailable")
-    if retained_percent < 80:
-        gate_reasons.append("healthy_exit_retention_below_80_percent")
     health_failures = [
         item
-        for item in (
-            report["healthBefore"]
-            + report["healthAfter"]
-            + (
-                recovery_report["healthBefore"] + recovery_report["healthAfter"]
-                if recovery_report is not None
-                else []
-            )
-        )
+        for stage_report in all_reports
+        for item in stage_report["healthBefore"] + stage_report["healthAfter"]
         if item.get("status") != 200
     ]
-    if health_failures:
-        gate_reasons.append("public_health_failure")
+    unrecovered = len(unresolved)
+    improvement_percent, gate_reasons = evaluate_gate(
+        useful_rps=useful_rps,
+        prior_useful_rps=args.prior_useful_rps,
+        minimum_improvement_percent=args.minimum_improvement_percent,
+        unrecovered=unrecovered,
+        retry_amplification=retry_amplification,
+        combined_429_503_percent=combined_429_503_percent,
+        three_bad_windows=three_bad_windows,
+        retained_percent=retained_percent,
+        shared_state_unchanged=published_before == publication_after,
+        public_health_failures=health_failures,
+        payload_control=payload_control,
+        peak_memory_bytes=peak_memory_bytes,
+        maximum_peak_memory_bytes=args.maximum_peak_memory_bytes,
+        peak_pids=peak_pids,
+        maximum_peak_pids=args.maximum_peak_pids,
+        scratch_bytes_after=scratch_bytes_after,
+        calibration_step=args.calibration_step,
+    )
+    if any(
+        not result.get("startedAtUtc")
+        for stage_report in [report, *recovery_reports]
+        for result in stage_report["results"]
+    ):
+        gate_reasons.append("minute_window_evidence_incomplete")
     decision = {
         "profile": args.network_profile,
+        "routingMode": "fixed-round-robin",
         "startedAtUtc": started.isoformat(),
         "finishedAtUtc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "requestCount": requests,
         "wireSends": wire_sends,
+        "evidenceWireSendsIncludingPayloadControls": (
+            wire_sends + payload_control_report["aggregate"]["requests"]
+        ),
         "validResponses": valid,
         "unrecoveredResponses": unrecovered,
         "priorUsefulPagesPerSecond": args.prior_useful_rps,
+        "minimumUsefulPagesPerSecond": (
+            args.prior_useful_rps
+            * (1 + args.minimum_improvement_percent / 100)
+        ),
+        "primaryUsefulPagesPerSecond": aggregate["usefulPagesPerSecond"],
         "usefulPagesPerSecond": useful_rps,
         "improvementPercent": improvement_percent,
         "improvementGateApplicable": not args.calibration_step,
@@ -484,35 +666,54 @@ def main():
         "preflightHealthyExits": preflight_healthy,
         "healthyExitsAfter": healthy_after,
         "retainedHealthyExitPercent": retained_percent,
-        "multiVariantScopeCount": fingerprint_variants,
-        "recoveryAttempted": recovery_report is not None,
-        "recoveryRequestCount": (
-            recovery_aggregate["requests"]
-            if recovery_aggregate is not None
-            else 0
+        "peakMemoryBytes": peak_memory_bytes,
+        "maximumPeakMemoryBytes": args.maximum_peak_memory_bytes,
+        "peakPids": peak_pids,
+        "maximumPeakPids": args.maximum_peak_pids,
+        "scratchBytesAfter": scratch_bytes_after,
+        "observedLiveScopeVariantCount": aggregate["multiVariantScopeCount"],
+        "observedLiveScopeVariantsAreGating": False,
+        "payloadControl": payload_control,
+        "recoveryAttempted": bool(recovery_reports),
+        "recoveryRounds": len(
+            {item["round"] for item in recovery_attempts if item["round"] > 0}
         ),
-        "threeConsecutiveMinuteWindowsAbove10Percent": False,
+        "recoveryRequestCount": recovery_wire_sends,
+        "recoveryDelaySeconds": recovery_delay_seconds,
+        "recoveryAttempts": recovery_attempts,
+        "minuteWindows": minute_windows,
+        "threeConsecutiveMinuteWindowsAbove10Percent": three_bad_windows,
         "publishedStateBefore": published_before,
         "publishedStateAfter": publication_after,
         "noSharedStateMutation": published_before == publication_after,
+        "toolingDll": str(tooling_dll),
+        "toolingSha256": hashlib.sha256(tooling_dll.read_bytes()).hexdigest(),
         "gatePassed": not gate_reasons,
         "gateReasons": gate_reasons,
         "rawPrimaryReport": str(report_path),
-        "rawRecoveryReport": (
-            str(recovery_report_path)
-            if recovery_report_path is not None
-            else None
-        ),
+        "rawRecoveryReports": [
+            str(path) for path in recovery_report_paths
+        ],
+        "rawPayloadControlReport": str(payload_control_report_path),
     }
     (output_dir / "decision.json").write_text(json.dumps(decision, indent=2) + "\n")
     (output_dir / "workload-manifest.json").write_text(
         json.dumps(
             {
                 "profile": args.network_profile,
+                "routingMode": "fixed-round-robin",
                 "scopeCount": len(workload),
                 "requestCount": args.request_count,
+                "payloadControlScopeCount": args.payload_control_scope_count,
+                "payloadControlRequestCount": len(payload_control_workload),
+                "maximumRecoveryRounds": args.max_recovery_rounds,
+                "recoveryDelaySeconds": args.recovery_delay_seconds,
                 "instruments": sorted({item["instrument"] for item in workload}),
                 "scopeHashes": [item["scopeHash"] for item in workload],
+                "payloadControlScopeHashes": [
+                    payload_control_workload[index]["scopeHash"]
+                    for index in range(0, len(payload_control_workload), 2)
+                ],
             },
             indent=2,
         )

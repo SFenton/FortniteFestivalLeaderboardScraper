@@ -1,0 +1,43 @@
+{
+  "primaryFailures": [
+    {
+      "originalIndex": 973,
+      "scopeHash": "62dbdddd36a722b0",
+      "attemptedProxies": [
+        "pia-gluetun-29"
+      ],
+      "category": "transport",
+      "curlExit": 35
+    },
+    {
+      "originalIndex": 1522,
+      "scopeHash": "181a1e7351bff743",
+      "attemptedProxies": [
+        "pia-gluetun-28"
+      ],
+      "category": "transport",
+      "curlExit": 35
+    }
+  ],
+  "firstAlternateResults": [
+    {
+      "proxy": "pia-gluetun-1",
+      "category": "cdn_non_json_403",
+      "httpStatus": 403
+    },
+    {
+      "proxy": "pia-gluetun-2",
+      "category": "cdn_non_json_403",
+      "httpStatus": 403
+    }
+  ],
+  "liveVariant": {
+    "scopeHash": "7b18cdc1066effd9",
+    "proxy": "pia-gluetun-14",
+    "observations": 13,
+    "fingerprintCounts": [
+      12,
+      1
+    ]
+  }
+}

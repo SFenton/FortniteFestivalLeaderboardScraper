@@ -143,6 +143,82 @@ public sealed class ResilientHttpExecutorTests
     }
 
     [Fact]
+    public async Task SendAsync_ProxyCurlPrimary_TlsThenAlternateCdnBlock_UsesThirdExit()
+    {
+        var handler = new MockHttpMessageHandler();
+        using var http = new HttpClient(handler);
+        var options = new ScraperOptions
+        {
+            ProxyUrls =
+            [
+                "http://gluetun-1:8888",
+                "http://gluetun-2:8888",
+                "http://gluetun-3:8888",
+            ],
+            ContainerNames = ["gluetun-1", "gluetun-2", "gluetun-3"],
+            VpnProviders =
+            [
+                "Private Internet Access",
+                "Private Internet Access",
+                "Private Internet Access",
+            ],
+            ControlUrls =
+            [
+                "http://gluetun-1:8000",
+                "http://gluetun-2:8000",
+                "http://gluetun-3:8000",
+            ],
+            ProxyActiveStandby = false,
+            ProxyUseCurlTransport = true,
+            ProxyCurlTempDirectory = "/app/data/curl-transport",
+        };
+        using var pool = new ProxyPool(
+            options,
+            NullLogger<ProxyPool>.Instance);
+        var executor = new ResilientHttpExecutor(http, _log, pool);
+        var selectedHosts = new List<string>();
+        executor.PrimaryCurlTransportOverride = (request, _, _) =>
+        {
+            Assert.True(request.Options.TryGetValue(
+                ProxyRequestState.EndpointProxyUri,
+                out var proxyUri));
+            selectedHosts.Add(proxyUri.Host);
+            return proxyUri.Host switch
+            {
+                "gluetun-1" => throw new HttpRequestException(
+                    "simulated curl exit 35 TLS failure"),
+                "gluetun-2" => Task.FromResult<HttpResponseMessage?>(
+                    new HttpResponseMessage(HttpStatusCode.Forbidden)
+                    {
+                        Content = new StringContent(
+                            "<html>cdn block</html>",
+                            System.Text.Encoding.UTF8,
+                            "text/html"),
+                    }),
+                _ => Task.FromResult<HttpResponseMessage?>(
+                    new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent("""{"result":"ok"}"""),
+                    }),
+            };
+        };
+
+        using var response = await executor.SendAsync(
+            () => MakeEpicEventsRequest(),
+            label: "tls-cdn-third-exit",
+            maxRetries: 0);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(
+            ["gluetun-1", "gluetun-2", "gluetun-3"],
+            selectedHosts);
+        Assert.Equal(3, executor.TotalHttpSends);
+        Assert.Equal(1, executor.CdnBlocksDetected);
+        Assert.Equal(0, executor.CdnProbeAttempts);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
     public async Task SendAsync_BackgroundWaitsForForegroundRegistration_ReportsTrafficTurnState()
     {
         var coordinator = new EpicTrafficCoordinator();

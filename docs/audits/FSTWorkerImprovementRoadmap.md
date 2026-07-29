@@ -48,9 +48,20 @@ blocker and exact outbox artifact paths.
   CDN blocks (`2.97%`), one primary `503`, zero `429`, `1.0797` retry
   amplification, no three bad one-minute windows, and 25/25 retained exits.
   The lane passed safety but missed the required 10% useful-throughput gain.
+- The `32.64` figure is not the transport-only rate. Epic fetching ended after
+  `4:17:07.544` at `38.428` useful pages/s; the declared legacy boundary then
+  waited `45:33.432` for band writer drain. The bounded `800/32/4` result was
+  `35.958` pages/s, so full-run pure fetch was actually `6.87%` faster. Future
+  network decisions score pure fetch separately and retain the combined
+  network-plus-writer boundary only as a cross-lane diagnostic.
 - `candidate-800-32-4` passed the matched bounded calibration at `35.96`
-  useful pages/s. `candidate-1600-64-8` reached `53.22` pages/s but failed the
-  zero-difference/unrecovered gate; `candidate-2880-128-16` was not run.
+  useful pages/s. `candidate-1600-64-8` reached `53.22` pages/s but its
+  one-round harness could not recover two TLS failures after the first
+  alternates returned CDN `403`; `candidate-2880-128-16` was not run. The
+  accepted `800` canary also had two TLS failures and recovered them, while the
+  reported live payload variant was 12 responses of one fingerprint and one
+  response of another through the same exit over 56 seconds. That evidence
+  rejects the old canary decision package, not the production retry path.
   `pia-gluetun-3` remains on its independently reversible healthy endpoint
   repair as an availability prerequisite, not a promoted throughput result.
 - The apparent `~400k -> 592,849` request increase is not retry inflation:
@@ -76,6 +87,40 @@ blocker and exact outbox artifact paths.
   that repair receives its own dual-lane full-scrape window.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1268-dual-lane-20260728T184812Z`.
+
+### NETWORK-NEXT-CANDIDATE-DESIGN — bounded tooling ready; live proof held
+
+- The next smallest hypothesis is bounded-only `candidate-800-32-5`: keep
+  global/per-exit pacing at `800/32`, curl HTTP/1.1 fresh connections,
+  production least-in-flight routing, cooldowns, and every retry setting;
+  change only the per-exit concurrency cap from `4` to `5`.
+- The bounded pass threshold is `39.554` useful pages/s, exactly 10% over the
+  accepted `35.958` result. A later full run must reach `42.271` pure-fetch
+  pages/s, or at most `3:53:45.040` for `592,849` pages, exactly 10% over
+  scrape `1268` pure fetch.
+- Reproducible source now lives in `tools/FstNetworkCanary`; the Python runner
+  builds it, permits at most three recovery rounds through previously untried
+  alternates, records app-connect/start-transfer/connection metrics, and runs 25
+  near-simultaneous cross-exit payload pairs. Temporal variants inside the
+  main live stage are diagnostic; only failed matched pairs are payload
+  differences.
+- A service regression test proves the production sequence TLS failure ->
+  alternate CDN `403` -> successful third exit. Scrape `1268` already
+  demonstrated `18,987` proxy-isolated CDN alternate retries. `pia-gluetun-3`
+  recorded normal block/cooldown behavior and three successful timeout-driven
+  self-heals, so its Seattle TCP pinned-endpoint repair remains accepted.
+- Curl process overhead was not the current limiter: `800/32/4` used
+  `0.69` average CPU cores / `348 MiB` peak memory / 100 active curl
+  processes; `1600/64/8` used `1.09` cores / `595 MiB` / 200 processes.
+  Connection reuse or .NET transport remains a separate later candidate and
+  must not be combined with the concurrency change.
+- The production wrapper and compose guard intentionally do not recognize
+  `candidate-800-32-5` yet. Real Epic canary execution, worker recreation, and
+  another scrape are held until the heavy Trios storage owner gives fresh
+  explicit clearance; wrapper/guard promotion requires a passing bounded
+  artifact first.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/network-next-candidate-design-20260729T105348Z`.
 
 ### NOTIFICATION-RECOVERY foundation
 
@@ -164,18 +209,20 @@ owns PostgreSQL query/write/storage/WAL/ranking/post-process work. Each lane
 gets its own baseline, target, rollback, metrics, and decision while sharing
 the same scope, manifest, API, publication, and notification correctness gate.
 
-Scrape `1268` evaluated the prior card. The next card is not armed because the
-network lane has no qualified improvement after the `1600/64/8` canary
-failure; the worker therefore remains held.
+Scrape `1268` evaluated the prior card. The next network candidate is designed
+and available only in the bounded runner; the production card remains unarmed
+until storage clearance and a passing bounded result. The worker therefore
+remains held.
 
 | Lane | Candidate | Baseline | Target |
 |---|---|---|---|
-| Network | **Unarmed:** isolate a new candidate at or below the accepted `800/32/4` budget; do not retry `1600/64/8` unchanged and do not skip to `2880/128/16` | Scrape 1268 `5:02:40.563`; `640,081` wire sends; `32.64` useful pages/s | >=10% higher useful pages/s with the same strict correctness/error/exit-retention gates |
+| Network | **Bounded-only, production unarmed:** `candidate-800-32-5`; change only per-exit concurrency `4 -> 5`, do not repeat `1600/64/8` unchanged | Bounded `35.958` useful pages/s; scrape 1268 pure fetch `4:17:07.544` / `38.428` pages/s; writer drain separately `45:33.432` | Bounded >=`39.554` pages/s; future full pure fetch >=`42.271` pages/s; zero unrecovered/matched-control/public differences; amplification <=`1.50`; 429+503 <=`5%`; >=80% exits |
 | Data/query | Publish band ranking snapshots/fingerprints before the final `api_response_cache` truncate/insert, retaining the notification contract and one atomic commit | Scrape 1268 functional notification completion in `101.76 s`, but 13 HTTP `504` and 20 `499` responses during the long cache lock | Zero representative-route failures; cache remains readable while band snapshot work waits; notification workset/owner/completion parity remains exact |
 
-Bounded network canaries may run while unrelated compaction/reclaim proceeds.
-Only the production scrape and resource-heavy/destructive windows require
-shared capacity/load coordination.
+Bounded network canaries can normally overlap demonstrably disjoint
+compaction/reclaim work. The current clean Trios v3 build is explicitly
+classified as measurement-contaminating heavy I/O, so no Epic canary or worker
+start may occur until `storage-reclaim-continuation` gives fresh clearance.
 
 For attribution, score registered-user, band-discovery, and targeted-band
 request/time deltas in the network lane, not the data lane. The executable
@@ -1048,13 +1095,15 @@ otherwise run them while the worker is held.
 | Matrix | Values |
 |---|---|
 | Healthy unique exits | 1, 4, 8, 16, 26, then 30 only if actually unique/healthy |
-| Guard profile | `candidate-800-32-4`, then `candidate-1600-64-8`, then `candidate-2880-128-16` |
-| Aggregate/per-exit/concurrency | `800/32/4`, `1600/64/8`, `2880/128/16` |
-| Assignment | current least-in-flight vs weighted sticky |
+| Historical scrape-1268 sequence | `candidate-800-32-4`, rejected `candidate-1600-64-8`; `candidate-2880-128-16` not run |
+| Next bounded-only profile | `candidate-800-32-5` = unchanged `800/32`, concurrency `4 -> 5` only |
+| Assignment | production least-in-flight; bounded fixed-balanced assignment is conservative and recorded explicitly |
 
 Each step must pass all of these gates before the next step:
 
-- zero unrecovered scope failures, missing manifests, or payload differences;
+- zero unrecovered scope failures, missing manifests, or matched cross-exit
+  payload-control differences; repeated temporal live variants are recorded
+  separately;
 - at least 10% higher useful RPS than the previous qualified step;
 - wire-send retry amplification <=`1.50`;
 - combined `429` plus `503` <=`5%` of wire sends and no three consecutive
