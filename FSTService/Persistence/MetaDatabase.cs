@@ -8247,7 +8247,7 @@ public sealed class MetaDatabase : IMetaDatabase
                     ), -1)
                 END
               AND points.snapshot_date >= @cutoff
-            ORDER BY points.snapshot_date DESC, points.snapshot_taken_at DESC
+            ORDER BY points.snapshot_date DESC
             """;
         cmd.Parameters.AddWithValue("teamKey", teamKey);
         cmd.Parameters.AddWithValue("scopeId", rankingScope == "overall" ? (short)0 : (short)1);
