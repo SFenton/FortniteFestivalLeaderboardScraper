@@ -240,6 +240,21 @@ compaction/reclaim work. Clean Trios v3 promotion/reclaim reached a terminal
 boundary before the c5 canary. A separate fresh clearance is still required
 before c6 so storage and network evidence remain independently attributable.
 
+### Freshness-yield correction — effective 2026-07-29
+
+Published-site freshness now outranks preserving a pristine optimization
+window. Long storage, compaction, reclaim, and benchmark lanes must finish only
+their currently running bounded chunk, checkpoint, and pause at the next clean
+resumable boundary when scrape cadence is due. They must not start another
+chunk while a continuity scrape is waiting.
+
+When a candidate cannot be qualified promptly after that boundary, the worker
+must use the last accepted network profile and the ready data candidate for
+one guarded run-once continuity scrape. That network result is an
+accepted-baseline measurement, not a promotion claim. Candidate iteration may
+resume only after publication/unfreeze, notification completion, parity, a
+worker hold, and explicit release of the paused storage owner.
+
 For attribution, score registered-user, band-discovery, and targeted-band
 request/time deltas in the network lane, not the data lane. The executable
 profile pins `00:10:00`, `00:05:00`, `00:05:00`, and `80`/`80` total lookup

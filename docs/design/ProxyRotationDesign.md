@@ -284,6 +284,14 @@ controls, and gates remain identical. One additional slot is justified because
 c5 safely narrowed the target miss to `0.61%` while remaining well below the
 resource caps. A fresh storage clearance is required before its live canary.
 
+Freshness limits this qualification window to one c6 attempt. The current
+bounded storage chunk may finish and checkpoint, but the longer storage lane
+must then pause. If c6 fails or cannot start promptly at that safe boundary,
+run the continuity scrape with accepted `candidate-800-32-4`; report that
+network result as an accepted-baseline measurement rather than a promotion,
+and resume candidate work only after terminal publication and notification
+completion.
+
 A future full run must reach at least `42.271` pure-fetch pages/s, or no more
 than `3:53:45.040` for `592,849` pages. Writer drain remains a separately
 reported data-path metric. The live pair is

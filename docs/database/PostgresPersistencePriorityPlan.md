@@ -10,6 +10,12 @@ This plan records the approved direction for improving FST Postgres persistence 
   Duets and Trios reads enabled. `fstworker` exited cleanly on
   `fstservice:scrape1268-dual-4ae6c171` with restart `no`; normal scheduling
   remains held pending the next complete dual-lane card.
+- Freshness is now a hard scheduling constraint: long storage/reclaim work
+  finishes only its current bounded chunk, checkpoints, and yields before the
+  next continuity scrape. A stale publication must not wait for repeated
+  candidate iteration; after at most one promptly available bounded network
+  attempt, use the last accepted network profile and refresh the public site
+  before storage work resumes.
 - Scrape `1268` is authoritative and unfrozen with `6,174` complete solo
   source mappings / `39,944,787` rows. Its improvement notification marker is
   completed for player and band song/ranking lanes with a persisted

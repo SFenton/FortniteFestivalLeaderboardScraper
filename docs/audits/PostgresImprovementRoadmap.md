@@ -193,6 +193,12 @@ safety model versus 314,856,988,672 free at the drill start.
   `candidate-800-32-6` after c5 safely missed its bounded throughput target at
   `39.314` pages/s. The network wrapper/guard are intentionally unchanged and
   the worker remains held.
+- Freshness correction: storage work may hold the worker only through its
+  currently active bounded chunk. At the next clean checkpoint it must yield
+  to a continuity scrape. If c6 cannot complete one qualified bounded attempt
+  promptly, use accepted `candidate-800-32-4`, classify the network lane as an
+  accepted-baseline measurement, publish/unfreeze and complete notifications,
+  then release the storage owner to resume.
 - Other measured regressions remain separate next-candidate evidence:
   `BandMaintenance` was `4:04:02.864` versus `3:12:28.804` on `1267`,
   `ComputeRankings` was `2:49:50.942` versus `1:18:21.810`, and solo
