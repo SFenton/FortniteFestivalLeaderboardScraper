@@ -32,6 +32,7 @@ class FstNetworkBoundedCanaryTests(unittest.TestCase):
         runner = load_runner()
 
         self.assertEqual((800, 32, 5), runner.PROFILES["candidate-800-32-5"])
+        self.assertEqual((800, 32, 6), runner.PROFILES["candidate-800-32-6"])
         self.assertEqual((800, 32, 4), runner.PROFILES["candidate-800-32-4"])
 
     def test_selects_payload_controls_across_instruments(self):

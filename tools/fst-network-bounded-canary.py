@@ -23,6 +23,7 @@ from fst_network_canary_logic import (
 PROFILES = {
     "candidate-800-32-4": (800, 32, 4),
     "candidate-800-32-5": (800, 32, 5),
+    "candidate-800-32-6": (800, 32, 6),
     "candidate-1600-64-8": (1600, 64, 8),
     "candidate-2880-128-16": (2880, 128, 16),
 }

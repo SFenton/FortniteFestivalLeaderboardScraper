@@ -88,16 +88,29 @@ blocker and exact outbox artifact paths.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1268-dual-lane-20260728T184812Z`.
 
-### NETWORK-NEXT-CANDIDATE-DESIGN — bounded tooling ready; live proof held
+### NETWORK-NEXT-CANDIDATE — concurrency 5 rejected; concurrency 6 held
 
-- The next smallest hypothesis is bounded-only `candidate-800-32-5`: keep
+- Bounded-only `candidate-800-32-5` kept
   global/per-exit pacing at `800/32`, curl HTTP/1.1 fresh connections,
   production least-in-flight routing, cooldowns, and every retry setting;
-  change only the per-exit concurrency cap from `4` to `5`.
+  only the per-exit concurrency cap changed from `4` to `5`.
 - The bounded pass threshold is `39.554` useful pages/s, exactly 10% over the
   accepted `35.958` result. A later full run must reach `42.271` pure-fetch
   pages/s, or at most `3:53:45.040` for `592,849` pages, exactly 10% over
   scrape `1268` pure fetch.
+- The live canary recovered `3,000/3,000` responses through one alternate
+  round, completed 25/25 cross-exit payload pairs exactly, retained 25/25
+  exits, emitted zero 429/503/CDN blocks, and used `1.00067` amplification,
+  `431 MiB` peak memory, and 149 PIDs. Continuous public/API monitoring was
+  green for 20/20 ticks and publication remained `1268`, unfrozen.
+- Strict useful throughput was `39.314` pages/s, `+9.33%`, versus the required
+  `39.554`; it missed by `0.240` pages/s (`0.61%` of target). Primary-only
+  throughput was `39.629`, but recovery wall time is part of the declared
+  gate. `candidate-800-32-5` is therefore **rejected on performance only**.
+- The next smallest bounded-only hypothesis is `candidate-800-32-6`: change
+  only per-exit concurrency `5 -> 6`, retain every other value and the same
+  gates. It requires a fresh explicit storage clearance before one live
+  canary.
 - Reproducible source now lives in `tools/FstNetworkCanary`; the Python runner
   builds it, permits at most three recovery rounds through previously untried
   alternates, records app-connect/start-transfer/connection metrics, and runs 25
@@ -109,18 +122,21 @@ blocker and exact outbox artifact paths.
   demonstrated `18,987` proxy-isolated CDN alternate retries. `pia-gluetun-3`
   recorded normal block/cooldown behavior and three successful timeout-driven
   self-heals, so its Seattle TCP pinned-endpoint repair remains accepted.
+- Preflight also found `pia-gluetun-21` unable to establish its Virginia UDP
+  tunnel. A reversible Virginia TCP override restored Docker health, passed
+  the 25/25 unique-egress guard, and returned 120/120 valid candidate
+  responses at `1.153 s` p95. Retain that availability repair.
 - Curl process overhead was not the current limiter: `800/32/4` used
   `0.69` average CPU cores / `348 MiB` peak memory / 100 active curl
   processes; `1600/64/8` used `1.09` cores / `595 MiB` / 200 processes.
   Connection reuse or .NET transport remains a separate later candidate and
   must not be combined with the concurrency change.
 - The production wrapper and compose guard intentionally do not recognize
-  `candidate-800-32-5` yet. Real Epic canary execution, worker recreation, and
-  another scrape are held until the heavy Trios storage owner gives fresh
-  explicit clearance; wrapper/guard promotion requires a passing bounded
-  artifact first.
+  `candidate-800-32-6`. Worker recreation and another scrape remain
+  prohibited; wrapper/guard promotion still requires a passing bounded
+  artifact.
 - Evidence:
-  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/network-next-candidate-design-20260729T105348Z`.
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/network-candidate-800-32-5-20260729T142923Z`.
 
 ### NOTIFICATION-RECOVERY foundation
 
@@ -216,13 +232,13 @@ remains held.
 
 | Lane | Candidate | Baseline | Target |
 |---|---|---|---|
-| Network | **Bounded-only, production unarmed:** `candidate-800-32-5`; change only per-exit concurrency `4 -> 5`, do not repeat `1600/64/8` unchanged | Bounded `35.958` useful pages/s; scrape 1268 pure fetch `4:17:07.544` / `38.428` pages/s; writer drain separately `45:33.432` | Bounded >=`39.554` pages/s; future full pure fetch >=`42.271` pages/s; zero unrecovered/matched-control/public differences; amplification <=`1.50`; 429+503 <=`5%`; >=80% exits |
+| Network | **Bounded-only, production unarmed:** `candidate-800-32-6`; change only per-exit concurrency `5 -> 6` after `candidate-800-32-5` safely missed its target at `39.314` pages/s | Accepted bounded `35.958` pages/s; c5 `39.314` / `+9.33%`; scrape 1268 pure fetch `38.428` pages/s | Bounded >=`39.554` pages/s; future full pure fetch >=`42.271` pages/s; zero unrecovered/matched-control/public differences; amplification <=`1.50`; 429+503 <=`5%`; >=80% exits |
 | Data/query | Publish band ranking snapshots/fingerprints before the final `api_response_cache` truncate/insert, retaining the notification contract and one atomic commit | Scrape 1268 functional notification completion in `101.76 s`, but 13 HTTP `504` and 20 `499` responses during the long cache lock | Zero representative-route failures; cache remains readable while band snapshot work waits; notification workset/owner/completion parity remains exact |
 
 Bounded network canaries can normally overlap demonstrably disjoint
-compaction/reclaim work. The current clean Trios v3 build is explicitly
-classified as measurement-contaminating heavy I/O, so no Epic canary or worker
-start may occur until `storage-reclaim-continuation` gives fresh clearance.
+compaction/reclaim work. Clean Trios v3 promotion/reclaim reached a terminal
+boundary before the c5 canary. A separate fresh clearance is still required
+before c6 so storage and network evidence remain independently attributable.
 
 For attribution, score registered-user, band-discovery, and targeted-band
 request/time deltas in the network lane, not the data lane. The executable
@@ -1096,7 +1112,8 @@ otherwise run them while the worker is held.
 |---|---|
 | Healthy unique exits | 1, 4, 8, 16, 26, then 30 only if actually unique/healthy |
 | Historical scrape-1268 sequence | `candidate-800-32-4`, rejected `candidate-1600-64-8`; `candidate-2880-128-16` not run |
-| Next bounded-only profile | `candidate-800-32-5` = unchanged `800/32`, concurrency `4 -> 5` only |
+| Latest bounded result | `candidate-800-32-5` rejected on performance only at `39.314` pages/s (`+9.33%`) |
+| Next bounded-only profile | `candidate-800-32-6` = unchanged `800/32`, concurrency `5 -> 6` only |
 | Assignment | production least-in-flight; bounded fixed-balanced assignment is conservative and recorded explicitly |
 
 Each step must pass all of these gates before the next step:

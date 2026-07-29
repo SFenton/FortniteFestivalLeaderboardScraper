@@ -239,9 +239,9 @@ effectively solo-only; wire sends are tracked separately.
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1268-dual-lane-20260728T184812Z`.
 
-### Next smallest candidate: `candidate-800-32-5`
+### Candidate 5 result and next smallest candidate
 
-The next candidate changes one variable only: per-exit concurrency `4 -> 5`.
+`candidate-800-32-5` changed one variable only: per-exit concurrency `4 -> 5`.
 Global `800`, per-exit `32`, curl HTTP/1.1 fresh connections, production
 least-in-flight selection, cooldowns, retry thresholds, and the PIA endpoint
 set remain unchanged.
@@ -258,6 +258,32 @@ Bounded acceptance requires:
 - zero publication/shared-state or representative public-route differences;
 - peak canary memory <=`768 MiB`, peak PIDs <=`300`, and zero scratch residue.
 
+The storage-cleared live canary passed every correctness, public-health, exit,
+error, and resource gate:
+
+- `3,000/3,000` recovered responses and `1.00067` amplification;
+- zero 429/503/CDN blocks and 25/25 exits retained;
+- 25/25 near-simultaneous cross-exit payload pairs exact;
+- `431 MiB` peak memory, 149 PIDs, and zero scratch residue;
+- 20/20 continuous public-health ticks green with publication unchanged at
+  scrape `1268`, unfrozen.
+
+Strict recovered useful throughput was `39.314` pages/s (`+9.33%`) against
+the required `39.554`; it missed by `0.240` pages/s. Primary-only throughput
+was `39.629`, but recovery wall time is deliberately part of the gate.
+`candidate-800-32-5` is rejected on performance only.
+
+Preflight found `pia-gluetun-21` unable to negotiate its Virginia UDP tunnel.
+The independently reversible Virginia TCP override restored health, passed
+the 25/25 unique-egress guard, and delivered 120/120 valid candidate responses
+at `1.153 s` p95. Retain this availability repair.
+
+The next smallest profile is bounded-only `candidate-800-32-6`. It changes
+only per-exit concurrency `5 -> 6`; all rates, transports, routing, recovery,
+controls, and gates remain identical. One additional slot is justified because
+c5 safely narrowed the target miss to `0.61%` while remaining well below the
+resource caps. A fresh storage clearance is required before its live canary.
+
 A future full run must reach at least `42.271` pure-fetch pages/s, or no more
 than `3:53:45.040` for `592,849` pages. Writer drain remains a separately
 reported data-path metric. The live pair is
@@ -266,24 +292,24 @@ reported data-path metric. The live pair is
 
 The canary now has repository-owned buildable source in
 `tools/FstNetworkCanary`, bounded distinct-alternate recovery,
-app-connect/start-transfer timing, and matched payload controls. A service regression
-test proves TLS -> alternate CDN `403` -> third-exit success on the production
-least-in-flight path.
+app-connect/start-transfer timing, and matched payload controls. A service
+regression test proves TLS -> alternate CDN `403` -> third-exit success on the
+production least-in-flight path.
 
-The production wrapper and compose guard remain unchanged. The candidate is
+The production wrapper and compose guard remain unchanged. Candidate 6 is
 bounded-only until a real canary passes after explicit storage clearance.
 At that boundary, use a new empty FST-drive evidence directory:
 
 ```bash
 python tools/fst-network-bounded-canary.py \
-  --network-profile candidate-800-32-5 \
-  --out-dir /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/<window>/candidate-800-32-5 \
+  --network-profile candidate-800-32-6 \
+  --out-dir /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/<window>/candidate-800-32-6 \
   --request-count 3000 \
   --prior-useful-rps 35.95782174836861
 ```
 
 Evidence:
-`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/network-next-candidate-design-20260729T105348Z`.
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/network-candidate-800-32-5-20260729T142923Z`.
 
 Transport fallback responses are only treated as recovered when they are not
 another CDN block and not retryable `429`/`5xx` status. This prevents a curl
@@ -346,7 +372,8 @@ tools/fst-worker-dual-lane-runonce.sh \
 
 Do not advance the production wrapper to `candidate-1600-64-8` or
 `candidate-2880-128-16`; that sequence stopped at the rejected `1600` result.
-The next candidate, `candidate-800-32-5`, exists only in
+`candidate-800-32-5` also remains absent because it missed the bounded
+performance gate. The next candidate, `candidate-800-32-6`, exists only in
 `fst-network-bounded-canary.py`. Add it to this run-once wrapper and the
 compose guard only after a storage-cleared bounded run passes every named
 gate.
