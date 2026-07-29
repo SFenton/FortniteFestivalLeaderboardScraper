@@ -30,7 +30,52 @@ This roadmap and the service roadmap are accompanied by:
 Delivery requires rendered HTML/text plus SMTP acceptance, or a recorded SMTP
 blocker and exact outbox artifact paths.
 
-## NOTIFICATION-RECOVERY — standalone recovery/code accepted; full-scrape qualification pending
+## SCRAPE-1268 DUAL-LANE — functional data win; shared promotion held
+
+- Run-once scrape `1268` used the contract-bearing
+  `fstservice:scrape1268-dual-4ae6c171` image, restart `no`, the exact
+  `candidate-800-32-4` / `notification-db-only` wrapper card, and 25
+  preflight-healthy unique PIA exits. It published `6,174` complete source
+  mappings / `39,944,787` rows, unfroze public reads, completed notifications,
+  and exited cleanly before another scrape.
+- The shared data-correctness gate passed: `8,232/8,232` manifests, zero incomplete
+  scopes, retry exhaustion, parse failures, writer failures, or
+  publication-critical failures. Two post-publish suites were HTTP `200` and
+  byte-exact `13/13`.
+- **Network lane — iterate/reject.** Network plus writer drain was
+  `5:02:40.563`, `0.10%` slower than `1267`; useful throughput was `32.64`
+  pages/s, `0.08%` lower. Final transport used `640,081` sends with `18,987`
+  CDN blocks (`2.97%`), one primary `503`, zero `429`, `1.0797` retry
+  amplification, no three bad one-minute windows, and 25/25 retained exits.
+  The lane passed safety but missed the required 10% useful-throughput gain.
+- `candidate-800-32-4` passed the matched bounded calibration at `35.96`
+  useful pages/s. `candidate-1600-64-8` reached `53.22` pages/s but failed the
+  zero-difference/unrecovered gate; `candidate-2880-128-16` was not run.
+  `pia-gluetun-3` remains on its independently reversible healthy endpoint
+  repair as an availability prerequisite, not a promoted throughput result.
+- The apparent `~400k -> 592,849` request increase is not retry inflation:
+  `401,504` pages are solo and `191,345` are now-required complete band pages.
+  Complete band scope semantics explain about 99% of the historical delta;
+  wire sends remain a separate retry metric.
+- **Data/query lane — functional pass, promotion iterate.** Publication
+  persisted an empty bounded projection workset, never fell back to all
+  `6,174` scopes, held one recovery owner, and completed player run `166` plus
+  band run `167` in `82.15 s` after marker start / `101.76 s` after
+  publication. The data lane emitted zero Epic sends, added `266,652,828`
+  WAL bytes, added zero temp bytes or checkpoints, and had no duplicate owner.
+- The shared public-health gate still failed during the multi-minute
+  publication transaction: real festivalweb traffic recorded `13` HTTP `504`
+  and `20` client-cancelled `499` responses while `api_response_cache` was
+  locked. Root cause is cache `TRUNCATE` occurring before long band ranking
+  snapshot copies/index builds in `MetaDatabase.PublishScrapeRun`.
+  The follow-up repair moves cache promotion to the end of the transaction and
+  adds a concurrent-read regression test plus a real leaderboard probe to the
+  60-second monitor. Neither lane is promoted until that repair receives its
+  own dual-lane full-scrape window.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1268-dual-lane-20260728T184812Z`.
+
+### NOTIFICATION-RECOVERY foundation
 
 - Verified that scrape `1267` published and unfroze before notification
   detection, then the worker was stopped during a redundant full solo
@@ -51,13 +96,13 @@ blocker and exact outbox artifact paths.
   unchanged.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/notification-recovery-20260728T1428Z`.
-- The next full scrape must qualify the normal path in the data/query lane.
-  Rollback uses an image that retains this publication-marker/scope-plan state
-  contract while reverting only the candidate behavior/config. A pre-contract
-  worker image is not a valid rollback after the database constraint exists.
-  Interruption leaves the published scrape available, marks notification work
-  deferred/failed, and startup recovery resumes the same published scrape
-  before another scrape.
+- Scrape `1268` qualified the bounded normal path, but the lane remains
+  unpromoted until the shared publication-route lock repair passes. Rollback
+  uses an image that retains this publication-marker/scope-plan state contract
+  while reverting only candidate behavior/config. A pre-contract worker image
+  is not valid after the database constraint exists. Interruption leaves the
+  published scrape available, marks notification work deferred/failed, and
+  startup recovery resumes the same published scrape before another scrape.
 - Registered-user/discovery/targeted budget changes share the Epic proxy pool
   with the network candidate, so they are not part of the independently scored
   data/query lane. The network lane owns their accepted bounded settings:
@@ -117,12 +162,14 @@ owns PostgreSQL query/write/storage/WAL/ranking/post-process work. Each lane
 gets its own baseline, target, rollback, metrics, and decision while sharing
 the same scope, manifest, API, publication, and notification correctness gate.
 
-The next candidate scrape pairs:
+Scrape `1268` evaluated the prior card. The next card is not armed because the
+network lane has no qualified improvement after the `1600/64/8` canary
+failure; the worker therefore remains held.
 
 | Lane | Candidate | Baseline | Target |
 |---|---|---|---|
-| Network | Highest sequentially qualified step from `800/32/4`, `1600/64/8`, and `2880/128/16` | Scrape 1267 core network + writer drain `5:02:22`; `629,426` wire sends; `32.67` useful pages/s under `800/32/4` | At least 10% higher useful pages/s and core network <=`4:30:00`; continue later dual-lane windows toward <=`1:00:00` |
-| Data/query | Fail-closed notification publication marker, pre-scrape recovery hold, and changed-scope-only solo projection/detection | Scrape 1267 published, then began a redundant all-`6,174`-scope projection refresh; the worker stop left no normal-path detection run | Notification status completed <=`10 min` after publication/unfreeze; refreshed scope set is bounded to changed scopes with no all-scope fallback; zero Epic sends owned by this lane; no >10% WAL/temp/CPU/memory/IO or public-route regression |
+| Network | **Unarmed:** isolate a new candidate at or below the accepted `800/32/4` budget; do not retry `1600/64/8` unchanged and do not skip to `2880/128/16` | Scrape 1268 `5:02:40.563`; `640,081` wire sends; `32.64` useful pages/s | >=10% higher useful pages/s with the same strict correctness/error/exit-retention gates |
+| Data/query | Publish band ranking snapshots/fingerprints before the final `api_response_cache` truncate/insert, retaining the notification contract and one atomic commit | Scrape 1268 functional notification completion in `101.76 s`, but 13 HTTP `504` and 20 `499` responses during the long cache lock | Zero representative-route failures; cache remains readable while band snapshot work waits; notification workset/owner/completion parity remains exact |
 
 Bounded network canaries may run while unrelated compaction/reclaim proceeds.
 Only the production scrape and resource-heavy/destructive windows require

@@ -190,6 +190,43 @@ requalification; the published result and public path are unaffected.
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1267-guarded-publication-20260727T201218Z`.
 
+### Scrape 1268 sequential qualification and full result
+
+The next sequential matrix stopped at its first failed step:
+
+- `candidate-800-32-4` passed the matched bounded calibration with
+  `3,000/3,000` recovered requests, `35.96` useful pages/s, `1.0007`
+  amplification, zero 429/503, zero payload variants, and 25/25 retained
+  exits.
+- `candidate-1600-64-8` reached `53.22` useful pages/s but two TLS sends
+  remained unrecovered after alternate exits returned CDN `403`; one repeated
+  live scope also changed payload. The strict correctness gate failed.
+- `candidate-2880-128-16` was not run. Sequential qualification stops at the
+  first failure.
+
+Production therefore reran `candidate-800-32-4` with only an independently
+reversible availability repair for `pia-gluetun-3`. The exit moved away from
+an unreachable server pool to a measured-reachable endpoint and passed the
+25/25 unique-egress guard. During the full run it participated in normal
+cooldown/self-heal behavior and finished healthy.
+
+Scrape `1268` completed `8,232/8,232` manifests with `592,849` useful pages.
+Network plus writer drain was `5:02:40.563`, `0.10%` slower than scrape
+`1267`; useful pages/s was `32.64`, `0.08%` lower. Final transport recorded
+`640,081` wire sends, `18,987` CDN blocks (`2.97%`), one primary `503`, zero
+`429`, `1.0797` amplification, no three consecutive bad one-minute windows,
+and 25/25 healthy exits at decision. Correctness and safety passed, but the
+10% useful-throughput target did not, so the network lane is **iterate**, not
+promoted.
+
+The historical request-count increase is a scope-semantics change rather than
+retry growth. Scrape `1268` consisted of `401,504` solo pages plus `191,345`
+complete Band Duets/Trios/Quad pages. Historical `~400k` totals were
+effectively solo-only; wire sends are tracked separately.
+
+Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1268-dual-lane-20260728T184812Z`.
+
 Transport fallback responses are only treated as recovered when they are not
 another CDN block and not retryable `429`/`5xx` status. This prevents a curl
 `503` observed after a transient process/tunnel failure from becoming a final

@@ -3,7 +3,7 @@
 **Authoritative runtime:** PostgreSQL 17 in `fst-postgres`  
 **Production compose owner:** `/home/sfenton/Docker/FestivalServiceTracker`  
 **Production data root:** `/mnt/docker-storage/Docker/FestivalServiceTracker/pg-data`  
-**Last targeted live storage validation:** 2026-07-28 11:25 UTC
+**Last targeted live storage validation:** 2026-07-29 10:10 UTC
 
 This document defines FST PostgreSQL ownership, source-of-truth boundaries,
 publication behavior, retention, index posture, and restore paths. PostgreSQL
@@ -280,14 +280,17 @@ When `Features:WritePublishedScopeSources` is enabled, the worker records
 reported coverage for every expected solo scope, validates exact physical row
 counts, and builds the complete per-scope candidate before marking the scrape
 complete. `PublishScrapeRun` then validates the expected mapping count, marks
-matching fingerprints published, swaps staged API cache rows, publishes current
-band ranking tables, advances `scrape_publication_state.published_scrape_id`,
-queues the same scrape in the improvement-notification marker when enabled,
-stores the exact bounded projection workset, and clears the public-read freeze
-in one transaction. Before doing so, it
-locks the existing publication row and rejects a newer publication unless the
-current published scrape's notification marker is `completed` or `disabled`
-(or no marker exists on a legacy row).
+matching fingerprints published, publishes current band ranking tables, swaps
+staged API cache rows, advances
+`scrape_publication_state.published_scrape_id`, queues the same scrape in the
+improvement-notification marker when enabled, stores the exact bounded
+projection workset, and clears the public-read freeze in one transaction.
+Long band ranking copies and index builds run before the cache swap so the
+`api_response_cache` `ACCESS EXCLUSIVE` lock is retained only for the final
+truncate/insert and commit work. Before publication, the transaction locks the
+existing publication row and rejects a newer publication unless the current
+published scrape's notification marker is `completed` or `disabled` (or no
+marker exists on a legacy row).
 
 | Rollout switch | Container | Default | Effect | Rollback |
 |---|---|---:|---|---|
@@ -507,7 +510,7 @@ partial result.
 | `player_improvement_state`, `player_rank_improvement_state`, `band_improvement_state`, `band_rank_improvement_state`, `band_improvement_subjects` | Durable detection state | Improvement detector | Idempotency/delta state. Subjects registered after the prior completed detection run are baselined once before events are emitted, preventing back-catalog first-play/first-score spam while preserving later improvements. |
 | `player_improvement_events`, `band_improvement_events`, `improvement_detection_runs` | Durable event/audit | Improvement detector/service | Bounded retention with replay identity. Detection runs record `published_scrape_id` and selective new-subject baseline counts so publication completion and catch-up are auditable. |
 | `service_notifications` | Durable notification outbox/read model | `ImprovementNotificationService` | Expiry cleanup is bounded; future process split must preserve replay |
-| `api_response_cache`, `api_response_cache_staging` | Cache | Precompute/publication path | Staging swaps atomically; safe to clear and regenerate from published source |
+| `api_response_cache`, `api_response_cache_staging` | Cache | Precompute/publication path | Staging swaps atomically after long band snapshot work; keep its exclusive lock at transaction end; safe to clear and regenerate from published source |
 
 Notification recovery and registered-phase budget operations are documented in
 `docs/database/ImprovementNotificationRecoveryRunbook.md`. The protected

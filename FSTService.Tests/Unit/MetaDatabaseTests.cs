@@ -686,6 +686,63 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public async Task PublishScrapeRun_KeepsPublicCacheReadableWhileBandSnapshotsAreBuilt()
+    {
+        var oldId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(oldId, 1, 10, 1, 100);
+        Db.BulkSetCachedResponses([(Key: "player:acct_1:::", Json: new byte[] { 1 }, ETag: "\"old\"")]);
+        Db.PublishScrapeRun(oldId, promoteCachedResponses: false);
+
+        var nextId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(nextId, 2, 20, 2, 200);
+        Db.BulkSetCachedResponsesStaging([(Key: "player:acct_1:::", Json: new byte[] { 2 }, ETag: "\"new\"")]);
+
+        var bandRankingTable =
+            BandRankingStorageNames.GetCurrentRankingTable("Band_Duets");
+        using var blocker = DataSource.OpenConnection();
+        using var blockerTx = await blocker.BeginTransactionAsync();
+        using (var lockCommand = blocker.CreateCommand())
+        {
+            lockCommand.Transaction = blockerTx;
+            lockCommand.CommandText =
+                $"LOCK TABLE {BandRankingStorageNames.QuoteIdentifier(bandRankingTable)} " +
+                "IN ACCESS EXCLUSIVE MODE";
+            await lockCommand.ExecuteNonQueryAsync();
+        }
+
+        var publishTask = Task.Run(() => Db.PublishScrapeRun(nextId));
+        await WaitForBlockedRelationLockAsync(bandRankingTable);
+
+        try
+        {
+            using var readerConnection = DataSource.OpenConnection();
+            using (var timeout = readerConnection.CreateCommand())
+            {
+                timeout.CommandText = "SET statement_timeout = '1s'";
+                await timeout.ExecuteNonQueryAsync();
+            }
+
+            using var readCache = readerConnection.CreateCommand();
+            readCache.CommandText = """
+                SELECT json_data
+                FROM api_response_cache
+                WHERE cache_key = @cacheKey
+                """;
+            readCache.Parameters.AddWithValue("cacheKey", "player:acct_1:::");
+            Assert.Equal(new byte[] { 1 }, (byte[]?)await readCache.ExecuteScalarAsync());
+        }
+        finally
+        {
+            await blockerTx.RollbackAsync();
+            await publishTask.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+
+        var cachedAfterPublish = Db.GetCachedResponse("player:acct_1:::");
+        Assert.NotNull(cachedAfterPublish);
+        Assert.Equal(new byte[] { 2 }, cachedAfterPublish.Value.Json);
+    }
+
+    [Fact]
     public void PublishScrapeRun_rejects_missing_scope_mapping_and_retains_previous_publication()
     {
         var oldId = Db.StartScrapeRun();
@@ -703,6 +760,30 @@ public sealed class MetaDatabaseTests : IDisposable
 
         Assert.Contains("per-scope source mapping is invalid", exception.Message);
         Assert.Equal(oldId, Db.GetPublishedScrapeRun()?.Id);
+    }
+
+    private async Task WaitForBlockedRelationLockAsync(string relationName)
+    {
+        using var conn = DataSource.OpenConnection();
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_locks
+                    WHERE relation = to_regclass(@relationName)
+                      AND NOT granted
+                )
+                """;
+            cmd.Parameters.AddWithValue("relationName", relationName);
+            if (cmd.ExecuteScalar() is true)
+                return;
+
+            await Task.Delay(100);
+        }
+        throw new TimeoutException(
+            $"Publication did not block on relation {relationName}.");
     }
 
     [Fact]

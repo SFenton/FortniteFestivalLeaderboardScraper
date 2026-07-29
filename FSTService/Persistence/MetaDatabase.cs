@@ -513,19 +513,6 @@ public sealed class MetaDatabase : IMetaDatabase
             }
         }
 
-        if (promoteCachedResponses)
-        {
-            using var cache = conn.CreateCommand();
-            cache.Transaction = tx;
-            cache.CommandText = """
-                TRUNCATE api_response_cache;
-                INSERT INTO api_response_cache (cache_key, json_data, etag, cached_at)
-                SELECT cache_key, json_data, etag, cached_at FROM api_response_cache_staging;
-                TRUNCATE api_response_cache_staging;
-                """;
-            cache.ExecuteNonQuery();
-        }
-
         PublishCurrentBandTeamRankings(conn, tx);
 
         if (expectedPublishedScopeCount.HasValue)
@@ -551,6 +538,22 @@ public sealed class MetaDatabase : IMetaDatabase
                     $"Scrape {scrapeId} published {publishedFingerprintCount} fingerprint rows; " +
                     $"{expectedPublishedScopeCount.Value} were required.");
             }
+        }
+
+        // Keep the public cache's ACCESS EXCLUSIVE lock at the end of the
+        // transaction so long-running band ranking copies and index builds do
+        // not block frozen public reads for the full publication window.
+        if (promoteCachedResponses)
+        {
+            using var cache = conn.CreateCommand();
+            cache.Transaction = tx;
+            cache.CommandText = """
+                TRUNCATE api_response_cache;
+                INSERT INTO api_response_cache (cache_key, json_data, etag, cached_at)
+                SELECT cache_key, json_data, etag, cached_at FROM api_response_cache_staging;
+                TRUNCATE api_response_cache_staging;
+                """;
+            cache.ExecuteNonQuery();
         }
 
         using (var publish = conn.CreateCommand())

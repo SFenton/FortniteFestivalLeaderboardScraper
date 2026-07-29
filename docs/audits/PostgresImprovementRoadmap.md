@@ -132,13 +132,58 @@ safety model versus 314,856,988,672 free at the drill start.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/observation-retirement-20260728T184629Z`.
 
+## SCRAPE-1268 dual-lane qualification update — 2026-07-29
+
+- Scrape `1268` completed and atomically published `6,174` complete solo
+  source mappings / `39,944,787` rows. All `8,232` solo+band manifests,
+  physical-source checks, writer gates, and 10 publication-critical phases
+  passed. Two settled public captures were HTTP `200` and exact `13/13`.
+- The notification DB-only surface worked as designed: publication persisted
+  a ready zero-scope workset owned by `1268`; no `6,174`-scope fallback
+  occurred; one advisory recovery owner ran; player run `166` and band run
+  `167` completed every required song/ranking lane; and the marker completed
+  `101.76 s` after publication.
+- The notification window owned zero Epic sends. It added `266,652,828` WAL
+  bytes, zero temp bytes, zero checkpoints, `1,223` inserted rows, `274,338`
+  updated rows, and `327` deleted rows. The prior standalone recovery window
+  generated about `52.51 GB` WAL; the bounded normal path reduced that by
+  about `99.5%`.
+- The full scrape added `25,597,894,656` database bytes and consumed
+  `29,414,273,024` filesystem free bytes. Final database size is
+  `3,611,541,812,915` bytes; final free space is `256,077,381,632` bytes.
+  The scrape guard still passes with about `195.68 GB` one-run margin and a
+  seven-day alert.
+- Full-run WAL was `512,098,894,951` bytes and temp growth was
+  `209,783,261,198` bytes, below scrape `1267`'s recorded
+  `550,846,974,842` / `349,841,108,977` bytes. Peak worker/Postgres RSS was
+  about `7.62 / 8.75 GiB`; no legacy shell/service-info monitor tick,
+  deadlock, terminal lock, or maintenance guard failed.
+- Promotion is still **iterate**, not accepted, because the shared public
+  gate found `13` HTTP `504` plus `20` client-cancelled `499` responses during
+  publication. `PublishScrapeRun` took an `ACCESS EXCLUSIVE` cache lock before
+  copying and indexing three band ranking snapshots, retaining that lock for
+  minutes.
+- The prepared next data/query candidate preserves atomic publication but
+  performs all long band snapshot copy/index work and fingerprint validation
+  before truncating/promoting `api_response_cache`. A concurrency regression
+  test holds a band ranking source lock and proves the old public cache remains
+  readable while publication waits. The next live window must pair this
+  independently reversible query-order candidate with a new qualified network
+  candidate; the worker remains held.
+- Other measured regressions remain separate next-candidate evidence:
+  `BandMaintenance` was `4:04:02.864` versus `3:12:28.804` on `1267`,
+  `ComputeRankings` was `2:49:50.942` versus `1:18:21.810`, and solo
+  projection cleanup was `25:15.672` versus `19:57.754`.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1268-dual-lane-20260728T184812Z`.
+
 ## Executive decision
 
 PostgreSQL remains the correct durable source of truth. The urgent issue is
 capacity and write amplification, not platform replacement.
 
-The database is `3,585,943,918,259` bytes on the 3.6 TB FST filesystem, which
-is 93% used with about 285.49 GB free. Physical solo snapshots consume about
+The database is `3,611,541,812,915` bytes on the 3.6 TB FST filesystem, which
+is 94% used with about 256.08 GB free. Physical solo snapshots consume about
 1.665 TB and add an estimated
 14 GB per full scrape. Band v2 history points consume about 799 GB. Together
 they account for about 74% of the database. The current scrape also generated
@@ -205,14 +250,20 @@ published API parity. The shared scrape gate still requires complete scope
 manifests, historical correctness, successful ranking/post-process,
 publication/unfreeze, notification completion, and public-route health.
 
-For the next scrape, the data/query partner is the notification recovery
-package's DB-only surface: the fail-closed publication marker, pre-scrape
-recovery hold, and changed-scope-only solo projection/detection. Scrape 1267
-published and then began a redundant all-`6,174`-scope projection refresh; the
-worker stop left no normal-path detection run. The candidate requires
-notification status to complete within `10 min` after publication/unfreeze,
-no all-scope fallback, zero Epic sends owned by the data lane, and no more than
-a `10%` regression in WAL, temp, CPU, memory, IO, or public-route latency.
+Scrape `1268` functionally qualified the notification contract: completion was
+`101.76 s` after publication, the persisted workset was empty and bounded,
+one recovery owner ran, and the window owned zero Epic sends. The shared
+public-route gate failed because the publication transaction locked
+`api_response_cache` before long band ranking snapshot copies/index builds.
+
+The next data/query partner therefore retains the complete notification
+contract but reorders publication so band snapshot work and fingerprint
+validation precede the final cache truncate/insert. Its gate requires the old
+public cache to remain readable while band publication waits, zero
+representative-route failures, and unchanged notification
+workset/owner/completion semantics. The network side is currently unarmed:
+`1600/64/8` failed its bounded correctness gate and `2880/128/16` may not be
+run by skipping that step.
 
 Registered-user/discovery/targeted processing shares the proxy pool and cannot
 be attributed to the DB-only lane while the network profile changes. The

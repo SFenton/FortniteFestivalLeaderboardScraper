@@ -6,22 +6,25 @@ This plan records the approved direction for improving FST Postgres persistence 
 
 - Production compose ownership: `/home/sfenton/Docker/FestivalServiceTracker`.
 - `fstservice`, `festivalweb`, and `fst-postgres` are healthy.
-  The observation retirement window used
-  `fstservice:notification-recovery-5de3ed3a`; `fstworker` was held with
-  restart `no`. The independent scrape-`1268` lane owns any later worker start.
-- Scrape `1267` published `6,174` complete solo scope mappings and
-  `39,937,029` rows with the publication ledger unfrozen and is authoritative.
-  Scrape `1266` remains failed at `post_process_no_progress_abandoned` with
-  zero published-source rows. No scrape later than `1267` exists.
-- The successful publication removed failed-candidate derived-read isolation:
-  leaderboard, export, ranking, history, composite, band, and band-song
-  validation routes now return stable HTTP `200`.
+  `fstworker` exited cleanly on
+  `fstservice:scrape1268-dual-4ae6c171` with restart `no`; normal scheduling
+  remains held pending the next complete dual-lane card.
+- Scrape `1268` is authoritative and unfrozen with `6,174` complete solo
+  source mappings / `39,944,787` rows. Its improvement notification marker is
+  completed for player and band song/ranking lanes with a persisted
+  zero-scope bounded workset. Scrape `1266` remains failed at
+  `post_process_no_progress_abandoned` with zero published-source rows.
+- Settled leaderboard, export, ranking, history, composite, band, and
+  band-song routes return stable HTTP `200` and two post-publish suites are
+  exact `13/13`. Promotion remains held because real traffic saw `13` HTTP
+  `504` and `20` `499` responses while publication retained the public cache
+  lock across long band ranking snapshot work.
 - `fstservice` and `festivalweb` may be restarted for maintenance and must be
-  recovered promptly. The incomplete Trios candidate reclaim left about
-  `285,491,810,304` bytes free; the scrape guard passes with
-  `225,098,810,501` bytes of modeled one-run margin, while the seven-day alert
-  remains active. Any later scrape must use commit `4121e7e5` or newer and run
-  the durable post-process watchdog.
+  recovered promptly. Final free space is `256,077,381,632` bytes and the
+  scrape guard passes with `195,684,381,829` bytes of modeled one-run margin;
+  the seven-day alert remains active. Any later scrape must use a
+  contract-bearing image at or after `05d6e820`, include the publication cache
+  lock-order repair, and run the durable post-process watchdog.
 - PG-3 dropped only `public.ix_crh_latest`, reclaiming exactly
   `20,890,148,864` database bytes. Free space rose from `78,549,483,520` to
   `99,439,702,016` bytes; the guard horizon improved from `2.61` to `3.31`
@@ -126,6 +129,15 @@ This plan records the approved direction for improving FST Postgres persistence 
   was `18,203,201,536`, above the safety floor by `3,632,051,333`. Final
   measured free space was `41,145,516,032`, so normal scheduling remains held
   and the proxy rates were restored to `400 / 2 / 1`.
+- Dual-lane scrape `1268` then completed and published with exact correctness
+  but did not promote either lane. Network plus writer drain was
+  `5:02:40.563`, useful throughput `32.64` pages/s, and final transport
+  `640,081` sends / `18,987` blocks; the required 10% gain was missed.
+  Notification completion was functionally successful in `101.76 s` after
+  publication with zero projection fallback and zero Epic sends, but the
+  shared public-route lock failure forces another isolation window. The
+  prepared next query candidate moves cache promotion after long band ranking
+  snapshot work while retaining one atomic transaction.
 - LOGICAL-RETIRE then independently reverified the gate and transactionally
   truncated the two logical parents and all 18 leaves. Database size fell by
   `123,173,593,088` bytes; stable free space rose to about

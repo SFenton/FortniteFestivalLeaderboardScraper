@@ -106,6 +106,44 @@ first on the next pass.
 `Scraper__PostScrapeRefreshTimeout` remains the backward-compatible fallback
 when a dedicated timeout is not configured.
 
+## 2026-07-29 normal-path qualification
+
+Scrape `1268` installed and exercised the complete publication/recovery
+contract:
+
+- publication persisted `improvement_notifications_projection_scopes=[]`,
+  marked the plan ready and owned by scrape `1268`, and never invoked the
+  all-`6,174`-scope fallback;
+- player run `166` completed in `13.53 s`; band run `167` completed in
+  `68.33 s`; both required song and ranking lanes;
+- the publication marker completed `82.15 s` after it started and `101.76 s`
+  after `published_at`, well below the 10-minute target;
+- the recovery advisory lock count never exceeded one, and the notification
+  window emitted zero Epic requests;
+- the bounded window added `266,652,828` WAL bytes and zero temp bytes or
+  checkpoints. The prior standalone recovery evidence added about `52.51 GB`
+  WAL across its unbounded recovery work.
+
+The functional notification path passed, but the shared full-scrape promotion
+gate remains **iterate**. During publication, `api_response_cache` was
+truncated before long band ranking snapshot copies and index builds completed,
+holding an `ACCESS EXCLUSIVE` lock for minutes. Festivalweb recorded `13`
+HTTP `504` and `20` client-cancelled `499` responses.
+
+The prepared repair keeps publication atomic but performs band snapshot work
+and fingerprint validation before the cache truncate/insert. A concurrent
+regression test locks a band ranking source table and proves the old public
+cache remains readable while publication waits. The 60-second monitor now
+selects and probes a real leaderboard route so this class of failure cannot be
+hidden by a healthy `/api/service-info` fast path.
+
+Do not promote the notification lane or enable another scheduled scrape until
+that contract-bearing repair passes a new dual-lane full-scrape window.
+
+Evidence:
+
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1268-dual-lane-20260728T184812Z`
+
 ## 2026-07-28 recovery evidence
 
 Published scrape `1267` remained authoritative and unfrozen. Runs `164`
