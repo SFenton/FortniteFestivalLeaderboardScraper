@@ -247,6 +247,12 @@ referenced it; Trios reads continued through v2. The exact
 a rollback rehearsal, `13/13` public parity, and explicit scrape-boundary
 coordination. Duets compact v3 and the Trios/Quad v2 sources were unchanged.
 
+A clean 2026-07-29 rebuild now has all `343,275,419` Trios rows, all 51 dates,
+four exact monthly multiset-hash matches, and a valid partitioned unique index
+family. `CompactV3TriosReadEnabled` is independently default-off; v2 remains
+authoritative until the service A/B, readiness promotion, detach/reattach
+rollback, and source-drop checks pass.
+
 ## Data ownership and restore class
 
 | Class | Meaning | Restore rule |
@@ -491,7 +497,7 @@ Band-partitioned source/current families use `Band_Duets`, `Band_Trios`, and
 | `band_team_rank_history`, `band_team_rank_history_points`, `band_team_rank_history_latest`, `band_team_ranking_stats_history` | Legacy durable history/latest | `MetaDatabase`, history API | Retain until v2/read-source parity and restore prove removal |
 | `band_team_rank_history_points_v2` partitions | Durable public history for Trios/Quad | Disabled history writer; API/export for non-promoted band types | Duets leaf retired; Trios/Quad remain `702,658,645` rows / `694,619,258,880` bytes |
 | `band_team_rank_history_points_v3_duets` monthly partitions and dictionaries | Durable compact Duets public history | `MetaDatabase` when the default-off compact flag and ready state are enabled | `215,134,574` rows / `52,134,436,864` bytes; rebuilds v2 through checked-in SQL |
-| Trios compact v3 candidate | No retained object | The incomplete manual build had no runtime writer or reader | Reclaimed on 2026-07-28; a future attempt must recreate from authoritative Trios v2 and pass a new promotion gate |
+| `band_team_rank_history_points_v3_trios` monthly partitions and dictionaries | Validated compact Trios candidate | Read only when the independently default-off Trios flag and ready state are enabled | Clean rebuild has `343,275,419` rows / 51 dates; v2 remains authoritative pending live cutover |
 | `band_team_rank_history_latest_v2` partitions | Empty derived latest delta schema | History worker only when mode is enabled | ORPHAN-RECLAIM truncated `21,403,363` rows while production mode was `Disabled`; rebuildable from retained v2 points |
 | `band_team_rank_history_snapshot_v2` | Durable history generation metadata | History worker/API status | Primary freshness/coverage ledger |
 | `band_rank_history_jobs`, `band_rank_history_job_chunks` | Durable resumability state | Background history worker | Keep incomplete/failed jobs for bounded retry/replay |

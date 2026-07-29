@@ -25,6 +25,10 @@ This plan records the approved direction for improving FST Postgres persistence 
   the seven-day alert remains active. Any later scrape must use a
   contract-bearing image at or after `05d6e820`, include the publication cache
   lock-order repair, and run the durable post-process watchdog.
+- The post-`1268` clean Trios compact rebuild is validated at
+  `343,275,419` rows / 51 dates with exact monthly hashes and valid unique
+  indexes. Its read flag remains default-off and Trios v2 remains
+  authoritative while the service A/B and rollback gate are pending.
 - PG-3 dropped only `public.ix_crh_latest`, reclaiming exactly
   `20,890,148,864` database bytes. Free space rose from `78,549,483,520` to
   `99,439,702,016` bytes; the guard horizon improved from `2.61` to `3.31`
@@ -389,7 +393,7 @@ path, and post-action validation are documented.
 | Autonomous scrape rollout | Rejected after scrape `1265`; worker held | Candidate `1265` passed start/post-writer guards, completed all manifests/writers and band maintenance, then crossed its declared capacity floor during ranking snapshots. It was stopped and reconciled failed with zero published mappings. Published `1236` remains safe. Post-cleanup nominal guards pass again, but the live run proved that model insufficient through publication. |
 | Scrape `1266` incident recovery | Complete / deployed / worker held | Exact rollback and guarded reconciliation preserved published `1236`; precise failed-candidate isolation remains active for derived reads. Commit `4121e7e5` adds critical band failure propagation, progress-only heartbeats, a 30-minute deferred-sync timeout, and DB-aware autonomous recovery. Service and held worker use `fstservice:scrape1266-recovery-4121e7e5`. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
-| Next implementation phase | Scrape `1268` dual-lane run; future Trios starts clean | The storage lane is quiescent and has cleared the run-once boundary. A later Trios candidate must recreate from v2, copy all 51 dates, build indexes, and pass an independent promotion gate. Do not start Quad until Trios releases its source and capacity is recalculated. |
+| Next implementation phase | Trios compact-v3 live read A/B | Deploy the default-off Trios read switch independently, prove exact API/public parity and detach/reattach rollback, then drop v2 only if the gate passes. Do not start Quad until Trios releases its source and capacity is recalculated. |
 
 ## LOGICAL-RETIRE decision and execution package (2026-07-25 to 2026-07-28)
 

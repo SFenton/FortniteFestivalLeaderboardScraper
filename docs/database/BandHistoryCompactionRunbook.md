@@ -7,6 +7,13 @@ The incomplete, unpromoted Trios v3 build was reclaimed independently on the
 same date. Trios and Quad remain on v2 and require separate future candidates
 and capacity guards.
 
+**2026-07-29 clean Trios readiness:** a clean candidate now contains all
+`343,275,419` rows / 51 dates with exact monthly full-row multiset hashes and
+valid local/parent unique indexes. The default-off
+`CompactV3TriosReadEnabled` switch and tests are implemented, but production
+still reads Trios v2 until the live service A/B and source detach/drop gate
+complete.
+
 BAND-HISTORY-COMPACT ran with runtime `gpt-5.6-sol`, reasoning `max`, and
 context `long_context`. Published scrape `1267` remained authoritative and
 unfrozen. `fstworker` remained exited/offline with restart `no`; no worker or
@@ -240,19 +247,17 @@ remained.
 
 - Duets API/export reads use compact v3.
 - The v2 Duets leaf no longer exists.
-- No Trios v3 candidate object or readiness row remains.
+- The clean Trios v3 candidate is `ready`, but its runtime flag remains off.
 - Trios and Quad v2 remain authoritative and unchanged.
-- Published scrape `1267` remains unfrozen.
+- Published scrape `1268` remains unfrozen.
 - Postgres, `fstservice`, and `festivalweb` are healthy.
 - `fstworker` remains held/offline with restart `no`.
-- No scrape ran.
+- No scrape ran during the clean Trios build.
 
 ## Next storage phase
 
-Any future Trios v3 attempt starts from a clean schema and must be a new,
-independently switchable data candidate after the active production scrape
-window. Re-run the measured guard, copy all 51 dates, build the deferred local
-unique indexes, prove full parity, and promote a Trios-specific read switch
-before retaining the candidate or releasing its 305,843,961,856-byte v2
-source. Do not start Quad until Trios has completed, released its source, and
-the guard has been recalculated.
+Deploy the independently reversible Trios read flag to `fstservice` only,
+compare v2/v3 API payloads and latency, then rehearse v2 detach/reattach.
+Release the `305,843,961,856`-byte v2 source only after those gates pass.
+Do not start Quad until Trios has completed, released its source, and the
+guard has been recalculated.

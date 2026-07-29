@@ -97,6 +97,19 @@ safety model versus 314,856,988,672 free at the drill start.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/trios-incomplete-candidate-reclaim-20260728T1914Z`.
 
+## CLEAN-TRIOS-V3 readiness update — 2026-07-29
+
+- After scrape `1268` published/unfroze, the worker remained held and a fresh
+  calibrated rewrite guard passed.
+- The clean candidate contains all `343,275,419` Trios rows and all 51 dates.
+  April, May, June, and July each passed five independent full-row multiset
+  hashes against v2.
+- All four local unique indexes and the attached parent index are valid and
+  ready. Direct overall/combo plans use the compact indexes.
+- A separately reversible, default-off `CompactV3TriosReadEnabled` path is
+  implemented with focused tests; production cutover and v2 retirement remain
+  pending live API/public parity and rollback rehearsal.
+
 ## OBSERVATION-RETIRE execution update — 2026-07-28
 
 - Published scrape `1267` proved both `player_score_observations` writers were

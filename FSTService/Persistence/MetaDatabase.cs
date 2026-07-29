@@ -20,6 +20,7 @@ public sealed class MetaDatabase : IMetaDatabase
     private readonly object _bandRankHistoryPollingSchemaLock = new();
     private bool _bandRankHistoryPollingSchemaEnsured;
     private int _bandRankHistoryCompactV3DuetsReady;
+    private int _bandRankHistoryCompactV3TriosReady;
 
     internal const int DataCollectionVersion = 3;
     internal const string WebTrackerDeviceId = "web-tracker";
@@ -33,6 +34,9 @@ public sealed class MetaDatabase : IMetaDatabase
     private const string BandRankHistoryCompactV3DuetsTable = "band_team_rank_history_points_v3_duets";
     private const string BandRankHistoryCompactV3DuetsTeamTable = "band_rank_history_team_v3_duets";
     private const string BandRankHistoryCompactV3DuetsComboTable = "band_rank_history_combo_v3_duets";
+    private const string BandRankHistoryCompactV3TriosTable = "band_team_rank_history_points_v3_trios";
+    private const string BandRankHistoryCompactV3TriosTeamTable = "band_rank_history_team_v3_trios";
+    private const string BandRankHistoryCompactV3TriosComboTable = "band_rank_history_combo_v3_trios";
     private static readonly string[] FailedCandidateReadIsolationFailurePhases =
     [
         FailedCandidateReadIsolationFailurePhase,
@@ -7969,9 +7973,44 @@ public sealed class MetaDatabase : IMetaDatabase
 
         if (_bandRankHistoryOptions.CompactV3DuetsReadEnabled
             && string.Equals(bandType, "Band_Duets", StringComparison.Ordinal)
-            && IsBandRankHistoryCompactV3Ready(conn, bandType))
+            && IsBandRankHistoryCompactV3Ready(
+                conn,
+                bandType,
+                BandRankHistoryCompactV3DuetsTable,
+                BandRankHistoryCompactV3DuetsTeamTable,
+                BandRankHistoryCompactV3DuetsComboTable,
+                ref _bandRankHistoryCompactV3DuetsReady))
         {
-            return GetBandRankHistoryFromCompactV3Duets(conn, teamKey, rankingScope, normalizedComboId, cutoff);
+            return GetBandRankHistoryFromCompactV3(
+                conn,
+                BandRankHistoryCompactV3DuetsTable,
+                BandRankHistoryCompactV3DuetsTeamTable,
+                BandRankHistoryCompactV3DuetsComboTable,
+                teamKey,
+                rankingScope,
+                normalizedComboId,
+                cutoff);
+        }
+
+        if (_bandRankHistoryOptions.CompactV3TriosReadEnabled
+            && string.Equals(bandType, "Band_Trios", StringComparison.Ordinal)
+            && IsBandRankHistoryCompactV3Ready(
+                conn,
+                bandType,
+                BandRankHistoryCompactV3TriosTable,
+                BandRankHistoryCompactV3TriosTeamTable,
+                BandRankHistoryCompactV3TriosComboTable,
+                ref _bandRankHistoryCompactV3TriosReady))
+        {
+            return GetBandRankHistoryFromCompactV3(
+                conn,
+                BandRankHistoryCompactV3TriosTable,
+                BandRankHistoryCompactV3TriosTeamTable,
+                BandRankHistoryCompactV3TriosComboTable,
+                teamKey,
+                rankingScope,
+                normalizedComboId,
+                cutoff);
         }
 
         if (readSource is BandRankHistoryApiReadSource.V2NarrowOnly or BandRankHistoryApiReadSource.V2NarrowWithLegacyFallback
@@ -8127,15 +8166,21 @@ public sealed class MetaDatabase : IMetaDatabase
             normalizedComboId,
             cutoff);
 
-    private bool IsBandRankHistoryCompactV3Ready(NpgsqlConnection conn, string bandType)
+    private static bool IsBandRankHistoryCompactV3Ready(
+        NpgsqlConnection conn,
+        string bandType,
+        string pointsTable,
+        string teamTable,
+        string comboTable,
+        ref int readyCache)
     {
-        if (Volatile.Read(ref _bandRankHistoryCompactV3DuetsReady) == 1)
+        if (Volatile.Read(ref readyCache) == 1)
             return true;
 
         if (!TableExists(conn, null, BandRankHistoryCompactV3StateTable)
-            || !TableExists(conn, null, BandRankHistoryCompactV3DuetsTable)
-            || !TableExists(conn, null, BandRankHistoryCompactV3DuetsTeamTable)
-            || !TableExists(conn, null, BandRankHistoryCompactV3DuetsComboTable))
+            || !TableExists(conn, null, pointsTable)
+            || !TableExists(conn, null, teamTable)
+            || !TableExists(conn, null, comboTable))
         {
             return false;
         }
@@ -8152,12 +8197,15 @@ public sealed class MetaDatabase : IMetaDatabase
         cmd.Parameters.AddWithValue("bandType", bandType);
         var ready = Convert.ToBoolean(cmd.ExecuteScalar() ?? false);
         if (ready)
-            Volatile.Write(ref _bandRankHistoryCompactV3DuetsReady, 1);
+            Volatile.Write(ref readyCache, 1);
         return ready;
     }
 
-    private static List<BandRankHistoryDto> GetBandRankHistoryFromCompactV3Duets(
+    private static List<BandRankHistoryDto> GetBandRankHistoryFromCompactV3(
         NpgsqlConnection conn,
+        string pointsTable,
+        string teamTable,
+        string comboTable,
         string teamKey,
         string rankingScope,
         string normalizedComboId,
@@ -8183,10 +8231,10 @@ public sealed class MetaDatabase : IMetaDatabase
                 points.raw_skill_rating,
                 points.total_charted_songs,
                 points.total_ranked_teams
-            FROM {BandRankHistoryCompactV3DuetsTable} points
+            FROM {pointsTable} points
             WHERE points.team_id = (
                     SELECT team_id
-                    FROM {BandRankHistoryCompactV3DuetsTeamTable}
+                    FROM {teamTable}
                     WHERE team_key = @teamKey
                 )
               AND points.scope_id = @scopeId
@@ -8194,7 +8242,7 @@ public sealed class MetaDatabase : IMetaDatabase
                     WHEN @scopeId = 0 THEN 0
                     ELSE COALESCE((
                         SELECT combo_ref
-                        FROM {BandRankHistoryCompactV3DuetsComboTable}
+                        FROM {comboTable}
                         WHERE combo_id = @comboId
                     ), -1)
                 END
