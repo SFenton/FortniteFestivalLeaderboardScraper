@@ -7,31 +7,31 @@ This plan records the approved direction for improving FST Postgres persistence 
 - Production compose ownership: `/home/sfenton/Docker/FestivalServiceTracker`.
 - `fstservice`, `festivalweb`, and `fst-postgres` are healthy.
   `fstservice` runs `fstservice:band-history-trios-ad015ca7` with compact
-  Duets and Trios reads enabled. `fstworker` exited cleanly on
-  `fstservice:scrape1268-dual-4ae6c171` with restart `no`; normal scheduling
-  remains held pending the next complete dual-lane card.
+  Duets and Trios reads enabled. Production worker compose selects the same
+  contract-bearing image, and `fstworker` exited cleanly after scrape `1269`
+  with restart `no`; it is held before another scrape.
 - Freshness is now a hard scheduling constraint: long storage/reclaim work
   finishes only its current bounded chunk, checkpoints, and yields before the
   next continuity scrape. A stale publication must not wait for repeated
   candidate iteration; after at most one promptly available bounded network
   attempt, use the last accepted network profile and refresh the public site
   before storage work resumes.
-- Scrape `1268` is authoritative and unfrozen with `6,174` complete solo
-  source mappings / `39,944,787` rows. Its improvement notification marker is
+- Scrape `1269` is authoritative and unfrozen with `6,174` complete solo
+  source mappings / `39,951,796` rows. Its improvement notification marker is
   completed for player and band song/ranking lanes with a persisted
   zero-scope bounded workset. Scrape `1266` remains failed at
   `post_process_no_progress_abandoned` with zero published-source rows.
 - Settled leaderboard, export, ranking, history, composite, band, and
   band-song routes return stable HTTP `200` and two post-publish suites are
-  exact `13/13`. Promotion remains held because real traffic saw `13` HTTP
-  `504` and `20` `499` responses while publication retained the public cache
-  lock across long band ranking snapshot work.
+  exact `13/13`. The `44a1fe9a` cache lock-order repair is accepted: `692`
+  monitor ticks and all nine publication-window ticks had zero public-route
+  failures, and festivalweb recorded zero `499` and zero `5xx`.
 - `fstservice` and `festivalweb` may be restarted for maintenance and must be
-  recovered promptly. Final free space is about `483,724,476,416` bytes and
-  the scrape guard passes with `423,331,476,613` bytes of modeled one-run margin;
-  the seven-day alert remains active. Any later scrape must use a
-  contract-bearing image at or after `05d6e820`, include the publication cache
-  lock-order repair, and run the durable post-process watchdog.
+  recovered promptly. The scrape `1269` terminal parity capture had
+  `367,602,806,784` bytes free and the seven-day alert remains active. Any
+  later scrape must use a contract-bearing image at or after `05d6e820`,
+  include the accepted publication cache lock-order repair, and run the
+  durable post-process watchdog.
 - The post-`1268` clean Trios compact rebuild is promoted at
   `343,275,419` rows / `83,664,461,824` bytes. Exact monthly hashes, live
   service A/B, detach/reattach rollback, and post-drop parity passed. The

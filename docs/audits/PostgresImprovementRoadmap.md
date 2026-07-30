@@ -206,6 +206,34 @@ safety model versus 314,856,988,672 free at the drill start.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1268-dual-lane-20260728T184812Z`.
 
+## SCRAPE-1269 freshness recovery update — 2026-07-30
+
+- Storage yielded after its active bounded Quad work reached committed
+  checkpoints; the scrape started with no storage query, waiting lock, or
+  active index build. At release, the Quad 202604/202605/202606 local unique
+  indexes were valid and 202607 plus parent attach/analyze remained resumable.
+- Scrape `1269` completed and published `6,174` complete mappings /
+  `39,951,796` rows. All `8,232` solo+band manifests, physical-source checks,
+  writer gates, and publication-critical phases passed. Two settled public
+  suites were HTTP `200` and exact `13/13`.
+- The publication cache lock-order repair from `44a1fe9a`, carried by
+  `fstservice:band-history-trios-ad015ca7`, is **accepted**. Across `692`
+  full-window monitor ticks and nine publication-window ticks there were zero
+  public-route failures; festivalweb recorded zero `499` and zero `5xx`.
+  Notifications completed `78.59 s` after publication with a persisted
+  zero-scope workset.
+- The accepted c4 network baseline took `5:01:08.141` through writer drain at
+  `32.819` useful pages/s. It emitted `640,250` wire sends, `18,918` blocks
+  (`2.955%`), zero `429`/`503`, and `1.0797` amplification. This is baseline
+  continuity evidence, not a network promotion; c6 was skipped because it
+  could not run promptly after the storage boundary.
+- Database size grew by `21,570,781,184` bytes and free space fell by
+  `31,926,575,104` bytes from the final preflight snapshot. The terminal parity
+  capture had `367,602,806,784` bytes free; the minimum observed during the
+  run was `347,991,855,104` bytes. The capacity alert remains active.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-continuity-recovery-20260729T161535Z`.
+
 ## Executive decision
 
 PostgreSQL remains the correct durable source of truth. The urgent issue is

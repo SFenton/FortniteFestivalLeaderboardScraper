@@ -292,6 +292,14 @@ network result as an accepted-baseline measurement rather than a promotion,
 and resume candidate work only after terminal publication and notification
 completion.
 
+That fallback path was exercised by scrape `1269`. c6 did not run because the
+safe storage boundary was not available promptly. Exact c4 completed the
+network-plus-writer boundary in `5:01:08.141` at `32.819` useful pages/s, with
+`640,250` sends, `18,918` blocks (`2.955%`), zero `429`/`503`, and `1.0797`
+amplification. Pure fetch was about `4:15:37.141` / `38.663` pages/s. This is
+accepted continuity-baseline evidence only; it does not clear the `42.271`
+full-run promotion target, and c6 remains bounded-only.
+
 A future full run must reach at least `42.271` pure-fetch pages/s, or no more
 than `3:53:45.040` for `592,849` pages. Writer drain remains a separately
 reported data-path metric. The live pair is

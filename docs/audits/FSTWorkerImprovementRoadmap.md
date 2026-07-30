@@ -88,6 +88,40 @@ blocker and exact outbox artifact paths.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1268-dual-lane-20260728T184812Z`.
 
+## SCRAPE-1269 CONTINUITY — fresh publication; data repair accepted
+
+- The active Quad compact-v3 storage chunk and already-started bounded index
+  work were allowed to finish and checkpoint without query termination.
+  Storage then paused before the guarded run-once scrape and resumed only after
+  terminal publication, notifications, and parity.
+- c6 could not run promptly at that safe boundary, so the network lane used
+  accepted `candidate-800-32-4` as an **accepted-baseline measurement**, not a
+  promotion claim. Network plus writer drain was `5:01:08.141` at
+  `32.819` useful pages/s; pure fetch was about `4:15:37.141` at
+  `38.663` pages/s. Final transport used `640,250` sends, `18,918` CDN
+  blocks (`2.955%`), `1.0797` amplification, zero `429`/`503`, and no three
+  bad one-minute windows. The `42.271` full-run promotion target was not met,
+  so c4 remains the accepted continuity baseline and c6 remains bounded-only.
+- The data lane ran the publication cache lock-order repair from `44a1fe9a`
+  through the contract- and Trios-bearing
+  `fstservice:band-history-trios-ad015ca7` image. Scrape `1269` published at
+  `2026-07-30 05:37:14.626757 UTC`, unfroze public reads, completed
+  notifications `78.59 s` later with a zero-scope projection plan, and exited
+  with restart `no`.
+- Shared correctness passed: `8,232/8,232` manifests, zero incomplete scopes,
+  retry exhaustion, writer failures, or publication-critical failures;
+  `6,174` published mappings / `39,951,796` physical rows were exact. The
+  registered-user refresh hit its known best-effort ten-minute timeout and was
+  classified without blocking publication.
+- The publication lock repair is **accepted/promoted**. The full public
+  monitor recorded `692` ticks with zero service, shell, service-info, or
+  representative leaderboard failures. All nine publication-window ticks
+  were HTTP `200`, representative leaderboard latency stayed at or below
+  `0.254 s`, festivalweb recorded zero `499` and zero `5xx`, and two settled
+  post-publish captures were exact `13/13`.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-continuity-recovery-20260729T161535Z`.
+
 ### NETWORK-NEXT-CANDIDATE — concurrency 5 rejected; concurrency 6 held
 
 - Bounded-only `candidate-800-32-5` kept
