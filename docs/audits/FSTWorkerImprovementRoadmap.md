@@ -122,7 +122,7 @@ blocker and exact outbox artifact paths.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-continuity-recovery-20260729T161535Z`.
 
-### NETWORK-NEXT-CANDIDATE — concurrency 5 rejected; concurrency 6 held
+### NETWORK-NEXT-CANDIDATE — c5 rejected; c6 invalidated by concurrent scrape
 
 - Bounded-only `candidate-800-32-5` kept
   global/per-exit pacing at `800/32`, curl HTTP/1.1 fresh connections,
@@ -145,6 +145,28 @@ blocker and exact outbox artifact paths.
   only per-exit concurrency `5 -> 6`, retain every other value and the same
   gates. It requires a fresh explicit storage clearance before one live
   canary.
+- A fresh post-`1269` clearance was issued and c6 began at
+  `2026-07-30 06:02:25 UTC`. Twelve seconds later, an independent continuity
+  path started `fstworker`, which allocated scrape `1270`, froze shared state,
+  and generated concurrent Epic traffic. The canary then recorded 16
+  unrecovered responses, 63 CDN blocks, 25/25 invalid payload-control pairs,
+  and a publication transition from `1269|unfrozen|1269` to
+  `1269|frozen|1270`. Its apparent `42.242` pages/s is contaminated and must
+  not be used.
+- The worker was stopped at `06:04:07 UTC`; a guarded transaction proved zero
+  candidate mappings, worker queries, locks, advisory locks, or maintenance,
+  marked `1270` failed with
+  `network_canary_concurrent_scrape_abandoned`, preserved published `1269`,
+  and restored the offline worker ledger. Public routes remained HTTP `200`.
+  C6 is **invalidated/rejected with no qualification**, and no retry is
+  authorized.
+- `fst-network-bounded-canary.py` now atomically owns
+  `/home/sfenton/Docker/FestivalServiceTracker/.fst-bounded-network-canary-active.json`
+  from its final worker-offline check through terminal cleanup. Autonomous
+  continuity/candidate starts must fail closed while that sentinel exists;
+  freshness cannot override an active bounded-canary isolation boundary. The
+  runner also polls `fstworker` every 250 ms during each stage and immediately
+  stops its own isolated canary container if the worker becomes active.
 - Reproducible source now lives in `tools/FstNetworkCanary`; the Python runner
   builds it, permits at most three recovery rounds through previously untried
   alternates, records app-connect/start-transfer/connection metrics, and runs 25
@@ -167,10 +189,10 @@ blocker and exact outbox artifact paths.
   must not be combined with the concurrency change.
 - The production wrapper and compose guard intentionally do not recognize
   `candidate-800-32-6`. Worker recreation and another scrape remain
-  prohibited; wrapper/guard promotion still requires a passing bounded
-  artifact.
+  prohibited; wrapper/guard promotion still requires a clean passing bounded
+  artifact after the concurrency-start root cause is reconciled.
 - Evidence:
-  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/network-candidate-800-32-5-20260729T142923Z`.
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/network-candidate-800-32-6-20260730T060051Z`.
 
 ### NOTIFICATION-RECOVERY foundation
 
@@ -259,15 +281,15 @@ owns PostgreSQL query/write/storage/WAL/ranking/post-process work. Each lane
 gets its own baseline, target, rollback, metrics, and decision while sharing
 the same scope, manifest, API, publication, and notification correctness gate.
 
-Scrape `1268` evaluated the prior card. The next network candidate is designed
-and available only in the bounded runner; the production card remains unarmed
-until storage clearance and a passing bounded result. The worker therefore
-remains held.
+Scrape `1269` accepted the publication lock repair with the accepted c4
+network baseline. C6's later bounded attempt was invalidated by concurrent
+scrape `1270`, so no network candidate is qualified and the production card
+remains unarmed.
 
 | Lane | Candidate | Baseline | Target |
 |---|---|---|---|
-| Network | **Bounded-only, production unarmed:** `candidate-800-32-6`; change only per-exit concurrency `5 -> 6` after `candidate-800-32-5` safely missed its target at `39.314` pages/s | Accepted bounded `35.958` pages/s; c5 `39.314` / `+9.33%`; scrape 1268 pure fetch `38.428` pages/s | Bounded >=`39.554` pages/s; future full pure fetch >=`42.271` pages/s; zero unrecovered/matched-control/public differences; amplification <=`1.50`; 429+503 <=`5%`; >=80% exits |
-| Data/query | Publish band ranking snapshots/fingerprints before the final `api_response_cache` truncate/insert, retaining the notification contract and one atomic commit | Scrape 1268 functional notification completion in `101.76 s`, but 13 HTTP `504` and 20 `499` responses during the long cache lock | Zero representative-route failures; cache remains readable while band snapshot work waits; notification workset/owner/completion parity remains exact |
+| Network | **Unarmed:** c6 remains bounded-only but unqualified; do not retry until the concurrent worker-start root cause and sentinel protocol are reconciled | Accepted bounded c4 `35.958` pages/s; c5 rejected at `39.314`; contaminated c6 metrics are excluded | Clean bounded >=`39.554` pages/s with zero unrecovered/matched-control/shared-state/public differences; amplification <=`1.50`; 429+503 <=`5%`; >=80% exits |
+| Data/query | **Accepted baseline:** publication cache lock-order repair from `44a1fe9a`, carried by the current contract/Trios lineage | Scrape 1269: zero public failures across 692 monitor ticks; notifications `78.59 s` after publication | Preserve as rollback baseline; the next independently reversible data candidate is unarmed |
 
 Bounded network canaries can normally overlap demonstrably disjoint
 compaction/reclaim work. Clean Trios v3 promotion/reclaim reached a terminal

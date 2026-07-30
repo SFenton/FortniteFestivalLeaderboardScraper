@@ -1,6 +1,7 @@
 import datetime
 import importlib.util
 import json
+import os
 import pathlib
 import sys
 import unittest
@@ -34,6 +35,40 @@ class FstNetworkBoundedCanaryTests(unittest.TestCase):
         self.assertEqual((800, 32, 5), runner.PROFILES["candidate-800-32-5"])
         self.assertEqual((800, 32, 6), runner.PROFILES["candidate-800-32-6"])
         self.assertEqual((800, 32, 4), runner.PROFILES["candidate-800-32-4"])
+
+    def test_coordination_sentinel_is_exclusive_and_owner_released(self):
+        runner = load_runner()
+        sentinel_path = (
+            TOOLS_DIR
+            / f".fst-bounded-canary-test-{os.getpid()}.json"
+        )
+        sentinel_path.unlink(missing_ok=True)
+        first = None
+        try:
+            first = runner.CoordinationSentinel.acquire(
+                sentinel_path,
+                "candidate-800-32-6",
+                TOOLS_DIR,
+            )
+            self.assertTrue(sentinel_path.is_file())
+            self.assertEqual(
+                0o600,
+                sentinel_path.stat().st_mode & 0o777,
+            )
+            with self.assertRaises(RuntimeError):
+                runner.CoordinationSentinel.acquire(
+                    sentinel_path,
+                    "candidate-800-32-6",
+                    TOOLS_DIR,
+                )
+
+            first.release()
+
+            self.assertFalse(sentinel_path.exists())
+        finally:
+            if first is not None:
+                first.release()
+            sentinel_path.unlink(missing_ok=True)
 
     def test_selects_payload_controls_across_instruments(self):
         workload = [

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import atexit
 import argparse
 import base64
 import datetime
@@ -6,6 +7,8 @@ import hashlib
 import json
 import os
 import pathlib
+import secrets
+import signal
 import subprocess
 import time
 import urllib.parse
@@ -41,6 +44,9 @@ DEFAULT_TOOLING = (
 )
 DEFAULT_COMPOSE_DIR = pathlib.Path("/home/sfenton/Docker/FestivalServiceTracker")
 DEFAULT_STORAGE_ROOT = pathlib.Path("/mnt/docker-storage")
+DEFAULT_COORDINATION_SENTINEL = (
+    DEFAULT_COMPOSE_DIR / ".fst-bounded-network-canary-active.json"
+)
 FULL_SCRAPE_PAGES = 592849
 SCRAPE_1268_PURE_FETCH_SECONDS = 15427.543513
 
@@ -82,6 +88,11 @@ def parse_args():
         default=DEFAULT_TOOLING_PROJECT,
     )
     parser.add_argument("--storage-root", type=pathlib.Path, default=DEFAULT_STORAGE_ROOT)
+    parser.add_argument(
+        "--coordination-sentinel",
+        type=pathlib.Path,
+        default=DEFAULT_COORDINATION_SENTINEL,
+    )
     return parser.parse_args()
 
 
@@ -93,6 +104,95 @@ def run(*args, input_bytes=None, check=True):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+
+
+class CoordinationSentinel:
+    def __init__(self, path, owner_token):
+        self.path = path
+        self.owner_token = owner_token
+        self.released = False
+
+    @classmethod
+    def acquire(cls, path, profile, evidence_dir):
+        path = path.resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        owner_token = secrets.token_hex(16)
+        payload = {
+            "kind": "fst-bounded-network-canary",
+            "profile": profile,
+            "pid": os.getpid(),
+            "startedAtUtc": datetime.datetime.now(
+                datetime.timezone.utc
+            ).isoformat(),
+            "evidenceDir": str(evidence_dir),
+            "ownerToken": owner_token,
+        }
+        try:
+            descriptor = os.open(
+                path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+        except FileExistsError as error:
+            existing = {}
+            try:
+                existing = json.loads(path.read_text())
+            except (OSError, json.JSONDecodeError):
+                pass
+            details = {
+                key: existing.get(key)
+                for key in ("profile", "pid", "startedAtUtc", "evidenceDir")
+                if existing.get(key) is not None
+            }
+            raise RuntimeError(
+                f"bounded canary coordination sentinel already exists: "
+                f"{path}; owner={details or 'unreadable'}"
+            ) from error
+        with os.fdopen(descriptor, "w") as stream:
+            json.dump(payload, stream, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(path, 0o600)
+        return cls(path, owner_token)
+
+    def release(self):
+        if self.released:
+            return
+        try:
+            payload = json.loads(self.path.read_text())
+            if payload.get("ownerToken") == self.owner_token:
+                self.path.unlink(missing_ok=True)
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+        self.released = True
+
+
+def worker_is_running():
+    process = run(
+        "docker",
+        "inspect",
+        "fstworker",
+        "--format",
+        "{{.State.Running}}",
+        check=False,
+    )
+    if process.returncode != 0:
+        raise RuntimeError(
+            "cannot inspect fstworker before bounded canary: "
+            + process.stderr.decode(errors="replace").strip()
+        )
+    value = process.stdout.decode().strip().lower()
+    if value not in {"true", "false"}:
+        raise RuntimeError(f"unexpected fstworker running state: {value!r}")
+    return value == "true"
+
+
+def install_termination_handler():
+    def terminate(signum, _frame):
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, terminate)
 
 
 def ensure_tooling(args):
@@ -277,6 +377,20 @@ def main():
         raise SystemExit(f"output directory is not empty: {output_dir}")
     output_dir.mkdir(parents=True, exist_ok=True)
     tooling_dll = ensure_tooling(args)
+    if worker_is_running():
+        raise SystemExit("fstworker must be stopped before a bounded canary")
+    sentinel = CoordinationSentinel.acquire(
+        args.coordination_sentinel,
+        args.network_profile,
+        output_dir,
+    )
+    atexit.register(sentinel.release)
+    install_termination_handler()
+    if worker_is_running():
+        sentinel.release()
+        raise SystemExit(
+            "fstworker started during bounded-canary sentinel acquisition"
+        )
 
     compose = json.loads(
         run(
@@ -368,13 +482,14 @@ def main():
                 public_probe_url,
             ],
         }
+        container_name = f"fst-network-canary-{os.getpid()}-{subdirectory}"
         command = [
             "docker",
             "run",
             "--rm",
             "-i",
             "--name",
-            f"fst-network-canary-{os.getpid()}-{subdirectory}",
+            container_name,
             "--network",
             network,
             "--cpus",
@@ -396,13 +511,85 @@ def main():
             image,
             f"/canary-tooling/{tooling_dll.name}",
         ]
-        process = run(*command, input_bytes=json.dumps(config).encode(), check=False)
-        (stage_output / "canary.stdout").write_bytes(process.stdout)
-        (stage_output / "canary.stderr").write_bytes(process.stderr)
-        report_path = stage_output / f"{name}.json"
-        if process.returncode != 0 or not report_path.is_file():
+        process = subprocess.Popen(
+            [str(item) for item in command],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        process.stdin.write(json.dumps(config).encode())
+        process.stdin.close()
+        worker_violation = None
+        try:
+            while process.poll() is None:
+                try:
+                    if worker_is_running():
+                        worker_violation = {
+                            "detectedAtUtc": datetime.datetime.now(
+                                datetime.timezone.utc
+                            ).isoformat(),
+                            "stage": name,
+                            "container": container_name,
+                            "reason": "fstworker_started_during_bounded_canary",
+                        }
+                        run(
+                            "docker",
+                            "stop",
+                            "-t",
+                            "1",
+                            container_name,
+                            check=False,
+                        )
+                        break
+                except RuntimeError as error:
+                    worker_violation = {
+                        "detectedAtUtc": datetime.datetime.now(
+                            datetime.timezone.utc
+                        ).isoformat(),
+                        "stage": name,
+                        "container": container_name,
+                        "reason": "fstworker_monitor_failed",
+                        "error": str(error),
+                    }
+                    run(
+                        "docker",
+                        "stop",
+                        "-t",
+                        "1",
+                        container_name,
+                        check=False,
+                    )
+                    break
+                time.sleep(0.25)
+        except BaseException:
+            run(
+                "docker",
+                "stop",
+                "-t",
+                "1",
+                container_name,
+                check=False,
+            )
+            process.wait()
+            raise
+        returncode = process.wait()
+        stdout = process.stdout.read()
+        stderr = process.stderr.read()
+        process.stdout.close()
+        process.stderr.close()
+        (stage_output / "canary.stdout").write_bytes(stdout)
+        (stage_output / "canary.stderr").write_bytes(stderr)
+        if worker_violation is not None:
+            (stage_output / "worker-boundary-violation.json").write_text(
+                json.dumps(worker_violation, indent=2) + "\n"
+            )
             raise RuntimeError(
-                f"canary runner failed with exit {process.returncode}; "
+                f"worker boundary violation during {name}; see {stage_output}"
+            )
+        report_path = stage_output / f"{name}.json"
+        if returncode != 0 or not report_path.is_file():
+            raise RuntimeError(
+                f"canary runner failed with exit {returncode}; "
                 f"see {stage_output}"
             )
         return json.loads(report_path.read_text()), report_path
@@ -687,6 +874,7 @@ def main():
         "publishedStateBefore": published_before,
         "publishedStateAfter": publication_after,
         "noSharedStateMutation": published_before == publication_after,
+        "coordinationSentinel": str(sentinel.path),
         "toolingDll": str(tooling_dll),
         "toolingSha256": hashlib.sha256(tooling_dll.read_bytes()).hexdigest(),
         "gatePassed": not gate_reasons,
@@ -720,6 +908,7 @@ def main():
         )
         + "\n"
     )
+    sentinel.release()
     print(json.dumps(decision, indent=2))
     return 0 if decision["gatePassed"] else 2
 

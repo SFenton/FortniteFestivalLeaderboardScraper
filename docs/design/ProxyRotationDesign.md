@@ -300,6 +300,27 @@ amplification. Pure fetch was about `4:15:37.141` / `38.663` pages/s. This is
 accepted continuity-baseline evidence only; it does not clear the `42.271`
 full-run promotion target, and c6 remains bounded-only.
 
+After `1269` reached terminal publication, a fresh storage-cleared c6 attempt
+started at `06:02:25 UTC`. An independent continuity path started `fstworker`
+12 seconds later, allocating scrape `1270` and adding concurrent Epic traffic.
+The c6 run's apparent `42.242` useful pages/s is therefore invalid. It had 16
+unrecovered responses, 63 CDN blocks, 25/25 invalid payload-control pairs, and
+shared state changed from `1269|unfrozen|1269` to `1269|frozen|1270`.
+
+The worker was stopped, `1270` was guardedly marked failed with zero candidate
+mappings/queries/locks/maintenance, published `1269` was preserved/unfrozen,
+and the worker ledger returned offline. Public routes remained HTTP `200`.
+C6 has no qualification decision and must not be retried from this evidence.
+
+The bounded runner now atomically creates
+`/home/sfenton/Docker/FestivalServiceTracker/.fst-bounded-network-canary-active.json`
+after proving the worker is offline and removes it only at terminal cleanup.
+Every autonomous continuity or candidate worker start must fail closed while
+the sentinel exists. Site freshness does not authorize concurrent traffic
+inside an active bounded-canary window. The runner independently polls
+`fstworker` every 250 ms and stops its own stage container if a noncompliant
+start still occurs.
+
 A future full run must reach at least `42.271` pure-fetch pages/s, or no more
 than `3:53:45.040` for `592,849` pages. Writer drain remains a separately
 reported data-path metric. The live pair is
@@ -312,9 +333,10 @@ app-connect/start-transfer timing, and matched payload controls. A service
 regression test proves TLS -> alternate CDN `403` -> third-exit success on the
 production least-in-flight path.
 
-The production wrapper and compose guard remain unchanged. Candidate 6 is
-bounded-only until a real canary passes after explicit storage clearance.
-At that boundary, use a new empty FST-drive evidence directory:
+The production wrapper and compose guard remain unchanged. Candidate 6 stays
+bounded-only and retry-blocked until the concurrent-start owner acknowledges
+the sentinel protocol and a new explicit boundary is issued. At that later
+boundary, use a new empty FST-drive evidence directory:
 
 ```bash
 python tools/fst-network-bounded-canary.py \
@@ -325,7 +347,7 @@ python tools/fst-network-bounded-canary.py \
 ```
 
 Evidence:
-`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/network-candidate-800-32-5-20260729T142923Z`.
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/network-candidate-800-32-6-20260730T060051Z`.
 
 Transport fallback responses are only treated as recovered when they are not
 another CDN block and not retryable `429`/`5xx` status. This prevents a curl
@@ -390,9 +412,9 @@ Do not advance the production wrapper to `candidate-1600-64-8` or
 `candidate-2880-128-16`; that sequence stopped at the rejected `1600` result.
 `candidate-800-32-5` also remains absent because it missed the bounded
 performance gate. The next candidate, `candidate-800-32-6`, exists only in
-`fst-network-bounded-canary.py`. Add it to this run-once wrapper and the
-compose guard only after a storage-cleared bounded run passes every named
-gate.
+`fst-network-bounded-canary.py`, but its first attempt was invalidated by
+concurrent scrape `1270`. Add it to this run-once wrapper and the compose guard
+only after a clean isolated retry passes every named gate.
 
 Recovery evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/proxy-recovery-20260713T171754Z`.

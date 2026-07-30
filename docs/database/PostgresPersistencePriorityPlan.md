@@ -16,6 +16,13 @@ This plan records the approved direction for improving FST Postgres persistence 
   candidate iteration; after at most one promptly available bounded network
   attempt, use the last accepted network profile and refresh the public site
   before storage work resumes.
+- Freshness cannot overlap an active bounded network canary. Before any worker
+  start/recreate, continuity owners must fail closed when
+  `/home/sfenton/Docker/FestivalServiceTracker/.fst-bounded-network-canary-active.json`
+  exists and wait for its terminal release. This guard was added after an
+  independent start allocated scrape `1270` during c6; `1270` was guardedly
+  failed with zero mappings/queries/locks, and published `1269` remained
+  unfrozen and authoritative.
 - Scrape `1269` is authoritative and unfrozen with `6,174` complete solo
   source mappings / `39,951,796` rows. Its improvement notification marker is
   completed for player and band song/ranking lanes with a persisted

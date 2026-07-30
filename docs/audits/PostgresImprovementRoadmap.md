@@ -234,6 +234,26 @@ safety model versus 314,856,988,672 free at the drill start.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-continuity-recovery-20260729T161535Z`.
 
+### Post-1269 bounded-canary isolation incident
+
+- A fresh c6-only boundary began at `06:02:25 UTC`, but an independent
+  continuity path started `fstworker` 12 seconds later and allocated scrape
+  `1270`. The bounded result is invalid because shared publication state and
+  Epic load changed during its evidence window.
+- `fstworker` was stopped at `06:04:07 UTC`. Guarded reconciliation required
+  published scrape `1269`, running candidate `1270`, zero candidate mappings,
+  zero worker queries, zero ungranted/advisory locks, and zero maintenance
+  progress before marking `1270` failed with
+  `network_canary_concurrent_scrape_abandoned`.
+- Published `1269` remained authoritative and unfrozen, notifications remained
+  completed, the worker ledger is offline, and public routes stayed HTTP
+  `200`. No database candidate or Quad object was mutated by the recovery.
+- Future worker-start/cadence owners must fail closed on
+  `/home/sfenton/Docker/FestivalServiceTracker/.fst-bounded-network-canary-active.json`;
+  freshness does not override an active bounded-canary isolation boundary.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/network-candidate-800-32-6-20260730T060051Z`.
+
 ## Executive decision
 
 PostgreSQL remains the correct durable source of truth. The urgent issue is

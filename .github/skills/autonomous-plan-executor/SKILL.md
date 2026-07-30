@@ -65,6 +65,14 @@ Repository rules override general plan text. Preserve historical leaderboard cor
 
 - Scrapes should proceed normally while autonomous work continues. Do not keep `fstworker` stopped as a default safety posture when normal scraping is expected.
 - Site freshness outranks pristine performance-isolation windows. Long database, storage, compaction, reclaim, benchmark, and candidate work must yield at the next clean resumable boundary before the expected scrape cadence is missed. Never terminate a legitimately progressing bounded query to make that boundary; finish the current chunk, checkpoint it, pause the longer lane, and restore scrape/publication continuity.
+- A bounded no-publication network canary owns
+  `/home/sfenton/Docker/FestivalServiceTracker/.fst-bounded-network-canary-active.json`
+  from its final worker-offline check until its terminal decision. Before any
+  continuity or candidate worker start/recreate, fail closed if that sentinel
+  exists and coordinate with its recorded evidence owner. Freshness never
+  authorizes overlap with an active bounded canary; wait for its explicit
+  terminal/release or treat a stale sentinel as an incident requiring guarded
+  reconciliation.
 - When the published scrape is already stale and a new network or data candidate cannot be qualified promptly after the safe boundary, stop candidate iteration and run one guarded continuity scrape with the last accepted independently reversible lane profile. Record an accepted-baseline measurement rather than a promotion claim, hold again after terminal publication, and resume optimization only after the site is fresh.
 - `fstworker`, `fstservice`, and `festivalweb` may be restarted, redeployed, or temporarily taken down for maintenance when useful. Keep downtime as short as practical, redeploy/recover as soon as possible, and verify worker/service/web health immediately afterward.
 - After any `fstworker`, `fstservice`, `festivalweb`, or production compose restart/redeploy, do not mark the action complete or move to unrelated work until the full public path is healthy after all expected containers have returned: Docker health/status for `fstservice`, `festivalweb`, `fst-postgres`, and `fstworker` when it is expected to run; `fstservice` `/readyz`; `festivalweb` container health; a browser/static app-shell route through `festivalweb`; and a representative API route through `festivalweb` such as `/api/service-info`. If starting `fstworker` causes `fstservice` or `festivalweb` API routes to become unhealthy/time out, stop or roll back the worker immediately, restore API/web health, record the failure evidence, and treat worker validation as rejected/blocked until a safer worker start path is implemented.
