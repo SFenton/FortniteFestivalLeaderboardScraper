@@ -8,7 +8,7 @@ This plan records the approved direction for improving FST Postgres persistence 
 - `fstservice`, `festivalweb`, and `fst-postgres` are healthy.
   `fstservice` runs `fstservice:band-history-trios-ad015ca7` with compact
   Duets and Trios reads enabled. Production worker compose selects the same
-  contract-bearing image, and `fstworker` exited cleanly after scrape `1269`
+  contract-bearing image, and `fstworker` exited cleanly after scrape `1271`
   with restart `no`; it is held before another scrape.
 - Freshness is now a hard scheduling constraint: long storage/reclaim work
   finishes only its current bounded chunk, checkpoints, and yields before the
@@ -16,6 +16,10 @@ This plan records the approved direction for improving FST Postgres persistence 
   candidate iteration; after at most one promptly available bounded network
   attempt, use the last accepted network profile and refresh the public site
   before storage work resumes.
+  Scrape `1271` revalidated the release side of that rule: Quad remained paused
+  through terminal publication, notifications, parity, and worker exit, then
+  its pause sentinel was removed so it can resume from the existing validation
+  checkpoint.
 - Freshness cannot overlap an active bounded network canary. Before any worker
   start/recreate, continuity owners must fail closed when
   `/home/sfenton/Docker/FestivalServiceTracker/.fst-bounded-network-canary-active.json`
@@ -24,19 +28,21 @@ This plan records the approved direction for improving FST Postgres persistence 
   another began duplicate c6; the worker allocated scrape `1270`. `1270` was
   guardedly failed with zero mappings/queries/locks, and published `1269`
   remained unfrozen and authoritative.
-- Scrape `1269` is authoritative and unfrozen with `6,174` complete solo
-  source mappings / `39,951,796` rows. Its improvement notification marker is
+- Scrape `1271` is authoritative and unfrozen with `6,174` complete solo
+  source mappings / `39,956,695` rows. Its improvement notification marker is
   completed for player and band song/ranking lanes with a persisted
-  zero-scope bounded workset. Scrape `1266` remains failed at
+  nine-scope bounded workset. Scrape `1266` remains failed at
   `post_process_no_progress_abandoned` with zero published-source rows.
 - Settled leaderboard, export, ranking, history, composite, band, and
   band-song routes return stable HTTP `200` and two post-publish suites are
-  exact `13/13`. The `44a1fe9a` cache lock-order repair is accepted: `692`
-  monitor ticks and all nine publication-window ticks had zero public-route
-  failures, and festivalweb recorded zero `499` and zero `5xx`.
+  exact `13/13`. The `44a1fe9a` cache lock-order repair remains accepted:
+  scrape `1271` added `745` zero-failure monitor ticks, all nine
+  publication/finalization ticks were HTTP `200`, and festivalweb recorded
+  zero `499` and zero `5xx`.
 - `fstservice` and `festivalweb` may be restarted for maintenance and must be
-  recovered promptly. The scrape `1269` terminal parity capture had
-  `367,602,806,784` bytes free and the seven-day alert remains active. Any
+  recovered promptly. The scrape `1271` terminal parity capture had
+  `343,768,289,280` bytes free; the scrape guard still passes at `2.85`
+  projected days while the seven-day alert remains active. Any
   later scrape must use a contract-bearing image at or after `05d6e820`,
   include the accepted publication cache lock-order repair, and run the
   durable post-process watchdog.

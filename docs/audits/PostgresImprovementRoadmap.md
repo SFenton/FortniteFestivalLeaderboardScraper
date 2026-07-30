@@ -257,6 +257,48 @@ safety model versus 314,856,988,672 free at the drill start.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/network-candidate-800-32-6-20260730T060051Z`.
 
+## SCRAPE-1271 continuity update — 2026-07-30
+
+- The corrected exclusive-start path ran exact accepted c4 once while every
+  storage/network/c6 lane remained held. Quad compact-v3 stayed checkpointed
+  and non-public throughout the scrape. After `1271` completed, published,
+  unfroze, finished notifications, passed settled parity, and left no query or
+  maintenance, the Quad pause sentinel was removed so work can resume from the
+  existing validation checkpoint.
+- Scrape `1271` completed in `12:49:30.964`, published/unfroze at
+  `2026-07-30 19:35:02.785516 UTC`, and exited cleanly. All
+  `8,232/8,232` manifests, 10 publication-critical phases, writer gates, and
+  `6,174` complete mappings / `39,956,695` physical rows passed. The only
+  best-effort failure was the known ten-minute registered-user refresh
+  timeout.
+- `BandMaintenance` was `3:30:26.184`, `12.53%` faster than `1269`.
+  `ComputeRankings` was `1:30:29.864` (`2.30%` slower), solo projection
+  cleanup `23:09.054` (`0.81%` slower), and precompute cleanup `16:51.239`
+  (`7.62%` slower). Five deferred-registration rival rebuilds made continuous
+  bounded query progress for `1:54:53.077`; the watchdog correctly deferred
+  instead of killing active PostgreSQL work.
+- Database size grew `22,566,510,592` bytes and terminal free space was
+  `343,768,289,280` bytes, down `23,014,764,544` bytes from the final start
+  guard. Minimum observed free space was `324,153,085,952` bytes. The terminal
+  scrape guard remains accepted with a capacity alert at `2.85` projected
+  headroom days; optional builds and rewrites remain blocked.
+- Exact monitored temp growth was `292,903,815,592` bytes. The WAL counter
+  increased `488,735,369,443` bytes from the `1269` terminal evidence capture;
+  that interval also includes the small guarded `1270` reconciliation, while
+  both bounded canaries were read-only. The resident WAL directory changed
+  only `452,984,832` bytes from scrape start to terminal.
+- The 60-second public monitor recorded `745` scrape ticks and zero public
+  failures. Nine publication/finalization ticks stayed HTTP `200`; festivalweb
+  emitted zero `499` and zero `5xx`; two settled suites were exact `13/13`.
+  Notifications completed `119.357 s` after publication with a ready
+  nine-scope plan and completed player/band runs `170/171`.
+- The freshness-yield rule is now exercised twice: finish only the active
+  bounded storage chunk, checkpoint, pause before the continuity scrape, and
+  release storage only after publication/unfreeze, notification completion,
+  route parity, worker exit, and zero terminal query/lock/maintenance state.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-correction-followup-20260730T055228Z`.
+
 ## Executive decision
 
 PostgreSQL remains the correct durable source of truth. The urgent issue is

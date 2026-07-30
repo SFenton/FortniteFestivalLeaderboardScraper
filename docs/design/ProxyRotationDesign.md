@@ -320,6 +320,18 @@ and the worker ledger returned offline. Public routes remained HTTP `200`.
 The duplicate attempt is excluded; no further c6 attempt is justified without
 a newly named payload-control/transport hypothesis.
 
+The corrected exclusive fallback then ran as scrape `1271` on exact accepted
+`candidate-800-32-4`. It fetched `593,058` useful pages in `4:05:05.601`
+(`40.329` pages/s), followed by `43:30.374` of band writer drain for a combined
+`4:48:35.975`. Final transport was `650,751` sends, `18,358` blocks
+(`2.821%`), `1.0973` amplification, zero strict-fetch `429`/`503`, and no three
+bad one-minute windows. The run completed publication, notifications, and
+`13/13` settled parity, but pure fetch remained `4.59%` below the
+`42.271` promotion target. This is accepted continuity-baseline evidence only;
+c6 remains rejected on correctness and no new network candidate is armed.
+Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-correction-followup-20260730T055228Z`.
+
 The bounded runner now atomically creates
 `/home/sfenton/Docker/FestivalServiceTracker/.fst-bounded-network-canary-active.json`
 after proving the worker is offline and removes it only at terminal cleanup.

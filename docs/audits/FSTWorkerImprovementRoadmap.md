@@ -122,6 +122,48 @@ blocker and exact outbox artifact paths.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-continuity-recovery-20260729T161535Z`.
 
+## SCRAPE-1271 CONTINUITY — exclusive c4 fallback completed
+
+- The post-c6 ownership repair held every competing runtime lane. Scrape
+  `1271` ran once on `fstservice:band-history-trios-ad015ca7`, exact
+  `candidate-800-32-4` (`800/32/4`), `RunOnce=true`, and restart `no`.
+  Quad compact-v3 remained paused at its validation checkpoint until terminal
+  publication, notification completion, and settled route parity; its pause
+  sentinel was then removed without running or mutating Quad.
+- Pure Epic fetch completed `593,058` useful pages in `4:05:05.601` at
+  `40.329` pages/s. Band writer drain added `43:30.374`, placing the combined
+  boundary at `4:48:35.975` / `34.249` pages/s. Final transport reconstructed
+  from the exact live diagnostic plus later request logs was `650,751` sends,
+  `18,358` CDN blocks (`2.821%`), and `1.0973` amplification. The strict fetch
+  window recorded zero `429`/`503` and no three bad one-minute windows.
+  Pure fetch improved `4.12%` from `1269` but remained `4.59%` below the
+  declared `42.271` promotion target, so c4 is again an
+  **accepted-baseline measurement**, not a new network promotion.
+- `BandMaintenance` completed in `3:30:26.184` (`12.53%` faster than `1269`)
+  and refreshed `9,882/52,659` changed scopes / `19,224,560` rows with zero
+  failures. `ComputeRankings` took `1:30:29.864`; solo projection cleanup
+  `23:09.054`; precompute cleanup `16:51.239`. Five deferred registrations
+  continued through legitimately progressing database work for `1:54:53.077`;
+  the DB-aware watchdog deferred rather than terminating those queries.
+- Scrape completion was `12:49:30.964` after start. Atomic publication and
+  unfreeze followed `5:11.175` later. The ready nine-scope notification plan
+  completed player run `170` and band run `171` `1:59.357` after publication;
+  the worker exited successfully with restart `no` at `12:56:43.853`.
+- Shared correctness passed: `8,232/8,232` manifests, zero incomplete scopes,
+  retry exhaustion, parse failures, writer failures, or publication-critical
+  failures; `6,174` complete mappings / `39,956,695` physical rows were exact.
+  The known registered-user refresh timeout remained the only classified
+  best-effort failure.
+- The combined 60-second monitor recorded `745` scrape ticks with zero service,
+  shell, service-info, or representative leaderboard failures. All nine
+  publication/finalization ticks were HTTP `200` with leaderboard latency at
+  or below `0.127 s`; festivalweb recorded zero `499` and zero `5xx`.
+  Two settled post-publish suites were byte-exact `13/13`. Terminal state had
+  zero worker queries, locks, advisory locks, or maintenance and the worker
+  ledger was offline.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-correction-followup-20260730T055228Z`.
+
 ### NETWORK-NEXT-CANDIDATE — c5 performance reject; c6 correctness reject
 
 - Bounded-only `candidate-800-32-5` kept
