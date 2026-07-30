@@ -116,6 +116,28 @@ safety model versus 314,856,988,672 free at the drill start.
   `222,179,500,032` net database reduction. Stable free space is about
   `483.72 GB`; immediate and 60-second public captures remained `13/13` exact.
 
+## CLEAN-QUAD-V3 execution update — 2026-07-30
+
+- Resumed only after scrape `1271` published/unfroze, completed notifications,
+  and released the Quad cadence checkpoint.
+- Candidate contains all `359,383,226` rows / 52 dates. April-May-June-July
+  each matched v2 on row count and five full-row multiset hashes.
+- All four local indexes plus the parent index are valid. The default-off Quad
+  read path passed `119/119` focused tests, Release build, exact three-slice
+  Quad payload parity, and `13/13` public parity.
+- Warm v3 p95 was 2.737 ms combo/full, 4.269 ms overall/30-day, and 4.203 ms
+  overall/full. All stayed below 5 ms.
+- Detach rollback completed in 13.786 ms; committed-state reattach completed
+  in 4.257 ms and rolled back.
+- Dropped only the detached `388,779,032,576`-byte Quad v2 source without
+  `CASCADE`. Compact objects total `87,994,753,024` bytes, for
+  `300,784,279,552` net database reduction.
+- Immediate and +60-second Quad/public captures remained exact. Terminal free
+  space is `732,566,126,592` bytes; database size is
+  `3,132,719,068,851` bytes.
+- Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-history-compact-quad-clean-20260729T1435Z`.
+
 ## OBSERVATION-RETIRE execution update — 2026-07-28
 
 - Published scrape `1267` proved both `player_score_observations` writers were

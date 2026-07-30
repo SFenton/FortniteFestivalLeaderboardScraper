@@ -2,10 +2,10 @@
 
 ## Current decision
 
-**Tier:** compact v3 accepted and promoted for Band Duets on 2026-07-28 and
-Band Trios on 2026-07-29. The incomplete first Trios build was reclaimed
-before the clean rebuild. Quad remains on v2 and requires a separate future
-candidate and capacity guard.
+**Tier:** compact v3 accepted and promoted for Band Duets on 2026-07-28,
+Band Trios on 2026-07-29, and Band Quad on 2026-07-30. The incomplete first
+Trios build was reclaimed before the clean rebuild. All three public/API export
+read paths now use independently reversible compact-v3 switches.
 
 **2026-07-29 clean Trios execution:** the compact relation contains all
 `343,275,419` rows / 51 dates with exact monthly full-row multiset hashes and
@@ -33,7 +33,7 @@ Evidence:
 |---|---:|---:|---:|---:|
 | Duets | 215,134,574 | 72,368,676,864 | 81,847,418,880 | 154,235,944,960 |
 | Trios | 343,275,419 | 126,774,484,992 | 179,034,488,832 | 305,843,961,856 |
-| Quad | 359,383,226 | 149,079,629,824 | 239,654,428,672 | 388,775,297,024 |
+| Quad | 359,383,226 | 149,079,629,824 | 239,699,402,752 | 388,779,032,576 |
 
 Production history writes remain disabled. The v2 points recorded zero
 inserts, updates, or deletes in the observed PostgreSQL statistics window.
@@ -132,11 +132,12 @@ zero temp files.
 
 ## Read cutover and performance
 
-`BandRankHistory:CompactV3DuetsReadEnabled` and
-`BandRankHistory:CompactV3TriosReadEnabled` are independently default-off.
-Production enables both after their readiness rows pass. Quad continues
-through `V2NarrowOnly`. A readiness row prevents candidate reads before
-validation, and successful readiness is cached for the service lifetime.
+`BandRankHistory:CompactV3DuetsReadEnabled`,
+`BandRankHistory:CompactV3TriosReadEnabled`, and
+`BandRankHistory:CompactV3QuadReadEnabled` are independently default-off.
+Production enables each only after its readiness row passes. A readiness row
+prevents candidate reads before validation, and successful readiness is cached
+for the service lifetime.
 
 Matched 40-call HTTP A/B:
 
@@ -293,20 +294,73 @@ healthy public paths.
 Post-drop rebuild SQL is
 `tools/sql/postgres-band-history-compact-v3/trios-rebuild-v2.sql`.
 
+## Clean Quad promotion and reclaim
+
+After scrape `1271` published/unfroze and completed notifications, the Quad
+candidate resumed from its cadence-yield checkpoint:
+
+- exact rows: `359,383,226`;
+- date range: 2026-04-26 through 2026-07-05;
+- four local unique indexes plus the attached parent index valid/ready;
+- April, May, June, and July each matched v2 on row count plus five full-row
+  multiset hashes;
+- `119/119` focused band-history tests and the Release build passed;
+- all three Quad history payloads and all `13/13` public fingerprints were
+  byte-exact before cutover, after cutover, after detach, immediately after
+  source drop, and 60 seconds after source drop.
+
+The default-off `CompactV3QuadReadEnabled` path is in commit `791f7f74`; the
+failure-isolated rebuild and guarded detach follow in `a05eb605` and
+`1e257b48`. Production service image
+`fstservice:band-history-quad-a05eb605` enables the Quad flag while the worker
+remains held with restart `no`.
+
+Matched same-image warm HTTP A/B:
+
+| Case | v2 p50/p95 | v3 p50/p95 | Decision |
+|---|---:|---:|---|
+| Quad combo, full | 1.755 / 3.175 ms | 2.247 / 2.737 ms | Accepted |
+| Quad overall, 30 days | 2.191 / 5.030 ms | 2.234 / 4.269 ms | Accepted |
+| Quad overall, full | 2.131 / 3.554 ms | 2.676 / 4.203 ms | Accepted with explicit +0.649 ms tradeoff |
+
+All v3 p95 values remained below 5 ms. The full-overall p95 regression is
+accepted for the large storage reduction; the other two slices improved.
+
+The source received a validated
+`CHECK (band_type = 'Band_Quad')` constraint. Detach rollback completed in
+13.786 ms. After committed detach, metadata-only reattach completed in
+4.257 ms, automatically resolving both child index attachments, and rolled
+back to the detached state.
+
+| Quad promotion metric | Result |
+|---|---:|
+| Compact v3 points + dictionaries | 87,994,753,024 bytes |
+| Retired v2 source | 388,779,032,576 bytes |
+| Net database reduction | 300,784,279,552 bytes |
+| Immediate filesystem gain | 388,780,703,744 bytes |
+| Final database size | 3,132,719,068,851 bytes |
+| Terminal filesystem free | 732,566,126,592 bytes |
+
+Post-drop rebuild SQL is
+`tools/sql/postgres-band-history-compact-v3/quad-rebuild-v2.sql`. Runtime
+rollback before a rebuild is to disable
+`BAND_RANK_HISTORY_COMPACT_V3_QUAD_READ_ENABLED` and deploy the prior service
+image.
+
 ## Final state
 
 - Duets API/export reads use compact v3.
 - Trios API/export reads use compact v3.
+- Quad API/export reads use compact v3.
 - The v2 Duets leaf no longer exists.
 - The v2 Trios leaf no longer exists.
-- Quad v2 remains authoritative and unchanged.
-- Published scrape `1268` remains unfrozen.
+- The v2 Quad leaf no longer exists.
+- Published scrape `1271` remains unfrozen and notification-complete.
 - Postgres, `fstservice`, and `festivalweb` are healthy.
 - `fstworker` remains held/offline with restart `no`.
-- No scrape ran during the clean Trios build.
+- No scrape ran during the Quad validation/cutover.
 
-## Next storage phase
+## Next phase
 
-Recalculate the clean compact guard for Quad after coordinating the next
-production scrape boundary. Quad remains a separate candidate; do not combine
-its build/cutover with an unrelated data-lane change.
+Begin the approved atomic-publication proof harness and gating probes. Do not
+start the next scrape until its paired network/data card is ready.

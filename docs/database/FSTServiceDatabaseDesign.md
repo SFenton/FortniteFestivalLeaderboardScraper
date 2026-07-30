@@ -253,6 +253,15 @@ family. Production enables the independently reversible
 `CompactV3TriosReadEnabled` flag. The service A/B, readiness promotion,
 detach/reattach rollback, and source drop passed; Trios v2 no longer exists.
 
+A clean 2026-07-30 Quad continuation has all `359,383,226` rows and all 52
+dates, exact monthly full-row multiset hashes, and a valid partitioned unique
+index family. Production enables the independently reversible
+`CompactV3QuadReadEnabled` flag. The service A/B, readiness promotion,
+detach/reattach rollback, and source drop passed; Quad v2 no longer exists.
+The `388,779,032,576`-byte source was replaced by
+`87,994,753,024` compact bytes, a `300,784,279,552`-byte net database
+reduction.
+
 ## Data ownership and restore class
 
 | Class | Meaning | Restore rule |

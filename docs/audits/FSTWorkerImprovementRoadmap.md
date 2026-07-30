@@ -164,6 +164,17 @@ blocker and exact outbox artifact paths.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-correction-followup-20260730T055228Z`.
 
+## POST-1271 QUAD COMPACTION — completed before next scrape
+
+- Quad compact-v3 resumed only after the terminal continuity gate.
+- All `359,383,226` rows and exact monthly hashes passed; the separately
+  reversible service reader produced exact payloads and acceptable latency.
+- v2 detach/reattach rollback passed before the source was dropped. The
+  migration reclaimed `300,784,279,552` net database bytes and left
+  `732,566,126,592` filesystem bytes free.
+- `fstworker` remains exited with restart `no`; the next scrape requires a new
+  dual-lane network/data card after atomic-publication preparation.
+
 ### NETWORK-NEXT-CANDIDATE — c5 performance reject; c6 correctness reject
 
 - Bounded-only `candidate-800-32-5` kept
