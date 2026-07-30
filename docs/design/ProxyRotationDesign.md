@@ -300,17 +300,25 @@ amplification. Pure fetch was about `4:15:37.141` / `38.663` pages/s. This is
 accepted continuity-baseline evidence only; it does not clear the `42.271`
 full-run promotion target, and c6 remains bounded-only.
 
-After `1269` reached terminal publication, a fresh storage-cleared c6 attempt
-started at `06:02:25 UTC`. An independent continuity path started `fstworker`
-12 seconds later, allocating scrape `1270` and adding concurrent Epic traffic.
-The c6 run's apparent `42.242` useful pages/s is therefore invalid. It had 16
-unrecovered responses, 63 CDN blocks, 25/25 invalid payload-control pairs, and
-shared state changed from `1269|unfrozen|1269` to `1269|frozen|1270`.
+After `1269` reached terminal publication, the continuity owner ran an
+isolated c6 at `05:58:50-05:59:52 UTC`. It reached `53.022` useful pages/s,
+recovered `3,000/3,000`, and left publication unchanged, but 24/25 matched
+payload-control pairs were invalid after 38 control-stage CDN `403`s. That is
+the authoritative c6 decision: **reject on correctness**.
+
+The continuity owner began its accepted-c4 fallback workflow at `06:02:07
+UTC`. A second owner received the clearance without the first terminal
+decision and began a duplicate c6 at `06:02:25 UTC`. The fallback worker
+became active at `06:02:37 UTC`, allocating scrape `1270` and adding
+concurrent Epic traffic. The duplicate run's apparent `42.242` pages/s is
+invalid; it had 16 unrecovered responses, 63 CDN blocks, 25/25 invalid
+controls, and `1269|unfrozen|1269 -> 1269|frozen|1270`.
 
 The worker was stopped, `1270` was guardedly marked failed with zero candidate
 mappings/queries/locks/maintenance, published `1269` was preserved/unfrozen,
 and the worker ledger returned offline. Public routes remained HTTP `200`.
-C6 has no qualification decision and must not be retried from this evidence.
+The duplicate attempt is excluded; no further c6 attempt is justified without
+a newly named payload-control/transport hypothesis.
 
 The bounded runner now atomically creates
 `/home/sfenton/Docker/FestivalServiceTracker/.fst-bounded-network-canary-active.json`
@@ -411,10 +419,10 @@ tools/fst-worker-dual-lane-runonce.sh \
 Do not advance the production wrapper to `candidate-1600-64-8` or
 `candidate-2880-128-16`; that sequence stopped at the rejected `1600` result.
 `candidate-800-32-5` also remains absent because it missed the bounded
-performance gate. The next candidate, `candidate-800-32-6`, exists only in
-`fst-network-bounded-canary.py`, but its first attempt was invalidated by
-concurrent scrape `1270`. Add it to this run-once wrapper and the compose guard
-only after a clean isolated retry passes every named gate.
+performance gate. `candidate-800-32-6` remains absent because its isolated
+attempt failed matched-control correctness; a duplicate attempt was also
+invalidated by concurrent scrape `1270`. Do not add c6 to the wrapper/guard or
+repeat it unchanged.
 
 Recovery evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/proxy-recovery-20260713T171754Z`.

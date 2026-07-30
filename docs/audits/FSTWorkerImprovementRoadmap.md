@@ -122,7 +122,7 @@ blocker and exact outbox artifact paths.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-continuity-recovery-20260729T161535Z`.
 
-### NETWORK-NEXT-CANDIDATE — c5 rejected; c6 invalidated by concurrent scrape
+### NETWORK-NEXT-CANDIDATE — c5 performance reject; c6 correctness reject
 
 - Bounded-only `candidate-800-32-5` kept
   global/per-exit pacing at `800/32`, curl HTTP/1.1 fresh connections,
@@ -145,21 +145,29 @@ blocker and exact outbox artifact paths.
   only per-exit concurrency `5 -> 6`, retain every other value and the same
   gates. It requires a fresh explicit storage clearance before one live
   canary.
-- A fresh post-`1269` clearance was issued and c6 began at
-  `2026-07-30 06:02:25 UTC`. Twelve seconds later, an independent continuity
-  path started `fstworker`, which allocated scrape `1270`, froze shared state,
-  and generated concurrent Epic traffic. The canary then recorded 16
-  unrecovered responses, 63 CDN blocks, 25/25 invalid payload-control pairs,
-  and a publication transition from `1269|unfrozen|1269` to
-  `1269|frozen|1270`. Its apparent `42.242` pages/s is contaminated and must
-  not be used.
+- Two autonomous owners independently consumed the same post-`1269`
+  boundary. The continuity owner ran c6 first at `05:58:50-05:59:52 UTC`.
+  That isolated attempt reached `53.022` pages/s with `3,000/3,000`
+  recovered responses and unchanged publication state, but 24/25 matched
+  payload-control pairs were invalid after the control stage received 38 CDN
+  `403`s. C6 is therefore **rejected on correctness**; throughput cannot
+  override that gate.
+- The continuity owner then began the documented accepted-c4 fallback worker
+  workflow at `06:02:07 UTC`. A delayed clearance message caused this network
+  owner to start a second c6 at `06:02:25 UTC` before learning the first
+  decision. The fallback worker became active at `06:02:37 UTC`, allocated
+  scrape `1270`, froze shared state, and contaminated the second attempt. It
+  recorded 16 unrecovered responses, 63 CDN blocks, 25/25 invalid controls,
+  and `1269|unfrozen|1269 -> 1269|frozen|1270`; its apparent `42.242`
+  pages/s is excluded.
 - The worker was stopped at `06:04:07 UTC`; a guarded transaction proved zero
   candidate mappings, worker queries, locks, advisory locks, or maintenance,
   marked `1270` failed with
   `network_canary_concurrent_scrape_abandoned`, preserved published `1269`,
   and restored the offline worker ledger. Public routes remained HTTP `200`.
-  C6 is **invalidated/rejected with no qualification**, and no retry is
-  authorized.
+  The second attempt is invalidated; the first isolated attempt supplies the
+  authoritative c6 correctness rejection. No further c6 attempt is justified
+  without a new payload-control/transport hypothesis.
 - `fst-network-bounded-canary.py` now atomically owns
   `/home/sfenton/Docker/FestivalServiceTracker/.fst-bounded-network-canary-active.json`
   from its final worker-offline check through terminal cleanup. Autonomous
@@ -282,13 +290,14 @@ gets its own baseline, target, rollback, metrics, and decision while sharing
 the same scope, manifest, API, publication, and notification correctness gate.
 
 Scrape `1269` accepted the publication lock repair with the accepted c4
-network baseline. C6's later bounded attempt was invalidated by concurrent
-scrape `1270`, so no network candidate is qualified and the production card
-remains unarmed.
+network baseline. The first isolated c6 attempt failed matched payload
+controls, and a duplicate second attempt was invalidated by concurrent scrape
+`1270`; no network candidate is qualified and the production card remains
+unarmed.
 
 | Lane | Candidate | Baseline | Target |
 |---|---|---|---|
-| Network | **Unarmed:** c6 remains bounded-only but unqualified; do not retry until the concurrent worker-start root cause and sentinel protocol are reconciled | Accepted bounded c4 `35.958` pages/s; c5 rejected at `39.314`; contaminated c6 metrics are excluded | Clean bounded >=`39.554` pages/s with zero unrecovered/matched-control/shared-state/public differences; amplification <=`1.50`; 429+503 <=`5%`; >=80% exits |
+| Network | **Unarmed:** c6 is rejected on matched-control correctness; do not repeat it without a new transport/control hypothesis | Accepted bounded c4 `35.958` pages/s; c5 performance reject `39.314`; isolated c6 `53.022` but 24/25 invalid controls; duplicate c6 excluded | A newly named candidate must pass zero unrecovered/matched-control/shared-state/public differences; amplification <=`1.50`; 429+503 <=`5%`; >=80% exits |
 | Data/query | **Accepted baseline:** publication cache lock-order repair from `44a1fe9a`, carried by the current contract/Trios lineage | Scrape 1269: zero public failures across 692 monitor ticks; notifications `78.59 s` after publication | Preserve as rollback baseline; the next independently reversible data candidate is unarmed |
 
 Bounded network canaries can normally overlap demonstrably disjoint

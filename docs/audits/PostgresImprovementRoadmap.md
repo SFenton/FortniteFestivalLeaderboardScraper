@@ -236,10 +236,13 @@ safety model versus 314,856,988,672 free at the drill start.
 
 ### Post-1269 bounded-canary isolation incident
 
-- A fresh c6-only boundary began at `06:02:25 UTC`, but an independent
-  continuity path started `fstworker` 12 seconds later and allocated scrape
-  `1270`. The bounded result is invalid because shared publication state and
-  Epic load changed during its evidence window.
+- Two autonomous owners consumed the same boundary from stale local state.
+  The continuity owner completed an isolated c6 at `05:59:52 UTC`, rejected it
+  on 24/25 invalid payload controls, then began its documented accepted-c4
+  fallback at `06:02:07 UTC`. A delayed clearance caused a second owner to
+  begin duplicate c6 at `06:02:25 UTC`; the fallback worker became active 12
+  seconds later and allocated `1270`. The first c6 is the authoritative
+  correctness rejection; the duplicate result is invalid.
 - `fstworker` was stopped at `06:04:07 UTC`. Guarded reconciliation required
   published scrape `1269`, running candidate `1270`, zero candidate mappings,
   zero worker queries, zero ungranted/advisory locks, and zero maintenance
