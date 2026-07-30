@@ -1344,6 +1344,52 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
+    public void GetBandRankHistory_CompactV3QuadReadsReadyProjectionWhenV2RowsAreGone()
+    {
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<Microsoft.Extensions.Logging.ILogger<BandLeaderboardPersistence>>());
+        persistence.UpsertBandEntries("song_0", "Band_Quad",
+        [
+            MakeBandEntry(["p1", "p2", "p3", "p4"], "0:1:2:3", 1000, isFullCombo: true),
+            MakeBandEntry(["p5", "p6", "p7", "p8"], "0:1:2:3", 900),
+        ]);
+        persistence.UpsertBandEntries("song_1", "Band_Quad",
+        [
+            MakeBandEntry(["p1", "p2", "p3", "p4"], "0:1:2:3", 1200),
+            MakeBandEntry(["p5", "p6", "p7", "p8"], "0:1:2:3", 1100, isFullCombo: true),
+        ]);
+
+        Db.RebuildBandTeamRankings("Band_Quad", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Quad", new BandRankHistorySnapshotOptions
+        {
+            WriteMode = BandRankHistoryWriteMode.V2Only,
+        });
+
+        using var v2Db = CreateMetaDatabase(BandRankHistoryApiReadSource.V2NarrowOnly);
+        var expectedOverall = v2Db.GetBandRankHistory("Band_Quad", "p1:p2:p3:p4");
+        var comboId = BandComboIds.FromEpicRawCombo("0:1:2:3");
+        var expectedCombo = v2Db.GetBandRankHistory("Band_Quad", "p1:p2:p3:p4", comboId);
+        SeedCompactV3Quad();
+
+        using (var conn = _fixture.DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "DELETE FROM band_team_rank_history_points_v2 WHERE band_type = 'Band_Quad'";
+            cmd.ExecuteNonQuery();
+        }
+
+        using var compactDb = CreateMetaDatabase(
+            BandRankHistoryApiReadSource.V2NarrowOnly,
+            compactV3QuadReadEnabled: true);
+        var actualOverall = compactDb.GetBandRankHistory("Band_Quad", "p1:p2:p3:p4");
+        var actualCombo = compactDb.GetBandRankHistory("Band_Quad", "p1:p2:p3:p4", comboId);
+
+        Assert.Equal(JsonSerializer.Serialize(expectedOverall), JsonSerializer.Serialize(actualOverall));
+        Assert.Equal(JsonSerializer.Serialize(expectedCombo), JsonSerializer.Serialize(actualCombo));
+    }
+
+    [Fact]
     public void GetBandRankHistory_V2NarrowOnlyDoesNotFallbackToLegacy()
     {
         SeedBandRankingsSource();
@@ -2741,10 +2787,109 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         cmd.ExecuteNonQuery();
     }
 
+    private void SeedCompactV3Quad()
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE band_rank_history_compact_v3_state (
+                band_type TEXT PRIMARY KEY,
+                status TEXT NOT NULL
+            );
+            CREATE TABLE band_rank_history_team_v3_quad (
+                team_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                team_key TEXT NOT NULL UNIQUE
+            );
+            CREATE TABLE band_rank_history_combo_v3_quad (
+                combo_ref INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                combo_id TEXT NOT NULL UNIQUE
+            );
+            CREATE TABLE band_team_rank_history_points_v3_quad (
+                team_id BIGINT NOT NULL,
+                scope_id SMALLINT NOT NULL,
+                combo_ref INT NOT NULL,
+                snapshot_date DATE NOT NULL,
+                snapshot_id BIGINT NOT NULL,
+                generation_id BIGINT NOT NULL,
+                snapshot_taken_at TIMESTAMPTZ NOT NULL,
+                row_fingerprint BYTEA NOT NULL,
+                adjusted_skill_rank INT NOT NULL,
+                weighted_rank INT NOT NULL,
+                fc_rate_rank INT NOT NULL,
+                total_score_rank INT NOT NULL,
+                adjusted_skill_rating DOUBLE PRECISION,
+                weighted_rating DOUBLE PRECISION,
+                fc_rate DOUBLE PRECISION,
+                total_score BIGINT,
+                songs_played INT,
+                coverage DOUBLE PRECISION,
+                full_combo_count INT,
+                total_charted_songs INT,
+                total_ranked_teams INT,
+                raw_weighted_rating DOUBLE PRECISION,
+                raw_skill_rating DOUBLE PRECISION,
+                PRIMARY KEY (team_id, scope_id, combo_ref, snapshot_date)
+            );
+
+            INSERT INTO band_rank_history_team_v3_quad (team_key)
+            SELECT DISTINCT team_key
+            FROM band_team_rank_history_points_v2
+            WHERE band_type = 'Band_Quad';
+
+            INSERT INTO band_rank_history_combo_v3_quad (combo_id)
+            SELECT DISTINCT combo_id
+            FROM band_team_rank_history_points_v2
+            WHERE band_type = 'Band_Quad'
+              AND combo_id <> '';
+
+            INSERT INTO band_team_rank_history_points_v3_quad (
+                team_id, scope_id, combo_ref, snapshot_date, snapshot_id, generation_id,
+                snapshot_taken_at, row_fingerprint, adjusted_skill_rank, weighted_rank,
+                fc_rate_rank, total_score_rank, adjusted_skill_rating, weighted_rating,
+                fc_rate, total_score, songs_played, coverage, full_combo_count,
+                total_charted_songs, total_ranked_teams, raw_weighted_rating, raw_skill_rating)
+            SELECT
+                team.team_id,
+                CASE points.ranking_scope WHEN 'overall' THEN 0::smallint ELSE 1::smallint END,
+                COALESCE(combo.combo_ref, 0),
+                points.snapshot_date,
+                points.snapshot_id,
+                points.generation_id,
+                points.snapshot_taken_at,
+                decode(points.row_fingerprint, 'hex'),
+                points.adjusted_skill_rank,
+                points.weighted_rank,
+                points.fc_rate_rank,
+                points.total_score_rank,
+                points.adjusted_skill_rating,
+                points.weighted_rating,
+                points.fc_rate,
+                points.total_score,
+                points.songs_played,
+                points.coverage,
+                points.full_combo_count,
+                points.total_charted_songs,
+                points.total_ranked_teams,
+                points.raw_weighted_rating,
+                points.raw_skill_rating
+            FROM band_team_rank_history_points_v2 points
+            JOIN band_rank_history_team_v3_quad team USING (team_key)
+            LEFT JOIN band_rank_history_combo_v3_quad combo
+              ON combo.combo_id = points.combo_id
+             AND points.combo_id <> ''
+            WHERE points.band_type = 'Band_Quad';
+
+            INSERT INTO band_rank_history_compact_v3_state (band_type, status)
+            VALUES ('Band_Quad', 'ready');
+            """;
+        cmd.ExecuteNonQuery();
+    }
+
     private MetaDatabase CreateMetaDatabase(
         BandRankHistoryApiReadSource apiReadSource,
         bool compactV3DuetsReadEnabled = false,
-        bool compactV3TriosReadEnabled = false) => new(
+        bool compactV3TriosReadEnabled = false,
+        bool compactV3QuadReadEnabled = false) => new(
         _fixture.DataSource,
         Substitute.For<Microsoft.Extensions.Logging.ILogger<MetaDatabase>>(),
         new BandRankHistoryOptions
@@ -2752,6 +2897,7 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
             ApiReadSource = apiReadSource,
             CompactV3DuetsReadEnabled = compactV3DuetsReadEnabled,
             CompactV3TriosReadEnabled = compactV3TriosReadEnabled,
+            CompactV3QuadReadEnabled = compactV3QuadReadEnabled,
         });
 
     private sealed record BandRankingMetadataCounts(

@@ -21,6 +21,7 @@ public sealed class MetaDatabase : IMetaDatabase
     private bool _bandRankHistoryPollingSchemaEnsured;
     private int _bandRankHistoryCompactV3DuetsReady;
     private int _bandRankHistoryCompactV3TriosReady;
+    private int _bandRankHistoryCompactV3QuadReady;
 
     internal const int DataCollectionVersion = 3;
     internal const string WebTrackerDeviceId = "web-tracker";
@@ -37,6 +38,9 @@ public sealed class MetaDatabase : IMetaDatabase
     private const string BandRankHistoryCompactV3TriosTable = "band_team_rank_history_points_v3_trios";
     private const string BandRankHistoryCompactV3TriosTeamTable = "band_rank_history_team_v3_trios";
     private const string BandRankHistoryCompactV3TriosComboTable = "band_rank_history_combo_v3_trios";
+    private const string BandRankHistoryCompactV3QuadTable = "band_team_rank_history_points_v3_quad";
+    private const string BandRankHistoryCompactV3QuadTeamTable = "band_rank_history_team_v3_quad";
+    private const string BandRankHistoryCompactV3QuadComboTable = "band_rank_history_combo_v3_quad";
     private static readonly string[] FailedCandidateReadIsolationFailurePhases =
     [
         FailedCandidateReadIsolationFailurePhase,
@@ -8007,6 +8011,27 @@ public sealed class MetaDatabase : IMetaDatabase
                 BandRankHistoryCompactV3TriosTable,
                 BandRankHistoryCompactV3TriosTeamTable,
                 BandRankHistoryCompactV3TriosComboTable,
+                teamKey,
+                rankingScope,
+                normalizedComboId,
+                cutoff);
+        }
+
+        if (_bandRankHistoryOptions.CompactV3QuadReadEnabled
+            && string.Equals(bandType, "Band_Quad", StringComparison.Ordinal)
+            && IsBandRankHistoryCompactV3Ready(
+                conn,
+                bandType,
+                BandRankHistoryCompactV3QuadTable,
+                BandRankHistoryCompactV3QuadTeamTable,
+                BandRankHistoryCompactV3QuadComboTable,
+                ref _bandRankHistoryCompactV3QuadReady))
+        {
+            return GetBandRankHistoryFromCompactV3(
+                conn,
+                BandRankHistoryCompactV3QuadTable,
+                BandRankHistoryCompactV3QuadTeamTable,
+                BandRankHistoryCompactV3QuadComboTable,
                 teamKey,
                 rankingScope,
                 normalizedComboId,

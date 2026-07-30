@@ -80,6 +80,7 @@ public class ScraperOptionsAndModelsTests
         Assert.Equal(BandRankHistoryApiReadSource.NarrowWithWideFallback, opts.ApiReadSource);
         Assert.False(opts.CompactV3DuetsReadEnabled);
         Assert.False(opts.CompactV3TriosReadEnabled);
+        Assert.False(opts.CompactV3QuadReadEnabled);
         Assert.Equal(250_000, opts.ChunkSize);
         Assert.True(opts.RangeChunkingEnabled);
     }
