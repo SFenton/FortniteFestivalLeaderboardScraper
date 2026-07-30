@@ -7,11 +7,25 @@ SET wal_compression = on;
 SET work_mem = '768MB';
 SET max_parallel_workers_per_gather = 2;
 
-CREATE TABLE public.band_team_rank_history_points_v2_quad
-    PARTITION OF public.band_team_rank_history_points_v2
-    FOR VALUES IN ('Band_Quad');
+DO $$
+BEGIN
+    IF to_regclass('public.band_team_rank_history_points_v2_quad') IS NOT NULL THEN
+        RAISE EXCEPTION 'Quad v2 source already exists';
+    END IF;
+    IF to_regclass('public.band_team_rank_history_points_v2_quad_rebuild') IS NOT NULL THEN
+        RAISE EXCEPTION
+            'partial Quad v2 rebuild exists; inspect and remove it explicitly before retrying';
+    END IF;
+END $$;
 
-INSERT INTO public.band_team_rank_history_points_v2_quad (
+CREATE TABLE public.band_team_rank_history_points_v2_quad_rebuild
+    (LIKE public.band_team_rank_history_points_v2 INCLUDING ALL);
+
+ALTER TABLE public.band_team_rank_history_points_v2_quad_rebuild
+    ADD CONSTRAINT band_team_rank_history_points_v2_quad_rebuild_band_type_check
+    CHECK (band_type = 'Band_Quad');
+
+INSERT INTO public.band_team_rank_history_points_v2_quad_rebuild (
     band_type,
     ranking_scope,
     combo_id,
@@ -65,6 +79,34 @@ FROM public.band_team_rank_history_points_v3_quad points
 JOIN public.band_rank_history_team_v3_quad team USING (team_id)
 LEFT JOIN public.band_rank_history_combo_v3_quad combo USING (combo_ref);
 
-ANALYZE public.band_team_rank_history_points_v2_quad;
-CHECKPOINT;
+ANALYZE public.band_team_rank_history_points_v2_quad_rebuild;
 
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '30min';
+
+DO $$
+DECLARE
+    rebuilt_rows BIGINT;
+BEGIN
+    SELECT COUNT(*)
+    INTO rebuilt_rows
+    FROM public.band_team_rank_history_points_v2_quad_rebuild;
+
+    IF rebuilt_rows IS DISTINCT FROM 359383226 THEN
+        RAISE EXCEPTION
+            'Quad v2 rebuild row mismatch: expected 359383226, got %',
+            rebuilt_rows;
+    END IF;
+END $$;
+
+ALTER TABLE public.band_team_rank_history_points_v2_quad_rebuild
+    RENAME TO band_team_rank_history_points_v2_quad;
+
+ALTER TABLE public.band_team_rank_history_points_v2
+    ATTACH PARTITION public.band_team_rank_history_points_v2_quad
+    FOR VALUES IN ('Band_Quad');
+
+COMMIT;
+
+CHECKPOINT;
