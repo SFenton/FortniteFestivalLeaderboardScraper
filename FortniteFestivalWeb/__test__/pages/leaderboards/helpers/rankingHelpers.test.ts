@@ -191,6 +191,15 @@ describe('getRatingForMetric – adjusted/weighted use raw values', () => {
     const empty = { fullComboCount: 0, songsPlayed: 0, totalChartedSongs: 0, fcRate: 0 } as AccountRankingEntry;
     expect(getRatingForMetric(empty, 'fcrate')).toBe(0);
   });
+
+  it('returns the adjusted Max Score percent used for ranking', () => {
+    const maxScore = {
+      ...entry,
+      maxScorePercent: 0.936,
+      rawMaxScorePercent: 0.968,
+    } as AccountRankingEntry;
+    expect(getRatingForMetric(maxScore, 'maxscore')).toBe(0.936);
+  });
 });
 
 describe('getSongsLabel', () => {

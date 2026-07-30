@@ -344,6 +344,39 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
     }
 
     [Fact]
+    public async Task PrecomputeAllAsync_UnfilteredLeaderboardAllUsesComputedRank()
+    {
+        SeedSong("s1", "Solo_Guitar", 100000,
+            ("computed-first", 95000), ("computed-second", 90000));
+        var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        db.UpsertEntries("s1",
+        [
+            new LeaderboardEntry { AccountId = "computed-first", Score = 95000, ApiRank = 2 },
+            new LeaderboardEntry { AccountId = "computed-second", Score = 90000, ApiRank = 1 },
+        ]);
+        db.RecomputeAllRanks();
+
+        await _sut.PrecomputeAllAsync(CancellationToken.None);
+
+        var result = _sut.TryGet("lb:s1:10:");
+        Assert.NotNull(result);
+        var json = JsonDocument.Parse(result.Value.Json);
+        var instrument = json.RootElement.GetProperty("instruments")
+            .EnumerateArray()
+            .Single(x => x.GetProperty("instrument").GetString() == "Solo_Guitar");
+        var entries = instrument.GetProperty("entries");
+
+        Assert.Equal("computed-first", entries[0].GetProperty("accountId").GetString());
+        Assert.Equal(1, entries[0].GetProperty("rank").GetInt32());
+        Assert.Equal(2, entries[0].GetProperty("apiRank").GetInt32());
+        Assert.Equal("computed", entries[0].GetProperty("rankSource").GetString());
+        Assert.Equal("computed-second", entries[1].GetProperty("accountId").GetString());
+        Assert.Equal(2, entries[1].GetProperty("rank").GetInt32());
+        Assert.Equal(1, entries[1].GetProperty("apiRank").GetInt32());
+        Assert.Equal("computed", entries[1].GetProperty("rankSource").GetString());
+    }
+
+    [Fact]
     public async Task PrecomputeAllAsync_ProducesSongBandLeaderboardAllEntries()
     {
         SeedBandSong("band-song-1", "Band_Duets",

@@ -313,6 +313,8 @@
       "noSeason": "No Season",
       "noSeasonShort": "Season",
       "noScoreShort": "—",
+      "maxScoreUnavailable": "Max Score Unavailable",
+      "maxScoreUnavailableShort": "No Max",
       "atMax": "At Max",
       "atMaxShort": "Max"
     },

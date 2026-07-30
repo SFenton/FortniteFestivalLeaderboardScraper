@@ -927,6 +927,37 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task ApiLeaderboard_UnfilteredUsesComputedRankAndPreservesEpicRankAsMetadata()
+    {
+        const string songId = "computedRankSong";
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+            db.UpsertEntries(songId,
+            [
+                new LeaderboardEntry { AccountId = "computed-first", Score = 100_000, Rank = 1, ApiRank = 2 },
+                new LeaderboardEntry { AccountId = "computed-second", Score = 90_000, Rank = 2, ApiRank = 1 },
+            ]);
+            db.RecomputeAllRanks();
+        }
+
+        var response = await _client.GetAsync($"/api/leaderboard/{songId}/Solo_Guitar");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var entries = json.GetProperty("entries");
+        Assert.Equal("computed-first", entries[0].GetProperty("accountId").GetString());
+        Assert.Equal(1, entries[0].GetProperty("rank").GetInt32());
+        Assert.Equal(2, entries[0].GetProperty("apiRank").GetInt32());
+        Assert.Equal("computed", entries[0].GetProperty("rankSource").GetString());
+        Assert.Equal("computed-second", entries[1].GetProperty("accountId").GetString());
+        Assert.Equal(2, entries[1].GetProperty("rank").GetInt32());
+        Assert.Equal(1, entries[1].GetProperty("apiRank").GetInt32());
+        Assert.Equal("computed", entries[1].GetProperty("rankSource").GetString());
+    }
+
+    [Fact]
     public async Task ApiLeaderboard_UnknownInstrument_Returns404()
     {
         var response = await _client.GetAsync("/api/leaderboard/testSong1/Kazoo");
@@ -1324,7 +1355,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
-    public async Task ApiLeaderboardAll_Rank_PrefersApiRank()
+    public async Task ApiLeaderboardAll_UnfilteredRankUsesComputedOrder()
     {
         const string song = "apiRankAllSong";
         const string inst = "Solo_Guitar";
@@ -1335,9 +1366,9 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             var db = persistence.GetOrCreateInstrumentDb(inst);
             db.UpsertEntries(song, new[]
             {
-                // ApiRank=5000 from Epic backfill; computed ROW_NUMBER rank would be 1
+                // ApiRank=5000 from Epic backfill; computed ROW_NUMBER rank is 1.
                 new LeaderboardEntry { AccountId = "apiRkAcct1", Score = 90_000, ApiRank = 5000 },
-                // No ApiRank; computed ROW_NUMBER rank should be used (2)
+                // No ApiRank; computed ROW_NUMBER rank is 2.
                 new LeaderboardEntry { AccountId = "apiRkAcct2", Score = 80_000, ApiRank = 0 },
             });
         }
@@ -1351,10 +1382,12 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         {
             if (instEl.GetProperty("instrument").GetString() != inst) continue;
             var entries = instEl.GetProperty("entries");
-            // First entry: ApiRank=5000 should be used instead of computed rank 1
-            Assert.Equal(5000, entries[0].GetProperty("rank").GetInt32());
-            // Second entry: ApiRank=0, so computed rank (2) is used
+            Assert.Equal(1, entries[0].GetProperty("rank").GetInt32());
+            Assert.Equal(5000, entries[0].GetProperty("apiRank").GetInt32());
+            Assert.Equal("computed", entries[0].GetProperty("rankSource").GetString());
             Assert.Equal(2, entries[1].GetProperty("rank").GetInt32());
+            Assert.False(entries[1].TryGetProperty("apiRank", out _));
+            Assert.Equal("computed", entries[1].GetProperty("rankSource").GetString());
         }
     }
 

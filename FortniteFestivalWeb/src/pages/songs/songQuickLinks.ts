@@ -355,11 +355,21 @@ function getMaxDistanceBucket(
   instrument: InstrumentKey | null,
   t: TFunction,
 ): SectionBucket {
-  const ratio = getMaxScoreRatio(score, song, instrument);
-  if (ratio == null) {
+  if (!score || score.score <= 0) {
     return makeBucket(sortMode, 'no-score', t('filter.noScore'), t('songs.quickLinks.noScoreShort'));
   }
 
+  const maxScore = getMaxScore(song, instrument);
+  if (maxScore == null || maxScore <= 0) {
+    return makeBucket(
+      sortMode,
+      'max-unavailable',
+      t('songs.quickLinks.maxScoreUnavailable'),
+      t('songs.quickLinks.maxScoreUnavailableShort'),
+    );
+  }
+
+  const ratio = score.score / maxScore;
   if (ratio >= 1) return makeBucket(sortMode, '100', '100%', '100');
   if (ratio >= 0.99) return makeBucket(sortMode, '99', '99%+', '99+');
   if (ratio >= 0.98) return makeBucket(sortMode, '98', '98%+', '98+');
@@ -376,8 +386,16 @@ function getMaxScoreDiffBucket(
   t: TFunction,
 ): SectionBucket {
   const maxScore = getMaxScore(song, instrument);
-  if (!score || score.score <= 0 || maxScore == null) {
+  if (!score || score.score <= 0) {
     return makeBucket(sortMode, 'no-score', t('filter.noScore'), t('songs.quickLinks.noScoreShort'));
+  }
+  if (maxScore == null || maxScore <= 0) {
+    return makeBucket(
+      sortMode,
+      'max-unavailable',
+      t('songs.quickLinks.maxScoreUnavailable'),
+      t('songs.quickLinks.maxScoreUnavailableShort'),
+    );
   }
 
   const diff = score.score - maxScore;
@@ -409,14 +427,6 @@ function getBestLastPlayed(byInstrument: ReadonlyMap<InstrumentKey, PlayerScore>
     }
   }
   return best;
-}
-
-function getMaxScoreRatio(score: PlayerScore | undefined, song: Song, instrument: InstrumentKey | null): number | null {
-  const maxScore = getMaxScore(song, instrument);
-  if (!score || score.score <= 0 || maxScore == null || maxScore <= 0) {
-    return null;
-  }
-  return score.score / maxScore;
 }
 
 function getMaxScore(song: Song, instrument: InstrumentKey | null): number | undefined {

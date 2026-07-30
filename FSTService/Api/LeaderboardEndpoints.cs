@@ -394,10 +394,14 @@ public static partial class ApiEndpoints
                 e.AccountId,
                 DisplayName = names.GetValueOrDefault(e.AccountId),
                 e.Score,
-                Rank = LeaderboardResponseRanks.Resolve(e.ApiRank, e.Rank, e.Rank, useFilteredRank, exactRemovedAbove),
+                Rank = useFilteredRank
+                    ? LeaderboardResponseRanks.Resolve(e.ApiRank, e.Rank, e.Rank, true, exactRemovedAbove)
+                    : e.Rank,
                 LocalRank = useFilteredRank ? e.Rank : (int?)null,
                 ApiRank = e.ApiRank > 0 ? e.ApiRank : (int?)null,
-                RankSource = LeaderboardResponseRanks.ResolveSource(e.ApiRank, e.Rank, e.Rank, useFilteredRank, exactRemovedAbove),
+                RankSource = useFilteredRank
+                    ? LeaderboardResponseRanks.ResolveSource(e.ApiRank, e.Rank, e.Rank, true, exactRemovedAbove)
+                    : LeaderboardResponseRanks.ComputedRankSource,
                 e.Accuracy,
                 e.IsFullCombo,
                 e.Stars,
@@ -557,10 +561,14 @@ public static partial class ApiEndpoints
                     e.AccountId,
                     DisplayName = names.GetValueOrDefault(e.AccountId),
                     e.Score,
-                    Rank = LeaderboardResponseRanks.Resolve(e.ApiRank, e.Rank, e.Rank, ri.UseFilteredRank, ri.ExactRemovedAbove),
+                    Rank = ri.UseFilteredRank
+                        ? LeaderboardResponseRanks.Resolve(e.ApiRank, e.Rank, e.Rank, true, ri.ExactRemovedAbove)
+                        : e.Rank,
                     LocalRank = ri.UseFilteredRank ? e.Rank : (int?)null,
                     ApiRank = e.ApiRank > 0 ? e.ApiRank : (int?)null,
-                    RankSource = LeaderboardResponseRanks.ResolveSource(e.ApiRank, e.Rank, e.Rank, ri.UseFilteredRank, ri.ExactRemovedAbove),
+                    RankSource = ri.UseFilteredRank
+                        ? LeaderboardResponseRanks.ResolveSource(e.ApiRank, e.Rank, e.Rank, true, ri.ExactRemovedAbove)
+                        : LeaderboardResponseRanks.ComputedRankSource,
                     e.Accuracy,
                     e.IsFullCombo,
                     e.Stars,

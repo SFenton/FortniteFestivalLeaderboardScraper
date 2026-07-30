@@ -22,7 +22,7 @@ export function getRatingForMetric(entry: AccountRankingEntry, metric: RankingMe
     case 'weighted': return entry.rawWeightedRating ?? entry.weightedRating;
     case 'fcrate': return entry.totalChartedSongs > 0 ? entry.fullComboCount / entry.totalChartedSongs : 0;
     case 'totalscore': return entry.totalScore;
-    case 'maxscore': return entry.rawMaxScorePercent ?? entry.maxScorePercent;
+    case 'maxscore': return entry.maxScorePercent;
   }
 }
 
