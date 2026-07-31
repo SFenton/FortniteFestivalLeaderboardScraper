@@ -58,9 +58,8 @@ public sealed class EndpointPrecomputerWiringTests : IDisposable
     }
 
     /// <summary>
-    /// Stores a precomputed JSON response under the given cache key,
-    /// then verifies TryGet retrieves it with a non-null ETag.
-    /// This proves the Store→TryGet pipeline works for each cache key pattern.
+    /// Captures a precomputed JSON response under the given cache key, verifies
+    /// Store does not publish it directly, then simulates complete publication.
     /// </summary>
     private void StoreAndVerify(string cacheKey, object payload)
     {
@@ -70,7 +69,12 @@ public sealed class EndpointPrecomputerWiringTests : IDisposable
         // Use reflection to call the private Store method
         var storeMethod = typeof(ScrapeTimePrecomputer)
             .GetMethod("Store", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-        storeMethod.Invoke(_precomputer, new object?[] { cacheKey, json, null });
+        var entries = new List<(string Key, byte[] Json, string ETag)>();
+        storeMethod.Invoke(_precomputer, new object?[] { cacheKey, json, entries });
+
+        Assert.Null(_precomputer.TryGet(cacheKey));
+        Assert.Single(entries);
+        _metaDb.BulkSetCachedResponses(entries);
 
         var result = _precomputer.TryGet(cacheKey);
         Assert.NotNull(result);
@@ -91,7 +95,9 @@ public sealed class EndpointPrecomputerWiringTests : IDisposable
     [Fact]
     public void PlayerHistory_CacheKey_RoundTrips()
     {
-        StoreAndVerify("history:user1", new { accountId = "user1", count = 0, history = Array.Empty<object>() });
+        StoreAndVerify(
+            ScrapeTimePrecomputer.PlayerHistoryCacheKey("user1"),
+            new { accountId = "user1", count = 0, history = Array.Empty<object>() });
     }
 
     [Fact]

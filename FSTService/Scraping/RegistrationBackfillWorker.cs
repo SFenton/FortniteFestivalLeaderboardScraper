@@ -14,6 +14,7 @@ public sealed class RegistrationBackfillWorker : BackgroundService
     private readonly FestivalService _festivalService;
     private readonly CyclicalSongMachine _cyclicalMachine;
     private readonly BackfillOrchestrator _backfillOrchestrator;
+    private readonly BackgroundWorkCoordinator _coordinator;
     private readonly IOptions<ScraperOptions> _options;
     private readonly ILogger<RegistrationBackfillWorker> _log;
 
@@ -22,6 +23,7 @@ public sealed class RegistrationBackfillWorker : BackgroundService
         FestivalService festivalService,
         CyclicalSongMachine cyclicalMachine,
         BackfillOrchestrator backfillOrchestrator,
+        BackgroundWorkCoordinator coordinator,
         IOptions<ScraperOptions> options,
         ILogger<RegistrationBackfillWorker> log)
     {
@@ -29,6 +31,7 @@ public sealed class RegistrationBackfillWorker : BackgroundService
         _festivalService = festivalService;
         _cyclicalMachine = cyclicalMachine;
         _backfillOrchestrator = backfillOrchestrator;
+        _coordinator = coordinator;
         _options = options;
         _log = log;
     }
@@ -42,25 +45,47 @@ public sealed class RegistrationBackfillWorker : BackgroundService
 
             while (!stoppingToken.IsCancellationRequested)
             {
-                var opts = _options.Value;
-                var claimed = await DrainQueuedRegistrationBackfillsAsync(
-                    opts.RegistrationBackfillBatchSize,
-                    (batchSize, token) => _backfillOrchestrator.RunQueuedRegistrationBackfillBatchAsync(
-                        _festivalService,
-                        batchSize,
-                        token),
-                    claimedInBatch => _log.LogInformation(
-                        "Claimed {Count} queued registration backfill account(s).",
-                        claimedInBatch),
-                    stoppingToken);
-
-                if (claimed > 0)
+                if (!_coordinator.TryBeginBackgroundOperation(out var operationLease))
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
                     continue;
+                }
 
-                var delay = opts.RegistrationBackfillPollInterval <= TimeSpan.Zero
-                    ? TimeSpan.FromSeconds(30)
-                    : opts.RegistrationBackfillPollInterval;
-                await Task.Delay(delay, stoppingToken);
+                try
+                {
+                    using (operationLease)
+                    using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+                               stoppingToken,
+                               _coordinator.BackgroundToken))
+                    {
+                        var opts = _options.Value;
+                        var claimed = await DrainQueuedRegistrationBackfillsAsync(
+                            opts.RegistrationBackfillBatchSize,
+                            (batchSize, token) => _backfillOrchestrator.RunQueuedRegistrationBackfillBatchAsync(
+                                _festivalService,
+                                batchSize,
+                                token),
+                            claimedInBatch => _log.LogInformation(
+                                "Claimed {Count} queued registration backfill account(s).",
+                                claimedInBatch),
+                            linkedCts.Token);
+
+                        if (claimed > 0)
+                            continue;
+
+                        var delay = opts.RegistrationBackfillPollInterval <= TimeSpan.Zero
+                            ? TimeSpan.FromSeconds(30)
+                            : opts.RegistrationBackfillPollInterval;
+                        await Task.Delay(delay, linkedCts.Token);
+                    }
+                }
+                catch (OperationCanceledException) when (
+                    !stoppingToken.IsCancellationRequested
+                    && _coordinator.ScrapeRunning)
+                {
+                    _log.LogInformation(
+                        "Registration backfill paused at the scrape publication boundary.");
+                }
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

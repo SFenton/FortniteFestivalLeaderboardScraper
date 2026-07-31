@@ -196,7 +196,7 @@ public sealed class BackfillOrchestrator
                 {
                     _resultProcessor.FlushStagedData(user.AccountId);
                     _persistence.Meta.CompleteBackfill(user.AccountId, rankingsPending: true);
-                    _rivalsOrchestrator.ComputeForUser(user.AccountId);
+                    _persistence.Meta.QueueRivalsRecompute(user.AccountId);
                     _precomputer.PrecomputeUser(user.AccountId);
                     _ = _notifications.NotifyBackfillCompleteAsync(user.AccountId);
 
@@ -223,13 +223,23 @@ public sealed class BackfillOrchestrator
             }
 
             if (result.EntriesUpdated > 0)
-                _leaderboardAllCache.InvalidateAll();
+            {
+                _log.LogDebug(
+                    "Preserving published leaderboard cache after {UpdatedEntries} backfill update(s); frozen={Frozen}.",
+                    result.EntriesUpdated,
+                    _leaderboardAllCache.IsFrozen);
+            }
 
             return users.Count;
         }
-        catch (OperationCanceledException) { throw; }
+        catch (OperationCanceledException)
+        {
+            _resultProcessor.DiscardStagedData(accountIds);
+            throw;
+        }
         catch (Exception ex)
         {
+            _resultProcessor.DiscardStagedData(accountIds);
             _log.LogError(ex, "Queued registration backfill batch failed. Returning accounts to the deferred queue.");
             foreach (var user in users)
             {
@@ -357,8 +367,8 @@ public sealed class BackfillOrchestrator
                 try
                 {
                     _resultProcessor.FlushStagedData(user.AccountId);
-                    _persistence.Meta.CompleteBackfill(user.AccountId);
-                    _rivalsOrchestrator.ComputeForUser(user.AccountId);
+                    _persistence.Meta.CompleteBackfill(user.AccountId, rankingsPending: true);
+                    _persistence.Meta.QueueRivalsRecompute(user.AccountId);
                     _precomputer.PrecomputeUser(user.AccountId);
                     _ = _notifications.NotifyBackfillCompleteAsync(user.AccountId);
 
@@ -390,11 +400,21 @@ public sealed class BackfillOrchestrator
             }
 
             if (result.EntriesUpdated > 0)
-                _leaderboardAllCache.InvalidateAll();
+            {
+                _log.LogDebug(
+                    "Preserving published leaderboard cache after {UpdatedEntries} backfill update(s); frozen={Frozen}.",
+                    result.EntriesUpdated,
+                    _leaderboardAllCache.IsFrozen);
+            }
         }
-        catch (OperationCanceledException) { throw; }
+        catch (OperationCanceledException)
+        {
+            _resultProcessor.DiscardStagedData(accountIds);
+            throw;
+        }
         catch (Exception ex)
         {
+            _resultProcessor.DiscardStagedData(accountIds);
             _log.LogError(ex, "Backfill via SongProcessingMachine failed. Will retry next pass.");
         }
         finally

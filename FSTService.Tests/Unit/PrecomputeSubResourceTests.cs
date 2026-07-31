@@ -87,6 +87,7 @@ public sealed class PrecomputeSubResourceTests : IDisposable
     private void SeedRivals(string userId, string combo, List<UserRivalRow> rivals, List<RivalSongSampleRow> samples)
     {
         _metaDb.EnsureRivalsStatus(userId);
+        _metaDb.StartRivals(userId);
         _metaDb.CompleteRivals(userId, 1, rivals.Count);
         _metaDb.ReplaceRivalsData(userId, rivals, samples);
     }
@@ -302,7 +303,7 @@ public sealed class PrecomputeSubResourceTests : IDisposable
 
         await _sut.PrecomputeAllAsync(CancellationToken.None);
 
-        var result = _sut.TryGet("history:u1");
+        var result = _sut.TryGet(ScrapeTimePrecomputer.PlayerHistoryCacheKey("u1"));
         Assert.NotNull(result);
 
         var json = JsonDocument.Parse(result.Value.Json);
@@ -585,7 +586,7 @@ public sealed class PrecomputeSubResourceTests : IDisposable
 
         // No player sub-resource keys should exist
         Assert.Null(_sut.TryGet("playerstats:any"));
-        Assert.Null(_sut.TryGet("history:any"));
+        Assert.Null(_sut.TryGet(ScrapeTimePrecomputer.PlayerHistoryCacheKey("any")));
         Assert.Null(_sut.TryGet("syncstatus:any"));
         Assert.Null(_sut.TryGet("rivals-overview:any"));
         Assert.Null(_sut.TryGet("rivals-all:any"));
@@ -604,10 +605,24 @@ public sealed class PrecomputeSubResourceTests : IDisposable
         // sync-status should exist (always for registered users)
         Assert.NotNull(_sut.TryGet("syncstatus:u1"));
         // history should exist (even if empty)
-        Assert.NotNull(_sut.TryGet("history:u1"));
+        Assert.NotNull(_sut.TryGet(ScrapeTimePrecomputer.PlayerHistoryCacheKey("u1")));
         // rivals should NOT exist (no rivals data)
         Assert.Null(_sut.TryGet("rivals-overview:u1"));
         Assert.Null(_sut.TryGet("rivals-all:u1"));
+    }
+
+    [Fact]
+    public async Task PrecomputeAllAsync_RegisteredUserWithoutScores_PublishesEmptyProfile()
+    {
+        RegisterUser("empty-user");
+
+        await _sut.PrecomputeAllAsync(CancellationToken.None);
+
+        var result = _sut.TryGet("player:empty-user:::");
+        Assert.NotNull(result);
+        var json = JsonDocument.Parse(result.Value.Json);
+        Assert.Equal(0, json.RootElement.GetProperty("totalScores").GetInt32());
+        Assert.Empty(json.RootElement.GetProperty("scores").EnumerateArray());
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -615,7 +630,7 @@ public sealed class PrecomputeSubResourceTests : IDisposable
     // ═══════════════════════════════════════════════════════════════
 
     [Fact]
-    public void PrecomputeUser_ProducesPlayerAndSubResources()
+    public void PrecomputeUser_DoesNotChangePublishedOrSharedStagingCache()
     {
         RegisterUser("u1");
         SeedSong("s1", "Solo_Guitar", 100000, ("u1", 95000));
@@ -624,8 +639,20 @@ public sealed class PrecomputeSubResourceTests : IDisposable
 
         _sut.PrecomputeUser("u1");
 
-        Assert.NotNull(_sut.TryGet("player:u1:::"));
-        Assert.NotNull(_sut.TryGet("history:u1"));
-        Assert.NotNull(_sut.TryGet("syncstatus:u1"));
+        Assert.Null(_sut.TryGet("player:u1:::"));
+        Assert.Null(_sut.TryGet(ScrapeTimePrecomputer.PlayerHistoryCacheKey("u1")));
+        Assert.Null(_sut.TryGet("syncstatus:u1"));
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT
+                (SELECT COUNT(*) FROM api_response_cache),
+                (SELECT COUNT(*) FROM api_response_cache_staging)
+            """;
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(0, reader.GetInt64(0));
+        Assert.Equal(0, reader.GetInt64(1));
     }
 }

@@ -334,6 +334,18 @@ public class BatchResultProcessor
         _stagingAccountIds = null;
     }
 
+    /// <summary>Discard all buffered writes for the given accounts.</summary>
+    public void DiscardStagedData(IEnumerable<string> accountIds)
+    {
+        foreach (var accountId in accountIds.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            _stagedEntries.TryRemove(accountId, out _);
+            _stagedScoreChanges.TryRemove(accountId, out _);
+            _stagedPopulation.TryRemove(accountId, out _);
+            _stagedBackfillProgress.TryRemove(accountId, out _);
+        }
+    }
+
     /// <summary>Returns true if the account is in staging mode.</summary>
     private bool IsStaged(string accountId) => _stagingAccountIds?.Contains(accountId) == true;
 

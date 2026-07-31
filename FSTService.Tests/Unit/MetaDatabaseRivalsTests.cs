@@ -37,6 +37,41 @@ public sealed class MetaDatabaseRivalsTests : IDisposable
     }
 
     [Fact]
+    public void QueueRivalsRecompute_resets_existing_terminal_state_to_pending()
+    {
+        Db.EnsureRivalsStatus("acct_1");
+        Db.StartRivals("acct_1", totalCombosToCompute: 9);
+        Db.CompleteRivals("acct_1", combosComputed: 7, rivalsFound: 42);
+
+        Db.QueueRivalsRecompute("acct_1");
+
+        var status = Db.GetRivalsStatus("acct_1");
+        Assert.NotNull(status);
+        Assert.Equal("pending", status.Status);
+        Assert.Equal(0, status.CombosComputed);
+        Assert.Equal(0, status.TotalCombosToCompute);
+        Assert.Equal(0, status.RivalsFound);
+        Assert.Null(status.StartedAt);
+        Assert.Null(status.CompletedAt);
+        Assert.Null(status.ErrorMessage);
+        Assert.Contains("acct_1", Db.GetPendingRivalsAccounts());
+    }
+
+    [Fact]
+    public void QueueRivalsRecompute_during_active_run_is_not_lost_when_old_run_completes()
+    {
+        Db.EnsureRivalsStatus("acct_1");
+        Db.StartRivals("acct_1", totalCombosToCompute: 9);
+        Db.QueueRivalsRecompute("acct_1");
+
+        var completed = Db.CompleteRivals("acct_1", combosComputed: 9, rivalsFound: 12);
+
+        Assert.False(completed);
+        Assert.Equal("pending", Db.GetRivalsStatus("acct_1")!.Status);
+        Assert.Contains("acct_1", Db.GetPendingRivalsAccounts());
+    }
+
+    [Fact]
     public void StartRivals_sets_in_progress()
     {
         Db.EnsureRivalsStatus("acct_1");
@@ -78,6 +113,7 @@ public sealed class MetaDatabaseRivalsTests : IDisposable
         Db.EnsureRivalsStatus("acct_2");
         Db.EnsureRivalsStatus("acct_3");
         Db.StartRivals("acct_2");
+        Db.StartRivals("acct_3");
         Db.CompleteRivals("acct_3", 1, 1);
 
         var pending = Db.GetPendingRivalsAccounts();

@@ -30,6 +30,8 @@ public sealed class MetaDatabase : IMetaDatabase
     internal const string LeaderboardStagingTable = "leaderboard_staging_v2";
     internal const string FailedCandidateReadIsolationFailurePhase = "capacity_watchdog_abandoned";
     internal const string NoProgressReadIsolationFailurePhase = "post_process_no_progress_abandoned";
+    internal const string PostProcessReadIsolationFailurePhase = "post_process";
+    internal const string PublicationReadIsolationFailurePhase = "publication";
     internal const string FailedCandidateReadIsolationReason = "failed-candidate";
     private const string BandRankHistoryCompactV3StateTable = "band_rank_history_compact_v3_state";
     private const string BandRankHistoryCompactV3DuetsTable = "band_team_rank_history_points_v3_duets";
@@ -45,6 +47,8 @@ public sealed class MetaDatabase : IMetaDatabase
     [
         FailedCandidateReadIsolationFailurePhase,
         NoProgressReadIsolationFailurePhase,
+        PostProcessReadIsolationFailurePhase,
+        PublicationReadIsolationFailurePhase,
     ];
     private const string LeaderboardStagingReadColumns = "scrape_id, song_id, instrument, page_num, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, staged_at";
 
@@ -423,6 +427,18 @@ public sealed class MetaDatabase : IMetaDatabase
             verify.Parameters.AddWithValue("id", (int)scrapeId);
             if (verify.ExecuteScalar() is not bool isCompleted || !isCompleted)
                 throw new InvalidOperationException($"Scrape run {scrapeId} cannot be published before it is completed.");
+        }
+
+        if (promoteCachedResponses)
+        {
+            using var verifyCache = conn.CreateCommand();
+            verifyCache.Transaction = tx;
+            verifyCache.CommandText = "SELECT EXISTS (SELECT 1 FROM api_response_cache_staging)";
+            if (verifyCache.ExecuteScalar() is not bool hasStagedResponses || !hasStagedResponses)
+            {
+                throw new InvalidOperationException(
+                    $"Scrape run {scrapeId} cannot be published because its API response cache staging table is empty.");
+            }
         }
 
         using (var notificationGate = conn.CreateCommand())
@@ -2865,14 +2881,53 @@ public sealed class MetaDatabase : IMetaDatabase
 
     private const string BackfillStatusColumns = "account_id, status, songs_checked, entries_found, total_songs_to_check, started_at, completed_at, last_resumed_at, error_message, rankings_pending, deferred_reason";
 
-    public void EnqueueBackfill(string accountId, int totalSongsToCheck) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO backfill_status (account_id, status, total_songs_to_check, rankings_pending, deferred_reason) VALUES (@id, 'pending', @total, FALSE, NULL) ON CONFLICT(account_id) DO UPDATE SET status = 'pending', songs_checked = CASE WHEN backfill_status.status = 'complete' THEN 0 ELSE backfill_status.songs_checked END, entries_found = CASE WHEN backfill_status.status = 'complete' THEN 0 ELSE backfill_status.entries_found END, started_at = CASE WHEN backfill_status.status = 'complete' THEN NULL ELSE backfill_status.started_at END, completed_at = CASE WHEN backfill_status.status = 'complete' THEN NULL ELSE backfill_status.completed_at END, last_resumed_at = CASE WHEN backfill_status.status = 'complete' THEN NULL ELSE backfill_status.last_resumed_at END, error_message = NULL, total_songs_to_check = EXCLUDED.total_songs_to_check, rankings_pending = FALSE, deferred_reason = NULL WHERE backfill_status.status != 'complete' OR EXCLUDED.total_songs_to_check > backfill_status.total_songs_to_check"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("total", totalSongsToCheck); cmd.ExecuteNonQuery(); }
-    public void DeferBackfill(string accountId, int totalSongsToCheck, string reason) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO backfill_status (account_id, status, total_songs_to_check, rankings_pending, deferred_reason) VALUES (@id, 'deferred', @total, FALSE, @reason) ON CONFLICT(account_id) DO UPDATE SET status = 'deferred', songs_checked = CASE WHEN backfill_status.status = 'complete' THEN 0 ELSE backfill_status.songs_checked END, entries_found = CASE WHEN backfill_status.status = 'complete' THEN 0 ELSE backfill_status.entries_found END, started_at = CASE WHEN backfill_status.status = 'complete' THEN NULL ELSE backfill_status.started_at END, completed_at = CASE WHEN backfill_status.status = 'complete' THEN NULL ELSE backfill_status.completed_at END, last_resumed_at = CASE WHEN backfill_status.status = 'complete' THEN NULL ELSE backfill_status.last_resumed_at END, error_message = NULL, total_songs_to_check = EXCLUDED.total_songs_to_check, rankings_pending = FALSE, deferred_reason = EXCLUDED.deferred_reason WHERE backfill_status.status != 'complete' OR EXCLUDED.total_songs_to_check > backfill_status.total_songs_to_check"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("total", totalSongsToCheck); cmd.Parameters.AddWithValue("reason", reason); cmd.ExecuteNonQuery(); }
+    public void EnqueueBackfill(string accountId, int totalSongsToCheck) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO backfill_status (account_id, status, total_songs_to_check, rankings_pending, deferred_reason) VALUES (@id, 'pending', @total, FALSE, NULL) ON CONFLICT(account_id) DO UPDATE SET status = 'pending', songs_checked = CASE WHEN backfill_status.status = 'complete' THEN 0 ELSE backfill_status.songs_checked END, entries_found = CASE WHEN backfill_status.status = 'complete' THEN 0 ELSE backfill_status.entries_found END, started_at = CASE WHEN backfill_status.status = 'complete' THEN NULL ELSE backfill_status.started_at END, completed_at = CASE WHEN backfill_status.status = 'complete' THEN NULL ELSE backfill_status.completed_at END, last_resumed_at = CASE WHEN backfill_status.status = 'complete' THEN NULL ELSE backfill_status.last_resumed_at END, error_message = NULL, total_songs_to_check = EXCLUDED.total_songs_to_check, rankings_pending = backfill_status.rankings_pending, deferred_reason = NULL WHERE backfill_status.status != 'complete' OR EXCLUDED.total_songs_to_check > backfill_status.total_songs_to_check"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("total", totalSongsToCheck); cmd.ExecuteNonQuery(); }
+    public void DeferBackfill(string accountId, int totalSongsToCheck, string reason) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO backfill_status (account_id, status, total_songs_to_check, rankings_pending, deferred_reason) VALUES (@id, 'deferred', @total, FALSE, @reason) ON CONFLICT(account_id) DO UPDATE SET status = 'deferred', songs_checked = CASE WHEN backfill_status.status = 'complete' THEN 0 ELSE backfill_status.songs_checked END, entries_found = CASE WHEN backfill_status.status = 'complete' THEN 0 ELSE backfill_status.entries_found END, started_at = CASE WHEN backfill_status.status = 'complete' THEN NULL ELSE backfill_status.started_at END, completed_at = CASE WHEN backfill_status.status = 'complete' THEN NULL ELSE backfill_status.completed_at END, last_resumed_at = CASE WHEN backfill_status.status = 'complete' THEN NULL ELSE backfill_status.last_resumed_at END, error_message = NULL, total_songs_to_check = EXCLUDED.total_songs_to_check, rankings_pending = backfill_status.rankings_pending, deferred_reason = EXCLUDED.deferred_reason WHERE backfill_status.status != 'complete' OR EXCLUDED.total_songs_to_check > backfill_status.total_songs_to_check"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("total", totalSongsToCheck); cmd.Parameters.AddWithValue("reason", reason); cmd.ExecuteNonQuery(); }
     public List<BackfillStatusInfo> GetPendingBackfills() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT {BackfillStatusColumns} FROM backfill_status WHERE status IN ('pending', 'in_progress')"; var list = new List<BackfillStatusInfo>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadBackfillStatus(r)); return list; }
     public List<BackfillStatusInfo> GetDeferredBackfills() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT {BackfillStatusColumns} FROM backfill_status WHERE status IN ('deferred', 'in_progress')"; var list = new List<BackfillStatusInfo>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadBackfillStatus(r)); return list; }
     public BackfillStatusInfo? GetBackfillStatus(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT {BackfillStatusColumns} FROM backfill_status WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); using var r = cmd.ExecuteReader(); return r.Read() ? ReadBackfillStatus(r) : null; }
     public void StartBackfill(string accountId) { SimpleUpdate("UPDATE backfill_status SET status = 'in_progress', started_at = COALESCE(started_at, @now), last_resumed_at = @now, deferred_reason = NULL WHERE account_id = @id", accountId); }
-    public void CompleteBackfill(string accountId, bool rankingsPending = false) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE backfill_status SET status = 'complete', completed_at = @now, rankings_pending = @rankingsPending, deferred_reason = NULL WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.Parameters.AddWithValue("rankingsPending", rankingsPending); cmd.ExecuteNonQuery(); }
-    public void ClearBackfillRankingsPending(IEnumerable<string> accountIds) { var ids = accountIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(); if (ids.Length == 0) return; using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE backfill_status SET rankings_pending = FALSE WHERE rankings_pending = TRUE AND account_id = ANY(@ids)"; cmd.Parameters.AddWithValue("ids", ids); cmd.ExecuteNonQuery(); }
+    public void CompleteBackfill(string accountId, bool rankingsPending = false) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE backfill_status SET status = 'complete', completed_at = @now, rankings_pending = rankings_pending OR @rankingsPending, deferred_reason = NULL WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.Parameters.AddWithValue("rankingsPending", rankingsPending); cmd.ExecuteNonQuery(); }
+    public IReadOnlyList<SoloCurrentProjectionScopeKey> GetBackfillProjectionScopesCompletedBefore(
+        IEnumerable<string> accountIds,
+        DateTime completedBeforeUtc)
+    {
+        var ids = accountIds
+            .Where(static id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (ids.Length == 0)
+            return [];
+
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT DISTINCT overlay.song_id, overlay.instrument
+            FROM backfill_status backfill
+            JOIN leaderboard_entries_overlay overlay
+              ON overlay.account_id = backfill.account_id
+            WHERE backfill.account_id = ANY(@ids)
+              AND backfill.status = 'complete'
+              AND backfill.rankings_pending = TRUE
+              AND backfill.completed_at IS NOT NULL
+              AND backfill.completed_at <= @completedBefore
+            ORDER BY overlay.instrument, overlay.song_id
+            """;
+        cmd.Parameters.AddWithValue("ids", ids);
+        cmd.Parameters.AddWithValue("completedBefore", completedBeforeUtc);
+
+        var scopes = new List<SoloCurrentProjectionScopeKey>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            scopes.Add(new SoloCurrentProjectionScopeKey(
+                reader.GetString(0),
+                reader.GetString(1)));
+        }
+
+        return scopes;
+    }
+    public void ClearBackfillRankingsPending(IEnumerable<string> accountIds, DateTime completedBeforeUtc) { var ids = accountIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(); if (ids.Length == 0) return; using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE backfill_status SET rankings_pending = FALSE WHERE rankings_pending = TRUE AND account_id = ANY(@ids) AND completed_at IS NOT NULL AND completed_at <= @completedBefore"; cmd.Parameters.AddWithValue("ids", ids); cmd.Parameters.AddWithValue("completedBefore", completedBeforeUtc); cmd.ExecuteNonQuery(); }
     public void FailBackfill(string accountId, string errorMessage) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE backfill_status SET status = 'error', error_message = @err, deferred_reason = NULL WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("err", errorMessage); cmd.ExecuteNonQuery(); }
     public void UpdateBackfillProgress(string accountId, int songsChecked, int entriesFound) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE backfill_status SET songs_checked = @checked, entries_found = @found WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("checked", songsChecked); cmd.Parameters.AddWithValue("found", entriesFound); cmd.ExecuteNonQuery(); }
     public void MarkBackfillSongChecked(string accountId, string songId, string instrument, bool entryFound) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO backfill_progress (account_id, song_id, instrument, checked, entry_found, checked_at) VALUES (@acct, @song, @inst, 1, @found, @now) ON CONFLICT(account_id, song_id, instrument) DO UPDATE SET checked = 1, entry_found = EXCLUDED.entry_found, checked_at = EXCLUDED.checked_at"; cmd.Parameters.AddWithValue("acct", accountId); cmd.Parameters.AddWithValue("song", songId); cmd.Parameters.AddWithValue("inst", instrument); cmd.Parameters.AddWithValue("found", entryFound ? 1 : 0); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }
@@ -3114,9 +3169,10 @@ public sealed class MetaDatabase : IMetaDatabase
     // ── Rivals ───────────────────────────────────────────────────────
 
     public void EnsureRivalsStatus(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO rivals_status (account_id, status) VALUES (@id, 'pending') ON CONFLICT DO NOTHING"; cmd.Parameters.AddWithValue("id", accountId); cmd.ExecuteNonQuery(); }
+    public void QueueRivalsRecompute(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO rivals_status (account_id, status) VALUES (@id, 'pending') ON CONFLICT (account_id) DO UPDATE SET status = 'pending', combos_computed = 0, total_combos_to_compute = 0, rivals_found = 0, started_at = NULL, completed_at = NULL, error_message = NULL"; cmd.Parameters.AddWithValue("id", accountId); cmd.ExecuteNonQuery(); }
     public void StartRivals(string accountId, int totalCombosToCompute = 0) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE rivals_status SET status = 'in_progress', started_at = @now, total_combos_to_compute = @total, combos_computed = 0, rivals_found = 0, error_message = NULL WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.Parameters.AddWithValue("total", totalCombosToCompute); cmd.ExecuteNonQuery(); }
-    public void CompleteRivals(string accountId, int combosComputed, int rivalsFound) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE rivals_status SET status = 'complete', combos_computed = @combos, rivals_found = @rivals, algorithm_version = @version, completed_at = @now, error_message = NULL WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("combos", combosComputed); cmd.Parameters.AddWithValue("rivals", rivalsFound); cmd.Parameters.AddWithValue("version", RivalsAlgorithmVersion.SongRivals); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }
-    public void FailRivals(string accountId, string errorMessage) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE rivals_status SET status = 'error', error_message = @err, completed_at = @now WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("err", errorMessage); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }
+    public bool CompleteRivals(string accountId, int combosComputed, int rivalsFound) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE rivals_status SET status = 'complete', combos_computed = @combos, rivals_found = @rivals, algorithm_version = @version, completed_at = @now, error_message = NULL WHERE account_id = @id AND status = 'in_progress'"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("combos", combosComputed); cmd.Parameters.AddWithValue("rivals", rivalsFound); cmd.Parameters.AddWithValue("version", RivalsAlgorithmVersion.SongRivals); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); return cmd.ExecuteNonQuery() == 1; }
+    public void FailRivals(string accountId, string errorMessage) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE rivals_status SET status = 'error', error_message = @err, completed_at = @now WHERE account_id = @id AND status = 'in_progress'"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("err", errorMessage); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }
     public RivalsStatusInfo? GetRivalsStatus(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id, status, combos_computed, total_combos_to_compute, rivals_found, algorithm_version, started_at, completed_at, error_message FROM rivals_status WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); using var r = cmd.ExecuteReader(); if (!r.Read()) return null; return new RivalsStatusInfo { AccountId = r.GetString(0), Status = r.GetString(1), CombosComputed = r.GetInt32(2), TotalCombosToCompute = r.GetInt32(3), RivalsFound = r.GetInt32(4), AlgorithmVersion = r.GetInt32(5), StartedAt = r.IsDBNull(6) ? null : r.GetDateTime(6).ToString("o"), CompletedAt = r.IsDBNull(7) ? null : r.GetDateTime(7).ToString("o"), ErrorMessage = r.IsDBNull(8) ? null : r.GetString(8) }; }
     public List<string> GetPendingRivalsAccounts() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id FROM rivals_status WHERE status IN ('pending', 'in_progress')"; var list = new List<string>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(r.GetString(0)); return list; }
     public int ResetStaleRivals() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE rivals_status SET status = 'pending', combos_computed = 0, rivals_found = 0, error_message = NULL WHERE status = 'complete' AND (rivals_found = 0 OR algorithm_version < @version)"; cmd.Parameters.AddWithValue("version", RivalsAlgorithmVersion.SongRivals); return cmd.ExecuteNonQuery(); }
@@ -5195,8 +5251,14 @@ public sealed class MetaDatabase : IMetaDatabase
         using var conn = _ds.OpenConnection();
         EnsureBandRankHistoryPollingSchema(conn);
 
-        var rankingsTable = ResolveBandRankingReadTable(conn, bandType);
-        var statsTable = ResolveBandRankingStatsReadTable(conn, bandType);
+        var rankingsTable = ResolveBandRankingReadTable(
+            conn,
+            bandType,
+            options.UsePublishedRankings);
+        var statsTable = ResolveBandRankingStatsReadTable(
+            conn,
+            bandType,
+            options.UsePublishedRankings);
 
         if (options.UseLatestState)
             SeedBandRankHistoryLatestState(conn, bandType, options.CommandTimeoutSeconds, ct);
@@ -7231,6 +7293,20 @@ public sealed class MetaDatabase : IMetaDatabase
                 WHERE band_type = @bandType
                   AND snapshot_date = @snapshotDate
                   AND scrape_id < @scrapeId
+                  AND (
+                      NOT EXISTS (
+                          SELECT 1
+                          FROM scrape_publication_state
+                          WHERE id = TRUE
+                            AND published_scrape_id IS NOT NULL
+                      )
+                      OR EXISTS (
+                          SELECT 1
+                          FROM scrape_publication_state
+                          WHERE id = TRUE
+                            AND published_scrape_id = @scrapeId
+                      )
+                  )
                   AND status IN ('queued', 'running', 'paused', 'failed')";
             supersede.Parameters.AddWithValue("bandType", bandType);
             supersede.Parameters.AddWithValue("snapshotDate", snapshotDate);
@@ -7268,7 +7344,10 @@ public sealed class MetaDatabase : IMetaDatabase
         return ReadBandRankHistoryJob(reader);
     }
 
-    public BandRankHistoryJobInfo? GetNextBandRankHistoryJob(int maxAttempts = int.MaxValue, TimeSpan? retryDelay = null)
+    public BandRankHistoryJobInfo? GetNextBandRankHistoryJob(
+        int maxAttempts = int.MaxValue,
+        TimeSpan? retryDelay = null,
+        bool requirePublishedScrape = false)
     {
         var effectiveMaxAttempts = Math.Max(1, maxAttempts);
         var effectiveRetryDelay = retryDelay ?? TimeSpan.Zero;
@@ -7281,23 +7360,72 @@ public sealed class MetaDatabase : IMetaDatabase
         }
 
         using var cmd = conn.CreateCommand();
+        if (requirePublishedScrape)
+        {
+            using var supersede = conn.CreateCommand();
+            supersede.CommandText = """
+                UPDATE band_rank_history_jobs job
+                SET status = 'superseded',
+                    superseded_at = now(),
+                    updated_at = now(),
+                    last_error = CASE
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM scrape_log scrape
+                            WHERE scrape.id = job.scrape_id
+                              AND scrape.status = 'failed'
+                        )
+                            THEN 'Superseded because the candidate scrape failed.'
+                        ELSE 'Superseded by a newer published scrape.'
+                    END
+                WHERE job.status IN ('queued', 'running', 'paused', 'failed')
+                  AND (
+                      EXISTS (
+                          SELECT 1
+                          FROM scrape_log scrape
+                          WHERE scrape.id = job.scrape_id
+                            AND scrape.status = 'failed'
+                      )
+                      OR EXISTS (
+                          SELECT 1
+                          FROM scrape_publication_state publication
+                          WHERE publication.id = TRUE
+                            AND publication.published_scrape_id IS NOT NULL
+                            AND job.scrape_id < publication.published_scrape_id
+                      )
+                  )
+                """;
+            supersede.ExecuteNonQuery();
+        }
+
         cmd.CommandText = @"
             SELECT job_id, scrape_id, snapshot_date, band_type, mode, status, started_at, completed_at,
                    failed_at, paused_at, superseded_at, last_error, attempts, chunks_total,
                    chunks_completed, rows_scanned, rows_inserted, rows_skipped,
                    current_ranking_scope, current_combo_id, updated_at
             FROM band_rank_history_jobs
-            WHERE status IN ('queued', 'paused')
-               OR (
-                   status = 'failed'
-                   AND attempts < @maxAttempts
-                   AND updated_at <= now() - @retryDelay
-               )
+            WHERE (
+                    status IN ('queued', 'paused')
+                    OR (
+                        status = 'failed'
+                        AND attempts < @maxAttempts
+                        AND updated_at <= now() - @retryDelay
+                    )
+                  )
+              AND (
+                  @requirePublishedScrape = FALSE
+                  OR scrape_id = (
+                      SELECT published_scrape_id
+                      FROM scrape_publication_state
+                      WHERE id = TRUE
+                  )
+              )
             ORDER BY CASE WHEN status IN ('queued', 'paused') THEN 0 ELSE 1 END,
                      snapshot_date DESC, scrape_id DESC, job_id ASC
             LIMIT 1";
         cmd.Parameters.AddWithValue("maxAttempts", effectiveMaxAttempts);
         cmd.Parameters.AddWithValue("retryDelay", effectiveRetryDelay);
+        cmd.Parameters.AddWithValue("requirePublishedScrape", requirePublishedScrape);
         using var reader = cmd.ExecuteReader();
         return reader.Read() ? ReadBandRankHistoryJob(reader) : null;
     }

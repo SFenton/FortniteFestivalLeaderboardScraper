@@ -143,6 +143,8 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<bool>(),
             Arg.Any<CancellationToken>(),
             Arg.Any<bool>());
+
+        Assert.True(_metaDb.GetBackfillStatus("acctDb")!.RankingsPending);
     }
 
     [Fact]

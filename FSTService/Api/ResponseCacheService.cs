@@ -12,13 +12,18 @@ public sealed class ResponseCacheService : IDisposable
     private readonly ConcurrentDictionary<string, CacheEntry> _cache = new(StringComparer.Ordinal);
     private readonly TimeSpan _ttl;
     private readonly PublicReadGateService? _publicReadGate;
+    private readonly bool _requireCachedReadsWhenFrozen;
     private readonly Timer _evictionTimer;
     private volatile bool _frozen;
 
-    public ResponseCacheService(TimeSpan ttl, PublicReadGateService? publicReadGate = null)
+    public ResponseCacheService(
+        TimeSpan ttl,
+        PublicReadGateService? publicReadGate = null,
+        bool requireCachedReadsWhenFrozen = false)
     {
         _ttl = ttl;
         _publicReadGate = publicReadGate;
+        _requireCachedReadsWhenFrozen = requireCachedReadsWhenFrozen;
         _evictionTimer = new Timer(_ => Cleanup(), null, ttl, ttl);
     }
 
@@ -30,7 +35,9 @@ public sealed class ResponseCacheService : IDisposable
     /// </summary>
     public bool IsFrozen => _frozen || (_publicReadGate?.IsFrozen ?? false);
 
-    public bool RequiresCachedReads => _publicReadGate?.RequiresCachedReads ?? false;
+    public bool RequiresCachedReads =>
+        _requireCachedReadsWhenFrozen && IsFrozen
+        || (_publicReadGate?.RequiresCachedReads ?? false);
 
     /// <summary>Freeze the cache — entries never expire until <see cref="Unfreeze"/> is called.</summary>
     public void Freeze() => _frozen = true;

@@ -120,7 +120,8 @@ function deriveSyncStateFromStatus(res: SyncStatusResponse, prev: SyncState): Sy
     ? Math.min(rv.combosComputed / rv.totalCombosToCompute, 1) : 0;
 
   const psActive = ps?.status === BackfillStatus.Pending || ps?.status === BackfillStatus.InProgress;
-  const isSyncing = bfDeferred || bfActive || hrActive || rvActive || psActive;
+  const pendingPublication = res.pendingRankUpdate ?? bf?.rankingsPending ?? false;
+  const isSyncing = bfDeferred || bfActive || hrActive || rvActive || psActive || pendingPublication;
 
   let phase: SyncPhase;
   if (bfDeferred) phase = SyncPhase.Queued;
@@ -128,6 +129,7 @@ function deriveSyncStateFromStatus(res: SyncStatusResponse, prev: SyncState): Sy
   else if (hrActive) phase = SyncPhase.History;
   else if (rvActive) phase = SyncPhase.Rivals;
   else if (psActive) phase = SyncPhase.PostScrape;
+  else if (pendingPublication) phase = SyncPhase.PostScrape;
   else if (bfStatus === BackfillStatus.Complete || hrStatus === BackfillStatus.Complete) phase = SyncPhase.Complete;
   else if (bfStatus === BackfillStatus.Error || hrStatus === BackfillStatus.Error) phase = SyncPhase.Error;
   else phase = SyncPhase.Idle;
@@ -148,7 +150,7 @@ function deriveSyncStateFromStatus(res: SyncStatusResponse, prev: SyncState): Sy
     rivalsFound: rv?.rivalsFound ?? prev.rivalsFound,
     isThrottled: false,
     throttleStatusKey: null,
-    pendingRankUpdate: res.pendingRankUpdate ?? bf?.rankingsPending ?? false,
+    pendingRankUpdate: pendingPublication,
     estimatedRankUpdateMinutes: null,
     probeStatusKey: null,
     nextRetrySeconds: null,
@@ -231,9 +233,18 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
         complete: SyncPhase.Complete,
         error: SyncPhase.Error,
       };
-      const phase = phaseMap[sp.phase] ?? SyncPhase.Idle;
+      const reportedPhase = phaseMap[sp.phase] ?? SyncPhase.Idle;
+      const pendingPublication = sp.pendingRankUpdate ?? false;
+      const phase = reportedPhase === SyncPhase.Complete && pendingPublication
+        ? SyncPhase.PostScrape
+        : reportedPhase;
       lastWsMsgRef.current = phase === SyncPhase.Queued ? 0 : Date.now();
-      const isSyncing = phase === SyncPhase.Queued || phase === SyncPhase.Backfill || phase === SyncPhase.History || phase === SyncPhase.Rivals || phase === SyncPhase.PostScrape;
+      const isSyncing = pendingPublication
+        || phase === SyncPhase.Queued
+        || phase === SyncPhase.Backfill
+        || phase === SyncPhase.History
+        || phase === SyncPhase.Rivals
+        || phase === SyncPhase.PostScrape;
       const displayProgress = resolveDisplayProgress(sp.itemsCompleted, sp.totalItems, sp.displayItemsCompleted, sp.displayTotalItems);
       const phaseProgress = displayProgress.total > 0 ? Math.min(displayProgress.completed / displayProgress.total, 1) : 0;
 

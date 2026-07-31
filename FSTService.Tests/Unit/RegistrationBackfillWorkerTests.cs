@@ -53,4 +53,24 @@ public class RegistrationBackfillWorkerTests
         Assert.Equal(1, calls);
         Assert.Empty(loggedClaims);
     }
+
+    [Fact]
+    public async Task BackgroundWorkCoordinator_WaitsForActiveWriterBeforeScrapeContinues()
+    {
+        var coordinator = new BackgroundWorkCoordinator();
+        Assert.True(coordinator.TryBeginBackgroundOperation(out var operation));
+
+        coordinator.RequestPauseForScrape();
+        var quiescence = coordinator.WaitForBackgroundQuiescenceAsync();
+
+        Assert.False(quiescence.IsCompleted);
+        Assert.False(coordinator.TryBeginBackgroundOperation(out _));
+
+        operation!.Dispose();
+        await quiescence.WaitAsync(TimeSpan.FromSeconds(1));
+
+        coordinator.ResumeAfterScrape();
+        Assert.True(coordinator.TryBeginBackgroundOperation(out var nextOperation));
+        nextOperation!.Dispose();
+    }
 }

@@ -158,10 +158,14 @@ public sealed class RivalsOrchestrator
             var selectionState = _calculator.ComputeSelectionState(accountId);
             _persistence.Meta.ReplaceRivalSelectionState(accountId, selectionState.Fingerprints, selectionState.InstrumentStates);
             _persistence.Meta.ClearAllDirtyRivalSongs(accountId);
-            _persistence.Meta.CompleteRivals(accountId, result.CombosComputed, result.Rivals.Count);
+            var completed = _persistence.Meta.CompleteRivals(accountId, result.CombosComputed, result.Rivals.Count);
             _syncTracker.ReportRivalsItem(accountId, result.CombosComputed, result.Rivals.Count);
-            _syncTracker.Complete(accountId);
-            _rivalsCache.InvalidateAll();
+            if (completed)
+                _syncTracker.Complete(accountId);
+            _log.LogDebug(
+                "Preserving published rivals cache for {AccountId}; frozen={Frozen}.",
+                accountId,
+                _rivalsCache.IsFrozen);
             _calculator.InvalidateSongGapsCache();
 
             try { _notifications.NotifyRivalsCompleteAsync(accountId).GetAwaiter().GetResult(); }

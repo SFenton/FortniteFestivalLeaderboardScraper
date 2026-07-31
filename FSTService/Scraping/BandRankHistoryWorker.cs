@@ -60,6 +60,13 @@ public sealed class BandRankHistoryWorker : BackgroundService
                 continue;
             }
 
+            if (!_coordinator.TryBeginBackgroundOperation(out var operationLease))
+            {
+                await DelaySafely(IdleDelay, stoppingToken);
+                continue;
+            }
+
+            using var backgroundOperation = operationLease;
             BandRankHistoryJobInfo? job = null;
             try
             {
@@ -73,7 +80,10 @@ public sealed class BandRankHistoryWorker : BackgroundService
                     _log.LogInformation("Recovered or superseded {JobCount:N0} stale band rank-history job(s).", recoveredJobs);
                 }
 
-                job = _metaDb.GetNextBandRankHistoryJob(maxAttempts, retryDelay);
+                job = _metaDb.GetNextBandRankHistoryJob(
+                    maxAttempts,
+                    retryDelay,
+                    requirePublishedScrape: true);
                 if (job is null)
                 {
                     await DelaySafely(IdleDelay, stoppingToken);
@@ -136,6 +146,7 @@ public sealed class BandRankHistoryWorker : BackgroundService
     private static BandRankHistorySnapshotOptions CreateSnapshotOptions(BandRankHistoryOptions opts) => new()
     {
         UseLatestState = opts.UseLatestState,
+        UsePublishedRankings = true,
         WriteMode = opts.WriteMode,
         UseNarrowHistory = opts.UseNarrowHistory,
         UseWideHistoryCompatibilityWrite = opts.UseWideHistoryCompatibilityWrite,

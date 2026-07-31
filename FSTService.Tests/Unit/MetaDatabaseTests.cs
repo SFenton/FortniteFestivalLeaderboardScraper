@@ -686,6 +686,28 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void PublishScrapeRun_rejects_empty_cache_staging_and_preserves_published_state()
+    {
+        var oldId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(oldId, 1, 10, 1, 100);
+        Db.BulkSetCachedResponses(
+            [(Key: "player:acct_1:::", Json: new byte[] { 1 }, ETag: "\"old\"")]);
+        Db.PublishScrapeRun(oldId, promoteCachedResponses: false);
+
+        var nextId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(nextId, 2, 20, 2, 200);
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => Db.PublishScrapeRun(nextId));
+
+        Assert.Contains("cache staging table is empty", exception.Message);
+        Assert.Equal(oldId, Db.GetPublishedScrapeRun()?.Id);
+        Assert.Equal(
+            new byte[] { 1 },
+            Db.GetCachedResponse("player:acct_1:::")?.Json);
+    }
+
+    [Fact]
     public async Task PublishScrapeRun_KeepsPublicCacheReadableWhileBandSnapshotsAreBuilt()
     {
         var oldId = Db.StartScrapeRun();
@@ -1184,14 +1206,78 @@ public sealed class MetaDatabaseTests : IDisposable
         Db.EnqueueBackfill("acct_1", 100);
         Db.StartBackfill("acct_1");
         Db.CompleteBackfill("acct_1", rankingsPending: true);
+        Db.CompleteBackfill("acct_1");
 
         var status = Db.GetBackfillStatus("acct_1");
         Assert.True(status!.RankingsPending);
 
-        Db.ClearBackfillRankingsPending(["acct_1"]);
+        Db.ClearBackfillRankingsPending(["acct_1"], DateTime.UtcNow.AddMinutes(1));
 
         status = Db.GetBackfillStatus("acct_1");
         Assert.False(status!.RankingsPending);
+    }
+
+    [Fact]
+    public void RequeueBackfill_preserves_rankings_pending_until_publication_clears_it()
+    {
+        Db.EnqueueBackfill("acct_requeue", 100);
+        Db.StartBackfill("acct_requeue");
+        Db.CompleteBackfill("acct_requeue", rankingsPending: true);
+
+        Db.EnqueueBackfill("acct_requeue", 200);
+        Db.DeferBackfill("acct_requeue", 200, "test");
+
+        Assert.True(Db.GetBackfillStatus("acct_requeue")!.RankingsPending);
+    }
+
+    [Fact]
+    public void GetBackfillProjectionScopesCompletedBefore_returns_only_published_cut_accounts()
+    {
+        Db.EnqueueBackfill("acct_cut", 100);
+        Db.StartBackfill("acct_cut");
+        Db.CompleteBackfill("acct_cut", rankingsPending: true);
+
+        using (var conn = DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                INSERT INTO leaderboard_entries_overlay
+                (song_id, instrument, account_id, score, source, first_seen_at,
+                 last_updated_at, source_priority, overlay_reason)
+                VALUES
+                ('song_cut', 'Solo_Guitar', 'acct_cut', 123456, 'registered',
+                 @now, @now, 100, 'test')
+                """;
+            cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+            cmd.ExecuteNonQuery();
+        }
+
+        var scopes = Db.GetBackfillProjectionScopesCompletedBefore(
+            ["acct_cut"],
+            DateTime.UtcNow.AddMinutes(1));
+
+        Assert.Equal(
+            [new SoloCurrentProjectionScopeKey("song_cut", "Solo_Guitar")],
+            scopes);
+        Assert.Empty(Db.GetBackfillProjectionScopesCompletedBefore(
+            ["acct_cut"],
+            DateTime.UtcNow.AddMinutes(-1)));
+        Assert.Empty(Db.GetBackfillProjectionScopesCompletedBefore(
+            ["other_account"],
+            DateTime.UtcNow.AddMinutes(1)));
+    }
+
+    [Fact]
+    public void ClearBackfillRankingsPending_preserves_work_completed_after_cutoff()
+    {
+        Db.EnqueueBackfill("acct_1", 100);
+        Db.StartBackfill("acct_1");
+        var cutoff = DateTime.UtcNow.AddMinutes(-1);
+        Db.CompleteBackfill("acct_1", rankingsPending: true);
+
+        Db.ClearBackfillRankingsPending(["acct_1"], cutoff);
+
+        Assert.True(Db.GetBackfillStatus("acct_1")!.RankingsPending);
     }
 
     [Fact]

@@ -238,6 +238,22 @@ public class CyclicalSongMachineTests
             staleSeconds: 180));
     }
 
+    [Fact]
+    public async Task AttachmentCancellation_waits_for_admitted_work_to_drain()
+    {
+        var attachment = CreateAttachment(["song1"]);
+        Assert.True(attachment.TryAcquireWork());
+
+        attachment.RequestCancellation();
+
+        Assert.False(attachment.Completion.Task.IsCompleted);
+
+        attachment.ReleaseWork();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => attachment.Completion.Task);
+    }
+
     // ── Helper: invoke private static DeduplicateUsers via reflection ──
 
     private static CyclicalSongMachine.MachineAttachment CreateAttachment(

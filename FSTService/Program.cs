@@ -374,13 +374,15 @@ builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("Neighbo
         sp.GetRequiredService<FSTService.Api.PublicReadGateService>()));
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("RivalsCache",
     (sp, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(5),
-        sp.GetRequiredService<FSTService.Api.PublicReadGateService>()));
+        sp.GetRequiredService<FSTService.Api.PublicReadGateService>(),
+        requireCachedReadsWhenFrozen: true));
 builder.Services.AddSingleton<RivalsCalculator>();
 builder.Services.AddSingleton<RivalsOrchestrator>();
 builder.Services.AddSingleton<LeaderboardRivalsCalculator>();
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("LeaderboardRivalsCache",
     (sp, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(5),
-        sp.GetRequiredService<FSTService.Api.PublicReadGateService>()));
+        sp.GetRequiredService<FSTService.Api.PublicReadGateService>(),
+        requireCachedReadsWhenFrozen: true));
 builder.Services.AddSingleton<ScrapeLifecycleNotifier>();
 builder.Services.AddSingleton<BackgroundWorkCoordinator>();
 builder.Services.AddSingleton<RankingsCalculator>();
@@ -435,7 +437,8 @@ builder.Services.AddSingleton<ScrapeTimePrecomputer>(sp =>
         jsonOpts,
         sp.GetRequiredService<IOptions<FeatureOptions>>().Value,
         sp.GetRequiredService<IOptions<ScraperOptions>>().Value,
-        sp.GetRequiredService<LeaderboardRivalsCalculator>());
+        sp.GetRequiredService<LeaderboardRivalsCalculator>(),
+        sp.GetRequiredService<SoloCurrentProjectionBuilder>());
 });
 
 builder.Services.AddHttpClient<ItemShopService>()
@@ -624,6 +627,21 @@ else if (hostedWorkerMode == HostedWorkerMode.RegistrationSyncWorker)
         await precompFestivalService.InitializeAsync();
         precompLog.LogInformation("--precompute: {SongCount} songs loaded, DBs ready.",
             precompFestivalService.Songs.Count);
+
+        var soloProjection = app.Services.GetRequiredService<SoloCurrentProjectionBuilder>();
+        await soloProjection.EnsureSchemaAsync();
+        var projectionStats = soloProjection.Inspect();
+        var staleScopes = await soloProjection.LoadStaleScopesAsync();
+        if (!projectionStats.ProjectionExists
+            || projectionStats.ScopeCount == 0
+            || projectionStats.FailedScopeCount > 0
+            || staleScopes.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "--precompute requires a complete, current solo projection " +
+                $"(exists={projectionStats.ProjectionExists}, scopes={projectionStats.ScopeCount}, " +
+                $"failed={projectionStats.FailedScopeCount}, stale={staleScopes.Count}).");
+        }
 
         precompLog.LogInformation("--precompute: running precomputation...");
         var precomputer = app.Services.GetRequiredService<ScrapeTimePrecomputer>();

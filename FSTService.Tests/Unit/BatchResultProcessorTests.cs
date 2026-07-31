@@ -183,4 +183,26 @@ public class BatchResultProcessorTests : IDisposable
         Assert.Equal(50000, entry!.Score);
         Assert.Contains(("song1", "Solo_Guitar"), _metaDb.Db.GetCheckedBackfillPairs("acct1"));
     }
+
+    [Fact]
+    public void DiscardStagedData_PreventsCancelledBackfillWritesFromReplaying()
+    {
+        _processor.SetStagingAccounts(["acct1"]);
+        _processor.ProcessAlltimeResults(
+            "song1",
+            "Solo_Guitar",
+            [new LeaderboardEntry { AccountId = "acct1", Score = 50000, Rank = 5 }],
+            new HashSet<string>());
+        _processor.MarkBackfillChecked(
+            "acct1",
+            "song1",
+            "Solo_Guitar",
+            entryFound: true);
+
+        _processor.DiscardStagedData(["acct1"]);
+        _processor.FlushStagedData("acct1");
+
+        Assert.Null(_persistence.GetOrCreateInstrumentDb("Solo_Guitar").GetEntry("song1", "acct1"));
+        Assert.DoesNotContain(("song1", "Solo_Guitar"), _metaDb.Db.GetCheckedBackfillPairs("acct1"));
+    }
 }

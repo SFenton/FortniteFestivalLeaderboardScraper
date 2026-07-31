@@ -157,13 +157,13 @@ public class CyclicalSongMachine
         MarkCycleProgress();
         EnsureCycleRunning();
 
-        // When the caller's CT fires, we don't remove the attachment (the cycle handles it)
-        // but we do cancel the TCS.
+        // Stop admitting new work immediately, but do not complete the caller's
+        // cancellation until already-admitted song work has drained.
         ct.Register(() =>
         {
             if (_attachments.TryRemove(callerId, out var removed))
             {
-                removed.TryCancel();
+                removed.RequestCancellation();
                 _progress.UnregisterAttachment(callerId);
                 _log.LogDebug("Attachment {CallerId} cancelled by caller.", callerId);
             }
@@ -581,76 +581,84 @@ public class CyclicalSongMachine
                     var work = gatherUsers(songEntry.SongId);
                     var users = work.Users;
                     var highPriority = work.HighPriority;
-                    if (users.Count == 0)
+                    try
                     {
+                        if (users.Count == 0)
+                        {
+                            if (OwnsProgress)
+                                _progress.ReportPhaseItemComplete();
+                            return;
+                        }
+
+                        var result = await _inner.ProcessSongForUsersAsync(
+                            songEntry.SongId, instruments, users, seasonPrefixMap,
+                            accessToken, callerAccountId, _pool, highPriority,
+                            opts.LookupBatchSize, work.EpicTrafficKind, passCt);
+
+                        // Check CDN throttle state and surface to each user's sync progress.
+                        // Throttle when limiter DOP drops below 25% of max.
+                        var limiter = _pool.Limiter;
+                        bool isThrottled = limiter.ThrottlePercent < 25;
+                        foreach (var user in users)
+                        {
+                            _syncTracker.ReportThrottleState(
+                                user.AccountId, isThrottled,
+                                isThrottled ? "throttle_cdn_busy" : null);
+                        }
+
+                        foreach (var (_, att) in _attachments)
+                        {
+                            if (att.IsCompleted) continue;
+                            att.RecordSongResult(songEntry.GlobalIndex, result);
+                        }
+
+                        foreach (var user in users)
+                        {
+                            if (user.Purposes.HasFlag(WorkPurpose.Backfill))
+                            {
+                                // Report backfill progress per song (6 instruments checked).
+                                // Pairs are deduplicated in the tracker so the historical pass
+                                // won't inflate the counter beyond songs × instruments.
+                                bool found = result.EntriesUpdated > 0;
+                                foreach (var inst in instruments)
+                                    _syncTracker.ReportBackfillItem(user.AccountId, songEntry.SongId, inst, found);
+                            }
+
+                            if (user.Purposes.HasFlag(WorkPurpose.HistoryRecon))
+                            {
+                                _syncTracker.ReportHistoryItem(
+                                    user.AccountId,
+                                    seasonsQueried: seasonPrefixMap.Count,
+                                    entriesFound: result.SessionsInserted);
+                            }
+                            else if (user.Purposes.HasFlag(WorkPurpose.PostScrape)
+                                     && !_syncTracker.IsActiveHigherPriority(user.AccountId))
+                            {
+                                int units = instruments.Count * ((user.AllTimeNeeded ? 1 : 0) + seasonPrefixMap.Count);
+                                _syncTracker.ReportPostScrapeWork(
+                                    user.AccountId,
+                                    completedUnits: units,
+                                    entriesFound: result.EntriesUpdated);
+                            }
+                        }
+
+                        // Update attachment user counters from the live sync tracker
+                        foreach (var (attCallerId, att) in _attachments)
+                        {
+                            if (att.IsCompleted) continue;
+                            _progress.UpdateAttachmentUserProgress(attCallerId, _syncTracker);
+                        }
+
                         if (OwnsProgress)
                             _progress.ReportPhaseItemComplete();
-                        return;
+
+                        MarkCycleProgress();
                     }
-
-                    var result = await _inner.ProcessSongForUsersAsync(
-                        songEntry.SongId, instruments, users, seasonPrefixMap,
-                        accessToken, callerAccountId, _pool, highPriority,
-                        opts.LookupBatchSize, work.EpicTrafficKind, passCt);
-
-                    // Check CDN throttle state and surface to each user's sync progress.
-                    // Throttle when limiter DOP drops below 25% of max.
-                    var limiter = _pool.Limiter;
-                    bool isThrottled = limiter.ThrottlePercent < 25;
-                    foreach (var user in users)
+                    finally
                     {
-                        _syncTracker.ReportThrottleState(
-                            user.AccountId, isThrottled,
-                            isThrottled ? "throttle_cdn_busy" : null);
+                        foreach (var attachment in work.Attachments)
+                            attachment.ReleaseWork();
                     }
-
-                    foreach (var (_, att) in _attachments)
-                    {
-                        if (att.IsCompleted) continue;
-                        att.RecordSongResult(songEntry.GlobalIndex, result);
-                    }
-
-                    foreach (var user in users)
-                    {
-                        if (user.Purposes.HasFlag(WorkPurpose.Backfill))
-                        {
-                            // Report backfill progress per song (6 instruments checked).
-                            // Pairs are deduplicated in the tracker so the historical pass
-                            // won't inflate the counter beyond songs × instruments.
-                            bool found = result.EntriesUpdated > 0;
-                            foreach (var inst in instruments)
-                                _syncTracker.ReportBackfillItem(user.AccountId, songEntry.SongId, inst, found);
-                        }
-
-                        if (user.Purposes.HasFlag(WorkPurpose.HistoryRecon))
-                        {
-                            _syncTracker.ReportHistoryItem(
-                                user.AccountId,
-                                seasonsQueried: seasonPrefixMap.Count,
-                                entriesFound: result.SessionsInserted);
-                        }
-                        else if (user.Purposes.HasFlag(WorkPurpose.PostScrape)
-                                 && !_syncTracker.IsActiveHigherPriority(user.AccountId))
-                        {
-                            int units = instruments.Count * ((user.AllTimeNeeded ? 1 : 0) + seasonPrefixMap.Count);
-                            _syncTracker.ReportPostScrapeWork(
-                                user.AccountId,
-                                completedUnits: units,
-                                entriesFound: result.EntriesUpdated);
-                        }
-                    }
-
-                    // Update attachment user counters from the live sync tracker
-                    foreach (var (attCallerId, att) in _attachments)
-                    {
-                        if (att.IsCompleted) continue;
-                        _progress.UpdateAttachmentUserProgress(attCallerId, _syncTracker);
-                    }
-
-                    if (OwnsProgress)
-                        _progress.ReportPhaseItemComplete();
-
-                    MarkCycleProgress();
                 }
                 catch (CdnBlockedException ex)
                 {
@@ -756,6 +764,7 @@ public class CyclicalSongMachine
     private SongPassWork GatherCoreUsersForSong(string songId, int currentSeason)
     {
         var users = new List<UserWorkItem>();
+        var attachments = new List<MachineAttachment>();
         bool highPriority = false;
         var epicTrafficKind = EpicTrafficKind.Background;
 
@@ -763,6 +772,9 @@ public class CyclicalSongMachine
         {
             if (att.IsCompleted) continue;
             if (!att.SongIds.Contains(songId)) continue;
+            if (!att.TryAcquireWork()) continue;
+
+            attachments.Add(att);
 
             foreach (var user in att.Users)
             {
@@ -785,7 +797,11 @@ public class CyclicalSongMachine
             epicTrafficKind = CombineTrafficKind(epicTrafficKind, att.EpicTrafficKind);
         }
 
-        return new SongPassWork(DeduplicateUsers(users), highPriority, epicTrafficKind);
+        return new SongPassWork(
+            DeduplicateUsers(users),
+            highPriority,
+            epicTrafficKind,
+            attachments);
     }
 
     /// <summary>
@@ -795,6 +811,7 @@ public class CyclicalSongMachine
     private SongPassWork GatherHistoricalUsersForSong(string songId, int currentSeason)
     {
         var users = new List<UserWorkItem>();
+        var attachments = new List<MachineAttachment>();
         bool highPriority = false;
         var epicTrafficKind = EpicTrafficKind.Background;
 
@@ -804,13 +821,14 @@ public class CyclicalSongMachine
             if (!att.SongIds.Contains(songId)) continue;
             if (!AttachmentNeedsHistorical(att, currentSeason)) continue;
 
+            var attachmentUsers = new List<UserWorkItem>();
             foreach (var user in att.Users)
             {
                 var historicalSeasons = new HashSet<int>(user.SeasonsNeeded);
                 historicalSeasons.Remove(currentSeason);
                 if (historicalSeasons.Count == 0) continue;
 
-                users.Add(new UserWorkItem
+                attachmentUsers.Add(new UserWorkItem
                 {
                     AccountId = user.AccountId,
                     Purposes = user.Purposes,
@@ -820,11 +838,20 @@ public class CyclicalSongMachine
                 });
             }
 
+            if (attachmentUsers.Count == 0 || !att.TryAcquireWork())
+                continue;
+
+            attachments.Add(att);
+            users.AddRange(attachmentUsers);
             if (att.IsHighPriority) highPriority = true;
             epicTrafficKind = CombineTrafficKind(epicTrafficKind, att.EpicTrafficKind);
         }
 
-        return new SongPassWork(DeduplicateUsers(users), highPriority, epicTrafficKind);
+        return new SongPassWork(
+            DeduplicateUsers(users),
+            highPriority,
+            epicTrafficKind,
+            attachments);
     }
 
     private static EpicTrafficKind CombineTrafficKind(EpicTrafficKind current, EpicTrafficKind next)
@@ -1110,7 +1137,8 @@ public class CyclicalSongMachine
     private readonly record struct SongPassWork(
         List<UserWorkItem> Users,
         bool HighPriority,
-        EpicTrafficKind EpicTrafficKind);
+        EpicTrafficKind EpicTrafficKind,
+        IReadOnlyList<MachineAttachment> Attachments);
 
     /// <summary>
     /// Represents one caller's attachment to the cyclical machine.
@@ -1149,6 +1177,9 @@ public class CyclicalSongMachine
         private readonly ConcurrentDictionary<int, byte> _processedSongIndices = [];
         private readonly CancellationToken _callerCt;
         private readonly HashSet<string> _songIdSet;
+        private readonly object _workGate = new();
+        private int _inFlightWork;
+        private bool _cancellationRequested;
 
         public MachineAttachment(
             string callerId,
@@ -1177,6 +1208,45 @@ public class CyclicalSongMachine
         {
             if (JoinedAtSongIndex < 0)
                 JoinedAtSongIndex = index;
+        }
+
+        public bool TryAcquireWork()
+        {
+            lock (_workGate)
+            {
+                if (_cancellationRequested || IsCompleted)
+                    return false;
+
+                _inFlightWork++;
+                return true;
+            }
+        }
+
+        public void ReleaseWork()
+        {
+            var cancel = false;
+            lock (_workGate)
+            {
+                if (_inFlightWork > 0)
+                    _inFlightWork--;
+                cancel = _cancellationRequested && _inFlightWork == 0;
+            }
+
+            if (cancel)
+                TryCancel();
+        }
+
+        public void RequestCancellation()
+        {
+            var cancel = false;
+            lock (_workGate)
+            {
+                _cancellationRequested = true;
+                cancel = _inFlightWork == 0;
+            }
+
+            if (cancel)
+                TryCancel();
         }
 
         /// <summary>Whether this attachment needs a loop-back pass for missed songs.</summary>

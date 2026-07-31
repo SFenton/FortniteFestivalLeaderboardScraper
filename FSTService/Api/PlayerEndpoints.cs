@@ -27,13 +27,37 @@ public static partial class ApiEndpoints
 
             // Build cache key from all parameters
             var cacheKey = $"player:{accountId}:{songId}:{instruments}:{leeway}";
+            var publishedProfile = precomputer.TryGet($"player:{accountId}:::");
 
             // ── Check precomputed store (covers all leeway values in one response) ──
             if (songId is null && instruments is null)
             {
-                var precomputedKey = $"player:{accountId}:::";
-                var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet(precomputedKey));
+                var result = CacheHelper.ServeIfCached(httpContext, publishedProfile);
                 if (result is not null) return result;
+            }
+
+            if (publishedProfile is not null
+                && (songId is not null || instruments is not null || leeway is not null))
+            {
+                return Results.Problem(
+                    title: "Published filtered profile unavailable",
+                    detail: "Filtered player profiles will resume after publication-scoped profile reads are enabled.",
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+
+            if (publishedProfile is null
+                && metaDb.GetRegisteredAccountIds().Contains(accountId))
+            {
+                httpContext.Response.Headers.CacheControl = "no-store";
+                return Results.Json(new
+                {
+                    accountId,
+                    displayName = metaDb.GetDisplayName(accountId),
+                    status = "syncing",
+                    notYetPublished = true,
+                    totalScores = 0,
+                    scores = Array.Empty<object>(),
+                }, statusCode: StatusCodes.Status202Accepted);
             }
 
             // ── Check cache ──────────────────────────────────────
@@ -277,19 +301,11 @@ public static partial class ApiEndpoints
             HttpContext httpContext,
             string accountId,
             IMetaDatabase metaDb,
-            UserSyncProgressTracker syncTracker,
-            ScrapeTimePrecomputer precomputer) =>
+            UserSyncProgressTracker syncTracker) =>
         {
             // Reduce cache during active sync for fresher fallback reads
             var liveProgress = syncTracker.GetProgress(accountId);
             httpContext.Response.Headers.CacheControl = liveProgress is not null ? "public, max-age=1" : "public, max-age=5";
-
-            // ── Check precomputed store (skip if live progress available) ──
-            if (liveProgress is null)
-            {
-                var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet($"syncstatus:{accountId}"));
-                if (result is not null) return result;
-            }
 
             var backfill = metaDb.GetBackfillStatus(accountId);
             var historyRecon = metaDb.GetHistoryReconStatus(accountId);
@@ -653,8 +669,7 @@ public static partial class ApiEndpoints
             string? songId,
             string? instrument,
             IMetaDatabase metaDb,
-            ScrapeTimePrecomputer precomputer,
-            [FromKeyedServices("PlayerCache")] ResponseCacheService playerCache) =>
+            ScrapeTimePrecomputer precomputer) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=60";
             // Check if the account is a registered user
@@ -667,19 +682,34 @@ public static partial class ApiEndpoints
                 });
             }
 
-            // ── Check precomputed store for unfiltered requests ──
-            if (songId is null && instrument is null && (limit is null || limit >= 1000))
+            var published = precomputer.TryGet(ScrapeTimePrecomputer.PlayerHistoryCacheKey(accountId));
+            if (published is null)
             {
+                httpContext.Response.Headers.CacheControl = "no-store";
+                return Results.Json(new
                 {
-                    var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet($"history:{accountId}"));
-                    if (result is not null) return result;
-                }
+                    accountId,
+                    status = "syncing",
+                    notYetPublished = true,
+                    count = 0,
+                    history = Array.Empty<object>(),
+                }, statusCode: StatusCodes.Status202Accepted);
             }
 
-            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, playerCache);
-            if (frozenMiss is not null) return frozenMiss;
+            var jsonOpts = httpContext.RequestServices
+                .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
+                .Value.SerializerOptions;
+            var payload = JsonSerializer.Deserialize<PlayerHistoryCachePayload>(
+                published.Value.Json,
+                jsonOpts)
+                ?? throw new JsonException($"Published history payload for {accountId} is invalid.");
+            var history = payload.History
+                .Where(entry =>
+                    (songId is null || string.Equals(entry.SongId, songId, StringComparison.Ordinal))
+                    && (instrument is null || string.Equals(entry.Instrument, instrument, StringComparison.OrdinalIgnoreCase)))
+                .Take(Math.Max(0, limit ?? 1000))
+                .ToList();
 
-            var history = metaDb.GetScoreHistory(accountId, limit ?? 1000, songId, instrument);
             return Results.Ok(new
             {
                 accountId,
@@ -690,6 +720,11 @@ public static partial class ApiEndpoints
         .WithTags("Players")
         .RequireRateLimiting("public");
     }
+
+    private sealed record PlayerHistoryCachePayload(
+        string AccountId,
+        int Count,
+        IReadOnlyList<ScoreHistoryEntry> History);
 
     /// <summary>
     /// Compute and persist player stats tiers on-demand for unregistered players

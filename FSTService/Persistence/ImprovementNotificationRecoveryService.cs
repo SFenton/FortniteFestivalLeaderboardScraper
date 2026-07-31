@@ -114,9 +114,13 @@ public sealed class ImprovementNotificationRecoveryService
             }
             else if (!refreshSoloProjection)
             {
-                _notifications.AdoptProjectionPlanForRecovery(
-                    publishedScrapeId,
-                    []);
+                var persistedPlan = _notifications.GetProjectionPlan(publishedScrapeId);
+                if (!persistedPlan.IsReady)
+                {
+                    _notifications.AdoptProjectionPlanForRecovery(
+                        publishedScrapeId,
+                        []);
+                }
             }
 
             _notifications.EnsurePublicationPending(publishedScrapeId);

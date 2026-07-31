@@ -699,10 +699,9 @@ public static partial class ApiEndpoints
             RivalsOrchestrator rivalsOrchestrator,
             ScrapeTimePrecomputer precomputer) =>
         {
-            metaDb.EnsureRivalsStatus(accountId);
-            rivalsOrchestrator.ComputeForUser(accountId);
+            metaDb.QueueRivalsRecompute(accountId);
             precomputer.PrecomputeUser(accountId);
-            return Results.Ok(new { accountId, status = "recomputed" });
+            return Results.Ok(new { accountId, status = "pending_publication" });
         })
         .WithTags("Rivals")
         .RequireRateLimiting("protected")

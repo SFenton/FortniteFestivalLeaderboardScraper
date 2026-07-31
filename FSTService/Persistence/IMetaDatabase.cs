@@ -116,7 +116,10 @@ public interface IMetaDatabase : IDisposable
     BackfillStatusInfo? GetBackfillStatus(string accountId);
     void StartBackfill(string accountId);
     void CompleteBackfill(string accountId, bool rankingsPending = false);
-    void ClearBackfillRankingsPending(IEnumerable<string> accountIds);
+    IReadOnlyList<SoloCurrentProjectionScopeKey> GetBackfillProjectionScopesCompletedBefore(
+        IEnumerable<string> accountIds,
+        DateTime completedBeforeUtc);
+    void ClearBackfillRankingsPending(IEnumerable<string> accountIds, DateTime completedBeforeUtc);
     void FailBackfill(string accountId, string errorMessage);
     void UpdateBackfillProgress(string accountId, int songsChecked, int entriesFound);
     void MarkBackfillSongChecked(string accountId, string songId, string instrument, bool entryFound);
@@ -163,8 +166,9 @@ public interface IMetaDatabase : IDisposable
 
     // ── Rivals ───────────────────────────────────────────────────────
     void EnsureRivalsStatus(string accountId);
+    void QueueRivalsRecompute(string accountId);
     void StartRivals(string accountId, int totalCombosToCompute = 0);
-    void CompleteRivals(string accountId, int combosComputed, int rivalsFound);
+    bool CompleteRivals(string accountId, int combosComputed, int rivalsFound);
     void FailRivals(string accountId, string errorMessage);
     RivalsStatusInfo? GetRivalsStatus(string accountId);
     List<string> GetPendingRivalsAccounts();
@@ -234,7 +238,10 @@ public interface IMetaDatabase : IDisposable
     BandRankHistoryV2BackfillResult BackfillBandRankHistoryV2FromLegacy(string bandType, BandRankHistoryV2BackfillOptions options, CancellationToken ct = default);
     int CleanupBandRankHistoryRetention(string bandType, int retentionDays = 365, int commandTimeoutSeconds = 0, CancellationToken ct = default, int batchSize = 5000, int maxBatches = 1);
     BandRankHistoryJobInfo EnqueueBandRankHistoryJob(long scrapeId, string bandType, DateOnly snapshotDate, string mode, bool coalesceSameDay = true);
-    BandRankHistoryJobInfo? GetNextBandRankHistoryJob(int maxAttempts = int.MaxValue, TimeSpan? retryDelay = null);
+    BandRankHistoryJobInfo? GetNextBandRankHistoryJob(
+        int maxAttempts = int.MaxValue,
+        TimeSpan? retryDelay = null,
+        bool requirePublishedScrape = false);
     int RecoverStaleBandRankHistoryJobs(TimeSpan staleAfter, TimeSpan maxCatchupAge);
     bool TryStartBandRankHistoryJob(long jobId, int maxAttempts = int.MaxValue);
     void CompleteBandRankHistoryJob(long jobId, BandRankHistorySnapshotResult result);

@@ -213,7 +213,6 @@ public sealed class ApiPublicationClassificationTests
         new(HttpMethods.Get, "/api/player/{accountId}/rivals"),
         new(HttpMethods.Get, "/api/player/{accountId}/rivals/suggestions"),
         new(HttpMethods.Get, "/api/player/{accountId}/rivals/all"),
-        new(HttpMethods.Get, "/api/player/{accountId}/rivals/diagnostics"),
         new(HttpMethods.Get, "/api/player/{accountId}/rivals/{combo}"),
         new(HttpMethods.Get, "/api/player/{accountId}/rivals/{combo}/{rivalId}"),
         new(HttpMethods.Get, "/api/player/{accountId}/rivals/{rivalId}/songs/{instrument}"),
@@ -277,6 +276,7 @@ public sealed class ApiPublicationClassificationTests
         new(HttpMethods.Post, "/api/debug/client-interactions"),
         new(HttpMethods.Post, "/api/player/{accountId}/leaderboard-rivals/recompute"),
         new(HttpMethods.Post, "/api/player/{accountId}/rivals/recompute"),
+        new(HttpMethods.Get, "/api/player/{accountId}/rivals/diagnostics"),
         new(ApiPublicationRouteCatalog.AnyMethod, "/api/{**path}"),
     ];
 

@@ -438,6 +438,8 @@ export type PlayerResponse = {
   displayName: string;
   totalScores: number;
   scores: PlayerScore[];
+  status?: 'syncing';
+  notYetPublished?: boolean;
 };
 
 export type AccountCheckResponse = {
@@ -659,6 +661,8 @@ export type PlayerHistoryResponse = {
   accountId: string;
   count: number;
   history: ServerScoreHistoryEntry[];
+  status?: 'syncing';
+  notYetPublished?: boolean;
 };
 
 /** Leaderboard data for all instruments on one song. */
@@ -1504,6 +1508,8 @@ type WirePlayerResponse = {
   displayName: string;
   totalScores: number;
   scores: WirePlayerScore[];
+  status?: 'syncing';
+  notYetPublished?: boolean;
 };
 
 // ─── Population tier wire types (inside /api/songs) ─────────
@@ -1576,6 +1582,8 @@ export function expandWirePlayerResponse(wire: WirePlayerResponse): PlayerRespon
     displayName: wire.displayName,
     totalScores: wire.totalScores,
     scores: wire.scores.map(expandPlayerScore),
+    status: wire.status,
+    notYetPublished: wire.notYetPublished,
   };
 }
 

@@ -26,6 +26,8 @@ public sealed class ScrapeTimePrecomputer
     private readonly FeatureOptions _features;
     private readonly ScraperOptions _scraperOptions;
     private readonly LeaderboardRivalsCalculator? _leaderboardRivalsCalculator;
+    private readonly SoloCurrentProjectionBuilder? _soloCurrentProjectionBuilder;
+    private bool _currentProjectionAuthoritativeForPrecompute;
 
     /// <summary>
     /// Disk staging writer for bulk precomputation. Created per PrecomputeAllAsync call,
@@ -39,13 +41,6 @@ public sealed class ScrapeTimePrecomputer
     /// </summary>
     private volatile IReadOnlyDictionary<(string SongId, string Instrument), PopulationTierData>? _populationTiers;
 
-    /// <summary>
-    /// Shared single-user precompute inputs cached across repeated PrecomputeUser()
-    /// calls on the same service instance.
-    /// </summary>
-    private volatile SharedPrecomputeInputs? _singleUserSharedInputs;
-    private readonly object _singleUserSharedInputsGate = new();
-
     public ScrapeTimePrecomputer(
         GlobalLeaderboardPersistence persistence,
         IMetaDatabase metaDb,
@@ -55,8 +50,9 @@ public sealed class ScrapeTimePrecomputer
         ILoggerFactory loggerFactory,
         JsonSerializerOptions jsonOpts,
         FeatureOptions features,
-        LeaderboardRivalsCalculator? leaderboardRivalsCalculator = null)
-        : this(persistence, metaDb, pathStore, progress, log, loggerFactory, jsonOpts, features, new ScraperOptions(), leaderboardRivalsCalculator)
+        LeaderboardRivalsCalculator? leaderboardRivalsCalculator = null,
+        SoloCurrentProjectionBuilder? soloCurrentProjectionBuilder = null)
+        : this(persistence, metaDb, pathStore, progress, log, loggerFactory, jsonOpts, features, new ScraperOptions(), leaderboardRivalsCalculator, soloCurrentProjectionBuilder)
     {
     }
 
@@ -70,7 +66,8 @@ public sealed class ScrapeTimePrecomputer
         JsonSerializerOptions jsonOpts,
         FeatureOptions features,
         ScraperOptions scraperOptions,
-        LeaderboardRivalsCalculator? leaderboardRivalsCalculator = null)
+        LeaderboardRivalsCalculator? leaderboardRivalsCalculator = null,
+        SoloCurrentProjectionBuilder? soloCurrentProjectionBuilder = null)
     {
         _persistence = persistence;
         _metaDb = metaDb;
@@ -82,6 +79,7 @@ public sealed class ScrapeTimePrecomputer
         _features = features;
         _scraperOptions = scraperOptions;
         _leaderboardRivalsCalculator = leaderboardRivalsCalculator;
+        _soloCurrentProjectionBuilder = soloCurrentProjectionBuilder;
     }
 
     /// <summary>Returns a precomputed response if available, else null.</summary>
@@ -101,7 +99,6 @@ public sealed class ScrapeTimePrecomputer
     public void InvalidateAll()
     {
         _populationTiers = null;
-        _singleUserSharedInputs = null;
     }
 
     /// <summary>Number of records staged (during active precomputation) or 0.</summary>
@@ -125,6 +122,14 @@ public sealed class ScrapeTimePrecomputer
             publishImmediately,
             showLeaderboardEntryTotals);
         _metaDb.BulkSetCachedResponsesStaging([]);
+        var projectionStats = _soloCurrentProjectionBuilder?.Inspect();
+        _currentProjectionAuthoritativeForPrecompute =
+            projectionStats is
+            {
+                ProjectionExists: true,
+                ScopeCount: > 0,
+                FailedScopeCount: 0,
+            };
         var allMaxScores = _pathStore.GetAllMaxScores();
         var unfilteredPopulation = _metaDb.GetAllLeaderboardPopulation();
         var registeredIds = _metaDb.GetRegisteredAccountIds();
@@ -147,12 +152,6 @@ public sealed class ScrapeTimePrecomputer
         _log.LogInformation("Building scrape-time band scores cache for player precomputation.");
         var bandScoresCache = BuildBandScoresCache(allMaxScores, instrumentKeys);
         _log.LogInformation("Built scrape-time band scores cache for {Count:N0} (song, instrument) pair(s).", bandScoresCache.Count);
-        _singleUserSharedInputs = new SharedPrecomputeInputs(
-            allMaxScores,
-            unfilteredPopulation,
-            instrumentKeys,
-            tiers,
-            bandScoresCache);
 
         // ── Phases 2-7: Independent. Run sequentially by default so API latency
         // remains the priority while post-scrape work is active.
@@ -225,116 +224,21 @@ public sealed class ScrapeTimePrecomputer
         return end < 0 ? cacheKey[7..] : cacheKey[7..end];
     }
 
+    internal static string PlayerHistoryCacheKey(string accountId)
+        => $"history:v2:{accountId}";
+
     /// <summary>
     /// Precompute a single player (e.g., after /track registration between scrapes).
     /// Covers profile + all sub-resources (stats, history, sync-status, rivals, lb-rivals).
-    /// Writes entries directly to PostgreSQL (no disk staging needed for single user).
+    /// Does not mutate published or shared staging cache state. A complete
+    /// publication rebuild owns cache promotion.
     /// </summary>
     public void PrecomputeUser(string accountId)
     {
-        var sharedInputs = MeasurePrecomputeStep(accountId, "shared_inputs", GetSingleUserSharedInputs);
-
-        // Collect entries in a thread-local list, then flush all at once
-        var entries = new List<(string Key, byte[] Json, string ETag)>();
-        MeasurePrecomputeStoreStep(accountId, "player_profile", entries, () =>
-            PrecomputeSinglePlayer(
-                accountId,
-                sharedInputs.AllMaxScores,
-                sharedInputs.UnfilteredPopulation,
-                sharedInputs.PopulationTiers,
-                sharedInputs.BandScoresCache,
-                storeOverride: entries));
-
-        // Sub-resources
-        var displayNames = MeasurePrecomputeStep(accountId, "display_name_lookup",
-            () => _metaDb.GetDisplayNames(new[] { accountId }));
-        MeasurePrecomputeStoreStep(accountId, "player_stats", entries,
-            () => PrecomputePlayerStats(accountId, storeOverride: entries));
-        MeasurePrecomputeStoreStep(accountId, "player_history", entries,
-            () => PrecomputePlayerHistory(accountId, storeOverride: entries));
-        MeasurePrecomputeStoreStep(accountId, "player_sync_status", entries,
-            () => PrecomputePlayerSyncStatus(accountId, storeOverride: entries));
-        MeasurePrecomputeStoreStep(accountId, "player_rivals_overview", entries,
-            () => PrecomputePlayerRivalsOverview(accountId, storeOverride: entries));
-        MeasurePrecomputeStoreStep(accountId, "player_rivals_all", entries,
-            () => PrecomputePlayerRivalsAll(accountId, displayNames, storeOverride: entries));
-        MeasurePrecomputeStoreStep(accountId, "player_leaderboard_rivals", entries,
-            () => PrecomputePlayerLeaderboardRivals(
-                accountId,
-                sharedInputs.InstrumentKeys,
-                displayNames,
-                allowLiveFallback: true,
-                storeOverride: entries));
-
-        if (entries.Count > 0)
-        {
-            MeasurePrecomputeStep(accountId, "cache_write",
-                () => _metaDb.BulkSetCachedResponses(entries), entries.Count);
-        }
-    }
-
-    private SharedPrecomputeInputs GetSingleUserSharedInputs()
-    {
-        var cached = _singleUserSharedInputs;
-        if (cached is not null)
-            return cached;
-
-        lock (_singleUserSharedInputsGate)
-        {
-            cached = _singleUserSharedInputs;
-            if (cached is not null)
-                return cached;
-
-            var allMaxScores = _pathStore.GetAllMaxScores();
-            var unfilteredPopulation = _metaDb.GetAllLeaderboardPopulation();
-            var instrumentKeys = _persistence.GetInstrumentKeys();
-            var tiers = _populationTiers ?? ComputePopulationTiers(allMaxScores, instrumentKeys);
-            var bandScoresCache = BuildBandScoresCache(allMaxScores, instrumentKeys);
-
-            cached = new SharedPrecomputeInputs(
-                allMaxScores,
-                unfilteredPopulation,
-                instrumentKeys,
-                tiers,
-                bandScoresCache);
-            _singleUserSharedInputs = cached;
-            return cached;
-        }
-    }
-
-    private T MeasurePrecomputeStep<T>(string accountId, string step, Func<T> action, int? cacheEntries = null)
-    {
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        var result = action();
-        sw.Stop();
-        LogPrecomputeStep(accountId, step, sw.ElapsedMilliseconds, cacheEntries);
-        return result;
-    }
-
-    private void MeasurePrecomputeStep(string accountId, string step, Action action, int? cacheEntries = null)
-    {
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        action();
-        sw.Stop();
-        LogPrecomputeStep(accountId, step, sw.ElapsedMilliseconds, cacheEntries);
-    }
-
-    private void MeasurePrecomputeStoreStep(
-        string accountId,
-        string step,
-        List<(string Key, byte[] Json, string ETag)> storeOverride,
-        Action action)
-    {
-        var beforeCount = storeOverride.Count;
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        action();
-        sw.Stop();
-        LogPrecomputeStep(accountId, step, sw.ElapsedMilliseconds, storeOverride.Count - beforeCount);
-    }
-
-    private void LogPrecomputeStep(string accountId, string step, long durationMs, int? cacheEntries)
-    {
-        _log.LogInformation($"[Precompute.Step] account={accountId} step={step} duration_ms={durationMs} cache_entries={(cacheEntries?.ToString() ?? "-")}");
+        _log.LogInformation(
+            "Deferred single-user precompute for {AccountId}; " +
+            "a complete publication rebuild owns cache generation.",
+            accountId);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -537,6 +441,7 @@ public sealed class ScrapeTimePrecomputer
 
         // Bulk-resolve display names for all registered users
         var displayNames = _metaDb.GetDisplayNames(registeredIds);
+        var failures = new ConcurrentBag<Exception>();
 
         await Parallel.ForEachAsync(registeredIds, new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = ct },
             (accountId, _) =>
@@ -549,9 +454,13 @@ public sealed class ScrapeTimePrecomputer
                 catch (Exception ex)
                 {
                     _log.LogWarning(ex, "Failed to precompute player {AccountId}", accountId);
+                    failures.Add(new InvalidOperationException(
+                        $"Player profile precompute failed for {accountId}.",
+                        ex));
                 }
                 return ValueTask.CompletedTask;
             });
+        ThrowIfPrecomputeFailures("player profiles", failures);
     }
 
     internal void PrecomputeSinglePlayer(
@@ -564,9 +473,8 @@ public sealed class ScrapeTimePrecomputer
         List<(string Key, byte[] Json, string ETag)>? storeOverride = null)
     {
         var scores = _persistence.GetCurrentStatePlayerProfile(accountId);
-        if (scores.Count == 0)
+        if (scores.Count == 0 && !_currentProjectionAuthoritativeForPrecompute)
             scores = _persistence.GetPlayerProfile(accountId);
-        if (scores.Count == 0) return;
 
         displayNames ??= _metaDb.GetDisplayNames(new[] { accountId });
         var displayName = displayNames.GetValueOrDefault(accountId);
@@ -791,6 +699,7 @@ public sealed class ScrapeTimePrecomputer
         }
 
         var songParallelism = Math.Max(1, _scraperOptions.PrecomputeLeaderboardSongParallelism);
+        var failures = new ConcurrentBag<Exception>();
         Parallel.ForEach(allSongIds, new ParallelOptions { MaxDegreeOfParallelism = songParallelism }, songId =>
         {
             try
@@ -803,8 +712,12 @@ public sealed class ScrapeTimePrecomputer
             catch (Exception ex)
             {
                 _log.LogWarning(ex, "Failed to precompute leaderboard-all for song {SongId}", songId);
+                failures.Add(new InvalidOperationException(
+                    $"Leaderboard-all precompute failed for {songId}.",
+                    ex));
             }
         });
+        ThrowIfPrecomputeFailures("leaderboard-all", failures);
     }
 
     private void PrecomputeLeaderboardAllForSong(
@@ -900,6 +813,7 @@ public sealed class ScrapeTimePrecomputer
         var songIds = _metaDb.GetBandLeaderboardSongIds();
         if (songIds.Count == 0) return;
 
+        var failures = new ConcurrentBag<Exception>();
         Parallel.ForEach(songIds, new ParallelOptions { MaxDegreeOfParallelism = 4 }, songId =>
         {
             try
@@ -909,8 +823,12 @@ public sealed class ScrapeTimePrecomputer
             catch (Exception ex)
             {
                 _log.LogWarning(ex, "Failed to precompute song band leaderboards for song {SongId}", songId);
+                failures.Add(new InvalidOperationException(
+                    $"Song band leaderboard precompute failed for {songId}.",
+                    ex));
             }
         });
+        ThrowIfPrecomputeFailures("song band leaderboards", failures);
     }
 
     private void PrecomputeSongBandLeaderboardsAllForSong(string songId, bool showLeaderboardEntryTotals)
@@ -1005,8 +923,10 @@ public sealed class ScrapeTimePrecomputer
             return;
         }
 
-        // No staging active — write directly to PostgreSQL (single-entry path)
-        _metaDb.BulkSetCachedResponses(new[] { (cacheKey, json, etag) });
+        _log.LogDebug(
+            "Skipped direct precomputed cache write for {CacheKey}; " +
+            "a complete publication rebuild owns cache promotion.",
+            cacheKey);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1021,6 +941,7 @@ public sealed class ScrapeTimePrecomputer
         if (registeredIds.Count == 0) return;
 
         var displayNames = _metaDb.GetDisplayNames(registeredIds);
+        var failures = new ConcurrentBag<Exception>();
 
         await Parallel.ForEachAsync(registeredIds, new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = ct },
             (accountId, _) =>
@@ -1041,9 +962,13 @@ public sealed class ScrapeTimePrecomputer
                 catch (Exception ex)
                 {
                     _log.LogWarning(ex, "Failed to precompute sub-resources for {AccountId}", accountId);
+                    failures.Add(new InvalidOperationException(
+                        $"Player sub-resource precompute failed for {accountId}.",
+                        ex));
                 }
                 return ValueTask.CompletedTask;
             });
+        ThrowIfPrecomputeFailures("player sub-resources", failures);
     }
 
     private void PrecomputePlayerStats(string accountId,
@@ -1178,7 +1103,7 @@ public sealed class ScrapeTimePrecomputer
     private void PrecomputePlayerHistory(string accountId,
         List<(string Key, byte[] Json, string ETag)>? storeOverride = null)
     {
-        var history = _metaDb.GetScoreHistory(accountId, 1000);
+        var history = _metaDb.GetScoreHistory(accountId, int.MaxValue);
         var payload = new
         {
             accountId,
@@ -1186,7 +1111,7 @@ public sealed class ScrapeTimePrecomputer
             history,
         };
         var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
-        Store($"history:{accountId}", jsonBytes, storeOverride);
+        Store(PlayerHistoryCacheKey(accountId), jsonBytes, storeOverride);
     }
 
     private void PrecomputePlayerSyncStatus(string accountId,
@@ -1460,13 +1385,6 @@ public sealed class ScrapeTimePrecomputer
         IReadOnlyList<LeaderboardRankOffsetData> RankOffsets,
         IReadOnlyDictionary<(string SongId, string Instrument), LeaderboardRankOffsetData> RankOffsetsByKey);
 
-    private sealed record SharedPrecomputeInputs(
-        Dictionary<string, SongMaxScores> AllMaxScores,
-        Dictionary<(string SongId, string Instrument), long> UnfilteredPopulation,
-        IReadOnlyList<string> InstrumentKeys,
-        IReadOnlyDictionary<(string SongId, string Instrument), PopulationTierData> PopulationTiers,
-        Dictionary<(string SongId, string Instrument), int[]> BandScoresCache);
-
     // ═══════════════════════════════════════════════════════════════
     // Phase 5: Rankings Pages (page 1 for each instrument × metric)
     // ═══════════════════════════════════════════════════════════════
@@ -1720,6 +1638,7 @@ public sealed class ScrapeTimePrecomputer
     {
         if (registeredIds.Count == 0) return;
 
+        var failures = new ConcurrentBag<Exception>();
         foreach (var accountId in registeredIds)
         {
             // Per-instrument neighborhoods
@@ -1764,6 +1683,9 @@ public sealed class ScrapeTimePrecomputer
                 catch (Exception ex)
                 {
                     _log.LogWarning(ex, "Failed to precompute neighborhood for {AccountId}/{Instrument}", accountId, instrument);
+                    failures.Add(new InvalidOperationException(
+                        $"Ranking neighborhood precompute failed for {accountId}/{instrument}.",
+                        ex));
                 }
             }
 
@@ -1802,8 +1724,24 @@ public sealed class ScrapeTimePrecomputer
             catch (Exception ex)
             {
                 _log.LogWarning(ex, "Failed to precompute composite neighborhood for {AccountId}", accountId);
+                failures.Add(new InvalidOperationException(
+                    $"Composite neighborhood precompute failed for {accountId}.",
+                    ex));
             }
         }
+        ThrowIfPrecomputeFailures("ranking neighborhoods", failures);
+    }
+
+    private static void ThrowIfPrecomputeFailures(
+        string phase,
+        ConcurrentBag<Exception> failures)
+    {
+        if (failures.IsEmpty)
+            return;
+
+        throw new AggregateException(
+            $"Scrape-time precompute failed for {phase} ({failures.Count} failure(s)).",
+            failures);
     }
 
     // ═══════════════════════════════════════════════════════════════

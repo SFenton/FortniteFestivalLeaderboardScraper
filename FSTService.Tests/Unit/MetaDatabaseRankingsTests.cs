@@ -1570,6 +1570,50 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
+    public void GetNextBandRankHistoryJob_requires_current_published_scrape_and_supersedes_failed_candidates()
+    {
+        var publishedScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(publishedScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(publishedScrapeId, promoteCachedResponses: false);
+
+        var candidateScrapeId = Db.StartScrapeRun();
+        var candidateJob = Db.EnqueueBandRankHistoryJob(
+            candidateScrapeId,
+            "Band_Duets",
+            DateOnly.FromDateTime(DateTime.UtcNow),
+            "Background",
+            coalesceSameDay: false);
+
+        Assert.Null(Db.GetNextBandRankHistoryJob(
+            requirePublishedScrape: true));
+
+        Db.FailScrapeRun(candidateScrapeId, "post_process", "injected");
+
+        Assert.Null(Db.GetNextBandRankHistoryJob(
+            requirePublishedScrape: true));
+        Assert.Equal("superseded", GetBandHistoryJobStatus(candidateJob.JobId));
+    }
+
+    [Fact]
+    public void GetNextBandRankHistoryJob_accepts_job_for_current_published_scrape()
+    {
+        var publishedScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(publishedScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(publishedScrapeId, promoteCachedResponses: false);
+        var publishedJob = Db.EnqueueBandRankHistoryJob(
+            publishedScrapeId,
+            "Band_Duets",
+            DateOnly.FromDateTime(DateTime.UtcNow),
+            "Background",
+            coalesceSameDay: false);
+
+        Assert.Equal(
+            publishedJob.JobId,
+            Db.GetNextBandRankHistoryJob(
+                requirePublishedScrape: true)?.JobId);
+    }
+
+    [Fact]
     public void FailedBandRankHistoryJob_BecomesNextJobOnlyWithinRetryPolicy()
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);

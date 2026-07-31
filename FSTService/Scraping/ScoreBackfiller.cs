@@ -157,7 +157,7 @@ public class ScoreBackfiller
             }
 
             _metaDb.UpdateBackfillProgress(accountId, songsChecked, entriesFound);
-            _metaDb.CompleteBackfill(accountId);
+            _metaDb.CompleteBackfill(accountId, rankingsPending: true);
 
             _log.LogInformation(
                 "Backfill for {AccountId} complete. Checked {Checked}/{Total} pairs, found {Found} new entries.",

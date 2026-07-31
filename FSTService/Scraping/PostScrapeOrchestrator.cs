@@ -145,13 +145,20 @@ public sealed class PostScrapeOrchestrator
         if (resolvedPhases.HasFlag(ScrapePhase.SoloEnrichment))
             await RunEnrichmentAsync(ctx, service, ct);
 
+        var registeredUserRefreshResult = new SongProcessingMachine.MachineResult();
+
         // ── Solo refresh registered users ──
         if (resolvedPhases.HasFlag(ScrapePhase.SoloRefreshUsers))
-            await RunPhaseAsync(
+        {
+            registeredUserRefreshResult = await RunPhaseAsync(
                 ctx,
                 "RefreshRegisteredUsers",
                 () => RefreshRegisteredUsersAsync(ctx, ct),
-                new SongProcessingMachine.MachineResult());
+                new SongProcessingMachine.MachineResult(),
+                alwaysPropagateFailure: true);
+            foreach (var scope in registeredUserRefreshResult.UpdatedScopes)
+                ctx.NotificationProjectionScopes.Add(scope);
+        }
 
         var expectedSnapshotPairs = BuildExpectedSnapshotPairs(ctx);
         if (ShouldActivateShadowSnapshotsBeforeDerived(ctx, resolvedPhases))
@@ -327,7 +334,21 @@ public sealed class PostScrapeOrchestrator
             // ── Solo rankings ──
             if (resolvedPhases.HasFlag(ScrapePhase.SoloRankings))
             {
-                ctx.RankingsComputedSuccessfully = await RunPhaseAsync(ctx, "ComputeRankings", () => ComputeRankingsAsync(service, ctx.ScrapeId, ct));
+                ctx.RankingsInputCutoffUtc = DateTime.UtcNow;
+                ctx.RegisteredIds.UnionWith(_persistence.Meta.GetRegisteredAccountIds());
+                foreach (var scope in _persistence.Meta.GetBackfillProjectionScopesCompletedBefore(
+                             ctx.RegisteredIds,
+                             ctx.RankingsInputCutoffUtc.Value))
+                {
+                    ctx.NotificationProjectionScopes.Add(scope);
+                }
+
+                ctx.RankingsComputedSuccessfully = await RunPhaseAsync(
+                    ctx,
+                    "ComputeRankings",
+                    () => ComputeRankingsAsync(service, ctx.ScrapeId, ct),
+                    defaultValue: false,
+                    alwaysPropagateFailure: true);
             }
             // ── Solo rivals ──
             if (resolvedPhases.HasFlag(ScrapePhase.SoloRivals))
@@ -377,6 +398,17 @@ public sealed class PostScrapeOrchestrator
 
         }
 
+        if (_soloCurrentProjectionBuilder is not null
+            && (resolvedPhases.HasFlag(ScrapePhase.SoloFinalize)
+                || resolvedPhases.HasFlag(ScrapePhase.SoloPrecompute)))
+        {
+            await RunPhaseAsync(
+                ctx,
+                "SealSoloCurrentProjectionScopes",
+                () => SealSoloCurrentProjectionScopesAsync(ctx, ct),
+                alwaysPropagateFailure: true);
+        }
+
         // ── Await background band scrape for exception observation ──
         if (bandScrapeTask is not null)
         {
@@ -407,6 +439,9 @@ public sealed class PostScrapeOrchestrator
         var refreshSoloCurrentProjection = ShouldRefreshSoloCurrentProjectionDuringCleanup(ctx, resolvedPhases);
         var precomputeApiResponses = ShouldPrecomputeDuringPublicationCleanup(resolvedPhases);
 
+        if (precomputeApiResponses)
+            ctx.RegisteredIds.UnionWith(_persistence.Meta.GetRegisteredAccountIds());
+
         if (refreshSoloCurrentProjection)
             cleanupItems++;
         if (precomputeApiResponses)
@@ -421,7 +456,11 @@ public sealed class PostScrapeOrchestrator
 
         if (refreshSoloCurrentProjection)
         {
-            await RunPhaseAsync(ctx, "Cleanup.SoloCurrentProjection", () => RefreshSoloCurrentProjectionForCleanupAsync(ct));
+            await RunPhaseAsync(
+                ctx,
+                "Cleanup.SoloCurrentProjection",
+                () => RefreshSoloCurrentProjectionForCleanupAsync(ctx, ct),
+                alwaysPropagateFailure: true);
             ctx.SoloCurrentProjectionRefreshedForPublication =
                 ctx.PostScrapeOutcomes.Outcomes.Any(static outcome =>
                     outcome.Phase == "Cleanup.SoloCurrentProjection" && outcome.Success);
@@ -429,8 +468,11 @@ public sealed class PostScrapeOrchestrator
 
         if (precomputeApiResponses)
         {
-            _persistence.Meta.ClearBackfillRankingsPending(ctx.RegisteredIds);
-            await RunPhaseAsync(ctx, "Cleanup.PrecomputeAll", () => PrecomputeAllForCleanupAsync(ctx.EpicReportedOver100Pages, ct));
+            await RunPhaseAsync(
+                ctx,
+                "Cleanup.PrecomputeAll",
+                () => PrecomputeAllForCleanupAsync(ctx.EpicReportedOver100Pages, ct),
+                alwaysPropagateFailure: true);
         }
     }
 
@@ -446,18 +488,21 @@ public sealed class PostScrapeOrchestrator
         ScrapePhase resolvedPhases,
         CancellationToken ct)
     {
-        await RunPhaseAsync(
-            ctx,
-            "DeferredRegistrationSync",
-            () => RunDeferredRegistrationSyncWithTimeoutAsync(
-                phaseCt => RunDeferredRegistrationSyncCoreAsync(ctx, service, resolvedPhases, phaseCt),
-                ct,
-                ctx));
-
-        if (ctx.PostScrapeOutcomes.Outcomes.Any(static outcome =>
-                outcome.Phase == "DeferredRegistrationSync" && !outcome.Success))
+        try
+        {
+            await RunPhaseAsync(
+                ctx,
+                "DeferredRegistrationSync",
+                () => RunDeferredRegistrationSyncWithTimeoutAsync(
+                    phaseCt => RunDeferredRegistrationSyncCoreAsync(ctx, service, resolvedPhases, phaseCt),
+                    ct,
+                    ctx),
+                alwaysPropagateFailure: true);
+        }
+        catch
         {
             ctx.NotificationProjectionRequiresFullRefresh = true;
+            throw;
         }
     }
 
@@ -484,7 +529,7 @@ public sealed class PostScrapeOrchestrator
             if (ctx is not null)
                 ctx.NotificationProjectionRequiresFullRefresh = true;
             _log.LogWarning(
-                "Deferred registration sync timed out after {Timeout}. Publication will continue and queued users will retry on a later pass.",
+                "Deferred registration sync timed out after {Timeout}. The candidate will not publish and queued users will retry on a later pass.",
                 timeout);
             throw new TimeoutException(
                 $"Deferred registration sync timed out after {timeout}.");
@@ -591,7 +636,7 @@ public sealed class PostScrapeOrchestrator
         }
 
         _log.LogInformation(
-            "Running deferred registration sync for {Count} user(s) after current-cycle derived publication.",
+            "Running deferred registration sync for {Count} user(s) after the current publication cache cut; their score data remains pending until a later ranked publication.",
             users.Count);
         UpdatePostProcessOperation(
             "DeferredRegistrationSync",
@@ -607,42 +652,51 @@ public sealed class PostScrapeOrchestrator
             ct: ct,
             preserveProgressPhaseOnIdle: true);
 
-        foreach (var scope in result.UpdatedScopes)
-            ctx.NotificationProjectionScopes.Add(scope);
-
         if (result.EntriesUpdated > 0 || result.SessionsInserted > 0)
             _log.LogInformation("Deferred registration sync updated {Entries} entries, {Sessions} sessions for {Users} users.",
                 result.EntriesUpdated, result.SessionsInserted, result.UsersProcessed);
 
+        var postSyncFailures = new List<Exception>();
         for (var index = 0; index < users.Count; index++)
         {
             var user = users[index];
             UpdatePostProcessOperation(
                 "DeferredRegistrationSync",
-                $"Computing deferred rivals {index + 1}/{users.Count}",
+                $"Queueing deferred rivals {index + 1}/{users.Count}",
                 progressPercent: users.Count == 0 ? 100 : 100d * index / users.Count);
             try
             {
-                _persistence.Meta.CompleteBackfill(user.AccountId, rankingsPending: true);
-                _rivalsOrchestrator.ComputeForUser(user.AccountId, forceRecompute: true);
-                _ = _notifications.NotifyBackfillCompleteAsync(user.AccountId);
+                _persistence.Meta.QueueRivalsRecompute(user.AccountId);
 
                 var reconStatus = _persistence.Meta.GetHistoryReconStatus(user.AccountId);
                 if (reconStatus is null)
                     _persistence.Meta.EnqueueHistoryRecon(user.AccountId, 0);
 
                 _persistence.Meta.CompleteHistoryRecon(user.AccountId);
+                _persistence.Meta.CompleteBackfill(user.AccountId, rankingsPending: true);
+                _ = _notifications.NotifyBackfillCompleteAsync(user.AccountId);
                 _ = _notifications.NotifyHistoryReconCompleteAsync(user.AccountId);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _log.LogWarning(ex, "Deferred registration post-sync actions failed for {AccountId}.", user.AccountId);
+                var failure = new InvalidOperationException(
+                    $"Deferred registration post-sync actions failed for {user.AccountId}.",
+                    ex);
+                postSyncFailures.Add(failure);
+                _log.LogWarning(failure, "Deferred registration post-sync actions failed for {AccountId}.", user.AccountId);
             }
 
             UpdatePostProcessOperation(
                 "DeferredRegistrationSync",
-                $"Completed deferred rivals {index + 1}/{users.Count}",
+                $"Queued deferred rivals {index + 1}/{users.Count}",
                 progressPercent: 100d * (index + 1) / users.Count);
+        }
+
+        if (postSyncFailures.Count > 0)
+        {
+            throw new AggregateException(
+                $"Deferred registration post-sync actions failed for {postSyncFailures.Count} user(s).",
+                postSyncFailures);
         }
     }
 
@@ -679,7 +733,7 @@ public sealed class PostScrapeOrchestrator
                     expectedPublishedScrapeId: ctx.ScrapeId,
                     execute: true,
                     baselineOnly: false,
-                    refreshSoloProjection: true,
+                    refreshSoloProjection: false,
                     projectionScopes: null,
                     force: false,
                     source: "post-scrape",
@@ -793,7 +847,7 @@ public sealed class PostScrapeOrchestrator
             expectedPublishedScrapeId: publishedScrapeId,
             execute: true,
             baselineOnly: false,
-            refreshSoloProjection: true,
+            refreshSoloProjection: false,
             projectionScopes: null,
             force: false,
             source: "startup-recovery",
@@ -931,8 +985,15 @@ public sealed class PostScrapeOrchestrator
 
     private bool ShouldRefreshSoloCurrentProjectionDuringCleanup(ScrapePassContext ctx, ScrapePhase resolvedPhases)
     {
-        if (_soloCurrentProjectionBuilder is null ||
-            !_options.Value.RefreshSoloProjectionDuringCleanup ||
+        if (_soloCurrentProjectionBuilder is null)
+        {
+            return false;
+        }
+
+        if (ctx.NotificationProjectionScopes.Count > 0)
+            return true;
+
+        if (!_options.Value.RefreshSoloProjectionDuringCleanup ||
             !resolvedPhases.HasFlag(ScrapePhase.SoloFinalize))
         {
             return false;
@@ -968,7 +1029,27 @@ public sealed class PostScrapeOrchestrator
         }
     }
 
-    private async Task RefreshSoloCurrentProjectionForCleanupAsync(CancellationToken ct)
+    private async Task SealSoloCurrentProjectionScopesAsync(
+        ScrapePassContext ctx,
+        CancellationToken ct)
+    {
+        var builder = _soloCurrentProjectionBuilder
+            ?? throw new InvalidOperationException(
+                "Solo current projection scope sealing requires a configured projection builder.");
+
+        await builder.EnsureSchemaAsync(ct);
+        foreach (var scope in await builder.LoadStaleScopesAsync(ct))
+            ctx.NotificationProjectionScopes.Add(scope);
+
+        ctx.SoloCurrentProjectionScopesSealedForPublication = true;
+        _log.LogInformation(
+            "Sealed {ScopeCount:N0} solo current projection scope(s) for publication before deferred registration writes.",
+            ctx.NotificationProjectionScopes.Count);
+    }
+
+    private async Task RefreshSoloCurrentProjectionForCleanupAsync(
+        ScrapePassContext ctx,
+        CancellationToken ct)
     {
         _progress.SetSubOperation("cleanup_solo_current_projection");
         try
@@ -978,8 +1059,16 @@ public sealed class PostScrapeOrchestrator
                 return;
 
             await builder.EnsureSchemaAsync(ct);
-            var staleScopes = await builder.LoadStaleScopesAsync(ct);
-            if (staleScopes.Count == 0)
+            var staleScopes = ctx.SoloCurrentProjectionScopesSealedForPublication
+                ? []
+                : await builder.LoadStaleScopesAsync(ct);
+            var scopes = staleScopes
+                .Concat(ctx.NotificationProjectionScopes)
+                .Distinct()
+                .OrderBy(static scope => scope.Instrument, StringComparer.Ordinal)
+                .ThenBy(static scope => scope.SongId, StringComparer.Ordinal)
+                .ToArray();
+            if (scopes.Length == 0)
             {
                 _log.LogInformation("Cleanup solo current projection refresh skipped; no stale scopes found.");
                 return;
@@ -993,11 +1082,11 @@ public sealed class PostScrapeOrchestrator
             };
 
             _log.LogInformation(
-                "Cleanup refreshing {ScopeCount:N0} stale solo current projection scope(s) with maxDegree={MaxDegree}.",
-                staleScopes.Count,
+                "Cleanup refreshing {ScopeCount:N0} stale or deferred-write solo current projection scope(s) with maxDegree={MaxDegree}.",
+                scopes.Length,
                 refreshOptions.MaxDegreeOfParallelism);
 
-            var result = await builder.RefreshScopesAsync(staleScopes, refreshOptions, ct);
+            var result = await builder.RefreshScopesAsync(scopes, refreshOptions, ct);
             if (result.FailedScopeCount > 0)
             {
                 _log.LogError(
@@ -1511,7 +1600,8 @@ public sealed class PostScrapeOrchestrator
     private async Task RunPhaseAsync(
         ScrapePassContext ctx,
         string phaseName,
-        Func<Task> phase)
+        Func<Task> phase,
+        bool alwaysPropagateFailure = false)
     {
         var criticality = PostScrapePhasePolicy.GetCriticality(phaseName);
         var heapBefore = GC.GetTotalMemory(false);
@@ -1539,7 +1629,7 @@ public sealed class PostScrapeOrchestrator
                 phaseName,
                 criticality);
             if (criticality == PostScrapePhaseCriticality.PublicationCritical
-                && _persistence.EnforcePublicationCriticalPhases)
+                && (alwaysPropagateFailure || _persistence.EnforcePublicationCriticalPhases))
             {
                 throw;
             }
@@ -1565,7 +1655,8 @@ public sealed class PostScrapeOrchestrator
         ScrapePassContext ctx,
         string phaseName,
         Func<Task<T>> phase,
-        T defaultValue = default!)
+        T defaultValue = default!,
+        bool alwaysPropagateFailure = false)
     {
         var criticality = PostScrapePhasePolicy.GetCriticality(phaseName);
         var heapBefore = GC.GetTotalMemory(false);
@@ -1594,7 +1685,7 @@ public sealed class PostScrapeOrchestrator
                 phaseName,
                 criticality);
             if (criticality == PostScrapePhaseCriticality.PublicationCritical
-                && _persistence.EnforcePublicationCriticalPhases)
+                && (alwaysPropagateFailure || _persistence.EnforcePublicationCriticalPhases))
             {
                 throw;
             }
@@ -1630,8 +1721,9 @@ public sealed class PostScrapeOrchestrator
     internal Task RunClassifiedPhaseForTestAsync(
         ScrapePassContext ctx,
         string phaseName,
-        Func<Task> phase) =>
-        RunPhaseAsync(ctx, phaseName, phase);
+        Func<Task> phase,
+        bool alwaysPropagateFailure = false) =>
+        RunPhaseAsync(ctx, phaseName, phase, alwaysPropagateFailure);
 
     private void RecordPhaseOutcome(
         ScrapePassContext ctx,
@@ -1996,7 +2088,7 @@ public sealed class PostScrapeOrchestrator
             {
                 try
                 {
-                    _persistence.Meta.CompleteBackfill(user.AccountId);
+                    _persistence.Meta.CompleteBackfill(user.AccountId, rankingsPending: true);
                     _rivalsOrchestrator.ComputeForUser(user.AccountId);
                     _ = _notifications.NotifyBackfillCompleteAsync(user.AccountId);
 

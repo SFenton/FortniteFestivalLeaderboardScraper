@@ -12,6 +12,57 @@ public sealed class ImprovementNotificationRecoveryServiceTests : IDisposable
     public void Dispose() => _fixture.Dispose();
 
     [Fact]
+    public async Task RunPublishedScrapeAsync_WithoutRefreshPreservesPersistedProjectionPlan()
+    {
+        var scrapeId = _fixture.Db.StartScrapeRun();
+        _fixture.Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        _fixture.Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false,
+            queueImprovementNotifications: true,
+            improvementNotificationProjectionScopes:
+            [
+                new SoloCurrentProjectionScopeKey("song-1", "Solo_Guitar"),
+            ]);
+        var notificationService = new ImprovementNotificationService(
+            _fixture.DataSource,
+            NullLogger<ImprovementNotificationService>.Instance);
+        var recovery = new ImprovementNotificationRecoveryService(
+            notificationService,
+            new SoloCurrentProjectionBuilder(
+                _fixture.DataSource,
+                NullLogger<SoloCurrentProjectionBuilder>.Instance),
+            Options.Create(new ImprovementNotificationOptions
+            {
+                Enabled = true,
+                Scope = "registered",
+                IncludePlayers = true,
+                IncludeBands = false,
+                IncludeSongEvents = false,
+                IncludeRankings = false,
+                RefreshSoloProjection = false,
+                PruneExpired = false,
+            }),
+            NullLogger<ImprovementNotificationRecoveryService>.Instance);
+
+        await recovery.RunPublishedScrapeAsync(
+            expectedPublishedScrapeId: scrapeId,
+            execute: true,
+            baselineOnly: false,
+            refreshSoloProjection: false,
+            projectionScopes: null,
+            force: false,
+            source: "test-persisted-plan",
+            CancellationToken.None);
+
+        var plan = notificationService.GetProjectionPlan(scrapeId);
+        Assert.True(plan.IsReady);
+        var scope = Assert.Single(plan.Scopes);
+        Assert.Equal("song-1", scope.SongId);
+        Assert.Equal("Solo_Guitar", scope.Instrument);
+    }
+
+    [Fact]
     public async Task RunPublishedScrapeAsync_ShutdownDefersAndNextAttemptCompletes()
     {
         var scrapeId = _fixture.Db.StartScrapeRun();

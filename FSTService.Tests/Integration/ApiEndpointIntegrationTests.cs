@@ -1180,10 +1180,26 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     [Fact]
     public async Task ApiPlayer_ReturnsProfile()
     {
-        var response = await _client.GetAsync("/api/player/testAcct1");
+        const string accountId = "basicProfileAcct";
+        const string songId = "basicProfileSong";
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            persistence.GetOrCreateInstrumentDb("Solo_Guitar").UpsertEntries(
+                songId,
+                [new LeaderboardEntry
+                {
+                    AccountId = accountId,
+                    Score = 100_000,
+                    Rank = 1,
+                    ApiRank = 1,
+                }]);
+        }
+
+        var response = await _client.GetAsync($"/api/player/{accountId}");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("testAcct1", json.GetProperty("accountId").GetString());
+        Assert.Equal(accountId, json.GetProperty("accountId").GetString());
     }
 
     [Fact]
@@ -1576,7 +1592,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
-    public async Task ApiPlayerHistory_RegisteredUser_ReturnsHistory()
+    public async Task ApiPlayerHistory_RegisteredUserWithoutPublishedPayload_ReturnsSyncing()
     {
         // Seed display name so register endpoint can resolve username → accountId
         using (var scope = _factory.Services.CreateScope())
@@ -1590,9 +1606,40 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         await _authedClient.PostAsync("/api/register", regContent);
 
         var response = await _authedClient.GetAsync("/api/player/histAcct/history");
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Contains("no-store", response.Headers.CacheControl?.ToString());
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("histAcct", json.GetProperty("accountId").GetString());
+        Assert.Equal("syncing", json.GetProperty("status").GetString());
+        Assert.True(json.GetProperty("notYetPublished").GetBoolean());
+    }
+
+    [Fact]
+    public async Task ApiPlayerHistory_LegacyTruncatedCacheDoesNotCountAsPublished()
+    {
+        const string accountId = "legacyHistoryAcct";
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        metaDb.RegisterUser("legacy-history-device", accountId);
+        var legacyJson = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            accountId,
+            count = 0,
+            history = Array.Empty<object>(),
+        });
+        metaDb.BulkSetCachedResponses(
+        [
+            (
+                $"history:{accountId}",
+                legacyJson,
+                ResponseCacheService.ComputeETag(legacyJson)
+            ),
+        ]);
+
+        var response = await _client.GetAsync($"/api/player/{accountId}/history");
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.GetProperty("notYetPublished").GetBoolean());
     }
 
     // ─── Backfill status ────────────────────────────────────────
@@ -1983,11 +2030,39 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(acct, json.GetProperty("accountId").GetString());
         Assert.True(json.GetProperty("isTracked").GetBoolean());
-
         var backfill = json.GetProperty("backfill");
         Assert.NotEqual(JsonValueKind.Null, backfill.ValueKind);
         Assert.Equal("pending", backfill.GetProperty("status").GetString());
         Assert.Equal(100, backfill.GetProperty("totalSongsToCheck").GetInt32());
+    }
+
+    [Fact]
+    public async Task SyncStatus_IgnoresStalePublishedCacheAndReadsLiveOperationalState()
+    {
+        const string accountId = "syncLiveAcct";
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        metaDb.RegisterUser("sync-live-device", accountId);
+        var staleJson = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            accountId,
+            isTracked = false,
+        });
+        metaDb.BulkSetCachedResponses(
+        [
+            (
+                $"syncstatus:{accountId}",
+                staleJson,
+                ResponseCacheService.ComputeETag(staleJson)
+            ),
+        ]);
+
+        var response = await _client.GetAsync($"/api/player/{accountId}/sync-status");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        var json = JsonDocument.Parse(body).RootElement;
+        Assert.True(json.TryGetProperty("isTracked", out var isTracked), body);
+        Assert.True(isTracked.GetBoolean());
     }
 
     // ─── Player profile with display name ───────────────────
@@ -2245,7 +2320,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
-    public async Task TrackPlayer_BackfillCompletion_PrecomputesPlayerPayloadWithFallbackTiers()
+    public async Task TrackPlayer_BackfillCompletion_DoesNotPublishPlayerPayloadEarly()
     {
         const string accountId = "trackPrecomputeAcct";
         const string songId = "trackPrecomputeSong";
@@ -2298,19 +2373,19 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             Assert.Equal(1, claimed);
         }
 
-        var cachedJson = await WaitForCachedPlayerPayloadAsync(
-            factory.Services,
-            $"player:{accountId}:::",
-            TimeSpan.FromSeconds(5));
-        var score = Assert.Single(cachedJson.GetProperty("scores").EnumerateArray(),
-            entry => entry.GetProperty("si").GetString() == songId
-                     && entry.GetProperty("ins").GetString() == "01");
+        using (var scope = factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            Assert.Null(metaDb.GetCachedResponse($"player:{accountId}:::"));
+        }
 
-        Assert.True(score.GetProperty("ml").GetDouble() > 1.0);
-        var validScore = Assert.Single(score.GetProperty("vs").EnumerateArray(),
-            entry => entry.GetProperty("sc").GetInt32() == 80_000);
-        Assert.True(validScore.GetProperty("ml").GetDouble() <= 1.0);
-        Assert.True(validScore.GetProperty("fc").GetBoolean());
+        var playerResponse = await client.GetAsync($"/api/player/{accountId}");
+        Assert.Equal(HttpStatusCode.Accepted, playerResponse.StatusCode);
+        Assert.Contains("no-store", playerResponse.Headers.CacheControl?.ToString());
+        var playerJson = await playerResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("syncing", playerJson.GetProperty("status").GetString());
+        Assert.True(playerJson.GetProperty("notYetPublished").GetBoolean());
+        Assert.Empty(playerJson.GetProperty("scores").EnumerateArray());
     }
 
     [Fact]
@@ -4061,7 +4136,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var response = await _authedClient.PostAsync("/api/player/acct1/rivals/recompute", null);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("recomputed", json.GetProperty("status").GetString());
+        Assert.Equal("pending_publication", json.GetProperty("status").GetString());
     }
 
     [Fact]
@@ -4075,9 +4150,9 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     public async Task LeaderboardRivals_Recompute_WithApiKey_ReturnsOk()
     {
         var response = await _authedClient.PostAsync("/api/player/acct1/leaderboard-rivals/recompute", null);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("recomputed", json.GetProperty("status").GetString());
+        Assert.Equal("publication_generation_required", json.GetProperty("status").GetString());
     }
 
     [Fact]
@@ -5051,6 +5126,33 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task Player_FilteredPublishedProfile_FailsClosedInsteadOfReadingLiveState()
+    {
+        const string accountId = "published-filter-player";
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var publishedJson = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            accountId,
+            displayName = "Published Filter",
+            totalScores = 0,
+            scores = Array.Empty<object>(),
+        });
+        metaDb.BulkSetCachedResponses(
+        [
+            (
+                $"player:{accountId}:::",
+                publishedJson,
+                ResponseCacheService.ComputeETag(publishedJson)
+            ),
+        ]);
+
+        var response = await _client.GetAsync(
+            $"/api/player/{accountId}?songId=testSong1");
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Player_Stats_WithSeededData()
     {
         var persistence = _factory.Services.GetRequiredService<GlobalLeaderboardPersistence>();
@@ -5071,16 +5173,53 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
-    public async Task Player_History_ReturnsData_WhenRegistered()
+    public async Task Player_History_FilterUsesPublishedPayloadInsteadOfLiveRows()
     {
         var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
         metaDb.RegisterUser("hist-device", "hist_reg_player");
         metaDb.InsertScoreChange("testSong1", "Solo_Guitar", "hist_reg_player",
             null, 5000, null, 50, accuracy: 90, isFullCombo: false, stars: 4,
             percentile: 0.5, season: 3, scoreAchievedAt: null);
+        var publishedHistory = Enumerable.Range(0, 1001)
+            .Select(index => new ScoreHistoryEntry
+            {
+                SongId = $"other-song-{index}",
+                Instrument = "Solo_Guitar",
+                NewScore = index + 1,
+                NewRank = index + 1,
+                ChangedAt = "2026-07-02T00:00:00Z",
+            })
+            .Append(new ScoreHistoryEntry
+            {
+                SongId = "testSong1",
+                Instrument = "Solo_Guitar",
+                NewScore = 4000,
+                NewRank = 60,
+                ChangedAt = "2026-07-01T00:00:00Z",
+            })
+            .ToArray();
+        var publishedPayload = new
+        {
+            accountId = "hist_reg_player",
+            count = publishedHistory.Length,
+            history = publishedHistory,
+        };
+        var publishedJson = JsonSerializer.SerializeToUtf8Bytes(publishedPayload);
+        metaDb.BulkSetCachedResponses(
+        [
+            (
+                ScrapeTimePrecomputer.PlayerHistoryCacheKey("hist_reg_player"),
+                publishedJson,
+                ResponseCacheService.ComputeETag(publishedJson)
+            ),
+        ]);
 
         var response = await _client.GetAsync("/api/player/hist_reg_player/history?songId=testSong1");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var history = json.GetProperty("history");
+        Assert.Single(history.EnumerateArray());
+        Assert.Equal(4000, history[0].GetProperty("newScore").GetInt32());
     }
 
     // ─── Player leeway (valid score filtering) ──────────────────
@@ -5453,12 +5592,45 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         using (var scope = _factory.Services.CreateScope())
         {
             var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
             var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
             db.UpsertEntries("diag_song", new List<LeaderboardEntry>
             {
                 new() { AccountId = "diag_acct", Score = 10000, Accuracy = 95, Stars = 5 },
                 new() { AccountId = "filler1",   Score = 9000,  Accuracy = 90, Stars = 4 },
             });
+            InsertCurrentLeaderboardEntry(
+                dataSource,
+                "diag_song",
+                "Solo_Guitar",
+                "diag_acct",
+                10000,
+                rank: 1,
+                apiRank: 1);
+            InsertCurrentLeaderboardEntry(
+                dataSource,
+                "diag_song",
+                "Solo_Guitar",
+                "filler1",
+                9000,
+                rank: 2,
+                apiRank: 2);
+            using var conn = dataSource.OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO solo_current_projection_scope
+                (song_id, instrument, projection_generation, row_count,
+                 source_snapshot_id, status, updated_at)
+                VALUES
+                ('diag_song', 'Solo_Guitar', 1, 2, NULL, 'ready', now())
+                ON CONFLICT (song_id, instrument) DO UPDATE SET
+                    projection_generation = EXCLUDED.projection_generation,
+                    row_count = EXCLUDED.row_count,
+                    source_snapshot_id = EXCLUDED.source_snapshot_id,
+                    status = EXCLUDED.status,
+                    updated_at = EXCLUDED.updated_at
+                """;
+            cmd.ExecuteNonQuery();
         }
 
         var response = await _authedClient.GetAsync("/api/player/diag_acct/rivals/diagnostics");

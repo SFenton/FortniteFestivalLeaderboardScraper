@@ -482,6 +482,29 @@ describe('useSyncStatus', () => {
     expect(result.current.progress).toBeCloseTo(0.3);
   });
 
+  it('keeps a complete WS phase syncing while publication is pending', async () => {
+    mockGetStatus.mockResolvedValue({ backfill: null, historyRecon: null } as any);
+    const { result } = renderHook(() => useSyncStatus('acc1'), { wrapper });
+    await flush();
+
+    await act(async () => {
+      wsHandlers.forEach(handler => handler({
+        type: 'sync_progress',
+        accountId: 'acc1',
+        phase: 'complete',
+        pendingRankUpdate: true,
+        itemsCompleted: 100,
+        totalItems: 100,
+        entriesFound: 10,
+      } as any));
+    });
+
+    expect(result.current.isSyncing).toBe(true);
+    expect(result.current.phase).toBe('postscrape');
+    expect(result.current.pendingRankUpdate).toBe(true);
+    expect(result.current.justCompleted).toBe(false);
+  });
+
   it('prefers display counts from WebSocket backfill progress', async () => {
     mockGetStatus.mockResolvedValue({ backfill: null, historyRecon: null } as any);
     const { result } = renderHook(() => useSyncStatus('acc1'), { wrapper });
@@ -587,7 +610,8 @@ describe('useSyncStatus', () => {
     const { result } = renderHook(() => useSyncStatus('acc1'), { wrapper });
     await flush();
 
-    expect(result.current.phase).toBe('complete');
+    expect(result.current.isSyncing).toBe(true);
+    expect(result.current.phase).toBe('postscrape');
     expect(result.current.pendingRankUpdate).toBe(true);
   });
 

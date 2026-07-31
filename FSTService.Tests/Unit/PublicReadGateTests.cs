@@ -77,6 +77,8 @@ public class PublicReadGateTests
     [Theory]
     [InlineData(MetaDatabase.FailedCandidateReadIsolationFailurePhase)]
     [InlineData(MetaDatabase.NoProgressReadIsolationFailurePhase)]
+    [InlineData(MetaDatabase.PostProcessReadIsolationFailurePhase)]
+    [InlineData(MetaDatabase.PublicationReadIsolationFailurePhase)]
     public void MetaDatabase_FailedCandidateReadIsolation_PersistsUntilLaterPublication(
         string failurePhase)
     {
@@ -141,6 +143,24 @@ public class PublicReadGateTests
         var gate = new PublicReadGateService(metaDb, NullLogger<PublicReadGateService>.Instance);
 
         using var cache = new ResponseCacheService(TimeSpan.FromMinutes(5), gate);
+
+        Assert.True(cache.IsFrozen);
+        Assert.True(cache.RequiresCachedReads);
+        Assert.NotNull(CacheHelper.ServeUnavailableIfFrozen(new DefaultHttpContext(), cache));
+    }
+
+    [Fact]
+    public void ResponseCache_CanRequireCachedReadsDuringNormalFreeze()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            new PublicReadFreezeState(true, DateTime.UtcNow, 1271, "scrape"));
+        var gate = new PublicReadGateService(metaDb, NullLogger<PublicReadGateService>.Instance);
+
+        using var cache = new ResponseCacheService(
+            TimeSpan.FromMinutes(5),
+            gate,
+            requireCachedReadsWhenFrozen: true);
 
         Assert.True(cache.IsFrozen);
         Assert.True(cache.RequiresCachedReads);

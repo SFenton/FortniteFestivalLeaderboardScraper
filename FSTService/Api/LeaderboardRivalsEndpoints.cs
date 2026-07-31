@@ -186,16 +186,12 @@ public static partial class ApiEndpoints
         .RequireRateLimiting("public");
 
         app.MapPost("/api/player/{accountId}/leaderboard-rivals/recompute", (
-            string accountId,
-            ScrapeTimePrecomputer precomputer,
-            [FromKeyedServices("LeaderboardRivalsCache")] ResponseCacheService cache) =>
+            string accountId) =>
         {
-            cache.InvalidateAll();
-            precomputer.PrecomputeUser(accountId);
-            return Results.Ok(new
+            return Results.Conflict(new
             {
                 accountId,
-                status = "recomputed",
+                status = "publication_generation_required",
             });
         })
         .WithTags("LeaderboardRivals")

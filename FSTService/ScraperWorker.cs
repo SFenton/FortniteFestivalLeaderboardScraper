@@ -445,6 +445,8 @@ public sealed class ScraperWorker : BackgroundService
         _backgroundWork.RequestPauseForScrape();
         try
         {
+            await _backgroundWork.WaitForBackgroundQuiescenceAsync(ct);
+
             var resolvedPhases = opts.ResolvedPhases;
             if (resolvedPhases != ScrapePhase.All)
                 _log.LogInformation("Phase-selective mode: {Phases}", ScrapePhaseResolver.Format(resolvedPhases));
@@ -640,16 +642,26 @@ public sealed class ScraperWorker : BackgroundService
                     await _postScrapeOrchestrator.RunAsync(ctx, service, postScrapePhases, ct);
                     postProcessCompleted = true;
                 }
-                catch (OperationCanceledException) { throw; }
+                catch (OperationCanceledException ex)
+                {
+                    passDetail = $"Post-processing was cancelled: {ex.Message}";
+                    RecordFailedCandidateIsolation(
+                        ctx.ScrapeId,
+                        "Post-processing cancellation",
+                        ex.Message,
+                        ref publicReadsReleased);
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     _workerStatus?.FailOperation("scrape.post_process", ex);
                     postProcessOperationActive = false;
                     passDetail = $"Post-processing failed: {ex.Message}";
-                    _persistence.Meta.FailScrapeRun(
+                    RecordFailedCandidateIsolation(
                         ctx.ScrapeId,
-                        "post_process",
-                        ex.Message);
+                        "Post-processing",
+                        ex.Message,
+                        ref publicReadsReleased);
                     _log.LogError(ex, "Post-scrape orchestration failed. Finalizing pass with stale data.");
                 }
             }
@@ -661,12 +673,26 @@ public sealed class ScraperWorker : BackgroundService
                 {
                     await _postScrapeOrchestrator.RunPublicationCleanupAsync(ctx, postScrapePhases, ct);
                 }
-                catch (OperationCanceledException) { throw; }
+                catch (OperationCanceledException ex)
+                {
+                    passDetail = $"Publication cleanup was cancelled: {ex.Message}";
+                    RecordFailedCandidateIsolation(
+                        ctx.ScrapeId,
+                        "Publication cleanup cancellation",
+                        ex.Message,
+                        ref publicReadsReleased);
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     publicationCleanupCompleted = false;
                     passDetail = $"Publication cleanup failed: {ex.Message}";
                     _log.LogError(ex, "Publication cleanup failed. Published scrape will remain unchanged to avoid live-read fallback.");
+                    RecordFailedCandidateIsolation(
+                        ctx.ScrapeId,
+                        "Publication cleanup",
+                        ex.Message,
+                        ref publicReadsReleased);
                 }
 
                 postProcessCompleted = publicationCleanupCompleted;
@@ -682,10 +708,28 @@ public sealed class ScraperWorker : BackgroundService
                 {
                     await _postScrapeOrchestrator.RunDeferredRegistrationSyncAsync(ctx, service, postScrapePhases, ct);
                 }
-                catch (OperationCanceledException) { throw; }
+                catch (OperationCanceledException ex)
+                {
+                    passDetail = $"Deferred registration sync was cancelled: {ex.Message}";
+                    RecordFailedCandidateIsolation(
+                        ctx.ScrapeId,
+                        "Deferred registration sync cancellation",
+                        ex.Message,
+                        ref publicReadsReleased);
+                    throw;
+                }
                 catch (Exception ex)
                 {
-                    _log.LogWarning(ex, "Deferred registration sync failed. Queued users will retry on a later pass.");
+                    postProcessCompleted = false;
+                    passDetail = $"Deferred registration sync failed: {ex.Message}";
+                    _log.LogError(
+                        ex,
+                        "Deferred registration sync failed after the candidate cache cut. Published state will remain unchanged.");
+                    RecordFailedCandidateIsolation(
+                        ctx.ScrapeId,
+                        "Deferred registration sync",
+                        ex.Message,
+                        ref publicReadsReleased);
                 }
             }
 
@@ -696,7 +740,16 @@ public sealed class ScraperWorker : BackgroundService
                 {
                     await _postScrapeOrchestrator.RunCleanupAsync(ctx, postScrapePhases, ct);
                 }
-                catch (OperationCanceledException) { throw; }
+                catch (OperationCanceledException ex)
+                {
+                    passDetail = $"Post-scrape cleanup was cancelled: {ex.Message}";
+                    RecordFailedCandidateIsolation(
+                        ctx.ScrapeId,
+                        "Post-scrape cleanup cancellation",
+                        ex.Message,
+                        ref publicReadsReleased);
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     passDetail = $"Post-scrape cleanup failed: {ex.Message}";
@@ -811,6 +864,8 @@ public sealed class ScraperWorker : BackgroundService
                             result.EpicReportedOver100Pages);
                         _persistence.Meta.PublishScrapeRun(
                             result.ScrapeId,
+                            promoteCachedResponses:
+                                postScrapePhases.HasFlag(ScrapePhase.SoloPrecompute),
                             expectedPublishedScopeCount: expectedPublishedScopeCount,
                             queueImprovementNotifications: queueImprovementNotifications,
                             improvementNotificationProjectionScopes:
@@ -829,16 +884,24 @@ public sealed class ScraperWorker : BackgroundService
                     {
                         _workerStatus?.CompleteOperation("scrape.publication", "cancelled");
                         passDetail = "Publication was cancelled.";
+                        RecordFailedCandidateIsolation(
+                            ctx.ScrapeId,
+                            "Publication cancellation",
+                            "publication",
+                            passDetail,
+                            ref publicReadsReleased);
                         throw;
                     }
                     catch (Exception ex)
                     {
                         _workerStatus?.FailOperation("scrape.publication", ex);
                         passDetail = $"Publication failed: {ex.Message}";
-                        _persistence.Meta.FailScrapeRun(
+                        RecordFailedCandidateIsolation(
                             result.ScrapeId,
+                            "Publication",
                             "publication",
-                            ex.Message);
+                            ex.Message,
+                            ref publicReadsReleased);
                         throw;
                     }
                 }
@@ -854,6 +917,27 @@ public sealed class ScraperWorker : BackgroundService
             {
                 passStatus = "completed";
                 passDetail = null;
+            }
+
+            if (publishedNewState)
+            {
+                try
+                {
+                    if (ctx.RankingsComputedSuccessfully
+                        && ctx.RankingsInputCutoffUtc.HasValue)
+                    {
+                        _persistence.Meta.ClearBackfillRankingsPending(
+                            ctx.RegisteredIds,
+                            ctx.RankingsInputCutoffUtc.Value);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(
+                        ex,
+                        "Published scrape {ScrapeId} successfully, but clearing pending-rank sync state failed and will retry later.",
+                        publishedScrapeId);
+                }
             }
 
             if (publicReadsFrozen)
@@ -902,6 +986,44 @@ public sealed class ScraperWorker : BackgroundService
             await CleanupActiveScrapeResourcesAsync("scrape pass exit", CancellationToken.None);
             _backgroundWork.ResumeAfterScrape();
             _workerStatus?.CompleteOperation("scrape.pass", passStatus, passDetail);
+        }
+    }
+
+    private void RecordFailedCandidateIsolation(
+        long scrapeId,
+        string operation,
+        string failureMessage,
+        ref bool publicReadsReleased) =>
+        RecordFailedCandidateIsolation(
+            scrapeId,
+            operation,
+            MetaDatabase.PostProcessReadIsolationFailurePhase,
+            failureMessage,
+            ref publicReadsReleased);
+
+    private void RecordFailedCandidateIsolation(
+        long scrapeId,
+        string operation,
+        string failurePhase,
+        string failureMessage,
+        ref bool publicReadsReleased)
+    {
+        if (scrapeId <= 0)
+            return;
+
+        try
+        {
+            _persistence.Meta.FailScrapeRun(
+                scrapeId,
+                failurePhase,
+                failureMessage);
+        }
+        catch (Exception isolationEx)
+        {
+            publicReadsReleased = true;
+            throw new InvalidOperationException(
+                $"{operation} failed and durable read isolation could not be recorded; public reads remain frozen.",
+                isolationEx);
         }
     }
 

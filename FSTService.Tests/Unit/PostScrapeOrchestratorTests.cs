@@ -1177,6 +1177,52 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task RunPublicationCleanupAsync_RefreshesExplicitPublicationScopesEvenWhenSnapshotIsUnchanged()
+    {
+        const string songId = "song_deferred_projection";
+        const string instrument = "Solo_Guitar";
+        const string accountId = "acct_deferred_projection";
+
+        await _soloCurrentProjectionBuilder.EnsureSchemaAsync();
+        InsertSnapshotState(songId, instrument, 77);
+        InsertSnapshotEntry(77, songId, instrument, accountId, 100_000);
+        InsertProjectionScope(songId, instrument, sourceSnapshotId: 77);
+        InsertOverlayEntry(songId, instrument, accountId, 125_000);
+
+        var ctx = CreateContext(scrapeId: 77);
+        ctx.NotificationProjectionScopes.Add(
+            new SoloCurrentProjectionScopeKey(songId, instrument));
+
+        await _sut.RunPublicationCleanupAsync(
+            ctx,
+            ScrapePhase.SoloFinalize,
+            CancellationToken.None);
+
+        Assert.Equal(125_000, GetProjectedScore(songId, instrument, accountId));
+    }
+
+    [Fact]
+    public async Task RunPublicationCleanupAsync_DoesNotAdmitScopesCreatedAfterPublicationSeal()
+    {
+        const string songId = "song_after_projection_seal";
+        const string instrument = "Solo_Guitar";
+        const string accountId = "acct_after_projection_seal";
+
+        await _soloCurrentProjectionBuilder.EnsureSchemaAsync();
+        var ctx = CreateContext(scrapeId: 78);
+        ctx.SoloCurrentProjectionScopesSealedForPublication = true;
+
+        InsertOverlayEntry(songId, instrument, accountId, 130_000);
+
+        await _sut.RunPublicationCleanupAsync(
+            ctx,
+            ScrapePhase.SoloFinalize,
+            CancellationToken.None);
+
+        Assert.Null(GetProjectedScore(songId, instrument, accountId));
+    }
+
+    [Fact]
     public async Task RunPublicationCleanupAsync_WithSoloPrecompute_BuildsPlayerProfileAfterProjectionRefresh()
     {
         const string accountId = "acct-cache-fresh";
@@ -1305,6 +1351,32 @@ public class PostScrapeOrchestratorTests : IDisposable
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "INSERT INTO songs (song_id) VALUES (@sid) ON CONFLICT DO NOTHING";
         cmd.Parameters.AddWithValue("sid", songId);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void InsertOverlayEntry(
+        string songId,
+        string instrument,
+        string accountId,
+        int score)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO leaderboard_entries_overlay
+            (song_id, instrument, account_id, score, accuracy, is_full_combo, stars,
+             season, percentile, rank, source, difficulty, api_rank, end_time,
+             first_seen_at, last_updated_at, source_priority, overlay_reason)
+            VALUES
+            (@songId, @instrument, @accountId, @score, 99, TRUE, 5,
+             3, 99.0, 1, 'registered', 3, 1, '2025-01-16T12:00:00Z',
+             @now, @now, 100, 'test')
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("score", score);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         cmd.ExecuteNonQuery();
     }
 
@@ -1733,6 +1805,24 @@ public class PostScrapeOrchestratorTests : IDisposable
         Assert.Equal("Checkpoint", after.SubOperation);
         Assert.Equal("Completed Checkpoint", after.Detail);
         Assert.True(after.UpdatedAtUtc >= before.UpdatedAtUtc);
+    }
+
+    [Fact]
+    public async Task PublicationCachePhaseFailurePropagatesWhenRolloutFlagIsDisabled()
+    {
+        var ctx = CreateContext();
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _sut.RunClassifiedPhaseForTestAsync(
+                ctx,
+                "Cleanup.PrecomputeAll",
+                () => throw new InvalidOperationException("precompute failed"),
+                alwaysPropagateFailure: true));
+
+        Assert.Equal("precompute failed", exception.Message);
+        var outcome = Assert.Single(ctx.PostScrapeOutcomes.Outcomes);
+        Assert.Equal("Cleanup.PrecomputeAll", outcome.Phase);
+        Assert.False(outcome.Success);
     }
 
     [Fact]

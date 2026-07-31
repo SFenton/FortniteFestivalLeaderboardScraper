@@ -98,7 +98,6 @@ public static class ApiPublicationRouteCatalog
         Publication(HttpMethods.Get, "/api/player/{accountId}/rivals"),
         Publication(HttpMethods.Get, "/api/player/{accountId}/rivals/suggestions"),
         Publication(HttpMethods.Get, "/api/player/{accountId}/rivals/all"),
-        Publication(HttpMethods.Get, "/api/player/{accountId}/rivals/diagnostics"),
         Publication(HttpMethods.Get, "/api/player/{accountId}/rivals/{combo}"),
         Publication(HttpMethods.Get, "/api/player/{accountId}/rivals/{combo}/{rivalId}"),
         Publication(HttpMethods.Get, "/api/player/{accountId}/rivals/{rivalId}/songs/{instrument}"),
@@ -163,6 +162,7 @@ public static class ApiPublicationRouteCatalog
         Private(HttpMethods.Post, "/api/debug/client-interactions", "Client diagnostic telemetry ingestion."),
         Private(HttpMethods.Post, "/api/player/{accountId}/leaderboard-rivals/recompute", "Protected derived-data recomputation command."),
         Private(HttpMethods.Post, "/api/player/{accountId}/rivals/recompute", "Protected derived-data recomputation command."),
+        Private(HttpMethods.Get, "/api/player/{accountId}/rivals/diagnostics", "Protected rivals diagnostics."),
         Private(AnyMethod, "/api/{**path}", "Unmatched API fallback returns only a 404 response."),
     ];
 

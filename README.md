@@ -78,6 +78,13 @@ initialized. Rollback sets them to `false`; failed candidates and replay
 artifacts remain diagnostic-only, and public reads stay on the prior mapped
 published scrape.
 
+Registration/backfill results are publication-pending until a successful
+ranking pass and cache cut include them. New users therefore receive a
+no-store `202 syncing/notYetPublished` profile/history response instead of
+live candidate scores. Background registration and band-history workers pause
+and drain at scrape boundaries; deferred rivals and post-cutoff registrations
+remain queued for a later ranked publication.
+
 Improvement notifications can be recovered for the already-published scrape
 without starting a full scrape:
 

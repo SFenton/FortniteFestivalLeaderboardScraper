@@ -4,6 +4,7 @@ public sealed class BandRankHistorySnapshotOptions
 {
     public BandRankHistoryWriteMode WriteMode { get; init; } = BandRankHistoryWriteMode.Legacy;
     public bool UseLatestState { get; init; } = true;
+    public bool UsePublishedRankings { get; init; }
     public bool UseNarrowHistory { get; init; } = true;
     public bool UseWideHistoryCompatibilityWrite { get; init; } = true;
     public bool RangeChunkingEnabled { get; init; } = true;

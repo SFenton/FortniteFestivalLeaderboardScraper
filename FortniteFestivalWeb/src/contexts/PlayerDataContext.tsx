@@ -107,6 +107,8 @@ export function PlayerDataProvider({
       setSyncBannerDismissed(false);
       saveDismissed(accountId, false);
       void qc.invalidateQueries({ queryKey: queryKeys.player(accountId) });
+      void qc.invalidateQueries({ queryKey: ['playerHistory', accountId] });
+      void qc.invalidateQueries({ queryKey: queryKeys.playerStats(accountId) });
     }
   }, [justCompleted, accountId, clearCompleted, qc]);
   /* v8 ignore stop */

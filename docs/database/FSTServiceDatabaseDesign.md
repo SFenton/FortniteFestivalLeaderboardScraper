@@ -624,6 +624,41 @@ integration and browser tests. The cache telemetry is deployed but its
 representative frozen-window baseline remains a time-accrual gate for the next
 approved scrape.
 
+### Atomic-publication Phase 1 safe-writer boundary (2026-07-30)
+
+Phase 1 removes direct early publication from registration, profile/history,
+rivals, response-cache, notification, and background-history paths while the
+generation ledger is still being built:
+
+- single-user precompute no longer mutates the live or shared staging cache;
+- registered users without a published full-profile/history payload receive a
+  no-store `202 syncing/notYetPublished` response;
+- filtered history is derived only from the published full-history payload,
+  and filtered registered profiles fail closed rather than reading live rows;
+- the worker quiesces background backfill/history operations before the scrape,
+  waits for admitted cyclical-song work to drain, and discards cancelled
+  in-memory staging before candidate work begins;
+- ranking input time and projection scope keys are sealed before the
+  publication cache cut. Registration work completed after that boundary stays
+  `rankings_pending`, queues rivals for the next ranked publication, and cannot
+  refresh the current publication projection or cache;
+- projection refresh and cache precompute are unconditionally
+  publication-critical. Empty cache staging, partial precompute, cancellation,
+  or failed durable isolation leaves the previous publication active and keeps
+  reads frozen if the isolation marker itself cannot be recorded;
+- backfill pending state is monotonic and can be cleared only after a successful
+  ranking publication whose input cutoff included that completion;
+- background band rank-history jobs are claimable only for the current
+  published scrape, read published ranking tables, and supersede failed or
+  older unpublished candidates;
+- notification recovery reuses the projection plan persisted with publication
+  and does not mutate the published projection after commit.
+
+This is a fail-closed transition layer, not the final generation-addressable
+architecture. Phase 2 still owns durable `publication_generations`,
+current/previous/working pointers, typed surface manifests,
+`PublicationReadContext`, and publication-keyed URLs/query keys/caches.
+
 The read-only band-search reuse probe measured
 `46,662,828,032` bytes across `band_search_team_projection` and
 `band_search_member_projection`. Scrape `1269`/`1271` refresh evidence bounds
