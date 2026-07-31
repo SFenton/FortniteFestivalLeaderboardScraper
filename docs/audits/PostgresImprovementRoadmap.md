@@ -138,6 +138,19 @@ safety model versus 314,856,988,672 free at the drill start.
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-history-compact-quad-clean-20260729T1435Z`.
 
+## ATOMIC-PUBLICATION PHASE 0 — proof harness accepted
+
+- Commit `273de756` classifies every API route and makes missing, duplicate,
+  dynamically captured, or catalog-mismatched publication metadata a startup
+  failure.
+- Commit `92d2db10` adds bounded frozen-route cache hit/miss/bypass telemetry
+  and a protected diagnostic endpoint.
+- The read-only band-search probe measured `46.66 GB` current storage but only
+  a 5.91-7.21% refresh-key upper bound, supporting immutable per-team snapshots
+  plus a compact publication map instead of full duplication.
+- Current route/read behavior is unchanged. The frozen traffic baseline is
+  intentionally deferred to the next approved scrape window.
+
 ## OBSERVATION-RETIRE execution update — 2026-07-28
 
 - Published scrape `1267` proved both `player_score_observations` writers were

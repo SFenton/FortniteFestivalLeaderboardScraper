@@ -601,6 +601,37 @@ the original exact manifest or the fully empty retired state.
 
 ## Publication and freeze sequence
 
+### Atomic-publication Phase 0 proof harness (2026-07-30)
+
+The approved atomic-publication roadmap begins with additive proof and
+measurement rather than changing read semantics:
+
+- all `83` `/api` routes have exactly one explicit
+  `PublicationBound`, `OperationalLive`, or `AdminPrivate` classification;
+- startup validates the completed endpoint data source, rejects missing or
+  duplicate metadata, rejects catalog mismatches, canonicalizes equivalent
+  route spellings, and rejects dynamic first-segment routes that could capture
+  `/api` traffic;
+- publication-bound WebSocket content is not exempt;
+- `PublicApiCacheTelemetry` records bounded per-route-template frozen hits,
+  continued misses, blocked misses, and publication-bound bypasses;
+- protected diagnostics are exposed at
+  `/api/admin/public-cache-telemetry`;
+- no cache/read behavior changes in Phase 0.
+
+The route matrix is the driver for later old-generation/new-generation
+integration and browser tests. The cache telemetry is deployed but its
+representative frozen-window baseline remains a time-accrual gate for the next
+approved scrape.
+
+The read-only band-search reuse probe measured
+`46,662,828,032` bytes across `band_search_team_projection` and
+`band_search_member_projection`. Scrape `1269`/`1271` refresh evidence bounds
+reusable team bindings at `92.79-94.09%`. Changed immutable payload plus a
+full publication map is modeled at `2.16-2.85 GB` per publication, replacing
+the prior conservative full-copy assumption. Exact content-fingerprint proof
+is still required before implementation.
+
 1. Worker starts `scrape_log` and freezes public reads.
 2. Network, staging, physical/logical writes, fingerprints, and scope coverage
    accrue without changing the public generation.
