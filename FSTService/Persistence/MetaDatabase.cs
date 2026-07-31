@@ -10957,7 +10957,15 @@ public sealed class MetaDatabase : IMetaDatabase
                       FROM publication_api_response_cache
                       WHERE publication_id = @publicationId
                   ),
-                  NULL,
+                  (
+                      SELECT md5(COALESCE(
+                          string_agg(
+                              cache_key || ':' || etag,
+                              '|' ORDER BY cache_key),
+                          ''))
+                      FROM publication_api_response_cache
+                      WHERE publication_id = @publicationId
+                  ),
                   'ready',
                   now())
               ON CONFLICT (publication_id, surface_name) DO UPDATE SET

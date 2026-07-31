@@ -744,6 +744,12 @@ public sealed class MetaDatabaseTests : IDisposable
             Db.GetCachedResponse(
                 nextPublicationId,
                 "player:acct_1:::")?.Json);
+        var cacheBinding = Db.GetPublicationSurfaceBindings(nextPublicationId)
+            .Single(binding =>
+                binding.SurfaceName == "api_response_cache");
+        Assert.Equal("generation_cache_table", cacheBinding.BindingKind);
+        Assert.Equal(1, cacheBinding.RowCount);
+        Assert.False(string.IsNullOrWhiteSpace(cacheBinding.ContentHash));
     }
 
     [Fact]
