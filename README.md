@@ -100,6 +100,15 @@ Current and previous generations are retained; older cache generations and
 failed candidate staging are removed independently of scrape-log retention.
 The legacy cache remains as a rollback compatibility mirror.
 
+Song catalog sync now also persists a deterministic provider-only live
+snapshot. Scrape allocation copies that snapshot into
+`publication_song_catalog` and records a ready `song_catalog` binding; current,
+previous, and working generations are retained. `/api/songs`, `/api/shop`, and
+path readers still use their legacy live sources, so this storage is additive
+and `Features__EnablePublicationReadContext` remains `false`. Rollback deploys
+the prior binary and leaves the new tables unused; no schema or data removal is
+required.
+
 Improvement notifications can be recovered for the already-published scrape
 without starting a full scrape:
 

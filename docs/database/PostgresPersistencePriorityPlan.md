@@ -419,9 +419,29 @@ path, and post-action validation are documented.
 | Quad compact-v3 | Accepted and executed | All `359,383,226` rows, four monthly full-row hashes, five indexes, exact Quad/API/public payloads, warm latency, detach/reattach rollback, and immediate/+60s post-drop parity passed. Retired the `388,779,032,576`-byte v2 source for a `300,784,279,552`-byte net database reduction. |
 | Atomic publication Phase 0 | Accepted / telemetry accrual pending | Explicitly classified 83 API routes, added fail-closed startup/catalog validation, deployed bounded frozen-route cache telemetry, and measured 92.79-94.09% reusable band-search bindings. The representative frozen traffic baseline accrues on the next approved scrape. |
 | Atomic publication Phase 1 | Code complete / deployment and live A/B pending | Removed direct single-user cache publication; added no-store `202` unpublished-user behavior, full-history-only filtering, durable failed-candidate isolation, monotonic pending state, ranked input/projection cuts, background-writer quiescence and drain, queued deferred rivals, empty-staging rejection, and published-only band-history processing. |
-| Atomic publication Phase 2 foundation | Code complete / default-off cutover | Added durable generation lifecycle, current/previous/working pointers, typed surface bindings, cross-process publication locks, `/api/publication`, pinned HTTP/path/WebSocket client support, API-side socket rotation monitoring, and retention-safe predecessor links. `EnablePublicationReadContext` remains off while legacy catalog/shop/path/cache bindings are marked building. |
+| Atomic publication Phase 2 foundation | Code complete / default-off cutover | Added durable generation lifecycle, current/previous/working pointers, typed surface bindings, cross-process publication locks, `/api/publication`, pinned HTTP/path/WebSocket client support, API-side socket rotation monitoring, and retention-safe predecessor links. `EnablePublicationReadContext` remains off while source cuts proceed. |
 | Publication cache source cut | Code complete / deployment pending | Added generation-keyed live/staging cache tables, explicit build targeting, deadlock-safe cross-process locks, current+previous retention, exact pinned reads, rollback reconciliation, failed-generation cleanup, and watchdog lifecycle parity. |
-| Next implementation phase | Create remaining immutable source cuts | Version catalog, shop, path, overlay, history, and names; replace every remaining `legacy_live_unversioned` binding with a ready generation-addressable binding before enabling request pinning. |
+| CATALOG-1 immutable song catalog | Code complete / deployment and reader cutover pending | Added deterministic provider-only live catalog capture, allocation-time immutable publication copies, SHA-256/count manifests, ready bindings, current bootstrap, and current/previous/working retention. No endpoint reader changed and `EnablePublicationReadContext` remains false. |
+| Next implementation phase | Create remaining immutable source cuts | Version shop, path, overlay, history, and names; replace every remaining `legacy_live_unversioned` binding with a ready generation-addressable binding before enabling request pinning. |
+
+## CATALOG-1 immutable song catalog source cut (2026-07-31)
+
+CATALOG-1 is an additive storage foundation, not a public read cutover.
+
+| Gate | Implementation | Decision |
+|---|---|---|
+| Canonical source | Schema-versioned deterministic DTO retains provider `Song`/`Track` fields used by song, shop, and path consumers; mutable local UI fields are excluded | Accepted |
+| Live capture | `FestivalPersistence.SaveSongsAsync` commits legacy song upserts and the `live_song_catalog` singleton together | Accepted |
+| Publication cut | Working-publication allocation copies the singleton into `publication_song_catalog`, then records matching SHA-256, song count, and a ready binding in the same transaction | Accepted |
+| Immutability | Publication validates but never rewrites the catalog snapshot; subsequent live syncs cannot change an allocated generation | Accepted |
+| Bootstrap | Startup seeds a missing singleton from legacy `songs`, then fills only missing current/working publication snapshots and replaces legacy building bindings | Accepted |
+| Retention | Payloads are retained only for current, previous, and working pointers; failed/older payloads are removed and bindings are marked failed/retired | Accepted |
+| Rollback/read safety | Prior binaries ignore the additive tables; `/api/songs`, `/api/shop`, and path readers remain unchanged; `EnablePublicationReadContext=false` | Default-off |
+
+No production schema, process, worker, or endpoint was changed as part of this
+code phase. Deployment and live scrape/publication parity remain separate
+promotion gates. Code validation passed `175/175` targeted Release tests plus
+the `FSTService` Release build.
 
 ## LOGICAL-RETIRE decision and execution package (2026-07-25 to 2026-07-28)
 

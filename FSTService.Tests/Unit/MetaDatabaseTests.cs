@@ -1,3 +1,4 @@
+using FortniteFestival.Core;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
@@ -38,6 +39,52 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal(scrapeId, generation.ScrapeId);
         Assert.Equal(generation.PublicationId, pointer.WorkingPublicationId);
         Assert.Null(pointer.CurrentPublicationId);
+    }
+
+    [Fact]
+    public async Task StartScrapeRun_captures_immutable_working_song_catalog()
+    {
+        var persistence = new FestivalPersistence(DataSource);
+        await persistence.SaveSongsAsync(
+        [
+            CreateCatalogSong("song-a", "Alpha"),
+        ]);
+        var liveBefore = ReadLiveSongCatalog();
+
+        var scrapeId = Db.StartScrapeRun();
+        var publicationId =
+            Db.GetPublicationGenerationForScrape(scrapeId)!.PublicationId;
+        var captured = ReadPublicationSongCatalog(publicationId);
+
+        Assert.Equal(liveBefore.ContentHash, captured.ContentHash);
+        Assert.Equal(liveBefore.SongCount, captured.SongCount);
+        var binding = Db.GetPublicationSurfaceBindings(publicationId)
+            .Single(static item => item.SurfaceName == "song_catalog");
+        Assert.Equal("generation_catalog_snapshot", binding.BindingKind);
+        Assert.Equal("ready", binding.Status);
+        Assert.Equal(captured.ContentHash, binding.ContentHash);
+        Assert.Equal(captured.SongCount, binding.RowCount);
+
+        await persistence.SaveSongsAsync(
+        [
+            CreateCatalogSong("song-a", "Alpha changed"),
+            CreateCatalogSong("song-b", "Beta"),
+        ]);
+        var liveAfter = ReadLiveSongCatalog();
+        var stillCaptured = ReadPublicationSongCatalog(publicationId);
+
+        Assert.NotEqual(liveBefore.ContentHash, liveAfter.ContentHash);
+        Assert.Equal(captured, stillCaptured);
+
+        Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(scrapeId, promoteCachedResponses: false);
+
+        var publishedBinding = Db.GetPublicationSurfaceBindings(publicationId)
+            .Single(static item => item.SurfaceName == "song_catalog");
+        Assert.Equal("generation_catalog_snapshot", publishedBinding.BindingKind);
+        Assert.Equal("ready", publishedBinding.Status);
+        Assert.Equal(captured.ContentHash, publishedBinding.ContentHash);
+        Assert.Equal(captured, ReadPublicationSongCatalog(publicationId));
     }
 
     [Fact]
@@ -330,14 +377,55 @@ public sealed class MetaDatabaseTests : IDisposable
         using var conn = DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT COUNT(*)
-            FROM publication_api_response_cache_staging
-            WHERE publication_id = @publicationId
+            SELECT
+                (
+                    SELECT COUNT(*)
+                    FROM publication_api_response_cache_staging
+                    WHERE publication_id = @publicationId
+                ),
+                (
+                    SELECT COUNT(*)
+                    FROM publication_song_catalog
+                    WHERE publication_id = @publicationId
+                ),
+                (
+                    SELECT status
+                    FROM publication_surface_bindings
+                    WHERE publication_id = @publicationId
+                      AND surface_name = 'song_catalog'
+                )
             """;
         cmd.Parameters.AddWithValue(
             "publicationId",
             generation.PublicationId);
-        Assert.Equal(0L, (long)cmd.ExecuteScalar()!);
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(0L, reader.GetInt64(0));
+        Assert.Equal(0L, reader.GetInt64(1));
+        Assert.Equal("failed", reader.GetString(2));
+    }
+
+    [Fact]
+    public void FailScrapeRun_does_not_remove_published_song_catalog()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(scrapeId, promoteCachedResponses: false);
+        var publicationId =
+            Db.GetPublicationGenerationForScrape(scrapeId)!.PublicationId;
+
+        Db.FailScrapeRun(scrapeId, "late_failure", "ignored");
+
+        Assert.True(HasPublicationSongCatalog(publicationId));
+        Assert.Equal(
+            PublicationGenerationStatus.Current,
+            Db.GetPublicationGeneration(publicationId)!.Status);
+        Assert.Equal(
+            "ready",
+            Db.GetPublicationSurfaceBindings(publicationId)
+                .Single(static binding =>
+                    binding.SurfaceName == "song_catalog")
+                .Status);
     }
 
     [Fact]
@@ -782,6 +870,18 @@ public sealed class MetaDatabaseTests : IDisposable
             Db.GetPublicationSurfaceBindings(firstGeneration.PublicationId)
                 .Select(static binding => binding.SurfaceName)
                 .ToArray());
+        var firstCatalogBinding =
+            Db.GetPublicationSurfaceBindings(firstGeneration.PublicationId)
+                .Single(static binding =>
+                    binding.SurfaceName == "song_catalog");
+        Assert.Equal(
+            "generation_catalog_snapshot",
+            firstCatalogBinding.BindingKind);
+        Assert.Equal("ready", firstCatalogBinding.Status);
+        Assert.False(string.IsNullOrWhiteSpace(
+            firstCatalogBinding.ContentHash));
+        Assert.True(HasPublicationSongCatalog(
+            firstGeneration.PublicationId));
 
         var secondScrapeId = Db.StartScrapeRun();
         Db.CompleteScrapeRun(secondScrapeId, 1, 20, 2, 200);
@@ -829,11 +929,23 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.NotNull(Db.GetCachedResponse(
             thirdGeneration.PublicationId,
             "player:acct_1:::"));
+        Assert.False(HasPublicationSongCatalog(
+            firstGeneration.PublicationId));
+        Assert.True(HasPublicationSongCatalog(
+            secondGeneration.PublicationId));
+        Assert.True(HasPublicationSongCatalog(
+            thirdGeneration.PublicationId));
         Assert.Equal(
             "retired",
             Db.GetPublicationSurfaceBindings(firstGeneration.PublicationId)
                 .Single(binding =>
                     binding.SurfaceName == "api_response_cache")
+                .Status);
+        Assert.Equal(
+            "retired",
+            Db.GetPublicationSurfaceBindings(firstGeneration.PublicationId)
+                .Single(binding =>
+                    binding.SurfaceName == "song_catalog")
                 .Status);
     }
 
@@ -841,7 +953,11 @@ public sealed class MetaDatabaseTests : IDisposable
     public void PublishScrapeRun_rejects_generation_that_does_not_own_working_pointer()
     {
         var firstScrapeId = Db.StartScrapeRun();
+        var firstPublicationId =
+            Db.GetPublicationGenerationForScrape(firstScrapeId)!.PublicationId;
         var secondScrapeId = Db.StartScrapeRun();
+        var secondPublicationId =
+            Db.GetPublicationGenerationForScrape(secondScrapeId)!.PublicationId;
         Db.CompleteScrapeRun(firstScrapeId, 1, 10, 1, 100);
 
         var exception = Assert.Throws<InvalidOperationException>(
@@ -851,8 +967,16 @@ public sealed class MetaDatabaseTests : IDisposable
 
         Assert.Contains("does not own the working pointer", exception.Message);
         Assert.Equal(
-            Db.GetPublicationGenerationForScrape(secondScrapeId)!.PublicationId,
+            secondPublicationId,
             Db.GetPublicationPointerState().WorkingPublicationId);
+        Assert.False(HasPublicationSongCatalog(firstPublicationId));
+        Assert.True(HasPublicationSongCatalog(secondPublicationId));
+        Assert.Equal(
+            "retired",
+            Db.GetPublicationSurfaceBindings(firstPublicationId)
+                .Single(static binding =>
+                    binding.SurfaceName == "song_catalog")
+                .Status);
     }
 
     [Fact]
@@ -1039,6 +1163,74 @@ public sealed class MetaDatabaseTests : IDisposable
                 .Single(binding =>
                     binding.SurfaceName == "api_response_cache")
                 .BindingKind);
+    }
+
+    [Fact]
+    public async Task SchemaUpgrade_bootstraps_current_song_catalog_safely()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(scrapeId, promoteCachedResponses: false);
+        var publicationId =
+            Db.GetPublicationGenerationForScrape(scrapeId)!.PublicationId;
+
+        using (var conn = DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                DELETE FROM publication_song_catalog
+                WHERE publication_id = @publicationId;
+                DELETE FROM live_song_catalog
+                WHERE id = TRUE;
+
+                UPDATE publication_surface_bindings
+                SET binding_kind = 'legacy_live_unversioned',
+                    binding_json = jsonb_build_object('table', 'songs'),
+                    row_count = NULL,
+                    content_hash = NULL,
+                    status = 'building',
+                    built_at = now()
+                WHERE publication_id = @publicationId
+                  AND surface_name = 'song_catalog';
+
+                INSERT INTO songs (
+                    song_id, title, artist, active_date, last_modified,
+                    lead_diff, bass_diff, vocals_diff, drums_diff,
+                    pro_lead_diff, pro_bass_diff, release_year, tempo,
+                    plastic_guitar_diff, plastic_bass_diff,
+                    plastic_drums_diff, pro_vocals_diff)
+                VALUES (
+                    'bootstrap-song', 'Bootstrap Song', 'Bootstrap Artist',
+                    '2026-07-30T00:00:00.0000000Z',
+                    '2026-07-31T00:00:00.0000000Z',
+                    1, 2, 3, 4, 5, 6, 2026, 120, 5, 6, 7, 8)
+                ON CONFLICT (song_id) DO UPDATE SET
+                    title = EXCLUDED.title,
+                    artist = EXCLUDED.artist
+                """;
+            cmd.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            cmd.ExecuteNonQuery();
+        }
+
+        await DatabaseInitializer.EnsureSchemaAsync(DataSource);
+        var first = ReadPublicationSongCatalog(publicationId);
+        await DatabaseInitializer.EnsureSchemaAsync(DataSource);
+        var second = ReadPublicationSongCatalog(publicationId);
+
+        Assert.Equal(first, second);
+        Assert.Equal(1, first.SongCount);
+        Assert.Equal(64, first.ContentHash.Length);
+        var binding = Db.GetPublicationSurfaceBindings(publicationId)
+            .Single(static item => item.SurfaceName == "song_catalog");
+        Assert.Equal("generation_catalog_snapshot", binding.BindingKind);
+        Assert.Equal("ready", binding.Status);
+        Assert.Equal(first.ContentHash, binding.ContentHash);
+        Assert.Equal(first.SongCount, binding.RowCount);
+        Assert.Equal(
+            ReadLiveSongCatalog().ContentHash,
+            first.ContentHash);
     }
 
     [Fact]
@@ -2871,4 +3063,89 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Single(readRivals);
         Assert.Equal("new_rival", readRivals[0].RivalAccountId);
     }
+
+    private (string CatalogJson, string ContentHash, int SongCount)
+        ReadLiveSongCatalog()
+    {
+        using var conn = DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT catalog_json::text, content_hash, song_count
+            FROM live_song_catalog
+            WHERE id = TRUE
+            """;
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        return (
+            reader.GetString(0),
+            reader.GetString(1),
+            reader.GetInt32(2));
+    }
+
+    private (string CatalogJson, string ContentHash, int SongCount)
+        ReadPublicationSongCatalog(long publicationId)
+    {
+        using var conn = DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT catalog_json::text, content_hash, song_count
+            FROM publication_song_catalog
+            WHERE publication_id = @publicationId
+            """;
+        cmd.Parameters.AddWithValue("publicationId", publicationId);
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        return (
+            reader.GetString(0),
+            reader.GetString(1),
+            reader.GetInt32(2));
+    }
+
+    private bool HasPublicationSongCatalog(long publicationId)
+    {
+        using var conn = DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM publication_song_catalog
+                WHERE publication_id = @publicationId
+            )
+            """;
+        cmd.Parameters.AddWithValue("publicationId", publicationId);
+        return (bool)cmd.ExecuteScalar()!;
+    }
+
+    private static Song CreateCatalogSong(string songId, string title) =>
+        new()
+        {
+            _title = title,
+            lastModified = new DateTime(
+                2026, 7, 31, 12, 0, 0, DateTimeKind.Utc),
+            track = new Track
+            {
+                su = songId,
+                tt = title,
+                an = "Artist",
+                ab = "Album",
+                au = $"https://example.test/{songId}.jpg",
+                mu = $"https://example.test/{songId}.dat",
+                sig = "4/4",
+                ge = ["rock"],
+                ry = 2026,
+                mt = 120,
+                dn = 200,
+                @in = new In
+                {
+                    gr = 1,
+                    ba = 2,
+                    vl = 3,
+                    ds = 4,
+                    pg = 5,
+                    pb = 6,
+                    pd = 7,
+                    bd = 8,
+                },
+            },
+        };
 }

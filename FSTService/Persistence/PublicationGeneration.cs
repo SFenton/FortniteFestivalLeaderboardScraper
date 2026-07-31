@@ -120,6 +120,32 @@ public static class PublicationGenerationSchema
         CREATE INDEX IF NOT EXISTS ix_publication_surface_bindings_surface
             ON publication_surface_bindings (surface_name, publication_id DESC);
 
+        CREATE TABLE IF NOT EXISTS live_song_catalog (
+            id             BOOLEAN     PRIMARY KEY DEFAULT TRUE CHECK (id),
+            catalog_json   JSONB       NOT NULL,
+            content_hash   TEXT        NOT NULL,
+            song_count     INTEGER     NOT NULL,
+            captured_at    TIMESTAMPTZ NOT NULL,
+            CONSTRAINT ck_live_song_catalog_count
+                CHECK (song_count >= 0),
+            CONSTRAINT ck_live_song_catalog_hash
+                CHECK (content_hash ~ '^[0-9a-f]{64}$')
+        );
+
+        CREATE TABLE IF NOT EXISTS publication_song_catalog (
+            publication_id    BIGINT      PRIMARY KEY
+                REFERENCES publication_generations(publication_id) ON DELETE CASCADE,
+            catalog_json      JSONB       NOT NULL,
+            content_hash      TEXT        NOT NULL,
+            song_count        INTEGER     NOT NULL,
+            source_captured_at TIMESTAMPTZ NOT NULL,
+            captured_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+            CONSTRAINT ck_publication_song_catalog_count
+                CHECK (song_count >= 0),
+            CONSTRAINT ck_publication_song_catalog_hash
+                CHECK (content_hash ~ '^[0-9a-f]{64}$')
+        );
+
         CREATE TABLE IF NOT EXISTS publication_api_response_cache (
             publication_id BIGINT NOT NULL
                 REFERENCES publication_generations(publication_id) ON DELETE CASCADE,
@@ -208,6 +234,133 @@ public static class PublicationGenerationSchema
         WHERE publication.id = TRUE
           AND publication.published_scrape_id = generation.scrape_id
           AND publication.current_publication_id IS NULL;
+
+        WITH canonical_songs AS (
+            SELECT
+                song.song_id,
+                jsonb_strip_nulls(jsonb_build_object(
+                    '_title', song.title,
+                    'track', jsonb_strip_nulls(jsonb_build_object(
+                        'tt', song.title,
+                        'ry', song.release_year,
+                        'su', song.song_id,
+                        'in', CASE
+                            WHEN song.lead_diff IS NOT NULL
+                              OR song.bass_diff IS NOT NULL
+                              OR song.vocals_diff IS NOT NULL
+                              OR song.drums_diff IS NOT NULL
+                              OR song.pro_lead_diff IS NOT NULL
+                              OR song.pro_bass_diff IS NOT NULL
+                              OR song.plastic_guitar_diff IS NOT NULL
+                              OR song.plastic_bass_diff IS NOT NULL
+                              OR song.plastic_drums_diff IS NOT NULL
+                              OR song.pro_vocals_diff IS NOT NULL
+                            THEN jsonb_strip_nulls(jsonb_build_object(
+                                'pb', COALESCE(
+                                    song.plastic_bass_diff,
+                                    song.pro_bass_diff),
+                                'pd', song.plastic_drums_diff,
+                                'vl', song.vocals_diff,
+                                'pg', COALESCE(
+                                    song.plastic_guitar_diff,
+                                    song.pro_lead_diff),
+                                'gr', song.lead_diff,
+                                'ds', song.drums_diff,
+                                'ba', song.bass_diff,
+                                'bd', song.pro_vocals_diff))
+                            ELSE NULL
+                        END,
+                        'mt', song.tempo,
+                        'an', song.artist)),
+                    '_activeDate', NULLIF(song.active_date, ''),
+                    'lastModified', NULLIF(song.last_modified, '')))
+                    AS song_json
+            FROM songs song
+            WHERE NULLIF(song.song_id, '') IS NOT NULL
+        ),
+        legacy_payload AS (
+            SELECT
+                jsonb_build_object(
+                    'schemaVersion', 1,
+                    'songs', COALESCE(
+                        jsonb_agg(song_json ORDER BY song_id),
+                        '[]'::jsonb)) AS catalog_json,
+                COUNT(*)::integer AS song_count
+            FROM canonical_songs
+        )
+        INSERT INTO live_song_catalog (
+            id, catalog_json, content_hash, song_count, captured_at)
+        SELECT
+            TRUE,
+            catalog_json,
+            encode(
+                digest(convert_to(catalog_json::text, 'UTF8'), 'sha256'),
+                'hex'),
+            song_count,
+            now()
+        FROM legacy_payload
+        ON CONFLICT (id) DO NOTHING;
+
+        WITH bootstrap_publications AS (
+            SELECT current_publication_id AS publication_id
+            FROM scrape_publication_state
+            WHERE id = TRUE
+              AND current_publication_id IS NOT NULL
+            UNION
+            SELECT working_publication_id
+            FROM scrape_publication_state
+            WHERE id = TRUE
+              AND working_publication_id IS NOT NULL
+        )
+        INSERT INTO publication_song_catalog (
+            publication_id, catalog_json, content_hash, song_count,
+            source_captured_at, captured_at)
+        SELECT
+            publication.publication_id,
+            catalog.catalog_json,
+            catalog.content_hash,
+            catalog.song_count,
+            catalog.captured_at,
+            now()
+        FROM bootstrap_publications publication
+        CROSS JOIN live_song_catalog catalog
+        WHERE catalog.id = TRUE
+        ON CONFLICT (publication_id) DO NOTHING;
+
+        INSERT INTO publication_surface_bindings (
+            publication_id, surface_name, binding_kind, binding_json,
+            row_count, content_hash, status, built_at)
+        SELECT
+            snapshot.publication_id,
+            'song_catalog',
+            'generation_catalog_snapshot',
+            jsonb_build_object(
+                'table', 'publication_song_catalog',
+                'publicationId', snapshot.publication_id,
+                'schemaVersion', 1,
+                'sourceCapturedAt', snapshot.source_captured_at),
+            snapshot.song_count,
+            snapshot.content_hash,
+            'ready',
+            snapshot.captured_at
+        FROM publication_song_catalog snapshot
+        JOIN scrape_publication_state publication
+          ON publication.id = TRUE
+         AND snapshot.publication_id IN (
+             publication.current_publication_id,
+             publication.working_publication_id)
+        ON CONFLICT (publication_id, surface_name) DO UPDATE SET
+            binding_kind = EXCLUDED.binding_kind,
+            binding_json = EXCLUDED.binding_json,
+            row_count = EXCLUDED.row_count,
+            content_hash = EXCLUDED.content_hash,
+            status = EXCLUDED.status,
+            built_at = EXCLUDED.built_at
+        WHERE publication_surface_bindings.binding_kind =
+                  'legacy_live_unversioned'
+           OR publication_surface_bindings.status IN (
+                  'building',
+                  'failed');
 
         DO $$
         DECLARE
@@ -323,6 +476,36 @@ public static class PublicationGenerationSchema
               publication.previous_publication_id
           AND cache.publication_id IS DISTINCT FROM
               publication.working_publication_id;
+
+        DELETE FROM publication_song_catalog catalog
+        USING scrape_publication_state publication
+        WHERE publication.id = TRUE
+          AND catalog.publication_id IS DISTINCT FROM
+              publication.current_publication_id
+          AND catalog.publication_id IS DISTINCT FROM
+              publication.previous_publication_id
+          AND catalog.publication_id IS DISTINCT FROM
+              publication.working_publication_id;
+
+        UPDATE publication_surface_bindings binding
+        SET binding_kind = 'retired_generation_catalog',
+            binding_json = jsonb_build_object(
+                'table', 'publication_song_catalog',
+                'retired', true),
+            row_count = 0,
+            content_hash = NULL,
+            status = 'retired',
+            built_at = now()
+        FROM scrape_publication_state publication
+        WHERE publication.id = TRUE
+          AND binding.surface_name = 'song_catalog'
+          AND binding.publication_id IS DISTINCT FROM
+              publication.current_publication_id
+          AND binding.publication_id IS DISTINCT FROM
+              publication.previous_publication_id
+          AND binding.publication_id IS DISTINCT FROM
+              publication.working_publication_id
+          AND binding.status <> 'retired';
 
         UPDATE publication_surface_bindings binding
         SET binding_kind = 'retired_generation_cache',

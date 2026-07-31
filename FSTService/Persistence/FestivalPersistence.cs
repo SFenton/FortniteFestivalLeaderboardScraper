@@ -75,10 +75,13 @@ public sealed class FestivalPersistence : IFestivalPersistence
 
     public async Task SaveSongsAsync(IEnumerable<Song> songs)
     {
+        var songList = songs.ToArray();
+        var catalogSnapshot = SongCatalogSnapshotBuilder.Create(songList);
+
         await using var conn = await _ds.OpenConnectionAsync();
         await using var tx = await conn.BeginTransactionAsync();
 
-        foreach (var s in songs)
+        foreach (var s in songList)
         {
             await using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
@@ -125,6 +128,36 @@ public sealed class FestivalPersistence : IFestivalPersistence
             cmd.Parameters.AddWithValue("proVocals", proVocals);
 
             await cmd.ExecuteNonQueryAsync();
+        }
+
+        await using (var catalog = conn.CreateCommand())
+        {
+            catalog.Transaction = tx;
+            catalog.CommandText = """
+                INSERT INTO live_song_catalog (
+                    id, catalog_json, content_hash, song_count, captured_at)
+                VALUES (
+                    TRUE, @catalogJson, @contentHash, @songCount, @capturedAt)
+                ON CONFLICT (id) DO UPDATE SET
+                    catalog_json = EXCLUDED.catalog_json,
+                    content_hash = EXCLUDED.content_hash,
+                    song_count = EXCLUDED.song_count,
+                    captured_at = EXCLUDED.captured_at
+                WHERE live_song_catalog.catalog_json IS DISTINCT FROM EXCLUDED.catalog_json
+                   OR live_song_catalog.content_hash IS DISTINCT FROM EXCLUDED.content_hash
+                   OR live_song_catalog.song_count IS DISTINCT FROM EXCLUDED.song_count
+                """;
+            catalog.Parameters.Add(
+                "catalogJson",
+                NpgsqlDbType.Jsonb).Value = catalogSnapshot.CatalogJson;
+            catalog.Parameters.AddWithValue(
+                "contentHash",
+                catalogSnapshot.ContentHash);
+            catalog.Parameters.AddWithValue(
+                "songCount",
+                catalogSnapshot.SongCount);
+            catalog.Parameters.AddWithValue("capturedAt", DateTime.UtcNow);
+            await catalog.ExecuteNonQueryAsync();
         }
 
         await tx.CommitAsync();

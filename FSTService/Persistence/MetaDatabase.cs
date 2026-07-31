@@ -125,6 +125,69 @@ public sealed class MetaDatabase : IMetaDatabase
             publicationId = (long)generation.ExecuteScalar()!;
         }
 
+        using (var catalog = conn.CreateCommand())
+        {
+            catalog.Transaction = tx;
+            catalog.CommandText = """
+                INSERT INTO publication_song_catalog (
+                    publication_id, catalog_json, content_hash, song_count,
+                    source_captured_at, captured_at)
+                SELECT
+                    @publicationId,
+                    catalog_json,
+                    content_hash,
+                    song_count,
+                    captured_at,
+                    @now
+                FROM live_song_catalog
+                WHERE id = TRUE
+                ON CONFLICT (publication_id) DO NOTHING
+                """;
+            catalog.Parameters.AddWithValue("publicationId", publicationId);
+            catalog.Parameters.AddWithValue("now", now);
+            if (catalog.ExecuteNonQuery() != 1)
+            {
+                throw new InvalidOperationException(
+                    "A scrape publication cannot be allocated without a live song catalog snapshot.");
+            }
+        }
+
+        using (var catalogBinding = conn.CreateCommand())
+        {
+            catalogBinding.Transaction = tx;
+            catalogBinding.CommandText = """
+                INSERT INTO publication_surface_bindings (
+                    publication_id, surface_name, binding_kind, binding_json,
+                    row_count, content_hash, status, built_at)
+                SELECT
+                    publication_id,
+                    'song_catalog',
+                    'generation_catalog_snapshot',
+                    jsonb_build_object(
+                        'table', 'publication_song_catalog',
+                        'publicationId', publication_id,
+                        'schemaVersion', @schemaVersion,
+                        'sourceCapturedAt', source_captured_at),
+                    song_count,
+                    content_hash,
+                    'ready',
+                    captured_at
+                FROM publication_song_catalog
+                WHERE publication_id = @publicationId
+                """;
+            catalogBinding.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            catalogBinding.Parameters.AddWithValue(
+                "schemaVersion",
+                SongCatalogSnapshotBuilder.SchemaVersion);
+            if (catalogBinding.ExecuteNonQuery() != 1)
+            {
+                throw new InvalidOperationException(
+                    $"Publication generation {publicationId} has no ready song catalog binding.");
+            }
+        }
+
         using (var pointer = conn.CreateCommand())
         {
             pointer.Transaction = tx;
@@ -139,6 +202,44 @@ public sealed class MetaDatabase : IMetaDatabase
             pointer.Parameters.AddWithValue("publicationId", publicationId);
             pointer.Parameters.AddWithValue("now", now);
             pointer.ExecuteNonQuery();
+        }
+
+        using (var retainCatalogs = conn.CreateCommand())
+        {
+            retainCatalogs.Transaction = tx;
+            retainCatalogs.CommandText = """
+                DELETE FROM publication_song_catalog catalog
+                USING scrape_publication_state publication
+                WHERE publication.id = TRUE
+                  AND catalog.publication_id IS DISTINCT FROM
+                      publication.current_publication_id
+                  AND catalog.publication_id IS DISTINCT FROM
+                      publication.previous_publication_id
+                  AND catalog.publication_id IS DISTINCT FROM
+                      publication.working_publication_id;
+
+                UPDATE publication_surface_bindings binding
+                SET binding_kind = 'retired_generation_catalog',
+                    binding_json = jsonb_build_object(
+                        'table', 'publication_song_catalog',
+                        'retired', true),
+                    row_count = 0,
+                    content_hash = NULL,
+                    status = 'retired',
+                    built_at = @now
+                FROM scrape_publication_state publication
+                WHERE publication.id = TRUE
+                  AND binding.surface_name = 'song_catalog'
+                  AND binding.publication_id IS DISTINCT FROM
+                      publication.current_publication_id
+                  AND binding.publication_id IS DISTINCT FROM
+                      publication.previous_publication_id
+                  AND binding.publication_id IS DISTINCT FROM
+                      publication.working_publication_id
+                  AND binding.status <> 'retired';
+                """;
+            retainCatalogs.Parameters.AddWithValue("now", now);
+            retainCatalogs.ExecuteNonQuery();
         }
 
         tx.Commit();
@@ -257,6 +358,36 @@ public sealed class MetaDatabase : IMetaDatabase
                 """;
             failedCache.Parameters.AddWithValue("id", scrapeId);
             failedCache.ExecuteNonQuery();
+        }
+
+        using (var failedCatalog = conn.CreateCommand())
+        {
+            failedCatalog.Transaction = tx;
+            failedCatalog.CommandText = """
+                DELETE FROM publication_song_catalog catalog
+                USING publication_generations generation
+                WHERE generation.scrape_id = @id
+                  AND generation.status = 'failed'
+                  AND catalog.publication_id = generation.publication_id;
+
+                UPDATE publication_surface_bindings binding
+                SET binding_kind = 'failed_generation_catalog',
+                    binding_json = jsonb_build_object(
+                        'table', 'publication_song_catalog',
+                        'retained', false),
+                    row_count = 0,
+                    content_hash = NULL,
+                    status = 'failed',
+                    built_at = @now
+                FROM publication_generations generation
+                WHERE generation.scrape_id = @id
+                  AND generation.status = 'failed'
+                  AND binding.publication_id = generation.publication_id
+                  AND binding.surface_name = 'song_catalog';
+                """;
+            failedCatalog.Parameters.AddWithValue("id", scrapeId);
+            failedCatalog.Parameters.AddWithValue("now", now);
+            failedCatalog.ExecuteNonQuery();
         }
 
         tx.Commit();
@@ -764,6 +895,35 @@ public sealed class MetaDatabase : IMetaDatabase
                 $"({workingPublicationId?.ToString() ?? "null"}).");
         }
 
+        using (var verifyCatalog = conn.CreateCommand())
+        {
+            verifyCatalog.Transaction = tx;
+            verifyCatalog.CommandText = """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM publication_song_catalog catalog
+                    JOIN publication_surface_bindings binding
+                      ON binding.publication_id = catalog.publication_id
+                     AND binding.surface_name = 'song_catalog'
+                    WHERE catalog.publication_id = @publicationId
+                      AND binding.binding_kind =
+                          'generation_catalog_snapshot'
+                      AND binding.row_count = catalog.song_count
+                      AND binding.content_hash = catalog.content_hash
+                      AND binding.status = 'ready'
+                )
+                """;
+            verifyCatalog.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            if (verifyCatalog.ExecuteScalar() is not bool hasCatalog
+                || !hasCatalog)
+            {
+                throw new InvalidOperationException(
+                    $"Publication generation {publicationId} has no complete song catalog snapshot.");
+            }
+        }
+
         if (promoteCachedResponses)
         {
             using var verifyCache = conn.CreateCommand();
@@ -1037,16 +1197,6 @@ public sealed class MetaDatabase : IMetaDatabase
                     ),
                     (
                         @publicationId,
-                        'song_catalog',
-                        'legacy_live_unversioned',
-                        jsonb_build_object('table', 'songs'),
-                        (SELECT COUNT(*) FROM songs),
-                        NULL,
-                        'building',
-                        @now
-                    ),
-                    (
-                        @publicationId,
                         'item_shop',
                         'legacy_live_unversioned',
                         jsonb_build_object('table', 'item_shop_tracks'),
@@ -1238,6 +1388,30 @@ public sealed class MetaDatabase : IMetaDatabase
                       OR publication_id <> @previousPublicationId
                   );
 
+                DELETE FROM publication_song_catalog
+                WHERE publication_id <> @currentPublicationId
+                  AND (
+                      @previousPublicationId IS NULL
+                      OR publication_id <> @previousPublicationId
+                  );
+
+                UPDATE publication_surface_bindings
+                SET binding_kind = 'retired_generation_catalog',
+                    binding_json = jsonb_build_object(
+                        'table', 'publication_song_catalog',
+                        'retired', true),
+                    row_count = 0,
+                    content_hash = NULL,
+                    status = 'retired',
+                    built_at = @now
+                WHERE surface_name = 'song_catalog'
+                  AND publication_id <> @currentPublicationId
+                  AND (
+                      @previousPublicationId IS NULL
+                      OR publication_id <> @previousPublicationId
+                  )
+                  AND status <> 'retired';
+
                 UPDATE publication_surface_bindings
                 SET binding_kind = 'retired_generation_cache',
                     binding_json = jsonb_build_object(
@@ -1420,6 +1594,8 @@ public sealed class MetaDatabase : IMetaDatabase
                 SELECT to_regclass('public.scrape_publication_state') IS NOT NULL
                    AND to_regclass('public.publication_generations') IS NOT NULL
                    AND to_regclass('public.publication_surface_bindings') IS NOT NULL
+                   AND to_regclass('public.live_song_catalog') IS NOT NULL
+                   AND to_regclass('public.publication_song_catalog') IS NOT NULL
                    AND to_regclass('public.publication_api_response_cache') IS NOT NULL
                    AND to_regclass('public.publication_api_response_cache_staging') IS NOT NULL
                    AND (

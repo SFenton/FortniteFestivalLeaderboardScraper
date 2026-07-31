@@ -45,7 +45,7 @@ changes that boundary.
 | Solo and band current projections | Worker/post-process | `SoloCurrentProjectionBuilder`, `BandCurrentProjectionBuilder` |
 | Rankings and history | Worker/post-process/background jobs | `RankingsCalculator`, `MetaDatabase`, `BandRankHistoryWorker` |
 | Public API reads and exports | `fstservice` | API endpoint groups, `InstrumentDatabase`, `MetaDatabase`, `PlayerDataExportService` |
-| Song catalog, shop, and path metadata | Currently shared; SERVICE-1 makes service sole owner | `FestivalPersistence`, `MetaDatabase`, `PathDataStore` |
+| Song catalog, shop, and path metadata | Service owns live catalog refresh; scrape allocation owns immutable catalog publication cuts | `FestivalPersistence`, `MetaDatabase`, `PathDataStore` |
 | Durable notifications/improvement state | Shared persistence; service delivers publicly | `ImprovementNotificationService` |
 | Retention planning and bounded cleanup | Service maintenance runner | `DatabaseMaintenanceDryRunReporter`, `DatabaseRetentionMaintenanceService` |
 
@@ -324,6 +324,8 @@ marker exists on a legacy row).
 | Tables | Class | Owner/callers | Retention and safety |
 |---|---|---|---|
 | `songs`, `item_shop_tracks`, `season_windows`, `song_first_seen_season` | Durable source/metadata | `FestivalPersistence`, `MetaDatabase`, path/ranking readers | Keep provider IDs/timestamps and source provenance |
+| `live_song_catalog` | Canonical live catalog singleton | `FestivalPersistence.SaveSongsAsync` | Provider-only schema-versioned JSON, SHA-256, count, and capture time; excludes `imagePath`, `isSelected`, and `isInLocalData` |
+| `publication_song_catalog` | Immutable generation snapshot | `MetaDatabase.StartScrapeRun`, publication retention | One row per publication; allocated atomically from the live singleton and retained only for current, previous, and working pointers |
 | `account_names` | Durable source/cache of Epic identity | Worker resolver; API/search readers | Refreshable, but historical account IDs remain stable |
 | `registered_users`, `registered_bands` | Durable source | API activity/registration and worker consumers | Activity-based retention must preserve idempotent claims |
 | `registered_band_processing_status`, `registered_band_processing_progress`, `registered_player_band_discovery_progress` | Durable work state | Registration/backfill workers | Resume/idempotency state; prune only completed stale work |
@@ -690,9 +692,9 @@ claiming that legacy mutable surfaces are already generation-addressable:
 
 `Features:EnablePublicationReadContext` remains default-off. It must not be
 enabled until every `PublicationBound` route resolves through a ready,
-generation-addressable surface binding. Current catalog, shop, path, and
-inherited-cache bindings are deliberately marked `building`; they are the
-ordered source-cut work for the next phase.
+generation-addressable surface binding. Catalog and API response cache now
+have ready generation bindings; shop, path, and the remaining inherited
+surfaces stay deliberately incomplete.
 
 The first completed source cut is the API response cache:
 
@@ -716,6 +718,35 @@ The first completed source cut is the API response cache:
 
 The legacy `api_response_cache` tables remain as rollback/current-service
 compatibility mirrors until request pinning is promoted.
+
+CATALOG-1 adds the first immutable non-cache source cut without changing any
+endpoint reader:
+
+- `SongCatalogSnapshotBuilder` maps provider `Song`/`Track` fields into a
+  schema-versioned deterministic DTO, sorts songs and provider string lists,
+  normalizes provider timestamps, and excludes the mutable local UI fields
+  `imagePath`, `isSelected`, and `isInLocalData`;
+- `FestivalPersistence.SaveSongsAsync` writes the legacy `songs` rows and the
+  `live_song_catalog` singleton in one transaction. The singleton stores the
+  canonical payload, SHA-256 content hash, song count, and capture time;
+- `StartScrapeRun` copies that singleton into `publication_song_catalog` in
+  the same advisory-locked transaction that allocates the working publication,
+  then creates a ready `generation_catalog_snapshot` surface binding;
+- publication validates the snapshot/binding pair but does not rewrite it as
+  `legacy_live_unversioned`, so later catalog refreshes cannot alter an
+  in-progress or published generation;
+- startup idempotently bootstraps the current publication (and an existing
+  working pointer) from the live singleton. If the singleton is new, it is
+  seeded deterministically from the fields available in legacy `songs`;
+- catalog payload retention follows current, previous, and working publication
+  pointers. Failed and older payloads are removed while their binding metadata
+  is marked failed or retired.
+
+This is additive storage only. `/api/songs`, `/api/shop`, and path generation
+still read the live `FestivalService`/legacy path sources, and
+`Features:EnablePublicationReadContext` remains `false`. Rollback is a prior
+binary with the additive tables retained and ignored; no destructive migration
+is required.
 
 The read-only band-search reuse probe measured
 `46,662,828,032` bytes across `band_search_team_projection` and
