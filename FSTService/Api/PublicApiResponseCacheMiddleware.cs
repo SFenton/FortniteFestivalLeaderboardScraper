@@ -12,10 +12,26 @@ public sealed class PublicApiResponseCacheMiddleware
         _ = log;
     }
 
-    public async Task InvokeAsync(HttpContext context, IMetaDatabase metaDb, PublicReadGateService gate)
+    public async Task InvokeAsync(
+        HttpContext context,
+        IMetaDatabase metaDb,
+        PublicReadGateService gate,
+        PublicApiCacheTelemetry telemetry)
     {
+        if (context.WebSockets.IsWebSocketRequest)
+        {
+            await _next(context);
+            return;
+        }
+
+        var publicationBound =
+            context.GetEndpoint()?.Metadata.GetMetadata<PublicationBound>() is not null;
         if (!PublicApiResponseCachePolicy.IsCacheableRequest(context.Request, out var cacheKey))
         {
+            if (publicationBound && gate.IsFrozen)
+            {
+                telemetry.Record(context, PublicApiCacheOutcome.Bypassed);
+            }
             await _next(context);
             return;
         }
@@ -26,6 +42,8 @@ public sealed class PublicApiResponseCacheMiddleware
             var cachedResult = CacheHelper.ServeIfCached(context, cached);
             if (cachedResult is not null)
             {
+                if (publicationBound)
+                    telemetry.Record(context, PublicApiCacheOutcome.Hit);
                 context.Response.Headers["X-FST-Public-Cache"] = "hit";
                 await cachedResult.ExecuteAsync(context);
                 return;
@@ -35,6 +53,8 @@ public sealed class PublicApiResponseCacheMiddleware
             if (gate.RequiresCachedReads &&
                 PublicReadGateMiddleware.RequiresPublishedData(context.Request))
             {
+                if (publicationBound)
+                    telemetry.Record(context, PublicApiCacheOutcome.MissBlocked);
                 context.Response.Headers.CacheControl = "no-store";
                 context.Response.Headers["Retry-After"] = "30";
                 await Results.Problem(
@@ -44,6 +64,8 @@ public sealed class PublicApiResponseCacheMiddleware
                 return;
             }
 
+            if (publicationBound)
+                telemetry.Record(context, PublicApiCacheOutcome.MissContinued);
             await _next(context);
             return;
         }

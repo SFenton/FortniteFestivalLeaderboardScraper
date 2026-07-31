@@ -271,6 +271,7 @@ public sealed class ApiPublicationClassificationTests
         new(HttpMethods.Get, "/api/admin/dbstats/queries"),
         new(HttpMethods.Get, "/api/admin/dbstats/bloat"),
         new(HttpMethods.Get, "/api/admin/dbstats/pressure"),
+        new(HttpMethods.Get, "/api/admin/public-cache-telemetry"),
         new(HttpMethods.Get, "/api/diag/inflight"),
         new(HttpMethods.Get, "/api/diag/improvement-notifications"),
         new(HttpMethods.Post, "/api/debug/client-interactions"),

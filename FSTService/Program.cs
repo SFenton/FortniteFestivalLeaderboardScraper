@@ -362,6 +362,7 @@ builder.Services.AddSingleton<FSTService.Scraping.UserSyncProgressTracker>();
 builder.Services.AddSingleton<FSTService.Api.SongsCacheService>();
 builder.Services.AddSingleton<FSTService.Api.ShopCacheService>();
 builder.Services.AddSingleton<FSTService.Api.PublicReadGateService>();
+builder.Services.AddSingleton<FSTService.Api.PublicApiCacheTelemetry>();
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("PlayerCache",
     (sp, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(2),
         sp.GetRequiredService<FSTService.Api.PublicReadGateService>()));

@@ -459,5 +459,12 @@ public static partial class ApiEndpoints
         .WithTags("Admin")
         .RequireAuthorization()
         .RequireRateLimiting("protected");
+
+        app.MapGet("/api/admin/public-cache-telemetry", (
+            PublicApiCacheTelemetry telemetry) =>
+            Results.Ok(telemetry.Snapshot()))
+        .WithTags("Admin")
+        .RequireAuthorization()
+        .RequireRateLimiting("protected");
     }
 }

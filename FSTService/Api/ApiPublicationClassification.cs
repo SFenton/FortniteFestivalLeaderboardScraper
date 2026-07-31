@@ -157,6 +157,7 @@ public static class ApiPublicationRouteCatalog
         Private(HttpMethods.Get, "/api/admin/dbstats/queries", "Protected database diagnostics."),
         Private(HttpMethods.Get, "/api/admin/dbstats/bloat", "Protected database diagnostics."),
         Private(HttpMethods.Get, "/api/admin/dbstats/pressure", "Protected database diagnostics."),
+        Private(HttpMethods.Get, "/api/admin/public-cache-telemetry", "Protected publication cache diagnostics."),
         Private(HttpMethods.Get, "/api/diag/inflight", "Protected service diagnostics."),
         Private(HttpMethods.Get, "/api/diag/improvement-notifications", "Protected notification publication diagnostics."),
         Private(HttpMethods.Post, "/api/debug/client-interactions", "Client diagnostic telemetry ingestion."),

@@ -2,6 +2,9 @@ using FSTService.Api;
 using FSTService.Persistence;
 using FSTService.Tests.Helpers;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -416,16 +419,19 @@ public class PublicReadGateTests
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Get;
         context.Request.Path = "/api/rankings/Solo_Guitar";
+        SetPublicationEndpoint(context, "/api/rankings/{instrument}");
         context.RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider();
         context.Response.Body = new MemoryStream();
+        var telemetry = new PublicApiCacheTelemetry();
 
-        await middleware.InvokeAsync(context, metaDb, gate);
+        await middleware.InvokeAsync(context, metaDb, gate, telemetry);
 
         context.Response.Body.Position = 0;
         using var reader = new StreamReader(context.Response.Body, Encoding.UTF8);
         Assert.Equal("{\"ok\":true}", await reader.ReadToEndAsync());
         metaDb.DidNotReceive().BulkSetCachedResponses(Arg.Any<IEnumerable<(string Key, byte[] Json, string ETag)>>());
         Assert.False(context.Response.Headers.ContainsKey("X-FST-Public-Cache"));
+        Assert.Equal(0, telemetry.Snapshot().Total);
     }
 
     [Fact]
@@ -445,16 +451,19 @@ public class PublicReadGateTests
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Get;
         context.Request.Path = "/api/rankings/Solo_Guitar";
+        SetPublicationEndpoint(context, "/api/rankings/{instrument}");
         context.RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider();
         context.Response.Body = new MemoryStream();
+        var telemetry = new PublicApiCacheTelemetry();
 
-        await middleware.InvokeAsync(context, metaDb, gate);
+        await middleware.InvokeAsync(context, metaDb, gate, telemetry);
 
         context.Response.Body.Position = 0;
         using var reader = new StreamReader(context.Response.Body, Encoding.UTF8);
         Assert.False(nextCalled);
         Assert.Equal("{\"publishedScrapeId\":793}", await reader.ReadToEndAsync());
         Assert.Equal("hit", context.Response.Headers["X-FST-Public-Cache"]);
+        Assert.Equal(1, telemetry.Snapshot().Hits);
     }
 
     [Fact]
@@ -475,10 +484,12 @@ public class PublicReadGateTests
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Get;
         context.Request.Path = "/api/rankings/composite/account-1";
+        SetPublicationEndpoint(context, "/api/rankings/composite/{accountId}");
         context.RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider();
         context.Response.Body = new MemoryStream();
+        var telemetry = new PublicApiCacheTelemetry();
 
-        await middleware.InvokeAsync(context, metaDb, gate);
+        await middleware.InvokeAsync(context, metaDb, gate, telemetry);
 
         context.Response.Body.Position = 0;
         using var reader = new StreamReader(context.Response.Body, Encoding.UTF8);
@@ -487,6 +498,7 @@ public class PublicReadGateTests
         Assert.Equal("miss", context.Response.Headers["X-FST-Public-Cache"]);
         Assert.Equal("{\"computed\":true}", await reader.ReadToEndAsync());
         metaDb.DidNotReceive().BulkSetCachedResponses(Arg.Any<IEnumerable<(string Key, byte[] Json, string ETag)>>());
+        Assert.Equal(1, telemetry.Snapshot().MissesContinued);
     }
 
     [Fact]
@@ -507,13 +519,124 @@ public class PublicReadGateTests
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Get;
         context.Request.Path = "/api/rankings/Solo_Guitar/account-1";
+        SetPublicationEndpoint(context, "/api/rankings/{instrument}/{accountId}");
         context.RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider();
         context.Response.Body = new MemoryStream();
+        var telemetry = new PublicApiCacheTelemetry();
 
-        await middleware.InvokeAsync(context, metaDb, gate);
+        await middleware.InvokeAsync(context, metaDb, gate, telemetry);
 
         Assert.False(nextCalled);
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, context.Response.StatusCode);
         Assert.Equal("miss", context.Response.Headers["X-FST-Public-Cache"]);
+        Assert.Equal(1, telemetry.Snapshot().MissesBlocked);
+    }
+
+    [Fact]
+    public async Task PublicApiResponseCacheMiddleware_RecordsPublicationBoundBypassDuringFreeze()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            new PublicReadFreezeState(true, DateTime.UtcNow, 793, "scrape"));
+        var gate = new PublicReadGateService(metaDb, NullLogger<PublicReadGateService>.Instance);
+        var nextCalled = false;
+        var middleware = new PublicApiResponseCacheMiddleware(context =>
+        {
+            nextCalled = true;
+            return Task.CompletedTask;
+        }, NullLogger<PublicApiResponseCacheMiddleware>.Instance);
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/paths/song/Solo_Guitar/expert";
+        context.SetEndpoint(new RouteEndpoint(
+            _ => Task.CompletedTask,
+            RoutePatternFactory.Parse("/api/paths/{songId}/{instrument}/{difficulty}"),
+            order: 0,
+            new EndpointMetadataCollection(
+                new HttpMethodMetadata([HttpMethods.Get]),
+                PublicationBound.Instance),
+            displayName: "path"));
+        var telemetry = new PublicApiCacheTelemetry();
+
+        await middleware.InvokeAsync(context, metaDb, gate, telemetry);
+
+        Assert.True(nextCalled);
+        var snapshot = telemetry.Snapshot();
+        Assert.Equal(1, snapshot.Bypassed);
+        var route = Assert.Single(snapshot.Routes);
+        Assert.Equal("/api/paths/{songId}/{instrument}/{difficulty}", route.RoutePattern);
+        Assert.Equal(nameof(PublicationBound), route.Classification);
+    }
+
+    [Fact]
+    public async Task PublicApiResponseCacheMiddleware_WebSocketBypassesGateAndTelemetry()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        var gate = new PublicReadGateService(metaDb, NullLogger<PublicReadGateService>.Instance);
+        var nextCalled = false;
+        var middleware = new PublicApiResponseCacheMiddleware(context =>
+        {
+            nextCalled = true;
+            return Task.CompletedTask;
+        }, NullLogger<PublicApiResponseCacheMiddleware>.Instance);
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/ws";
+        var webSocketFeature = Substitute.For<IHttpWebSocketFeature>();
+        webSocketFeature.IsWebSocketRequest.Returns(true);
+        context.Features.Set(webSocketFeature);
+        SetPublicationEndpoint(context, "/api/ws", ApiPublicationRouteCatalog.AnyMethod);
+        var telemetry = new PublicApiCacheTelemetry();
+
+        await middleware.InvokeAsync(context, metaDb, gate, telemetry);
+
+        Assert.True(nextCalled);
+        Assert.Equal(0, telemetry.Snapshot().Total);
+        metaDb.DidNotReceive().GetPublicReadFreezeState();
+        metaDb.DidNotReceive().GetFailedCandidateReadIsolationState();
+    }
+
+    [Fact]
+    public async Task PublicApiResponseCacheMiddleware_DoesNotCountAdminFallbackTraffic()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            new PublicReadFreezeState(true, DateTime.UtcNow, 793, "scrape"));
+        metaDb.GetCachedResponse(Arg.Any<string>()).Returns(((byte[] Json, string ETag)?)null);
+        var gate = new PublicReadGateService(metaDb, NullLogger<PublicReadGateService>.Instance);
+        var middleware = new PublicApiResponseCacheMiddleware(
+            _ => Task.CompletedTask,
+            NullLogger<PublicApiResponseCacheMiddleware>.Instance);
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/scanner-generated-path";
+        context.SetEndpoint(new RouteEndpoint(
+            _ => Task.CompletedTask,
+            RoutePatternFactory.Parse("/api/{**path}"),
+            order: int.MaxValue,
+            new EndpointMetadataCollection(
+                new AdminPrivate("test fallback"),
+                new HttpMethodMetadata([ApiPublicationRouteCatalog.AnyMethod])),
+            displayName: "fallback"));
+        var telemetry = new PublicApiCacheTelemetry();
+
+        await middleware.InvokeAsync(context, metaDb, gate, telemetry);
+
+        Assert.Equal(0, telemetry.Snapshot().Total);
+    }
+
+    private static void SetPublicationEndpoint(
+        HttpContext context,
+        string routePattern,
+        string method = "GET")
+    {
+        context.SetEndpoint(new RouteEndpoint(
+            _ => Task.CompletedTask,
+            RoutePatternFactory.Parse(routePattern),
+            order: 0,
+            new EndpointMetadataCollection(
+                new HttpMethodMetadata([method]),
+                PublicationBound.Instance),
+            displayName: routePattern));
     }
 }
