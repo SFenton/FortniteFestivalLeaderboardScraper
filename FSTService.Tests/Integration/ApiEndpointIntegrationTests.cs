@@ -1642,6 +1642,51 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.True(json.GetProperty("notYetPublished").GetBoolean());
     }
 
+    [Fact]
+    public async Task PlayerAndHistory_PendingPublicationOverrideCachedPayloads()
+    {
+        const string accountId = "pendingCachedPlayer";
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        metaDb.RegisterUser("pending-cached-device", accountId);
+        metaDb.EnqueueBackfill(accountId, 100);
+        metaDb.StartBackfill(accountId);
+        metaDb.CompleteBackfill(accountId, rankingsPending: true);
+
+        var profileJson = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            accountId,
+            totalScores = 1,
+            scores = new[] { new { si = "cached-song", ins = "01", sc = 123 } },
+        });
+        var historyJson = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            accountId,
+            count = 1,
+            history = new[] { new { songId = "cached-song", instrument = "Solo_Guitar" } },
+        });
+        metaDb.BulkSetCachedResponses(
+        [
+            (
+                $"player:{accountId}:::",
+                profileJson,
+                ResponseCacheService.ComputeETag(profileJson)
+            ),
+            (
+                ScrapeTimePrecomputer.PlayerHistoryCacheKey(accountId),
+                historyJson,
+                ResponseCacheService.ComputeETag(historyJson)
+            ),
+        ]);
+
+        var profileResponse = await _client.GetAsync($"/api/player/{accountId}");
+        var historyResponse = await _client.GetAsync($"/api/player/{accountId}/history");
+
+        Assert.Equal(HttpStatusCode.Accepted, profileResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, historyResponse.StatusCode);
+        Assert.Contains("no-store", profileResponse.Headers.CacheControl?.ToString());
+        Assert.Contains("no-store", historyResponse.Headers.CacheControl?.ToString());
+    }
+
     // ─── Backfill status ────────────────────────────────────────
 
     [Fact]

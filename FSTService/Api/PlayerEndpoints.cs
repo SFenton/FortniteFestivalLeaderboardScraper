@@ -28,6 +28,24 @@ public static partial class ApiEndpoints
             // Build cache key from all parameters
             var cacheKey = $"player:{accountId}:{songId}:{instruments}:{leeway}";
             var publishedProfile = precomputer.TryGet($"player:{accountId}:::");
+            var isRegistered = metaDb.IsAccountRegistered(accountId);
+            var backfill = isRegistered ? metaDb.GetBackfillStatus(accountId) : null;
+            var publicationPending = backfill is not null
+                && (backfill.Status != "complete" || backfill.RankingsPending);
+
+            if (isRegistered && (publicationPending || publishedProfile is null))
+            {
+                httpContext.Response.Headers.CacheControl = "no-store";
+                return Results.Json(new
+                {
+                    accountId,
+                    displayName = metaDb.GetDisplayName(accountId),
+                    status = "syncing",
+                    notYetPublished = true,
+                    totalScores = 0,
+                    scores = Array.Empty<object>(),
+                }, statusCode: StatusCodes.Status202Accepted);
+            }
 
             // ── Check precomputed store (covers all leeway values in one response) ──
             if (songId is null && instruments is null)
@@ -43,21 +61,6 @@ public static partial class ApiEndpoints
                     title: "Published filtered profile unavailable",
                     detail: "Filtered player profiles will resume after publication-scoped profile reads are enabled.",
                     statusCode: StatusCodes.Status503ServiceUnavailable);
-            }
-
-            if (publishedProfile is null
-                && metaDb.GetRegisteredAccountIds().Contains(accountId))
-            {
-                httpContext.Response.Headers.CacheControl = "no-store";
-                return Results.Json(new
-                {
-                    accountId,
-                    displayName = metaDb.GetDisplayName(accountId),
-                    status = "syncing",
-                    notYetPublished = true,
-                    totalScores = 0,
-                    scores = Array.Empty<object>(),
-                }, statusCode: StatusCodes.Status202Accepted);
             }
 
             // ── Check cache ──────────────────────────────────────
@@ -683,7 +686,10 @@ public static partial class ApiEndpoints
             }
 
             var published = precomputer.TryGet(ScrapeTimePrecomputer.PlayerHistoryCacheKey(accountId));
-            if (published is null)
+            var backfill = metaDb.GetBackfillStatus(accountId);
+            var publicationPending = backfill is not null
+                && (backfill.Status != "complete" || backfill.RankingsPending);
+            if (published is null || publicationPending)
             {
                 httpContext.Response.Headers.CacheControl = "no-store";
                 return Results.Json(new
