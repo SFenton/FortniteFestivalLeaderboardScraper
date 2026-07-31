@@ -762,11 +762,15 @@ if (hasEmbeddedWebApp)
 
     // Keep retired or misspelled API routes as real 404s instead of returning
     // the embedded SPA shell with a misleading 200 response.
-    app.MapFallback("/api/{**path}", () => Results.NotFound());
+    app.MapFallback("/api/{**path}", () => Results.NotFound())
+        .WithApiPublicationClassification(ApiPublicationRouteCatalog.AnyMethod, "/api/{**path}");
 
     // Fallback: serve index.html for non-API routes (SPA support).
     app.MapFallbackToFile("index.html");
 }
+
+ApiPublicationEndpointDescriptions.Validate(
+    app.Services.GetRequiredService<EndpointDataSource>());
 
 app.Run();
 
