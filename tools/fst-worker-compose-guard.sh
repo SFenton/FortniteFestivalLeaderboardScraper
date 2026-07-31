@@ -118,6 +118,23 @@ for command in docker python3 realpath; do
     fi
 done
 
+retry_probe() {
+    local attempts="$1"
+    local delay_seconds="$2"
+    shift 2
+
+    local attempt
+    for ((attempt = 1; attempt <= attempts; attempt++)); do
+        if "$@"; then
+            return 0
+        fi
+        if ((attempt < attempts)); then
+            sleep "$delay_seconds"
+        fi
+    done
+    return 1
+}
+
 compose_dir="$(realpath -m "$COMPOSE_DIR")"
 base_file="$(realpath -m "$compose_dir/$BASE_FILE")"
 pia_overlay="$(realpath -m "$compose_dir/$PIA_OVERLAY")"
@@ -429,28 +446,45 @@ print(hashlib.sha256(value.encode()).hexdigest())
             exit 1
         fi
 
-        if ! docker exec "$node" sh -c \
+        if ! retry_probe 6 5 docker exec "$node" sh -c \
             'getent hosts account-public-service-prod.ol.epicgames.com >/dev/null 2>&1 || nslookup account-public-service-prod.ol.epicgames.com >/dev/null 2>&1'
         then
             printf 'ERROR: Epic DNS lookup failed in %s\n' "$node" >&2
             exit 1
         fi
 
-        control_status="$(
-            docker exec fstservice curl -fsS --connect-timeout 2 --max-time 5 \
-                "http://$node:8000/v1/vpn/status" 2>/dev/null \
-                | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status", ""))' \
-                || true
-        )"
+        control_status=""
+        for attempt in 1 2 3 4 5 6; do
+            control_status="$(
+                docker exec fstservice curl -fsS --connect-timeout 2 --max-time 5 \
+                    "http://$node:8000/v1/vpn/status" 2>/dev/null \
+                    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status", ""))' \
+                    || true
+            )"
+            [[ "$control_status" == "running" ]] && break
+            ((attempt < 6)) && sleep 5
+        done
         if [[ "$control_status" != "running" ]]; then
             printf 'ERROR: control API is not running for %s\n' "$node" >&2
             exit 1
         fi
 
-        egress_output="$(
-            docker exec fstservice curl -sS --connect-timeout 3 --max-time 10 \
-                -x "http://$node:8888" https://api.ipify.org 2>/dev/null || true
-        )"
+        egress_output=""
+        for attempt in 1 2 3 4 5 6; do
+            egress_output="$(
+                docker exec fstservice curl -sS --connect-timeout 3 --max-time 10 \
+                    -x "http://$node:8888" https://api.ipify.org 2>/dev/null || true
+            )"
+            if python3 -c '
+import ipaddress
+import sys
+ipaddress.ip_address(sys.stdin.read().strip())
+' <<< "$egress_output" 2>/dev/null
+            then
+                break
+            fi
+            ((attempt < 6)) && sleep 5
+        done
         egress_hash="$(
             python3 -c '
 import hashlib
