@@ -33,6 +33,7 @@ Options:
                            Candidate profiles require --recreate-runonce for startup.
   --data-profile P         Select the paired data profile:
                              notification-db-only
+                             publication-cache-generation
                            Every run-once config requires a data profile.
   --compose-dir DIR        Production compose directory
   -h, --help               Show help
@@ -92,7 +93,7 @@ case "$THROUGHPUT_PROFILE" in
 esac
 
 case "$DATA_PROFILE" in
-    none|notification-db-only)
+    none|notification-db-only|publication-cache-generation)
         ;;
     *)
         printf 'ERROR: unknown data profile: %s\n' "$DATA_PROFILE" >&2
@@ -300,6 +301,28 @@ if data_profile == "notification-db-only":
         if nonnegative_integer(name) != 80:
             raise SystemExit(
                 f"ERROR: data profile notification-db-only requires {name}=80")
+if data_profile == "publication-cache-generation":
+    if worker.get("image") != "fstservice:atomic-pub-cache-09f56637":
+        raise SystemExit(
+            "ERROR: data profile publication-cache-generation requires "
+            "fstservice:atomic-pub-cache-09f56637")
+    exact_value("Scraper__EnabledPhases", "All")
+    for name in (
+        "Features__EnforcePublicationCriticalPhases",
+        "Features__EnforceScopeCompletenessManifests",
+        "Features__RequireSuccessfulScrapeWriters",
+        "Features__WritePublishedScopeSources",
+    ):
+        if not boolean(name):
+            raise SystemExit(
+                f"ERROR: data profile publication-cache-generation requires {name}=true")
+    for name in (
+        "Features__WriteLogicalLeaderboardVersions",
+        "Features__SkipUnchangedPhysicalLeaderboardSnapshots",
+    ):
+        if boolean(name):
+            raise SystemExit(
+                f"ERROR: data profile publication-cache-generation requires {name}=false")
 if canonical != 30:
     raise SystemExit(f"ERROR: canonical PIA service count must be 30, found {canonical}")
 if expected > canonical:
