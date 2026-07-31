@@ -505,6 +505,44 @@ public class PublicReadGateTests
     }
 
     [Fact]
+    public async Task PublicApiResponseCacheMiddleware_UsesPinnedPublicationCache()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            new PublicReadFreezeState(true, DateTime.UtcNow, 793, "test"));
+        var json = Encoding.UTF8.GetBytes("{\"publicationId\":42}");
+        metaDb.GetCachedResponse(42, Arg.Any<string>())
+            .Returns((json, ResponseCacheService.ComputeETag(json)));
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var middleware = new PublicApiResponseCacheMiddleware(
+            _ => throw new InvalidOperationException("Pinned cache miss."),
+            NullLogger<PublicApiResponseCacheMiddleware>.Instance);
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/rankings/Solo_Guitar";
+        SetPublicationEndpoint(context, "/api/rankings/{instrument}");
+        context.SetPublicationReadContext(
+            new PublicationReadContext(42, 793, DateTime.UtcNow));
+        context.RequestServices = new ServiceCollection()
+            .AddLogging()
+            .BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(
+            context,
+            metaDb,
+            gate,
+            new PublicApiCacheTelemetry());
+
+        _ = metaDb.Received(1).GetCachedResponse(
+            42,
+            Arg.Any<string>());
+        metaDb.DidNotReceive().GetCachedResponse(Arg.Any<string>());
+    }
+
+    [Fact]
     public async Task PublicApiResponseCacheMiddleware_ContinuesOnFrozenCacheMiss()
     {
         var metaDb = Substitute.For<IMetaDatabase>();

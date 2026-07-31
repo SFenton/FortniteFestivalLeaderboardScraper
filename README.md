@@ -95,6 +95,11 @@ rankings, rivals, exports, and notification feeds all have ready
 generation-addressable bindings. The current ledger deliberately marks legacy
 live/inherited bindings as incomplete.
 
+API response caches now have generation-keyed live and staging storage.
+Current and previous generations are retained; older cache generations and
+failed candidate staging are removed independently of scrape-log retention.
+The legacy cache remains as a rollback compatibility mirror.
+
 Improvement notifications can be recovered for the already-published scrape
 without starting a full scrape:
 

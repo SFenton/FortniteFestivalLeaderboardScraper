@@ -76,6 +76,9 @@ describe("FST worker no-progress watchdog", () => {
     assert.match(sql, /active_worker_queries <> 0/);
     assert.match(sql, /pg_stat_progress_create_index/);
     assert.match(sql, /public_reads_frozen = FALSE/);
+    assert.match(sql, /UPDATE publication_generations/);
+    assert.match(sql, /working_publication_id = NULL/);
+    assert.match(sql, /DELETE FROM publication_api_response_cache_staging/);
     assert.match(sql, /status = 'offline'/);
     assert.match(sql, /candidate_published_scope_rows/);
     assert.match(sql, /COMMIT;/);

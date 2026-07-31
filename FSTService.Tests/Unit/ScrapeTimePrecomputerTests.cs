@@ -188,6 +188,19 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
     public async Task PrecomputeAllAsync_EmptyDb_DoesNotThrow()
     {
         await _sut.PrecomputeAllAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task PrecomputeAllAsync_PublishImmediatelyRejectsActiveWorkingPublication()
+    {
+        _metaDb.StartScrapeRun();
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => _sut.PrecomputeAllAsync(CancellationToken.None));
+
+        Assert.Contains(
+            "cannot publish while a working publication generation exists",
+            exception.Message);
         // Static data (firstseen) is always precomputed, even on empty DB
         Assert.True(_sut.Count >= 0);
     }

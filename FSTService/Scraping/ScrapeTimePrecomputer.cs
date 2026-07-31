@@ -121,7 +121,25 @@ public sealed class ScrapeTimePrecomputer
             "Scrape-time precomputation starting. publishImmediately={PublishImmediately}, showLeaderboardEntryTotals={ShowLeaderboardEntryTotals}.",
             publishImmediately,
             showLeaderboardEntryTotals);
-        _metaDb.BulkSetCachedResponsesStaging([]);
+        var publicationPointers = _metaDb.GetPublicationPointerState();
+        if (publishImmediately && publicationPointers.WorkingPublicationId.HasValue)
+        {
+            throw new InvalidOperationException(
+                "Standalone precompute cannot publish while a working publication generation exists.");
+        }
+
+        var targetPublicationId = publishImmediately
+            ? publicationPointers.CurrentPublicationId
+            : publicationPointers.WorkingPublicationId
+                ?? publicationPointers.CurrentPublicationId;
+        var persistenceTargetPublicationId = targetPublicationId ?? 0;
+        using var publicationBuildLease =
+            _metaDb.AcquirePublicationCacheBuildLease(
+                persistenceTargetPublicationId,
+                requireCurrentPublication: publishImmediately);
+        _metaDb.BulkSetCachedResponsesStaging(
+            [],
+            persistenceTargetPublicationId);
         var projectionStats = _soloCurrentProjectionBuilder?.Inspect();
         _currentProjectionAuthoritativeForPrecompute =
             projectionStats is
@@ -198,12 +216,16 @@ public sealed class ScrapeTimePrecomputer
 
         // ── Flush from staging file to PostgreSQL staging table, then atomic swap ──
         _log.LogInformation("All phases complete. {Count:N0} records staged to disk.", staging.RecordCount);
-        staging.FlushToPostgres(_metaDb, useStaging: true);
+        staging.FlushToPostgres(
+            _metaDb,
+            useStaging: true,
+            publicationId: persistenceTargetPublicationId);
         _log.LogInformation("Scrape-time precompute cache staging flush complete. publishImmediately={PublishImmediately}.", publishImmediately);
         if (publishImmediately)
         {
             _log.LogInformation("Swapping scrape-time precompute cache staging responses into the live cache.");
-            _metaDb.SwapCachedResponsesFromStaging();
+            _metaDb.SwapCachedResponsesFromStaging(
+                persistenceTargetPublicationId);
             _log.LogInformation("Scrape-time precompute cache staging responses published.");
         }
         _staging = null;

@@ -315,6 +315,9 @@ public sealed class MetaDatabaseTests : IDisposable
     {
         var scrapeId = Db.StartScrapeRun();
         var generation = Db.GetPublicationGenerationForScrape(scrapeId)!;
+        Db.BulkSetCachedResponsesStaging(
+            [(Key: "failed-cache", Json: new byte[] { 1 }, ETag: "\"failed\"")],
+            generation.PublicationId);
 
         Db.FailScrapeRun(scrapeId, "post_process", "injected");
 
@@ -324,6 +327,17 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal("post_process", failed.FailurePhase);
         Assert.Equal("injected", failed.FailureMessage);
         Assert.Null(pointer.WorkingPublicationId);
+        using var conn = DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT COUNT(*)
+            FROM publication_api_response_cache_staging
+            WHERE publication_id = @publicationId
+            """;
+        cmd.Parameters.AddWithValue(
+            "publicationId",
+            generation.PublicationId);
+        Assert.Equal(0L, (long)cmd.ExecuteScalar()!);
     }
 
     [Fact]
@@ -695,6 +709,8 @@ public sealed class MetaDatabaseTests : IDisposable
         Db.CompleteScrapeRun(oldId, 1, 10, 1, 100);
         Db.BulkSetCachedResponses([(Key: "player:acct_1:::", Json: new byte[] { 1 }, ETag: "\"old\"")]);
         Db.PublishScrapeRun(oldId, promoteCachedResponses: false);
+        var oldPublicationId =
+            Db.GetPublicationGenerationForScrape(oldId)!.PublicationId;
 
         var nextId = Db.StartScrapeRun();
         Db.BulkSetCachedResponsesStaging([(Key: "player:acct_1:::", Json: new byte[] { 2 }, ETag: "\"new\"")]);
@@ -715,12 +731,29 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.NotNull(cachedAfterPublish);
         Assert.Equal(new byte[] { 2 }, cachedAfterPublish.Value.Json);
         Assert.Equal("\"new\"", cachedAfterPublish.Value.ETag);
+
+        var nextPublicationId =
+            Db.GetPublicationGenerationForScrape(nextId)!.PublicationId;
+        Assert.Equal(
+            new byte[] { 1 },
+            Db.GetCachedResponse(
+                oldPublicationId,
+                "player:acct_1:::")?.Json);
+        Assert.Equal(
+            new byte[] { 2 },
+            Db.GetCachedResponse(
+                nextPublicationId,
+                "player:acct_1:::")?.Json);
     }
 
     [Fact]
     public void PublishScrapeRun_rotates_publication_generations_and_records_surface_bindings()
     {
         var firstScrapeId = Db.StartScrapeRun();
+        Db.BulkSetCachedResponses(
+        [
+            (Key: "player:acct_1:::", Json: new byte[] { 1 }, ETag: "\"old\""),
+        ]);
         Db.CompleteScrapeRun(firstScrapeId, 1, 10, 1, 100);
         Db.PublishScrapeRun(firstScrapeId, promoteCachedResponses: false);
 
@@ -760,6 +793,42 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal(
             firstGeneration.PublicationId,
             secondGeneration.PreviousPublicationId);
+        Assert.Equal(
+            Db.GetCachedResponse(
+                firstGeneration.PublicationId,
+                "player:acct_1:::")?.Json,
+            Db.GetCachedResponse(
+                secondGeneration.PublicationId,
+                "player:acct_1:::")?.Json);
+        Assert.Equal(
+            new byte[] { 1 },
+            Db.GetCachedResponse(
+                secondGeneration.PublicationId,
+                "player:acct_1:::")?.Json);
+
+        var thirdScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(thirdScrapeId, 1, 30, 3, 300);
+        Db.PublishScrapeRun(
+            thirdScrapeId,
+            promoteCachedResponses: false);
+        var thirdGeneration =
+            Db.GetPublicationGenerationForScrape(thirdScrapeId)!;
+
+        Assert.Null(Db.GetCachedResponse(
+            firstGeneration.PublicationId,
+            "player:acct_1:::"));
+        Assert.NotNull(Db.GetCachedResponse(
+            secondGeneration.PublicationId,
+            "player:acct_1:::"));
+        Assert.NotNull(Db.GetCachedResponse(
+            thirdGeneration.PublicationId,
+            "player:acct_1:::"));
+        Assert.Equal(
+            "retired",
+            Db.GetPublicationSurfaceBindings(firstGeneration.PublicationId)
+                .Single(binding =>
+                    binding.SurfaceName == "api_response_cache")
+                .Status);
     }
 
     [Fact]
@@ -795,6 +864,198 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Null(
             Db.GetPublicationGeneration(after.CurrentPublicationId!.Value)!
                 .PreviousPublicationId);
+    }
+
+    [Fact]
+    public void Current_cache_target_is_rejected_after_new_working_generation_starts()
+    {
+        var publishedScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(publishedScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var currentPublicationId =
+            Db.GetPublicationGenerationForScrape(publishedScrapeId)!
+                .PublicationId;
+
+        var candidateScrapeId = Db.StartScrapeRun();
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            Db.BulkSetCachedResponsesStaging(
+                [(Key: "stale", Json: new byte[] { 1 }, ETag: "\"stale\"")],
+                currentPublicationId));
+
+        Assert.Contains(
+            "cannot mutate the cache while working publication",
+            exception.Message);
+    }
+
+    [Fact]
+    public void Current_cache_build_is_blocked_by_failed_candidate_isolation()
+    {
+        var publishedScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(publishedScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var currentPublicationId =
+            Db.GetPublicationGenerationForScrape(publishedScrapeId)!
+                .PublicationId;
+        var failedScrapeId = Db.StartScrapeRun();
+        Db.FailScrapeRun(
+            failedScrapeId,
+            MetaDatabase.PostProcessReadIsolationFailurePhase,
+            "injected");
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            Db.AcquirePublicationCacheBuildLease(
+                currentPublicationId,
+                requireCurrentPublication: true));
+
+        Assert.Contains("failed-candidate read isolation", exception.Message);
+
+        var swapException = Assert.Throws<InvalidOperationException>(() =>
+            Db.SwapCachedResponsesFromStaging(currentPublicationId));
+        Assert.Contains(
+            "failed-candidate read isolation",
+            swapException.Message);
+    }
+
+    [Fact]
+    public async Task Current_cache_build_lease_blocks_new_scrape_allocation()
+    {
+        var publishedScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(publishedScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var currentPublicationId =
+            Db.GetPublicationGenerationForScrape(publishedScrapeId)!
+                .PublicationId;
+
+        using var lease = Db.AcquirePublicationCacheBuildLease(
+            currentPublicationId,
+            requireCurrentPublication: true);
+        var startTask = Task.Run(Db.StartScrapeRun);
+        await Task.Delay(100);
+        Assert.False(startTask.IsCompleted);
+        Db.BulkSetCachedResponsesStaging(
+            [(Key: "lease-key", Json: new byte[] { 9 }, ETag: "\"lease\"")],
+            currentPublicationId);
+
+        lease.Dispose();
+        var newScrapeId = await startTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(newScrapeId > publishedScrapeId);
+    }
+
+    [Fact]
+    public async Task Publication_cache_build_lease_is_exclusive_per_generation()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(scrapeId, promoteCachedResponses: false);
+        var publicationId =
+            Db.GetPublicationGenerationForScrape(scrapeId)!.PublicationId;
+
+        using var first = Db.AcquirePublicationCacheBuildLease(
+            publicationId,
+            requireCurrentPublication: true);
+        var secondTask = Task.Run(() =>
+            Db.AcquirePublicationCacheBuildLease(
+                publicationId,
+                requireCurrentPublication: true));
+        await Task.Delay(100);
+        Assert.False(secondTask.IsCompleted);
+
+        first.Dispose();
+        using var second =
+            await secondTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task Rejected_cache_build_lease_releases_advisory_locks()
+    {
+        var publishedScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(publishedScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var currentPublicationId =
+            Db.GetPublicationGenerationForScrape(publishedScrapeId)!
+                .PublicationId;
+        var candidateScrapeId = Db.StartScrapeRun();
+
+        Assert.Throws<InvalidOperationException>(() =>
+            Db.AcquirePublicationCacheBuildLease(
+                currentPublicationId,
+                requireCurrentPublication: true));
+
+        Db.FailScrapeRun(candidateScrapeId, "test", "cleanup");
+        var startTask = Task.Run(Db.StartScrapeRun);
+        var nextScrapeId =
+            await startTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(nextScrapeId > candidateScrapeId);
+    }
+
+    [Fact]
+    public async Task SchemaUpgrade_reconciles_legacy_cache_after_rollback_writer()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        Db.BulkSetCachedResponsesStaging(
+            [(Key: "old-key", Json: new byte[] { 1 }, ETag: "\"old\"")]);
+        Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(scrapeId);
+        var publicationId =
+            Db.GetPublicationGenerationForScrape(scrapeId)!.PublicationId;
+
+        using (var conn = DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                TRUNCATE api_response_cache;
+                INSERT INTO api_response_cache (
+                    cache_key, json_data, etag, cached_at)
+                VALUES (
+                    'new-key', '\x02'::bytea, '"new"', now() + interval '1 minute');
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        await DatabaseInitializer.EnsureSchemaAsync(DataSource);
+
+        Assert.Null(Db.GetCachedResponse(publicationId, "old-key"));
+        Assert.Equal(
+            new byte[] { 2 },
+            Db.GetCachedResponse(publicationId, "new-key")?.Json);
+        Assert.Equal(
+            "legacy_current_table_reconciled",
+            Db.GetPublicationSurfaceBindings(publicationId)
+                .Single(binding =>
+                    binding.SurfaceName == "api_response_cache")
+                .BindingKind);
+    }
+
+    [Fact]
+    public async Task SchemaUpgrade_preserves_active_working_cache_staging()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        var publicationId =
+            Db.GetPublicationGenerationForScrape(scrapeId)!.PublicationId;
+        Db.BulkSetCachedResponsesStaging(
+            [(Key: "working-key", Json: new byte[] { 4 }, ETag: "\"working\"")],
+            publicationId);
+
+        await DatabaseInitializer.EnsureSchemaAsync(DataSource);
+
+        using var conn = DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT COUNT(*)
+            FROM publication_api_response_cache_staging
+            WHERE publication_id = @publicationId
+            """;
+        cmd.Parameters.AddWithValue("publicationId", publicationId);
+        Assert.Equal(1L, (long)cmd.ExecuteScalar()!);
     }
 
     [Fact]

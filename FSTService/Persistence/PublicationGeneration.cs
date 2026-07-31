@@ -43,6 +43,7 @@ public sealed record PublicationSurfaceBinding(
 public static class PublicationGenerationSchema
 {
     public const long AdvisoryLockKey = 5067481511116519500L;
+    public const long CacheBuildAdvisoryLockBase = 5067481511116520000L;
 
     public const string Sql = """
         CREATE TABLE IF NOT EXISTS publication_generations (
@@ -119,6 +120,26 @@ public static class PublicationGenerationSchema
         CREATE INDEX IF NOT EXISTS ix_publication_surface_bindings_surface
             ON publication_surface_bindings (surface_name, publication_id DESC);
 
+        CREATE TABLE IF NOT EXISTS publication_api_response_cache (
+            publication_id BIGINT NOT NULL
+                REFERENCES publication_generations(publication_id) ON DELETE CASCADE,
+            cache_key   TEXT        NOT NULL,
+            json_data   BYTEA       NOT NULL,
+            etag        TEXT        NOT NULL,
+            cached_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY (publication_id, cache_key)
+        );
+
+        CREATE TABLE IF NOT EXISTS publication_api_response_cache_staging (
+            publication_id BIGINT NOT NULL
+                REFERENCES publication_generations(publication_id) ON DELETE CASCADE,
+            cache_key   TEXT        NOT NULL,
+            json_data   BYTEA       NOT NULL,
+            etag        TEXT        NOT NULL,
+            cached_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY (publication_id, cache_key)
+        );
+
         ALTER TABLE scrape_publication_state
             ADD COLUMN IF NOT EXISTS current_publication_id BIGINT
                 REFERENCES publication_generations(publication_id);
@@ -187,5 +208,140 @@ public static class PublicationGenerationSchema
         WHERE publication.id = TRUE
           AND publication.published_scrape_id = generation.scrape_id
           AND publication.current_publication_id IS NULL;
+
+        DO $$
+        DECLARE
+            current_id BIGINT;
+            binding_built_at TIMESTAMPTZ;
+            existing_binding_kind TEXT;
+            legacy_cached_at TIMESTAMPTZ;
+            legacy_row_count BIGINT;
+            legacy_content_hash TEXT;
+            generation_row_count BIGINT;
+            generation_content_hash TEXT;
+        BEGIN
+            SELECT current_publication_id
+            INTO current_id
+            FROM scrape_publication_state
+            WHERE id = TRUE;
+
+            IF current_id IS NULL THEN
+                RETURN;
+            END IF;
+
+            SELECT binding.built_at, binding.binding_kind
+            INTO binding_built_at, existing_binding_kind
+            FROM publication_surface_bindings binding
+            WHERE binding.publication_id = current_id
+              AND binding.surface_name = 'api_response_cache';
+
+            SELECT
+                MAX(cached_at),
+                COUNT(*),
+                md5(COALESCE(
+                    string_agg(
+                        cache_key || ':' || etag,
+                        '|' ORDER BY cache_key),
+                    ''))
+            INTO legacy_cached_at, legacy_row_count, legacy_content_hash
+            FROM api_response_cache;
+
+            SELECT
+                COUNT(*),
+                md5(COALESCE(
+                    string_agg(
+                        cache_key || ':' || etag,
+                        '|' ORDER BY cache_key),
+                    ''))
+            INTO generation_row_count, generation_content_hash
+            FROM publication_api_response_cache
+            WHERE publication_id = current_id;
+
+            IF binding_built_at IS NULL
+               OR existing_binding_kind IN (
+                    'inherited_previous_publication',
+                    'inherited_generation_cache')
+               OR generation_row_count IS DISTINCT FROM legacy_row_count
+               OR generation_content_hash IS DISTINCT FROM legacy_content_hash
+               OR legacy_cached_at IS NOT NULL
+                  AND legacy_cached_at > binding_built_at
+            THEN
+                DELETE FROM publication_api_response_cache
+                WHERE publication_id = current_id;
+
+                INSERT INTO publication_api_response_cache (
+                    publication_id, cache_key, json_data, etag, cached_at)
+                SELECT
+                    current_id,
+                    cache_key,
+                    json_data,
+                    etag,
+                    cached_at
+                FROM api_response_cache;
+
+                INSERT INTO publication_surface_bindings (
+                    publication_id, surface_name, binding_kind, binding_json,
+                    row_count, content_hash, status, built_at)
+                VALUES (
+                    current_id,
+                    'api_response_cache',
+                    'legacy_current_table_reconciled',
+                    jsonb_build_object(
+                        'table', 'publication_api_response_cache',
+                        'sourceTable', 'api_response_cache',
+                        'publicationId', current_id),
+                    legacy_row_count,
+                    legacy_content_hash,
+                    'ready',
+                    now())
+                ON CONFLICT (publication_id, surface_name) DO UPDATE SET
+                    binding_kind = EXCLUDED.binding_kind,
+                    binding_json = EXCLUDED.binding_json,
+                    row_count = EXCLUDED.row_count,
+                    content_hash = EXCLUDED.content_hash,
+                    status = EXCLUDED.status,
+                    built_at = EXCLUDED.built_at;
+            END IF;
+        END $$;
+
+        DELETE FROM publication_api_response_cache cache
+        USING scrape_publication_state publication
+        WHERE publication.id = TRUE
+          AND cache.publication_id IS DISTINCT FROM
+              publication.current_publication_id
+          AND cache.publication_id IS DISTINCT FROM
+              publication.previous_publication_id
+          AND cache.publication_id IS DISTINCT FROM
+              publication.working_publication_id;
+
+        DELETE FROM publication_api_response_cache_staging cache
+        USING scrape_publication_state publication
+        WHERE publication.id = TRUE
+          AND cache.publication_id IS DISTINCT FROM
+              publication.current_publication_id
+          AND cache.publication_id IS DISTINCT FROM
+              publication.previous_publication_id
+          AND cache.publication_id IS DISTINCT FROM
+              publication.working_publication_id;
+
+        UPDATE publication_surface_bindings binding
+        SET binding_kind = 'retired_generation_cache',
+            binding_json = jsonb_build_object(
+                'table', 'publication_api_response_cache',
+                'retired', true),
+            row_count = 0,
+            content_hash = NULL,
+            status = 'retired',
+            built_at = now()
+        FROM scrape_publication_state publication
+        WHERE publication.id = TRUE
+          AND binding.surface_name = 'api_response_cache'
+          AND binding.publication_id IS DISTINCT FROM
+              publication.current_publication_id
+          AND binding.publication_id IS DISTINCT FROM
+              publication.previous_publication_id
+          AND binding.publication_id IS DISTINCT FROM
+              publication.working_publication_id
+          AND binding.status <> 'retired';
         """;
 }

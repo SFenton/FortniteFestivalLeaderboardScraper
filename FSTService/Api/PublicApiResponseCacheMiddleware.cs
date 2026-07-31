@@ -38,7 +38,12 @@ public sealed class PublicApiResponseCacheMiddleware
 
         if (gate.IsFrozen)
         {
-            var cached = metaDb.GetCachedResponse(cacheKey);
+            var publicationContext = context.GetPublicationReadContext();
+            var cached = publicationContext is null
+                ? metaDb.GetCachedResponse(cacheKey)
+                : metaDb.GetCachedResponse(
+                    publicationContext.PublicationId,
+                    cacheKey);
             var cachedResult = CacheHelper.ServeIfCached(context, cached);
             if (cachedResult is not null)
             {

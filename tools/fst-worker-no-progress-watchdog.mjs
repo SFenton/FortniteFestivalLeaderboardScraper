@@ -193,6 +193,31 @@ BEGIN
         RAISE EXCEPTION 'expected to fail one scrape row, changed %', changed_rows;
     END IF;
 
+    IF to_regclass('public.publication_generations') IS NOT NULL THEN
+        UPDATE publication_generations
+        SET status = 'failed',
+            failed_at = COALESCE(failed_at, recovery_at),
+            failure_phase = '${NO_PROGRESS_FAILURE_PHASE}',
+            failure_message = ${quoteLiteral(failureMessage)}
+        WHERE scrape_id = ${normalizedScrapeId}
+          AND status NOT IN ('current', 'retained', 'retired');
+
+        UPDATE scrape_publication_state publication
+        SET working_publication_id = NULL,
+            updated_at = recovery_at
+        FROM publication_generations generation
+        WHERE publication.id = TRUE
+          AND generation.scrape_id = ${normalizedScrapeId}
+          AND publication.working_publication_id = generation.publication_id;
+
+        IF to_regclass('public.publication_api_response_cache_staging') IS NOT NULL THEN
+            DELETE FROM publication_api_response_cache_staging staging
+            USING publication_generations generation
+            WHERE generation.scrape_id = ${normalizedScrapeId}
+              AND staging.publication_id = generation.publication_id;
+        END IF;
+    END IF;
+
     UPDATE scrape_publication_state
     SET public_reads_frozen = FALSE,
         public_reads_frozen_at = NULL,
@@ -410,11 +435,17 @@ SELECT format(
     status, failed_at, failure_phase, failure_message)
 FROM scrape_log WHERE id=${scrapeId};
 SELECT format(
-    'UPDATE scrape_publication_state SET published_scrape_id=%L, published_at=%L::timestamptz, updated_at=%L::timestamptz, public_reads_frozen=%L, public_reads_frozen_at=%L::timestamptz, public_reads_frozen_scrape_id=%L, public_reads_frozen_reason=%L, band_projection_generation=%L WHERE id=TRUE;',
+    'UPDATE scrape_publication_state SET published_scrape_id=%L, published_at=%L::timestamptz, updated_at=%L::timestamptz, public_reads_frozen=%L, public_reads_frozen_at=%L::timestamptz, public_reads_frozen_scrape_id=%L, public_reads_frozen_reason=%L, band_projection_generation=%L, current_publication_id=%L, previous_publication_id=%L, working_publication_id=%L WHERE id=TRUE;',
     published_scrape_id, published_at, updated_at, public_reads_frozen,
     public_reads_frozen_at, public_reads_frozen_scrape_id,
-    public_reads_frozen_reason, band_projection_generation)
+    public_reads_frozen_reason, band_projection_generation,
+    current_publication_id, previous_publication_id, working_publication_id)
 FROM scrape_publication_state WHERE id=TRUE;
+SELECT format(
+    'UPDATE publication_generations SET status=%L, failed_at=%L::timestamptz, failure_phase=%L, failure_message=%L WHERE scrape_id=${scrapeId};',
+    status, failed_at, failure_phase, failure_message)
+FROM publication_generations WHERE scrape_id=${scrapeId};
+SELECT '-- publication_api_response_cache_staging is derived; rebuild candidate precompute after watchdog rollback.';
 SELECT format(
     'UPDATE service_worker_status SET status=%L, last_status_change_at=%L::timestamptz, message=%L, current_operation_json=%L::jsonb, last_operation_json=%L::jsonb, updated_at=%L::timestamptz WHERE worker_key=''scraper'';',
     status, last_status_change_at, message, current_operation_json,

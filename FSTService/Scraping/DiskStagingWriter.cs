@@ -66,7 +66,10 @@ public sealed class DiskStagingWriter : IAsyncDisposable
     /// When <paramref name="useStaging"/> is true, writes to api_response_cache_staging
     /// instead of the live table (for atomic swap via <see cref="IMetaDatabase.SwapCachedResponsesFromStaging"/>).
     /// </summary>
-    public void FlushToPostgres(IMetaDatabase metaDb, bool useStaging = false)
+    public void FlushToPostgres(
+        IMetaDatabase metaDb,
+        bool useStaging = false,
+        long? publicationId = null)
     {
         if (!File.Exists(_stagingPath) || RecordCount == 0)
         {
@@ -78,7 +81,9 @@ public sealed class DiskStagingWriter : IAsyncDisposable
             RecordCount, Path.GetFileName(_stagingPath), useStaging ? " (staging table)" : "");
 
         if (useStaging)
-            metaDb.BulkSetCachedResponsesStaging(ReadStagingFile());
+            metaDb.BulkSetCachedResponsesStaging(
+                ReadStagingFile(),
+                publicationId);
         else
             metaDb.BulkSetCachedResponses(ReadStagingFile());
 

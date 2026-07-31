@@ -694,6 +694,29 @@ generation-addressable surface binding. Current catalog, shop, path, and
 inherited-cache bindings are deliberately marked `building`; they are the
 ordered source-cut work for the next phase.
 
+The first completed source cut is the API response cache:
+
+- `publication_api_response_cache` and its staging sibling use
+  `(publication_id, cache_key)` primary keys;
+- precompute captures one explicit target generation and holds a global shared
+  publication lock plus an exclusive per-generation build lock for the entire
+  build;
+- standalone current-publication rebuilds are rejected while a working
+  generation or failed-candidate isolation exists;
+- candidate staging, flush, and swap validate the same target and cannot
+  retarget after a concurrent pointer change;
+- publication retains exact current and previous cache generations only;
+  failed/retired staging is deleted immediately and older cache bindings are
+  marked retired;
+- legacy rollback writers remain supported: startup compares row count plus a
+  cache-key/ETag fingerprint and authoritatively reconciles changed or removed
+  rows into the current generation;
+- watchdog recovery marks the generation failed, clears the working pointer,
+  and deletes its keyed staging.
+
+The legacy `api_response_cache` tables remain as rollback/current-service
+compatibility mirrors until request pinning is promoted.
+
 The read-only band-search reuse probe measured
 `46,662,828,032` bytes across `band_search_team_projection` and
 `band_search_member_projection`. Scrape `1269`/`1271` refresh evidence bounds

@@ -13,6 +13,7 @@ namespace FSTService.Persistence;
 /// </summary>
 public sealed class MetaDatabase : IMetaDatabase
 {
+    private static readonly AsyncLocal<long?> PublicationCacheBuildTarget = new();
     private readonly NpgsqlDataSource _ds;
     private readonly ILogger<MetaDatabase> _log;
     private readonly BandRankHistoryOptions _bandRankHistoryOptions;
@@ -87,6 +88,17 @@ public sealed class MetaDatabase : IMetaDatabase
         EnsureScrapePublicationStateTable(conn);
         using var tx = conn.BeginTransaction();
         var now = DateTime.UtcNow;
+
+        using (var publicationLock = conn.CreateCommand())
+        {
+            publicationLock.Transaction = tx;
+            publicationLock.CommandText =
+                "SELECT pg_advisory_xact_lock(@lockKey)";
+            publicationLock.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+            publicationLock.ExecuteNonQuery();
+        }
 
         long scrapeId;
         using (var scrape = conn.CreateCommand())
@@ -232,6 +244,19 @@ public sealed class MetaDatabase : IMetaDatabase
             pointer.Parameters.AddWithValue("now", now);
             pointer.Parameters.AddWithValue("id", scrapeId);
             pointer.ExecuteNonQuery();
+        }
+
+        using (var failedCache = conn.CreateCommand())
+        {
+            failedCache.Transaction = tx;
+            failedCache.CommandText = """
+                DELETE FROM publication_api_response_cache_staging staging
+                USING publication_generations generation
+                WHERE generation.scrape_id = @id
+                  AND staging.publication_id = generation.publication_id;
+                """;
+            failedCache.Parameters.AddWithValue("id", scrapeId);
+            failedCache.ExecuteNonQuery();
         }
 
         tx.Commit();
@@ -743,8 +768,20 @@ public sealed class MetaDatabase : IMetaDatabase
         {
             using var verifyCache = conn.CreateCommand();
             verifyCache.Transaction = tx;
-            verifyCache.CommandText = "SELECT EXISTS (SELECT 1 FROM api_response_cache_staging)";
-            if (verifyCache.ExecuteScalar() is not bool hasStagedResponses || !hasStagedResponses)
+            verifyCache.CommandText = """
+                SELECT
+                    EXISTS (SELECT 1 FROM api_response_cache_staging)
+                    AND EXISTS (
+                        SELECT 1
+                        FROM publication_api_response_cache_staging
+                        WHERE publication_id = @publicationId
+                    )
+                """;
+            verifyCache.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            if (verifyCache.ExecuteScalar() is not bool hasStagedResponses
+                || !hasStagedResponses)
             {
                 throw new InvalidOperationException(
                     $"Scrape run {scrapeId} cannot be published because its API response cache staging table is empty.");
@@ -852,8 +889,65 @@ public sealed class MetaDatabase : IMetaDatabase
                 INSERT INTO api_response_cache (cache_key, json_data, etag, cached_at)
                 SELECT cache_key, json_data, etag, cached_at FROM api_response_cache_staging;
                 TRUNCATE api_response_cache_staging;
+
+                DELETE FROM publication_api_response_cache
+                WHERE publication_id = @publicationId;
+                INSERT INTO publication_api_response_cache (
+                    publication_id, cache_key, json_data, etag, cached_at)
+                SELECT publication_id, cache_key, json_data, etag, cached_at
+                FROM publication_api_response_cache_staging
+                WHERE publication_id = @publicationId;
+                DELETE FROM publication_api_response_cache_staging
+                WHERE publication_id = @publicationId;
                 """;
+            cache.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
             cache.ExecuteNonQuery();
+        }
+        else
+        {
+            using var inheritCache = conn.CreateCommand();
+            inheritCache.Transaction = tx;
+            inheritCache.CommandText = """
+                DELETE FROM publication_api_response_cache
+                WHERE publication_id = @publicationId;
+
+                INSERT INTO publication_api_response_cache (
+                    publication_id, cache_key, json_data, etag, cached_at)
+                SELECT
+                    @publicationId,
+                    cache.cache_key,
+                    cache.json_data,
+                    cache.etag,
+                    cache.cached_at
+                FROM publication_api_response_cache cache
+                WHERE cache.publication_id = @previousPublicationId
+                UNION ALL
+                SELECT
+                    @publicationId,
+                    legacy.cache_key,
+                    legacy.json_data,
+                    legacy.etag,
+                    legacy.cached_at
+                FROM api_response_cache legacy
+                WHERE @previousPublicationId IS NULL
+                   OR NOT EXISTS (
+                       SELECT 1
+                       FROM publication_api_response_cache cache
+                       WHERE cache.publication_id = @previousPublicationId
+                   );
+                """;
+            inheritCache.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            inheritCache.Parameters.Add(
+                "previousPublicationId",
+                NpgsqlDbType.Bigint).Value =
+                currentPublicationId.HasValue
+                    ? currentPublicationId.Value
+                    : DBNull.Value;
+            inheritCache.ExecuteNonQuery();
         }
 
         using (var bindings = conn.CreateCommand())
@@ -869,24 +963,34 @@ public sealed class MetaDatabase : IMetaDatabase
                         'api_response_cache',
                         CASE
                             WHEN @promoteCachedResponses
-                                THEN 'legacy_current_table'
-                            ELSE 'inherited_previous_publication'
+                                THEN 'generation_cache_table'
+                            ELSE 'inherited_generation_cache'
                         END,
                         jsonb_build_object(
-                            'table', 'api_response_cache',
+                            'table', 'publication_api_response_cache',
                             'scrapeId', @scrapeId,
+                            'publicationId', @publicationId,
                             'inheritedFromPublicationId',
                             CASE
                                 WHEN @promoteCachedResponses
                                     THEN NULL
                                 ELSE @previousPublicationId
                             END),
-                        (SELECT COUNT(*) FROM api_response_cache),
-                        NULL,
-                        CASE
-                            WHEN @promoteCachedResponses THEN 'ready'
-                            ELSE 'building'
-                        END,
+                        (
+                            SELECT COUNT(*)
+                            FROM publication_api_response_cache
+                            WHERE publication_id = @publicationId
+                        ),
+                        (
+                            SELECT md5(COALESCE(
+                                string_agg(
+                                    cache_key || ':' || etag,
+                                    '|' ORDER BY cache_key),
+                                ''))
+                            FROM publication_api_response_cache
+                            WHERE publication_id = @publicationId
+                        ),
+                        'ready',
                         @now
                     ),
                     (
@@ -1116,6 +1220,56 @@ public sealed class MetaDatabase : IMetaDatabase
             publish.ExecuteNonQuery();
         }
 
+        using (var retainCacheGenerations = conn.CreateCommand())
+        {
+            retainCacheGenerations.Transaction = tx;
+            retainCacheGenerations.CommandText = """
+                DELETE FROM publication_api_response_cache
+                WHERE publication_id <> @currentPublicationId
+                  AND (
+                      @previousPublicationId IS NULL
+                      OR publication_id <> @previousPublicationId
+                  );
+
+                DELETE FROM publication_api_response_cache_staging
+                WHERE publication_id <> @currentPublicationId
+                  AND (
+                      @previousPublicationId IS NULL
+                      OR publication_id <> @previousPublicationId
+                  );
+
+                UPDATE publication_surface_bindings
+                SET binding_kind = 'retired_generation_cache',
+                    binding_json = jsonb_build_object(
+                        'table', 'publication_api_response_cache',
+                        'retired', true),
+                    row_count = 0,
+                    content_hash = NULL,
+                    status = 'retired',
+                    built_at = @now
+                WHERE surface_name = 'api_response_cache'
+                  AND publication_id <> @currentPublicationId
+                  AND (
+                      @previousPublicationId IS NULL
+                      OR publication_id <> @previousPublicationId
+                  )
+                  AND status <> 'retired';
+                """;
+            retainCacheGenerations.Parameters.AddWithValue(
+                "currentPublicationId",
+                publicationId);
+            retainCacheGenerations.Parameters.Add(
+                "previousPublicationId",
+                NpgsqlDbType.Bigint).Value =
+                currentPublicationId.HasValue
+                    ? currentPublicationId.Value
+                    : DBNull.Value;
+            retainCacheGenerations.Parameters.AddWithValue(
+                "now",
+                DateTime.UtcNow);
+            retainCacheGenerations.ExecuteNonQuery();
+        }
+
         tx.Commit();
     }
 
@@ -1266,6 +1420,8 @@ public sealed class MetaDatabase : IMetaDatabase
                 SELECT to_regclass('public.scrape_publication_state') IS NOT NULL
                    AND to_regclass('public.publication_generations') IS NOT NULL
                    AND to_regclass('public.publication_surface_bindings') IS NOT NULL
+                   AND to_regclass('public.publication_api_response_cache') IS NOT NULL
+                   AND to_regclass('public.publication_api_response_cache_staging') IS NOT NULL
                    AND (
                        SELECT COUNT(*) = 17
                        FROM information_schema.columns
@@ -10419,34 +10575,238 @@ public sealed class MetaDatabase : IMetaDatabase
     {
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT json_data, etag FROM api_response_cache WHERE cache_key = @key";
+        cmd.CommandText = """
+            WITH current_publication AS (
+                SELECT current_publication_id
+                FROM scrape_publication_state
+                WHERE id = TRUE
+            ), generation_cache AS (
+                SELECT cache.json_data, cache.etag
+                FROM publication_api_response_cache cache
+                JOIN current_publication publication
+                  ON publication.current_publication_id = cache.publication_id
+                WHERE cache.cache_key = @key
+            )
+            SELECT json_data, etag
+            FROM generation_cache
+            UNION ALL
+            SELECT legacy.json_data, legacy.etag
+            FROM api_response_cache legacy
+            WHERE legacy.cache_key = @key
+              AND NOT EXISTS (SELECT 1 FROM generation_cache)
+            LIMIT 1
+            """;
         cmd.Parameters.AddWithValue("key", cacheKey);
         using var r = cmd.ExecuteReader();
         if (!r.Read()) return null;
         return ((byte[])r[0], r.GetString(1));
     }
 
+    public (byte[] Json, string ETag)? GetCachedResponse(
+        long publicationId,
+        string cacheKey)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT json_data, etag
+            FROM publication_api_response_cache
+            WHERE publication_id = @publicationId
+              AND cache_key = @key
+            """;
+        cmd.Parameters.AddWithValue("publicationId", publicationId);
+        cmd.Parameters.AddWithValue("key", cacheKey);
+        using var reader = cmd.ExecuteReader();
+        return reader.Read()
+            ? ((byte[])reader[0], reader.GetString(1))
+            : null;
+    }
+
+    public IDisposable AcquirePublicationCacheBuildLease(
+        long publicationId,
+        bool requireCurrentPublication)
+    {
+        var conn = _ds.OpenConnection();
+        var globalLockAcquired = false;
+        var buildLockAcquired = false;
+        try
+        {
+            using (var globalLock = conn.CreateCommand())
+            {
+                globalLock.CommandText =
+                    "SELECT pg_advisory_lock_shared(@lockKey)";
+                globalLock.Parameters.AddWithValue(
+                    "lockKey",
+                    PublicationGenerationSchema.AdvisoryLockKey);
+                globalLock.ExecuteNonQuery();
+                globalLockAcquired = true;
+            }
+
+            using (var buildLock = conn.CreateCommand())
+            {
+                buildLock.CommandText =
+                    "SELECT pg_advisory_lock(@lockKey)";
+                buildLock.Parameters.AddWithValue(
+                    "lockKey",
+                    PublicationGenerationSchema.CacheBuildAdvisoryLockBase
+                    + publicationId);
+                buildLock.ExecuteNonQuery();
+                buildLockAcquired = true;
+            }
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                WITH publication AS (
+                    SELECT current_publication_id,
+                           working_publication_id,
+                           published_scrape_id
+                    FROM scrape_publication_state
+                    WHERE id = TRUE
+                )
+                SELECT publication.current_publication_id,
+                       publication.working_publication_id,
+                       EXISTS (
+                           SELECT 1
+                           FROM scrape_log scrape
+                           WHERE scrape.id > COALESCE(
+                               publication.published_scrape_id,
+                               0)
+                             AND scrape.status = 'failed'
+                             AND scrape.failure_phase = ANY(@failurePhases)
+                       ) AS failed_candidate_isolation
+                FROM publication
+                """;
+            cmd.Parameters.AddWithValue(
+                "failurePhases",
+                NpgsqlDbType.Array | NpgsqlDbType.Text,
+                FailedCandidateReadIsolationFailurePhases);
+            using var reader = cmd.ExecuteReader();
+            if (!reader.Read())
+            {
+                if (publicationId == 0)
+                    return new PublicationCacheBuildLease(
+                        conn,
+                        publicationId);
+
+                throw new InvalidOperationException(
+                    "Publication cache build requires publication state.");
+            }
+
+            var currentPublicationId =
+                reader.IsDBNull(0) ? (long?)null : reader.GetInt64(0);
+            var workingPublicationId =
+                reader.IsDBNull(1) ? (long?)null : reader.GetInt64(1);
+            var failedCandidateIsolation = reader.GetBoolean(2);
+            var expectedPublicationId = workingPublicationId
+                ?? currentPublicationId;
+
+            if (publicationId == 0)
+            {
+                if (currentPublicationId.HasValue
+                    || workingPublicationId.HasValue)
+                {
+                    throw new InvalidOperationException(
+                        $"Legacy cache build cannot start while current={currentPublicationId?.ToString() ?? "null"} and working={workingPublicationId?.ToString() ?? "null"}.");
+                }
+                if (requireCurrentPublication && failedCandidateIsolation)
+                {
+                    throw new InvalidOperationException(
+                        "Legacy cache build is blocked by failed-candidate read isolation.");
+                }
+
+                return new PublicationCacheBuildLease(
+                    conn,
+                    publicationId);
+            }
+
+            if (requireCurrentPublication)
+            {
+                if (currentPublicationId != publicationId
+                    || workingPublicationId.HasValue)
+                {
+                    throw new InvalidOperationException(
+                        $"Current publication cache build {publicationId} cannot start while current={currentPublicationId?.ToString() ?? "null"} and working={workingPublicationId?.ToString() ?? "null"}.");
+                }
+                if (failedCandidateIsolation)
+                {
+                    throw new InvalidOperationException(
+                        "Current publication cache build is blocked by failed-candidate read isolation.");
+                }
+            }
+            else if (expectedPublicationId != publicationId)
+            {
+                throw new InvalidOperationException(
+                    $"Publication cache build {publicationId} does not own the current/working target {expectedPublicationId?.ToString() ?? "null"}.");
+            }
+
+            return new PublicationCacheBuildLease(
+                conn,
+                publicationId);
+        }
+        catch
+        {
+            ReleasePublicationCacheBuildLocks(
+                conn,
+                publicationId,
+                globalLockAcquired,
+                buildLockAcquired);
+            conn.Dispose();
+            throw;
+        }
+    }
+
     public void BulkSetCachedResponses(IEnumerable<(string Key, byte[] Json, string ETag)> entries)
     {
         using var conn = _ds.OpenConnection();
+        EnsureScrapePublicationStateTable(conn);
         using var tx = conn.BeginTransaction();
-        using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = """
+        AcquirePublicationCacheMutationLock(conn, tx);
+        var publicationId = ReadCacheTargetPublicationId(conn, tx);
+
+        using var legacy = conn.CreateCommand();
+        legacy.Transaction = tx;
+        legacy.CommandText = """
             INSERT INTO api_response_cache (cache_key, json_data, etag, cached_at)
             VALUES (@key, @json, @etag, now())
             ON CONFLICT (cache_key) DO UPDATE SET json_data = EXCLUDED.json_data, etag = EXCLUDED.etag, cached_at = now()
             """;
-        cmd.Parameters.Add(new NpgsqlParameter("key", NpgsqlDbType.Text));
-        cmd.Parameters.Add(new NpgsqlParameter("json", NpgsqlDbType.Bytea));
-        cmd.Parameters.Add(new NpgsqlParameter("etag", NpgsqlDbType.Text));
-        cmd.Prepare();
+        legacy.Parameters.Add(new NpgsqlParameter("key", NpgsqlDbType.Text));
+        legacy.Parameters.Add(new NpgsqlParameter("json", NpgsqlDbType.Bytea));
+        legacy.Parameters.Add(new NpgsqlParameter("etag", NpgsqlDbType.Text));
+        legacy.Prepare();
+
+        using var generation = conn.CreateCommand();
+        generation.Transaction = tx;
+        generation.CommandText = """
+            INSERT INTO publication_api_response_cache (
+                publication_id, cache_key, json_data, etag, cached_at)
+            VALUES (@publicationId, @key, @json, @etag, now())
+            ON CONFLICT (publication_id, cache_key) DO UPDATE SET
+                json_data = EXCLUDED.json_data,
+                etag = EXCLUDED.etag,
+                cached_at = now()
+            """;
+        generation.Parameters.Add(new NpgsqlParameter("publicationId", NpgsqlDbType.Bigint));
+        generation.Parameters.Add(new NpgsqlParameter("key", NpgsqlDbType.Text));
+        generation.Parameters.Add(new NpgsqlParameter("json", NpgsqlDbType.Bytea));
+        generation.Parameters.Add(new NpgsqlParameter("etag", NpgsqlDbType.Text));
+        if (publicationId.HasValue)
+            generation.Prepare();
+
         foreach (var (key, json, etag) in entries)
         {
-            cmd.Parameters["key"].Value = key;
-            cmd.Parameters["json"].Value = json;
-            cmd.Parameters["etag"].Value = etag;
-            cmd.ExecuteNonQuery();
+            legacy.Parameters["key"].Value = key;
+            legacy.Parameters["json"].Value = json;
+            legacy.Parameters["etag"].Value = etag;
+            legacy.ExecuteNonQuery();
+
+            if (publicationId.HasValue)
+            {
+                generation.Parameters["publicationId"].Value = publicationId.Value;
+                generation.Parameters["key"].Value = key;
+                generation.Parameters["json"].Value = json;
+                generation.Parameters["etag"].Value = etag;
+                generation.ExecuteNonQuery();
+            }
         }
         tx.Commit();
     }
@@ -10454,59 +10814,369 @@ public sealed class MetaDatabase : IMetaDatabase
     public void ClearCachedResponses()
     {
         using var conn = _ds.OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "TRUNCATE api_response_cache";
-        cmd.ExecuteNonQuery();
-    }
-
-    public void BulkSetCachedResponsesStaging(IEnumerable<(string Key, byte[] Json, string ETag)> entries)
-    {
-        using var conn = _ds.OpenConnection();
+        EnsureScrapePublicationStateTable(conn);
         using var tx = conn.BeginTransaction();
+        AcquirePublicationCacheMutationLock(conn, tx);
+        var publicationId = ReadCacheTargetPublicationId(conn, tx);
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
+        cmd.CommandText = publicationId.HasValue
+            ? """
+              TRUNCATE api_response_cache;
+              DELETE FROM publication_api_response_cache
+              WHERE publication_id = @publicationId;
+              """
+            : "TRUNCATE api_response_cache";
+        if (publicationId.HasValue)
+            cmd.Parameters.AddWithValue("publicationId", publicationId.Value);
+        cmd.ExecuteNonQuery();
+        tx.Commit();
+    }
+
+    public void BulkSetCachedResponsesStaging(
+        IEnumerable<(string Key, byte[] Json, string ETag)> entries,
+        long? publicationId = null)
+    {
+        using var conn = _ds.OpenConnection();
+        EnsureScrapePublicationStateTable(conn);
+        using var tx = conn.BeginTransaction();
+        if (!IsPublicationCacheBuildLockHeld(publicationId))
+            AcquirePublicationCacheMutationLock(conn, tx);
+        publicationId = ResolveCacheTargetPublicationId(
+            conn,
+            tx,
+            publicationId);
 
         // Start with a clean staging table
         using (var trunc = conn.CreateCommand())
         {
             trunc.Transaction = tx;
-            trunc.CommandText = "TRUNCATE api_response_cache_staging";
+            trunc.CommandText = publicationId.HasValue
+                ? """
+                  TRUNCATE api_response_cache_staging;
+                  DELETE FROM publication_api_response_cache_staging
+                  WHERE publication_id = @publicationId;
+                  """
+                : "TRUNCATE api_response_cache_staging";
+            if (publicationId.HasValue)
+                trunc.Parameters.AddWithValue("publicationId", publicationId.Value);
             trunc.ExecuteNonQuery();
         }
 
-        cmd.CommandText = """
+        using var legacy = conn.CreateCommand();
+        legacy.Transaction = tx;
+        legacy.CommandText = """
             INSERT INTO api_response_cache_staging (cache_key, json_data, etag, cached_at)
             VALUES (@key, @json, @etag, now())
             ON CONFLICT (cache_key) DO UPDATE SET json_data = EXCLUDED.json_data, etag = EXCLUDED.etag, cached_at = now()
             """;
-        cmd.Parameters.Add(new NpgsqlParameter("key", NpgsqlDbType.Text));
-        cmd.Parameters.Add(new NpgsqlParameter("json", NpgsqlDbType.Bytea));
-        cmd.Parameters.Add(new NpgsqlParameter("etag", NpgsqlDbType.Text));
-        cmd.Prepare();
+        legacy.Parameters.Add(new NpgsqlParameter("key", NpgsqlDbType.Text));
+        legacy.Parameters.Add(new NpgsqlParameter("json", NpgsqlDbType.Bytea));
+        legacy.Parameters.Add(new NpgsqlParameter("etag", NpgsqlDbType.Text));
+        legacy.Prepare();
+
+        using var generation = conn.CreateCommand();
+        generation.Transaction = tx;
+        generation.CommandText = """
+            INSERT INTO publication_api_response_cache_staging (
+                publication_id, cache_key, json_data, etag, cached_at)
+            VALUES (@publicationId, @key, @json, @etag, now())
+            ON CONFLICT (publication_id, cache_key) DO UPDATE SET
+                json_data = EXCLUDED.json_data,
+                etag = EXCLUDED.etag,
+                cached_at = now()
+            """;
+        generation.Parameters.Add(new NpgsqlParameter("publicationId", NpgsqlDbType.Bigint));
+        generation.Parameters.Add(new NpgsqlParameter("key", NpgsqlDbType.Text));
+        generation.Parameters.Add(new NpgsqlParameter("json", NpgsqlDbType.Bytea));
+        generation.Parameters.Add(new NpgsqlParameter("etag", NpgsqlDbType.Text));
+        if (publicationId.HasValue)
+            generation.Prepare();
+
         foreach (var (key, json, etag) in entries)
         {
-            cmd.Parameters["key"].Value = key;
-            cmd.Parameters["json"].Value = json;
-            cmd.Parameters["etag"].Value = etag;
-            cmd.ExecuteNonQuery();
+            legacy.Parameters["key"].Value = key;
+            legacy.Parameters["json"].Value = json;
+            legacy.Parameters["etag"].Value = etag;
+            legacy.ExecuteNonQuery();
+
+            if (publicationId.HasValue)
+            {
+                generation.Parameters["publicationId"].Value = publicationId.Value;
+                generation.Parameters["key"].Value = key;
+                generation.Parameters["json"].Value = json;
+                generation.Parameters["etag"].Value = etag;
+                generation.ExecuteNonQuery();
+            }
         }
         tx.Commit();
     }
 
-    public void SwapCachedResponsesFromStaging()
+    public void SwapCachedResponsesFromStaging(long? publicationId = null)
     {
         using var conn = _ds.OpenConnection();
+        EnsureScrapePublicationStateTable(conn);
         using var tx = conn.BeginTransaction();
+        if (!IsPublicationCacheBuildLockHeld(publicationId))
+            AcquirePublicationCacheMutationLock(conn, tx);
+        publicationId = ResolveCacheTargetPublicationId(
+            conn,
+            tx,
+            publicationId);
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        cmd.CommandText = """
+        cmd.CommandText = publicationId.HasValue
+            ? """
+              TRUNCATE api_response_cache;
+              INSERT INTO api_response_cache (cache_key, json_data, etag, cached_at)
+              SELECT cache_key, json_data, etag, cached_at FROM api_response_cache_staging;
+              TRUNCATE api_response_cache_staging;
+
+              DELETE FROM publication_api_response_cache
+              WHERE publication_id = @publicationId;
+              INSERT INTO publication_api_response_cache (
+                  publication_id, cache_key, json_data, etag, cached_at)
+              SELECT publication_id, cache_key, json_data, etag, cached_at
+              FROM publication_api_response_cache_staging
+              WHERE publication_id = @publicationId;
+              DELETE FROM publication_api_response_cache_staging
+              WHERE publication_id = @publicationId;
+
+              INSERT INTO publication_surface_bindings (
+                  publication_id, surface_name, binding_kind, binding_json,
+                  row_count, content_hash, status, built_at)
+              VALUES (
+                  @publicationId,
+                  'api_response_cache',
+                  'generation_cache_table',
+                  jsonb_build_object(
+                      'table', 'publication_api_response_cache',
+                      'publicationId', @publicationId),
+                  (
+                      SELECT COUNT(*)
+                      FROM publication_api_response_cache
+                      WHERE publication_id = @publicationId
+                  ),
+                  NULL,
+                  'ready',
+                  now())
+              ON CONFLICT (publication_id, surface_name) DO UPDATE SET
+                  binding_kind = EXCLUDED.binding_kind,
+                  binding_json = EXCLUDED.binding_json,
+                  row_count = EXCLUDED.row_count,
+                  content_hash = EXCLUDED.content_hash,
+                  status = EXCLUDED.status,
+                  built_at = EXCLUDED.built_at;
+              """
+            : """
             TRUNCATE api_response_cache;
             INSERT INTO api_response_cache (cache_key, json_data, etag, cached_at)
             SELECT cache_key, json_data, etag, cached_at FROM api_response_cache_staging;
             TRUNCATE api_response_cache_staging;
             """;
+        if (publicationId.HasValue)
+            cmd.Parameters.AddWithValue("publicationId", publicationId.Value);
         cmd.ExecuteNonQuery();
         tx.Commit();
+    }
+
+    private static long? ReadCacheTargetPublicationId(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            SELECT COALESCE(working_publication_id, current_publication_id)
+            FROM scrape_publication_state
+            WHERE id = TRUE
+            """;
+        var value = cmd.ExecuteScalar();
+        return value is null or DBNull ? null : Convert.ToInt64(value);
+    }
+
+    private static void AcquirePublicationCacheMutationLock(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText =
+            "SELECT pg_advisory_xact_lock_shared(@lockKey)";
+        cmd.Parameters.AddWithValue(
+            "lockKey",
+            PublicationGenerationSchema.AdvisoryLockKey);
+        cmd.ExecuteNonQuery();
+    }
+
+    private static bool IsPublicationCacheBuildLockHeld(
+        long? publicationId) =>
+        PublicationCacheBuildTarget.Value.HasValue
+        && PublicationCacheBuildTarget.Value.Value
+            == (publicationId ?? 0);
+
+    private static void ReleasePublicationCacheBuildLocks(
+        NpgsqlConnection connection,
+        long publicationId,
+        bool globalLockAcquired,
+        bool buildLockAcquired)
+    {
+        if (!globalLockAcquired && !buildLockAcquired)
+            return;
+
+        using var unlock = connection.CreateCommand();
+        var statements = new List<string>(2);
+        if (buildLockAcquired)
+        {
+            statements.Add(
+                "SELECT pg_advisory_unlock(@buildLockKey)");
+            unlock.Parameters.AddWithValue(
+                "buildLockKey",
+                PublicationGenerationSchema.CacheBuildAdvisoryLockBase
+                + publicationId);
+        }
+        if (globalLockAcquired)
+        {
+            statements.Add(
+                "SELECT pg_advisory_unlock_shared(@publicationLockKey)");
+            unlock.Parameters.AddWithValue(
+                "publicationLockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+        }
+        unlock.CommandText = string.Join(";", statements);
+        unlock.ExecuteNonQuery();
+    }
+
+    private static long? ResolveCacheTargetPublicationId(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        long? requestedPublicationId)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            WITH publication AS (
+                SELECT current_publication_id,
+                       working_publication_id,
+                       published_scrape_id
+                FROM scrape_publication_state
+                WHERE id = TRUE
+            )
+            SELECT publication.current_publication_id,
+                   publication.working_publication_id,
+                   EXISTS (
+                       SELECT 1
+                       FROM scrape_log scrape
+                       WHERE scrape.id > COALESCE(
+                           publication.published_scrape_id,
+                           0)
+                         AND scrape.status = 'failed'
+                         AND scrape.failure_phase = ANY(@failurePhases)
+                   )
+            FROM publication
+            """;
+        cmd.Parameters.AddWithValue(
+            "failurePhases",
+            NpgsqlDbType.Array | NpgsqlDbType.Text,
+            FailedCandidateReadIsolationFailurePhases);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+        {
+            if (requestedPublicationId == 0)
+                return null;
+
+            if (requestedPublicationId.HasValue)
+            {
+                throw new InvalidOperationException(
+                    $"Publication {requestedPublicationId.Value} cannot own cache staging because publication state is missing.");
+            }
+
+            return null;
+        }
+
+        var currentPublicationId =
+            reader.IsDBNull(0) ? (long?)null : reader.GetInt64(0);
+        var workingPublicationId =
+            reader.IsDBNull(1) ? (long?)null : reader.GetInt64(1);
+        var failedCandidateIsolation = reader.GetBoolean(2);
+        if (requestedPublicationId == 0)
+        {
+            if (currentPublicationId.HasValue
+                || workingPublicationId.HasValue)
+            {
+                throw new InvalidOperationException(
+                    $"Legacy cache target is no longer empty (current={currentPublicationId?.ToString() ?? "null"}, working={workingPublicationId?.ToString() ?? "null"}).");
+            }
+
+            return null;
+        }
+        var resolvedPublicationId =
+            requestedPublicationId
+            ?? workingPublicationId
+            ?? currentPublicationId;
+        if (requestedPublicationId.HasValue
+            && requestedPublicationId == currentPublicationId
+            && workingPublicationId.HasValue
+            && workingPublicationId != requestedPublicationId)
+        {
+            throw new InvalidOperationException(
+                $"Publication {requestedPublicationId.Value} cannot mutate the cache while working publication {workingPublicationId.Value} exists.");
+        }
+        if (requestedPublicationId.HasValue
+            && requestedPublicationId == currentPublicationId
+            && failedCandidateIsolation)
+        {
+            throw new InvalidOperationException(
+                $"Publication {requestedPublicationId.Value} cannot mutate the cache during failed-candidate read isolation.");
+        }
+
+        if (resolvedPublicationId.HasValue
+            && resolvedPublicationId != currentPublicationId
+            && resolvedPublicationId != workingPublicationId)
+        {
+            throw new InvalidOperationException(
+                $"Publication {resolvedPublicationId.Value} is not the current or working cache target.");
+        }
+
+        return resolvedPublicationId;
+    }
+
+    private sealed class PublicationCacheBuildLease : IDisposable
+    {
+        private NpgsqlConnection? _connection;
+        private readonly long? _previousTarget;
+        private readonly long _publicationId;
+
+        public PublicationCacheBuildLease(
+            NpgsqlConnection connection,
+            long publicationId)
+        {
+            _connection = connection;
+            _publicationId = publicationId;
+            _previousTarget = PublicationCacheBuildTarget.Value;
+            PublicationCacheBuildTarget.Value = publicationId;
+        }
+
+        public void Dispose()
+        {
+            PublicationCacheBuildTarget.Value = _previousTarget;
+            var connection = Interlocked.Exchange(ref _connection, null);
+            if (connection is null)
+                return;
+
+            try
+            {
+                ReleasePublicationCacheBuildLocks(
+                    connection,
+                    _publicationId,
+                    globalLockAcquired: true,
+                    buildLockAcquired: true);
+            }
+            finally
+            {
+                connection.Dispose();
+            }
+        }
     }
 
     // ── Private helpers ──────────────────────────────────────────────
