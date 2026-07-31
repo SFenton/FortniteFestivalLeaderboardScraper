@@ -135,6 +135,7 @@ public static class ApiPublicationRouteCatalog
         // Live operational state and controls.
         Operational(HttpMethods.Get, "/api/features", "Runtime feature configuration may change independently of publication data."),
         Operational(HttpMethods.Get, "/api/progress", "Reports live in-process scrape progress."),
+        Operational(HttpMethods.Get, "/api/publication", "Bootstraps the current durable publication generation before public query fan-out."),
         Operational(HttpMethods.Get, "/api/service-info", "Reports live worker, scrape, and publication health."),
         Operational(HttpMethods.Get, "/api/status", "Reports protected live scrape and storage status."),
         Operational(HttpMethods.Get, "/api/version", "Reports immutable service build metadata."),

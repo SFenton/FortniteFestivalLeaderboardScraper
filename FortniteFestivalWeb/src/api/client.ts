@@ -54,6 +54,7 @@ import type {
   CompositeNeighborhoodResponse,
   LeaderboardRivalsListResponse,
   RankHistoryResponse,
+  PublicationResponse,
 } from '@festival/core/api';
 import { expandWirePlayerResponse, expandWireSongsResponse, expandWireStatsResponse } from '@festival/core/api';
 import { readSelectedProfile } from '../state/selectedProfile';
@@ -62,6 +63,10 @@ import {
   readSongsCache,
   writeSongsCache,
 } from './songsCache';
+import {
+  ensurePublication,
+  fetchWithPublication,
+} from './publication';
 
 const BASE = '';
 const SELECTED_PLAYER_HEADER = 'X-FST-Selected-Player';
@@ -107,7 +112,7 @@ async function get<T>(path: string, options?: ApiRequestOptions): Promise<T> {
   const init: RequestInit = { headers: withSelectedProfileHeaders() };
   if (options?.signal) init.signal = options.signal;
 
-  const res = await fetch(`${BASE}${path}`, init);
+  const res = await fetchWithPublication(`${BASE}${path}`, init);
   if (!res.ok) {
     throw new Error(`API ${res.status}: ${res.statusText}`);
   }
@@ -115,7 +120,7 @@ async function get<T>(path: string, options?: ApiRequestOptions): Promise<T> {
 }
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetchWithPublication(`${BASE}${path}`, {
     method: 'POST',
     headers: withSelectedProfileHeaders({ 'Content-Type': 'application/json' }),
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -151,7 +156,7 @@ function getBrowserTimeZone(): string | null {
 }
 
 async function download(path: string, fallbackFileName: string, headers: Record<string, string> = {}): Promise<void> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetchWithPublication(`${BASE}${path}`, {
     headers: withSelectedProfileHeaders(headers),
     cache: 'no-store',
   });
@@ -192,6 +197,8 @@ function normalizeDisplayName<T extends { displayName: string }>(data: T): T {
 }
 
 export const api = {
+  getPublication: (): Promise<PublicationResponse> => ensurePublication(),
+
   getFeatures: (options?: ApiRequestOptions): Promise<FeatureFlagsResponse> =>
     get<FeatureFlagsResponse>('/api/features', options),
 
@@ -204,7 +211,7 @@ export const api = {
     // Without this, the browser's max-age (30 min) silently returns stale data.
     const init: RequestInit = { headers: withSelectedProfileHeaders(headers), cache: 'no-cache' };
     if (options?.signal) init.signal = options.signal;
-    const res = await fetch(`${BASE}/api/songs`, init);
+    const res = await fetchWithPublication(`${BASE}/api/songs`, init);
 
     // 304 Not Modified — server confirms our cached data is still current
     if (res.status === 304 && cached) return cached.data;
@@ -224,7 +231,7 @@ export const api = {
       cache: 'no-cache',
     };
     if (options?.signal) init.signal = options.signal;
-    const res = await fetch(`${BASE}/api/shop`, init);
+    const res = await fetchWithPublication(`${BASE}/api/shop`, init);
     if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
 
     const data = await res.json() as ShopResponse;
@@ -299,7 +306,7 @@ export const api = {
     };
     if (signal) init.signal = signal;
 
-    const res = await fetch(`${BASE}/api/service-info`, init);
+    const res = await fetchWithPublication(`${BASE}/api/service-info`, init);
     if (!res.ok) {
       throw new Error(`API ${res.status}: ${res.statusText}`);
     }

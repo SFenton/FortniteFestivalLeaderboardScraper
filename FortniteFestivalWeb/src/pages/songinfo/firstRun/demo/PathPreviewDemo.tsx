@@ -12,6 +12,7 @@ import ArcSpinner, { SpinnerSize } from '../../../../components/common/ArcSpinne
 import FadeIn from '../../../../components/page/FadeIn';
 import anim from '../../../../styles/animations.module.css';
 import fx from '../../../../styles/effects.module.css';
+import { withCurrentPublicationId } from '../../../../api/publication';
 
 const FADE_MS = TRANSITION_MS;
 const INSTRUMENTS: InstrumentKey[] = ['Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals'];
@@ -44,7 +45,11 @@ export default function PathPreviewDemo() {
   const pendingRef = useRef('');
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  const targetSrc = songId ? `/api/paths/${songId}/${selectedInst}/${selectedDiff}` : '';
+  const targetSrc = songId
+    ? withCurrentPublicationId(
+      `/api/paths/${songId}/${selectedInst}/${selectedDiff}`,
+    )
+    : '';
 
   // Phase 1: when targetSrc changes, start fade-out or spinner
   useEffect(() => {

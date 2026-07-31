@@ -261,9 +261,13 @@ public abstract class ScraperWorkerTestBase : IDisposable
         var rivalsCache = new Api.ResponseCacheService(TimeSpan.FromMinutes(5));
         var leaderboardRivalsCache = new Api.ResponseCacheService(TimeSpan.FromMinutes(5));
         var publicReadGate = new PublicReadGateService(_metaDb, NullLogger<PublicReadGateService>.Instance);
+        var publicationReadContext = new PublicationReadContextService(
+            _metaDb,
+            _metaFixture.DataSource,
+            Options.Create(new FeatureOptions()));
         var lifecycle = new ScrapeLifecycleNotifier(
             playerCache, leaderboardAllCache, neighborhoodCache, rivalsCache, leaderboardRivalsCache,
-            _metaDb, publicReadGate,
+            _metaDb, publicReadGate, publicationReadContext,
             Substitute.For<ILogger<ScrapeLifecycleNotifier>>());
 
         return new ScraperWorker(

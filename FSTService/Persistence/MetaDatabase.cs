@@ -84,10 +84,53 @@ public sealed class MetaDatabase : IMetaDatabase
     public long StartScrapeRun()
     {
         using var conn = _ds.OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "INSERT INTO scrape_log (started_at, status) VALUES (@now, 'running') RETURNING id";
-        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
-        return (long)(int)cmd.ExecuteScalar()!;
+        EnsureScrapePublicationStateTable(conn);
+        using var tx = conn.BeginTransaction();
+        var now = DateTime.UtcNow;
+
+        long scrapeId;
+        using (var scrape = conn.CreateCommand())
+        {
+            scrape.Transaction = tx;
+            scrape.CommandText =
+                "INSERT INTO scrape_log (started_at, status) VALUES (@now, 'running') RETURNING id";
+            scrape.Parameters.AddWithValue("now", now);
+            scrapeId = (long)(int)scrape.ExecuteScalar()!;
+        }
+
+        long publicationId;
+        using (var generation = conn.CreateCommand())
+        {
+            generation.Transaction = tx;
+            generation.CommandText = """
+                INSERT INTO publication_generations (
+                    scrape_id, status, created_at, source_cut_at)
+                VALUES (@scrapeId, 'building', @now, @now)
+                RETURNING publication_id
+                """;
+            generation.Parameters.AddWithValue("scrapeId", scrapeId);
+            generation.Parameters.AddWithValue("now", now);
+            publicationId = (long)generation.ExecuteScalar()!;
+        }
+
+        using (var pointer = conn.CreateCommand())
+        {
+            pointer.Transaction = tx;
+            pointer.CommandText = """
+                INSERT INTO scrape_publication_state (
+                    id, working_publication_id, updated_at)
+                VALUES (TRUE, @publicationId, @now)
+                ON CONFLICT (id) DO UPDATE SET
+                    working_publication_id = EXCLUDED.working_publication_id,
+                    updated_at = EXCLUDED.updated_at
+                """;
+            pointer.Parameters.AddWithValue("publicationId", publicationId);
+            pointer.Parameters.AddWithValue("now", now);
+            pointer.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+        return scrapeId;
     }
 
     public void CompleteScrapeRun(long scrapeId, int songsScraped, long totalEntries, int totalRequests, long totalBytes, bool epicReportedOver100Pages = false)
@@ -127,26 +170,71 @@ public sealed class MetaDatabase : IMetaDatabase
             return;
 
         using var conn = _ds.OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE scrape_log
-            SET status = 'failed',
-                failed_at = COALESCE(failed_at, @now),
-                failure_phase = @phase,
-                failure_message = @message
-            WHERE id = @id
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM scrape_publication_state
-                  WHERE scrape_publication_state.id = TRUE
-                    AND published_scrape_id = @id
-              )
-            """;
-        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
-        cmd.Parameters.AddWithValue("phase", phase);
-        cmd.Parameters.AddWithValue("message", message);
-        cmd.Parameters.AddWithValue("id", (int)scrapeId);
-        cmd.ExecuteNonQuery();
+        EnsureScrapePublicationStateTable(conn);
+        using var tx = conn.BeginTransaction();
+        var now = DateTime.UtcNow;
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                UPDATE scrape_log
+                SET status = 'failed',
+                    failed_at = COALESCE(failed_at, @now),
+                    failure_phase = @phase,
+                    failure_message = @message
+                WHERE id = @id
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM scrape_publication_state
+                      WHERE scrape_publication_state.id = TRUE
+                        AND published_scrape_id = @id
+                  )
+                """;
+            cmd.Parameters.AddWithValue("now", now);
+            cmd.Parameters.AddWithValue("phase", phase);
+            cmd.Parameters.AddWithValue("message", message);
+            cmd.Parameters.AddWithValue("id", (int)scrapeId);
+            cmd.ExecuteNonQuery();
+        }
+
+        using (var generation = conn.CreateCommand())
+        {
+            generation.Transaction = tx;
+            generation.CommandText = """
+                UPDATE publication_generations
+                SET status = 'failed',
+                    failed_at = COALESCE(failed_at, @now),
+                    failure_phase = @phase,
+                    failure_message = @message
+                WHERE scrape_id = @id
+                  AND status NOT IN ('current', 'retained', 'retired')
+                """;
+            generation.Parameters.AddWithValue("now", now);
+            generation.Parameters.AddWithValue("phase", phase);
+            generation.Parameters.AddWithValue("message", message);
+            generation.Parameters.AddWithValue("id", scrapeId);
+            generation.ExecuteNonQuery();
+        }
+
+        using (var pointer = conn.CreateCommand())
+        {
+            pointer.Transaction = tx;
+            pointer.CommandText = """
+                UPDATE scrape_publication_state publication
+                SET working_publication_id = NULL,
+                    updated_at = @now
+                FROM publication_generations generation
+                WHERE publication.id = TRUE
+                  AND generation.scrape_id = @id
+                  AND publication.working_publication_id = generation.publication_id
+                """;
+            pointer.Parameters.AddWithValue("now", now);
+            pointer.Parameters.AddWithValue("id", scrapeId);
+            pointer.ExecuteNonQuery();
+        }
+
+        tx.Commit();
     }
 
     public void RecordScrapeWriterFailures(
@@ -389,6 +477,99 @@ public sealed class MetaDatabase : IMetaDatabase
                 }
     }
 
+    public PublicationPointerState GetPublicationPointerState()
+    {
+        using var conn = _ds.OpenConnection();
+        EnsureScrapePublicationStateTable(conn);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT current_publication_id,
+                   previous_publication_id,
+                   working_publication_id,
+                   published_scrape_id,
+                   published_at
+            FROM scrape_publication_state
+            WHERE id = TRUE
+            """;
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return new PublicationPointerState(null, null, null, null, null);
+
+        return new PublicationPointerState(
+            reader.IsDBNull(0) ? null : reader.GetInt64(0),
+            reader.IsDBNull(1) ? null : reader.GetInt64(1),
+            reader.IsDBNull(2) ? null : reader.GetInt64(2),
+            reader.IsDBNull(3) ? null : reader.GetInt32(3),
+            reader.IsDBNull(4) ? null : reader.GetDateTime(4));
+    }
+
+    public PublicationGenerationInfo? GetPublicationGeneration(long publicationId)
+    {
+        using var conn = _ds.OpenConnection();
+        EnsureScrapePublicationStateTable(conn);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT publication_id, scrape_id, status, previous_publication_id,
+                   created_at, source_cut_at, ready_at, published_at,
+                   failed_at, failure_phase, failure_message
+            FROM publication_generations
+            WHERE publication_id = @publicationId
+            """;
+        cmd.Parameters.AddWithValue("publicationId", publicationId);
+        using var reader = cmd.ExecuteReader();
+        return reader.Read() ? ReadPublicationGeneration(reader) : null;
+    }
+
+    public PublicationGenerationInfo? GetPublicationGenerationForScrape(long scrapeId)
+    {
+        using var conn = _ds.OpenConnection();
+        EnsureScrapePublicationStateTable(conn);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT publication_id, scrape_id, status, previous_publication_id,
+                   created_at, source_cut_at, ready_at, published_at,
+                   failed_at, failure_phase, failure_message
+            FROM publication_generations
+            WHERE scrape_id = @scrapeId
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        using var reader = cmd.ExecuteReader();
+        return reader.Read() ? ReadPublicationGeneration(reader) : null;
+    }
+
+    public IReadOnlyList<PublicationSurfaceBinding> GetPublicationSurfaceBindings(
+        long publicationId)
+    {
+        using var conn = _ds.OpenConnection();
+        EnsureScrapePublicationStateTable(conn);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT publication_id, surface_name, binding_kind,
+                   binding_json::text, row_count, content_hash, status, built_at
+            FROM publication_surface_bindings
+            WHERE publication_id = @publicationId
+            ORDER BY surface_name
+            """;
+        cmd.Parameters.AddWithValue("publicationId", publicationId);
+
+        var bindings = new List<PublicationSurfaceBinding>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            bindings.Add(new PublicationSurfaceBinding(
+                reader.GetInt64(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetString(3),
+                reader.IsDBNull(4) ? null : reader.GetInt64(4),
+                reader.IsDBNull(5) ? null : reader.GetString(5),
+                reader.GetString(6),
+                reader.GetDateTime(7)));
+        }
+
+        return bindings;
+    }
+
     public void PublishScrapeRun(
         long scrapeId,
         bool promoteCachedResponses = true,
@@ -415,6 +596,20 @@ public sealed class MetaDatabase : IMetaDatabase
         using var conn = _ds.OpenConnection();
         EnsureScrapePublicationStateTable(conn);
         using var tx = conn.BeginTransaction();
+        var publicationId = 0L;
+        long? currentPublicationId = null;
+        long? workingPublicationId = null;
+
+        using (var publicationLock = conn.CreateCommand())
+        {
+            publicationLock.Transaction = tx;
+            publicationLock.CommandText =
+                "SELECT pg_advisory_xact_lock(@lockKey)";
+            publicationLock.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+            publicationLock.ExecuteNonQuery();
+        }
 
         using (var verify = conn.CreateCommand())
         {
@@ -429,6 +624,121 @@ public sealed class MetaDatabase : IMetaDatabase
                 throw new InvalidOperationException($"Scrape run {scrapeId} cannot be published before it is completed.");
         }
 
+        using (var notificationGate = conn.CreateCommand())
+        {
+            notificationGate.Transaction = tx;
+            notificationGate.CommandText = """
+                SELECT published_scrape_id,
+                       improvement_notifications_scrape_id,
+                       improvement_notifications_status,
+                       current_publication_id,
+                       working_publication_id
+                FROM scrape_publication_state
+                WHERE id = TRUE
+                FOR UPDATE
+                """;
+            using var reader = notificationGate.ExecuteReader();
+            if (reader.Read())
+            {
+                currentPublicationId =
+                    reader.IsDBNull(3) ? null : reader.GetInt64(3);
+                workingPublicationId =
+                    reader.IsDBNull(4) ? null : reader.GetInt64(4);
+                if (!reader.IsDBNull(0))
+                {
+                    var publishedScrapeId = reader.GetInt32(0);
+                    if (publishedScrapeId == scrapeId
+                        && currentPublicationId.HasValue)
+                    {
+                        reader.Close();
+                        tx.Commit();
+                        return;
+                    }
+
+                    var notificationScrapeId = reader.IsDBNull(1) ? (int?)null : reader.GetInt32(1);
+                    var notificationStatus = reader.IsDBNull(2) ? null : reader.GetString(2);
+                    var notificationComplete =
+                        notificationScrapeId is null
+                        && (notificationStatus is null or "disabled")
+                        || notificationScrapeId == publishedScrapeId
+                        && (notificationStatus is "completed" or "disabled");
+
+                    if (!notificationComplete)
+                    {
+                        throw new InvalidOperationException(
+                            $"Scrape {scrapeId} cannot be published while improvement notifications " +
+                            $"for published scrape {publishedScrapeId} are incomplete " +
+                            $"(marker={notificationScrapeId?.ToString() ?? "null"}, " +
+                            $"status={notificationStatus ?? "null"}).");
+                    }
+                }
+            }
+        }
+
+        using (var generation = conn.CreateCommand())
+        {
+            generation.Transaction = tx;
+            generation.CommandText = """
+                INSERT INTO publication_generations (
+                    scrape_id, status, created_at, source_cut_at)
+                SELECT @scrapeId, 'building', scrape.started_at, scrape.completed_at
+                FROM scrape_log scrape
+                WHERE scrape.id = @scrapeId
+                ON CONFLICT (scrape_id) DO UPDATE SET
+                    source_cut_at = COALESCE(
+                        publication_generations.source_cut_at,
+                        EXCLUDED.source_cut_at)
+                RETURNING publication_id, status
+                """;
+            generation.Parameters.AddWithValue("scrapeId", scrapeId);
+            using var reader = generation.ExecuteReader();
+            if (!reader.Read())
+                throw new InvalidOperationException(
+                    $"Scrape run {scrapeId} has no publication generation.");
+
+            publicationId = reader.GetInt64(0);
+            var generationStatus = reader.GetString(1);
+            if (generationStatus is not (
+                PublicationGenerationStatus.Building
+                or PublicationGenerationStatus.Ready))
+            {
+                throw new InvalidOperationException(
+                    $"Publication generation {publicationId} for scrape {scrapeId} is {generationStatus}.");
+            }
+        }
+
+        if (!workingPublicationId.HasValue)
+        {
+            using var adoptWorking = conn.CreateCommand();
+            adoptWorking.Transaction = tx;
+            adoptWorking.CommandText = """
+                INSERT INTO scrape_publication_state (
+                    id, working_publication_id, updated_at)
+                VALUES (TRUE, @publicationId, @now)
+                ON CONFLICT (id) DO UPDATE SET
+                    working_publication_id = COALESCE(
+                        scrape_publication_state.working_publication_id,
+                        EXCLUDED.working_publication_id),
+                    updated_at = EXCLUDED.updated_at
+                RETURNING working_publication_id
+                """;
+            adoptWorking.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            adoptWorking.Parameters.AddWithValue("now", DateTime.UtcNow);
+            workingPublicationId =
+                adoptWorking.ExecuteScalar() is long adopted
+                    ? adopted
+                    : null;
+        }
+
+        if (workingPublicationId != publicationId)
+        {
+            throw new InvalidOperationException(
+                $"Publication generation {publicationId} does not own the working pointer " +
+                $"({workingPublicationId?.ToString() ?? "null"}).");
+        }
+
         if (promoteCachedResponses)
         {
             using var verifyCache = conn.CreateCommand();
@@ -438,40 +748,6 @@ public sealed class MetaDatabase : IMetaDatabase
             {
                 throw new InvalidOperationException(
                     $"Scrape run {scrapeId} cannot be published because its API response cache staging table is empty.");
-            }
-        }
-
-        using (var notificationGate = conn.CreateCommand())
-        {
-            notificationGate.Transaction = tx;
-            notificationGate.CommandText = """
-                SELECT published_scrape_id,
-                       improvement_notifications_scrape_id,
-                       improvement_notifications_status
-                FROM scrape_publication_state
-                WHERE id = TRUE
-                FOR UPDATE
-                """;
-            using var reader = notificationGate.ExecuteReader();
-            if (reader.Read() && !reader.IsDBNull(0))
-            {
-                var publishedScrapeId = reader.GetInt32(0);
-                var notificationScrapeId = reader.IsDBNull(1) ? (int?)null : reader.GetInt32(1);
-                var notificationStatus = reader.IsDBNull(2) ? null : reader.GetString(2);
-                var notificationComplete =
-                    notificationScrapeId is null
-                    && (notificationStatus is null or "disabled")
-                    || notificationScrapeId == publishedScrapeId
-                    && (notificationStatus is "completed" or "disabled");
-
-                if (!notificationComplete)
-                {
-                    throw new InvalidOperationException(
-                        $"Scrape {scrapeId} cannot be published while improvement notifications " +
-                        $"for published scrape {publishedScrapeId} are incomplete " +
-                        $"(marker={notificationScrapeId?.ToString() ?? "null"}, " +
-                        $"status={notificationStatus ?? "null"}).");
-                }
             }
         }
 
@@ -580,6 +856,192 @@ public sealed class MetaDatabase : IMetaDatabase
             cache.ExecuteNonQuery();
         }
 
+        using (var bindings = conn.CreateCommand())
+        {
+            bindings.Transaction = tx;
+            bindings.CommandText = """
+                INSERT INTO publication_surface_bindings (
+                    publication_id, surface_name, binding_kind, binding_json,
+                    row_count, content_hash, status, built_at)
+                VALUES
+                    (
+                        @publicationId,
+                        'api_response_cache',
+                        CASE
+                            WHEN @promoteCachedResponses
+                                THEN 'legacy_current_table'
+                            ELSE 'inherited_previous_publication'
+                        END,
+                        jsonb_build_object(
+                            'table', 'api_response_cache',
+                            'scrapeId', @scrapeId,
+                            'inheritedFromPublicationId',
+                            CASE
+                                WHEN @promoteCachedResponses
+                                    THEN NULL
+                                ELSE @previousPublicationId
+                            END),
+                        (SELECT COUNT(*) FROM api_response_cache),
+                        NULL,
+                        CASE
+                            WHEN @promoteCachedResponses THEN 'ready'
+                            ELSE 'building'
+                        END,
+                        @now
+                    ),
+                    (
+                        @publicationId,
+                        'solo_scope_sources',
+                        'scrape_id',
+                        jsonb_build_object(
+                            'table', 'leaderboard_published_scope_source',
+                            'publishedScrapeId', @scrapeId),
+                        (
+                            SELECT COUNT(*)
+                            FROM leaderboard_published_scope_source
+                            WHERE published_scrape_id = @scrapeId
+                        ),
+                        NULL,
+                        'ready',
+                        @now
+                    ),
+                    (
+                        @publicationId,
+                        'band_rankings',
+                        'published_tables',
+                        jsonb_build_object(
+                            'generation',
+                            (SELECT current_generation
+                             FROM band_current_projection_state
+                             WHERE id = TRUE)),
+                        NULL,
+                        NULL,
+                        'ready',
+                        @now
+                    ),
+                    (
+                        @publicationId,
+                        'improvement_notifications',
+                        'publication_outbox',
+                        jsonb_build_object(
+                            'queued', @queueImprovementNotifications,
+                            'scopeCount', @notificationScopeCount),
+                        @notificationScopeCount,
+                        NULL,
+                        'ready',
+                        @now
+                    ),
+                    (
+                        @publicationId,
+                        'song_catalog',
+                        'legacy_live_unversioned',
+                        jsonb_build_object('table', 'songs'),
+                        (SELECT COUNT(*) FROM songs),
+                        NULL,
+                        'building',
+                        @now
+                    ),
+                    (
+                        @publicationId,
+                        'item_shop',
+                        'legacy_live_unversioned',
+                        jsonb_build_object('table', 'item_shop_tracks'),
+                        (SELECT COUNT(*) FROM item_shop_tracks),
+                        NULL,
+                        'building',
+                        @now
+                    ),
+                    (
+                        @publicationId,
+                        'path_artifacts',
+                        'legacy_live_unversioned',
+                        jsonb_build_object('table', 'songs'),
+                        (
+                            SELECT COUNT(*)
+                            FROM songs
+                            WHERE paths_generated_at IS NOT NULL
+                        ),
+                        NULL,
+                        'building',
+                        @now
+                    )
+                ON CONFLICT (publication_id, surface_name) DO UPDATE SET
+                    binding_kind = EXCLUDED.binding_kind,
+                    binding_json = EXCLUDED.binding_json,
+                    row_count = EXCLUDED.row_count,
+                    content_hash = EXCLUDED.content_hash,
+                    status = EXCLUDED.status,
+                    built_at = EXCLUDED.built_at
+                """;
+            bindings.Parameters.AddWithValue("publicationId", publicationId);
+            bindings.Parameters.AddWithValue("scrapeId", scrapeId);
+            bindings.Parameters.AddWithValue("now", DateTime.UtcNow);
+            bindings.Parameters.AddWithValue(
+                "queueImprovementNotifications",
+                queueImprovementNotifications);
+            bindings.Parameters.AddWithValue(
+                "promoteCachedResponses",
+                promoteCachedResponses);
+            bindings.Parameters.Add(
+                "previousPublicationId",
+                NpgsqlDbType.Bigint).Value =
+                currentPublicationId.HasValue
+                    ? currentPublicationId.Value
+                    : DBNull.Value;
+            bindings.Parameters.AddWithValue(
+                "notificationScopeCount",
+                notificationProjectionScopes.Length);
+            bindings.ExecuteNonQuery();
+        }
+
+        if (currentPublicationId.HasValue
+            && currentPublicationId.Value != publicationId)
+        {
+            using var retainPrevious = conn.CreateCommand();
+            retainPrevious.Transaction = tx;
+            retainPrevious.CommandText = """
+                UPDATE publication_generations
+                SET status = 'retained'
+                WHERE publication_id = @publicationId
+                  AND status = 'current'
+                """;
+            retainPrevious.Parameters.AddWithValue(
+                "publicationId",
+                currentPublicationId.Value);
+            retainPrevious.ExecuteNonQuery();
+        }
+
+        using (var publishGeneration = conn.CreateCommand())
+        {
+            publishGeneration.Transaction = tx;
+            publishGeneration.CommandText = """
+                UPDATE publication_generations
+                SET status = 'current',
+                    previous_publication_id = @previousPublicationId,
+                    ready_at = COALESCE(ready_at, @now),
+                    published_at = @now,
+                    failed_at = NULL,
+                    failure_phase = NULL,
+                    failure_message = NULL
+                WHERE publication_id = @publicationId
+                """;
+            publishGeneration.Parameters.Add(
+                "previousPublicationId",
+                NpgsqlDbType.Bigint).Value =
+                currentPublicationId.HasValue
+                    ? currentPublicationId.Value
+                    : DBNull.Value;
+            publishGeneration.Parameters.AddWithValue("now", DateTime.UtcNow);
+            publishGeneration.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            if (publishGeneration.ExecuteNonQuery() != 1)
+            {
+                throw new InvalidOperationException(
+                    $"Publication generation {publicationId} could not be promoted.");
+            }
+        }
+
         using (var publish = conn.CreateCommand())
         {
             publish.Transaction = tx;
@@ -596,6 +1058,9 @@ public sealed class MetaDatabase : IMetaDatabase
                     improvement_notifications_projection_scopes,
                     improvement_notifications_projection_ready,
                     improvement_notifications_projection_scrape_id,
+                    current_publication_id,
+                    previous_publication_id,
+                    working_publication_id,
                     updated_at)
                 VALUES (
                     TRUE, @scrapeId, @now,
@@ -609,6 +1074,9 @@ public sealed class MetaDatabase : IMetaDatabase
                     @notificationProjectionScopes,
                     @queueImprovementNotifications,
                     CASE WHEN @queueImprovementNotifications THEN @scrapeId ELSE NULL END,
+                    @publicationId,
+                    @previousPublicationId,
+                    NULL,
                     @now)
                 ON CONFLICT (id) DO UPDATE SET
                     published_scrape_id = EXCLUDED.published_scrape_id,
@@ -623,6 +1091,9 @@ public sealed class MetaDatabase : IMetaDatabase
                     improvement_notifications_projection_scopes = EXCLUDED.improvement_notifications_projection_scopes,
                     improvement_notifications_projection_ready = EXCLUDED.improvement_notifications_projection_ready,
                     improvement_notifications_projection_scrape_id = EXCLUDED.improvement_notifications_projection_scrape_id,
+                    current_publication_id = EXCLUDED.current_publication_id,
+                    previous_publication_id = EXCLUDED.previous_publication_id,
+                    working_publication_id = NULL,
                     public_reads_frozen = FALSE,
                     public_reads_frozen_at = NULL,
                     public_reads_frozen_scrape_id = NULL,
@@ -630,6 +1101,13 @@ public sealed class MetaDatabase : IMetaDatabase
                     updated_at = EXCLUDED.updated_at
                 """;
             publish.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+            publish.Parameters.AddWithValue("publicationId", publicationId);
+            publish.Parameters.Add(
+                "previousPublicationId",
+                NpgsqlDbType.Bigint).Value =
+                currentPublicationId.HasValue
+                    ? currentPublicationId.Value
+                    : DBNull.Value;
             publish.Parameters.AddWithValue("now", DateTime.UtcNow);
             publish.Parameters.AddWithValue("queueImprovementNotifications", queueImprovementNotifications);
             publish.Parameters.Add(
@@ -786,8 +1264,10 @@ public sealed class MetaDatabase : IMetaDatabase
         {
             probe.CommandText = """
                 SELECT to_regclass('public.scrape_publication_state') IS NOT NULL
+                   AND to_regclass('public.publication_generations') IS NOT NULL
+                   AND to_regclass('public.publication_surface_bindings') IS NOT NULL
                    AND (
-                       SELECT COUNT(*) = 14
+                       SELECT COUNT(*) = 17
                        FROM information_schema.columns
                        WHERE table_schema = 'public'
                          AND table_name = 'scrape_publication_state'
@@ -805,7 +1285,10 @@ public sealed class MetaDatabase : IMetaDatabase
                              'improvement_notifications_error',
                              'improvement_notifications_projection_scopes',
                              'improvement_notifications_projection_ready',
-                             'improvement_notifications_projection_scrape_id')
+                             'improvement_notifications_projection_scrape_id',
+                             'current_publication_id',
+                             'previous_publication_id',
+                             'working_publication_id')
                    )
                 """;
             if (Convert.ToBoolean(probe.ExecuteScalar()))
@@ -914,6 +1397,11 @@ public sealed class MetaDatabase : IMetaDatabase
             END $$;
             """;
         alter.ExecuteNonQuery();
+
+        using var publicationGenerations = conn.CreateCommand();
+        publicationGenerations.Transaction = tx;
+        publicationGenerations.CommandText = PublicationGenerationSchema.Sql;
+        publicationGenerations.ExecuteNonQuery();
         tx.Commit();
     }
 
@@ -922,6 +1410,21 @@ public sealed class MetaDatabase : IMetaDatabase
         if (!r.Read()) return null;
         return ReadScrapeRunInfo(r, 0);
     }
+
+    private static PublicationGenerationInfo ReadPublicationGeneration(
+        NpgsqlDataReader reader) =>
+        new(
+            reader.GetInt64(0),
+            reader.IsDBNull(1) ? null : reader.GetInt64(1),
+            reader.GetString(2),
+            reader.IsDBNull(3) ? null : reader.GetInt64(3),
+            reader.GetDateTime(4),
+            reader.IsDBNull(5) ? null : reader.GetDateTime(5),
+            reader.IsDBNull(6) ? null : reader.GetDateTime(6),
+            reader.IsDBNull(7) ? null : reader.GetDateTime(7),
+            reader.IsDBNull(8) ? null : reader.GetDateTime(8),
+            reader.IsDBNull(9) ? null : reader.GetString(9),
+            reader.IsDBNull(10) ? null : reader.GetString(10));
 
     private static ScrapeRunInfo? ReadScrapeRunInfo(NpgsqlDataReader r, int startOrdinal)
     {

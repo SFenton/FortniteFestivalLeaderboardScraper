@@ -67,12 +67,21 @@ class MockWebSocket {
   simulateError() {
     this.onerror?.();
   }
+
+  simulateMessage(data: unknown) {
+    this.onmessage?.({ data: JSON.stringify(data) } as MessageEvent);
+  }
 }
 
 // We need to import useAppWebSocket AFTER setting up the WebSocket mock,
 // because the module creates SharedWebSocket instances that call `new WebSocket()`.
 // Use dynamic import + resetModules to get a fresh module for each test.
 let useAppWebSocket: typeof import('../../../src/hooks/data/useAppWebSocket').useAppWebSocket;
+let setPublicationForTests: typeof import('../../../src/api/publication').setPublicationForTests;
+
+function setPublicationPinning(enabled: boolean) {
+  setPublicationForTests(42, enabled);
+}
 
 describe('useAppWebSocket lifecycle', () => {
   let origWebSocket: typeof WebSocket;
@@ -86,6 +95,9 @@ describe('useAppWebSocket lifecycle', () => {
 
     // Reset module state so each test gets fresh sharedInstance/refCount
     vi.resetModules();
+    const publication = await import('../../../src/api/publication');
+    setPublicationForTests = publication.setPublicationForTests;
+    publication.setPublicationForTests(42, false);
     const mod = await import('../../../src/hooks/data/useAppWebSocket');
     useAppWebSocket = mod.useAppWebSocket;
   });
@@ -97,9 +109,10 @@ describe('useAppWebSocket lifecycle', () => {
   });
 
   it('creates exactly one WebSocket on first consumer mount', () => {
+    setPublicationPinning(true);
     renderHook(() => useAppWebSocket());
     expect(wsInstances).toHaveLength(1);
-    expect(wsInstances[0]!.url).toContain('/api/ws');
+    expect(wsInstances[0]!.url).toContain('/api/ws?publicationId=42');
   });
 
   it('shares the same WebSocket across multiple consumers', () => {
@@ -116,6 +129,88 @@ describe('useAppWebSocket lifecycle', () => {
     // connected state is polled every 1s
     act(() => { vi.advanceTimersByTime(1_100); });
     expect(result.current.connected).toBe(true);
+  });
+
+  it('refreshes publication state before reconnecting after publication change', async () => {
+    setPublicationPinning(true);
+    (global.fetch as ReturnType<typeof vi.fn>) = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        publicationId: 43,
+        previousPublicationId: 42,
+        publishedScrapeId: 1272,
+        publishedAt: '2026-07-31T00:00:00Z',
+        pinningEnabled: true,
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    renderHook(() => useAppWebSocket());
+    const ws = wsInstances[0]!;
+    act(() => {
+      ws.simulateOpen();
+    });
+
+    await act(async () => {
+      ws.simulateMessage({
+        type: 'publication_changed',
+        publicationId: 43,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      ws.simulateClose();
+      vi.advanceTimersByTime(1_000);
+      await Promise.resolve();
+    });
+
+    expect(wsInstances[wsInstances.length - 1]!.url).toContain('publicationId=43');
+  });
+
+  it('retries a failed publication refresh before reconnecting', async () => {
+    setPublicationPinning(true);
+    global.fetch = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary publication failure'))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          publicationId: 43,
+          previousPublicationId: 42,
+          publishedScrapeId: 1272,
+          publishedAt: '2026-07-31T00:00:00Z',
+          pinningEnabled: true,
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    renderHook(() => useAppWebSocket());
+    const ws = wsInstances[0]!;
+    act(() => {
+      ws.simulateOpen();
+    });
+
+    await act(async () => {
+      ws.simulateMessage({
+        type: 'publication_changed',
+        publicationId: 43,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      ws.simulateClose();
+      vi.advanceTimersByTime(1_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(2_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(wsInstances[wsInstances.length - 1]!.url).toContain('publicationId=43');
   });
 
   // ── CONNECTING-safe destroy ──

@@ -46,6 +46,35 @@ public sealed class NotificationServiceTests
     }
 
     [Fact]
+    public async Task NotifyAccount_PublicationChanged_SendsControlMessageAndCloses()
+    {
+        var svc = CreateService();
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicationPointerState().Returns(
+            new PublicationPointerState(43, 42, null, 1272, DateTime.UtcNow));
+        svc.SetMetaDatabase(metaDb);
+        var ws = Substitute.For<WebSocket>();
+        ws.State.Returns(WebSocketState.Open);
+        svc.AddConnection("acct1", "dev1", ws, publicationId: 42);
+
+        await svc.NotifyAccountAsync("acct1", new { type = "scores_changed" });
+
+        await ws.Received(1).SendAsync(
+            Arg.Is<ArraySegment<byte>>(segment =>
+                SegmentContains(
+                    segment,
+                    "\"type\":\"publication_changed\"",
+                    "\"publicationId\":43")),
+            WebSocketMessageType.Text,
+            true,
+            Arg.Any<CancellationToken>());
+        await ws.Received(1).CloseOutputAsync(
+            WebSocketCloseStatus.PolicyViolation,
+            "Publication changed",
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task RemoveConnection_ThenNotify_DoesNotSend()
     {
         var svc = CreateService();

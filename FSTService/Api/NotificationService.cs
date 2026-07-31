@@ -18,7 +18,7 @@ namespace FSTService.Api;
 public sealed class NotificationService
 {
     private const int MaxControlMessageBytes = 16 * 1024;
-    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, WebSocket>> _connections = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, PublicationWebSocketConnection>> _connections = new(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger<NotificationService> _log;
     private IShopProvider? _shopProvider;
     private FestivalService? _festivalService;
@@ -56,11 +56,24 @@ public sealed class NotificationService
     /// <summary>
     /// Register a WebSocket connection for the given account+device pair.
     /// </summary>
-    public void AddConnection(string accountId, string deviceId, WebSocket ws)
+    public void AddConnection(string accountId, string deviceId, WebSocket ws) =>
+        AddConnection(accountId, deviceId, ws, publicationId: null);
+
+    public void AddConnection(
+        string accountId,
+        string deviceId,
+        WebSocket ws,
+        long? publicationId)
     {
-        var deviceMap = _connections.GetOrAdd(accountId, _ => new ConcurrentDictionary<string, WebSocket>(StringComparer.OrdinalIgnoreCase));
-        var replacedExisting = deviceMap.TryGetValue(deviceId, out var existingSocket) && !ReferenceEquals(existingSocket, ws);
-        deviceMap[deviceId] = ws;
+        var deviceMap = _connections.GetOrAdd(
+            accountId,
+            _ => new ConcurrentDictionary<string, PublicationWebSocketConnection>(
+                StringComparer.OrdinalIgnoreCase));
+        var connection = new PublicationWebSocketConnection(ws, publicationId);
+        var replacedExisting =
+            deviceMap.TryGetValue(deviceId, out var existing)
+            && !ReferenceEquals(existing.Socket, ws);
+        deviceMap[deviceId] = connection;
         if (replacedExisting)
         {
             _log.LogInformation("WebSocket replaced: account={AccountId}, device={DeviceId}. Total connections for account: {Count}",
@@ -84,8 +97,8 @@ public sealed class NotificationService
             {
                 removed = deviceMap.TryRemove(deviceId, out _);
             }
-            else if (deviceMap.TryGetValue(deviceId, out var currentSocket)
-                && ReferenceEquals(currentSocket, expectedSocket))
+            else if (deviceMap.TryGetValue(deviceId, out var current)
+                && ReferenceEquals(current.Socket, expectedSocket))
             {
                 removed = deviceMap.TryRemove(deviceId, out _);
             }
@@ -118,11 +131,22 @@ public sealed class NotificationService
         var bytes = Encoding.UTF8.GetBytes(json);
         var segment = new ArraySegment<byte>(bytes);
         var deadConnections = new List<(string DeviceId, WebSocket Socket)>();
+        var currentPublicationId = GetCurrentPublicationId();
 
-        foreach (var (deviceId, ws) in deviceMap)
+        foreach (var (deviceId, connection) in deviceMap)
         {
+            var ws = connection.Socket;
             try
             {
+                if (!await EnsureCurrentPublicationAsync(
+                        ws,
+                        connection.PublicationId,
+                        currentPublicationId))
+                {
+                    deadConnections.Add((deviceId, ws));
+                    continue;
+                }
+
                 if (ws.State == WebSocketState.Open)
                 {
                     await ws.SendAsync(segment, WebSocketMessageType.Text, true, CancellationToken.None);
@@ -156,14 +180,25 @@ public sealed class NotificationService
         var json = JsonSerializer.Serialize(message);
         var bytes = Encoding.UTF8.GetBytes(json);
         var segment = new ArraySegment<byte>(bytes);
+        var currentPublicationId = GetCurrentPublicationId();
 
         foreach (var (accountId, deviceMap) in _connections)
         {
             var deadConnections = new List<(string DeviceId, WebSocket Socket)>();
-            foreach (var (deviceId, ws) in deviceMap)
+            foreach (var (deviceId, connection) in deviceMap)
             {
+                var ws = connection.Socket;
                 try
                 {
+                    if (!await EnsureCurrentPublicationAsync(
+                            ws,
+                            connection.PublicationId,
+                            currentPublicationId))
+                    {
+                        deadConnections.Add((deviceId, ws));
+                        continue;
+                    }
+
                     if (ws.State == WebSocketState.Open)
                         await ws.SendAsync(segment, WebSocketMessageType.Text, true, CancellationToken.None);
                     else
@@ -174,11 +209,47 @@ public sealed class NotificationService
                     deadConnections.Add((deviceId, ws));
                 }
             }
+
             foreach (var (deviceId, deadSocket) in deadConnections)
                 RemoveConnection(accountId, deviceId, deadSocket);
         }
 
         _log.LogInformation("Broadcast to all clients: {Message}", json);
+    }
+
+    public async Task NotifyPublicationChangedAsync(long publicationId)
+    {
+        foreach (var (accountId, deviceMap) in _connections)
+        {
+            var deadConnections = new List<(string DeviceId, WebSocket Socket)>();
+            foreach (var (deviceId, connection) in deviceMap)
+            {
+                try
+                {
+                    if (await EnsureCurrentPublicationAsync(
+                            connection.Socket,
+                            connection.PublicationId,
+                            publicationId))
+                    {
+                        continue;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(
+                        ex,
+                        "Failed to rotate WebSocket {AccountId}/{DeviceId} to publication {PublicationId}.",
+                        accountId,
+                        deviceId,
+                        publicationId);
+                }
+
+                deadConnections.Add((deviceId, connection.Socket));
+            }
+
+            foreach (var (deviceId, socket) in deadConnections)
+                RemoveConnection(accountId, deviceId, socket);
+        }
     }
 
     /// <summary>
@@ -280,27 +351,77 @@ public sealed class NotificationService
     /// <summary>
     /// Process a WebSocket connection — keep alive until closed by client or server shutdown.
     /// </summary>
-    public async Task HandleConnectionAsync(string accountId, string deviceId, WebSocket ws, CancellationToken ct)
+    public Task HandleConnectionAsync(
+        string accountId,
+        string deviceId,
+        WebSocket ws,
+        CancellationToken ct) =>
+        HandleConnectionAsync(
+            accountId,
+            deviceId,
+            ws,
+            publicationId: null,
+            publicationService: null,
+            ct);
+
+    public async Task HandleConnectionAsync(
+        string accountId,
+        string deviceId,
+        WebSocket ws,
+        long? publicationId,
+        PublicationReadContextService? publicationService,
+        CancellationToken ct)
     {
         var currentKey = accountId;
-        AddConnection(currentKey, deviceId, ws);
-
-        // Send current shop snapshot so the client is immediately up-to-date
-        if (_shopProvider is not null && _festivalService is not null)
+        PublicationReadLease? registrationLease = null;
+        try
         {
-            try
+            if (publicationId.HasValue
+                && publicationService?.PinningEnabled == true)
             {
-                var shopIds = _shopProvider.InShopSongIds;
-                var leavingIds = _shopProvider.LeavingTomorrowSongIds;
-                var newIds = _shopProvider.NewSongIds;
-                var enrichedSongs = ShopCacheService.BuildEnrichedSongList(
-                    shopIds, leavingIds, newIds, _festivalService);
-                await SendShopSnapshotAsync(ws, enrichedSongs, leavingIds.ToArray(), newIds.ToArray());
+                registrationLease =
+                    await publicationService.AcquireAsync(ct);
+                if (!await EnsureCurrentPublicationAsync(
+                        ws,
+                        publicationId,
+                        registrationLease.Pointers.CurrentPublicationId))
+                {
+                    return;
+                }
             }
-            catch (Exception ex)
+
+            AddConnection(currentKey, deviceId, ws, publicationId);
+
+            // Send current shop snapshot so the client is immediately up-to-date.
+            if (_shopProvider is not null && _festivalService is not null)
             {
-                _log.LogWarning(ex, "Failed to send shop snapshot on connect for {AccountId}/{DeviceId}", accountId, deviceId);
+                try
+                {
+                    var shopIds = _shopProvider.InShopSongIds;
+                    var leavingIds = _shopProvider.LeavingTomorrowSongIds;
+                    var newIds = _shopProvider.NewSongIds;
+                    var enrichedSongs = ShopCacheService.BuildEnrichedSongList(
+                        shopIds, leavingIds, newIds, _festivalService);
+                    await SendShopSnapshotAsync(
+                        ws,
+                        enrichedSongs,
+                        leavingIds.ToArray(),
+                        newIds.ToArray());
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(
+                        ex,
+                        "Failed to send shop snapshot on connect for {AccountId}/{DeviceId}",
+                        accountId,
+                        deviceId);
+                }
             }
+        }
+        finally
+        {
+            if (registrationLease is not null)
+                await registrationLease.DisposeAsync();
         }
 
         try
@@ -346,7 +467,11 @@ public sealed class NotificationService
                                 // Rebind: move this socket from current key to the requested accountId
                                 RemoveConnection(currentKey, deviceId);
                                 currentKey = requestedAccountId;
-                                AddConnection(currentKey, deviceId, ws);
+                                AddConnection(
+                                    currentKey,
+                                    deviceId,
+                                    ws,
+                                    publicationId);
                                 _log.LogDebug("WebSocket {DeviceId} subscribed to account {AccountId}.", deviceId, currentKey);
 
                                 // Send current sync state immediately so late subscribers
@@ -372,7 +497,11 @@ public sealed class NotificationService
                                 {
                                     RemoveConnection(currentKey, deviceId);
                                     currentKey = accountId;
-                                    AddConnection(currentKey, deviceId, ws);
+                                    AddConnection(
+                                        currentKey,
+                                        deviceId,
+                                        ws,
+                                        publicationId);
                                     _log.LogDebug("WebSocket {DeviceId} unsubscribed, reverted to {AccountId}.", deviceId, currentKey);
                                 }
                             }
@@ -554,4 +683,44 @@ public sealed class NotificationService
             result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
         }
     }
+
+    private long? GetCurrentPublicationId() =>
+        _metaDb?.GetPublicationPointerState().CurrentPublicationId;
+
+    private static async Task<bool> EnsureCurrentPublicationAsync(
+        WebSocket ws,
+        long? connectionPublicationId,
+        long? currentPublicationId)
+    {
+        if (!connectionPublicationId.HasValue
+            || !currentPublicationId.HasValue
+            || connectionPublicationId.Value == currentPublicationId.Value)
+        {
+            return true;
+        }
+
+        if (ws.State == WebSocketState.Open)
+        {
+            var payload = JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                type = "publication_changed",
+                publicationId = currentPublicationId.Value,
+            });
+            await ws.SendAsync(
+                payload,
+                WebSocketMessageType.Text,
+                true,
+                CancellationToken.None);
+            await ws.CloseOutputAsync(
+                WebSocketCloseStatus.PolicyViolation,
+                "Publication changed",
+                CancellationToken.None);
+        }
+
+        return false;
+    }
+
+    private sealed record PublicationWebSocketConnection(
+        WebSocket Socket,
+        long? PublicationId);
 }

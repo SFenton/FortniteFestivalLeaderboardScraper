@@ -111,6 +111,12 @@ public sealed class FeatureOptions
     public bool EnforcePublicationCriticalPhases { get; set; }
 
     /// <summary>
+    /// Enables request publication pinning only after every publication-bound
+    /// surface has a generation-addressable binding.
+    /// </summary>
+    public bool EnablePublicationReadContext { get; set; }
+
+    /// <summary>
     /// When true, service-side current leaderboard reads and published exports
     /// resolve through the per-scope published source map. Keep disabled on the
     /// worker so post-process calculations continue to use the active candidate.

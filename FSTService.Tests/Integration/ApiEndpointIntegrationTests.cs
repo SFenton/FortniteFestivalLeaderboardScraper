@@ -72,6 +72,56 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.NotEqual("unknown", version);
     }
 
+    [Fact]
+    public async Task PublicationBootstrap_PinsPublicationBoundRequests()
+    {
+        using var factory = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                services.PostConfigure<FeatureOptions>(
+                    options => options.EnablePublicationReadContext = true);
+            });
+        });
+        using var client = factory.CreateClient();
+        var metaDb = factory.Services.GetRequiredService<MetaDatabase>();
+        var pointers = metaDb.GetPublicationPointerState();
+        if (!pointers.CurrentPublicationId.HasValue)
+        {
+            var scrapeId = metaDb.StartScrapeRun();
+            metaDb.CompleteScrapeRun(scrapeId, 1, 1, 1, 1);
+            metaDb.PublishScrapeRun(scrapeId, promoteCachedResponses: false);
+            pointers = metaDb.GetPublicationPointerState();
+        }
+
+        var publicationResponse = await client.GetAsync("/api/publication");
+        Assert.Equal(HttpStatusCode.OK, publicationResponse.StatusCode);
+        Assert.Contains("no-store", publicationResponse.Headers.CacheControl?.ToString());
+        var publication = await publicationResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var publicationId = publication.GetProperty("publicationId").GetInt64();
+        Assert.Equal(pointers.CurrentPublicationId, publicationId);
+        Assert.True(publication.GetProperty("pinningEnabled").GetBoolean());
+
+        var pinnedResponse = await client.GetAsync(
+            $"/api/songs?publicationId={publicationId}");
+        Assert.Equal(HttpStatusCode.OK, pinnedResponse.StatusCode);
+        Assert.Equal(
+            publicationId.ToString(),
+            pinnedResponse.Headers.GetValues(
+                PublicationReadContextMiddleware.PublicationHeader).Single());
+
+        var changedResponse = await client.GetAsync(
+            $"/api/songs?publicationId={publicationId + 1}");
+        Assert.Equal(HttpStatusCode.Conflict, changedResponse.StatusCode);
+        var changed = await changedResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("publication_changed", changed.GetProperty("status").GetString());
+        Assert.Equal(publicationId, changed.GetProperty("currentPublicationId").GetInt64());
+
+        var operationalResponse = await client.GetAsync(
+            $"/api/service-info?publicationId={publicationId + 1}");
+        Assert.Equal(HttpStatusCode.OK, operationalResponse.StatusCode);
+    }
+
     // ─── Features ───────────────────────────────────────────────
 
     [Fact]
@@ -6571,6 +6621,9 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 services.RemoveAll<NpgsqlDataSource>();
                 var testDs = SharedPostgresContainer.CreateDatabase();
                 services.AddSingleton(testDs);
+                services.RemoveAll<PublicationReadLockDataSource>();
+                services.AddSingleton(
+                    new PublicationReadLockDataSource(testDs));
 
                 // Remove the real ScraperWorker — we don't want background scraping.
                 // Also removes DatabaseInitializer (prevents HTTP calls to Epic CDN).

@@ -563,6 +563,14 @@ export type BandSyncStatusResponse = {
   } | null;
 };
 
+export type PublicationResponse = {
+  publicationId: number;
+  previousPublicationId: number | null;
+  publishedScrapeId: number;
+  publishedAt: string | null;
+  pinningEnabled: boolean;
+};
+
 export type ServiceInfoResponse = {
   lastCompletedUpdate: {
     scrapeId?: number;

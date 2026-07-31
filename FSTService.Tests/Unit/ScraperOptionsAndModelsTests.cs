@@ -119,6 +119,7 @@ public class ScraperOptionsAndModelsTests
         Assert.False(opts.EnforceScopeCompletenessManifests);
         Assert.False(opts.RequireSuccessfulScrapeWriters);
         Assert.False(opts.EnforcePublicationCriticalPhases);
+        Assert.False(opts.EnablePublicationReadContext);
         Assert.False(opts.WriteLogicalLeaderboardVersions);
         Assert.Null(typeof(FeatureOptions).GetProperty("UseLogicalLeaderboardVersions"));
     }

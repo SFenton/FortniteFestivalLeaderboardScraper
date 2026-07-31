@@ -11,7 +11,8 @@ public static partial class ApiEndpoints
         // Authenticated mobile clients can pass ?token={jwt}&deviceId={id} for per-account notifications.
         app.Map("/api/ws", async (
             HttpContext context,
-            NotificationService notifications) =>
+            NotificationService notifications,
+            PublicationReadContextService publicationService) =>
         {
             if (!context.WebSockets.IsWebSocketRequest)
             {
@@ -31,9 +32,16 @@ public static partial class ApiEndpoints
 
             var effectiveAccountId = accountId ?? $"anon-{Guid.NewGuid():N}";
             var effectiveDeviceId = deviceId ?? $"web-{Guid.NewGuid():N}";
+            var publicationId =
+                context.GetPublicationReadContext()?.PublicationId;
 
             await notifications.HandleConnectionAsync(
-                effectiveAccountId, effectiveDeviceId, ws, context.RequestAborted);
+                effectiveAccountId,
+                effectiveDeviceId,
+                ws,
+                publicationId,
+                publicationService,
+                context.RequestAborted);
         });
     }
 }

@@ -26,6 +26,21 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void StartScrapeRun_allocates_working_publication_generation()
+    {
+        var scrapeId = Db.StartScrapeRun();
+
+        var pointer = Db.GetPublicationPointerState();
+        var generation = Db.GetPublicationGenerationForScrape(scrapeId);
+
+        Assert.NotNull(generation);
+        Assert.Equal(PublicationGenerationStatus.Building, generation!.Status);
+        Assert.Equal(scrapeId, generation.ScrapeId);
+        Assert.Equal(generation.PublicationId, pointer.WorkingPublicationId);
+        Assert.Null(pointer.CurrentPublicationId);
+    }
+
+    [Fact]
     public void CompleteScrapeRun_updates_record()
     {
         var id = Db.StartScrapeRun();
@@ -292,6 +307,23 @@ public sealed class MetaDatabaseTests : IDisposable
             Assert.Equal("failed", runtime.LatestScrape?.Status);
             Assert.Equal(phase, runtime.LatestScrape?.FailurePhase);
         }
+
+    }
+
+    [Fact]
+    public void FailScrapeRun_marks_working_publication_generation_failed()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        var generation = Db.GetPublicationGenerationForScrape(scrapeId)!;
+
+        Db.FailScrapeRun(scrapeId, "post_process", "injected");
+
+        var failed = Db.GetPublicationGeneration(generation.PublicationId);
+        var pointer = Db.GetPublicationPointerState();
+        Assert.Equal(PublicationGenerationStatus.Failed, failed!.Status);
+        Assert.Equal("post_process", failed.FailurePhase);
+        Assert.Equal("injected", failed.FailureMessage);
+        Assert.Null(pointer.WorkingPublicationId);
     }
 
     [Fact]
@@ -683,6 +715,116 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.NotNull(cachedAfterPublish);
         Assert.Equal(new byte[] { 2 }, cachedAfterPublish.Value.Json);
         Assert.Equal("\"new\"", cachedAfterPublish.Value.ETag);
+    }
+
+    [Fact]
+    public void PublishScrapeRun_rotates_publication_generations_and_records_surface_bindings()
+    {
+        var firstScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(firstScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(firstScrapeId, promoteCachedResponses: false);
+
+        var firstGeneration = Db.GetPublicationGenerationForScrape(firstScrapeId)!;
+        var firstPointer = Db.GetPublicationPointerState();
+        Assert.Equal(firstGeneration.PublicationId, firstPointer.CurrentPublicationId);
+        Assert.Null(firstPointer.PreviousPublicationId);
+        Assert.Null(firstPointer.WorkingPublicationId);
+        Assert.Equal(PublicationGenerationStatus.Current, firstGeneration.Status);
+        Assert.Equal(
+            [
+                "api_response_cache",
+                "band_rankings",
+                "improvement_notifications",
+                "item_shop",
+                "path_artifacts",
+                "solo_scope_sources",
+                "song_catalog",
+            ],
+            Db.GetPublicationSurfaceBindings(firstGeneration.PublicationId)
+                .Select(static binding => binding.SurfaceName)
+                .ToArray());
+
+        var secondScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(secondScrapeId, 1, 20, 2, 200);
+        Db.PublishScrapeRun(secondScrapeId, promoteCachedResponses: false);
+
+        var secondGeneration = Db.GetPublicationGenerationForScrape(secondScrapeId)!;
+        var secondPointer = Db.GetPublicationPointerState();
+        Assert.Equal(secondGeneration.PublicationId, secondPointer.CurrentPublicationId);
+        Assert.Equal(firstGeneration.PublicationId, secondPointer.PreviousPublicationId);
+        Assert.Null(secondPointer.WorkingPublicationId);
+        Assert.Equal(
+            PublicationGenerationStatus.Retained,
+            Db.GetPublicationGeneration(firstGeneration.PublicationId)!.Status);
+        Assert.Equal(PublicationGenerationStatus.Current, secondGeneration.Status);
+        Assert.Equal(
+            firstGeneration.PublicationId,
+            secondGeneration.PreviousPublicationId);
+    }
+
+    [Fact]
+    public void PublishScrapeRun_rejects_generation_that_does_not_own_working_pointer()
+    {
+        var firstScrapeId = Db.StartScrapeRun();
+        var secondScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(firstScrapeId, 1, 10, 1, 100);
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => Db.PublishScrapeRun(
+                firstScrapeId,
+                promoteCachedResponses: false));
+
+        Assert.Contains("does not own the working pointer", exception.Message);
+        Assert.Equal(
+            Db.GetPublicationGenerationForScrape(secondScrapeId)!.PublicationId,
+            Db.GetPublicationPointerState().WorkingPublicationId);
+    }
+
+    [Fact]
+    public void PublishScrapeRun_current_generation_retry_is_idempotent()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(scrapeId, promoteCachedResponses: false);
+        var before = Db.GetPublicationPointerState();
+
+        Db.PublishScrapeRun(scrapeId, promoteCachedResponses: false);
+
+        var after = Db.GetPublicationPointerState();
+        Assert.Equal(before, after);
+        Assert.Null(
+            Db.GetPublicationGeneration(after.CurrentPublicationId!.Value)!
+                .PreviousPublicationId);
+    }
+
+    [Fact]
+    public void Retaining_newer_publication_does_not_block_old_scrape_deletion()
+    {
+        var firstScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(firstScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(firstScrapeId, promoteCachedResponses: false);
+        var firstPublicationId =
+            Db.GetPublicationGenerationForScrape(firstScrapeId)!.PublicationId;
+
+        var secondScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(secondScrapeId, 1, 20, 2, 200);
+        Db.PublishScrapeRun(secondScrapeId, promoteCachedResponses: false);
+        var secondPublicationId =
+            Db.GetPublicationGenerationForScrape(secondScrapeId)!.PublicationId;
+
+        using (var conn = DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "DELETE FROM scrape_log WHERE id = @scrapeId";
+            cmd.Parameters.AddWithValue("scrapeId", firstScrapeId);
+            Assert.Equal(1, cmd.ExecuteNonQuery());
+        }
+
+        Assert.Null(Db.GetPublicationGeneration(firstPublicationId));
+        Assert.Null(
+            Db.GetPublicationGeneration(secondPublicationId)!
+                .PreviousPublicationId);
+        Assert.Null(Db.GetPublicationPointerState().PreviousPublicationId);
     }
 
     [Fact]

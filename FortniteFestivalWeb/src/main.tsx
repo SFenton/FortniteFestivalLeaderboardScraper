@@ -6,6 +6,7 @@ import App from './App';
 import { queryClient } from './api/queryClient';
 import PwaIconCapture from './components/icons/PwaIconCapture';
 import BackendAvailabilityGate from './components/maintenance/BackendAvailabilityGate';
+import PublicationBoundary from './contexts/PublicationBoundary';
 import ModalAccessibilityFixture from './diagnostics/ModalAccessibilityFixture';
 import { applyScrollFadeTestMode } from './diagnostics/scrollFadeTestMode';
 import { installStaleChunkRecovery } from './utils/staleChunkRecovery';
@@ -26,9 +27,11 @@ const showReactQueryDevtools = import.meta.env.DEV && import.meta.env.MODE !== '
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <BackendAvailabilityGate>
-        <Root />
-      </BackendAvailabilityGate>
+      <PublicationBoundary>
+        <BackendAvailabilityGate>
+          <Root />
+        </BackendAvailabilityGate>
+      </PublicationBoundary>
       {showReactQueryDevtools && <ReactQueryDevtools initialIsOpen={false} />}
     </QueryClientProvider>
   </StrictMode>,

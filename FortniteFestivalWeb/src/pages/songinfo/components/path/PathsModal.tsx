@@ -2,6 +2,10 @@ import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMe
 import { createPortal } from 'react-dom';
 import { IoClose, IoChevronDown, IoImage, IoReaderOutline } from 'react-icons/io5';
 import { useTranslation } from 'react-i18next';
+import {
+  fetchWithPublication,
+  withCurrentPublicationId,
+} from '../../../../api/publication';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
 import { useVisualViewportHeight, useVisualViewportOffsetTop } from '../../../../hooks/ui/useVisualViewport';
 import {
@@ -463,7 +467,9 @@ function PathImage({ songId, instrument, difficulty, displayMode, isMobile, colu
   const [phase, setPhase] = useState<Phase>('spinner');
   const [displaySrc, setDisplaySrc] = useState('');
   const [error, setError] = useState(false);
-  const targetSrc = `/api/paths/${songId}/${instrument}/${difficulty}`;
+  const targetSrc = withCurrentPublicationId(
+    `/api/paths/${songId}/${instrument}/${difficulty}`,
+  );
   const pendingRef = useRef(targetSrc);
   const imgRef = useRef<HTMLImageElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -501,7 +507,10 @@ function PathImage({ songId, instrument, difficulty, displayMode, isMobile, colu
     setPathData(null);
     textDataRef.current = null;
     const controller = new AbortController();
-    fetch(`/api/paths/${songId}/${instrument}/${difficulty}/data`, { signal: controller.signal })
+    fetchWithPublication(
+      `/api/paths/${songId}/${instrument}/${difficulty}/data`,
+      { signal: controller.signal },
+    )
       .then(res => {
         if (!res.ok) throw new Error(`API ${res.status}`);
         return res.json() as Promise<PathDataResponse>;

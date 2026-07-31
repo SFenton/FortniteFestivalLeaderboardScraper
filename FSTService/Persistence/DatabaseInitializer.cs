@@ -13,7 +13,11 @@ public static class DatabaseInitializer
         await using var conn = await dataSource.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
         cmd.CommandTimeout = 0; // No timeout — schema init must complete before the service can start
-        cmd.CommandText = $"{Schema}{Environment.NewLine}{Environment.NewLine}{BandRankingStorageNames.GetCurrentSchemaSql()}{Environment.NewLine}{Environment.NewLine}{ImprovementNotificationSchema.Sql}";
+        cmd.CommandText =
+            $"{Schema}{Environment.NewLine}{Environment.NewLine}" +
+            $"{BandRankingStorageNames.GetCurrentSchemaSql()}{Environment.NewLine}{Environment.NewLine}" +
+            $"{ImprovementNotificationSchema.Sql}{Environment.NewLine}{Environment.NewLine}" +
+            PublicationGenerationSchema.Sql;
         await cmd.ExecuteNonQueryAsync(ct);
 
         // Advance SERIAL sequences after COPY-style explicit ID inserts, but never rewind them after retention/deletion.

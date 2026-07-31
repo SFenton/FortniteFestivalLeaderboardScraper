@@ -7,6 +7,7 @@ import {
   SONGS_CACHE_KEY,
   SONGS_CACHE_VERSION,
 } from '../../src/api/songsCache';
+import { setPublicationForTests } from '../../src/api/publication';
 
 const cachedSongs = {
   count: 1,
@@ -23,6 +24,7 @@ beforeEach(() => {
   vi.restoreAllMocks();
   localStorage.clear();
   clearSongsCache();
+  setPublicationForTests(42, false);
   global.fetch = vi.fn();
 });
 

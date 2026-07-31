@@ -143,7 +143,7 @@ internal static class PublicApiResponseCachePolicy
         return string.Concat(
             "public-route:",
             request.Path.Value,
-            request.QueryString.Value,
+            BuildCanonicalQueryString(request),
             routeCacheVersion,
             "|profileType=", selectedProfileType,
             "|profileId=", selectedProfileId,
@@ -151,6 +151,18 @@ internal static class PublicApiResponseCachePolicy
             "|bandId=", selectedBandId,
             "|bandType=", selectedBandType,
             "|teamKey=", selectedBandTeamKey);
+    }
+
+    private static string BuildCanonicalQueryString(HttpRequest request)
+    {
+        var values = request.Query
+            .Where(pair => !string.Equals(
+                pair.Key,
+                PublicationReadContextMiddleware.PublicationQueryParameter,
+                StringComparison.OrdinalIgnoreCase))
+            .SelectMany(pair => pair.Value.Select(value =>
+                new KeyValuePair<string, string?>(pair.Key, value)));
+        return QueryString.Create(values).Value ?? string.Empty;
     }
 
     private static string HeaderValue(HttpRequest request, string headerName) =>

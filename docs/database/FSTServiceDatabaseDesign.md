@@ -316,6 +316,7 @@ marker exists on a legacy row).
 | `Features__EnforceScopeCompletenessManifests` | `fstworker` | `false` | Requires every expected solo and band scope to have a complete page manifest before publication | Set `false`; manifests remain available as observe-only evidence |
 | `Features__RequireSuccessfulScrapeWriters` | `fstworker` | `false` | Rejects a candidate when any disk-spool or bounded-online writer reports failed pages/rows | Set `false`; durable failure rows and replay artifacts remain |
 | `Features__EnforcePublicationCriticalPhases` | `fstworker` | `false` | Rejects a candidate after any explicitly publication-critical post-scrape phase failure | Set `false`; phase outcomes remain visible while legacy swallow behavior is restored |
+| `Features__EnablePublicationReadContext` | `fstservice` | `false` | Enables publication bootstrap, pinned HTTP/WebSocket requests, shared read leases, and `409 publication_changed` enforcement after every public surface is generation-addressable | Keep `false` until all required surface bindings are ready; additive ledger/pointer rows remain |
 | `Features__WriteLogicalLeaderboardVersions` | all roles | `false` and startup-rejected when true | Retired shadow writer; no service/API reader exists | Future enablement requires a versioned migration, rebuild/restore validation, and a new live-scrape promotion |
 
 ### Song, account, registration, and authentication metadata
@@ -658,6 +659,40 @@ This is a fail-closed transition layer, not the final generation-addressable
 architecture. Phase 2 still owns durable `publication_generations`,
 current/previous/working pointers, typed surface manifests,
 `PublicationReadContext`, and publication-keyed URLs/query keys/caches.
+
+### Atomic-publication Phase 2 generation/context foundation
+
+Phase 2 adds the durable identity and request-pinning foundation without
+claiming that legacy mutable surfaces are already generation-addressable:
+
+- `publication_generations` allocates one durable identity per scrape and
+  tracks `building`, `ready`, `current`, `retained`, `failed`, and `retired`
+  lifecycle state;
+- `scrape_publication_state` owns current, previous, and working publication
+  pointers while preserving `published_scrape_id` compatibility;
+- `publication_surface_bindings` records typed bindings, row counts, hashes,
+  readiness, and explicit `legacy_live_unversioned`/inherited status rather
+  than presenting unbound surfaces as complete;
+- publication takes a cross-process advisory exclusive lock, requires the
+  matching working generation, rotates the previous pointer, and records
+  surface bindings in the same transaction;
+- publication-bound request pinning uses a separate 64-connection lock pool,
+  a short `READ COMMITTED` shared advisory lease, the
+  `X-FST-Publication-Id` response header, and `publicationId` URL parameter;
+- `/api/publication` bootstraps the browser before query fan-out. The web client
+  clears query/catalog caches on rotation, appends the ID to HTTP/path URLs,
+  pins WebSocket handshakes, and refreshes before every pinned reconnect;
+- API instances poll the durable pointer and close stale pinned sockets across
+  the worker/service process boundary;
+- predecessor references use `ON DELETE SET NULL`, while scrape-generation
+  ownership uses `ON DELETE CASCADE`, preserving normal abandoned-scrape and
+  metadata-retention behavior.
+
+`Features:EnablePublicationReadContext` remains default-off. It must not be
+enabled until every `PublicationBound` route resolves through a ready,
+generation-addressable surface binding. Current catalog, shop, path, and
+inherited-cache bindings are deliberately marked `building`; they are the
+ordered source-cut work for the next phase.
 
 The read-only band-search reuse probe measured
 `46,662,828,032` bytes across `band_search_team_projection` and

@@ -43,6 +43,33 @@ public static partial class ApiEndpoints
         .WithTags("Progress")
         .RequireRateLimiting("public");
 
+        app.MapGet("/api/publication", (
+            HttpContext httpContext,
+            PublicationReadContextService publicationService) =>
+        {
+            httpContext.Response.Headers.CacheControl = "no-store";
+            var pointers = publicationService.GetPointers();
+            if (!pointers.CurrentPublicationId.HasValue
+                || !pointers.PublishedScrapeId.HasValue)
+            {
+                return Results.Problem(
+                    title: "Published data unavailable",
+                    detail: "No current publication generation is available.",
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+
+            return Results.Ok(new
+            {
+                publicationId = pointers.CurrentPublicationId.Value,
+                previousPublicationId = pointers.PreviousPublicationId,
+                publishedScrapeId = pointers.PublishedScrapeId.Value,
+                publishedAt = pointers.PublishedAtUtc,
+                pinningEnabled = publicationService.PinningEnabled,
+            });
+        })
+        .WithTags("Health")
+        .RequireRateLimiting("public");
+
         app.MapGet("/api/service-info", (
             HttpContext httpContext,
             ScrapeProgressTracker tracker,

@@ -85,6 +85,16 @@ live candidate scores. Background registration and band-history workers pause
 and drain at scrape boundaries; deferred rivals and post-cutoff registrations
 remain queued for a later ranked publication.
 
+The additive publication-generation ledger and browser bootstrap are present,
+but request pinning remains disabled by default:
+
+- `Features__EnablePublicationReadContext=false`
+
+Do not enable it until catalog, shop, paths, caches, histories, overlays,
+rankings, rivals, exports, and notification feeds all have ready
+generation-addressable bindings. The current ledger deliberately marks legacy
+live/inherited bindings as incomplete.
+
 Improvement notifications can be recovered for the already-published scrape
 without starting a full scrape:
 

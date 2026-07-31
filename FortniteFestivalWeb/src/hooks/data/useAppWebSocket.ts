@@ -5,6 +5,11 @@
  */
 import { useEffect, useCallback, useState } from 'react';
 import type { WsNotificationMessage } from '@festival/core/api';
+import {
+  ensurePublication,
+  getCurrentPublicationId,
+  isPublicationPinningEnabled,
+} from '../../api/publication';
 
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
@@ -16,11 +21,19 @@ const DESTROY_DEFER_MS = 300;
 /* v8 ignore start -- WebSocket URL helper depends on browser location */
 function getWsUrl(): string {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${location.host}/api/ws`;
+  const publicationId = isPublicationPinningEnabled()
+    ? getCurrentPublicationId()
+    : null;
+  const query = publicationId ? `?publicationId=${publicationId}` : '';
+  return `${proto}//${location.host}/api/ws${query}`;
 }
 /* v8 ignore stop */
 
 export type WsMessageHandler = (msg: WsNotificationMessage) => void;
+type PublicationChangedMessage = {
+  type: 'publication_changed';
+  publicationId: number;
+};
 type ConnectionStateHandler = (connected: boolean) => void;
 type OpenHandler = () => void;
 
@@ -34,6 +47,15 @@ type AppWebSocketState = {
 let sharedInstance: SharedWebSocket | null = null;
 let refCount = 0;
 let destroyTimer: ReturnType<typeof setTimeout> | undefined;
+
+export function resetAppWebSocketForPublicationChange(): void {
+  if (destroyTimer !== undefined) {
+    clearTimeout(destroyTimer);
+    destroyTimer = undefined;
+  }
+  sharedInstance?.destroy();
+  sharedInstance = null;
+}
 
 class SharedWebSocket {
   private ws: WebSocket | null = null;
@@ -50,6 +72,9 @@ class SharedWebSocket {
   private hiddenEpoch = 0;
   private recoveredHiddenEpoch = 0;
   private lastResumeRecoveryAt = 0;
+  private publicationRefreshRequired = false;
+  private publicationRefreshPromise: Promise<boolean> | null = null;
+  private publicationRefreshCompletedForReconnect = false;
 
   constructor() {
     this.bindBrowserLifecycle();
@@ -107,9 +132,16 @@ class SharedWebSocket {
     ws.onmessage = (event: MessageEvent) => {
       if (version !== this.connectVersion) return;
       try {
-        const msg = JSON.parse(event.data as string) as WsNotificationMessage;
+        const msg = JSON.parse(event.data as string) as
+          | WsNotificationMessage
+          | PublicationChangedMessage;
+        if (msg.type === 'publication_changed') {
+          this.publicationRefreshRequired = true;
+          void this.refreshPublication();
+          return;
+        }
         for (const handler of this.handlers) {
-          handler(msg);
+          handler(msg as WsNotificationMessage);
         }
       } catch {
         // Ignore malformed messages
@@ -123,12 +155,7 @@ class SharedWebSocket {
       }
       this.setConnected(false);
       if (!this.alive) return;
-      this.clearReconnectTimer();
-      const delay = this.reconnectDelay;
-      this.reconnectTimer = setTimeout(() => {
-        this.reconnectDelay = Math.min(this.reconnectDelay * 2, RECONNECT_MAX_MS);
-        this.connect();
-      }, delay);
+      this.scheduleReconnect();
     };
 
     ws.onerror = () => {
@@ -273,6 +300,55 @@ class SharedWebSocket {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
     }
+  }
+
+  private scheduleReconnect() {
+    this.clearReconnectTimer();
+    const delay = this.reconnectDelay;
+    this.reconnectTimer = setTimeout(() => {
+      void this.reconnectAfterPublicationRefresh();
+    }, delay);
+  }
+
+  private async reconnectAfterPublicationRefresh() {
+    const alreadyRefreshed = this.publicationRefreshCompletedForReconnect;
+    this.publicationRefreshCompletedForReconnect = false;
+    if (!alreadyRefreshed
+        && (this.publicationRefreshRequired || isPublicationPinningEnabled())) {
+      if (!await this.refreshPublication()) {
+        this.reconnectDelay = Math.min(
+          this.reconnectDelay * 2,
+          RECONNECT_MAX_MS,
+        );
+        this.scheduleReconnect();
+        return;
+      }
+      this.publicationRefreshCompletedForReconnect = false;
+    }
+
+    this.reconnectDelay = Math.min(
+      this.reconnectDelay * 2,
+      RECONNECT_MAX_MS,
+    );
+    this.connect();
+  }
+
+  private refreshPublication(): Promise<boolean> {
+    if (this.publicationRefreshPromise) {
+      return this.publicationRefreshPromise;
+    }
+
+    this.publicationRefreshPromise = ensurePublication(true)
+      .then(() => {
+        this.publicationRefreshRequired = false;
+        this.publicationRefreshCompletedForReconnect = true;
+        return true;
+      })
+      .catch(() => false)
+      .finally(() => {
+        this.publicationRefreshPromise = null;
+      });
+    return this.publicationRefreshPromise;
   }
 
   destroy() {

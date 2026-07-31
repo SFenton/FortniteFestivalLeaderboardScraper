@@ -362,6 +362,17 @@ builder.Services.AddSingleton<FSTService.Scraping.UserSyncProgressTracker>();
 builder.Services.AddSingleton<FSTService.Api.SongsCacheService>();
 builder.Services.AddSingleton<FSTService.Api.ShopCacheService>();
 builder.Services.AddSingleton<FSTService.Api.PublicReadGateService>();
+builder.Services.AddSingleton(sp =>
+    new FSTService.Api.PublicationReadLockDataSource(
+        sp.GetRequiredService<IConfiguration>()
+            .GetConnectionString("PostgreSQL")
+        ?? throw new InvalidOperationException(
+            "Missing PostgreSQL connection string for publication read locks.")));
+builder.Services.AddSingleton<FSTService.Api.PublicationReadContextService>(sp =>
+    new FSTService.Api.PublicationReadContextService(
+        sp.GetRequiredService<IMetaDatabase>(),
+        sp.GetRequiredService<FSTService.Api.PublicationReadLockDataSource>(),
+        sp.GetRequiredService<IOptions<FeatureOptions>>()));
 builder.Services.AddSingleton<FSTService.Api.PublicApiCacheTelemetry>();
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("PlayerCache",
     (sp, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(2),
@@ -567,6 +578,8 @@ builder.Services.AddCors(opts =>
 builder.Services.AddSingleton<StartupInitializer>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<StartupInitializer>());
 builder.Services.AddHostedService<FSTService.Persistence.ImprovementNotificationStalenessMonitor>();
+if (hostedWorkerMode != HostedWorkerMode.FullWorker)
+    builder.Services.AddHostedService<FSTService.Api.PublicationChangeMonitorService>();
 builder.Services.AddHealthChecks()
     .AddCheck<StartupInitializer>("database", tags: ["ready"]);
 if (hostedWorkerMode == HostedWorkerMode.ApiOnly)
@@ -734,6 +747,7 @@ app.UseForwardedHeaders(new ForwardedHeadersOptions
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseMiddleware<FSTService.Api.PublicationReadContextMiddleware>();
 app.UseMiddleware<FSTService.Api.PublicApiResponseCacheMiddleware>();
 app.UseMiddleware<FSTService.Api.PublicReadGateMiddleware>();
 app.Use(async (context, next) =>

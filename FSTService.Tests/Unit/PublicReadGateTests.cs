@@ -425,6 +425,24 @@ public class PublicReadGateTests
     }
 
     [Fact]
+    public void PublicApiResponseCachePolicy_KeyIgnoresPublicationPin()
+    {
+        var unpinned = new DefaultHttpContext();
+        unpinned.Request.Method = HttpMethods.Get;
+        unpinned.Request.Path = "/api/rankings/overview";
+        unpinned.Request.QueryString = new QueryString("?page=2");
+
+        var pinned = new DefaultHttpContext();
+        pinned.Request.Method = HttpMethods.Get;
+        pinned.Request.Path = "/api/rankings/overview";
+        pinned.Request.QueryString = new QueryString("?page=2&publicationId=42");
+
+        Assert.Equal(
+            PublicApiResponseCachePolicy.BuildCacheKey(unpinned.Request),
+            PublicApiResponseCachePolicy.BuildCacheKey(pinned.Request));
+    }
+
+    [Fact]
     public async Task PublicApiResponseCacheMiddleware_DoesNotStoreSuccessfulJsonResponseWhenNotFrozen()
     {
         var metaDb = Substitute.For<IMetaDatabase>();

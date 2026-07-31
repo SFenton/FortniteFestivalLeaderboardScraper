@@ -14,6 +14,7 @@ public sealed class ScrapeLifecycleNotifier
     private readonly ResponseCacheService[] _caches;
     private readonly IMetaDatabase _metaDb;
     private readonly PublicReadGateService _publicReadGate;
+    private readonly PublicationReadContextService _publicationReadContext;
     private readonly ILogger<ScrapeLifecycleNotifier> _log;
 
     public ScrapeLifecycleNotifier(
@@ -24,11 +25,13 @@ public sealed class ScrapeLifecycleNotifier
         [FromKeyedServices("LeaderboardRivalsCache")] ResponseCacheService leaderboardRivalsCache,
         IMetaDatabase metaDb,
         PublicReadGateService publicReadGate,
+        PublicationReadContextService publicationReadContext,
         ILogger<ScrapeLifecycleNotifier> log)
     {
         _caches = [playerCache, leaderboardAllCache, neighborhoodCache, rivalsCache, leaderboardRivalsCache];
         _metaDb = metaDb;
         _publicReadGate = publicReadGate;
+        _publicationReadContext = publicationReadContext;
         _log = log;
     }
 
@@ -43,6 +46,7 @@ public sealed class ScrapeLifecycleNotifier
         {
             _metaDb.SetPublicReadFreeze(true, reason: "scrape");
             _publicReadGate.Invalidate();
+            _publicationReadContext.Invalidate();
         }
         catch (Exception ex)
         {
@@ -60,6 +64,7 @@ public sealed class ScrapeLifecycleNotifier
         {
             _metaDb.SetPublicReadFreeze(true, reason: "post-process");
             _publicReadGate.Invalidate();
+            _publicationReadContext.Invalidate();
         }
         catch (Exception ex)
         {
@@ -79,6 +84,7 @@ public sealed class ScrapeLifecycleNotifier
         {
             _metaDb.SetPublicReadFreeze(true, reason: "publish");
             _publicReadGate.Invalidate();
+            _publicationReadContext.Invalidate();
         }
         catch (Exception ex)
         {
@@ -110,6 +116,7 @@ public sealed class ScrapeLifecycleNotifier
         {
             _metaDb.SetPublicReadFreeze(false);
             _publicReadGate.Invalidate();
+            _publicationReadContext.Invalidate();
         }
         catch (Exception ex)
         {
