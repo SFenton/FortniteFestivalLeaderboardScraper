@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using FortniteFestival.Core.Config;
+using FortniteFestival.Core.Persistence;
 
 namespace FortniteFestival.Core.Services
 {
@@ -46,6 +47,7 @@ namespace FortniteFestival.Core.Services
         ) GetInstrumentation();
         Task InitializeAsync(); // load DB, initial song sync
         Task SyncSongsAsync();
+        Task<SongCatalogPersistenceToken> PersistSongCatalogAsync();
         Task<bool> FetchScoresAsync(
             string exchangeCode,
             int degreeOfParallelism,

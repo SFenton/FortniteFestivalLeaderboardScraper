@@ -27,4 +27,8 @@
     <ProjectReference Include="..\FSTService\FSTService.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

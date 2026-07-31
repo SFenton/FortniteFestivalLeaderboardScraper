@@ -1,4 +1,5 @@
 using FortniteFestival.Core;
+using FortniteFestival.Core.Persistence;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
@@ -45,19 +46,23 @@ public sealed class MetaDatabaseTests : IDisposable
     public async Task StartScrapeRun_captures_immutable_working_song_catalog()
     {
         var persistence = new FestivalPersistence(DataSource);
-        await persistence.SaveSongsAsync(
+        var token = await persistence.SaveSongsVersionedAsync(
         [
             CreateCatalogSong("song-a", "Alpha"),
         ]);
         var liveBefore = ReadLiveSongCatalog();
 
-        var scrapeId = Db.StartScrapeRun();
+        var scrapeId = Db.StartScrapeRun(token);
         var publicationId =
             Db.GetPublicationGenerationForScrape(scrapeId)!.PublicationId;
         var captured = ReadPublicationSongCatalog(publicationId);
 
         Assert.Equal(liveBefore.ContentHash, captured.ContentHash);
         Assert.Equal(liveBefore.SongCount, captured.SongCount);
+        Assert.Equal(liveBefore.CatalogVersion, captured.CatalogVersion);
+        Assert.Equal(token.CatalogVersion, captured.CatalogVersion);
+        Assert.True(captured.IsExact);
+        Assert.Equal("provider_exact", captured.SourceKind);
         var binding = Db.GetPublicationSurfaceBindings(publicationId)
             .Single(static item => item.SurfaceName == "song_catalog");
         Assert.Equal("generation_catalog_snapshot", binding.BindingKind);
@@ -85,6 +90,119 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal("ready", publishedBinding.Status);
         Assert.Equal(captured.ContentHash, publishedBinding.ContentHash);
         Assert.Equal(captured, ReadPublicationSongCatalog(publicationId));
+    }
+
+    [Fact]
+    public async Task StartScrapeRun_rejects_cross_process_catalog_race()
+    {
+        var workerPersistence = new FestivalPersistence(DataSource);
+        var servicePersistence = new FestivalPersistence(DataSource);
+        var workerSongs =
+            new[] { CreateCatalogSong("song-a", "Worker catalog") };
+        var serviceSongs =
+            new[] { CreateCatalogSong("song-a", "Service catalog") };
+        var workerToken =
+            await workerPersistence.SaveSongsVersionedAsync(workerSongs);
+        var serviceToken =
+            await servicePersistence.SaveSongsVersionedAsync(serviceSongs);
+        var scrapeCountBefore = CountScrapeRuns();
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => Db.StartScrapeRun(workerToken));
+
+        Assert.Contains(
+            "persisted song catalog changed before scrape allocation",
+            exception.Message);
+        Assert.Equal(scrapeCountBefore, CountScrapeRuns());
+        Assert.Null(Db.GetPublicationPointerState().WorkingPublicationId);
+        Assert.Throws<InvalidOperationException>(() =>
+            SongCatalogSnapshotBuilder.ValidateToken(
+                SongCatalogSnapshotBuilder.Create(serviceSongs),
+                workerToken));
+
+        var scrapeId = Db.StartScrapeRun(serviceToken);
+        var publicationId =
+            Db.GetPublicationGenerationForScrape(scrapeId)!.PublicationId;
+        var captured = ReadPublicationSongCatalog(publicationId);
+        Assert.Equal(serviceToken.CatalogVersion, captured.CatalogVersion);
+        Assert.Equal(serviceToken.ContentHash, captured.ContentHash);
+        Assert.True(captured.IsExact);
+    }
+
+    [Fact]
+    public async Task Catalog_writer_and_publication_allocation_share_lock()
+    {
+        var persistence = new FestivalPersistence(DataSource);
+        using var lockConn = DataSource.OpenConnection();
+        using var lockTx = lockConn.BeginTransaction();
+        using (var acquire = lockConn.CreateCommand())
+        {
+            acquire.Transaction = lockTx;
+            acquire.CommandText =
+                "SELECT pg_advisory_xact_lock(@lockKey)";
+            acquire.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+            acquire.ExecuteNonQuery();
+        }
+
+        var saveTask = Task.Run(() =>
+            persistence.SaveSongsVersionedAsync(
+            [
+                CreateCatalogSong("song-a", "Blocked writer"),
+            ]));
+        await Task.Delay(100);
+        Assert.False(saveTask.IsCompleted);
+
+        lockTx.Commit();
+        var token = await saveTask.WaitAsync(TimeSpan.FromSeconds(5));
+        var scrapeId = Db.StartScrapeRun(token);
+
+        Assert.True(scrapeId > 0);
+    }
+
+    [Fact]
+    public async Task Legacy_rollback_writer_invalidates_exact_catalog_token()
+    {
+        var persistence = new FestivalPersistence(DataSource);
+        var token = await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("song-a", "Exact catalog"),
+        ]);
+
+        using (var conn = DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                INSERT INTO live_song_catalog (
+                    id, catalog_json, content_hash, song_count, captured_at)
+                VALUES (
+                    TRUE,
+                    '{"schemaVersion":1,"songs":[]}'::jsonb,
+                    repeat('a', 64),
+                    0,
+                    now())
+                ON CONFLICT (id) DO UPDATE SET
+                    catalog_json = EXCLUDED.catalog_json,
+                    content_hash = EXCLUDED.content_hash,
+                    song_count = EXCLUDED.song_count,
+                    captured_at = EXCLUDED.captured_at
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        var downgraded = ReadLiveSongCatalog();
+        Assert.NotEqual(token.CatalogVersion, downgraded.CatalogVersion);
+        Assert.False(downgraded.IsExact);
+        Assert.Equal(1, downgraded.SchemaVersion);
+        Assert.Equal(
+            "legacy_columns_reconstructed",
+            downgraded.SourceKind);
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => Db.StartScrapeRun(token));
+        Assert.Contains(
+            "reconstructed or obsolete song catalog",
+            exception.Message);
     }
 
     [Fact]
@@ -1222,15 +1340,159 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal(first, second);
         Assert.Equal(1, first.SongCount);
         Assert.Equal(64, first.ContentHash.Length);
+        Assert.False(first.IsExact);
+        Assert.Equal(
+            "legacy_publication_reconstructed",
+            first.SourceKind);
+        Assert.Equal(1, first.SchemaVersion);
+        var liveLegacy = ReadLiveSongCatalog();
+        Assert.False(liveLegacy.IsExact);
+        Assert.Equal(
+            "legacy_columns_reconstructed",
+            liveLegacy.SourceKind);
+        Assert.Equal(1, liveLegacy.SchemaVersion);
         var binding = Db.GetPublicationSurfaceBindings(publicationId)
             .Single(static item => item.SurfaceName == "song_catalog");
-        Assert.Equal("generation_catalog_snapshot", binding.BindingKind);
-        Assert.Equal("ready", binding.Status);
+        Assert.Equal("legacy_reconstructed_catalog", binding.BindingKind);
+        Assert.Equal("building", binding.Status);
         Assert.Equal(first.ContentHash, binding.ContentHash);
         Assert.Equal(first.SongCount, binding.RowCount);
+        Assert.Throws<InvalidOperationException>(() => Db.StartScrapeRun());
+
+        var persistence = new FestivalPersistence(DataSource);
+        var exactToken = await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("bootstrap-song", "Bootstrap Song"),
+        ]);
+        await DatabaseInitializer.EnsureSchemaAsync(DataSource);
+
+        var unchangedCurrentBinding =
+            Db.GetPublicationSurfaceBindings(publicationId)
+                .Single(static item =>
+                    item.SurfaceName == "song_catalog");
         Assert.Equal(
-            ReadLiveSongCatalog().ContentHash,
-            first.ContentHash);
+            "legacy_reconstructed_catalog",
+            unchangedCurrentBinding.BindingKind);
+        Assert.Equal("building", unchangedCurrentBinding.Status);
+        Assert.False(
+            ReadPublicationSongCatalog(publicationId).IsExact);
+
+        var nextScrapeId = Db.StartScrapeRun(exactToken);
+        var nextPublicationId =
+            Db.GetPublicationGenerationForScrape(nextScrapeId)!.PublicationId;
+        var exactSnapshot =
+            ReadPublicationSongCatalog(nextPublicationId);
+        Assert.True(exactSnapshot.IsExact);
+        Assert.Equal("provider_exact", exactSnapshot.SourceKind);
+        Assert.Equal(
+            SongCatalogSnapshotBuilder.SchemaVersion,
+            exactSnapshot.SchemaVersion);
+        Assert.Equal(exactToken.CatalogVersion, exactSnapshot.CatalogVersion);
+        Assert.Equal(
+            "ready",
+            Db.GetPublicationSurfaceBindings(nextPublicationId)
+                .Single(static item =>
+                    item.SurfaceName == "song_catalog")
+                .Status);
+    }
+
+    [Fact]
+    public async Task SchemaUpgrade_downgrades_unproven_working_catalog()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        var publicationId =
+            Db.GetPublicationGenerationForScrape(scrapeId)!.PublicationId;
+        using (var conn = DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                UPDATE publication_song_catalog
+                SET schema_version = 1,
+                    source_kind = 'legacy_publication_reconstructed',
+                    is_exact = FALSE
+                WHERE publication_id = @publicationId;
+
+                UPDATE publication_surface_bindings
+                SET binding_kind = 'generation_catalog_snapshot',
+                    status = 'ready'
+                WHERE publication_id = @publicationId
+                  AND surface_name = 'song_catalog';
+                """;
+            cmd.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            cmd.ExecuteNonQuery();
+        }
+
+        await DatabaseInitializer.EnsureSchemaAsync(DataSource);
+
+        var snapshot = ReadPublicationSongCatalog(publicationId);
+        var binding = Db.GetPublicationSurfaceBindings(publicationId)
+            .Single(static item => item.SurfaceName == "song_catalog");
+        Assert.False(snapshot.IsExact);
+        Assert.Equal(
+            "legacy_publication_reconstructed",
+            snapshot.SourceKind);
+        Assert.Equal("legacy_reconstructed_catalog", binding.BindingKind);
+        Assert.Equal("building", binding.Status);
+
+        Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => Db.PublishScrapeRun(
+                scrapeId,
+                promoteCachedResponses: false));
+        Assert.Contains(
+            "no complete song catalog snapshot",
+            exception.Message);
+    }
+
+    [Fact]
+    public async Task SchemaUpgrade_from_original_catalog_schema_marks_rows_inexact()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        var publicationId =
+            Db.GetPublicationGenerationForScrape(scrapeId)!.PublicationId;
+        using (var conn = DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                ALTER TABLE live_song_catalog
+                    DROP CONSTRAINT ck_live_song_catalog_source_kind;
+                ALTER TABLE publication_song_catalog
+                    DROP CONSTRAINT ck_publication_song_catalog_source_kind;
+
+                ALTER TABLE live_song_catalog
+                    DROP COLUMN catalog_version,
+                    DROP COLUMN schema_version,
+                    DROP COLUMN source_kind,
+                    DROP COLUMN is_exact;
+                ALTER TABLE publication_song_catalog
+                    DROP COLUMN catalog_version,
+                    DROP COLUMN schema_version,
+                    DROP COLUMN source_kind,
+                    DROP COLUMN is_exact;
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        await DatabaseInitializer.EnsureSchemaAsync(DataSource);
+
+        var live = ReadLiveSongCatalog();
+        var publication =
+            ReadPublicationSongCatalog(publicationId);
+        var binding = Db.GetPublicationSurfaceBindings(publicationId)
+            .Single(static item => item.SurfaceName == "song_catalog");
+        Assert.False(live.IsExact);
+        Assert.Equal("legacy_columns_reconstructed", live.SourceKind);
+        Assert.Equal(1, live.SchemaVersion);
+        Assert.False(publication.IsExact);
+        Assert.Equal(
+            "legacy_publication_reconstructed",
+            publication.SourceKind);
+        Assert.Equal(1, publication.SchemaVersion);
+        Assert.Equal("legacy_reconstructed_catalog", binding.BindingKind);
+        Assert.Equal("building", binding.Status);
+        Assert.Throws<InvalidOperationException>(() => Db.StartScrapeRun());
     }
 
     [Fact]
@@ -3064,31 +3326,51 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal("new_rival", readRivals[0].RivalAccountId);
     }
 
-    private (string CatalogJson, string ContentHash, int SongCount)
+    private (
+        long CatalogVersion,
+        int SchemaVersion,
+        string CatalogJson,
+        string ContentHash,
+        int SongCount,
+        string SourceKind,
+        bool IsExact)
         ReadLiveSongCatalog()
     {
         using var conn = DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT catalog_json::text, content_hash, song_count
+            SELECT catalog_version, schema_version, catalog_json::text,
+                   content_hash, song_count, source_kind, is_exact
             FROM live_song_catalog
             WHERE id = TRUE
             """;
         using var reader = cmd.ExecuteReader();
         Assert.True(reader.Read());
         return (
-            reader.GetString(0),
-            reader.GetString(1),
-            reader.GetInt32(2));
+            reader.GetInt64(0),
+            reader.GetInt32(1),
+            reader.GetString(2),
+            reader.GetString(3),
+            reader.GetInt32(4),
+            reader.GetString(5),
+            reader.GetBoolean(6));
     }
 
-    private (string CatalogJson, string ContentHash, int SongCount)
+    private (
+        long CatalogVersion,
+        int SchemaVersion,
+        string CatalogJson,
+        string ContentHash,
+        int SongCount,
+        string SourceKind,
+        bool IsExact)
         ReadPublicationSongCatalog(long publicationId)
     {
         using var conn = DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT catalog_json::text, content_hash, song_count
+            SELECT catalog_version, schema_version, catalog_json::text,
+                   content_hash, song_count, source_kind, is_exact
             FROM publication_song_catalog
             WHERE publication_id = @publicationId
             """;
@@ -3096,9 +3378,13 @@ public sealed class MetaDatabaseTests : IDisposable
         using var reader = cmd.ExecuteReader();
         Assert.True(reader.Read());
         return (
-            reader.GetString(0),
-            reader.GetString(1),
-            reader.GetInt32(2));
+            reader.GetInt64(0),
+            reader.GetInt32(1),
+            reader.GetString(2),
+            reader.GetString(3),
+            reader.GetInt32(4),
+            reader.GetString(5),
+            reader.GetBoolean(6));
     }
 
     private bool HasPublicationSongCatalog(long publicationId)
@@ -3114,6 +3400,14 @@ public sealed class MetaDatabaseTests : IDisposable
             """;
         cmd.Parameters.AddWithValue("publicationId", publicationId);
         return (bool)cmd.ExecuteScalar()!;
+    }
+
+    private long CountScrapeRuns()
+    {
+        using var conn = DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM scrape_log";
+        return (long)cmd.ExecuteScalar()!;
     }
 
     private static Song CreateCatalogSong(string songId, string title) =>

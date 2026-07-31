@@ -101,13 +101,18 @@ failed candidate staging are removed independently of scrape-log retention.
 The legacy cache remains as a rollback compatibility mirror.
 
 Song catalog sync now also persists a deterministic provider-only live
-snapshot. Scrape allocation copies that snapshot into
-`publication_song_catalog` and records a ready `song_catalog` binding; current,
-previous, and working generations are retained. `/api/songs`, `/api/shop`, and
-path readers still use their legacy live sources, so this storage is additive
-and `Features__EnablePublicationReadContext` remains `false`. Rollback deploys
-the prior binary and leaves the new tables unused; no schema or data removal is
-required.
+snapshot, including unknown Epic extension fields, plus exact per-song
+`provider_json` for restart recovery. The worker persists the exact catalog it
+will scrape, receives a version/hash token, and allocation accepts only that
+same exact token under the publication lock. Legacy-column reconstruction is
+explicitly incomplete and produces a `building` binding until a fresh provider
+capture exists; it is never promoted as historical source-cut truth. Current,
+previous, and working exact generations are retained. `/api/songs`,
+`/api/shop`, and path readers still use their legacy live sources, so this
+storage is additive and `Features__EnablePublicationReadContext` remains
+`false`. Rollback deploys the prior binary and leaves the new columns/tables
+in place; legacy writes remain accepted but automatically invalidate exactness
+when their content changes. No schema or data removal is required.
 
 Improvement notifications can be recovered for the already-published scrape
 without starting a full scrape:

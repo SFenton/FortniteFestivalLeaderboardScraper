@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using FortniteFestival.Core.Persistence;
 using FSTService.Scraping;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -82,7 +83,10 @@ public sealed class MetaDatabase : IMetaDatabase
 
     // ── Scrape log ───────────────────────────────────────────────────
 
-    public long StartScrapeRun()
+    public long StartScrapeRun() => StartScrapeRun(expectedCatalog: null);
+
+    public long StartScrapeRun(
+        SongCatalogPersistenceToken? expectedCatalog)
     {
         using var conn = _ds.OpenConnection();
         EnsureScrapePublicationStateTable(conn);
@@ -98,6 +102,50 @@ public sealed class MetaDatabase : IMetaDatabase
                 "lockKey",
                 PublicationGenerationSchema.AdvisoryLockKey);
             publicationLock.ExecuteNonQuery();
+        }
+
+        SongCatalogPersistenceToken persistedCatalog;
+        using (var catalogToken = conn.CreateCommand())
+        {
+            catalogToken.Transaction = tx;
+            catalogToken.CommandText = """
+                SELECT catalog_version, schema_version, content_hash,
+                       song_count, is_exact, source_kind
+                FROM live_song_catalog
+                WHERE id = TRUE
+                FOR SHARE
+                """;
+            using var reader = catalogToken.ExecuteReader();
+            if (!reader.Read())
+            {
+                throw new InvalidOperationException(
+                    "A scrape publication cannot be allocated without a persisted song catalog.");
+            }
+
+            persistedCatalog = new SongCatalogPersistenceToken(
+                reader.GetInt64(0),
+                reader.GetInt32(1),
+                reader.GetString(2),
+                reader.GetInt32(3));
+            var isExact = reader.GetBoolean(4);
+            var sourceKind = reader.GetString(5);
+            if (!isExact
+                || sourceKind != "provider_exact"
+                || persistedCatalog.SchemaVersion !=
+                    SongCatalogSnapshotBuilder.SchemaVersion)
+            {
+                throw new InvalidOperationException(
+                    "A scrape publication cannot be allocated from a reconstructed or obsolete song catalog.");
+            }
+        }
+
+        if (expectedCatalog is not null
+            && !CatalogTokensMatch(expectedCatalog, persistedCatalog))
+        {
+            throw new InvalidOperationException(
+                $"The persisted song catalog changed before scrape allocation " +
+                $"(expected version {expectedCatalog.CatalogVersion}/{expectedCatalog.ContentHash}, " +
+                $"found {persistedCatalog.CatalogVersion}/{persistedCatalog.ContentHash}).");
         }
 
         long scrapeId;
@@ -130,20 +178,42 @@ public sealed class MetaDatabase : IMetaDatabase
             catalog.Transaction = tx;
             catalog.CommandText = """
                 INSERT INTO publication_song_catalog (
-                    publication_id, catalog_json, content_hash, song_count,
-                    source_captured_at, captured_at)
+                    publication_id, catalog_version, schema_version,
+                    catalog_json, content_hash, song_count, source_kind,
+                    is_exact, source_captured_at, captured_at)
                 SELECT
                     @publicationId,
+                    catalog_version,
+                    schema_version,
                     catalog_json,
                     content_hash,
                     song_count,
+                    source_kind,
+                    is_exact,
                     captured_at,
                     @now
                 FROM live_song_catalog
                 WHERE id = TRUE
+                  AND catalog_version = @catalogVersion
+                  AND schema_version = @schemaVersion
+                  AND content_hash = @contentHash
+                  AND song_count = @songCount
+                  AND is_exact
                 ON CONFLICT (publication_id) DO NOTHING
                 """;
             catalog.Parameters.AddWithValue("publicationId", publicationId);
+            catalog.Parameters.AddWithValue(
+                "catalogVersion",
+                persistedCatalog.CatalogVersion);
+            catalog.Parameters.AddWithValue(
+                "schemaVersion",
+                persistedCatalog.SchemaVersion);
+            catalog.Parameters.AddWithValue(
+                "contentHash",
+                persistedCatalog.ContentHash);
+            catalog.Parameters.AddWithValue(
+                "songCount",
+                persistedCatalog.SongCount);
             catalog.Parameters.AddWithValue("now", now);
             if (catalog.ExecuteNonQuery() != 1)
             {
@@ -166,7 +236,10 @@ public sealed class MetaDatabase : IMetaDatabase
                     jsonb_build_object(
                         'table', 'publication_song_catalog',
                         'publicationId', publication_id,
-                        'schemaVersion', @schemaVersion,
+                        'catalogVersion', catalog_version,
+                        'schemaVersion', schema_version,
+                        'sourceKind', source_kind,
+                        'isExact', is_exact,
                         'sourceCapturedAt', source_captured_at),
                     song_count,
                     content_hash,
@@ -178,9 +251,6 @@ public sealed class MetaDatabase : IMetaDatabase
             catalogBinding.Parameters.AddWithValue(
                 "publicationId",
                 publicationId);
-            catalogBinding.Parameters.AddWithValue(
-                "schemaVersion",
-                SongCatalogSnapshotBuilder.SchemaVersion);
             if (catalogBinding.ExecuteNonQuery() != 1)
             {
                 throw new InvalidOperationException(
@@ -908,6 +978,9 @@ public sealed class MetaDatabase : IMetaDatabase
                     WHERE catalog.publication_id = @publicationId
                       AND binding.binding_kind =
                           'generation_catalog_snapshot'
+                      AND catalog.is_exact
+                      AND catalog.source_kind = 'provider_exact'
+                      AND catalog.schema_version = @schemaVersion
                       AND binding.row_count = catalog.song_count
                       AND binding.content_hash = catalog.content_hash
                       AND binding.status = 'ready'
@@ -916,6 +989,9 @@ public sealed class MetaDatabase : IMetaDatabase
             verifyCatalog.Parameters.AddWithValue(
                 "publicationId",
                 publicationId);
+            verifyCatalog.Parameters.AddWithValue(
+                "schemaVersion",
+                SongCatalogSnapshotBuilder.SchemaVersion);
             if (verifyCatalog.ExecuteScalar() is not bool hasCatalog
                 || !hasCatalog)
             {
@@ -1599,6 +1675,28 @@ public sealed class MetaDatabase : IMetaDatabase
                    AND to_regclass('public.publication_api_response_cache') IS NOT NULL
                    AND to_regclass('public.publication_api_response_cache_staging') IS NOT NULL
                    AND (
+                       SELECT COUNT(*) = 4
+                       FROM information_schema.columns
+                       WHERE table_schema = 'public'
+                         AND table_name = 'live_song_catalog'
+                         AND column_name IN (
+                             'catalog_version',
+                             'schema_version',
+                             'source_kind',
+                             'is_exact')
+                   )
+                   AND (
+                       SELECT COUNT(*) = 4
+                       FROM information_schema.columns
+                       WHERE table_schema = 'public'
+                         AND table_name = 'publication_song_catalog'
+                         AND column_name IN (
+                             'catalog_version',
+                             'schema_version',
+                             'source_kind',
+                             'is_exact')
+                   )
+                   AND (
                        SELECT COUNT(*) = 17
                        FROM information_schema.columns
                        WHERE table_schema = 'public'
@@ -1757,6 +1855,17 @@ public sealed class MetaDatabase : IMetaDatabase
             reader.IsDBNull(8) ? null : reader.GetDateTime(8),
             reader.IsDBNull(9) ? null : reader.GetString(9),
             reader.IsDBNull(10) ? null : reader.GetString(10));
+
+    private static bool CatalogTokensMatch(
+        SongCatalogPersistenceToken expected,
+        SongCatalogPersistenceToken actual) =>
+        expected.CatalogVersion == actual.CatalogVersion
+        && expected.SchemaVersion == actual.SchemaVersion
+        && expected.SongCount == actual.SongCount
+        && string.Equals(
+            expected.ContentHash,
+            actual.ContentHash,
+            StringComparison.Ordinal);
 
     private static ScrapeRunInfo? ReadScrapeRunInfo(NpgsqlDataReader r, int startOrdinal)
     {

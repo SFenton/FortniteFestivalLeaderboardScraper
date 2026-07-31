@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using FortniteFestival.Core;
+using FortniteFestival.Core.Persistence;
 using FortniteFestival.Core.Services;
 using FSTService.Auth;
 using FSTService.Persistence;
@@ -55,6 +56,7 @@ public sealed class ScrapeOrchestrator
         string accessToken,
         string callerAccountId,
         FestivalService service,
+        SongCatalogPersistenceToken catalogToken,
         CancellationToken ct,
         TokenManager? tokenManager = null)
     {
@@ -74,9 +76,16 @@ public sealed class ScrapeOrchestrator
         _pool.ResetDop();
 
         var passCt = ct;
+        var catalogSongs = service.Songs
+            .Where(static song => song.track?.su is not null)
+            .ToArray();
+        var catalogSnapshot = SongCatalogSnapshotBuilder.Create(catalogSongs);
+        SongCatalogSnapshotBuilder.ValidateToken(
+            catalogSnapshot,
+            catalogToken);
 
         // Start scrape log entry
-        var scrapeId = _persistence.Meta.StartScrapeRun();
+        var scrapeId = _persistence.Meta.StartScrapeRun(catalogToken);
         _log.LogInformation("Scrape run #{ScrapeId} started.", scrapeId);
         _persistence.RollbackIncompleteLogicalLeaderboardScrapes(scrapeId);
         _persistence.CleanupAbandonedStaging(scrapeId);
@@ -89,8 +98,7 @@ public sealed class ScrapeOrchestrator
         // Build scrape requests: one per song, all enabled instruments.
         var enabledInstruments = GetEnabledInstruments(opts);
         var allMaxScores = _pathDataStore.GetAllMaxScores();
-        var scrapeRequests = service.Songs
-            .Where(s => s.track?.su is not null)
+        var scrapeRequests = catalogSongs
             .Select(song => new GlobalLeaderboardScraper.SongScrapeRequest
             {
                 SongId = song.track.su,

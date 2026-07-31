@@ -63,6 +63,10 @@ public static class SharedPostgresContainer
             ExecuteWithPostgresReadyRetry(() =>
                 FSTService.Persistence.DatabaseInitializer.EnsureSchemaAsync(ds)
                     .GetAwaiter().GetResult());
+            ExecuteWithPostgresReadyRetry(() =>
+                new FSTService.Persistence.FestivalPersistence(ds)
+                    .SaveSongsVersionedAsync([])
+                    .GetAwaiter().GetResult());
         }
         catch
         {

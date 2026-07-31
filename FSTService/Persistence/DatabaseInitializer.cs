@@ -60,6 +60,7 @@ public static class DatabaseInitializer
             plastic_bass_diff    INTEGER,
             plastic_drums_diff   INTEGER,
             pro_vocals_diff      INTEGER,
+            provider_json         JSONB,
             -- Path generation fields (from PathDataStore)
             max_lead_score       INTEGER,
             max_bass_score       INTEGER,
@@ -72,6 +73,9 @@ public static class DatabaseInitializer
             paths_generated_at   TIMESTAMPTZ,
             chopt_version        TEXT
         );
+
+        ALTER TABLE songs
+            ADD COLUMN IF NOT EXISTS provider_json JSONB;
 
         -- =====================================================================
         -- LEADERBOARD ENTRIES (partitioned by instrument)

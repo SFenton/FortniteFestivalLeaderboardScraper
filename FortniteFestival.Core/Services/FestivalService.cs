@@ -230,7 +230,12 @@ namespace FortniteFestival.Core.Services
             // flush removed
         }
 
-        public async Task SyncSongsAsync()
+        public Task SyncSongsAsync()
+        {
+            return SyncSongsAsync(persistCatalog: true);
+        }
+
+        public async Task SyncSongsAsync(bool persistCatalog)
         {
             // removed info log (sync songs start)
             try
@@ -266,7 +271,10 @@ namespace FortniteFestival.Core.Services
                             {
                                 var song = System.Text.Json.JsonSerializer.Deserialize<Song>(raw);
                                 if (song != null && song.track != null && song.track.su != null)
+                                {
+                                    song.providerJson = elem.Clone();
                                     list.Add(song);
+                                }
                                 else
                                 {
                                     droppedNullTrack++;
@@ -288,6 +296,7 @@ namespace FortniteFestival.Core.Services
                 }
                 if (droppedNoSu > 0 || droppedNullTrack > 0 || droppedErrors > 0)
                     LogLine($"SongSync: parsed {list.Count} songs from {totalObjects} objects ({droppedNoSu} no su, {droppedNullTrack} null track, {droppedErrors} errors)");
+                Song[] songsToPersist;
                 lock (_sync)
                 {
                     var incomingIds = new HashSet<string>(list.Select(s => s.track.su));
@@ -324,26 +333,16 @@ namespace FortniteFestival.Core.Services
                     foreach (var s in list)
                     {
                         if (_songs.TryGetValue(s.track.su, out var existing))
-                        {
-                            existing.track = s.track;
-                            existing._activeDate = s._activeDate;
-                            existing.lastModified = s.lastModified;
-                            existing._title = s._title ?? existing._title;
-                        }
+                            existing.ReplaceProviderDataFrom(s);
                         else
                             _songs[s.track.su] = s;
                     }
                     _songsDirty = true;
+                    songsToPersist = _songs.Values.ToArray();
                 }
                 // removed info log (song sync complete)
-                if (_persistence != null)
-                {
-                    try
-                    {
-                        await _persistence.SaveSongsAsync(_songs.Values).ConfigureAwait(false);
-                    }
-                    catch { }
-                }
+                if (persistCatalog && _persistence != null)
+                    await _persistence.SaveSongsAsync(songsToPersist).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -354,6 +353,25 @@ namespace FortniteFestival.Core.Services
                 _songSyncComplete = true;
                 // flush removed
             }
+        }
+
+        public async Task<SongCatalogPersistenceToken> PersistSongCatalogAsync()
+        {
+            var versionedPersistence =
+                _persistence as IVersionedSongCatalogPersistence;
+            if (versionedPersistence == null)
+            {
+                throw new InvalidOperationException(
+                    "The configured festival persistence does not support versioned song catalog capture.");
+            }
+
+            Song[] songs;
+            lock (_sync)
+                songs = _songs.Values.ToArray();
+
+            return await versionedPersistence
+                .SaveSongsVersionedAsync(songs)
+                .ConfigureAwait(false);
         }
 
         private async Task SyncImagesAsync()

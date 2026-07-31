@@ -355,9 +355,11 @@ public abstract class ScraperWorkerTestBase : IDisposable
         throw new InvalidOperationException($"Method {methodName} did not return Task<{typeof(T).Name}>");
     }
 
-    protected static FestivalService CreateServiceWithSongs(params (string id, string title, string artist)[] songs)
+    protected FestivalService CreateServiceWithSongs(
+        params (string id, string title, string artist)[] songs)
     {
-        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
+        var service = new FestivalService(
+            new FestivalPersistence(_metaFixture.DataSource));
         var flags = BindingFlags.NonPublic | BindingFlags.Instance;
         var songsField = typeof(FestivalService).GetField("_songs", flags)!;
         var dirtyField = typeof(FestivalService).GetField("_songsDirty", flags)!;

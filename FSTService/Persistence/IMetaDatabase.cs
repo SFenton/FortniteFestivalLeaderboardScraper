@@ -1,3 +1,4 @@
+using FortniteFestival.Core.Persistence;
 using FSTService.Scraping;
 
 namespace FSTService.Persistence;
@@ -11,6 +12,7 @@ public interface IMetaDatabase : IDisposable
 
     // ── Scrape log ───────────────────────────────────────────────────
     long StartScrapeRun();
+    long StartScrapeRun(SongCatalogPersistenceToken expectedCatalog);
     void CompleteScrapeRun(long scrapeId, int songsScraped, long totalEntries, int totalRequests, long totalBytes, bool epicReportedOver100Pages = false);
     void FailScrapeRun(long scrapeId, string phase, string message);
     void RecordScrapeWriterFailures(long scrapeId, IReadOnlyList<WriterDrainResult> results);

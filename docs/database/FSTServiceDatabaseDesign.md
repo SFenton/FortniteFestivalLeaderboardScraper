@@ -324,8 +324,8 @@ marker exists on a legacy row).
 | Tables | Class | Owner/callers | Retention and safety |
 |---|---|---|---|
 | `songs`, `item_shop_tracks`, `season_windows`, `song_first_seen_season` | Durable source/metadata | `FestivalPersistence`, `MetaDatabase`, path/ranking readers | Keep provider IDs/timestamps and source provenance |
-| `live_song_catalog` | Canonical live catalog singleton | `FestivalPersistence.SaveSongsAsync` | Provider-only schema-versioned JSON, SHA-256, count, and capture time; excludes `imagePath`, `isSelected`, and `isInLocalData` |
-| `publication_song_catalog` | Immutable generation snapshot | `MetaDatabase.StartScrapeRun`, publication retention | One row per publication; allocated atomically from the live singleton and retained only for current, previous, and working pointers |
+| `songs.provider_json`, `live_song_catalog` | Exact provider restart rows and canonical live singleton | `FestivalPersistence.SaveSongsVersionedAsync` | Provider-known and extension fields, schema/version, SHA-256, count, source kind, exactness, and capture time; excludes `imagePath`, `isSelected`, and `isInLocalData` |
+| `publication_song_catalog` | Immutable generation snapshot | `MetaDatabase.StartScrapeRun`, publication retention | One row per publication; ready only when its exact version/hash token matches the catalog selected by the scrape; retained only for current, previous, and working pointers |
 | `account_names` | Durable source/cache of Epic identity | Worker resolver; API/search readers | Refreshable, but historical account IDs remain stable |
 | `registered_users`, `registered_bands` | Durable source | API activity/registration and worker consumers | Activity-based retention must preserve idempotent claims |
 | `registered_band_processing_status`, `registered_band_processing_progress`, `registered_player_band_discovery_progress` | Durable work state | Registration/backfill workers | Resume/idempotency state; prune only completed stale work |
@@ -722,25 +722,40 @@ compatibility mirrors until request pinning is promoted.
 CATALOG-1 adds the first immutable non-cache source cut without changing any
 endpoint reader:
 
-- `SongCatalogSnapshotBuilder` maps provider `Song`/`Track` fields into a
-  schema-versioned deterministic DTO, sorts songs and provider string lists,
-  normalizes provider timestamps, and excludes the mutable local UI fields
-  `imagePath`, `isSelected`, and `isInLocalData`;
-- `FestivalPersistence.SaveSongsAsync` writes the legacy `songs` rows and the
-  `live_song_catalog` singleton in one transaction. The singleton stores the
-  canonical payload, SHA-256 content hash, song count, and capture time;
-- `StartScrapeRun` copies that singleton into `publication_song_catalog` in
-  the same advisory-locked transaction that allocates the working publication,
-  then creates a ready `generation_catalog_snapshot` surface binding;
+- `SongCatalogSnapshotBuilder` canonicalizes object keys recursively while
+  preserving provider array order and raw/extension fields. Known and unknown
+  Epic fields survive sync and restart; mutable local UI fields `imagePath`,
+  `isSelected`, and `isInLocalData` are excluded;
+- `FestivalPersistence.SaveSongsVersionedAsync` writes exact per-song
+  `provider_json`, legacy compatibility columns, and the `live_song_catalog`
+  singleton under the publication advisory lock. The singleton records a
+  monotonic catalog version, schema version, SHA-256, count, source kind,
+  exactness, and capture time;
+- worker sync replaces every provider-owned field while retaining only local
+  UI state. It then explicitly persists the exact in-memory catalog and passes
+  the returned version/hash token to `ScrapeOrchestrator`;
+- `ScrapeOrchestrator` snapshots the same songs used to build scrape requests,
+  verifies their hash/count against the persistence token, and
+  `StartScrapeRun` rejects any service/worker race before inserting a scrape
+  row. Allocation copies only the matching exact live version into
+  `publication_song_catalog` and creates the ready binding under the same
+  advisory lock;
 - publication validates the snapshot/binding pair but does not rewrite it as
   `legacy_live_unversioned`, so later catalog refreshes cannot alter an
   in-progress or published generation;
-- startup idempotently bootstraps the current publication (and an existing
-  working pointer) from the live singleton. If the singleton is new, it is
-  seeded deterministically from the fields available in legacy `songs`;
+- startup may reconstruct diagnostic payloads from legacy `songs` columns,
+  but labels both singleton and publication rows reconstructed/inexact and
+  keeps the surface binding `building`. Existing unproven ready bindings are
+  downgraded. A fresh exact provider capture is required before any new working
+  publication receives a ready binding; current historical generations are
+  never rewritten to pretend source-cut accuracy;
 - catalog payload retention follows current, previous, and working publication
   pointers. Failed and older payloads are removed while their binding metadata
-  is marked failed or retired.
+  is marked failed or retired;
+- additive rollback keeps old insert/update SQL valid through defaults. A
+  compatibility trigger detects any legacy content change that did not advance
+  the catalog version and marks the singleton reconstructed/inexact, forcing a
+  fresh provider capture before new-code allocation.
 
 This is additive storage only. `/api/songs`, `/api/shop`, and path generation
 still read the live `FestivalService`/legacy path sources, and

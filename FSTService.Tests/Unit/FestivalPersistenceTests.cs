@@ -1,5 +1,7 @@
 using System.Text.Json;
 using FortniteFestival.Core;
+using FortniteFestival.Core.Persistence;
+using FortniteFestival.Core.Services;
 using FSTService.Persistence;
 using FSTService.Tests.Helpers;
 using Npgsql;
@@ -30,33 +32,49 @@ public sealed class FestivalPersistenceTests : IDisposable
 
         await persistence.SaveSongsAsync([second, first]);
 
+        long catalogVersion;
+        int schemaVersion;
         string catalogJson;
         string contentHash;
         int songCount;
+        string sourceKind;
+        bool isExact;
         DateTime capturedAt;
         await using (var conn = await _dataSource.OpenConnectionAsync())
         await using (var cmd = conn.CreateCommand())
         {
             cmd.CommandText = """
-                SELECT catalog_json::text, content_hash, song_count, captured_at
+                SELECT catalog_version, schema_version, catalog_json::text,
+                       content_hash, song_count, source_kind, is_exact,
+                       captured_at
                 FROM live_song_catalog
                 WHERE id = TRUE
                 """;
             await using var reader = await cmd.ExecuteReaderAsync();
             Assert.True(await reader.ReadAsync());
-            catalogJson = reader.GetString(0);
-            contentHash = reader.GetString(1);
-            songCount = reader.GetInt32(2);
-            capturedAt = reader.GetDateTime(3);
+            catalogVersion = reader.GetInt64(0);
+            schemaVersion = reader.GetInt32(1);
+            catalogJson = reader.GetString(2);
+            contentHash = reader.GetString(3);
+            songCount = reader.GetInt32(4);
+            sourceKind = reader.GetString(5);
+            isExact = reader.GetBoolean(6);
+            capturedAt = reader.GetDateTime(7);
         }
 
+        Assert.True(catalogVersion > 0);
+        Assert.Equal(SongCatalogSnapshotBuilder.SchemaVersion, schemaVersion);
         Assert.Equal(expected.ContentHash, contentHash);
         Assert.Equal(2, songCount);
+        Assert.Equal("provider_exact", sourceKind);
+        Assert.True(isExact);
 
         using (var document = JsonDocument.Parse(catalogJson))
         {
             var root = document.RootElement;
-            Assert.Equal(1, root.GetProperty("schemaVersion").GetInt32());
+            Assert.Equal(
+                SongCatalogSnapshotBuilder.SchemaVersion,
+                root.GetProperty("schemaVersion").GetInt32());
             var songs = root.GetProperty("songs");
             Assert.Equal(2, songs.GetArrayLength());
 
@@ -80,7 +98,7 @@ public sealed class FestivalPersistenceTests : IDisposable
             Assert.Equal("https://example.test/song-a.dat", track.GetProperty("mu").GetString());
             Assert.Equal("https://example.test/song-a.jpg", track.GetProperty("au").GetString());
             Assert.Equal(
-                ["electronic", "rock"],
+                ["rock", "electronic"],
                 track.GetProperty("ge")
                     .EnumerateArray()
                     .Select(static value => value.GetString()!)
@@ -93,14 +111,135 @@ public sealed class FestivalPersistenceTests : IDisposable
         await using var verifyConn = await _dataSource.OpenConnectionAsync();
         await using var verify = verifyConn.CreateCommand();
         verify.CommandText = """
-            SELECT content_hash, captured_at
+            SELECT catalog_version, content_hash, captured_at
             FROM live_song_catalog
             WHERE id = TRUE
             """;
         await using var verifyReader = await verify.ExecuteReaderAsync();
         Assert.True(await verifyReader.ReadAsync());
-        Assert.Equal(contentHash, verifyReader.GetString(0));
-        Assert.Equal(capturedAt, verifyReader.GetDateTime(1));
+        Assert.Equal(catalogVersion, verifyReader.GetInt64(0));
+        Assert.Equal(contentHash, verifyReader.GetString(1));
+        Assert.Equal(capturedAt, verifyReader.GetDateTime(2));
+    }
+
+    [Fact]
+    public async Task Provider_fixture_roundtrips_across_restart_without_field_loss()
+    {
+        var providerJson = LoadProviderFixtureSongJson();
+        var song =
+            SongCatalogSnapshotBuilder.DeserializeProviderSong(providerJson);
+        song.imagePath = "/local/provider-fixture.jpg";
+        song.isSelected = true;
+        song.isInLocalData = "yes";
+        var expected = SongCatalogSnapshotBuilder.Create([song]);
+
+        var persistence = new FestivalPersistence(_dataSource);
+        var token = await persistence.SaveSongsVersionedAsync([song]);
+
+        var restartedPersistence = new FestivalPersistence(_dataSource);
+        var restartedSongs = await restartedPersistence.LoadSongsAsync();
+        var restarted = Assert.Single(restartedSongs);
+        var actual = SongCatalogSnapshotBuilder.Create(restartedSongs);
+
+        Assert.Equal(expected.CatalogJson, actual.CatalogJson);
+        Assert.Equal(expected.ContentHash, actual.ContentHash);
+        Assert.Equal(expected.ContentHash, token.ContentHash);
+        Assert.Equal(expected.SongCount, token.SongCount);
+        Assert.Equal("/local/provider-fixture.jpg", restarted.imagePath);
+
+        using var document = JsonDocument.Parse(actual.CatalogJson);
+        var persistedSong = document.RootElement
+            .GetProperty("songs")[0];
+        Assert.False(persistedSong.TryGetProperty("imagePath", out _));
+        Assert.False(persistedSong.TryGetProperty("isSelected", out _));
+        Assert.False(persistedSong.TryGetProperty("isInLocalData", out _));
+        Assert.True(persistedSong.TryGetProperty(
+            "futureTopLevel",
+            out var futureTopLevel));
+        Assert.Equal(3, futureTopLevel.GetProperty("revision").GetInt32());
+
+        var track = persistedSong.GetProperty("track");
+        Assert.Equal("ag-value", track.GetProperty("ag").GetString());
+        Assert.Equal("ci-value", track.GetProperty("ci").GetString());
+        Assert.Equal(
+            "US-AAA-26-00001",
+            track.GetProperty("isrc").GetString());
+        Assert.Equal(
+            12.5,
+            track.GetProperty("mmo")
+                .GetProperty("previewStart")
+                .GetDouble());
+        Assert.True(track.GetProperty("nu").GetBoolean());
+        Assert.Equal(2, track.GetProperty("sm").GetArrayLength());
+        Assert.Equal(42, track.GetProperty("tb").GetInt32());
+        Assert.Equal(
+            3,
+            track.GetProperty("in")
+                .GetProperty("futureIntensity")
+                .GetProperty("bands")
+                .GetArrayLength());
+    }
+
+    [Fact]
+    public void Provider_sync_replaces_all_provider_fields_but_keeps_local_state()
+    {
+        var existing = CreateSong("fixture-song", "Old title");
+        existing.imagePath = "/local/existing.jpg";
+        existing.isSelected = true;
+        existing.isInLocalData = "yes";
+        var incoming = SongCatalogSnapshotBuilder.DeserializeProviderSong(
+            LoadProviderFixtureSongJson());
+
+        existing.ReplaceProviderDataFrom(incoming);
+
+        Assert.Equal(
+            SongCatalogSnapshotBuilder.Create([incoming]),
+            SongCatalogSnapshotBuilder.Create([existing]));
+        Assert.Equal("/local/existing.jpg", existing.imagePath);
+        Assert.True(existing.isSelected);
+        Assert.Equal("yes", existing.isInLocalData);
+        Assert.Equal("Provider Fixture", existing._title);
+        Assert.Equal("en-US", existing._locale);
+        Assert.Equal(
+            "AthenaMusicPackItemDefinition:fixture",
+            existing._templateName);
+        Assert.True(existing.track.providerFields.ContainsKey("ag"));
+        Assert.True(existing.providerFields.ContainsKey("futureTopLevel"));
+    }
+
+    [Fact]
+    public async Task Restart_load_uses_exact_catalog_not_stale_legacy_rows()
+    {
+        var persistence = new FestivalPersistence(_dataSource);
+        var retained = CreateSong("retained-song", "Retained");
+        var removed = CreateSong("removed-song", "Removed");
+        await persistence.SaveSongsVersionedAsync([retained, removed]);
+        await persistence.SaveSongsVersionedAsync([retained]);
+
+        var restarted = await persistence.LoadSongsAsync();
+
+        var song = Assert.Single(restarted);
+        Assert.Equal("retained-song", song.track.su);
+        await using var conn = await _dataSource.OpenConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT COUNT(*)
+            FROM songs
+            WHERE song_id = 'removed-song'
+            """;
+        Assert.Equal(1L, (long)(await cmd.ExecuteScalarAsync())!);
+    }
+
+    [Fact]
+    public async Task Explicit_catalog_persistence_failure_is_not_swallowed()
+    {
+        var service = new FestivalService(
+            new ThrowingVersionedPersistence());
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            service.PersistSongCatalogAsync);
+
+        Assert.Equal("injected catalog persistence failure", exception.Message);
     }
 
     private static Song CreateSong(string songId, string title) =>
@@ -154,4 +293,39 @@ public sealed class FestivalPersistenceTests : IDisposable
                 jc = "jc",
             },
         };
+
+    private static string LoadProviderFixtureSongJson()
+    {
+        var path = Path.Combine(
+            AppContext.BaseDirectory,
+            "Fixtures",
+            "epic-song-provider.json");
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        return document.RootElement
+            .GetProperty("fixture-song")
+            .GetRawText();
+    }
+
+    private sealed class ThrowingVersionedPersistence :
+        IFestivalPersistence,
+        IVersionedSongCatalogPersistence
+    {
+        public Task<IList<LeaderboardData>> LoadScoresAsync() =>
+            Task.FromResult<IList<LeaderboardData>>([]);
+
+        public Task SaveScoresAsync(IEnumerable<LeaderboardData> scores) =>
+            Task.CompletedTask;
+
+        public Task<IList<Song>> LoadSongsAsync() =>
+            Task.FromResult<IList<Song>>([]);
+
+        public Task SaveSongsAsync(IEnumerable<Song> songs) =>
+            Task.CompletedTask;
+
+        public Task<SongCatalogPersistenceToken> SaveSongsVersionedAsync(
+            IEnumerable<Song> songs) =>
+            Task.FromException<SongCatalogPersistenceToken>(
+                new InvalidOperationException(
+                    "injected catalog persistence failure"));
+    }
 }

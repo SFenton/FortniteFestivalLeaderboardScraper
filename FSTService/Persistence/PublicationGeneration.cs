@@ -120,31 +120,186 @@ public static class PublicationGenerationSchema
         CREATE INDEX IF NOT EXISTS ix_publication_surface_bindings_surface
             ON publication_surface_bindings (surface_name, publication_id DESC);
 
+        CREATE SEQUENCE IF NOT EXISTS song_catalog_version_seq;
+
         CREATE TABLE IF NOT EXISTS live_song_catalog (
-            id             BOOLEAN     PRIMARY KEY DEFAULT TRUE CHECK (id),
-            catalog_json   JSONB       NOT NULL,
-            content_hash   TEXT        NOT NULL,
-            song_count     INTEGER     NOT NULL,
-            captured_at    TIMESTAMPTZ NOT NULL,
+            id              BOOLEAN     PRIMARY KEY DEFAULT TRUE CHECK (id),
+            catalog_version BIGINT      NOT NULL
+                DEFAULT nextval('song_catalog_version_seq'),
+            schema_version  INTEGER     NOT NULL DEFAULT 1,
+            catalog_json    JSONB       NOT NULL,
+            content_hash    TEXT        NOT NULL,
+            song_count      INTEGER     NOT NULL,
+            source_kind     TEXT        NOT NULL
+                DEFAULT 'legacy_columns_reconstructed',
+            is_exact        BOOLEAN     NOT NULL DEFAULT FALSE,
+            captured_at     TIMESTAMPTZ NOT NULL,
             CONSTRAINT ck_live_song_catalog_count
                 CHECK (song_count >= 0),
             CONSTRAINT ck_live_song_catalog_hash
-                CHECK (content_hash ~ '^[0-9a-f]{64}$')
+                CHECK (content_hash ~ '^[0-9a-f]{64}$'),
+            CONSTRAINT ck_live_song_catalog_source_kind
+                CHECK (source_kind IN (
+                    'provider_exact',
+                    'legacy_columns_reconstructed'))
         );
 
         CREATE TABLE IF NOT EXISTS publication_song_catalog (
             publication_id    BIGINT      PRIMARY KEY
                 REFERENCES publication_generations(publication_id) ON DELETE CASCADE,
+            catalog_version   BIGINT      NOT NULL
+                DEFAULT nextval('song_catalog_version_seq'),
+            schema_version    INTEGER     NOT NULL DEFAULT 1,
             catalog_json      JSONB       NOT NULL,
             content_hash      TEXT        NOT NULL,
             song_count        INTEGER     NOT NULL,
+            source_kind       TEXT        NOT NULL
+                DEFAULT 'legacy_publication_reconstructed',
+            is_exact          BOOLEAN     NOT NULL DEFAULT FALSE,
             source_captured_at TIMESTAMPTZ NOT NULL,
             captured_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
             CONSTRAINT ck_publication_song_catalog_count
                 CHECK (song_count >= 0),
             CONSTRAINT ck_publication_song_catalog_hash
-                CHECK (content_hash ~ '^[0-9a-f]{64}$')
+                CHECK (content_hash ~ '^[0-9a-f]{64}$'),
+            CONSTRAINT ck_publication_song_catalog_source_kind
+                CHECK (source_kind IN (
+                    'provider_exact',
+                    'legacy_publication_reconstructed'))
         );
+
+        ALTER TABLE live_song_catalog
+            ADD COLUMN IF NOT EXISTS catalog_version BIGINT;
+        ALTER TABLE live_song_catalog
+            ADD COLUMN IF NOT EXISTS schema_version INTEGER;
+        ALTER TABLE live_song_catalog
+            ADD COLUMN IF NOT EXISTS source_kind TEXT;
+        ALTER TABLE live_song_catalog
+            ADD COLUMN IF NOT EXISTS is_exact BOOLEAN;
+
+        UPDATE live_song_catalog
+        SET catalog_version = COALESCE(
+                catalog_version,
+                nextval('song_catalog_version_seq')),
+            schema_version = COALESCE(schema_version, 1),
+            source_kind = COALESCE(
+                source_kind,
+                'legacy_columns_reconstructed'),
+            is_exact = COALESCE(is_exact, FALSE);
+
+        ALTER TABLE live_song_catalog
+            ALTER COLUMN catalog_version SET NOT NULL;
+        ALTER TABLE live_song_catalog
+            ALTER COLUMN catalog_version
+            SET DEFAULT nextval('song_catalog_version_seq');
+        ALTER TABLE live_song_catalog
+            ALTER COLUMN schema_version SET NOT NULL;
+        ALTER TABLE live_song_catalog
+            ALTER COLUMN schema_version SET DEFAULT 1;
+        ALTER TABLE live_song_catalog
+            ALTER COLUMN source_kind SET NOT NULL;
+        ALTER TABLE live_song_catalog
+            ALTER COLUMN source_kind
+            SET DEFAULT 'legacy_columns_reconstructed';
+        ALTER TABLE live_song_catalog
+            ALTER COLUMN is_exact SET NOT NULL;
+        ALTER TABLE live_song_catalog
+            ALTER COLUMN is_exact SET DEFAULT FALSE;
+
+        ALTER TABLE publication_song_catalog
+            ADD COLUMN IF NOT EXISTS catalog_version BIGINT;
+        ALTER TABLE publication_song_catalog
+            ADD COLUMN IF NOT EXISTS schema_version INTEGER;
+        ALTER TABLE publication_song_catalog
+            ADD COLUMN IF NOT EXISTS source_kind TEXT;
+        ALTER TABLE publication_song_catalog
+            ADD COLUMN IF NOT EXISTS is_exact BOOLEAN;
+
+        UPDATE publication_song_catalog
+        SET catalog_version = COALESCE(
+                catalog_version,
+                nextval('song_catalog_version_seq')),
+            schema_version = COALESCE(schema_version, 1),
+            source_kind = COALESCE(
+                source_kind,
+                'legacy_publication_reconstructed'),
+            is_exact = COALESCE(is_exact, FALSE);
+
+        ALTER TABLE publication_song_catalog
+            ALTER COLUMN catalog_version SET NOT NULL;
+        ALTER TABLE publication_song_catalog
+            ALTER COLUMN catalog_version
+            SET DEFAULT nextval('song_catalog_version_seq');
+        ALTER TABLE publication_song_catalog
+            ALTER COLUMN schema_version SET NOT NULL;
+        ALTER TABLE publication_song_catalog
+            ALTER COLUMN schema_version SET DEFAULT 1;
+        ALTER TABLE publication_song_catalog
+            ALTER COLUMN source_kind SET NOT NULL;
+        ALTER TABLE publication_song_catalog
+            ALTER COLUMN source_kind
+            SET DEFAULT 'legacy_publication_reconstructed';
+        ALTER TABLE publication_song_catalog
+            ALTER COLUMN is_exact SET NOT NULL;
+        ALTER TABLE publication_song_catalog
+            ALTER COLUMN is_exact SET DEFAULT FALSE;
+
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conrelid = 'live_song_catalog'::regclass
+                  AND conname = 'ck_live_song_catalog_source_kind'
+            ) THEN
+                ALTER TABLE live_song_catalog
+                    ADD CONSTRAINT ck_live_song_catalog_source_kind
+                    CHECK (source_kind IN (
+                        'provider_exact',
+                        'legacy_columns_reconstructed'));
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conrelid = 'publication_song_catalog'::regclass
+                  AND conname = 'ck_publication_song_catalog_source_kind'
+            ) THEN
+                ALTER TABLE publication_song_catalog
+                    ADD CONSTRAINT ck_publication_song_catalog_source_kind
+                    CHECK (source_kind IN (
+                        'provider_exact',
+                        'legacy_publication_reconstructed'));
+            END IF;
+        END $$;
+
+        CREATE OR REPLACE FUNCTION normalize_legacy_live_song_catalog_write()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            IF (
+                NEW.catalog_json IS DISTINCT FROM OLD.catalog_json
+                OR NEW.content_hash IS DISTINCT FROM OLD.content_hash
+                OR NEW.song_count IS DISTINCT FROM OLD.song_count
+            )
+            AND NEW.catalog_version = OLD.catalog_version
+            THEN
+                NEW.catalog_version :=
+                    nextval('song_catalog_version_seq');
+                NEW.schema_version := 1;
+                NEW.source_kind := 'legacy_columns_reconstructed';
+                NEW.is_exact := FALSE;
+            END IF;
+            RETURN NEW;
+        END $$;
+
+        DROP TRIGGER IF EXISTS trg_normalize_legacy_live_song_catalog_write
+            ON live_song_catalog;
+        CREATE TRIGGER trg_normalize_legacy_live_song_catalog_write
+        BEFORE UPDATE ON live_song_catalog
+        FOR EACH ROW
+        EXECUTE FUNCTION normalize_legacy_live_song_catalog_write();
 
         CREATE TABLE IF NOT EXISTS publication_api_response_cache (
             publication_id BIGINT NOT NULL
@@ -289,14 +444,19 @@ public static class PublicationGenerationSchema
             FROM canonical_songs
         )
         INSERT INTO live_song_catalog (
-            id, catalog_json, content_hash, song_count, captured_at)
+            id, catalog_version, schema_version, catalog_json,
+            content_hash, song_count, source_kind, is_exact, captured_at)
         SELECT
             TRUE,
+            nextval('song_catalog_version_seq'),
+            1,
             catalog_json,
             encode(
                 digest(convert_to(catalog_json::text, 'UTF8'), 'sha256'),
                 'hex'),
             song_count,
+            'legacy_columns_reconstructed',
+            FALSE,
             now()
         FROM legacy_payload
         ON CONFLICT (id) DO NOTHING;
@@ -313,13 +473,18 @@ public static class PublicationGenerationSchema
               AND working_publication_id IS NOT NULL
         )
         INSERT INTO publication_song_catalog (
-            publication_id, catalog_json, content_hash, song_count,
+            publication_id, catalog_version, schema_version, catalog_json,
+            content_hash, song_count, source_kind, is_exact,
             source_captured_at, captured_at)
         SELECT
             publication.publication_id,
+            catalog.catalog_version,
+            catalog.schema_version,
             catalog.catalog_json,
             catalog.content_hash,
             catalog.song_count,
+            'legacy_publication_reconstructed',
+            FALSE,
             catalog.captured_at,
             now()
         FROM bootstrap_publications publication
@@ -333,15 +498,18 @@ public static class PublicationGenerationSchema
         SELECT
             snapshot.publication_id,
             'song_catalog',
-            'generation_catalog_snapshot',
+            'legacy_reconstructed_catalog',
             jsonb_build_object(
                 'table', 'publication_song_catalog',
                 'publicationId', snapshot.publication_id,
-                'schemaVersion', 1,
+                'catalogVersion', snapshot.catalog_version,
+                'schemaVersion', snapshot.schema_version,
+                'sourceKind', snapshot.source_kind,
+                'isExact', false,
                 'sourceCapturedAt', snapshot.source_captured_at),
             snapshot.song_count,
             snapshot.content_hash,
-            'ready',
+            'building',
             snapshot.captured_at
         FROM publication_song_catalog snapshot
         JOIN scrape_publication_state publication
@@ -349,6 +517,7 @@ public static class PublicationGenerationSchema
          AND snapshot.publication_id IN (
              publication.current_publication_id,
              publication.working_publication_id)
+        WHERE NOT snapshot.is_exact
         ON CONFLICT (publication_id, surface_name) DO UPDATE SET
             binding_kind = EXCLUDED.binding_kind,
             binding_json = EXCLUDED.binding_json,
@@ -356,11 +525,35 @@ public static class PublicationGenerationSchema
             content_hash = EXCLUDED.content_hash,
             status = EXCLUDED.status,
             built_at = EXCLUDED.built_at
-        WHERE publication_surface_bindings.binding_kind =
-                  'legacy_live_unversioned'
-           OR publication_surface_bindings.status IN (
+        WHERE publication_surface_bindings.status <> 'retired'
+          AND (
+              publication_surface_bindings.binding_kind IN (
+                  'legacy_live_unversioned',
+                  'generation_catalog_snapshot',
+                  'legacy_reconstructed_catalog')
+              OR publication_surface_bindings.status IN (
                   'building',
-                  'failed');
+                  'failed'));
+
+        UPDATE publication_surface_bindings binding
+        SET binding_kind = 'legacy_reconstructed_catalog',
+            binding_json = jsonb_build_object(
+                'table', 'publication_song_catalog',
+                'publicationId', snapshot.publication_id,
+                'catalogVersion', snapshot.catalog_version,
+                'schemaVersion', snapshot.schema_version,
+                'sourceKind', snapshot.source_kind,
+                'isExact', false,
+                'sourceCapturedAt', snapshot.source_captured_at),
+            row_count = snapshot.song_count,
+            content_hash = snapshot.content_hash,
+            status = 'building',
+            built_at = snapshot.captured_at
+        FROM publication_song_catalog snapshot
+        WHERE binding.publication_id = snapshot.publication_id
+          AND binding.surface_name = 'song_catalog'
+          AND NOT snapshot.is_exact
+          AND binding.status NOT IN ('failed', 'retired');
 
         DO $$
         DECLARE

@@ -473,7 +473,8 @@ public sealed class ScraperWorker : BackgroundService
             }
 
             // Re-sync the song catalog in case new songs appeared
-            await service.SyncSongsAsync();
+            await service.SyncSongsAsync(persistCatalog: false);
+            var songCatalogToken = await service.PersistSongCatalogAsync();
             _persistence.InvalidateTotalSongCount();
 
             // Keep this worker's local song list current for scrape requests. Public
@@ -498,7 +499,12 @@ public sealed class ScraperWorker : BackgroundService
                 {
                     _workerStatus?.BeginOperation("scrape.leaderboards", "Scraping leaderboard scores", phase: "Scraping", subOperation: "fetching_leaderboards");
                     result = await _scrapeOrchestrator.RunAsync(
-                        accessToken, _tokenManager.AccountId!, service, ct, _tokenManager);
+                        accessToken,
+                        _tokenManager.AccountId!,
+                        service,
+                        songCatalogToken,
+                        ct,
+                        _tokenManager);
                     _workerStatus?.CompleteOperation("scrape.leaderboards");
                 }
                 catch (ScrapeAuthenticationException ex)

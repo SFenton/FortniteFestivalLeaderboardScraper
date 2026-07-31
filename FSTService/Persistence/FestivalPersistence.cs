@@ -10,7 +10,9 @@ namespace FSTService.Persistence;
 /// FestivalService. Reads/writes the <c>songs</c> table.
 /// The Scores table is not used — leaderboard data lives in leaderboard_entries.
 /// </summary>
-public sealed class FestivalPersistence : IFestivalPersistence
+public sealed class FestivalPersistence :
+    IFestivalPersistence,
+    IVersionedSongCatalogPersistence
 {
     private readonly NpgsqlDataSource _ds;
 
@@ -21,19 +23,55 @@ public sealed class FestivalPersistence : IFestivalPersistence
 
     public async Task<IList<Song>> LoadSongsAsync()
     {
-        var list = new List<Song>();
         await using var conn = await _ds.OpenConnectionAsync();
+
+        await using (var catalog = conn.CreateCommand())
+        {
+            catalog.CommandText = """
+                SELECT catalog_json::text
+                FROM live_song_catalog
+                WHERE id = TRUE
+                  AND is_exact
+                  AND source_kind = 'provider_exact'
+                  AND schema_version = @schemaVersion
+                """;
+            catalog.Parameters.AddWithValue(
+                "schemaVersion",
+                SongCatalogSnapshotBuilder.SchemaVersion);
+            if (await catalog.ExecuteScalarAsync() is string catalogJson)
+            {
+                var exactSongs =
+                    SongCatalogSnapshotBuilder.DeserializeCatalog(
+                        catalogJson);
+                await RestoreLocalImagePathsAsync(conn, exactSongs);
+                return exactSongs;
+            }
+        }
+
+        var list = new List<Song>();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             SELECT song_id, title, artist, active_date, last_modified, image_path,
                    lead_diff, bass_diff, vocals_diff, drums_diff,
                    pro_lead_diff, pro_bass_diff, release_year, tempo,
-                   plastic_guitar_diff, plastic_bass_diff, plastic_drums_diff, pro_vocals_diff
+                   plastic_guitar_diff, plastic_bass_diff, plastic_drums_diff,
+                   pro_vocals_diff, provider_json::text
             FROM songs
             """;
         await using var r = await cmd.ExecuteReaderAsync();
         while (await r.ReadAsync())
         {
+            if (!r.IsDBNull(18))
+            {
+                var providerSong =
+                    SongCatalogSnapshotBuilder.DeserializeProviderSong(
+                        r.GetString(18));
+                providerSong.imagePath =
+                    r.IsDBNull(5) ? null : r.GetString(5);
+                list.Add(providerSong);
+                continue;
+            }
+
             var song = new Song
             {
                 track = new Track
@@ -75,11 +113,28 @@ public sealed class FestivalPersistence : IFestivalPersistence
 
     public async Task SaveSongsAsync(IEnumerable<Song> songs)
     {
+        await SaveSongsVersionedAsync(songs);
+    }
+
+    public async Task<SongCatalogPersistenceToken> SaveSongsVersionedAsync(
+        IEnumerable<Song> songs)
+    {
         var songList = songs.ToArray();
         var catalogSnapshot = SongCatalogSnapshotBuilder.Create(songList);
 
         await using var conn = await _ds.OpenConnectionAsync();
         await using var tx = await conn.BeginTransactionAsync();
+
+        await using (var publicationLock = conn.CreateCommand())
+        {
+            publicationLock.Transaction = tx;
+            publicationLock.CommandText =
+                "SELECT pg_advisory_xact_lock(@lockKey)";
+            publicationLock.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+            await publicationLock.ExecuteNonQueryAsync();
+        }
 
         foreach (var s in songList)
         {
@@ -89,10 +144,12 @@ public sealed class FestivalPersistence : IFestivalPersistence
                 INSERT INTO songs (song_id, title, artist, active_date, last_modified, image_path,
                                    lead_diff, bass_diff, vocals_diff, drums_diff,
                                    pro_lead_diff, pro_bass_diff, release_year, tempo,
-                                   plastic_guitar_diff, plastic_bass_diff, plastic_drums_diff, pro_vocals_diff)
+                                   plastic_guitar_diff, plastic_bass_diff,
+                                   plastic_drums_diff, pro_vocals_diff,
+                                   provider_json)
                 VALUES (@id, @title, @artist, @active, @modified, @image,
                         @lead, @bass, @vocals, @drums, @plead, @pbass, @ry, @tempo,
-                        @plGtr, @plBass, @plDrums, @proVocals)
+                        @plGtr, @plBass, @plDrums, @proVocals, @providerJson)
                 ON CONFLICT (song_id) DO UPDATE SET
                     title = EXCLUDED.title, artist = EXCLUDED.artist,
                     active_date = EXCLUDED.active_date, last_modified = EXCLUDED.last_modified,
@@ -102,7 +159,8 @@ public sealed class FestivalPersistence : IFestivalPersistence
                     pro_lead_diff = EXCLUDED.pro_lead_diff, pro_bass_diff = EXCLUDED.pro_bass_diff,
                     release_year = EXCLUDED.release_year, tempo = EXCLUDED.tempo,
                     plastic_guitar_diff = EXCLUDED.plastic_guitar_diff, plastic_bass_diff = EXCLUDED.plastic_bass_diff,
-                    plastic_drums_diff = EXCLUDED.plastic_drums_diff, pro_vocals_diff = EXCLUDED.pro_vocals_diff
+                    plastic_drums_diff = EXCLUDED.plastic_drums_diff, pro_vocals_diff = EXCLUDED.pro_vocals_diff,
+                    provider_json = EXCLUDED.provider_json
                 """;
 
             var rawProVocals = s.track?.@in?.bd;
@@ -126,27 +184,87 @@ public sealed class FestivalPersistence : IFestivalPersistence
             cmd.Parameters.AddWithValue("plBass", s.track?.@in?.pb ?? 0);
             cmd.Parameters.AddWithValue("plDrums", s.track?.@in?.pd ?? 0);
             cmd.Parameters.AddWithValue("proVocals", proVocals);
+            cmd.Parameters.Add(
+                "providerJson",
+                NpgsqlDbType.Jsonb).Value =
+                SongCatalogSnapshotBuilder.CreateProviderSongJson(s);
 
             await cmd.ExecuteNonQueryAsync();
         }
+
+        long? existingVersion = null;
+        var existingIsExact = false;
+        var existingSchemaVersion = 0;
+        string? existingHash = null;
+        var existingSongCount = -1;
+        DateTime? existingCapturedAt = null;
+        await using (var current = conn.CreateCommand())
+        {
+            current.Transaction = tx;
+            current.CommandText = """
+                SELECT catalog_version, schema_version, content_hash,
+                       song_count, captured_at, is_exact
+                FROM live_song_catalog
+                WHERE id = TRUE
+                FOR UPDATE
+                """;
+            await using var reader = await current.ExecuteReaderAsync();
+            if (await reader.ReadAsync())
+            {
+                existingVersion =
+                    reader.IsDBNull(0) ? null : reader.GetInt64(0);
+                existingSchemaVersion = reader.GetInt32(1);
+                existingHash = reader.GetString(2);
+                existingSongCount = reader.GetInt32(3);
+                existingCapturedAt = reader.GetDateTime(4);
+                existingIsExact = reader.GetBoolean(5);
+            }
+        }
+
+        var unchanged =
+            existingVersion.HasValue
+            && existingIsExact
+            && existingSchemaVersion == SongCatalogSnapshotBuilder.SchemaVersion
+            && existingSongCount == catalogSnapshot.SongCount
+            && string.Equals(
+                existingHash,
+                catalogSnapshot.ContentHash,
+                StringComparison.Ordinal);
+        var catalogVersion = unchanged
+            ? existingVersion!.Value
+            : await NextCatalogVersionAsync(conn, tx);
+        var capturedAt = unchanged
+            ? existingCapturedAt!.Value
+            : DateTime.UtcNow;
 
         await using (var catalog = conn.CreateCommand())
         {
             catalog.Transaction = tx;
             catalog.CommandText = """
                 INSERT INTO live_song_catalog (
-                    id, catalog_json, content_hash, song_count, captured_at)
+                    id, catalog_version, schema_version, catalog_json,
+                    content_hash, song_count, source_kind, is_exact,
+                    captured_at)
                 VALUES (
-                    TRUE, @catalogJson, @contentHash, @songCount, @capturedAt)
+                    TRUE, @catalogVersion, @schemaVersion, @catalogJson,
+                    @contentHash, @songCount, 'provider_exact', TRUE,
+                    @capturedAt)
                 ON CONFLICT (id) DO UPDATE SET
+                    catalog_version = EXCLUDED.catalog_version,
+                    schema_version = EXCLUDED.schema_version,
                     catalog_json = EXCLUDED.catalog_json,
                     content_hash = EXCLUDED.content_hash,
                     song_count = EXCLUDED.song_count,
+                    source_kind = EXCLUDED.source_kind,
+                    is_exact = EXCLUDED.is_exact,
                     captured_at = EXCLUDED.captured_at
-                WHERE live_song_catalog.catalog_json IS DISTINCT FROM EXCLUDED.catalog_json
-                   OR live_song_catalog.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                   OR live_song_catalog.song_count IS DISTINCT FROM EXCLUDED.song_count
                 """;
+            catalog.Parameters.AddWithValue(
+                "catalogVersion",
+                catalogVersion);
+            catalog.Parameters.AddWithValue(
+                "schemaVersion",
+                SongCatalogSnapshotBuilder.SchemaVersion);
             catalog.Parameters.Add(
                 "catalogJson",
                 NpgsqlDbType.Jsonb).Value = catalogSnapshot.CatalogJson;
@@ -156,11 +274,16 @@ public sealed class FestivalPersistence : IFestivalPersistence
             catalog.Parameters.AddWithValue(
                 "songCount",
                 catalogSnapshot.SongCount);
-            catalog.Parameters.AddWithValue("capturedAt", DateTime.UtcNow);
+            catalog.Parameters.AddWithValue("capturedAt", capturedAt);
             await catalog.ExecuteNonQueryAsync();
         }
 
         await tx.CommitAsync();
+        return new SongCatalogPersistenceToken(
+            catalogVersion,
+            SongCatalogSnapshotBuilder.SchemaVersion,
+            catalogSnapshot.ContentHash,
+            catalogSnapshot.SongCount);
     }
 
     public Task<IList<LeaderboardData>> LoadScoresAsync()
@@ -180,5 +303,51 @@ public sealed class FestivalPersistence : IFestivalPersistence
         if (r.IsDBNull(ord)) return DateTime.MinValue;
         var s = r.GetString(ord);
         return DateTime.TryParse(s, out var dt) ? dt : DateTime.MinValue;
+    }
+
+    private static async Task RestoreLocalImagePathsAsync(
+        NpgsqlConnection conn,
+        IList<Song> songs)
+    {
+        if (songs.Count == 0)
+            return;
+
+        var songLookup = songs
+            .Where(static song => song.track?.su is not null)
+            .ToDictionary(
+                static song => song.track.su,
+                StringComparer.Ordinal);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT song_id, image_path
+            FROM songs
+            WHERE song_id = ANY(@songIds)
+            """;
+        cmd.Parameters.Add(
+            "songIds",
+            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            songLookup.Keys.ToArray();
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            if (songLookup.TryGetValue(
+                    reader.GetString(0),
+                    out var song))
+            {
+                song.imagePath =
+                    reader.IsDBNull(1) ? null : reader.GetString(1);
+            }
+        }
+    }
+
+    private static async Task<long> NextCatalogVersionAsync(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText =
+            "SELECT nextval('song_catalog_version_seq')";
+        return (long)(await cmd.ExecuteScalarAsync())!;
     }
 }

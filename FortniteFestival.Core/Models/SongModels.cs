@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace FortniteFestival.Core
 {
@@ -13,7 +15,10 @@ namespace FortniteFestival.Core
         public int gr { get; set; }
         public int ds { get; set; }
         public int ba { get; set; }
-    public int bd { get; set; } // pro vocals difficulty (may be absent; treat 0 as missing until normalized)
+        public int bd { get; set; } // pro vocals difficulty (may be absent; treat 0 as missing until normalized)
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement> providerFields { get; set; }
     }
 
     public class Track
@@ -46,6 +51,9 @@ namespace FortniteFestival.Core
         public string ti { get; set; }
         public string ld { get; set; }
         public string jc { get; set; }
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement> providerFields { get; set; }
 
         // Friendly aliases (not serialized automatically) for clearer internal usage
         public int ReleaseYear
@@ -113,5 +121,27 @@ namespace FortniteFestival.Core
 
         // Local path to downloaded artwork image (saved as <_title>.jpg)
         public string imagePath { get; set; }
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement> providerFields { get; set; }
+
+        [JsonIgnore]
+        public JsonElement? providerJson { get; set; }
+
+        public void ReplaceProviderDataFrom(Song incoming)
+        {
+            if (incoming == null)
+                throw new ArgumentNullException(nameof(incoming));
+
+            _title = incoming._title;
+            track = incoming.track;
+            _noIndex = incoming._noIndex;
+            _activeDate = incoming._activeDate;
+            lastModified = incoming.lastModified;
+            _locale = incoming._locale;
+            _templateName = incoming._templateName;
+            providerFields = incoming.providerFields;
+            providerJson = incoming.providerJson;
+        }
     }
 }

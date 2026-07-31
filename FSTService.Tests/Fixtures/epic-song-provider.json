@@ -1,0 +1,77 @@
+{
+  "fixture-song": {
+    "_title": "Provider Fixture",
+    "_noIndex": false,
+    "_activeDate": "2026-07-30T12:00:00Z",
+    "lastModified": "2026-07-31T13:14:15Z",
+    "_locale": "en-US",
+    "_templateName": "AthenaMusicPackItemDefinition:fixture",
+    "futureTopLevel": {
+      "flag": true,
+      "revision": 3
+    },
+    "track": {
+      "tt": "Provider Fixture",
+      "ry": 2026,
+      "dn": 245,
+      "sib": "sib-value",
+      "sid": "sid-value",
+      "sig": "4/4",
+      "qi": "qi-value",
+      "sn": "sn-value",
+      "ge": [
+        "rock",
+        "electronic"
+      ],
+      "mk": "mk-value",
+      "mm": "mm-value",
+      "ab": "Fixture Album",
+      "siv": "siv-value",
+      "su": "fixture-song",
+      "in": {
+        "pb": 1,
+        "pd": 2,
+        "vl": 3,
+        "pg": 4,
+        "_type": "SparkTrackIntensities",
+        "gr": 5,
+        "ds": 6,
+        "ba": 7,
+        "bd": 8,
+        "futureIntensity": {
+          "bands": [
+            1,
+            2,
+            3
+          ]
+        }
+      },
+      "mt": 120,
+      "_type": "SparkTrack",
+      "mu": "https://example.test/fixture-song.dat",
+      "an": "Fixture Artist",
+      "gt": [
+        "tag-b",
+        "tag-a"
+      ],
+      "ar": "Fixture Artist",
+      "au": "https://example.test/fixture-song.jpg",
+      "ti": "ti-value",
+      "ld": "ld-value",
+      "jc": "jc-value",
+      "ag": "ag-value",
+      "ci": "ci-value",
+      "isrc": "US-AAA-26-00001",
+      "mmo": {
+        "previewStart": 12.5,
+        "previewLength": 30
+      },
+      "nu": true,
+      "sm": [
+        "mode-b",
+        "mode-a"
+      ],
+      "tb": 42
+    }
+  }
+}
