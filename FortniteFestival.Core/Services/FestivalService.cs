@@ -125,13 +125,20 @@ namespace FortniteFestival.Core.Services
         }
         public IReadOnlyDictionary<string, LeaderboardData> ScoresIndex => _scores;
         private readonly IFestivalPersistence _persistence;
+        private readonly HttpClient _contentClient;
 
         public FestivalService()
             : this(null) { }
 
         public FestivalService(IFestivalPersistence persistence)
+            : this(persistence, null) { }
+
+        public FestivalService(
+            IFestivalPersistence persistence,
+            HttpClient contentClient)
         {
             _persistence = persistence;
+            _contentClient = contentClient ?? _httpContent;
         }
 
         public void SetLogging(bool enabled) { /* no-op */ }
@@ -230,85 +237,154 @@ namespace FortniteFestival.Core.Services
             // flush removed
         }
 
-        public Task SyncSongsAsync()
+        public async Task SyncSongsAsync()
         {
-            return SyncSongsAsync(persistCatalog: true);
-        }
-
-        public async Task SyncSongsAsync(bool persistCatalog)
-        {
-            // removed info log (sync songs start)
             try
             {
-                var res = await _httpContent
-                    .GetAsync("/content/api/pages/fortnite-game/spark-tracks")
-                    .ConfigureAwait(false);
-                var content = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                if (!res.IsSuccessStatusCode)
+                await SyncSongsWithResultAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                LogLine("Song sync failed: " + ex.Message);
+            }
+        }
+
+        public async Task<SongCatalogSyncResult> SyncSongsWithResultAsync()
+        {
+            try
+            {
+                List<Song> list;
+                int totalObjects;
+                int droppedNoSu;
+                int droppedNullTrack;
+                int droppedErrors;
+                int duplicateSongIds;
+                try
                 {
-                    var (ec, msg) = HttpErrorHelper.ExtractError(content);
-                    LogLine(HttpErrorHelper.FormatHttpError("SongSync", res, content, ec, msg));
-                    return;
-                }
-                var list = new List<Song>();
-                int totalObjects = 0;
-                int droppedNoSu = 0;
-                int droppedNullTrack = 0;
-                int droppedErrors = 0;
-                using (var doc = JsonDocument.Parse(content))
-                {
-                    foreach (var prop in doc.RootElement.EnumerateObject())
+                    using (var res = await _contentClient
+                        .GetAsync("/content/api/pages/fortnite-game/spark-tracks")
+                        .ConfigureAwait(false))
                     {
-                        var elem = prop.Value;
-                        if (elem.ValueKind != JsonValueKind.Object)
-                            continue;
-                        totalObjects++;
-                        try
+                        var content = await res.Content
+                            .ReadAsStringAsync()
+                            .ConfigureAwait(false);
+                        if (!res.IsSuccessStatusCode)
                         {
-                            string raw = elem.GetRawText(); // naive parse of required fields
-                            // simple manual extraction for performance
-                            if (raw.IndexOf("\"su\":", StringComparison.OrdinalIgnoreCase) >= 0)
-                            {
-                                var song = System.Text.Json.JsonSerializer.Deserialize<Song>(raw);
-                                if (song != null && song.track != null && song.track.su != null)
-                                {
-                                    song.providerJson = elem.Clone();
-                                    list.Add(song);
-                                }
-                                else
-                                {
-                                    droppedNullTrack++;
-                                    LogLine($"SongSync: dropped '{prop.Name}' — track or su is null (track={song?.track != null}, su={song?.track?.su ?? "null"})");
-                                }
-                            }
-                            else
-                            {
-                                droppedNoSu++;
-                                LogLine($"SongSync: dropped '{prop.Name}' — no \"su\" field found");
-                            }
+                            var (ec, msg) =
+                                HttpErrorHelper.ExtractError(content);
+                            var failure = HttpErrorHelper.FormatHttpError(
+                                "SongSync",
+                                res,
+                                content,
+                                ec,
+                                msg);
+                            LogLine(failure);
+                            return CreateFailedSongCatalogSyncResult(
+                                providerRequestSucceeded: false,
+                                failureReason: failure);
                         }
-                        catch (Exception ex)
+
+                        list = new List<Song>();
+                        totalObjects = 0;
+                        droppedNoSu = 0;
+                        droppedNullTrack = 0;
+                        droppedErrors = 0;
+                        duplicateSongIds = 0;
+                        var seenSongIds = new HashSet<string>(
+                            StringComparer.Ordinal);
+                        using (var doc = JsonDocument.Parse(content))
                         {
-                            droppedErrors++;
-                            LogLine($"SongSync: dropped '{prop.Name}' — parse error: {ex.Message}");
+                            foreach (var prop in doc.RootElement.EnumerateObject())
+                            {
+                                var elem = prop.Value;
+                                if (elem.ValueKind != JsonValueKind.Object)
+                                    continue;
+                                totalObjects++;
+                                try
+                                {
+                                    string raw = elem.GetRawText();
+                                    if (raw.IndexOf(
+                                            "\"su\":",
+                                            StringComparison.OrdinalIgnoreCase) >= 0)
+                                    {
+                                        var song = System.Text.Json.JsonSerializer
+                                            .Deserialize<Song>(raw);
+                                        if (song != null
+                                            && song.track != null
+                                            && song.track.su != null)
+                                        {
+                                            if (!seenSongIds.Add(song.track.su))
+                                                duplicateSongIds++;
+                                            song.providerJson = elem.Clone();
+                                            list.Add(song);
+                                        }
+                                        else
+                                        {
+                                            droppedNullTrack++;
+                                            LogLine($"SongSync: dropped '{prop.Name}' — track or su is null (track={song?.track != null}, su={song?.track?.su ?? "null"})");
+                                        }
+                                    }
+                                    else
+                                    {
+                                        droppedNoSu++;
+                                        LogLine($"SongSync: dropped '{prop.Name}' — no \"su\" field found");
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    droppedErrors++;
+                                    LogLine($"SongSync: dropped '{prop.Name}' — parse error: {ex.Message}");
+                                }
+                            }
                         }
                     }
                 }
-                if (droppedNoSu > 0 || droppedNullTrack > 0 || droppedErrors > 0)
-                    LogLine($"SongSync: parsed {list.Count} songs from {totalObjects} objects ({droppedNoSu} no su, {droppedNullTrack} null track, {droppedErrors} errors)");
+                catch (Exception ex)
+                {
+                    var failure = "Song sync failed: " + ex.Message;
+                    LogLine(failure);
+                    return CreateFailedSongCatalogSyncResult(
+                        providerRequestSucceeded: false,
+                        failureReason: failure);
+                }
+
+                var droppedProviderObjectCount =
+                    droppedNoSu
+                    + droppedNullTrack
+                    + droppedErrors
+                    + duplicateSongIds;
+                if (droppedProviderObjectCount > 0)
+                {
+                    LogLine(
+                        $"SongSync: parsed {list.Count} songs from {totalObjects} objects " +
+                        $"({droppedNoSu} no su, {droppedNullTrack} null track, " +
+                        $"{droppedErrors} errors, {duplicateSongIds} duplicate song IDs)");
+                }
+
                 Song[] songsToPersist;
+                var safetyMergeApplied = false;
+                string failureReason = null;
                 lock (_sync)
                 {
+                    if (list.Count == 0)
+                    {
+                        var failure =
+                            $"SongSync: provider returned 0 songs while {_songs.Count} songs are loaded; exact capture rejected.";
+                        LogLine(failure);
+                        return new SongCatalogSyncResult(
+                            providerRequestSucceeded: true,
+                            isExact: false,
+                            safetyMergeApplied: true,
+                            providerSongCount: 0,
+                            catalogSongCount: _songs.Count,
+                            droppedProviderObjectCount:
+                                droppedProviderObjectCount,
+                            failureReason: failure,
+                            persistenceToken: null);
+                    }
+
                     var incomingIds = new HashSet<string>(list.Select(s => s.track.su));
                     var stale = _songs.Keys.Where(k => !incomingIds.Contains(k)).ToList();
-
-                    // ── Safety: never evict if the API returned zero songs (likely outage) ──
-                    if (list.Count == 0 && _songs.Count > 0)
-                    {
-                        LogLine($"SongSync: API returned 0 songs but we have {_songs.Count} in memory — skipping eviction (probable API outage).");
-                        _songSyncComplete = true;
-                        return;
-                    }
 
                     // ── Safety: refuse bulk eviction (>10% of catalog) ──
                     if (stale.Count > 0 && _songs.Count > 0)
@@ -316,8 +392,12 @@ namespace FortniteFestival.Core.Services
                         double evictionPct = (double)stale.Count / _songs.Count * 100;
                         if (evictionPct > 10)
                         {
-                            LogLine($"SongSync: BLOCKED eviction of {stale.Count}/{_songs.Count} songs ({evictionPct:F1}% > 10% threshold). API may be returning a partial catalog.");
-                            // Still apply updates for songs that ARE present
+                            safetyMergeApplied = true;
+                            failureReason =
+                                $"Blocked eviction of {stale.Count}/{_songs.Count} songs " +
+                                $"({evictionPct:F1}% > 10% threshold).";
+                            LogLine(
+                                $"SongSync: {failureReason} API may be returning a partial catalog.");
                         }
                         else
                         {
@@ -340,13 +420,60 @@ namespace FortniteFestival.Core.Services
                     _songsDirty = true;
                     songsToPersist = _songs.Values.ToArray();
                 }
-                // removed info log (song sync complete)
-                if (persistCatalog && _persistence != null)
-                    await _persistence.SaveSongsAsync(songsToPersist).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                LogLine("Song sync failed: " + ex.Message);
+
+                var isExact =
+                    droppedProviderObjectCount == 0
+                    && !safetyMergeApplied;
+                if (!isExact)
+                {
+                    if (failureReason == null)
+                    {
+                        failureReason =
+                            $"Provider response dropped or duplicated {droppedProviderObjectCount} song object(s).";
+                    }
+                    else if (droppedProviderObjectCount > 0)
+                    {
+                        failureReason +=
+                            $" Provider response also dropped or duplicated {droppedProviderObjectCount} song object(s).";
+                    }
+
+                    return new SongCatalogSyncResult(
+                        providerRequestSucceeded: true,
+                        isExact: false,
+                        safetyMergeApplied:
+                            safetyMergeApplied,
+                        providerSongCount: list.Count,
+                        catalogSongCount: songsToPersist.Length,
+                        droppedProviderObjectCount:
+                            droppedProviderObjectCount,
+                        failureReason: failureReason,
+                        persistenceToken: null);
+                }
+
+                SongCatalogPersistenceToken persistenceToken = null;
+                if (_persistence is IVersionedSongCatalogPersistence versioned)
+                {
+                    persistenceToken = await versioned
+                        .SaveSongsVersionedAsync(songsToPersist)
+                        .ConfigureAwait(false);
+                }
+                else if (_persistence != null)
+                {
+                    await _persistence
+                        .SaveSongsAsync(songsToPersist)
+                        .ConfigureAwait(false);
+                }
+
+                return new SongCatalogSyncResult(
+                    providerRequestSucceeded: true,
+                    isExact: true,
+                    safetyMergeApplied: false,
+                    providerSongCount: list.Count,
+                    catalogSongCount: songsToPersist.Length,
+                    droppedProviderObjectCount: 0,
+                    failureReason: null,
+                    persistenceToken:
+                        persistenceToken);
             }
             finally
             {
@@ -355,23 +482,25 @@ namespace FortniteFestival.Core.Services
             }
         }
 
-        public async Task<SongCatalogPersistenceToken> PersistSongCatalogAsync()
+        private SongCatalogSyncResult CreateFailedSongCatalogSyncResult(
+            bool providerRequestSucceeded,
+            string failureReason)
         {
-            var versionedPersistence =
-                _persistence as IVersionedSongCatalogPersistence;
-            if (versionedPersistence == null)
+            int catalogSongCount;
+            lock (_sync)
             {
-                throw new InvalidOperationException(
-                    "The configured festival persistence does not support versioned song catalog capture.");
+                catalogSongCount = _songs.Count;
             }
 
-            Song[] songs;
-            lock (_sync)
-                songs = _songs.Values.ToArray();
-
-            return await versionedPersistence
-                .SaveSongsVersionedAsync(songs)
-                .ConfigureAwait(false);
+            return new SongCatalogSyncResult(
+                providerRequestSucceeded,
+                isExact: false,
+                safetyMergeApplied: false,
+                providerSongCount: 0,
+                catalogSongCount: catalogSongCount,
+                droppedProviderObjectCount: 0,
+                failureReason: failureReason,
+                persistenceToken: null);
         }
 
         private async Task SyncImagesAsync()
@@ -440,7 +569,7 @@ namespace FortniteFestival.Core.Services
                     }
                     try
                     {
-                        var imgBytes = await _httpContent
+                        var imgBytes = await _contentClient
                             .GetByteArrayAsync(url)
                             .ConfigureAwait(false);
                         System.IO.File.WriteAllBytes(expectedPath, imgBytes);

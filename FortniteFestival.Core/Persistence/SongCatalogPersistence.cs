@@ -23,6 +23,38 @@ namespace FortniteFestival.Core.Persistence
         }
     }
 
+    public sealed class SongCatalogSyncResult
+    {
+        public bool ProviderRequestSucceeded { get; }
+        public bool IsExact { get; }
+        public bool SafetyMergeApplied { get; }
+        public int ProviderSongCount { get; }
+        public int CatalogSongCount { get; }
+        public int DroppedProviderObjectCount { get; }
+        public string FailureReason { get; }
+        public SongCatalogPersistenceToken PersistenceToken { get; }
+
+        public SongCatalogSyncResult(
+            bool providerRequestSucceeded,
+            bool isExact,
+            bool safetyMergeApplied,
+            int providerSongCount,
+            int catalogSongCount,
+            int droppedProviderObjectCount,
+            string failureReason,
+            SongCatalogPersistenceToken persistenceToken)
+        {
+            ProviderRequestSucceeded = providerRequestSucceeded;
+            IsExact = isExact;
+            SafetyMergeApplied = safetyMergeApplied;
+            ProviderSongCount = providerSongCount;
+            CatalogSongCount = catalogSongCount;
+            DroppedProviderObjectCount = droppedProviderObjectCount;
+            FailureReason = failureReason;
+            PersistenceToken = persistenceToken;
+        }
+    }
+
     public interface IVersionedSongCatalogPersistence
     {
         Task<SongCatalogPersistenceToken> SaveSongsVersionedAsync(

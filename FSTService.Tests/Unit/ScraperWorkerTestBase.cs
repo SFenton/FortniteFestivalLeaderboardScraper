@@ -355,11 +355,48 @@ public abstract class ScraperWorkerTestBase : IDisposable
         throw new InvalidOperationException($"Method {methodName} did not return Task<{typeof(T).Name}>");
     }
 
+    protected long CountScrapeRuns()
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM scrape_log";
+        return (long)cmd.ExecuteScalar()!;
+    }
+
     protected FestivalService CreateServiceWithSongs(
         params (string id, string title, string artist)[] songs)
     {
+        var providerPayload = songs.ToDictionary(
+            static song => song.id,
+            static song => (object)new
+            {
+                _title = song.title,
+                track = new
+                {
+                    su = song.id,
+                    tt = song.title,
+                    an = song.artist,
+                    @in = new
+                    {
+                        gr = 5,
+                        ba = 3,
+                        vl = 4,
+                        ds = 2,
+                    },
+                },
+            });
+        var contentClient = new HttpClient(
+            new StaticProviderHandler(
+                System.Net.HttpStatusCode.OK,
+                System.Text.Json.JsonSerializer.Serialize(
+                    providerPayload)))
+        {
+            BaseAddress = new Uri(
+                "https://fortnitecontent-website-prod07.ol.epicgames.com"),
+        };
         var service = new FestivalService(
-            new FestivalPersistence(_metaFixture.DataSource));
+            new FestivalPersistence(_metaFixture.DataSource),
+            contentClient);
         var flags = BindingFlags.NonPublic | BindingFlags.Instance;
         var songsField = typeof(FestivalService).GetField("_songs", flags)!;
         var dirtyField = typeof(FestivalService).GetField("_songsDirty", flags)!;
@@ -377,6 +414,65 @@ public abstract class ScraperWorkerTestBase : IDisposable
         }
         dirtyField.SetValue(service, true);
         return service;
+    }
+
+    protected FestivalService CreateServiceWithFailedProviderSync(
+        params (string id, string title, string artist)[] songs)
+    {
+        var service = new FestivalService(
+            new FestivalPersistence(_metaFixture.DataSource),
+            new HttpClient(
+                new StaticProviderHandler(
+                    System.Net.HttpStatusCode.ServiceUnavailable,
+                    """{"errorCode":"errors.com.epicgames.service_unavailable"}"""))
+            {
+                BaseAddress = new Uri(
+                    "https://fortnitecontent-website-prod07.ol.epicgames.com"),
+            });
+        var flags = BindingFlags.NonPublic | BindingFlags.Instance;
+        var songsField = typeof(FestivalService).GetField("_songs", flags)!;
+        var dirtyField = typeof(FestivalService).GetField("_songsDirty", flags)!;
+        var dict = (Dictionary<string, Song>)songsField.GetValue(service)!;
+        foreach (var (id, title, artist) in songs)
+        {
+            dict[id] = new Song
+            {
+                track = new Track
+                {
+                    su = id,
+                    tt = title,
+                    an = artist,
+                    @in = new In(),
+                },
+            };
+        }
+        dirtyField.SetValue(service, true);
+        return service;
+    }
+
+    private sealed class StaticProviderHandler : HttpMessageHandler
+    {
+        private readonly System.Net.HttpStatusCode _statusCode;
+        private readonly string _content;
+
+        public StaticProviderHandler(
+            System.Net.HttpStatusCode statusCode,
+            string content)
+        {
+            _statusCode = statusCode;
+            _content = content;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(_statusCode)
+            {
+                Content = new StringContent(
+                    _content,
+                    System.Text.Encoding.UTF8,
+                    "application/json"),
+            });
     }
 
     protected static void WriteBE(Stream s, int v) { s.WriteByte((byte)(v>>24)); s.WriteByte((byte)(v>>16)); s.WriteByte((byte)(v>>8)); s.WriteByte((byte)v); }

@@ -732,8 +732,14 @@ endpoint reader:
   monotonic catalog version, schema version, SHA-256, count, source kind,
   exactness, and capture time;
 - worker sync replaces every provider-owned field while retaining only local
-  UI state. It then explicitly persists the exact in-memory catalog and passes
-  the returned version/hash token to `ScrapeOrchestrator`;
+  UI state. `SyncSongsWithResultAsync` reports request success, parse drops,
+  duplicate IDs, zero-catalog responses, blocked eviction/safety merges, and
+  the persistence token. Only a successful fully parsed response with no
+  safety merge is persisted as `provider_exact`;
+- the worker requires that exact result and token before freezing reads or
+  allocating a scrape. Failed, partial, zero-song, or safety-merged refreshes
+  abort the pass with no `scrape_log`, generation, ready binding, or live
+  exactness promotion;
 - `ScrapeOrchestrator` snapshots the same songs used to build scrape requests,
   verifies their hash/count against the persistence token, and
   `StartScrapeRun` rejects any service/worker race before inserting a scrape

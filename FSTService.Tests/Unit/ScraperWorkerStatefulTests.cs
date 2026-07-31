@@ -413,6 +413,81 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
     // ═══════════════════════════════════════════════════════════════
 
     [Fact]
+    public async Task RunScrapePass_FailedProviderSyncCannotPromoteLegacyCatalog()
+    {
+        using (var conn = _metaFixture.DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                DELETE FROM live_song_catalog
+                WHERE id = TRUE;
+                UPDATE songs
+                SET provider_json = NULL;
+                INSERT INTO songs (
+                    song_id, title, artist, active_date, last_modified)
+                VALUES (
+                    'legacy-song', 'Legacy Song', 'Legacy Artist',
+                    '2026-07-30T00:00:00Z',
+                    '2026-07-31T00:00:00Z')
+                ON CONFLICT (song_id) DO UPDATE SET
+                    title = EXCLUDED.title,
+                    artist = EXCLUDED.artist,
+                    provider_json = NULL;
+                """;
+            cmd.ExecuteNonQuery();
+        }
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _metaFixture.DataSource);
+
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>("token"));
+        _tokenManager.AccountId.Returns("callerAcct");
+        var service = CreateServiceWithFailedProviderSync(
+            ("legacy-song", "Legacy Song", "Legacy Artist"));
+        var opts = new ScraperOptions
+        {
+            DataDirectory = _tempDir,
+            DegreeOfParallelism = 2,
+        };
+        var worker = CreateWorker(opts);
+        var scrapeCountBefore = CountScrapeRuns();
+
+        await InvokePrivateAsync(
+            worker,
+            "RunScrapePassAsync",
+            service,
+            opts,
+            CancellationToken.None);
+
+        Assert.Equal(scrapeCountBefore, CountScrapeRuns());
+        Assert.Null(
+            _metaDb.GetPublicationPointerState().WorkingPublicationId);
+        using var verifyConn =
+            _metaFixture.DataSource.OpenConnection();
+        using var verify = verifyConn.CreateCommand();
+        verify.CommandText = """
+            SELECT
+                source_kind,
+                is_exact,
+                (
+                    SELECT COUNT(*)
+                    FROM publication_surface_bindings
+                    WHERE surface_name = 'song_catalog'
+                      AND status = 'ready'
+                )
+            FROM live_song_catalog
+            WHERE id = TRUE
+            """;
+        using var reader = verify.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(
+            "legacy_columns_reconstructed",
+            reader.GetString(0));
+        Assert.False(reader.GetBoolean(1));
+        Assert.Equal(0L, reader.GetInt64(2));
+    }
+
+    [Fact]
     public async Task RunScrapePass_WithRegisteredUsers_RefreshesAndBackfills()
     {
         var service = CreateServiceWithSongs(("s1", "Song One", "Artist"));

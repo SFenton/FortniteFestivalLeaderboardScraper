@@ -102,12 +102,15 @@ The legacy cache remains as a rollback compatibility mirror.
 
 Song catalog sync now also persists a deterministic provider-only live
 snapshot, including unknown Epic extension fields, plus exact per-song
-`provider_json` for restart recovery. The worker persists the exact catalog it
-will scrape, receives a version/hash token, and allocation accepts only that
-same exact token under the publication lock. Legacy-column reconstruction is
-explicitly incomplete and produces a `building` binding until a fresh provider
-capture exists; it is never promoted as historical source-cut truth. Current,
-previous, and working exact generations are retained. `/api/songs`,
+`provider_json` for restart recovery. Catalog sync returns an explicit capture
+result and persists only a successful, fully parsed provider response with no
+safety merge or blocked eviction. The worker aborts before scrape allocation
+when that result is inexact, otherwise it passes the returned version/hash
+token and allocation accepts only that same exact token under the publication
+lock. Legacy-column reconstruction is explicitly incomplete and produces a
+`building` binding until a fresh provider capture exists; it is never promoted
+as historical source-cut truth. Current, previous, and working exact
+generations are retained. `/api/songs`,
 `/api/shop`, and path readers still use their legacy live sources, so this
 storage is additive and `Features__EnablePublicationReadContext` remains
 `false`. Rollback deploys the prior binary and leaves the new columns/tables

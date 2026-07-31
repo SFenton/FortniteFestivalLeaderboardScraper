@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Persistence;
@@ -234,12 +235,80 @@ public sealed class FestivalPersistenceTests : IDisposable
     public async Task Explicit_catalog_persistence_failure_is_not_swallowed()
     {
         var service = new FestivalService(
-            new ThrowingVersionedPersistence());
+            new ThrowingVersionedPersistence(),
+            CreateProviderClient(
+                System.Net.HttpStatusCode.OK,
+                LoadProviderFixtureJson()));
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            service.PersistSongCatalogAsync);
+            service.SyncSongsWithResultAsync);
 
         Assert.Equal("injected catalog persistence failure", exception.Message);
+    }
+
+    [Fact]
+    public async Task Exact_provider_sync_returns_persisted_capture_token()
+    {
+        var service = new FestivalService(
+            new FestivalPersistence(_dataSource),
+            CreateProviderClient(
+                System.Net.HttpStatusCode.OK,
+                LoadProviderFixtureJson()));
+
+        var result = await service.SyncSongsWithResultAsync();
+
+        Assert.True(result.ProviderRequestSucceeded);
+        Assert.True(result.IsExact);
+        Assert.False(result.SafetyMergeApplied);
+        Assert.Equal(1, result.ProviderSongCount);
+        Assert.Equal(1, result.CatalogSongCount);
+        Assert.Equal(0, result.DroppedProviderObjectCount);
+        Assert.Null(result.FailureReason);
+        Assert.NotNull(result.PersistenceToken);
+        Assert.Equal(
+            ReadLiveCatalogHash(),
+            result.PersistenceToken.ContentHash);
+    }
+
+    [Fact]
+    public async Task Safety_merged_provider_sync_does_not_persist_exact_catalog()
+    {
+        var persistence = new FestivalPersistence(_dataSource);
+        var loadedSongs = Enumerable.Range(1, 20)
+            .Select(index =>
+                CreateSong($"song-{index:D2}", $"Song {index:D2}"))
+            .ToArray();
+        var originalToken =
+            await persistence.SaveSongsVersionedAsync(loadedSongs);
+        var partialPayload = JsonSerializer.Serialize(
+            new Dictionary<string, object>
+            {
+                ["song-01"] = new
+                {
+                    _title = "Song 01 updated",
+                    track = new
+                    {
+                        su = "song-01",
+                        tt = "Song 01 updated",
+                        an = "Artist",
+                    },
+                },
+            });
+        var service = new FestivalService(
+            persistence,
+            CreateProviderClient(
+                System.Net.HttpStatusCode.OK,
+                partialPayload));
+        SetSongs(service, loadedSongs);
+
+        var result = await service.SyncSongsWithResultAsync();
+
+        Assert.True(result.ProviderRequestSucceeded);
+        Assert.False(result.IsExact);
+        Assert.True(result.SafetyMergeApplied);
+        Assert.Null(result.PersistenceToken);
+        Assert.Contains("Blocked eviction", result.FailureReason);
+        Assert.Equal(originalToken.ContentHash, ReadLiveCatalogHash());
     }
 
     private static Song CreateSong(string songId, string title) =>
@@ -296,14 +365,82 @@ public sealed class FestivalPersistenceTests : IDisposable
 
     private static string LoadProviderFixtureSongJson()
     {
+        using var document =
+            JsonDocument.Parse(LoadProviderFixtureJson());
+        return document.RootElement
+            .GetProperty("fixture-song")
+            .GetRawText();
+    }
+
+    private static string LoadProviderFixtureJson()
+    {
         var path = Path.Combine(
             AppContext.BaseDirectory,
             "Fixtures",
             "epic-song-provider.json");
-        using var document = JsonDocument.Parse(File.ReadAllText(path));
-        return document.RootElement
-            .GetProperty("fixture-song")
-            .GetRawText();
+        return File.ReadAllText(path);
+    }
+
+    private static HttpClient CreateProviderClient(
+        System.Net.HttpStatusCode statusCode,
+        string content) =>
+        new(new StaticProviderHandler(statusCode, content))
+        {
+            BaseAddress = new Uri(
+                "https://fortnitecontent-website-prod07.ol.epicgames.com"),
+        };
+
+    private static void SetSongs(
+        FestivalService service,
+        IEnumerable<Song> songs)
+    {
+        var flags = BindingFlags.NonPublic | BindingFlags.Instance;
+        var songsField =
+            typeof(FestivalService).GetField("_songs", flags)!;
+        var dirtyField =
+            typeof(FestivalService).GetField("_songsDirty", flags)!;
+        var dictionary =
+            (Dictionary<string, Song>)songsField.GetValue(service)!;
+        foreach (var song in songs)
+            dictionary[song.track.su] = song;
+        dirtyField.SetValue(service, true);
+    }
+
+    private string ReadLiveCatalogHash()
+    {
+        using var conn = _dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT content_hash
+            FROM live_song_catalog
+            WHERE id = TRUE
+            """;
+        return (string)cmd.ExecuteScalar()!;
+    }
+
+    private sealed class StaticProviderHandler : HttpMessageHandler
+    {
+        private readonly System.Net.HttpStatusCode _statusCode;
+        private readonly string _content;
+
+        public StaticProviderHandler(
+            System.Net.HttpStatusCode statusCode,
+            string content)
+        {
+            _statusCode = statusCode;
+            _content = content;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(_statusCode)
+            {
+                Content = new StringContent(
+                    _content,
+                    System.Text.Encoding.UTF8,
+                    "application/json"),
+            });
     }
 
     private sealed class ThrowingVersionedPersistence :

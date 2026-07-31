@@ -47,7 +47,7 @@ namespace FortniteFestival.Core.Services
         ) GetInstrumentation();
         Task InitializeAsync(); // load DB, initial song sync
         Task SyncSongsAsync();
-        Task<SongCatalogPersistenceToken> PersistSongCatalogAsync();
+        Task<SongCatalogSyncResult> SyncSongsWithResultAsync();
         Task<bool> FetchScoresAsync(
             string exchangeCode,
             int degreeOfParallelism,

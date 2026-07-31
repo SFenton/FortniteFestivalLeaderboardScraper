@@ -473,8 +473,29 @@ public sealed class ScraperWorker : BackgroundService
             }
 
             // Re-sync the song catalog in case new songs appeared
-            await service.SyncSongsAsync(persistCatalog: false);
-            var songCatalogToken = await service.PersistSongCatalogAsync();
+            var songCatalogCapture =
+                await service.SyncSongsWithResultAsync();
+            if (!songCatalogCapture.IsExact
+                || songCatalogCapture.PersistenceToken is null)
+            {
+                passDetail =
+                    $"Exact provider song catalog refresh failed: " +
+                    $"{songCatalogCapture.FailureReason ?? "no exact persistence token"}";
+                _log.LogError(
+                    "Aborting scrape before allocation because the provider song catalog is not exact. " +
+                    "RequestSucceeded={RequestSucceeded}, SafetyMerge={SafetyMerge}, " +
+                    "ProviderSongs={ProviderSongs}, CatalogSongs={CatalogSongs}, " +
+                    "DroppedObjects={DroppedObjects}, Reason={Reason}",
+                    songCatalogCapture.ProviderRequestSucceeded,
+                    songCatalogCapture.SafetyMergeApplied,
+                    songCatalogCapture.ProviderSongCount,
+                    songCatalogCapture.CatalogSongCount,
+                    songCatalogCapture.DroppedProviderObjectCount,
+                    songCatalogCapture.FailureReason);
+                return;
+            }
+            var songCatalogToken =
+                songCatalogCapture.PersistenceToken;
             _persistence.InvalidateTotalSongCount();
 
             // Keep this worker's local song list current for scrape requests. Public
