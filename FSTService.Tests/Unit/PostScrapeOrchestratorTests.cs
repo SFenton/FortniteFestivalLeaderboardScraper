@@ -677,6 +677,314 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task CyclicalSongMachine_LateMismatchedSeason_DefersAttachmentUntilMatchingCycle()
+    {
+        const string firstAccount = "user-season-14";
+        const string lateAccount = "user-season-15";
+        const string season14Window = "season_14_competitive";
+        const string season15Window = "season_15_competitive";
+
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns("test-access-token");
+        _tokenManager.AccountId.Returns("caller-001");
+
+        var allTimeCalls =
+            new System.Collections.Concurrent.ConcurrentBag<(string SongId, string[] Accounts)>();
+        var seasonalCalls =
+            new System.Collections.Concurrent.ConcurrentBag<(string SongId, string WindowId, string[] Accounts)>();
+        var firstSongStarted = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstSong = new TaskCompletionSource<List<SessionHistoryEntry>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var querier = Substitute.For<ILeaderboardQuerier>();
+        querier.LookupMultipleAccountsAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>(),
+            true)
+            .Returns(call =>
+            {
+                allTimeCalls.Add((
+                    call.ArgAt<string>(0),
+                    call.ArgAt<IReadOnlyList<string>>(2).ToArray()));
+                return new List<LeaderboardEntry>();
+            });
+        querier.LookupMultipleAccountSessionsAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>(),
+            true)
+            .Returns(call =>
+            {
+                var songId = call.ArgAt<string>(0);
+                var instrument = call.ArgAt<string>(1);
+                var windowId = call.ArgAt<string>(2);
+                var accounts = call.ArgAt<IReadOnlyList<string>>(3).ToArray();
+                seasonalCalls.Add((songId, windowId, accounts));
+                if (songId == "song-a"
+                    && instrument == "Solo_Guitar"
+                    && accounts.SequenceEqual([firstAccount]))
+                {
+                    firstSongStarted.TrySetResult(true);
+                    return releaseFirstSong.Task;
+                }
+
+                return Task.FromResult(new List<SessionHistoryEntry>());
+            });
+
+        var syncTracker = new UserSyncProgressTracker(
+            new NotificationService(NullLogger<NotificationService>.Instance),
+            NullLogger<UserSyncProgressTracker>.Instance);
+        var innerMachine = new SongProcessingMachine(
+            querier,
+            new BatchResultProcessor(
+                _persistence,
+                Substitute.For<ILogger<BatchResultProcessor>>()),
+            _persistence,
+            _progress,
+            syncTracker,
+            Substitute.For<ILogger<SongProcessingMachine>>());
+        var historyReconstructor = Substitute.For<HistoryReconstructor>(
+            querier,
+            _persistence,
+            new HttpClient(),
+            _progress,
+            syncTracker,
+            Substitute.For<ILogger<HistoryReconstructor>>());
+        var cyclicalMachine = new CyclicalSongMachine(
+            innerMachine,
+            historyReconstructor,
+            _tokenManager,
+            _pool,
+            _progress,
+            syncTracker,
+            _persistence,
+            Options.Create(new ScraperOptions
+            {
+                SongMachineDop = 1,
+                RefreshCurrentSeasonSessions = true,
+            }),
+            Substitute.For<ILogger<CyclicalSongMachine>>());
+        var firstWindows = new[]
+        {
+            new SeasonWindowInfo
+            {
+                SeasonNumber = 14,
+                WindowId = season14Window,
+                SourceKind = "event_api",
+                IsFreshAuthoritative = true,
+            },
+        };
+        var lateWindows = new[]
+        {
+            new SeasonWindowInfo
+            {
+                SeasonNumber = 15,
+                WindowId = season15Window,
+                SourceKind = "event_api",
+                IsFreshAuthoritative = true,
+            },
+        };
+        var lateCompletedScopes =
+            new System.Collections.Concurrent.ConcurrentBag<SoloCurrentProjectionScopeKey>();
+
+        var firstTask = cyclicalMachine.AttachAsync(
+            [
+                new UserWorkItem
+                {
+                    AccountId = firstAccount,
+                    Purposes = WorkPurpose.PostScrape,
+                    AllTimeNeeded = true,
+                    SeasonsNeeded = [14],
+                },
+            ],
+            ["song-a", "song-b"],
+            firstWindows,
+            SongMachineSource.PostScrape,
+            isHighPriority: true,
+            attachmentOptions: new CyclicalSongMachine.AttachmentOptions(
+                PreserveSongOrder: true,
+                OnScopesCompleted: _ => ValueTask.CompletedTask,
+                CurrentSeason: 14,
+                CurrentSeasonLookupId: season14Window));
+
+        await firstSongStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var lateTask = cyclicalMachine.AttachAsync(
+            [
+                new UserWorkItem
+                {
+                    AccountId = lateAccount,
+                    Purposes = WorkPurpose.PostScrape,
+                    AllTimeNeeded = true,
+                    SeasonsNeeded = [15],
+                },
+            ],
+            ["song-b"],
+            lateWindows,
+            SongMachineSource.PostScrape,
+            isHighPriority: true,
+            attachmentOptions: new CyclicalSongMachine.AttachmentOptions(
+                PreserveSongOrder: true,
+                OnScopesCompleted: scopes =>
+                {
+                    foreach (var scope in scopes)
+                        lateCompletedScopes.Add(scope);
+                    return ValueTask.CompletedTask;
+                },
+                CurrentSeason: 15,
+                CurrentSeasonLookupId: season15Window));
+
+        Assert.Empty(lateCompletedScopes);
+        releaseFirstSong.SetResult([]);
+        await firstTask.WaitAsync(TimeSpan.FromSeconds(20));
+        await lateTask.WaitAsync(TimeSpan.FromSeconds(20));
+
+        Assert.DoesNotContain(allTimeCalls, call =>
+            call.SongId == "song-b"
+            && call.Accounts.Contains(firstAccount)
+            && call.Accounts.Contains(lateAccount));
+        Assert.Contains(allTimeCalls, call =>
+            call.SongId == "song-b"
+            && call.Accounts.SequenceEqual([firstAccount]));
+        Assert.Contains(allTimeCalls, call =>
+            call.SongId == "song-b"
+            && call.Accounts.SequenceEqual([lateAccount]));
+        Assert.Contains(seasonalCalls, call =>
+            call.SongId == "song-b"
+            && call.WindowId == season15Window
+            && call.Accounts.SequenceEqual([lateAccount]));
+        Assert.Equal(
+            GlobalLeaderboardScraper.AllInstruments.Count,
+            lateCompletedScopes.Count);
+    }
+
+    [Fact]
+    public async Task CyclicalSongMachine_HistoryPair_WaitsForFullSeasonPassSuccess()
+    {
+        const string accountId = "history-user";
+        const string fingerprint = "history-fingerprint";
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns("test-access-token");
+        _tokenManager.AccountId.Returns("caller-001");
+
+        var querier = Substitute.For<ILeaderboardQuerier>();
+        querier.LookupMultipleAccountSessionsAsync(
+            "song-history",
+            Arg.Any<string>(),
+            "season014",
+            Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>(),
+            true)
+            .Returns(Task.FromException<List<SessionHistoryEntry>>(
+                new HttpRequestException("season 14 failed")));
+        querier.LookupMultipleAccountSessionsAsync(
+            "song-history",
+            Arg.Any<string>(),
+            "season015",
+            Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>(),
+            true)
+            .Returns([]);
+
+        var syncTracker = new UserSyncProgressTracker(
+            new NotificationService(NullLogger<NotificationService>.Instance),
+            NullLogger<UserSyncProgressTracker>.Instance);
+        var innerMachine = new SongProcessingMachine(
+            querier,
+            new BatchResultProcessor(
+                _persistence,
+                Substitute.For<ILogger<BatchResultProcessor>>()),
+            _persistence,
+            _progress,
+            syncTracker,
+            Substitute.For<ILogger<SongProcessingMachine>>());
+        var historyReconstructor = Substitute.For<HistoryReconstructor>(
+            querier,
+            _persistence,
+            new HttpClient(),
+            _progress,
+            syncTracker,
+            Substitute.For<ILogger<HistoryReconstructor>>());
+        var cyclicalMachine = new CyclicalSongMachine(
+            innerMachine,
+            historyReconstructor,
+            _tokenManager,
+            _pool,
+            _progress,
+            syncTracker,
+            _persistence,
+            Options.Create(new ScraperOptions { SongMachineDop = 1 }),
+            Substitute.For<ILogger<CyclicalSongMachine>>());
+        _metaDb.EnqueueHistoryRecon(
+            accountId,
+            1,
+            HistoryReconstructor.CurrentReconstructionVersion,
+            fingerprint);
+
+        await cyclicalMachine.AttachAsync(
+            [
+                new UserWorkItem
+                {
+                    AccountId = accountId,
+                    Purposes = WorkPurpose.HistoryRecon,
+                    AllTimeNeeded = false,
+                    SeasonsNeeded = [14, 15],
+                    HistoryReconstructionVersion =
+                        HistoryReconstructor.CurrentReconstructionVersion,
+                    HistoryWindowFingerprint = fingerprint,
+                },
+            ],
+            ["song-history"],
+            [
+                new SeasonWindowInfo
+                {
+                    SeasonNumber = 14,
+                    WindowId = "season014",
+                    SourceKind = "event_api",
+                },
+                new SeasonWindowInfo
+                {
+                    SeasonNumber = 15,
+                    WindowId = "season015",
+                    SourceKind = "event_api",
+                },
+            ],
+            SongMachineSource.HistoryRecon,
+            isHighPriority: false);
+
+        Assert.Empty(_metaDb.GetProcessedHistoryReconPairs(
+            accountId,
+            HistoryReconstructor.CurrentReconstructionVersion,
+            fingerprint));
+        await querier.Received().LookupMultipleAccountSessionsAsync(
+            "song-history",
+            Arg.Any<string>(),
+            "season014",
+            Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>(),
+            true);
+    }
+
+    [Fact]
     public async Task RefreshRegisteredUsers_orders_least_covered_songs_and_logs_bounded_telemetry()
     {
         _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
@@ -1945,6 +2253,8 @@ public class PostScrapeOrchestratorTests : IDisposable
                 SeasonNumber = 15,
                 EventId = "season15-event",
                 WindowId = "season_15_competitive",
+                SourceKind = "event_api",
+                IsFreshAuthoritative = true,
             },
         };
         _historyReconstructor.DiscoverSeasonWindowsAsync(
@@ -1959,11 +2269,13 @@ public class PostScrapeOrchestratorTests : IDisposable
         _firstSeenCalculator.CalculateAsync(
             Arg.Any<FestivalService>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<SharedDopPool>(), Arg.Any<CancellationToken>(),
-            Arg.Any<IReadOnlyList<SeasonWindowInfo>?>())
+            Arg.Any<IReadOnlyList<SeasonWindowInfo>?>(),
+            Arg.Any<bool>())
             .Returns(call =>
             {
                 callOrder.Add("calculate");
                 Assert.Same(discoveredWindows, call.ArgAt<IReadOnlyList<SeasonWindowInfo>>(5));
+                Assert.True(call.ArgAt<bool>(6));
                 return 5;
             });
 
@@ -1979,7 +2291,8 @@ public class PostScrapeOrchestratorTests : IDisposable
             Arg.Is<IReadOnlyList<SeasonWindowInfo>?>(windows =>
                 windows != null &&
                 windows.Count == 1 &&
-                windows[0].WindowId == "season_15_competitive"));
+                windows[0].WindowId == "season_15_competitive"),
+            true);
         Assert.Equal(["discover", "calculate"], callOrder);
     }
 
@@ -1993,7 +2306,8 @@ public class PostScrapeOrchestratorTests : IDisposable
         _firstSeenCalculator.CalculateAsync(
             Arg.Any<FestivalService>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<SharedDopPool>(), Arg.Any<CancellationToken>(),
-            Arg.Any<IReadOnlyList<SeasonWindowInfo>?>())
+            Arg.Any<IReadOnlyList<SeasonWindowInfo>?>(),
+            Arg.Any<bool>())
             .ThrowsAsync(new InvalidOperationException("test error"));
 
         var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);

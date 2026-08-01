@@ -1432,6 +1432,9 @@ Use one token owner or an atomic, locked, permission-restricted shared store.
 - Resolve that same exact window before FirstSeenSeason, registered-band
   discovery/processing, and legacy history reconstruction; invalidate stale
   progress/version state and fail completion on missing required coverage.
+- Snapshot the active cyclical window fingerprint so mismatched late
+  attachments defer, and version history pair completion by the exact window
+  map so legacy/changed-window state cannot remain falsely complete.
 - Keep registration backfill, history reconstruction, and solo-projection
   dirty-scope persistence outside this recurring-refresh ledger.
 

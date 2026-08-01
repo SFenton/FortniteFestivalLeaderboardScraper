@@ -58,6 +58,8 @@ public abstract class SongMachineWorkItem
 public sealed class UserWorkItem : SongMachineWorkItem
 {
     public required string AccountId { get; init; }
+    public int HistoryReconstructionVersion { get; init; }
+    public string HistoryWindowFingerprint { get; init; } = "";
 }
 
 /// <summary>

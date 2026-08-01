@@ -4234,21 +4234,179 @@ public sealed class MetaDatabase : IMetaDatabase
 
     // ── History reconstruction ───────────────────────────────────────
 
-    public void EnqueueHistoryRecon(string accountId, int totalSongsToProcess) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO history_recon_status (account_id, status, total_songs_to_process) VALUES (@id, 'pending', @total) ON CONFLICT(account_id) DO UPDATE SET status = CASE WHEN history_recon_status.status = 'complete' THEN history_recon_status.status ELSE 'pending' END, total_songs_to_process = EXCLUDED.total_songs_to_process WHERE history_recon_status.status != 'complete'"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("total", totalSongsToProcess); cmd.ExecuteNonQuery(); }
-    public List<HistoryReconStatusInfo> GetPendingHistoryRecons() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id, status, songs_processed, total_songs_to_process, seasons_queried, history_entries_found, started_at, completed_at, error_message FROM history_recon_status WHERE status IN ('pending', 'in_progress')"; var list = new List<HistoryReconStatusInfo>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadHistoryReconStatus(r)); return list; }
-    public HistoryReconStatusInfo? GetHistoryReconStatus(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id, status, songs_processed, total_songs_to_process, seasons_queried, history_entries_found, started_at, completed_at, error_message FROM history_recon_status WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); using var r = cmd.ExecuteReader(); return r.Read() ? ReadHistoryReconStatus(r) : null; }
+    public void EnqueueHistoryRecon(string accountId, int totalSongsToProcess)
+        => EnqueueHistoryRecon(accountId, totalSongsToProcess, 0, "");
+    public void EnqueueHistoryRecon(string accountId, int totalSongsToProcess, int reconstructionVersion, string windowFingerprint)
+    {
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO history_recon_status (
+                    account_id,
+                    status,
+                    total_songs_to_process,
+                    reconstruction_version,
+                    window_fingerprint)
+                VALUES (
+                    @id,
+                    'pending',
+                    @total,
+                    @version,
+                    @fingerprint)
+                ON CONFLICT(account_id) DO UPDATE SET
+                    status = CASE
+                        WHEN history_recon_status.reconstruction_version = EXCLUDED.reconstruction_version
+                         AND history_recon_status.window_fingerprint = EXCLUDED.window_fingerprint
+                         AND history_recon_status.status = 'complete'
+                        THEN 'complete'
+                        ELSE 'pending'
+                    END,
+                    songs_processed = CASE
+                        WHEN history_recon_status.reconstruction_version = EXCLUDED.reconstruction_version
+                         AND history_recon_status.window_fingerprint = EXCLUDED.window_fingerprint
+                        THEN history_recon_status.songs_processed
+                        ELSE 0
+                    END,
+                    seasons_queried = CASE
+                        WHEN history_recon_status.reconstruction_version = EXCLUDED.reconstruction_version
+                         AND history_recon_status.window_fingerprint = EXCLUDED.window_fingerprint
+                        THEN history_recon_status.seasons_queried
+                        ELSE 0
+                    END,
+                    history_entries_found = CASE
+                        WHEN history_recon_status.reconstruction_version = EXCLUDED.reconstruction_version
+                         AND history_recon_status.window_fingerprint = EXCLUDED.window_fingerprint
+                        THEN history_recon_status.history_entries_found
+                        ELSE 0
+                    END,
+                    total_songs_to_process = EXCLUDED.total_songs_to_process,
+                    started_at = CASE
+                        WHEN history_recon_status.reconstruction_version = EXCLUDED.reconstruction_version
+                         AND history_recon_status.window_fingerprint = EXCLUDED.window_fingerprint
+                        THEN history_recon_status.started_at
+                        ELSE NULL
+                    END,
+                    completed_at = CASE
+                        WHEN history_recon_status.reconstruction_version = EXCLUDED.reconstruction_version
+                         AND history_recon_status.window_fingerprint = EXCLUDED.window_fingerprint
+                         AND history_recon_status.status = 'complete'
+                        THEN history_recon_status.completed_at
+                        ELSE NULL
+                    END,
+                    error_message = NULL,
+                    reconstruction_version = EXCLUDED.reconstruction_version,
+                    window_fingerprint = EXCLUDED.window_fingerprint
+                """;
+            cmd.Parameters.AddWithValue("id", accountId);
+            cmd.Parameters.AddWithValue("total", totalSongsToProcess);
+            cmd.Parameters.AddWithValue("version", reconstructionVersion);
+            cmd.Parameters.AddWithValue("fingerprint", windowFingerprint);
+            cmd.ExecuteNonQuery();
+        }
+
+        using (var cleanup = conn.CreateCommand())
+        {
+            cleanup.Transaction = tx;
+            cleanup.CommandText = """
+                DELETE FROM history_recon_progress
+                WHERE account_id = @id
+                  AND (
+                      reconstruction_version <> @version
+                      OR window_fingerprint <> @fingerprint)
+                """;
+            cleanup.Parameters.AddWithValue("id", accountId);
+            cleanup.Parameters.AddWithValue("version", reconstructionVersion);
+            cleanup.Parameters.AddWithValue("fingerprint", windowFingerprint);
+            cleanup.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+    }
+    public List<HistoryReconStatusInfo> GetPendingHistoryRecons() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id, status, songs_processed, total_songs_to_process, seasons_queried, history_entries_found, started_at, completed_at, error_message, reconstruction_version, window_fingerprint FROM history_recon_status WHERE status IN ('pending', 'in_progress')"; var list = new List<HistoryReconStatusInfo>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadHistoryReconStatus(r)); return list; }
+    public HistoryReconStatusInfo? GetHistoryReconStatus(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id, status, songs_processed, total_songs_to_process, seasons_queried, history_entries_found, started_at, completed_at, error_message, reconstruction_version, window_fingerprint FROM history_recon_status WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); using var r = cmd.ExecuteReader(); return r.Read() ? ReadHistoryReconStatus(r) : null; }
     public void StartHistoryRecon(string accountId) { SimpleUpdate("UPDATE history_recon_status SET status = 'in_progress', started_at = COALESCE(started_at, @now) WHERE account_id = @id", accountId); }
     public void CompleteHistoryRecon(string accountId) { SimpleUpdate("UPDATE history_recon_status SET status = 'complete', completed_at = @now WHERE account_id = @id", accountId); }
+    public void CompleteHistoryRecon(string accountId, int reconstructionVersion, string windowFingerprint)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE history_recon_status
+            SET status = 'complete',
+                completed_at = @now,
+                error_message = NULL
+            WHERE account_id = @id
+              AND reconstruction_version = @version
+              AND window_fingerprint = @fingerprint
+            """;
+        cmd.Parameters.AddWithValue("id", accountId);
+        cmd.Parameters.AddWithValue("version", reconstructionVersion);
+        cmd.Parameters.AddWithValue("fingerprint", windowFingerprint);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
     public void FailHistoryRecon(string accountId, string errorMessage) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE history_recon_status SET status = 'error', error_message = @err WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("err", errorMessage); cmd.ExecuteNonQuery(); }
     public void UpdateHistoryReconProgress(string accountId, int songsProcessed, int seasonsQueried, int historyEntriesFound) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE history_recon_status SET songs_processed = @songs, seasons_queried = @seasons, history_entries_found = @entries WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("songs", songsProcessed); cmd.Parameters.AddWithValue("seasons", seasonsQueried); cmd.Parameters.AddWithValue("entries", historyEntriesFound); cmd.ExecuteNonQuery(); }
-    public void MarkHistoryReconSongProcessed(string accountId, string songId, string instrument) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO history_recon_progress (account_id, song_id, instrument, processed, processed_at) VALUES (@acct, @song, @inst, 1, @now) ON CONFLICT(account_id, song_id, instrument) DO UPDATE SET processed = 1, processed_at = EXCLUDED.processed_at"; cmd.Parameters.AddWithValue("acct", accountId); cmd.Parameters.AddWithValue("song", songId); cmd.Parameters.AddWithValue("inst", instrument); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }
-    public HashSet<(string SongId, string Instrument)> GetProcessedHistoryReconPairs(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT song_id, instrument FROM history_recon_progress WHERE account_id = @acct AND processed = 1"; cmd.Parameters.AddWithValue("acct", accountId); var set = new HashSet<(string, string)>(); using var r = cmd.ExecuteReader(); while (r.Read()) set.Add((r.GetString(0), r.GetString(1))); return set; }
+    public void MarkHistoryReconSongProcessed(string accountId, string songId, string instrument)
+        => MarkHistoryReconSongProcessed(accountId, songId, instrument, 0, "");
+    public void MarkHistoryReconSongProcessed(string accountId, string songId, string instrument, int reconstructionVersion, string windowFingerprint) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO history_recon_progress (account_id, song_id, instrument, processed, processed_at, reconstruction_version, window_fingerprint) VALUES (@acct, @song, @inst, 1, @now, @version, @fingerprint) ON CONFLICT(account_id, song_id, instrument) DO UPDATE SET processed = 1, processed_at = EXCLUDED.processed_at, reconstruction_version = EXCLUDED.reconstruction_version, window_fingerprint = EXCLUDED.window_fingerprint"; cmd.Parameters.AddWithValue("acct", accountId); cmd.Parameters.AddWithValue("song", songId); cmd.Parameters.AddWithValue("inst", instrument); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.Parameters.AddWithValue("version", reconstructionVersion); cmd.Parameters.AddWithValue("fingerprint", windowFingerprint); cmd.ExecuteNonQuery(); }
+    public HashSet<(string SongId, string Instrument)> GetProcessedHistoryReconPairs(string accountId)
+        => GetProcessedHistoryReconPairs(accountId, 0, "");
+    public HashSet<(string SongId, string Instrument)> GetProcessedHistoryReconPairs(string accountId, int reconstructionVersion, string windowFingerprint) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT song_id, instrument FROM history_recon_progress WHERE account_id = @acct AND processed = 1 AND reconstruction_version = @version AND window_fingerprint = @fingerprint"; cmd.Parameters.AddWithValue("acct", accountId); cmd.Parameters.AddWithValue("version", reconstructionVersion); cmd.Parameters.AddWithValue("fingerprint", windowFingerprint); var set = new HashSet<(string, string)>(); using var r = cmd.ExecuteReader(); while (r.Read()) set.Add((r.GetString(0), r.GetString(1))); return set; }
 
     // ── Season windows ───────────────────────────────────────────────
 
-    public void UpsertSeasonWindow(int seasonNumber, string eventId, string windowId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO season_windows (season_number, event_id, window_id, discovered_at) VALUES (@season, @eventId, @windowId, @now) ON CONFLICT(season_number) DO UPDATE SET event_id = EXCLUDED.event_id, window_id = EXCLUDED.window_id"; cmd.Parameters.AddWithValue("season", seasonNumber); cmd.Parameters.AddWithValue("eventId", eventId); cmd.Parameters.AddWithValue("windowId", windowId); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }
-    public List<SeasonWindowInfo> GetSeasonWindows() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT season_number, event_id, window_id, discovered_at FROM season_windows ORDER BY season_number"; var list = new List<SeasonWindowInfo>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(new SeasonWindowInfo { SeasonNumber = r.GetInt32(0), EventId = r.GetString(1), WindowId = r.GetString(2), DiscoveredAt = r.GetDateTime(3).ToString("o") }); return list; }
-    public SeasonWindowInfo? GetSeasonWindow(int seasonNumber) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT season_number, event_id, window_id, discovered_at FROM season_windows WHERE season_number = @season"; cmd.Parameters.AddWithValue("season", seasonNumber); using var r = cmd.ExecuteReader(); if (!r.Read()) return null; return new SeasonWindowInfo { SeasonNumber = r.GetInt32(0), EventId = r.GetString(1), WindowId = r.GetString(2), DiscoveredAt = r.GetDateTime(3).ToString("o") }; }
+    public void UpsertSeasonWindow(int seasonNumber, string eventId, string windowId, string sourceKind = "legacy")
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO season_windows (
+                season_number,
+                event_id,
+                window_id,
+                source_kind,
+                discovered_at)
+            VALUES (
+                @season,
+                @eventId,
+                @windowId,
+                @sourceKind,
+                @now)
+            ON CONFLICT(season_number) DO UPDATE SET
+                event_id = EXCLUDED.event_id,
+                window_id = EXCLUDED.window_id,
+                source_kind = EXCLUDED.source_kind,
+                discovered_at = EXCLUDED.discovered_at
+            WHERE (
+                CASE EXCLUDED.source_kind
+                    WHEN 'event_api' THEN 3
+                    WHEN 'legacy' THEN 2
+                    WHEN 'probe' THEN 1
+                    ELSE 0
+                END)
+                >= (
+                CASE season_windows.source_kind
+                    WHEN 'event_api' THEN 3
+                    WHEN 'legacy' THEN 2
+                    WHEN 'probe' THEN 1
+                    ELSE 0
+                END)
+            """;
+        cmd.Parameters.AddWithValue("season", seasonNumber);
+        cmd.Parameters.AddWithValue("eventId", eventId);
+        cmd.Parameters.AddWithValue("windowId", windowId);
+        cmd.Parameters.AddWithValue(
+            "sourceKind",
+            string.IsNullOrWhiteSpace(sourceKind) ? "legacy" : sourceKind);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+    public List<SeasonWindowInfo> GetSeasonWindows() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT season_number, event_id, window_id, discovered_at, source_kind FROM season_windows ORDER BY season_number"; var list = new List<SeasonWindowInfo>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(new SeasonWindowInfo { SeasonNumber = r.GetInt32(0), EventId = r.GetString(1), WindowId = r.GetString(2), DiscoveredAt = r.GetDateTime(3).ToString("o"), SourceKind = r.GetString(4) }); return list; }
+    public SeasonWindowInfo? GetSeasonWindow(int seasonNumber) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT season_number, event_id, window_id, discovered_at, source_kind FROM season_windows WHERE season_number = @season"; cmd.Parameters.AddWithValue("season", seasonNumber); using var r = cmd.ExecuteReader(); if (!r.Read()) return null; return new SeasonWindowInfo { SeasonNumber = r.GetInt32(0), EventId = r.GetString(1), WindowId = r.GetString(2), DiscoveredAt = r.GetDateTime(3).ToString("o"), SourceKind = r.GetString(4) }; }
     public int GetCurrentSeason() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT COALESCE(MAX(season_number), 0) FROM season_windows"; return Convert.ToInt32(cmd.ExecuteScalar()); }
 
     // ── Player stats ─────────────────────────────────────────────────
@@ -12585,7 +12743,7 @@ public sealed class MetaDatabase : IMetaDatabase
         return roundUp ? (pairCount + instrumentCount - 1) / instrumentCount : pairCount / instrumentCount;
     }
     private static BackfillStatusInfo ReadBackfillStatus(NpgsqlDataReader r) => new() { AccountId = r.GetString(0), Status = r.GetString(1), SongsChecked = r.GetInt32(2), EntriesFound = r.GetInt32(3), TotalSongsToCheck = r.GetInt32(4), StartedAt = r.IsDBNull(5) ? null : r.GetDateTime(5).ToString("o"), CompletedAt = r.IsDBNull(6) ? null : r.GetDateTime(6).ToString("o"), LastResumedAt = r.IsDBNull(7) ? null : r.GetDateTime(7).ToString("o"), ErrorMessage = r.IsDBNull(8) ? null : r.GetString(8), RankingsPending = !r.IsDBNull(9) && r.GetBoolean(9), DeferredReason = r.IsDBNull(10) ? null : r.GetString(10) };
-    private static HistoryReconStatusInfo ReadHistoryReconStatus(NpgsqlDataReader r) => new() { AccountId = r.GetString(0), Status = r.GetString(1), SongsProcessed = r.GetInt32(2), TotalSongsToProcess = r.GetInt32(3), SeasonsQueried = r.GetInt32(4), HistoryEntriesFound = r.GetInt32(5), StartedAt = r.IsDBNull(6) ? null : r.GetDateTime(6).ToString("o"), CompletedAt = r.IsDBNull(7) ? null : r.GetDateTime(7).ToString("o"), ErrorMessage = r.IsDBNull(8) ? null : r.GetString(8) };
+    private static HistoryReconStatusInfo ReadHistoryReconStatus(NpgsqlDataReader r) => new() { AccountId = r.GetString(0), Status = r.GetString(1), SongsProcessed = r.GetInt32(2), TotalSongsToProcess = r.GetInt32(3), SeasonsQueried = r.GetInt32(4), HistoryEntriesFound = r.GetInt32(5), StartedAt = r.IsDBNull(6) ? null : r.GetDateTime(6).ToString("o"), CompletedAt = r.IsDBNull(7) ? null : r.GetDateTime(7).ToString("o"), ErrorMessage = r.IsDBNull(8) ? null : r.GetString(8), ReconstructionVersion = r.GetInt32(9), WindowFingerprint = r.GetString(10) };
     private static CompositeRankingDto ReadCompositeRanking(NpgsqlDataReader r) => new() { AccountId = r.GetString(0), InstrumentsPlayed = r.GetInt32(1), TotalSongsPlayed = r.GetInt32(2), CompositeRating = r.GetDouble(3), CompositeRank = r.GetInt32(4), GuitarAdjustedSkill = r.IsDBNull(5) ? null : r.GetDouble(5), GuitarSkillRank = r.IsDBNull(6) ? null : r.GetInt32(6), BassAdjustedSkill = r.IsDBNull(7) ? null : r.GetDouble(7), BassSkillRank = r.IsDBNull(8) ? null : r.GetInt32(8), DrumsAdjustedSkill = r.IsDBNull(9) ? null : r.GetDouble(9), DrumsSkillRank = r.IsDBNull(10) ? null : r.GetInt32(10), VocalsAdjustedSkill = r.IsDBNull(11) ? null : r.GetDouble(11), VocalsSkillRank = r.IsDBNull(12) ? null : r.GetInt32(12), ProGuitarAdjustedSkill = r.IsDBNull(13) ? null : r.GetDouble(13), ProGuitarSkillRank = r.IsDBNull(14) ? null : r.GetInt32(14), ProBassAdjustedSkill = r.IsDBNull(15) ? null : r.GetDouble(15), ProBassSkillRank = r.IsDBNull(16) ? null : r.GetInt32(16), ProVocalsAdjustedSkill = r.IsDBNull(17) ? null : r.GetDouble(17), ProVocalsSkillRank = r.IsDBNull(18) ? null : r.GetInt32(18), ProCymbalsAdjustedSkill = r.IsDBNull(19) ? null : r.GetDouble(19), ProCymbalsSkillRank = r.IsDBNull(20) ? null : r.GetInt32(20), ProDrumsAdjustedSkill = r.IsDBNull(21) ? null : r.GetDouble(21), ProDrumsSkillRank = r.IsDBNull(22) ? null : r.GetInt32(22), CompositeRatingWeighted = r.IsDBNull(23) ? null : r.GetDouble(23), CompositeRankWeighted = r.IsDBNull(24) ? null : r.GetInt32(24), CompositeRatingFcRate = r.IsDBNull(25) ? null : r.GetDouble(25), CompositeRankFcRate = r.IsDBNull(26) ? null : r.GetInt32(26), CompositeRatingTotalScore = r.IsDBNull(27) ? null : r.GetDouble(27), CompositeRankTotalScore = r.IsDBNull(28) ? null : r.GetInt32(28), CompositeRatingMaxScore = r.IsDBNull(29) ? null : r.GetDouble(29), CompositeRankMaxScore = r.IsDBNull(30) ? null : r.GetInt32(30), ComputedAt = r.GetDateTime(31).ToString("o") };
     private static string SoloFamilyRankColumn(string rankBy) => (rankBy ?? "adjusted").ToLowerInvariant() switch
     {

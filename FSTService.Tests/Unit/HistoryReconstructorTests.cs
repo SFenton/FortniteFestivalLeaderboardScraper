@@ -55,6 +55,36 @@ public class HistoryReconstructorTests
             }));
     }
 
+    [Fact]
+    public void MergeSeasonWindows_prefers_authoritative_event_window_over_probe()
+    {
+        var probe = new SeasonWindowInfo
+        {
+            SeasonNumber = 15,
+            EventId = "season015_probe_song",
+            WindowId = "season015",
+            SourceKind = "probe",
+        };
+        var authoritative = new SeasonWindowInfo
+        {
+            SeasonNumber = 15,
+            EventId = "festival-season-15",
+            WindowId = "season_15_competitive",
+            SourceKind = "event_api",
+            IsFreshAuthoritative = true,
+        };
+
+        var merged = HistoryReconstructor.MergeSeasonWindows(
+            [probe],
+            [authoritative]);
+        var reverseMerged = HistoryReconstructor.MergeSeasonWindows(
+            [authoritative],
+            [probe]);
+
+        Assert.Equal("season_15_competitive", Assert.Single(merged).WindowId);
+        Assert.Equal("season_15_competitive", Assert.Single(reverseMerged).WindowId);
+    }
+
     [Theory]
     [InlineData("Season1", 1)]
     [InlineData("Season10", 10)]

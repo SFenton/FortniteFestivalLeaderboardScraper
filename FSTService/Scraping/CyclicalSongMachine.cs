@@ -404,8 +404,13 @@ public class CyclicalSongMachine
     /// </summary>
     private async Task RunOneCycleAsync(CancellationToken ct)
     {
+        var cycleAttachments = _attachments.Values
+            .Where(static attachment => !attachment.IsCompleted)
+            .OrderBy(static attachment => attachment.AttachmentNumber)
+            .ToArray();
+
         // ── Build the sorted song list (snapshot for this cycle) ──
-        var songList = BuildSortedSongList();
+        var songList = BuildSongList(cycleAttachments);
         if (songList.Count == 0)
         {
             _log.LogWarning("No charted songs available. Skipping cycle.");
@@ -413,7 +418,9 @@ public class CyclicalSongMachine
         }
 
         // ── Discover season windows ──
-        var seasonWindows = await DiscoverSeasonWindowsAsync(ct);
+        var seasonWindows = await DiscoverSeasonWindowsAsync(
+            cycleAttachments,
+            ct);
 
         lock (_lock)
         {
@@ -443,8 +450,11 @@ public class CyclicalSongMachine
         var opts = _options.Value;
         int currentSeason = ResolveCurrentSeason(
             seasonWindows,
-            _attachments.Values,
+            cycleAttachments,
             _persistence.GetMaxSeasonAcrossInstruments());
+        seasonLookupIdMap.TryGetValue(
+            currentSeason,
+            out var currentSeasonLookupId);
 
         // ═══════════════════════════════════════════════════════
         // CORE PASS — alltime + current season for ALL users
@@ -469,7 +479,10 @@ public class CyclicalSongMachine
 
         await RunSongPassAsync(
             coreSongs, instruments,
-            songId => GatherCoreUsersForSong(songId, currentSeason),
+            songId => GatherCoreUsersForSong(
+                songId,
+                currentSeason,
+                currentSeasonLookupId),
             coreSeasonLookupIdMap, accessToken, callerAccountId, opts,
             reportScopeCompletion: true, ct);
         MarkCycleProgress();
@@ -730,9 +743,6 @@ public class CyclicalSongMachine
     /// Build a deterministic song list from all attachments' song IDs.
     /// Preferred attachment orders are honored first; remaining songs are sorted.
     /// </summary>
-    private List<string> BuildSortedSongList()
-        => BuildSongList(_attachments.Values);
-
     internal static List<string> BuildSongList(IEnumerable<MachineAttachment> attachments)
     {
         var attachmentList = attachments
@@ -795,7 +805,10 @@ public class CyclicalSongMachine
     /// Gather users for the <b>core pass</b> (alltime + current season only).
     /// All users are included, but their <c>SeasonsNeeded</c> is clamped to the current season.
     /// </summary>
-    private SongPassWork GatherCoreUsersForSong(string songId, int currentSeason)
+    private SongPassWork GatherCoreUsersForSong(
+        string songId,
+        int currentSeason,
+        string? currentSeasonLookupId)
     {
         var users = new List<UserWorkItem>();
         var attachments = new List<MachineAttachment>();
@@ -806,24 +819,43 @@ public class CyclicalSongMachine
         {
             if (att.IsCompleted) continue;
             if (!att.SongIds.Contains(songId)) continue;
+            if (!AttachmentMatchesCurrentSeason(
+                    att,
+                    currentSeason,
+                    currentSeasonLookupId))
+            {
+                continue;
+            }
             if (!att.TryAcquireWork()) continue;
 
             attachments.Add(att);
 
             foreach (var user in att.Users)
             {
+                var needsFullHistoryPass =
+                    user.Purposes.HasFlag(WorkPurpose.HistoryRecon)
+                    && user.SeasonsNeeded.Any(season => season != currentSeason);
+
                 // Clamp to alltime + current season only for the core pass
-                var coreSeasons = user.SeasonsNeeded.Contains(currentSeason)
+                var includeCurrentSeason =
+                    (!needsFullHistoryPass
+                     || user.Purposes.HasFlag(WorkPurpose.PostScrape))
+                    && user.SeasonsNeeded.Contains(currentSeason);
+                var coreSeasons = includeCurrentSeason
                     ? new HashSet<int> { currentSeason }
-                    : new HashSet<int>();
+                    : [];
 
                 users.Add(new UserWorkItem
                 {
                     AccountId = user.AccountId,
-                    Purposes = user.Purposes,
+                    Purposes = needsFullHistoryPass
+                        ? user.Purposes & ~WorkPurpose.HistoryRecon
+                        : user.Purposes,
                     AllTimeNeeded = user.AllTimeNeeded,
                     SeasonsNeeded = coreSeasons,
                     AlreadyChecked = user.AlreadyChecked,
+                    HistoryReconstructionVersion = user.HistoryReconstructionVersion,
+                    HistoryWindowFingerprint = user.HistoryWindowFingerprint,
                 });
             }
 
@@ -836,6 +868,28 @@ public class CyclicalSongMachine
             highPriority,
             epicTrafficKind,
             attachments);
+    }
+
+    internal static bool AttachmentMatchesCurrentSeason(
+        MachineAttachment attachment,
+        int currentSeason,
+        string? currentSeasonLookupId)
+    {
+        var requestedSeason = attachment.Options?.CurrentSeason;
+        if (requestedSeason is > 0 && requestedSeason.Value != currentSeason)
+            return false;
+
+        var requestedLookupId = attachment.Options?.CurrentSeasonLookupId;
+        if (!string.IsNullOrWhiteSpace(requestedLookupId)
+            && !string.Equals(
+                requestedLookupId,
+                currentSeasonLookupId,
+                StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -859,7 +913,8 @@ public class CyclicalSongMachine
             foreach (var user in att.Users)
             {
                 var historicalSeasons = new HashSet<int>(user.SeasonsNeeded);
-                historicalSeasons.Remove(currentSeason);
+                if (!user.Purposes.HasFlag(WorkPurpose.HistoryRecon))
+                    historicalSeasons.Remove(currentSeason);
                 if (historicalSeasons.Count == 0) continue;
 
                 attachmentUsers.Add(new UserWorkItem
@@ -869,6 +924,8 @@ public class CyclicalSongMachine
                     AllTimeNeeded = false, // Already done in core pass
                     SeasonsNeeded = historicalSeasons,
                     AlreadyChecked = user.AlreadyChecked,
+                    HistoryReconstructionVersion = user.HistoryReconstructionVersion,
+                    HistoryWindowFingerprint = user.HistoryWindowFingerprint,
                 });
             }
 
@@ -942,6 +999,22 @@ public class CyclicalSongMachine
                     AllTimeNeeded = existing.AllTimeNeeded || user.AllTimeNeeded,
                     SeasonsNeeded = mergedSeasons,
                     AlreadyChecked = mergedChecked,
+                    HistoryReconstructionVersion =
+                        existing.HistoryReconstructionVersion == user.HistoryReconstructionVersion
+                            && string.Equals(
+                                existing.HistoryWindowFingerprint,
+                                user.HistoryWindowFingerprint,
+                                StringComparison.Ordinal)
+                            ? existing.HistoryReconstructionVersion
+                            : 0,
+                    HistoryWindowFingerprint =
+                        existing.HistoryReconstructionVersion == user.HistoryReconstructionVersion
+                            && string.Equals(
+                                existing.HistoryWindowFingerprint,
+                                user.HistoryWindowFingerprint,
+                                StringComparison.Ordinal)
+                            ? existing.HistoryWindowFingerprint
+                            : "",
                 };
             }
             else
@@ -1158,27 +1231,15 @@ public class CyclicalSongMachine
     /// Discover season windows. Reuses previously discovered windows if available,
     /// merging with any new windows from attachments.
     /// </summary>
-    private async Task<IReadOnlyList<SeasonWindowInfo>> DiscoverSeasonWindowsAsync(CancellationToken ct)
+    private async Task<IReadOnlyList<SeasonWindowInfo>> DiscoverSeasonWindowsAsync(
+        IReadOnlyList<MachineAttachment> cycleAttachments,
+        CancellationToken ct)
     {
-        // Merge caller-supplied windows so a newly discovered rollover season from
-        // one attachment cannot be hidden by an older concurrent attachment.
-        var suppliedWindows = new Dictionary<int, SeasonWindowInfo>();
-        foreach (var attachment in _attachments.Values.OrderBy(
-                     static attachment => attachment.AttachmentNumber))
-        {
-            foreach (var window in attachment.SeasonWindows)
-            {
-                if (!suppliedWindows.TryGetValue(window.SeasonNumber, out var existing)
-                    || (string.IsNullOrWhiteSpace(existing.WindowId)
-                        && !string.IsNullOrWhiteSpace(window.WindowId)))
-                {
-                    suppliedWindows[window.SeasonNumber] = window;
-                }
-            }
-        }
+        var suppliedWindows = HistoryReconstructor.MergeSeasonWindows(
+            cycleAttachments.SelectMany(static attachment => attachment.SeasonWindows));
 
         if (suppliedWindows.Count > 0)
-            return suppliedWindows.Values.OrderBy(static window => window.SeasonNumber).ToArray();
+            return suppliedWindows;
 
         // Otherwise discover fresh
         try
@@ -1422,5 +1483,6 @@ public class CyclicalSongMachine
     public sealed record AttachmentOptions(
         bool PreserveSongOrder = false,
         Func<IReadOnlyCollection<SoloCurrentProjectionScopeKey>, ValueTask>? OnScopesCompleted = null,
-        int? CurrentSeason = null);
+        int? CurrentSeason = null,
+        string? CurrentSeasonLookupId = null);
 }

@@ -356,7 +356,7 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
-    public async Task EnsureSchemaAsync_adds_registered_band_window_identity_columns_idempotently()
+    public async Task EnsureSchemaAsync_adds_season_and_history_identity_columns_idempotently()
     {
         await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
 
@@ -368,6 +368,14 @@ public class DatabaseInitializerTests : IDisposable
                     DROP COLUMN window_id;
                 ALTER TABLE registered_player_band_discovery_progress
                     DROP COLUMN window_id;
+                ALTER TABLE season_windows
+                    DROP COLUMN source_kind;
+                ALTER TABLE history_recon_status
+                    DROP COLUMN reconstruction_version,
+                    DROP COLUMN window_fingerprint;
+                ALTER TABLE history_recon_progress
+                    DROP COLUMN reconstruction_version,
+                    DROP COLUMN window_fingerprint;
                 """;
             dropCmd.ExecuteNonQuery();
         }
@@ -392,12 +400,99 @@ public class DatabaseInitializerTests : IDisposable
                     WHERE table_schema = 'public'
                       AND table_name = 'registered_player_band_discovery_progress'
                       AND column_name = 'window_id'
+                      AND is_nullable = 'NO'),
+                EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'season_windows'
+                      AND column_name = 'source_kind'
+                      AND is_nullable = 'NO'),
+                EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'history_recon_status'
+                      AND column_name = 'window_fingerprint'
+                      AND is_nullable = 'NO'),
+                EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'history_recon_progress'
+                      AND column_name = 'reconstruction_version'
                       AND is_nullable = 'NO')
             """;
         using var reader = cmd.ExecuteReader();
         Assert.True(reader.Read());
         Assert.True(reader.GetBoolean(0));
         Assert.True(reader.GetBoolean(1));
+        Assert.True(reader.GetBoolean(2));
+        Assert.True(reader.GetBoolean(3));
+        Assert.True(reader.GetBoolean(4));
+    }
+
+    [Fact]
+    public async Task EnsureSchemaAsync_invalidates_legacy_completed_history_reconstruction()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using (var conn = _metaFixture.DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                INSERT INTO history_recon_status (
+                    account_id,
+                    status,
+                    songs_processed,
+                    total_songs_to_process,
+                    completed_at,
+                    reconstruction_version,
+                    window_fingerprint)
+                VALUES (
+                    'legacy-history',
+                    'complete',
+                    10,
+                    10,
+                    @now,
+                    0,
+                    '');
+                INSERT INTO history_recon_progress (
+                    account_id,
+                    song_id,
+                    instrument,
+                    processed,
+                    processed_at,
+                    reconstruction_version,
+                    window_fingerprint)
+                VALUES (
+                    'legacy-history',
+                    'song-a',
+                    'Solo_Guitar',
+                    1,
+                    @now,
+                    0,
+                    '');
+                """;
+            cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+            cmd.ExecuteNonQuery();
+        }
+
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using var verifyConn = _metaFixture.DataSource.OpenConnection();
+        using var verifyCmd = verifyConn.CreateCommand();
+        verifyCmd.CommandText = """
+            SELECT status, songs_processed, completed_at, reconstruction_version
+            FROM history_recon_status
+            WHERE account_id = 'legacy-history'
+            """;
+        using var reader = verifyCmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal("pending", reader.GetString(0));
+        Assert.Equal(0, reader.GetInt32(1));
+        Assert.True(reader.IsDBNull(2));
+        Assert.Equal(0, reader.GetInt32(3));
     }
 
     [Fact]

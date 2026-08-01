@@ -1211,8 +1211,25 @@ public static class DatabaseInitializer
             history_entries_found    INTEGER NOT NULL DEFAULT 0,
             started_at               TIMESTAMPTZ,
             completed_at             TIMESTAMPTZ,
-            error_message            TEXT
+            error_message            TEXT,
+            reconstruction_version   INTEGER NOT NULL DEFAULT 0,
+            window_fingerprint       TEXT    NOT NULL DEFAULT ''
         );
+
+        ALTER TABLE history_recon_status
+            ADD COLUMN IF NOT EXISTS reconstruction_version INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE history_recon_status
+            ADD COLUMN IF NOT EXISTS window_fingerprint TEXT NOT NULL DEFAULT '';
+
+        UPDATE history_recon_status
+        SET status = 'pending',
+            songs_processed = 0,
+            seasons_queried = 0,
+            history_entries_found = 0,
+            completed_at = NULL,
+            error_message = 'history_reconstruction_v1_required'
+        WHERE status = 'complete'
+          AND reconstruction_version < 1;
 
         CREATE INDEX IF NOT EXISTS ix_hr_status
             ON history_recon_status (status);
@@ -1227,8 +1244,15 @@ public static class DatabaseInitializer
             instrument  TEXT    NOT NULL,
             processed   INTEGER NOT NULL DEFAULT 0,
             processed_at TIMESTAMPTZ,
+            reconstruction_version INTEGER NOT NULL DEFAULT 0,
+            window_fingerprint TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (account_id, song_id, instrument)
         );
+
+        ALTER TABLE history_recon_progress
+            ADD COLUMN IF NOT EXISTS reconstruction_version INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE history_recon_progress
+            ADD COLUMN IF NOT EXISTS window_fingerprint TEXT NOT NULL DEFAULT '';
 
         CREATE INDEX IF NOT EXISTS ix_hrp_account
             ON history_recon_progress (account_id);
@@ -1241,8 +1265,18 @@ public static class DatabaseInitializer
             season_number INTEGER PRIMARY KEY,
             event_id      TEXT        NOT NULL,
             window_id     TEXT        NOT NULL,
+            source_kind   TEXT        NOT NULL DEFAULT 'legacy',
             discovered_at TIMESTAMPTZ NOT NULL
         );
+
+        ALTER TABLE season_windows
+            ADD COLUMN IF NOT EXISTS source_kind TEXT NOT NULL DEFAULT 'legacy';
+
+        UPDATE season_windows
+        SET source_kind = 'synthetic'
+        WHERE source_kind = 'legacy'
+          AND event_id = ''
+          AND window_id = '';
 
         -- =====================================================================
         -- SONG FIRST SEEN SEASON (from fst-meta.db)

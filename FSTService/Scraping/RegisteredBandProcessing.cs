@@ -415,12 +415,7 @@ public sealed class RegisteredBandProcessingOrchestrator
         IReadOnlyList<SeasonWindowInfo> seasonWindows)
     {
         var distinctSongIds = songIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        var windows = seasonWindows
-            .Where(static window => window.SeasonNumber > 0)
-            .GroupBy(static window => window.SeasonNumber)
-            .Select(static group =>
-                group.LastOrDefault(static window => !string.IsNullOrWhiteSpace(window.WindowId))
-                ?? group.Last())
+        var windows = HistoryReconstructor.MergeSeasonWindows(seasonWindows)
             .OrderByDescending(static window => window.SeasonNumber)
             .ToList();
 

@@ -1,3 +1,4 @@
+using System.Net;
 using FortniteFestival.Core.Services;
 using FSTService.Persistence;
 
@@ -25,8 +26,9 @@ public class FirstSeenSeasonCalculator
     /// v1 = original MIN(season) + single probe approach.
     /// v2 = binary search across all seasons.
     /// v3 = authoritative discovered window IDs; retries v2 rollover misses.
+    /// v4 = only conclusive probes after fresh event-API discovery are durable.
     /// </summary>
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 4;
 
     private readonly ILeaderboardQuerier _scraper;
     private readonly GlobalLeaderboardPersistence _persistence;
@@ -57,13 +59,22 @@ public class FirstSeenSeasonCalculator
         string callerAccountId,
         SharedDopPool pool,
         CancellationToken ct = default,
-        IReadOnlyList<SeasonWindowInfo>? authoritativeSeasonWindows = null)
+        IReadOnlyList<SeasonWindowInfo>? authoritativeSeasonWindows = null,
+        bool authoritativeDiscoveryFresh = false)
     {
         // Get all song IDs from the catalog
         var allSongs = festivalService.Songs
             .Where(s => s.track?.su is not null)
             .Select(s => s.track.su)
             .ToList();
+
+        if (!authoritativeDiscoveryFresh)
+        {
+            _log.LogWarning(
+                "FirstSeenSeason v{Version}: no fresh authoritative season-window discovery; leaving rows retryable.",
+                CurrentVersion);
+            return 0;
+        }
 
         // Get songs already at current version — these are skipped
         var alreadyCurrent = _metaDb.GetSongIdsWithFirstSeenVersion(CurrentVersion);
@@ -87,14 +98,8 @@ public class FirstSeenSeasonCalculator
 
         // Get authoritative season windows sorted ascending. The caller may pass a
         // freshly discovered rollover window that has not existed for a prior pass.
-        var seasonWindows = (authoritativeSeasonWindows ?? _metaDb.GetSeasonWindows())
-            .Where(static window => window.SeasonNumber > 0)
-            .GroupBy(static window => window.SeasonNumber)
-            .Select(static group =>
-                group.LastOrDefault(static window => !string.IsNullOrWhiteSpace(window.WindowId))
-                ?? group.Last())
-            .OrderBy(static window => window.SeasonNumber)
-            .ToList();
+        var seasonWindows = HistoryReconstructor.MergeSeasonWindows(
+            authoritativeSeasonWindows ?? _metaDb.GetSeasonWindows());
 
         if (seasonWindows.Count == 0)
         {
@@ -133,17 +138,13 @@ public class FirstSeenSeasonCalculator
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _log.LogWarning(ex, "FirstSeenSeason binary search failed for {SongId}.", songId);
-
-                // Store as unresolved at current version so we don't retry indefinitely
-                var minObserved = songMinSeasons.GetValueOrDefault(songId);
-                _metaDb.UpsertFirstSeenSeason(
-                    songId, minObserved, minObserved,
-                    minObserved ?? seasonWindows[^1].SeasonNumber,
-                    "binary_search_failed", CurrentVersion);
+                _log.LogWarning(
+                    ex,
+                    "FirstSeenSeason probe was inconclusive for {SongId}; preserving retryable version state.",
+                    songId);
 
                 _progress.ReportPhaseItemComplete();
-                return 1;
+                return 0;
             }
         }).ToList();
 
@@ -223,11 +224,14 @@ public class FirstSeenSeasonCalculator
             _progress.ReportPhaseRequest();
             return true;
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException ex)
         {
             pool.ReportFailure();
             _progress.ReportPhaseRequest();
-            return false;
+            if (ex.StatusCode == HttpStatusCode.BadRequest)
+                return false;
+
+            throw;
         }
         finally
         {

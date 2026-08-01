@@ -125,7 +125,7 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         var service = CreateServiceWithSongs(Array.Empty<Song>());
         SeedSeasonWindows(1, 2, 3, 4, 5);
 
-        var result = await calculator.CalculateAsync(service, "token", "caller", _pool);
+        var result = await calculator.CalculateAsync(service, "token", "caller", _pool, authoritativeDiscoveryFresh: true);
 
         Assert.Equal(0, result);
     }
@@ -139,7 +139,7 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         var service = CreateServiceWithSongs(new[] { MakeSong("song1") });
         // No season windows seeded
 
-        var result = await calculator.CalculateAsync(service, "token", "caller", _pool);
+        var result = await calculator.CalculateAsync(service, "token", "caller", _pool, authoritativeDiscoveryFresh: true);
 
         Assert.Equal(0, result);
     }
@@ -158,7 +158,7 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         EnqueueProbeSuccess(handler); // season 2 → exists
         EnqueueProbeSuccess(handler); // season 1 → exists
 
-        var result = await calculator.CalculateAsync(service, "token", "caller", _pool);
+        var result = await calculator.CalculateAsync(service, "token", "caller", _pool, authoritativeDiscoveryFresh: true);
 
         Assert.Equal(1, result);
         var all = _metaDb.Db.GetAllFirstSeenSeasons();
@@ -185,7 +185,7 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         EnqueueProbeFailure(handler); // season 3 → doesn't exist
         EnqueueProbeFailure(handler); // season 4 → doesn't exist
 
-        var result = await calculator.CalculateAsync(service, "token", "caller", _pool);
+        var result = await calculator.CalculateAsync(service, "token", "caller", _pool, authoritativeDiscoveryFresh: true);
 
         Assert.Equal(1, result);
         Assert.Equal(5, _metaDb.Db.GetAllFirstSeenSeasons()["song1"].FirstSeenSeason);
@@ -206,7 +206,7 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         EnqueueProbeFailure(handler); // season 3
         EnqueueProbeFailure(handler); // season 4
 
-        var result = await calculator.CalculateAsync(service, "token", "caller", _pool);
+        var result = await calculator.CalculateAsync(service, "token", "caller", _pool, authoritativeDiscoveryFresh: true);
 
         Assert.Equal(1, result);
         var all = _metaDb.Db.GetAllFirstSeenSeasons();
@@ -228,7 +228,7 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         _metaDb.Db.UpsertFirstSeenSeason("song1", 2, 3, 2, "found_season002_via_binary_search(3_probes)",
             FirstSeenSeasonCalculator.CurrentVersion);
 
-        var result = await calculator.CalculateAsync(service, "token", "caller", _pool);
+        var result = await calculator.CalculateAsync(service, "token", "caller", _pool, authoritativeDiscoveryFresh: true);
 
         Assert.Equal(0, result);
         Assert.Equal(2, _metaDb.Db.GetAllFirstSeenSeasons()["song1"].FirstSeenSeason);
@@ -251,7 +251,7 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         EnqueueProbeSuccess(handler); // season 2 → exists
         EnqueueProbeFailure(handler); // season 1 → doesn't exist
 
-        var result = await calculator.CalculateAsync(service, "token", "caller", _pool);
+        var result = await calculator.CalculateAsync(service, "token", "caller", _pool, authoritativeDiscoveryFresh: true);
 
         Assert.Equal(1, result);
         var all = _metaDb.Db.GetAllFirstSeenSeasons();
@@ -260,7 +260,7 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
     }
 
     [Fact]
-    public async Task CalculateAsync_V2RolloverMiss_RetriesWithExactDiscoveredWindow()
+    public async Task CalculateAsync_V3RolloverMiss_RetriesWithExactDiscoveredWindow()
     {
         const string windowId = "season_15_competitive";
         var scraper = Substitute.For<ILeaderboardQuerier>();
@@ -286,7 +286,7 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
             null,
             15,
             "not_found_in_any_season(1_probes)",
-            calculationVersion: 2);
+            calculationVersion: 3);
         var windows = new[]
         {
             new SeasonWindowInfo
@@ -294,6 +294,8 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
                 SeasonNumber = 15,
                 EventId = "season15-event",
                 WindowId = windowId,
+                SourceKind = "event_api",
+                IsFreshAuthoritative = true,
             },
         };
 
@@ -302,7 +304,8 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
             "token",
             "caller",
             _pool,
-            authoritativeSeasonWindows: windows);
+            authoritativeSeasonWindows: windows,
+            authoritativeDiscoveryFresh: true);
 
         Assert.Equal(1, result);
         var stored = _metaDb.Db.GetAllFirstSeenSeasons()["song1"];
@@ -319,6 +322,111 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
             Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task CalculateAsync_NoFreshAuthoritativeDiscovery_PreservesRetryableVersion()
+    {
+        var scraper = Substitute.For<ILeaderboardQuerier>();
+        var calculator = new FirstSeenSeasonCalculator(
+            scraper,
+            _persistence,
+            _progress,
+            _log);
+        var service = CreateServiceWithSongs([MakeSong("song1")]);
+        _metaDb.Db.UpsertFirstSeenSeason(
+            "song1",
+            null,
+            null,
+            15,
+            "legacy_rollover_miss",
+            calculationVersion: 3);
+
+        var result = await calculator.CalculateAsync(
+            service,
+            "token",
+            "caller",
+            _pool,
+            authoritativeSeasonWindows:
+            [
+                new SeasonWindowInfo
+                {
+                    SeasonNumber = 15,
+                    WindowId = "season_15_competitive",
+                    SourceKind = "event_api",
+                },
+            ],
+            authoritativeDiscoveryFresh: false);
+
+        Assert.Equal(0, result);
+        Assert.Equal(
+            3,
+            _metaDb.Db.GetAllFirstSeenSeasons()["song1"].CalculationVersion);
+        await scraper.DidNotReceiveWithAnyArgs().LookupSeasonalAsync(
+            default!,
+            default!,
+            default!,
+            default!,
+            default!,
+            default!,
+            default,
+            default);
+    }
+
+    [Fact]
+    public async Task CalculateAsync_AuthFailure_DoesNotLatchCurrentVersion()
+    {
+        const string windowId = "season_15_competitive";
+        var scraper = Substitute.For<ILeaderboardQuerier>();
+        scraper.LookupSeasonalAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            windowId,
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>())
+            .Returns(Task.FromException<LeaderboardEntry?>(
+                new HttpRequestException(
+                    "unauthorized",
+                    null,
+                    HttpStatusCode.Unauthorized)));
+        var calculator = new FirstSeenSeasonCalculator(
+            scraper,
+            _persistence,
+            _progress,
+            _log);
+        var service = CreateServiceWithSongs([MakeSong("song1")]);
+        _metaDb.Db.UpsertFirstSeenSeason(
+            "song1",
+            null,
+            null,
+            15,
+            "legacy_rollover_miss",
+            calculationVersion: 3);
+
+        var result = await calculator.CalculateAsync(
+            service,
+            "token",
+            "caller",
+            _pool,
+            authoritativeSeasonWindows:
+            [
+                new SeasonWindowInfo
+                {
+                    SeasonNumber = 15,
+                    WindowId = windowId,
+                    SourceKind = "event_api",
+                    IsFreshAuthoritative = true,
+                },
+            ],
+            authoritativeDiscoveryFresh: true);
+
+        Assert.Equal(0, result);
+        Assert.Equal(
+            3,
+            _metaDb.Db.GetAllFirstSeenSeasons()["song1"].CalculationVersion);
+    }
+
     // ─── Idempotent re-run: no extra API calls ──────────
 
     [Fact]
@@ -332,12 +440,12 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         EnqueueProbeSuccess(handler); // season 2
         EnqueueProbeSuccess(handler); // season 1
 
-        var result1 = await calculator.CalculateAsync(service, "token", "caller", _pool);
+        var result1 = await calculator.CalculateAsync(service, "token", "caller", _pool, authoritativeDiscoveryFresh: true);
         Assert.Equal(1, result1);
         Assert.Equal(1, _metaDb.Db.GetAllFirstSeenSeasons()["song1"].FirstSeenSeason);
 
         // Second run: should skip (current version)
-        var result2 = await calculator.CalculateAsync(service, "token", "caller", _pool);
+        var result2 = await calculator.CalculateAsync(service, "token", "caller", _pool, authoritativeDiscoveryFresh: true);
         Assert.Equal(0, result2);
         Assert.Equal(2, handler.Requests.Count); // no new requests from second run
     }
@@ -353,7 +461,7 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
 
         EnqueueProbeSuccess(handler); // season 1 → exists
 
-        var result = await calculator.CalculateAsync(service, "token", "caller", _pool);
+        var result = await calculator.CalculateAsync(service, "token", "caller", _pool, authoritativeDiscoveryFresh: true);
 
         Assert.Equal(1, result);
         Assert.Equal(1, _metaDb.Db.GetAllFirstSeenSeasons()["song1"].FirstSeenSeason);
@@ -375,16 +483,16 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         EnqueueProbeFailure(handler); // season 1
         EnqueueProbeSuccess(handler); // season 2
 
-        var result = await calculator.CalculateAsync(service, "token", "caller", _pool);
+        var result = await calculator.CalculateAsync(service, "token", "caller", _pool, authoritativeDiscoveryFresh: true);
 
         Assert.Equal(1, result);
         Assert.Equal(2, _metaDb.Db.GetAllFirstSeenSeasons()["song1"].FirstSeenSeason);
     }
 
-    // ─── Fatal exception in probe → catch stores fallback ──
+    // ─── Fatal exception in probe → remains retryable ──
 
     [Fact]
-    public async Task CalculateAsync_ProbeThrowsNonHttp_CatchFallsBack()
+    public async Task CalculateAsync_ProbeThrowsNonHttp_RemainsRetryable()
     {
         var (calculator, handler) = CreateCalculator();
         var service = CreateServiceWithSongs(new[] { MakeSong("song1") });
@@ -394,13 +502,11 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         // The first probe throws an unexpected exception
         handler.EnqueueException(new InvalidOperationException("unexpected internal error"));
 
-        var result = await calculator.CalculateAsync(service, "token", "caller", _pool);
+        var result = await calculator.CalculateAsync(service, "token", "caller", _pool, authoritativeDiscoveryFresh: true);
 
-        Assert.Equal(1, result);
+        Assert.Equal(0, result);
         var all = _metaDb.Db.GetAllFirstSeenSeasons();
-        // Falls back to min_observed_season (2) since binary search failed
-        Assert.Equal(2, all["song1"].FirstSeenSeason);
-        Assert.Equal(FirstSeenSeasonCalculator.CurrentVersion, all["song1"].CalculationVersion);
+        Assert.DoesNotContain("song1", all.Keys);
     }
 
     // ─── Multiple songs: binary search per song ─────────
@@ -425,7 +531,7 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         EnqueueProbeFailure(handler); // s2: season 2
         EnqueueProbeSuccess(handler); // s2: season 3
 
-        var result = await calculator.CalculateAsync(service, "token", "caller", _pool);
+        var result = await calculator.CalculateAsync(service, "token", "caller", _pool, authoritativeDiscoveryFresh: true);
 
         Assert.Equal(2, result);
         var all = _metaDb.Db.GetAllFirstSeenSeasons();

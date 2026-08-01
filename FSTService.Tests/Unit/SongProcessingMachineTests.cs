@@ -141,7 +141,7 @@ public class SongProcessingMachineTests : IDisposable
         _scraper.LookupMultipleAccountSessionsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<IReadOnlyList<string>>(), Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<CancellationToken>())
+            Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<CancellationToken>(), true)
             .Returns(new List<SessionHistoryEntry>());
 
         var machine = CreateMachine();
@@ -159,13 +159,13 @@ public class SongProcessingMachineTests : IDisposable
         await _scraper.Received(6).LookupMultipleAccountSessionsAsync(
             "song1", Arg.Any<string>(), "season013",
             Arg.Is<IReadOnlyList<string>>(l => l.Count == 2),
-            "token", "caller", Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<CancellationToken>());
+            "token", "caller", Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<CancellationToken>(), true);
 
         // Season 12: only user2 → 6 calls with 1 target
         await _scraper.Received(6).LookupMultipleAccountSessionsAsync(
             "song1", Arg.Any<string>(), "season012",
             Arg.Is<IReadOnlyList<string>>(l => l.Count == 1),
-            "token", "caller", Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<CancellationToken>());
+            "token", "caller", Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<CancellationToken>(), true);
     }
 
     [Fact]
@@ -321,6 +321,53 @@ public class SongProcessingMachineTests : IDisposable
         Assert.False(result.RequiredLookupsSucceeded);
         Assert.Empty(result.CompletedScopes);
         Assert.Empty(completed);
+    }
+
+    [Fact]
+    public async Task ProcessSongForUsersAsync_HistoryMissingRequiredWindow_DoesNotMarkPairProcessed()
+    {
+        const string fingerprint = "history-window-fingerprint";
+        var machine = CreateMachine();
+        var result = await machine.ProcessSongForUsersAsync(
+            "song-history-missing",
+            ["Solo_Guitar"],
+            [
+                new UserWorkItem
+                {
+                    AccountId = "history-user",
+                    Purposes = WorkPurpose.HistoryRecon,
+                    AllTimeNeeded = false,
+                    SeasonsNeeded = [15],
+                    HistoryReconstructionVersion =
+                        HistoryReconstructor.CurrentReconstructionVersion,
+                    HistoryWindowFingerprint = fingerprint,
+                },
+            ],
+            new Dictionary<int, string>(),
+            "token",
+            "caller",
+            _pool,
+            isHighPriority: false,
+            batchSize: 500,
+            EpicTrafficKind.Background,
+            CancellationToken.None);
+
+        Assert.False(result.RequiredLookupsSucceeded);
+        Assert.Empty(_metaDb.Db.GetProcessedHistoryReconPairs(
+            "history-user",
+            HistoryReconstructor.CurrentReconstructionVersion,
+            fingerprint));
+        await _scraper.DidNotReceiveWithAnyArgs()
+            .LookupMultipleAccountSessionsAsync(
+                default!,
+                default!,
+                default!,
+                default!,
+                default!,
+                default!,
+                default,
+                default,
+                default);
     }
 
     [Fact]

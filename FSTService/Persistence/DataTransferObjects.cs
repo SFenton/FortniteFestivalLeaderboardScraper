@@ -134,6 +134,8 @@ public sealed class HistoryReconStatusInfo
     public string? StartedAt { get; init; }
     public string? CompletedAt { get; init; }
     public string? ErrorMessage { get; init; }
+    public int ReconstructionVersion { get; init; }
+    public string WindowFingerprint { get; init; } = "";
 }
 
 /// <summary>
@@ -178,6 +180,8 @@ public sealed class SeasonWindowInfo
     public string EventId { get; init; } = "";
     public string WindowId { get; init; } = "";
     public string DiscoveredAt { get; init; } = "";
+    public string SourceKind { get; init; } = "legacy";
+    public bool IsFreshAuthoritative { get; init; }
 }
 
 /// <summary>

@@ -602,7 +602,11 @@ public sealed class PostScrapeOrchestrator
             for (int s = 1; s <= floor; s++)
             {
                 if (known.Contains(s)) continue;
-                _persistence.Meta.UpsertSeasonWindow(s, eventId: "", windowId: "");
+                _persistence.Meta.UpsertSeasonWindow(
+                    s,
+                    eventId: "",
+                    windowId: "",
+                    sourceKind: "synthetic");
             }
 
             if (floor > (seasonWindows.Count == 0 ? 0 : seasonWindows.Max(w => w.SeasonNumber)))
@@ -614,6 +618,10 @@ public sealed class PostScrapeOrchestrator
         var allSeasons = seasonWindows.Select(w => w.SeasonNumber).ToHashSet();
         if (allSeasons.Count == 0)
             allSeasons.Add(currentSeason);
+        var historyWindowFingerprint = HistoryReconstructor.ComputeWindowFingerprint(
+            seasonWindows);
+        var expectedHistoryPairs =
+            chartedSongIds.Count * GlobalLeaderboardScraper.AllInstruments.Count;
 
         var users = new List<UserWorkItem>(deferredBackfills.Count);
         foreach (var backfill in deferredBackfills)
@@ -624,6 +632,11 @@ public sealed class PostScrapeOrchestrator
 
             _persistence.Meta.StartBackfill(backfill.AccountId);
             _syncTracker.BeginBackfill(backfill.AccountId, totalPairs);
+            _persistence.Meta.EnqueueHistoryRecon(
+                backfill.AccountId,
+                expectedHistoryPairs,
+                HistoryReconstructor.CurrentReconstructionVersion,
+                historyWindowFingerprint);
 
             users.Add(new UserWorkItem
             {
@@ -632,6 +645,9 @@ public sealed class PostScrapeOrchestrator
                 AllTimeNeeded = true,
                 SeasonsNeeded = new HashSet<int>(allSeasons),
                 AlreadyChecked = _persistence.Meta.GetCheckedBackfillPairs(backfill.AccountId),
+                HistoryReconstructionVersion =
+                    HistoryReconstructor.CurrentReconstructionVersion,
+                HistoryWindowFingerprint = historyWindowFingerprint,
             });
         }
 
@@ -668,11 +684,11 @@ public sealed class PostScrapeOrchestrator
             {
                 _persistence.Meta.QueueRivalsRecompute(user.AccountId);
 
-                var reconStatus = _persistence.Meta.GetHistoryReconStatus(user.AccountId);
-                if (reconStatus is null)
-                    _persistence.Meta.EnqueueHistoryRecon(user.AccountId, 0);
-
-                _persistence.Meta.CompleteHistoryRecon(user.AccountId);
+                if (!TryCompleteHistoryRecon(user, expectedHistoryPairs))
+                {
+                    throw new InvalidOperationException(
+                        $"Deferred registration history reconstruction remained incomplete for {user.AccountId}.");
+                }
                 _persistence.Meta.CompleteBackfill(user.AccountId, rankingsPending: true);
                 _ = _notifications.NotifyBackfillCompleteAsync(user.AccountId);
                 _ = _notifications.NotifyHistoryReconCompleteAsync(user.AccountId);
@@ -1871,7 +1887,13 @@ public sealed class PostScrapeOrchestrator
 
                     var firstSeenCount = await _firstSeenCalculator.CalculateAsync(
                         service, firstSeenToken, _tokenManager.AccountId!,
-                        _pool, ct, firstSeenSeasonWindows);
+                        _pool,
+                        ct,
+                        firstSeenSeasonWindows,
+                        authoritativeDiscoveryFresh: firstSeenSeasonWindows.Any(
+                            static window =>
+                                window.IsFreshAuthoritative
+                                && window.SourceKind == "event_api"));
                     if (firstSeenCount > 0)
                         _log.LogInformation("Calculated FirstSeenSeason for {Count} song(s).", firstSeenCount);
                     _progress.CompleteBranch("first_seen", "complete",
@@ -2004,7 +2026,11 @@ public sealed class PostScrapeOrchestrator
                 for (int s = 1; s <= floor; s++)
                 {
                     if (known.Contains(s)) continue;
-                    _persistence.Meta.UpsertSeasonWindow(s, eventId: "", windowId: "");
+                    _persistence.Meta.UpsertSeasonWindow(
+                        s,
+                        eventId: "",
+                        windowId: "",
+                        sourceKind: "synthetic");
                 }
                 if (floor > (seasonWindows.Count == 0 ? 0 : seasonWindows.Max(w => w.SeasonNumber)))
                 {
@@ -2032,6 +2058,13 @@ public sealed class PostScrapeOrchestrator
                 instrumentMaxSeason ?? 0);
             if (currentSeason <= 0)
                 currentSeason = 1;
+            var currentSeasonWindow = HistoryReconstructor.MergeSeasonWindows(
+                    seasonWindows)
+                .FirstOrDefault(window =>
+                    window.SeasonNumber == currentSeason);
+            var currentSeasonLookupId = currentSeasonWindow is null
+                ? HistoryReconstructor.GetSeasonPrefix(currentSeason)
+                : HistoryReconstructor.GetSeasonLookupId(currentSeasonWindow);
             RegisterKnownBandsForAccounts(ctx.RegisteredIds);
             LogRegisteredUserRefreshCoverage(
                 "before",
@@ -2069,7 +2102,8 @@ public sealed class PostScrapeOrchestrator
                         DateTime.UtcNow);
                     return ValueTask.CompletedTask;
                 },
-                CurrentSeason: currentSeason);
+                CurrentSeason: currentSeason,
+                CurrentSeasonLookupId: currentSeasonLookupId);
 
             SongProcessingMachine.MachineResult result;
             try
@@ -2149,6 +2183,29 @@ public sealed class PostScrapeOrchestrator
 
         if (registeredBands > 0)
             _log.LogDebug("Registered or refreshed {BandCount} known band(s) for tracked player history processing.", registeredBands);
+    }
+
+    private bool TryCompleteHistoryRecon(
+        UserWorkItem user,
+        int expectedHistoryPairs)
+    {
+        var processed = _persistence.Meta.GetProcessedHistoryReconPairs(
+            user.AccountId,
+            user.HistoryReconstructionVersion,
+            user.HistoryWindowFingerprint);
+        if (processed.Count < expectedHistoryPairs)
+        {
+            _persistence.Meta.FailHistoryRecon(
+                user.AccountId,
+                $"History reconstruction incomplete: {processed.Count}/{expectedHistoryPairs} song/instrument pairs.");
+            return false;
+        }
+
+        _persistence.Meta.CompleteHistoryRecon(
+            user.AccountId,
+            user.HistoryReconstructionVersion,
+            user.HistoryWindowFingerprint);
+        return true;
     }
 
     private async Task<IReadOnlyCollection<SoloCurrentProjectionScopeKey>> BuildSoloProjectionScopesForNotificationsAsync(

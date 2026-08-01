@@ -153,17 +153,21 @@ public interface IMetaDatabase : IDisposable
 
     // ── History reconstruction ───────────────────────────────────────
     void EnqueueHistoryRecon(string accountId, int totalSongsToProcess);
+    void EnqueueHistoryRecon(string accountId, int totalSongsToProcess, int reconstructionVersion, string windowFingerprint);
     List<HistoryReconStatusInfo> GetPendingHistoryRecons();
     HistoryReconStatusInfo? GetHistoryReconStatus(string accountId);
     void StartHistoryRecon(string accountId);
     void CompleteHistoryRecon(string accountId);
+    void CompleteHistoryRecon(string accountId, int reconstructionVersion, string windowFingerprint);
     void FailHistoryRecon(string accountId, string errorMessage);
     void UpdateHistoryReconProgress(string accountId, int songsProcessed, int seasonsQueried, int historyEntriesFound);
     void MarkHistoryReconSongProcessed(string accountId, string songId, string instrument);
+    void MarkHistoryReconSongProcessed(string accountId, string songId, string instrument, int reconstructionVersion, string windowFingerprint);
     HashSet<(string SongId, string Instrument)> GetProcessedHistoryReconPairs(string accountId);
+    HashSet<(string SongId, string Instrument)> GetProcessedHistoryReconPairs(string accountId, int reconstructionVersion, string windowFingerprint);
 
     // ── Season windows ───────────────────────────────────────────────
-    void UpsertSeasonWindow(int seasonNumber, string eventId, string windowId);
+    void UpsertSeasonWindow(int seasonNumber, string eventId, string windowId, string sourceKind = "legacy");
     List<SeasonWindowInfo> GetSeasonWindows();
     int GetCurrentSeason();
 

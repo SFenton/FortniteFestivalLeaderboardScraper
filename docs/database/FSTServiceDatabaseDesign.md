@@ -323,14 +323,14 @@ marker exists on a legacy row).
 
 | Tables | Class | Owner/callers | Retention and safety |
 |---|---|---|---|
-| `songs`, `item_shop_tracks`, `season_windows`, `song_first_seen_season` | Durable source/metadata | `FestivalPersistence`, `MetaDatabase`, path/ranking readers | Keep provider IDs/timestamps and source provenance |
+| `songs`, `item_shop_tracks`, `season_windows`, `song_first_seen_season` | Durable source/metadata | `FestivalPersistence`, `MetaDatabase`, path/ranking readers | Keep provider IDs/timestamps and source provenance. `season_windows.source_kind` ranks `event_api` above legacy/probe/synthetic rows so conventional IDs cannot replace authoritative event windows |
 | `songs.provider_json`, `live_song_catalog` | Exact provider restart rows and canonical live singleton | `FestivalPersistence.SaveSongsVersionedAsync` | Provider-known and extension fields, schema/version, SHA-256, count, source kind, exactness, and capture time; excludes `imagePath`, `isSelected`, and `isInLocalData` |
 | `publication_song_catalog` | Immutable generation snapshot | `MetaDatabase.StartScrapeRun`, publication retention | One row per publication; ready only when its exact version/hash token matches the catalog selected by the scrape; retained only for current, previous, and working pointers |
 | `account_names` | Durable source/cache of Epic identity | Worker resolver; API/search readers | Refreshable, but historical account IDs remain stable |
 | `registered_users`, `registered_bands` | Durable source | API activity/registration and worker consumers | Activity-based retention must preserve idempotent claims |
 | `registered_user_refresh_scope_progress` | Durable recurring-refresh work state | `PostScrapeOrchestrator`, `CyclicalSongMachine`, `MetaDatabase` | One latest successful checkpoint per `(song_id, instrument)` with `status`, `checked_at`, nullable positive `scrape_id`, and explicit `scrape`/`phase_only` provenance; the small partial `checked_at` index supports fairness/coverage reads |
 | `registered_band_processing_status`, `registered_band_processing_progress`, `registered_player_band_discovery_progress` | Durable work state | Registration/backfill workers | Resume/idempotency state includes exact seasonal `window_id`; a changed/noncanonical ID invalidates the prior season checkpoint without changing the compact primary key |
-| `backfill_status`, `backfill_progress`, `history_recon_status`, `history_recon_progress`, `deep_scrape_queue` | Durable work state | Worker queues/orchestrators | Preserve failed/incomplete work for replay |
+| `backfill_status`, `backfill_progress`, `history_recon_status`, `history_recon_progress`, `deep_scrape_queue` | Durable work state | Worker queues/orchestrators | Preserve failed/incomplete work for replay. History status/progress is bound to a reconstruction version and exact season-window fingerprint |
 | `user_sessions`, `epic_user_tokens` | Security-sensitive durable state | Authentication subsystem | Never include values in logs, reports, fixtures, or exports; restore with access controls |
 
 The publication-critical registered-user refresh contains only recurring
@@ -377,18 +377,31 @@ season `N` lookup must succeed before the scope callback can checkpoint.
 
 The enrichment branch resolves/persists authoritative windows before
 FirstSeenSeason probes and passes those rows directly to
-`FirstSeenSeasonCalculator`. Calculation version `3` invalidates version `2`
-results so rollover misses latched under reconstructed `seasonNNN` IDs are
-retried with exact discovered IDs. Registered-band targeted processing and
-registered-player band discovery carry the same exact ID through lookup
-intents and durable progress; legacy blank progress resolves to its
-conventional ID, while a newly discovered noncanonical ID forces a recheck.
+`FirstSeenSeasonCalculator`. Calculation version `4` invalidates questionable
+version `3` rows. It advances only after a fresh `event_api` discovery and
+conclusive probes: HTTP 400 is a confirmed missing leaderboard, while
+transport/auth/5xx failures leave the older version retryable. Registered-band
+targeted processing and registered-player band discovery carry the same exact
+ID through lookup intents and durable progress; legacy blank progress resolves
+to its conventional ID, while a newly discovered noncanonical ID forces a
+recheck.
+
+Each cyclical pass snapshots its attachment/window set and binds the active
+core pass to `(current season, exact lookup ID)`. A late PostScrape attachment
+whose requested fingerprint differs is not admitted to remaining songs in
+that pass; it retains missing song IDs and runs in the next matching cycle.
+This prevents an all-time-only result from checkpointing a scope that requested
+a different current-season window.
 
 The legacy `HistoryReconstructor.ReconstructAccountAsync` path also resolves
 blank synthetic windows through `GetSeasonLookupId`. Missing windows or failed
 required seasonal calls leave the song/instrument unprocessed and the account
 history status in error for retry; partial required coverage is never marked
-complete.
+complete. The batched `SongProcessingMachine` path uses strict lookup failure
+propagation for history users and marks a pair only after every required
+seasonal lookup succeeds. Version `1` plus the SHA-256 exact-window fingerprint
+invalidates legacy completed status/progress and prevents a changed window map
+from reusing stale pair completion.
 
 The worker logs bounded before/after coverage over only the current charted
 songs and nine solo instruments: expected scopes, checked scopes, missing

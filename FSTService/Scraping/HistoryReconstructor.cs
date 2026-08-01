@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using FSTService.Persistence;
 
@@ -27,6 +29,8 @@ namespace FSTService.Scraping;
 /// </summary>
 public class HistoryReconstructor
 {
+    public const int CurrentReconstructionVersion = 1;
+
     private static readonly TimeSpan DefaultSeasonWindowDiscoveryTimeout = TimeSpan.FromSeconds(45);
 
     private readonly ILeaderboardQuerier _scraper;
@@ -102,14 +106,15 @@ public class HistoryReconstructor
             if (windows.Count > 0)
             {
                 foreach (var w in windows)
-                    _metaDb.UpsertSeasonWindow(w.SeasonNumber, w.EventId, w.WindowId);
+                    _metaDb.UpsertSeasonWindow(
+                        w.SeasonNumber,
+                        w.EventId,
+                        w.WindowId,
+                        w.SourceKind);
 
                 // Merge API results with any cached windows the API didn't return, preferring
                 // API values for overlapping season numbers.
-                var merged = new Dictionary<int, SeasonWindowInfo>();
-                foreach (var w in cached) merged[w.SeasonNumber] = w;
-                foreach (var w in windows) merged[w.SeasonNumber] = w;
-                var result = merged.Values.OrderBy(w => w.SeasonNumber).ToList();
+                var result = MergeSeasonWindows(cached, windows);
 
                 _log.LogInformation(
                     "Refreshed season windows: {ApiCount} from events API, {TotalCount} total after merge.",
@@ -129,7 +134,9 @@ public class HistoryReconstructor
         }
 
         // API failed or returned empty: prefer the cached list if we have one.
-        if (cached.Count > 0)
+        if (cached.Any(static window =>
+                window.SourceKind != "synthetic"
+                && !string.IsNullOrWhiteSpace(window.WindowId)))
         {
             _log.LogInformation("Using {Count} cached season windows (events API unavailable).", cached.Count);
             return cached;
@@ -138,10 +145,14 @@ public class HistoryReconstructor
         // No cache and API unavailable: fall back to probing.
         var probed = await ProbeSeasonWindowsAsync(accessToken, callerAccountId, ct);
         foreach (var w in probed)
-            _metaDb.UpsertSeasonWindow(w.SeasonNumber, w.EventId, w.WindowId);
+            _metaDb.UpsertSeasonWindow(
+                w.SeasonNumber,
+                w.EventId,
+                w.WindowId,
+                w.SourceKind);
 
         _log.LogInformation("Discovered and cached {Count} season windows via probing.", probed.Count);
-        return probed;
+        return MergeSeasonWindows(cached, probed);
     }
 
     /// <summary>
@@ -209,6 +220,8 @@ public class HistoryReconstructor
                                 SeasonNumber = seasonNum,
                                 EventId = eventId ?? "",
                                 WindowId = windowId,
+                                SourceKind = "event_api",
+                                IsFreshAuthoritative = true,
                             });
                         }
                     }
@@ -268,6 +281,66 @@ public class HistoryReconstructor
             ? GetSeasonPrefix(window.SeasonNumber)
             : window.WindowId;
 
+    internal static IReadOnlyList<SeasonWindowInfo> MergeSeasonWindows(
+        params IEnumerable<SeasonWindowInfo>[] sources)
+    {
+        var merged = new Dictionary<int, SeasonWindowInfo>();
+        foreach (var source in sources)
+        {
+            foreach (var candidate in source.Where(
+                         static window => window.SeasonNumber > 0))
+            {
+                if (!merged.TryGetValue(candidate.SeasonNumber, out var existing)
+                    || ShouldReplaceSeasonWindow(existing, candidate))
+                {
+                    merged[candidate.SeasonNumber] = candidate;
+                }
+            }
+        }
+
+        return merged.Values
+            .OrderBy(static window => window.SeasonNumber)
+            .ToArray();
+    }
+
+    internal static string ComputeWindowFingerprint(
+        IEnumerable<SeasonWindowInfo> seasonWindows)
+    {
+        var canonical = string.Join(
+            '\n',
+            MergeSeasonWindows(seasonWindows).Select(static window =>
+                $"{window.SeasonNumber}:{GetSeasonLookupId(window)}"));
+        return Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+    }
+
+    private static bool ShouldReplaceSeasonWindow(
+        SeasonWindowInfo existing,
+        SeasonWindowInfo candidate)
+    {
+        var existingPriority = GetSeasonWindowSourcePriority(existing.SourceKind);
+        var candidatePriority = GetSeasonWindowSourcePriority(candidate.SourceKind);
+        if (candidatePriority != existingPriority)
+            return candidatePriority > existingPriority;
+
+        if (string.IsNullOrWhiteSpace(existing.WindowId)
+            != string.IsNullOrWhiteSpace(candidate.WindowId))
+        {
+            return !string.IsNullOrWhiteSpace(candidate.WindowId);
+        }
+
+        return true;
+    }
+
+    private static int GetSeasonWindowSourcePriority(string? sourceKind)
+        => sourceKind switch
+        {
+            "event_api" => 3,
+            "legacy" => 2,
+            "probe" => 1,
+            _ => 0,
+        };
+
     /// <summary>
     /// Probe for season windows by convention using FNLookup event ID format:
     /// Season 1 = "evergreen", Season 2+ = "season00N".
@@ -312,6 +385,7 @@ public class HistoryReconstructor
                     SeasonNumber = season,
                     EventId = $"{seasonPrefix}_{testSongId}",
                     WindowId = seasonPrefix,
+                    SourceKind = "probe",
                 });
                 consecutiveFailures = 0;
 
@@ -361,9 +435,16 @@ public class HistoryReconstructor
         int maxConcurrency = 10,
         CancellationToken ct = default)
     {
+        var windowFingerprint = ComputeWindowFingerprint(seasonWindows);
+
         // Check if already completed
         var status = _metaDb.GetHistoryReconStatus(accountId);
-        if (status?.Status == "complete")
+        if (status?.Status == "complete"
+            && status.ReconstructionVersion == CurrentReconstructionVersion
+            && string.Equals(
+                status.WindowFingerprint,
+                windowFingerprint,
+                StringComparison.Ordinal))
         {
             _log.LogDebug("History reconstruction already complete for {AccountId}.", accountId);
             return 0;
@@ -398,17 +479,31 @@ public class HistoryReconstructor
         if (reconstructable.Count == 0)
         {
             _log.LogInformation("No reconstructable history for {AccountId} (all scores in season 0–1).", accountId);
-            _metaDb.EnqueueHistoryRecon(accountId, 0);
-            _metaDb.CompleteHistoryRecon(accountId);
+            _metaDb.EnqueueHistoryRecon(
+                accountId,
+                0,
+                CurrentReconstructionVersion,
+                windowFingerprint);
+            _metaDb.CompleteHistoryRecon(
+                accountId,
+                CurrentReconstructionVersion,
+                windowFingerprint);
             return 0;
         }
 
         // Set up tracking
-        _metaDb.EnqueueHistoryRecon(accountId, reconstructable.Count);
+        _metaDb.EnqueueHistoryRecon(
+            accountId,
+            reconstructable.Count,
+            CurrentReconstructionVersion,
+            windowFingerprint);
         _metaDb.StartHistoryRecon(accountId);
 
         // Get already-processed pairs (for resumption)
-        var alreadyProcessed = _metaDb.GetProcessedHistoryReconPairs(accountId);
+        var alreadyProcessed = _metaDb.GetProcessedHistoryReconPairs(
+            accountId,
+            CurrentReconstructionVersion,
+            windowFingerprint);
 
         // Bulk-load FirstSeenSeason data so we can skip seasons before a song existed
         var firstSeenMap = _metaDb.GetAllFirstSeenSeasons();
@@ -446,7 +541,12 @@ public class HistoryReconstructor
                 _log.LogDebug("Skipping {Song}/{Instrument}: no FirstSeenSeason data (song may not be released yet).",
                     songId, instrument);
                 Interlocked.Increment(ref songsProcessed);
-                _metaDb.MarkHistoryReconSongProcessed(accountId, songId, instrument);
+                _metaDb.MarkHistoryReconSongProcessed(
+                    accountId,
+                    songId,
+                    instrument,
+                    CurrentReconstructionVersion,
+                    windowFingerprint);
                 continue;
             }
             int songMinSeason = fss.FirstSeenSeason ?? fss.EstimatedSeason;
@@ -466,7 +566,12 @@ public class HistoryReconstructor
                 Interlocked.Add(ref seasonsQueried, queries);
                 var processed = Interlocked.Increment(ref songsProcessed);
 
-                _metaDb.MarkHistoryReconSongProcessed(accountId, songId, instrument);
+                _metaDb.MarkHistoryReconSongProcessed(
+                    accountId,
+                    songId,
+                    instrument,
+                    CurrentReconstructionVersion,
+                    windowFingerprint);
                 _progress.ReportPhaseItemComplete();
                 if (entries > 0) _progress.ReportPhaseEntryUpdated(entries);
 
@@ -512,7 +617,10 @@ public class HistoryReconstructor
             return totalHistoryEntries;
         }
 
-        _metaDb.CompleteHistoryRecon(accountId);
+        _metaDb.CompleteHistoryRecon(
+            accountId,
+            CurrentReconstructionVersion,
+            windowFingerprint);
 
         _log.LogInformation(
             "History reconstruction complete for {AccountId}: {Entries} history entries from {Seasons} seasonal queries across {Songs} songs.",

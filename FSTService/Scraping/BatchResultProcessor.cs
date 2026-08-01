@@ -310,8 +310,18 @@ public class BatchResultProcessor
     /// <summary>
     /// Mark a history reconstruction song/instrument pair as processed for an account.
     /// </summary>
-    public void MarkHistoryReconProcessed(string accountId, string songId, string instrument)
-        => _metaDb.MarkHistoryReconSongProcessed(accountId, songId, instrument);
+    public void MarkHistoryReconProcessed(
+        string accountId,
+        string songId,
+        string instrument,
+        int reconstructionVersion = 0,
+        string? windowFingerprint = null)
+        => _metaDb.MarkHistoryReconSongProcessed(
+            accountId,
+            songId,
+            instrument,
+            reconstructionVersion,
+            windowFingerprint ?? "");
 
     // ══════════════════════════════════════════════════════════════
     // Staging mode — buffer writes for designated accounts

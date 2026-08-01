@@ -2327,6 +2327,31 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal(2, pending.Count);
     }
 
+    [Fact]
+    public void HistoryRecon_window_fingerprint_change_resets_status_and_progress()
+    {
+        Db.EnqueueHistoryRecon("acct-versioned", 1, 1, "fingerprint-a");
+        Db.StartHistoryRecon("acct-versioned");
+        Db.MarkHistoryReconSongProcessed(
+            "acct-versioned",
+            "song-a",
+            "Solo_Guitar",
+            1,
+            "fingerprint-a");
+        Db.CompleteHistoryRecon("acct-versioned", 1, "fingerprint-a");
+
+        Db.EnqueueHistoryRecon("acct-versioned", 1, 1, "fingerprint-b");
+
+        var status = Db.GetHistoryReconStatus("acct-versioned");
+        Assert.Equal("pending", status?.Status);
+        Assert.Equal(1, status?.ReconstructionVersion);
+        Assert.Equal("fingerprint-b", status?.WindowFingerprint);
+        Assert.Empty(Db.GetProcessedHistoryReconPairs(
+            "acct-versioned",
+            1,
+            "fingerprint-b"));
+    }
+
     // ═══ SeasonWindows ══════════════════════════════════════════
 
     [Fact]
@@ -2352,6 +2377,27 @@ public sealed class MetaDatabaseTests : IDisposable
         var window = windows.First(w => w.SeasonNumber == 1);
         Assert.Equal("evt_1_updated", window.EventId);
         Assert.Equal("season_1_new", window.WindowId);
+    }
+
+    [Fact]
+    public void UpsertSeasonWindow_does_not_let_probe_override_event_api()
+    {
+        Db.UpsertSeasonWindow(
+            15,
+            "festival-season-15",
+            "season_15_competitive",
+            "event_api");
+        Db.UpsertSeasonWindow(
+            15,
+            "season015_probe_song",
+            "season015",
+            "probe");
+
+        var window = Db.GetSeasonWindow(15);
+
+        Assert.NotNull(window);
+        Assert.Equal("season_15_competitive", window!.WindowId);
+        Assert.Equal("event_api", window.SourceKind);
     }
 
     // ═══ SongFirstSeenSeason ════════════════════════════════════

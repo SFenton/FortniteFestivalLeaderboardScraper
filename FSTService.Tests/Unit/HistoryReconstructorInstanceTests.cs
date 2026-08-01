@@ -225,13 +225,20 @@ public class HistoryReconstructorInstanceTests : IDisposable
     {
         var (recon, _, _) = CreateReconstructor();
 
-        _metaDb.Db.EnqueueHistoryRecon("acct1", 0);
-        _metaDb.Db.CompleteHistoryRecon("acct1");
-
         var windows = new List<SeasonWindowInfo>
         {
             new() { SeasonNumber = 1, EventId = "e1", WindowId = "season_1" }
         };
+        var fingerprint = HistoryReconstructor.ComputeWindowFingerprint(windows);
+        _metaDb.Db.EnqueueHistoryRecon(
+            "acct1",
+            0,
+            HistoryReconstructor.CurrentReconstructionVersion,
+            fingerprint);
+        _metaDb.Db.CompleteHistoryRecon(
+            "acct1",
+            HistoryReconstructor.CurrentReconstructionVersion,
+            fingerprint);
 
         var result = await recon.ReconstructAccountAsync(
             "acct1", windows, "token", "caller", _pool);
@@ -514,9 +521,19 @@ public class HistoryReconstructorInstanceTests : IDisposable
         };
 
         // Pre-mark songA as already processed (simulates partial resumption)
-        _metaDb.Db.EnqueueHistoryRecon("acct1", 2);
+        var fingerprint = HistoryReconstructor.ComputeWindowFingerprint(windows);
+        _metaDb.Db.EnqueueHistoryRecon(
+            "acct1",
+            2,
+            HistoryReconstructor.CurrentReconstructionVersion,
+            fingerprint);
         _metaDb.Db.StartHistoryRecon("acct1");
-        _metaDb.Db.MarkHistoryReconSongProcessed("acct1", "songA", "Solo_Guitar");
+        _metaDb.Db.MarkHistoryReconSongProcessed(
+            "acct1",
+            "songA",
+            "Solo_Guitar",
+            HistoryReconstructor.CurrentReconstructionVersion,
+            fingerprint);
 
         // Only songB should be processed (2 seasons to query)
         scraperHandler.EnqueueJsonOk("""

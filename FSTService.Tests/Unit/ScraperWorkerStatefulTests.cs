@@ -421,7 +421,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
     }
 
     [Fact]
-    public async Task RunHistoryReconPhase_AlreadyReconstructed_Skips()
+    public async Task RunHistoryReconPhase_LegacyCompletedState_ReopensForWindowValidation()
     {
         _metaDb.RegisterUser("dev1", "acct1");
         _metaDb.EnqueueBackfill("acct1", 10);
@@ -438,7 +438,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         var orchestrator = CreateBackfillOrchestrator();
         await orchestrator.RunHistoryReconAsync(_festivalService, CancellationToken.None);
 
-        await _historyReconstructor.DidNotReceive().DiscoverSeasonWindowsAsync(
+        await _historyReconstructor.Received(1).DiscoverSeasonWindowsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 

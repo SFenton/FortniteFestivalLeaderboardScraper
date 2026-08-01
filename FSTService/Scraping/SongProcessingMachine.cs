@@ -210,7 +210,10 @@ public class SongProcessingMachine
         int instrumentsWithSuccessfulLookups = 0;
         var updatedScopes = new ConcurrentDictionary<SoloCurrentProjectionScopeKey, byte>();
         var completedScopes = new ConcurrentDictionary<SoloCurrentProjectionScopeKey, byte>();
-        var requireReliableCompletion = onScopesCompleted is not null;
+        var requireReliableCompletion =
+            onScopesCompleted is not null
+            || users.Any(static user =>
+                user.Purposes.HasFlag(WorkPurpose.HistoryRecon));
 
         // Shared across all instruments: when a pad instrument discovers
         // that a season returns no data (BadRequest or empty), record it
@@ -309,10 +312,21 @@ public class SongProcessingMachine
             : Array.Empty<SoloCurrentProjectionScopeKey>();
 
         // Mark history recon processed for users doing that work
-        foreach (var user in users)
+        if (requiredLookupsSucceeded)
         {
-            if (user.Purposes.HasFlag(WorkPurpose.HistoryRecon) && !user.IsAlreadyChecked(songId, instrument))
-                _resultProcessor.MarkHistoryReconProcessed(user.AccountId, songId, instrument);
+            foreach (var user in users)
+            {
+                if (user.Purposes.HasFlag(WorkPurpose.HistoryRecon)
+                    && !user.IsAlreadyChecked(songId, instrument))
+                {
+                    _resultProcessor.MarkHistoryReconProcessed(
+                        user.AccountId,
+                        songId,
+                        instrument,
+                        user.HistoryReconstructionVersion,
+                        user.HistoryWindowFingerprint);
+                }
+            }
         }
 
         return new SongStepResult

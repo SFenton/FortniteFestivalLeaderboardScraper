@@ -184,6 +184,7 @@ public static partial class ApiEndpoints
             FirstSeenSeasonCalculator calculator,
             FestivalService festivalService,
             TokenManager tokenManager,
+            HistoryReconstructor historyReconstructor,
             SharedDopPool pool,
             CancellationToken ct) =>
         {
@@ -200,8 +201,21 @@ public static partial class ApiEndpoints
                     return Results.Problem("Song catalog is empty.");
             }
 
+            var seasonWindows = await historyReconstructor.DiscoverSeasonWindowsAsync(
+                accessToken,
+                callerAccountId,
+                ct);
             var calculated = await calculator.CalculateAsync(
-                festivalService, accessToken, callerAccountId, pool, ct);
+                festivalService,
+                accessToken,
+                callerAccountId,
+                pool,
+                ct,
+                seasonWindows,
+                authoritativeDiscoveryFresh: seasonWindows.Any(
+                    static window =>
+                        window.IsFreshAuthoritative
+                        && window.SourceKind == "event_api"));
 
             return Results.Ok(new
             {
