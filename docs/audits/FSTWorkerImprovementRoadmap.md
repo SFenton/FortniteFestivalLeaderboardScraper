@@ -1418,8 +1418,8 @@ Use one token owner or an atomic, locked, permission-restricted shared store.
 **Decision:** Code accepted; production qualification pending.
 
 - Persist the latest successful `(song_id, instrument)` PostScrape checkpoint
-  with `checked_at`, status, and scrape ID after each completed scope rather
-  than only when the attachment returns.
+  with `checked_at`, status, and real-scrape or explicit phase-only provenance
+  after each completed scope rather than only when the attachment returns.
 - Keep every charted song in each pass, ordering missing coverage first and
   then least-recently checked coverage.
 - Treat successful empty/recognized missing leaderboards as complete, but
@@ -1427,6 +1427,8 @@ Use one token owner or an atomic, locked, permission-restricted shared store.
   failure.
 - Preserve finished checkpoints across timeout/cancellation and log bounded
   expected/checked/missing/oldest/current-scrape coverage.
+- Carry one authoritative discovered current season into the cyclical machine
+  so a rollover season cannot be stripped by a lagging instrument maximum.
 - Keep registration backfill, history reconstruction, and solo-projection
   dirty-scope persistence outside this recurring-refresh ledger.
 

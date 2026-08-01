@@ -441,9 +441,10 @@ public class CyclicalSongMachine
         var callerAccountId = _tokenManager.AccountId!;
 
         var opts = _options.Value;
-        int currentSeason = seasonWindows.Count > 0
-            ? seasonWindows.Max(w => w.SeasonNumber)
-            : _persistence.GetMaxSeasonAcrossInstruments() ?? 1;
+        int currentSeason = ResolveCurrentSeason(
+            seasonWindows,
+            _attachments.Values,
+            _persistence.GetMaxSeasonAcrossInstruments());
 
         // ═══════════════════════════════════════════════════════
         // CORE PASS — alltime + current season for ALL users
@@ -1159,12 +1160,25 @@ public class CyclicalSongMachine
     /// </summary>
     private async Task<IReadOnlyList<SeasonWindowInfo>> DiscoverSeasonWindowsAsync(CancellationToken ct)
     {
-        // Use windows from attachments if any provided
-        foreach (var (_, att) in _attachments)
+        // Merge caller-supplied windows so a newly discovered rollover season from
+        // one attachment cannot be hidden by an older concurrent attachment.
+        var suppliedWindows = new Dictionary<int, SeasonWindowInfo>();
+        foreach (var attachment in _attachments.Values.OrderBy(
+                     static attachment => attachment.AttachmentNumber))
         {
-            if (att.SeasonWindows.Count > 0)
-                return att.SeasonWindows;
+            foreach (var window in attachment.SeasonWindows)
+            {
+                if (!suppliedWindows.TryGetValue(window.SeasonNumber, out var existing)
+                    || (string.IsNullOrWhiteSpace(existing.WindowId)
+                        && !string.IsNullOrWhiteSpace(window.WindowId)))
+                {
+                    suppliedWindows[window.SeasonNumber] = window;
+                }
+            }
         }
+
+        if (suppliedWindows.Count > 0)
+            return suppliedWindows.Values.OrderBy(static window => window.SeasonNumber).ToArray();
 
         // Otherwise discover fresh
         try
@@ -1180,6 +1194,34 @@ public class CyclicalSongMachine
             _log.LogWarning(ex, "Season window discovery failed. Using empty season list.");
             return [];
         }
+    }
+
+    internal static int ResolveCurrentSeason(
+        IReadOnlyList<SeasonWindowInfo> seasonWindows,
+        IEnumerable<MachineAttachment> attachments,
+        int? instrumentSeasonFallback)
+    {
+        var declaredSeasons = attachments
+            .Where(static attachment => !attachment.IsCompleted)
+            .Select(static attachment => attachment.Options?.CurrentSeason)
+            .Where(static season => season is > 0)
+            .Select(static season => season!.Value)
+            .Distinct()
+            .ToArray();
+
+        if (declaredSeasons.Length > 1)
+        {
+            throw new InvalidOperationException(
+                $"CyclicalSongMachine attachments disagree on current season: {string.Join(", ", declaredSeasons.Order())}.");
+        }
+
+        if (declaredSeasons.Length == 1)
+            return declaredSeasons[0];
+
+        if (seasonWindows.Count > 0)
+            return seasonWindows.Max(static window => window.SeasonNumber);
+
+        return instrumentSeasonFallback ?? 1;
     }
 
     // ─── Inner types ────────────────────────────────────────
@@ -1379,5 +1421,6 @@ public class CyclicalSongMachine
 
     public sealed record AttachmentOptions(
         bool PreserveSongOrder = false,
-        Func<IReadOnlyCollection<SoloCurrentProjectionScopeKey>, ValueTask>? OnScopesCompleted = null);
+        Func<IReadOnlyCollection<SoloCurrentProjectionScopeKey>, ValueTask>? OnScopesCompleted = null,
+        int? CurrentSeason = null);
 }

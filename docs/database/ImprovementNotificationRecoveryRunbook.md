@@ -115,6 +115,13 @@ leaderboards count, while transport/API failure does not. Checkpoints are
 written from the live attachment callback, so a timeout or cancellation keeps
 all scopes that finished before the boundary.
 
+Normal scrape passes store a positive `scrape_id` with `provenance='scrape'`.
+Supported phase-only `SoloRefreshUsers` execution stores a null scrape ID with
+`provenance='phase_only'`; it must not fail or synthesize a scrape ledger row.
+At season rollover, the discovered highest window is authoritative over an
+instrument maximum that is still one season behind, and that exact seasonal
+lookup must finish successfully before the scope is marked complete.
+
 The worker emits `Registered-user refresh coverage (before|after)` with
 `expectedScopes`, `checkedScopes`, `missingScopes`, `oldestCheckedAtUtc`,
 `oldestCheckedAge`, and `currentScrapeCompletions`. These reads are bounded to

@@ -96,6 +96,10 @@ public interface IMetaDatabase : IDisposable
     IReadOnlyList<string> GetRegisteredUserRefreshSongOrder(
         IReadOnlyCollection<string> songIds,
         IReadOnlyCollection<string> instruments);
+    /// <summary>
+    /// Persist successful recurring-refresh scopes. A positive scrape ID records
+    /// scrape provenance; zero records an explicit phase-only checkpoint.
+    /// </summary>
     int UpsertRegisteredUserRefreshScopes(
         long scrapeId,
         IReadOnlyCollection<SoloCurrentProjectionScopeKey> scopes,

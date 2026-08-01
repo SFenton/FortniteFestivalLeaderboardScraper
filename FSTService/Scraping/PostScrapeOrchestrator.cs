@@ -2006,7 +2006,13 @@ public sealed class PostScrapeOrchestrator
             var orderedSongIds = _persistence.Meta.GetRegisteredUserRefreshSongOrder(
                 chartedSongIds,
                 GlobalLeaderboardScraper.AllInstruments);
-            var currentSeason = instrumentMaxSeason ?? 1;
+            var currentSeason = Math.Max(
+                seasonWindows.Count > 0
+                    ? seasonWindows.Max(static window => window.SeasonNumber)
+                    : 0,
+                instrumentMaxSeason ?? 0);
+            if (currentSeason <= 0)
+                currentSeason = 1;
             RegisterKnownBandsForAccounts(ctx.RegisteredIds);
             LogRegisteredUserRefreshCoverage(
                 "before",
@@ -2043,7 +2049,8 @@ public sealed class PostScrapeOrchestrator
                         scopes,
                         DateTime.UtcNow);
                     return ValueTask.CompletedTask;
-                });
+                },
+                CurrentSeason: currentSeason);
 
             SongProcessingMachine.MachineResult result;
             try

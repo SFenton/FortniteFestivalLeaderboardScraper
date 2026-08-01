@@ -971,11 +971,68 @@ public static class DatabaseInitializer
             instrument  TEXT        NOT NULL,
             status      TEXT        NOT NULL DEFAULT 'complete',
             checked_at  TIMESTAMPTZ NOT NULL,
-            scrape_id   BIGINT      NOT NULL,
+            scrape_id   BIGINT,
+            provenance  TEXT        NOT NULL DEFAULT 'scrape',
             PRIMARY KEY (song_id, instrument),
             CONSTRAINT ck_registered_user_refresh_scope_status
-                CHECK (status IN ('complete'))
+                CHECK (status IN ('complete')),
+            CONSTRAINT ck_registered_user_refresh_scope_provenance
+                CHECK (
+                    (provenance = 'scrape' AND scrape_id > 0)
+                    OR (provenance = 'phase_only' AND scrape_id IS NULL))
         );
+
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM pg_attribute
+                WHERE attrelid =
+                    'registered_user_refresh_scope_progress'::regclass
+                  AND attname = 'scrape_id'
+                  AND attnotnull
+            ) THEN
+                ALTER TABLE registered_user_refresh_scope_progress
+                    ALTER COLUMN scrape_id DROP NOT NULL;
+            END IF;
+        END
+        $$;
+
+        ALTER TABLE registered_user_refresh_scope_progress
+            ADD COLUMN IF NOT EXISTS provenance TEXT NOT NULL DEFAULT 'scrape';
+
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'ck_registered_user_refresh_scope_provenance'
+                  AND conrelid = 'registered_user_refresh_scope_progress'::regclass
+            ) THEN
+                ALTER TABLE registered_user_refresh_scope_progress
+                    ADD CONSTRAINT ck_registered_user_refresh_scope_provenance
+                    CHECK (
+                        (provenance = 'scrape' AND scrape_id > 0)
+                        OR (provenance = 'phase_only' AND scrape_id IS NULL))
+                    NOT VALID;
+            END IF;
+        END
+        $$;
+
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'ck_registered_user_refresh_scope_provenance'
+                  AND conrelid = 'registered_user_refresh_scope_progress'::regclass
+                  AND NOT convalidated
+            ) THEN
+                ALTER TABLE registered_user_refresh_scope_progress
+                    VALIDATE CONSTRAINT ck_registered_user_refresh_scope_provenance;
+            END IF;
+        END
+        $$;
 
         CREATE INDEX IF NOT EXISTS ix_registered_user_refresh_scope_checked_at
             ON registered_user_refresh_scope_progress (checked_at, song_id, instrument)

@@ -57,9 +57,9 @@ public sealed class RegisteredUserRefreshProgressTests : IDisposable
         Assert.Equal(
             0,
             _fixture.Db.UpsertRegisteredUserRefreshScopes(
-                99,
+                100,
                 [initialScopes[0]],
-                newer + TimeSpan.FromHours(1)));
+                old - TimeSpan.FromHours(1)));
         Assert.Equal(
             1,
             _fixture.Db.UpsertRegisteredUserRefreshScopes(
@@ -94,5 +94,32 @@ public sealed class RegisteredUserRefreshProgressTests : IDisposable
         Assert.Equal("complete", reader.GetString(0));
         Assert.Equal(newer, reader.GetDateTime(1));
         Assert.Equal(101, reader.GetInt64(2));
+    }
+
+    [Fact]
+    public void Scope_upsert_records_explicit_phase_only_provenance_without_scrape_id()
+    {
+        var checkedAt = new DateTime(2026, 8, 1, 12, 0, 0, DateTimeKind.Utc);
+
+        Assert.Equal(
+            1,
+            _fixture.Db.UpsertRegisteredUserRefreshScopes(
+                0,
+                [new SoloCurrentProjectionScopeKey("song-phase", "Solo_Guitar")],
+                checkedAt));
+
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT scrape_id, provenance, checked_at
+            FROM registered_user_refresh_scope_progress
+            WHERE song_id = 'song-phase'
+              AND instrument = 'Solo_Guitar'
+            """;
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.True(reader.IsDBNull(0));
+        Assert.Equal("phase_only", reader.GetString(1));
+        Assert.Equal(checkedAt, reader.GetDateTime(2));
     }
 }

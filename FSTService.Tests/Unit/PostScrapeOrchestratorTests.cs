@@ -285,6 +285,94 @@ public class PostScrapeOrchestratorTests : IDisposable
             improvementNotificationRecovery: improvementRecovery);
     }
 
+    private PostScrapeOrchestrator CreateOrchestrator(
+        CyclicalSongMachine cyclicalMachine,
+        HistoryReconstructor historyReconstructor,
+        ScraperOptions? options = null)
+    {
+        var scraper = Substitute.For<GlobalLeaderboardScraper>(
+            new HttpClient(),
+            new ScrapeProgressTracker(),
+            Substitute.For<ILogger<GlobalLeaderboardScraper>>(),
+            0,
+            null);
+        var scraperOptions = options ?? new ScraperOptions();
+        var rivalsCalculator = new RivalsCalculator(
+            _persistence,
+            Substitute.For<ILogger<RivalsCalculator>>());
+        var rivalsOrchestrator = new RivalsOrchestrator(
+            rivalsCalculator,
+            _persistence,
+            new NotificationService(Substitute.For<ILogger<NotificationService>>()),
+            _progress,
+            new UserSyncProgressTracker(
+                new NotificationService(Substitute.For<ILogger<NotificationService>>()),
+                Substitute.For<ILogger<UserSyncProgressTracker>>()),
+            new ResponseCacheService(TimeSpan.FromMinutes(5)),
+            Substitute.For<ILogger<RivalsOrchestrator>>());
+        var rankingsCalculator = new RankingsCalculator(
+            _persistence,
+            _metaDb,
+            _pathDataStore,
+            _progress,
+            Options.Create(new FeatureOptions()),
+            Substitute.For<ILogger<RankingsCalculator>>());
+        var leaderboardRivalsCalculator = new LeaderboardRivalsCalculator(
+            _persistence,
+            _metaDb,
+            Options.Create(scraperOptions),
+            Substitute.For<ILogger<LeaderboardRivalsCalculator>>());
+
+        return new PostScrapeOrchestrator(
+            _persistence,
+            _firstSeenCalculator,
+            _nameResolver,
+            _refresher,
+            Substitute.For<IServiceProvider>(),
+            historyReconstructor,
+            _pool,
+            cyclicalMachine,
+            rivalsOrchestrator,
+            rankingsCalculator,
+            leaderboardRivalsCalculator,
+            _notifications,
+            _tokenManager,
+            _progress,
+            new UserSyncProgressTracker(
+                new NotificationService(Substitute.For<ILogger<NotificationService>>()),
+                Substitute.For<ILogger<UserSyncProgressTracker>>()),
+            _pathDataStore,
+            new ScrapeTimePrecomputer(
+                _persistence,
+                _metaDb,
+                _pathDataStore,
+                _progress,
+                Substitute.For<ILogger<ScrapeTimePrecomputer>>(),
+                NullLoggerFactory.Instance,
+                new JsonSerializerOptions(),
+                new FeatureOptions()),
+            new PostScrapeBandExtractor(
+                null!,
+                _pathDataStore,
+                Substitute.For<ILogger<PostScrapeBandExtractor>>()),
+            new BandScrapePhase(
+                scraper,
+                new BandLeaderboardPersistence(
+                    null!,
+                    Substitute.For<ILogger<BandLeaderboardPersistence>>()),
+                _pathDataStore,
+                _pool,
+                _progress,
+                Options.Create(scraperOptions),
+                Substitute.For<ILogger<BandScrapePhase>>()),
+            new BandLeaderboardPersistence(
+                null!,
+                Substitute.For<ILogger<BandLeaderboardPersistence>>()),
+            Options.Create(scraperOptions),
+            _log,
+            null);
+    }
+
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // RefreshRegisteredUsersAsync
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -323,6 +411,258 @@ public class PostScrapeOrchestratorTests : IDisposable
             Arg.Any<EpicTrafficKind>(),
             Arg.Is<CyclicalSongMachine.AttachmentOptions?>(options =>
                 options != null && options.PreserveSongOrder));
+    }
+
+    [Fact]
+    public async Task RefreshRegisteredUsers_PhaseOnlyCallback_PersistsNoScrapeProvenance()
+    {
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns("test-access-token");
+        _tokenManager.AccountId.Returns("caller-001");
+
+        _cyclicalMachine.AttachAsync(
+            Arg.Any<IReadOnlyList<UserWorkItem>>(),
+            Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
+            SongMachineSource.PostScrape,
+            true,
+            Arg.Any<CancellationToken>(),
+            true,
+            Arg.Any<EpicTrafficKind>(),
+            Arg.Any<CyclicalSongMachine.AttachmentOptions?>())
+            .Returns(async call =>
+            {
+                var options = call.Arg<CyclicalSongMachine.AttachmentOptions?>();
+                Assert.NotNull(options?.OnScopesCompleted);
+                await options!.OnScopesCompleted!(
+                    [new SoloCurrentProjectionScopeKey("song-phase-only", "Solo_Guitar")]);
+                return new SongProcessingMachine.MachineResult();
+            });
+
+        var ctx = CreateContext(
+            scrapeId: 0,
+            registeredIds: new HashSet<string> { "user-1" },
+            scrapeRequests:
+            [
+                new GlobalLeaderboardScraper.SongScrapeRequest
+                {
+                    SongId = "song-phase-only",
+                    Instruments = GlobalLeaderboardScraper.AllInstruments,
+                },
+            ]);
+
+        await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT scrape_id, provenance
+            FROM registered_user_refresh_scope_progress
+            WHERE song_id = 'song-phase-only'
+              AND instrument = 'Solo_Guitar'
+            """;
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.True(reader.IsDBNull(0));
+        Assert.Equal("phase_only", reader.GetString(1));
+    }
+
+    [Fact]
+    public async Task RefreshRegisteredUsers_SeasonRollover_QueriesDiscoveredSeasonBeforeCheckpoint()
+    {
+        const int instrumentMaxSeason = 14;
+        const int discoveredSeason = 15;
+        const string songId = "song-rollover";
+        const string accountId = "user-rollover";
+
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns("test-access-token");
+        _tokenManager.AccountId.Returns("caller-001");
+
+        using (var conn = _metaFixture.DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                INSERT INTO instrument_scrape_state (
+                    instrument,
+                    max_observed_season,
+                    last_scrape_id,
+                    updated_at)
+                VALUES (
+                    'Solo_Guitar',
+                    @season,
+                    NULL,
+                    @now)
+                ON CONFLICT (instrument) DO UPDATE SET
+                    max_observed_season = EXCLUDED.max_observed_season,
+                    updated_at = EXCLUDED.updated_at
+                """;
+            cmd.Parameters.AddWithValue("season", instrumentMaxSeason);
+            cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+            cmd.ExecuteNonQuery();
+        }
+
+        var querier = Substitute.For<ILeaderboardQuerier>();
+        querier.LookupMultipleAccountsAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>(),
+            true)
+            .Returns([]);
+
+        var guitarSeasonLookupStarted = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseGuitarSeasonLookup =
+            new TaskCompletionSource<List<SessionHistoryEntry>>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+        querier.LookupMultipleAccountSessionsAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>(),
+            true)
+            .Returns(call =>
+            {
+                Assert.Equal("season015", call.ArgAt<string>(2));
+                if (call.ArgAt<string>(1) == "Solo_Guitar")
+                {
+                    guitarSeasonLookupStarted.TrySetResult(true);
+                    return releaseGuitarSeasonLookup.Task;
+                }
+
+                return Task.FromResult(new List<SessionHistoryEntry>());
+            });
+
+        var syncTracker = new UserSyncProgressTracker(
+            new NotificationService(NullLogger<NotificationService>.Instance),
+            NullLogger<UserSyncProgressTracker>.Instance);
+        var innerMachine = new SongProcessingMachine(
+            querier,
+            new BatchResultProcessor(
+                _persistence,
+                Substitute.For<ILogger<BatchResultProcessor>>()),
+            _persistence,
+            _progress,
+            syncTracker,
+            Substitute.For<ILogger<SongProcessingMachine>>());
+        var historyReconstructor = Substitute.For<HistoryReconstructor>(
+            querier,
+            _persistence,
+            new HttpClient(new NoOpHttpHandler()),
+            _progress,
+            syncTracker,
+            Substitute.For<ILogger<HistoryReconstructor>>());
+        historyReconstructor.DiscoverSeasonWindowsAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>())
+            .Returns(
+            [
+                new SeasonWindowInfo
+                {
+                    SeasonNumber = discoveredSeason,
+                    EventId = "season015_event",
+                    WindowId = "season015",
+                },
+            ]);
+
+        var scraperOptions = new ScraperOptions
+        {
+            RefreshCurrentSeasonSessions = true,
+            RegisteredUserRefreshTimeout = TimeSpan.Zero,
+        };
+        var cyclicalMachine = new CyclicalSongMachine(
+            innerMachine,
+            historyReconstructor,
+            _tokenManager,
+            _pool,
+            _progress,
+            syncTracker,
+            _persistence,
+            Options.Create(scraperOptions),
+            Substitute.For<ILogger<CyclicalSongMachine>>());
+        var sut = CreateOrchestrator(
+            cyclicalMachine,
+            historyReconstructor,
+            scraperOptions);
+        var ctx = CreateContext(
+            scrapeId: 500,
+            registeredIds: new HashSet<string> { accountId },
+            scrapeRequests:
+            [
+                new GlobalLeaderboardScraper.SongScrapeRequest
+                {
+                    SongId = songId,
+                    Instruments = GlobalLeaderboardScraper.AllInstruments,
+                },
+            ]);
+
+        var refreshTask = sut.RefreshRegisteredUsersAsync(
+            ctx,
+            CancellationToken.None);
+        await guitarSeasonLookupStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        using (var conn = _metaFixture.DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT COUNT(*)
+                FROM registered_user_refresh_scope_progress
+                WHERE song_id = @songId
+                  AND instrument = 'Solo_Guitar'
+                """;
+            cmd.Parameters.AddWithValue("songId", songId);
+            Assert.Equal(0, Convert.ToInt32(cmd.ExecuteScalar()));
+        }
+
+        releaseGuitarSeasonLookup.SetResult([]);
+        await refreshTask;
+
+        await querier.Received(1).LookupMultipleAccountSessionsAsync(
+            songId,
+            "Solo_Guitar",
+            "season015",
+            Arg.Is<IReadOnlyList<string>>(accounts =>
+                accounts.Count == 1 && accounts[0] == accountId),
+            "test-access-token",
+            "caller-001",
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>(),
+            true);
+        await querier.DidNotReceive().LookupMultipleAccountSessionsAsync(
+            songId,
+            "Solo_Guitar",
+            "season014",
+            Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>(),
+            true);
+
+        using (var conn = _metaFixture.DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT scrape_id, provenance
+                FROM registered_user_refresh_scope_progress
+                WHERE song_id = @songId
+                  AND instrument = 'Solo_Guitar'
+                """;
+            cmd.Parameters.AddWithValue("songId", songId);
+            using var reader = cmd.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.Equal(500, reader.GetInt64(0));
+            Assert.Equal("scrape", reader.GetString(1));
+        }
     }
 
     [Fact]

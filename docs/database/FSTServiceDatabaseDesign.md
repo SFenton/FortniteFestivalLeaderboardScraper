@@ -328,7 +328,7 @@ marker exists on a legacy row).
 | `publication_song_catalog` | Immutable generation snapshot | `MetaDatabase.StartScrapeRun`, publication retention | One row per publication; ready only when its exact version/hash token matches the catalog selected by the scrape; retained only for current, previous, and working pointers |
 | `account_names` | Durable source/cache of Epic identity | Worker resolver; API/search readers | Refreshable, but historical account IDs remain stable |
 | `registered_users`, `registered_bands` | Durable source | API activity/registration and worker consumers | Activity-based retention must preserve idempotent claims |
-| `registered_user_refresh_scope_progress` | Durable recurring-refresh work state | `PostScrapeOrchestrator`, `CyclicalSongMachine`, `MetaDatabase` | One latest successful checkpoint per `(song_id, instrument)` with `status`, `checked_at`, and `scrape_id`; the small partial `checked_at` index supports fairness/coverage reads |
+| `registered_user_refresh_scope_progress` | Durable recurring-refresh work state | `PostScrapeOrchestrator`, `CyclicalSongMachine`, `MetaDatabase` | One latest successful checkpoint per `(song_id, instrument)` with `status`, `checked_at`, nullable positive `scrape_id`, and explicit `scrape`/`phase_only` provenance; the small partial `checked_at` index supports fairness/coverage reads |
 | `registered_band_processing_status`, `registered_band_processing_progress`, `registered_player_band_discovery_progress` | Durable work state | Registration/backfill workers | Resume/idempotency state; prune only completed stale work |
 | `backfill_status`, `backfill_progress`, `history_recon_status`, `history_recon_progress`, `deep_scrape_queue` | Durable work state | Worker queues/orchestrators | Preserve failed/incomplete work for replay |
 | `user_sessions`, `epic_user_tokens` | Security-sensitive durable state | Authentication subsystem | Never include values in logs, reports, fixtures, or exports; restore with access controls |
@@ -360,17 +360,28 @@ current-season batch succeeds. Successful empty and recognized Epic
 statuses, invalid payloads, missing required season windows, cancellation, and
 other incomplete lookups do not advance that scope. Already completed scopes
 remain durable if a later scope, timeout, process exit, or cancellation ends
-the attachment. Upserts reject stale writes: an older scrape never wins, and
-`checked_at` advances monotonically within the same scrape.
+the attachment. The newest `checked_at` wins; a tie prefers positive scrape
+provenance. Full scrapes store their positive scrape ID. Supported phase-only
+`SoloRefreshUsers` runs store `scrape_id = NULL` with
+`provenance = 'phase_only'` instead of inventing a scrape identity.
+
+PostScrape chooses one authoritative current season as the maximum of the
+discovered/persisted season windows and the instrument-observation fallback,
+then passes that exact value in its attachment options. The cyclical machine
+merges supplied windows and uses the declared value for core clamping and
+prefix selection. A rollover window `N` therefore cannot be replaced by an
+instrument maximum of `N-1`; the exact season `N` lookup must succeed before
+the scope callback can checkpoint.
 
 The worker logs bounded before/after coverage over only the current charted
 songs and nine solo instruments: expected scopes, checked scopes, missing
 scopes, oldest checked timestamp/age, and rows completed by the current scrape.
 There is currently no pass cap; fairness changes ordering only. Registration
 backfill/history progress and solo-projection dirty-scope persistence remain
-separate contracts. Rollback is code-only: older workers ignore the additive
-table and index, which should be retained for audit/retry continuity unless a
-later maintenance decision explicitly drops them.
+separate contracts. Rollback retains the additive table, index, provenance
+rows, and the fixed nullable-provenance writer; orchestration ordering can be
+disabled without deleting checkpoint evidence. Do not restore the predecessor
+writer that rejects phase-only execution while that supported mode remains.
 
 SERVICE-1/WORKER-5 consolidate competing registration consumers, catalog
 ownership, and token refresh ownership.

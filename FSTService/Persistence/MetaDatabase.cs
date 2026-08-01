@@ -3166,8 +3166,8 @@ public sealed class MetaDatabase : IMetaDatabase
         IReadOnlyCollection<SoloCurrentProjectionScopeKey> scopes,
         DateTime checkedAtUtc)
     {
-        if (scrapeId <= 0)
-            throw new ArgumentOutOfRangeException(nameof(scrapeId), scrapeId, "Scrape ID must be positive.");
+        if (scrapeId < 0)
+            throw new ArgumentOutOfRangeException(nameof(scrapeId), scrapeId, "Scrape ID cannot be negative.");
 
         var normalizedScopes = scopes
             .Where(static scope =>
@@ -3188,31 +3188,39 @@ public sealed class MetaDatabase : IMetaDatabase
                 instrument,
                 status,
                 checked_at,
-                scrape_id)
+                scrape_id,
+                provenance)
             SELECT
                 scope.song_id,
                 scope.instrument,
                 'complete',
                 @checkedAt,
-                @scrapeId
+                @scrapeId,
+                @provenance
             FROM unnest(
                 @songIds::text[],
                 @instruments::text[]) AS scope(song_id, instrument)
             ON CONFLICT (song_id, instrument) DO UPDATE SET
                 status = EXCLUDED.status,
                 checked_at = EXCLUDED.checked_at,
-                scrape_id = EXCLUDED.scrape_id
-            WHERE registered_user_refresh_scope_progress.scrape_id < EXCLUDED.scrape_id
+                scrape_id = EXCLUDED.scrape_id,
+                provenance = EXCLUDED.provenance
+            WHERE registered_user_refresh_scope_progress.checked_at < EXCLUDED.checked_at
                OR (
-                    registered_user_refresh_scope_progress.scrape_id = EXCLUDED.scrape_id
-                AND registered_user_refresh_scope_progress.checked_at <= EXCLUDED.checked_at)
+                    registered_user_refresh_scope_progress.checked_at = EXCLUDED.checked_at
+                AND COALESCE(registered_user_refresh_scope_progress.scrape_id, 0)
+                    <= COALESCE(EXCLUDED.scrape_id, 0))
             """;
         cmd.Parameters.Add("songIds", NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
             normalizedScopes.Select(static scope => scope.SongId).ToArray();
         cmd.Parameters.Add("instruments", NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
             normalizedScopes.Select(static scope => scope.Instrument).ToArray();
         cmd.Parameters.AddWithValue("checkedAt", NormalizeUtc(checkedAtUtc));
-        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        cmd.Parameters.Add("scrapeId", NpgsqlDbType.Bigint).Value =
+            scrapeId > 0 ? scrapeId : DBNull.Value;
+        cmd.Parameters.AddWithValue(
+            "provenance",
+            scrapeId > 0 ? "scrape" : "phase_only");
         return cmd.ExecuteNonQuery();
     }
 

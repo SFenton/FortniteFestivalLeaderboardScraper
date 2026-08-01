@@ -168,6 +168,22 @@ public class DatabaseInitializerTests : IDisposable
                     WHERE table_schema = 'public'
                       AND table_name = 'registered_user_refresh_scope_progress'
                       AND is_nullable = 'NO'
+                ),
+                EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'registered_user_refresh_scope_progress'
+                      AND column_name = 'scrape_id'
+                      AND is_nullable = 'YES'
+                ),
+                EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'ck_registered_user_refresh_scope_provenance'
+                      AND conrelid =
+                        'registered_user_refresh_scope_progress'::regclass
+                      AND convalidated
                 )
             """;
 
@@ -177,8 +193,69 @@ public class DatabaseInitializerTests : IDisposable
         Assert.True(reader.GetBoolean(1));
         Assert.Equal(new[] { "song_id", "instrument" }, reader.GetFieldValue<string[]>(2));
         Assert.Equal(
-            new[] { "song_id", "instrument", "status", "checked_at", "scrape_id" },
+            new[] { "song_id", "instrument", "status", "checked_at", "provenance" },
             reader.GetFieldValue<string[]>(3));
+        Assert.True(reader.GetBoolean(4));
+        Assert.True(reader.GetBoolean(5));
+    }
+
+    [Fact]
+    public async Task EnsureSchemaAsync_upgrades_registered_user_refresh_scrape_provenance_idempotently()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using (var conn = _metaFixture.DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                ALTER TABLE registered_user_refresh_scope_progress
+                    DROP CONSTRAINT ck_registered_user_refresh_scope_provenance;
+                ALTER TABLE registered_user_refresh_scope_progress
+                    DROP COLUMN provenance;
+                ALTER TABLE registered_user_refresh_scope_progress
+                    ALTER COLUMN scrape_id SET NOT NULL;
+
+                INSERT INTO registered_user_refresh_scope_progress (
+                    song_id,
+                    instrument,
+                    status,
+                    checked_at,
+                    scrape_id)
+                VALUES (
+                    'legacy-refresh-song',
+                    'Solo_Guitar',
+                    'complete',
+                    '2026-08-01T00:00:00Z',
+                    1272);
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using var verifyConn = _metaFixture.DataSource.OpenConnection();
+        using var verifyCmd = verifyConn.CreateCommand();
+        verifyCmd.CommandText = """
+            SELECT
+                scrape_id,
+                provenance,
+                (
+                    SELECT is_nullable
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'registered_user_refresh_scope_progress'
+                      AND column_name = 'scrape_id'
+                )
+            FROM registered_user_refresh_scope_progress
+            WHERE song_id = 'legacy-refresh-song'
+              AND instrument = 'Solo_Guitar'
+            """;
+        using var reader = verifyCmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(1272, reader.GetInt64(0));
+        Assert.Equal("scrape", reader.GetString(1));
+        Assert.Equal("YES", reader.GetString(2));
     }
 
     [Fact]
