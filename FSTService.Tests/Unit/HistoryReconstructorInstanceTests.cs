@@ -72,6 +72,22 @@ public class HistoryReconstructorInstanceTests : IDisposable
         return (recon, scraperHandler, eventsHandler);
     }
 
+    private void BindFirstSeen(
+        string songId,
+        int firstSeenSeason,
+        IReadOnlyList<SeasonWindowInfo> windows)
+    {
+        _metaDb.Db.UpsertFirstSeenSeason(
+            songId,
+            firstSeenSeason,
+            firstSeenSeason,
+            firstSeenSeason,
+            "test_authoritative",
+            FirstSeenSeasonCalculator.CurrentVersion,
+            HistoryReconstructor.ComputeWindowFingerprint(windows),
+            windows.Max(static window => window.SeasonNumber));
+    }
+
     // â”€â”€â”€ DiscoverSeasonWindowsAsync â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
@@ -288,6 +304,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
             new() { SeasonNumber = 2, EventId = "e2", WindowId = "season_2" },
             new() { SeasonNumber = 3, EventId = "e3", WindowId = "season_3" },
         };
+        BindFirstSeen("songA", 1, windows);
 
         // Seasonal lookups: season 1 â†’ 1000, season 2 â†’ 3000, season 3 â†’ 5000
         scraperHandler.EnqueueJsonOk("""
@@ -338,6 +355,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
             new() { SeasonNumber = 2, EventId = "e2", WindowId = "season_2" },
             new() { SeasonNumber = 3, EventId = "e3", WindowId = "season_3" },
         };
+        BindFirstSeen("songA", 1, windows);
 
         // Season 1: 3000, Season 2: 2000 (no increase), Season 3: 5000
         scraperHandler.EnqueueJsonOk("""
@@ -416,6 +434,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
             new() { SeasonNumber = 1, EventId = "", WindowId = "" },
             new() { SeasonNumber = 2, EventId = "", WindowId = "" },
         };
+        BindFirstSeen("songA", 1, windows);
 
         var result = await recon.ReconstructAccountAsync(
             "acct1", windows, "token", "caller", _pool);
@@ -454,6 +473,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
             new() { SeasonNumber = 1, EventId = "e1", WindowId = "season_1" },
             new() { SeasonNumber = 3, EventId = "e3", WindowId = "season_3" },
         };
+        BindFirstSeen("songA", 1, windows);
 
         var result = await recon.ReconstructAccountAsync(
             "acct1", windows, "token", "caller", _pool);
@@ -483,6 +503,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
             new() { SeasonNumber = 1, EventId = "e1", WindowId = "season_1" },
             new() { SeasonNumber = 2, EventId = "e2", WindowId = "season_2" },
         };
+        BindFirstSeen("songA", 1, windows);
 
         // Both seasons return empty â€” no entries for this account
         scraperHandler.EnqueueJsonOk("""{"page":0,"totalPages":0,"entries":[]}""");
@@ -519,23 +540,30 @@ public class HistoryReconstructorInstanceTests : IDisposable
             new() { SeasonNumber = 2, EventId = "e2", WindowId = "season_2" },
             new() { SeasonNumber = 3, EventId = "e3", WindowId = "season_3" },
         };
+        BindFirstSeen("songA", 1, windows);
+        BindFirstSeen("songB", 1, windows);
 
         // Pre-mark songA as already processed (simulates partial resumption)
         var fingerprint = HistoryReconstructor.ComputeWindowFingerprint(windows);
-        _metaDb.Db.EnqueueHistoryRecon(
+        var revision = _metaDb.Db.AdmitHistoryRecon(
             "acct1",
             2,
             HistoryReconstructor.CurrentReconstructionVersion,
             fingerprint);
-        _metaDb.Db.StartHistoryRecon("acct1");
+        _metaDb.Db.StartHistoryRecon(
+            "acct1",
+            HistoryReconstructor.CurrentReconstructionVersion,
+            fingerprint,
+            revision);
         _metaDb.Db.MarkHistoryReconSongProcessed(
             "acct1",
             "songA",
             "Solo_Guitar",
             HistoryReconstructor.CurrentReconstructionVersion,
-            fingerprint);
+            fingerprint,
+            revision);
 
-        // Only songB should be processed (2 seasons to query)
+        // Only songB should be processed through authoritative current season 3.
         scraperHandler.EnqueueJsonOk("""
         [{
             "teamId":"acct1","rank":300,"percentile":0.2,
@@ -548,13 +576,13 @@ public class HistoryReconstructorInstanceTests : IDisposable
             "sessionHistory":[{"endTime":"2024-04-01T00:00:00Z","trackedStats":{"SCORE":3000}}]
         }]
         """);
+        scraperHandler.EnqueueJsonOk("""[]""");
 
         var result = await recon.ReconstructAccountAsync(
             "acct1", windows, "token", "caller", _pool);
 
         Assert.Equal(2, result);
-        // Only 2 HTTP requests (songB's 2 seasons, songA skipped)
-        Assert.Equal(2, scraperHandler.Requests.Count);
+        Assert.Equal(3, scraperHandler.Requests.Count);
     }
 
     // â”€â”€â”€ Per-song error during reconstruction â†’ caught, continues â”€â”€
@@ -581,6 +609,8 @@ public class HistoryReconstructorInstanceTests : IDisposable
             new() { SeasonNumber = 1, EventId = "e1", WindowId = "season_1" },
             new() { SeasonNumber = 2, EventId = "e2", WindowId = "season_2" },
         };
+        BindFirstSeen("songA", 1, windows);
+        BindFirstSeen("songB", 1, windows);
 
         // SongA season 1 fails, season 2 returns ok (but songA overall fails with exception)
         scraperHandler.EnqueueException(new HttpRequestException("songA lookup failed"));
@@ -666,6 +696,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
             new() { SeasonNumber = 1, EventId = "e1", WindowId = "season_1" },
             new() { SeasonNumber = 2, EventId = "e2", WindowId = "season_2" },
         };
+        BindFirstSeen("songA", 1, windows);
 
         // Season 1: 3 sessions showing progression within the season
         scraperHandler.EnqueueJsonOk("""
@@ -718,6 +749,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
             new() { SeasonNumber = 1, EventId = "e1", WindowId = "season_1" },
             new() { SeasonNumber = 2, EventId = "e2", WindowId = "season_2" },
         };
+        BindFirstSeen("songA", 1, windows);
 
         // Season 1: 4 sessions, scores go 100k â†’ 200k â†’ 150k â†’ 300k
         scraperHandler.EnqueueJsonOk("""
@@ -777,6 +809,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
             new() { SeasonNumber = 4, EventId = "e4", WindowId = "season_4" },
             new() { SeasonNumber = 5, EventId = "e5", WindowId = "season_5" },
         };
+        BindFirstSeen("songA", 3, windows);
 
         // Only seasons 3, 4, 5 should be queried (not 1, 2)
         scraperHandler.EnqueueJsonOk("""
@@ -808,7 +841,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
     }
 
     [Fact]
-    public async Task ReconstructAccountAsync_WithEstimatedSeason_SkipsEarlierSeasons()
+    public async Task ReconstructAccountAsync_EstimatedOnlyFirstSeen_RemainsPending()
     {
         var (recon, scraperHandler, _) = CreateReconstructor();
 
@@ -855,12 +888,13 @@ public class HistoryReconstructorInstanceTests : IDisposable
         var result = await recon.ReconstructAccountAsync(
             "acct1", windows, "token", "caller", _pool);
 
-        Assert.Equal(3, result);
-        Assert.Equal(3, scraperHandler.Requests.Count);
+        Assert.Equal(0, result);
+        Assert.Equal("error", _metaDb.Db.GetHistoryReconStatus("acct1")?.Status);
+        Assert.Empty(scraperHandler.Requests);
     }
 
     [Fact]
-    public async Task ReconstructAccountAsync_NoFirstSeenData_SkipsSong()
+    public async Task ReconstructAccountAsync_NoFirstSeenData_RemainsPending()
     {
         var (recon, scraperHandler, _) = CreateReconstructor();
 
@@ -886,5 +920,66 @@ public class HistoryReconstructorInstanceTests : IDisposable
 
         Assert.Equal(0, result);
         Assert.Equal(0, scraperHandler.Requests.Count);
+        Assert.Equal("error", _metaDb.Db.GetHistoryReconStatus("acct1")?.Status);
+        Assert.Empty(_metaDb.Db.GetProcessedHistoryReconPairs(
+            "acct1",
+            HistoryReconstructor.CurrentReconstructionVersion,
+            HistoryReconstructor.ComputeWindowFingerprint(windows)));
+    }
+
+    [Fact]
+    public async Task ReconstructAccountAsync_QueriesThroughCurrentSeasonAndRecordsLaterLowerSession()
+    {
+        var (recon, scraperHandler, _) = CreateReconstructor();
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("song-current", [new LeaderboardEntry
+        {
+            AccountId = "acct1",
+            Score = 5000,
+            Rank = 10,
+            Season = 1,
+        }]);
+        _metaDb.Db.UpsertFirstSeenSeason(
+            "song-current",
+            1,
+            1,
+            1,
+            "found",
+            FirstSeenSeasonCalculator.CurrentVersion);
+        var windows = new List<SeasonWindowInfo>
+        {
+            new() { SeasonNumber = 1, WindowId = "season001" },
+            new() { SeasonNumber = 2, WindowId = "season002" },
+            new() { SeasonNumber = 3, WindowId = "season003" },
+        };
+        BindFirstSeen("song-current", 1, windows);
+        scraperHandler.EnqueueJsonOk("""
+        [{"teamId":"acct1","rank":10,"sessionHistory":[
+            {"endTime":"2024-01-01T00:00:00Z","trackedStats":{"SCORE":5000}}
+        ]}]
+        """);
+        scraperHandler.EnqueueJsonOk("""
+        [{"teamId":"acct1","rank":20,"sessionHistory":[
+            {"endTime":"2024-04-01T00:00:00Z","trackedStats":{"SCORE":4500}}
+        ]}]
+        """);
+        scraperHandler.EnqueueJsonOk("""
+        [{"teamId":"acct1","rank":30,"sessionHistory":[
+            {"endTime":"2024-07-01T00:00:00Z","trackedStats":{"SCORE":4000}}
+        ]}]
+        """);
+
+        var result = await recon.ReconstructAccountAsync(
+            "acct1",
+            windows,
+            "token",
+            "caller",
+            _pool);
+
+        Assert.Equal(3, result);
+        var history = _metaDb.Db.GetScoreHistory("acct1", 100);
+        Assert.Contains(history, row =>
+            row.Season == 3 && row.NewScore == 4000);
+        Assert.Equal("complete", _metaDb.Db.GetHistoryReconStatus("acct1")?.Status);
     }
 }

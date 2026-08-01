@@ -205,4 +205,89 @@ public class BatchResultProcessorTests : IDisposable
         Assert.Null(_persistence.GetOrCreateInstrumentDb("Solo_Guitar").GetEntry("song1", "acct1"));
         Assert.DoesNotContain(("song1", "Solo_Guitar"), _metaDb.Db.GetCheckedBackfillPairs("acct1"));
     }
+
+    [Fact]
+    public void DiscardStagedData_RemovesHistoryScoresAndProgressTogether()
+    {
+        const string fingerprint = "history-fingerprint";
+        var revision = _metaDb.Db.AdmitHistoryRecon(
+            "acct1",
+            1,
+            HistoryReconstructor.CurrentReconstructionVersion,
+            fingerprint);
+        _processor.SetStagingAccounts(["acct1"]);
+        _processor.ProcessSeasonalSessions(
+            "song1",
+            "Solo_Guitar",
+            15,
+            [
+                new SessionHistoryEntry
+                {
+                    AccountId = "acct1",
+                    Score = 12345,
+                    Rank = 10,
+                },
+            ]);
+        _processor.MarkHistoryReconProcessed(
+            "acct1",
+            "song1",
+            "Solo_Guitar",
+            HistoryReconstructor.CurrentReconstructionVersion,
+            fingerprint,
+            revision);
+
+        _processor.DiscardStagedData(["acct1"]);
+        Assert.True(_processor.FlushStagedData(
+            "acct1",
+            HistoryReconstructor.CurrentReconstructionVersion,
+            fingerprint,
+            revision));
+
+        Assert.Empty(_metaDb.Db.GetScoreHistory("acct1"));
+        Assert.Empty(_metaDb.Db.GetProcessedHistoryReconPairs(
+            "acct1",
+            HistoryReconstructor.CurrentReconstructionVersion,
+            fingerprint,
+            revision));
+    }
+
+    [Fact]
+    public void FlushStagedData_RejectsStaleAdmissionWithoutScoreOrProgressWrites()
+    {
+        var staleRevision = _metaDb.Db.AdmitHistoryRecon(
+            "acct1",
+            1,
+            HistoryReconstructor.CurrentReconstructionVersion,
+            "fingerprint-1");
+        _processor.SetStagingAccounts(["acct1"]);
+        _processor.ProcessSeasonalSessions(
+            "song1",
+            "Solo_Guitar",
+            15,
+            [new SessionHistoryEntry { AccountId = "acct1", Score = 54321 }]);
+        _processor.MarkHistoryReconProcessed(
+            "acct1",
+            "song1",
+            "Solo_Guitar",
+            HistoryReconstructor.CurrentReconstructionVersion,
+            "fingerprint-1",
+            staleRevision);
+        _ = _metaDb.Db.AdmitHistoryRecon(
+            "acct1",
+            1,
+            HistoryReconstructor.CurrentReconstructionVersion,
+            "fingerprint-2");
+
+        Assert.False(_processor.FlushStagedData(
+            "acct1",
+            HistoryReconstructor.CurrentReconstructionVersion,
+            "fingerprint-1",
+            staleRevision));
+        Assert.Empty(_metaDb.Db.GetScoreHistory("acct1"));
+        Assert.Empty(_metaDb.Db.GetProcessedHistoryReconPairs(
+            "acct1",
+            HistoryReconstructor.CurrentReconstructionVersion,
+            "fingerprint-1",
+            staleRevision));
+    }
 }

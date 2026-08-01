@@ -80,6 +80,12 @@ public class SongProcessingMachine
             return new MachineResult();
 
         var instruments = GlobalLeaderboardScraper.AllInstruments;
+        var firstSeenBySong = _persistence.Meta.GetAllFirstSeenSeasons();
+        var windowFingerprint = HistoryReconstructor.ComputeWindowFingerprint(
+            seasonWindows);
+        var maxSeason = seasonWindows.Count == 0
+            ? 0
+            : seasonWindows.Max(static window => window.SeasonNumber);
 
         // Build exact seasonal lookup IDs from discovered windows.
         var seasonLookupIdMap = new Dictionary<int, string>();
@@ -122,7 +128,13 @@ public class SongProcessingMachine
         {
             var result = await ProcessSongAsync(
                 songId, instruments, users, seasonLookupIdMap,
-                    accessToken, callerAccountId, pool, isHighPriority, batchSize, trafficKind, iterCt);
+                    accessToken, callerAccountId, pool, isHighPriority, batchSize, trafficKind, iterCt,
+                    songFirstSeenSeason: firstSeenBySong.TryGetValue(songId, out var firstSeen)
+                        && firstSeen.CalculationVersion == FirstSeenSeasonCalculator.CurrentVersion
+                        && firstSeen.WindowFingerprint == windowFingerprint
+                        && firstSeen.MaxSeason == maxSeason
+                        ? firstSeen.FirstSeenSeason
+                        : null);
 
             Interlocked.Add(ref totalUpdated, result.EntriesUpdated);
             Interlocked.Add(ref totalSessions, result.SessionsInserted);
@@ -181,10 +193,12 @@ public class SongProcessingMachine
         int batchSize,
         EpicTrafficKind trafficKind,
         CancellationToken ct,
-        Func<IReadOnlyCollection<SoloCurrentProjectionScopeKey>, ValueTask>? onScopesCompleted = null)
+        Func<IReadOnlyCollection<SoloCurrentProjectionScopeKey>, ValueTask>? onScopesCompleted = null,
+        int? songFirstSeenSeason = null)
         => await ProcessSongAsync(songId, instruments, users, seasonPrefixMap,
             accessToken, callerAccountId, pool, isHighPriority, batchSize, trafficKind, ct,
-            onScopesCompleted);
+            onScopesCompleted,
+            songFirstSeenSeason);
 
     /// <summary>
     /// Process one song across all instruments for all users.
@@ -202,7 +216,8 @@ public class SongProcessingMachine
         int batchSize,
         EpicTrafficKind trafficKind,
         CancellationToken ct,
-        Func<IReadOnlyCollection<SoloCurrentProjectionScopeKey>, ValueTask>? onScopesCompleted = null)
+        Func<IReadOnlyCollection<SoloCurrentProjectionScopeKey>, ValueTask>? onScopesCompleted = null,
+        int? songFirstSeenSeason = null)
     {
         int entriesUpdated = 0;
         int sessionsInserted = 0;
@@ -213,7 +228,8 @@ public class SongProcessingMachine
         var requireReliableCompletion =
             onScopesCompleted is not null
             || users.Any(static user =>
-                user.Purposes.HasFlag(WorkPurpose.HistoryRecon));
+                user.Purposes.HasFlag(WorkPurpose.HistoryRecon)
+                || user.Purposes.HasFlag(WorkPurpose.Backfill));
 
         // Shared across all instruments: when a pad instrument discovers
         // that a season returns no data (BadRequest or empty), record it
@@ -225,7 +241,7 @@ public class SongProcessingMachine
             var result = await ProcessSongInstrumentAsync(
                 songId, instrument, users, seasonPrefixMap,
                 accessToken, callerAccountId, pool, isHighPriority, batchSize, trafficKind, ct,
-                requireReliableCompletion, missingSeasonsForSong);
+                requireReliableCompletion, songFirstSeenSeason, missingSeasonsForSong);
 
             Interlocked.Add(ref entriesUpdated, result.EntriesUpdated);
             Interlocked.Add(ref sessionsInserted, result.SessionsInserted);
@@ -272,6 +288,7 @@ public class SongProcessingMachine
         EpicTrafficKind trafficKind,
         CancellationToken ct,
         bool requireReliableCompletion,
+        int? songFirstSeenSeason,
         ConcurrentDictionary<int, bool>? missingSeasonsForSong = null)
     {
         int entriesUpdated = 0;
@@ -287,7 +304,9 @@ public class SongProcessingMachine
         // Skip seasons that predate the instrument's launch:
         //   Pro Lead/Bass — Season 3
         //   Pro Vocals/Cymbals/Drums — Season 14
-        int songFirstSeason = GlobalLeaderboardScraper.GetInstrumentLaunchSeason(instrument);
+        int songFirstSeason = Math.Max(
+            GlobalLeaderboardScraper.GetInstrumentLaunchSeason(instrument),
+            songFirstSeenSeason ?? 1);
 
         var seasonalTask = RunSeasonalLookups(
             songId, instrument, users, seasonPrefixMap, accessToken, callerAccountId,
@@ -324,7 +343,8 @@ public class SongProcessingMachine
                         songId,
                         instrument,
                         user.HistoryReconstructionVersion,
-                        user.HistoryWindowFingerprint);
+                        user.HistoryWindowFingerprint,
+                        user.HistoryAdmissionRevision);
                 }
             }
         }

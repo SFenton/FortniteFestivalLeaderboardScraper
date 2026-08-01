@@ -416,6 +416,24 @@ history. Versioned status, counter, failure, pair-upsert, and completion writes
 all require the active identity, with the progress upsert locking that status
 row. Late work from fingerprint F1 therefore cannot overwrite an activated F2.
 
+History/backfill durability adds a monotonic admission revision to that
+identity. Staged seasonal score-history rows and history pair progress promote
+in one PostgreSQL transaction only while `(version, fingerprint, revision)` is
+still active; cancellation/discard removes both buffers. Backfill completion
+separately requires the exact current charted-song × nine-instrument all-time
+pair set, so historical success cannot hide a failed core lookup.
+
+Authoritative FirstSeen floors suppress pre-release seasonal calls in the
+batched machine. Legacy reconstruction no longer treats season 0/1 entries as
+already complete: it queries from authoritative FirstSeen through the highest
+current window, records later lower-score sessions, and leaves pairs without
+authoritative FirstSeen metadata pending.
+
+`song_first_seen_season` rows bind calculation version to the authoritative
+window fingerprint and maximum season. A null/not-found result is reopened
+whenever either changes, preventing an older terminal miss from surviving a
+new season window.
+
 The worker logs bounded before/after coverage over only the current charted
 songs and nine solo instruments: expected scopes, checked scopes, missing
 scopes, oldest checked timestamp/age, and rows completed by the current scrape.

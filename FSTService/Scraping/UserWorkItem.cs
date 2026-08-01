@@ -62,6 +62,7 @@ public sealed class UserWorkItem : SongMachineWorkItem
     public HashSet<(string SongId, string Instrument)>? HistoryAlreadyProcessed { get; init; }
     public int HistoryReconstructionVersion { get; init; }
     public string HistoryWindowFingerprint { get; init; } = "";
+    public long HistoryAdmissionRevision { get; init; }
 
     public bool IsBackfillAlreadyChecked(string songId, string instrument)
         => (BackfillAlreadyChecked

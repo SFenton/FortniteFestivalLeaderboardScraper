@@ -76,26 +76,6 @@ public class FirstSeenSeasonCalculator
             return 0;
         }
 
-        // Get songs already at current version — these are skipped
-        var alreadyCurrent = _metaDb.GetSongIdsWithFirstSeenVersion(CurrentVersion);
-
-        // Filter to songs that need (re)calculation
-        var songsToCalculate = allSongs
-            .Where(id => !alreadyCurrent.Contains(id))
-            .ToList();
-
-        if (songsToCalculate.Count == 0)
-        {
-            _log.LogDebug("FirstSeenSeason: all {Total} songs already at version {Version}.", allSongs.Count, CurrentVersion);
-            return 0;
-        }
-
-        _log.LogInformation(
-            "FirstSeenSeason v{Version}: calculating for {Count} song(s) ({Already} already done, {Total} total).",
-            CurrentVersion, songsToCalculate.Count, alreadyCurrent.Count, allSongs.Count);
-
-        _progress.BeginPhaseProgress(songsToCalculate.Count);
-
         // Get authoritative season windows sorted ascending. The caller may pass a
         // freshly discovered rollover window that has not existed for a prior pass.
         var seasonWindows = HistoryReconstructor.MergeSeasonWindows(
@@ -106,6 +86,30 @@ public class FirstSeenSeasonCalculator
             _log.LogWarning("FirstSeenSeason: no season windows discovered. Cannot calculate.");
             return 0;
         }
+
+        var windowFingerprint = HistoryReconstructor.ComputeWindowFingerprint(
+            seasonWindows);
+        var maxSeason = seasonWindows[^1].SeasonNumber;
+        var alreadyCurrent = _metaDb.GetSongIdsWithFirstSeenVersion(
+            CurrentVersion,
+            windowFingerprint,
+            maxSeason);
+        var songsToCalculate = allSongs
+            .Where(id => !alreadyCurrent.Contains(id))
+            .ToList();
+
+        if (songsToCalculate.Count == 0)
+        {
+            _log.LogDebug("FirstSeenSeason: all {Total} songs already at version {Version} for window fingerprint {Fingerprint}.",
+                allSongs.Count, CurrentVersion, windowFingerprint);
+            return 0;
+        }
+
+        _log.LogInformation(
+            "FirstSeenSeason v{Version}: calculating for {Count} song(s) ({Already} already done, {Total} total).",
+            CurrentVersion, songsToCalculate.Count, alreadyCurrent.Count, allSongs.Count);
+
+        _progress.BeginPhaseProgress(songsToCalculate.Count);
 
         // Also get MIN(season) per song from instrument DBs for diagnostic min_observed_season
         var songMinSeasons = new Dictionary<string, int?>(songsToCalculate.Count);
@@ -131,7 +135,10 @@ public class FirstSeenSeasonCalculator
                 _metaDb.UpsertFirstSeenSeason(
                     songId, result.FirstSeenSeason, minObserved,
                     result.FirstSeenSeason ?? seasonWindows[^1].SeasonNumber,
-                    result.ProbeResult, CurrentVersion);
+                    result.ProbeResult,
+                    CurrentVersion,
+                    windowFingerprint,
+                    maxSeason);
 
                 _progress.ReportPhaseItemComplete();
                 return 1;

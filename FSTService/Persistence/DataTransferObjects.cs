@@ -136,7 +136,19 @@ public sealed class HistoryReconStatusInfo
     public string? ErrorMessage { get; init; }
     public int ReconstructionVersion { get; init; }
     public string WindowFingerprint { get; init; } = "";
+    public long AdmissionRevision { get; init; }
 }
+
+public sealed record FirstSeenSeasonInfo(
+    int? FirstSeenSeason,
+    int EstimatedSeason,
+    int? CalculationVersion,
+    string WindowFingerprint,
+    int MaxSeason);
+
+public sealed record HistoryReconProgressWrite(
+    string SongId,
+    string Instrument);
 
 /// <summary>
 /// DTO for registered-band targeted lookup status.

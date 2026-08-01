@@ -436,6 +436,9 @@ public class HistoryReconstructor
         CancellationToken ct = default)
     {
         var windowFingerprint = ComputeWindowFingerprint(seasonWindows);
+        var authoritativeMaxSeason = seasonWindows.Count == 0
+            ? 0
+            : seasonWindows.Max(static window => window.SeasonNumber);
 
         // Check if already completed
         var status = _metaDb.GetHistoryReconStatus(accountId);
@@ -472,14 +475,12 @@ public class HistoryReconstructor
             }
         }
 
-        // Filter: only entries where Season > 1 need reconstruction.
-        // Season 0 or 1 means the first play IS the current high score — no history to find.
-        var reconstructable = allEntries.Where(e => e.Entry.Season > 1).ToList();
+        var reconstructable = allEntries;
 
         if (reconstructable.Count == 0)
         {
-            _log.LogInformation("No reconstructable history for {AccountId} (all scores in season 0–1).", accountId);
-            _metaDb.EnqueueHistoryRecon(
+            _log.LogInformation("No leaderboard entries available for history reconstruction for {AccountId}.", accountId);
+            var emptyRevision = _metaDb.AdmitHistoryRecon(
                 accountId,
                 0,
                 CurrentReconstructionVersion,
@@ -487,12 +488,13 @@ public class HistoryReconstructor
             _metaDb.CompleteHistoryRecon(
                 accountId,
                 CurrentReconstructionVersion,
-                windowFingerprint);
+                windowFingerprint,
+                emptyRevision);
             return 0;
         }
 
         // Set up tracking
-        _metaDb.EnqueueHistoryRecon(
+        var admissionRevision = _metaDb.AdmitHistoryRecon(
             accountId,
             reconstructable.Count,
             CurrentReconstructionVersion,
@@ -500,13 +502,15 @@ public class HistoryReconstructor
         _metaDb.StartHistoryRecon(
             accountId,
             CurrentReconstructionVersion,
-            windowFingerprint);
+            windowFingerprint,
+            admissionRevision);
 
         // Get already-processed pairs (for resumption)
         var alreadyProcessed = _metaDb.GetProcessedHistoryReconPairs(
             accountId,
             CurrentReconstructionVersion,
-            windowFingerprint);
+            windowFingerprint,
+            admissionRevision);
 
         // Bulk-load FirstSeenSeason data so we can skip seasons before a song existed
         var firstSeenMap = _metaDb.GetAllFirstSeenSeasons();
@@ -536,23 +540,22 @@ public class HistoryReconstructor
                 continue; // Already processed in a previous run
             }
 
-            // Determine the earliest season this song could have data in.
-            // If FirstSeenSeason data is available, use it; otherwise skip entirely —
-            // no FirstSeenSeason means the song is likely not released yet (just in the API catalog).
-            if (!firstSeenMap.TryGetValue(songId, out var fss))
+            if (!firstSeenMap.TryGetValue(songId, out var fss)
+                || fss.FirstSeenSeason is null
+                || fss.CalculationVersion != FirstSeenSeasonCalculator.CurrentVersion
+                || !string.Equals(
+                    fss.WindowFingerprint,
+                    windowFingerprint,
+                    StringComparison.Ordinal)
+                || fss.MaxSeason != authoritativeMaxSeason)
             {
-                _log.LogDebug("Skipping {Song}/{Instrument}: no FirstSeenSeason data (song may not be released yet).",
+                _log.LogWarning("History recon cannot process {Song}/{Instrument}: authoritative FirstSeenSeason is missing.",
                     songId, instrument);
-                Interlocked.Increment(ref songsProcessed);
-                _metaDb.MarkHistoryReconSongProcessed(
-                    accountId,
-                    songId,
-                    instrument,
-                    CurrentReconstructionVersion,
-                    windowFingerprint);
+                Interlocked.Increment(ref failedPairs);
+                _progress.ReportPhaseItemComplete();
                 continue;
             }
-            int songMinSeason = fss.FirstSeenSeason ?? fss.EstimatedSeason;
+            int songMinSeason = fss.FirstSeenSeason.Value;
 
             tasks.Add(ProcessOneSongAsync(songId, instrument, alltimeEntry, songMinSeason));
         }
@@ -561,20 +564,27 @@ public class HistoryReconstructor
         {
             try
             {
-                var (entries, queries) = await ReconstructSongHistoryAsync(
+                var (scoreChanges, queries) = await ReconstructSongHistoryAsync(
                     accountId, songId, instrument, alltimeEntry,
                     songMinSeason, seasonWindows, accessToken, callerAccountId, pool, ct);
 
+                if (!_metaDb.CommitStagedHistoryData(
+                        accountId,
+                        scoreChanges,
+                        [new HistoryReconProgressWrite(songId, instrument)],
+                        CurrentReconstructionVersion,
+                        windowFingerprint,
+                        admissionRevision))
+                {
+                    throw new InvalidOperationException(
+                        $"History reconstruction admission became stale for {accountId}.");
+                }
+
+                var entries = scoreChanges.Count;
                 Interlocked.Add(ref totalHistoryEntries, entries);
                 Interlocked.Add(ref seasonsQueried, queries);
                 var processed = Interlocked.Increment(ref songsProcessed);
 
-                _metaDb.MarkHistoryReconSongProcessed(
-                    accountId,
-                    songId,
-                    instrument,
-                    CurrentReconstructionVersion,
-                    windowFingerprint);
                 _progress.ReportPhaseItemComplete();
                 if (entries > 0) _progress.ReportPhaseEntryUpdated(entries);
 
@@ -588,7 +598,8 @@ public class HistoryReconstructor
                         Volatile.Read(ref seasonsQueried),
                         Volatile.Read(ref totalHistoryEntries),
                         CurrentReconstructionVersion,
-                        windowFingerprint);
+                        windowFingerprint,
+                        admissionRevision);
 
                     _log.LogDebug(
                         "History recon progress: {Processed}/{Total} songs, DOP={Dop}.",
@@ -615,14 +626,16 @@ public class HistoryReconstructor
             seasonsQueried,
             totalHistoryEntries,
             CurrentReconstructionVersion,
-            windowFingerprint);
+            windowFingerprint,
+            admissionRevision);
         if (failedPairs > 0)
         {
             _metaDb.FailHistoryRecon(
                 accountId,
                 $"{failedPairs} song/instrument pair(s) had incomplete required seasonal lookups.",
                 CurrentReconstructionVersion,
-                windowFingerprint);
+                windowFingerprint,
+                admissionRevision);
             _log.LogWarning(
                 "History reconstruction incomplete for {AccountId}: {FailedPairs} pair(s) remain pending after required lookup failures.",
                 accountId,
@@ -633,7 +646,8 @@ public class HistoryReconstructor
         _metaDb.CompleteHistoryRecon(
             accountId,
             CurrentReconstructionVersion,
-            windowFingerprint);
+            windowFingerprint,
+            admissionRevision);
 
         _log.LogInformation(
             "History reconstruction complete for {AccountId}: {Entries} history entries from {Seasons} seasonal queries across {Songs} songs.",
@@ -651,7 +665,7 @@ public class HistoryReconstructor
     /// <param name="firstSeenSeason">The earliest season this song existed in (from FirstSeenSeason data).
     /// Seasons before this are skipped, avoiding unnecessary API calls.</param>
     /// <returns>A tuple of (history entries created, season queries made).</returns>
-    private async Task<(int EntriesCreated, int QueriesMade)> ReconstructSongHistoryAsync(
+    private async Task<(IReadOnlyList<ScoreChangeRecord> ScoreChanges, int QueriesMade)> ReconstructSongHistoryAsync(
         string accountId,
         string songId,
         string instrument,
@@ -663,9 +677,10 @@ public class HistoryReconstructor
         SharedDopPool pool,
         CancellationToken ct)
     {
-        int maxSeason = alltimeEntry.Season;
-        if (maxSeason <= 1)
-            return (0, 0); // No history to reconstruct
+        int authoritativeCurrentSeason = seasonWindows.Count == 0
+            ? alltimeEntry.Season
+            : seasonWindows.Max(static window => window.SeasonNumber);
+        int maxSeason = Math.Max(alltimeEntry.Season, authoritativeCurrentSeason);
 
         // Start from the song's FirstSeenSeason instead of season 1.
         // This avoids querying seasons that predate the song's existence.
@@ -696,7 +711,7 @@ public class HistoryReconstructor
         }
 
         if (seasonsToQuery.Count == 0)
-            return (0, 0);
+            return ([], 0);
 
         // Query all seasons in parallel, collecting ALL sessions from each.
         // Each season query acquires/releases the shared DOP pool (low priority).
@@ -749,7 +764,7 @@ public class HistoryReconstructor
         }
 
         if (allSessions.IsEmpty)
-            return (0, queriesMade);
+            return ([], queriesMade);
 
         // Sort all sessions by endTime ascending (fall back to season number if endTime is null)
         var sortedSessions = allSessions
@@ -767,21 +782,30 @@ public class HistoryReconstructor
 
         // Record every session. OldScore/OldRank track the running personal best
         // so consumers can identify improvements (NewScore > OldScore).
-        int entriesCreated = 0;
+        var scoreChanges = new List<ScoreChangeRecord>(sortedSessions.Count);
         int? bestScore = null;
         int? bestRank = null;
 
         foreach (var (season, session) in sortedSessions)
         {
-            _metaDb.InsertScoreChange(
-                songId, instrument, accountId,
-                bestScore, session.Score,
-                bestRank, session.Rank,
-                session.Accuracy, session.IsFullCombo, session.Stars,
-                session.Percentile, season, session.EndTime,
-                seasonRank: session.Rank, difficulty: session.Difficulty);
-
-            entriesCreated++;
+            scoreChanges.Add(new ScoreChangeRecord
+            {
+                SongId = songId,
+                Instrument = instrument,
+                AccountId = accountId,
+                OldScore = bestScore,
+                NewScore = session.Score,
+                OldRank = bestRank,
+                NewRank = session.Rank,
+                Accuracy = session.Accuracy,
+                IsFullCombo = session.IsFullCombo,
+                Stars = session.Stars,
+                Percentile = session.Percentile,
+                Season = season,
+                ScoreAchievedAt = session.EndTime,
+                SeasonRank = session.Rank,
+                Difficulty = session.Difficulty,
+            });
 
             if (bestScore is null || session.Score > bestScore)
             {
@@ -790,6 +814,6 @@ public class HistoryReconstructor
             }
         }
 
-        return (entriesCreated, queriesMade);
+        return (scoreChanges, queriesMade);
     }
 }

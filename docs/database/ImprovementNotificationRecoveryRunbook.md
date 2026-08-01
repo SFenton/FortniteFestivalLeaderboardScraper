@@ -140,6 +140,13 @@ one coherent history pass. Backfill and history resume keys are separate, and
 all versioned history writes are conditional on the active fingerprint so a
 late prior run cannot overwrite newer progress or completion.
 
+Each admitted history run also owns a monotonic revision. Staged score-history
+rows and pair progress flush atomically only for that active token; cancellation
+or stale-token rejection discards both. Backfill completion requires exact
+all-time pair coverage independently of history completion. Legacy history
+queries through the authoritative current season, and FirstSeen rows reopen
+when the authoritative window fingerprint or maximum season advances.
+
 The worker emits `Registered-user refresh coverage (before|after)` with
 `expectedScopes`, `checkedScopes`, `missingScopes`, `oldestCheckedAtUtc`,
 `oldestCheckedAge`, and `currentScrapeCompletions`. These reads are bounded to

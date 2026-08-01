@@ -632,7 +632,7 @@ public sealed class PostScrapeOrchestrator
 
             _persistence.Meta.StartBackfill(backfill.AccountId);
             _syncTracker.BeginBackfill(backfill.AccountId, totalPairs);
-            _persistence.Meta.EnqueueHistoryRecon(
+            var historyAdmissionRevision = _persistence.Meta.AdmitHistoryRecon(
                 backfill.AccountId,
                 expectedHistoryPairs,
                 HistoryReconstructor.CurrentReconstructionVersion,
@@ -642,7 +642,8 @@ public sealed class PostScrapeOrchestrator
             var historyProcessed = _persistence.Meta.GetProcessedHistoryReconPairs(
                 backfill.AccountId,
                 HistoryReconstructor.CurrentReconstructionVersion,
-                historyWindowFingerprint);
+                historyWindowFingerprint,
+                historyAdmissionRevision);
 
             users.Add(new UserWorkItem
             {
@@ -655,6 +656,7 @@ public sealed class PostScrapeOrchestrator
                 HistoryReconstructionVersion =
                     HistoryReconstructor.CurrentReconstructionVersion,
                 HistoryWindowFingerprint = historyWindowFingerprint,
+                HistoryAdmissionRevision = historyAdmissionRevision,
             });
         }
 
@@ -696,7 +698,11 @@ public sealed class PostScrapeOrchestrator
                     throw new InvalidOperationException(
                         $"Deferred registration history reconstruction remained incomplete for {user.AccountId}.");
                 }
-                _persistence.Meta.CompleteBackfill(user.AccountId, rankingsPending: true);
+                if (!TryCompleteBackfill(user.AccountId, chartedSongIds))
+                {
+                    throw new InvalidOperationException(
+                        $"Deferred registration backfill coverage remained incomplete for {user.AccountId}.");
+                }
                 _ = _notifications.NotifyBackfillCompleteAsync(user.AccountId);
                 _ = _notifications.NotifyHistoryReconCompleteAsync(user.AccountId);
             }
@@ -2199,21 +2205,49 @@ public sealed class PostScrapeOrchestrator
         var processed = _persistence.Meta.GetProcessedHistoryReconPairs(
             user.AccountId,
             user.HistoryReconstructionVersion,
-            user.HistoryWindowFingerprint);
+            user.HistoryWindowFingerprint,
+            user.HistoryAdmissionRevision);
         if (processed.Count < expectedHistoryPairs)
         {
             _persistence.Meta.FailHistoryRecon(
                 user.AccountId,
                 $"History reconstruction incomplete: {processed.Count}/{expectedHistoryPairs} song/instrument pairs.",
                 user.HistoryReconstructionVersion,
-                user.HistoryWindowFingerprint);
+                user.HistoryWindowFingerprint,
+                user.HistoryAdmissionRevision);
             return false;
         }
 
         _persistence.Meta.CompleteHistoryRecon(
             user.AccountId,
             user.HistoryReconstructionVersion,
-            user.HistoryWindowFingerprint);
+            user.HistoryWindowFingerprint,
+            user.HistoryAdmissionRevision);
+        return true;
+    }
+
+    private bool TryCompleteBackfill(
+        string accountId,
+        IReadOnlyCollection<string> chartedSongIds)
+    {
+        var expected = chartedSongIds
+            .SelectMany(songId =>
+                GlobalLeaderboardScraper.AllInstruments.Select(
+                    instrument => (SongId: songId, Instrument: instrument)))
+            .ToHashSet();
+        var checkedPairs = _persistence.Meta.GetCheckedBackfillPairs(accountId);
+        if (!checkedPairs.SetEquals(expected))
+        {
+            _persistence.Meta.DeferBackfill(
+                accountId,
+                expected.Count,
+                "incomplete_alltime_coverage");
+            return false;
+        }
+
+        _persistence.Meta.CompleteBackfill(
+            accountId,
+            rankingsPending: true);
         return true;
     }
 

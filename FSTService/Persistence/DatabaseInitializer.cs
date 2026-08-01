@@ -1213,13 +1213,16 @@ public static class DatabaseInitializer
             completed_at             TIMESTAMPTZ,
             error_message            TEXT,
             reconstruction_version   INTEGER NOT NULL DEFAULT 0,
-            window_fingerprint       TEXT    NOT NULL DEFAULT ''
+            window_fingerprint       TEXT    NOT NULL DEFAULT '',
+            admission_revision       BIGINT  NOT NULL DEFAULT 0
         );
 
         ALTER TABLE history_recon_status
             ADD COLUMN IF NOT EXISTS reconstruction_version INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE history_recon_status
             ADD COLUMN IF NOT EXISTS window_fingerprint TEXT NOT NULL DEFAULT '';
+        ALTER TABLE history_recon_status
+            ADD COLUMN IF NOT EXISTS admission_revision BIGINT NOT NULL DEFAULT 0;
 
         UPDATE history_recon_status
         SET status = 'pending',
@@ -1246,6 +1249,7 @@ public static class DatabaseInitializer
             processed_at TIMESTAMPTZ,
             reconstruction_version INTEGER NOT NULL DEFAULT 0,
             window_fingerprint TEXT NOT NULL DEFAULT '',
+            admission_revision BIGINT NOT NULL DEFAULT 0,
             PRIMARY KEY (account_id, song_id, instrument)
         );
 
@@ -1253,6 +1257,8 @@ public static class DatabaseInitializer
             ADD COLUMN IF NOT EXISTS reconstruction_version INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE history_recon_progress
             ADD COLUMN IF NOT EXISTS window_fingerprint TEXT NOT NULL DEFAULT '';
+        ALTER TABLE history_recon_progress
+            ADD COLUMN IF NOT EXISTS admission_revision BIGINT NOT NULL DEFAULT 0;
 
         CREATE INDEX IF NOT EXISTS ix_hrp_account
             ON history_recon_progress (account_id);
@@ -1289,9 +1295,13 @@ public static class DatabaseInitializer
             estimated_season      INTEGER NOT NULL,
             probe_result          TEXT,
             calculated_at         TIMESTAMPTZ NOT NULL,
-            calculation_version   INTEGER
+            calculation_version   INTEGER,
+            window_fingerprint    TEXT NOT NULL DEFAULT '',
+            max_season            INTEGER NOT NULL DEFAULT 0
         );
         ALTER TABLE song_first_seen_season ADD COLUMN IF NOT EXISTS calculation_version INTEGER;
+        ALTER TABLE song_first_seen_season ADD COLUMN IF NOT EXISTS window_fingerprint TEXT NOT NULL DEFAULT '';
+        ALTER TABLE song_first_seen_season ADD COLUMN IF NOT EXISTS max_season INTEGER NOT NULL DEFAULT 0;
 
         -- =====================================================================
         -- EPIC USER TOKENS (from fst-meta.db)

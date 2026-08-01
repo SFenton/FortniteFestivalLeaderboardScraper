@@ -320,7 +320,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
     }
 
     /// <summary>Create a mock CyclicalSongMachine whose AttachAsync returns an empty result.</summary>
-    protected static CyclicalSongMachine CreateMockCyclicalMachine()
+    protected CyclicalSongMachine CreateMockCyclicalMachine()
     {
         var mock = Substitute.For<CyclicalSongMachine>();
         mock.AttachAsync(
@@ -333,7 +333,42 @@ public abstract class ScraperWorkerTestBase : IDisposable
             Arg.Any<bool>(),
             Arg.Any<EpicTrafficKind>(),
             Arg.Any<CyclicalSongMachine.AttachmentOptions?>())
-            .Returns(new SongProcessingMachine.MachineResult());
+            .Returns(call =>
+            {
+                var users = call.ArgAt<IReadOnlyList<UserWorkItem>>(0);
+                var songs = call.ArgAt<IReadOnlyList<string>>(1);
+                foreach (var user in users)
+                {
+                    foreach (var songId in songs)
+                    foreach (var instrument in GlobalLeaderboardScraper.AllInstruments)
+                    {
+                        if (user.Purposes.HasFlag(WorkPurpose.Backfill))
+                        {
+                            _metaDb.MarkBackfillSongChecked(
+                                user.AccountId,
+                                songId,
+                                instrument,
+                                entryFound: false);
+                        }
+
+                        if (user.Purposes.HasFlag(WorkPurpose.HistoryRecon))
+                        {
+                            _metaDb.MarkHistoryReconSongProcessed(
+                                user.AccountId,
+                                songId,
+                                instrument,
+                                user.HistoryReconstructionVersion,
+                                user.HistoryWindowFingerprint,
+                                user.HistoryAdmissionRevision);
+                        }
+                    }
+                }
+
+                return new SongProcessingMachine.MachineResult
+                {
+                    UsersProcessed = users.Count,
+                };
+            });
         return mock;
     }
 

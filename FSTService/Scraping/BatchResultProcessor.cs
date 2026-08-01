@@ -27,6 +27,7 @@ public class BatchResultProcessor
     // Population floor raises are metadata-only (not user-visible); buffer and apply on flush.
     private readonly ConcurrentDictionary<string, ConcurrentBag<(string SongId, string Instrument, long MaxRank)>> _stagedPopulation = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, ConcurrentBag<(string SongId, string Instrument, bool EntryFound)>> _stagedBackfillProgress = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ConcurrentBag<(HistoryReconProgressWrite Progress, int Version, string Fingerprint, long Revision)>> _stagedHistoryProgress = new(StringComparer.OrdinalIgnoreCase);
 
     public BatchResultProcessor(
         GlobalLeaderboardPersistence persistence,
@@ -315,13 +316,29 @@ public class BatchResultProcessor
         string songId,
         string instrument,
         int reconstructionVersion = 0,
-        string? windowFingerprint = null)
-        => _metaDb.MarkHistoryReconSongProcessed(
+        string? windowFingerprint = null,
+        long admissionRevision = 0)
+    {
+        var fingerprint = windowFingerprint ?? "";
+        if (IsStaged(accountId))
+        {
+            var bag = _stagedHistoryProgress.GetOrAdd(accountId, _ => []);
+            bag.Add((
+                new HistoryReconProgressWrite(songId, instrument),
+                reconstructionVersion,
+                fingerprint,
+                admissionRevision));
+            return;
+        }
+
+        _metaDb.MarkHistoryReconSongProcessed(
             accountId,
             songId,
             instrument,
             reconstructionVersion,
-            windowFingerprint ?? "");
+            fingerprint,
+            admissionRevision);
+    }
 
     // ══════════════════════════════════════════════════════════════
     // Staging mode — buffer writes for designated accounts
@@ -353,6 +370,7 @@ public class BatchResultProcessor
             _stagedScoreChanges.TryRemove(accountId, out _);
             _stagedPopulation.TryRemove(accountId, out _);
             _stagedBackfillProgress.TryRemove(accountId, out _);
+            _stagedHistoryProgress.TryRemove(accountId, out _);
         }
     }
 
@@ -418,6 +436,50 @@ public class BatchResultProcessor
         }
 
         _log.LogDebug("Flushed staged data for account {AccountId}.", accountId);
+    }
+
+    public bool FlushStagedData(
+        string accountId,
+        int reconstructionVersion,
+        string windowFingerprint,
+        long admissionRevision)
+    {
+        var scoreChanges = _stagedScoreChanges.TryGetValue(
+                accountId,
+                out var changeBag)
+            ? changeBag.ToList()
+            : [];
+        var historyProgress = _stagedHistoryProgress.TryGetValue(
+                accountId,
+                out var progressBag)
+            ? progressBag
+                .Where(item =>
+                    item.Version == reconstructionVersion
+                    && item.Revision == admissionRevision
+                    && string.Equals(
+                        item.Fingerprint,
+                        windowFingerprint,
+                        StringComparison.Ordinal))
+                .Select(static item => item.Progress)
+                .ToArray()
+            : [];
+
+        if (!_metaDb.CommitStagedHistoryData(
+                accountId,
+                scoreChanges,
+                historyProgress,
+                reconstructionVersion,
+                windowFingerprint,
+                admissionRevision))
+        {
+            DiscardStagedData([accountId]);
+            return false;
+        }
+
+        _stagedScoreChanges.TryRemove(accountId, out _);
+        _stagedHistoryProgress.TryRemove(accountId, out _);
+        FlushStagedData(accountId);
+        return true;
     }
 
     // ── Private staging helpers ──────────────────────────────────

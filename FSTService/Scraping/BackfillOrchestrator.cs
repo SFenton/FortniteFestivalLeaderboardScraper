@@ -156,21 +156,21 @@ public sealed class BackfillOrchestrator
             totalsByAccount[backfill.AccountId] = totalPairs;
             _persistence.Meta.StartBackfill(backfill.AccountId);
             _syncTracker.BeginBackfill(backfill.AccountId, totalPairs);
-            if (canRunCompleteHistoryRecon)
-            {
-                _persistence.Meta.EnqueueHistoryRecon(
+            var historyAdmissionRevision = canRunCompleteHistoryRecon
+                ? _persistence.Meta.AdmitHistoryRecon(
                     backfill.AccountId,
                     expectedHistoryPairs,
                     HistoryReconstructor.CurrentReconstructionVersion,
-                    historyWindowFingerprint);
-            }
+                    historyWindowFingerprint)
+                : 0;
             var backfillChecked = _persistence.Meta.GetCheckedBackfillPairs(
                 backfill.AccountId);
             var historyProcessed = canRunCompleteHistoryRecon
                 ? _persistence.Meta.GetProcessedHistoryReconPairs(
                     backfill.AccountId,
                     HistoryReconstructor.CurrentReconstructionVersion,
-                    historyWindowFingerprint)
+                    historyWindowFingerprint,
+                    historyAdmissionRevision)
                 : null;
 
             users.Add(new UserWorkItem
@@ -189,6 +189,7 @@ public sealed class BackfillOrchestrator
                 HistoryWindowFingerprint = canRunCompleteHistoryRecon
                     ? historyWindowFingerprint
                     : "",
+                HistoryAdmissionRevision = historyAdmissionRevision,
             });
         }
 
@@ -228,8 +229,19 @@ public sealed class BackfillOrchestrator
             {
                 try
                 {
-                    _resultProcessor.FlushStagedData(user.AccountId);
-                    _persistence.Meta.CompleteBackfill(user.AccountId, rankingsPending: true);
+                    var stagedCommitted = user.Purposes.HasFlag(WorkPurpose.HistoryRecon)
+                        ? _resultProcessor.FlushStagedData(
+                            user.AccountId,
+                            user.HistoryReconstructionVersion,
+                            user.HistoryWindowFingerprint,
+                            user.HistoryAdmissionRevision)
+                        : FlushBackfillOnly(user.AccountId);
+                    if (!stagedCommitted)
+                        throw new InvalidOperationException(
+                            $"Staged data identity was stale for {user.AccountId}.");
+                    if (!TryCompleteBackfill(user.AccountId, chartedSongIds))
+                        throw new InvalidOperationException(
+                            $"Backfill coverage remained incomplete for {user.AccountId}.");
                     _persistence.Meta.QueueRivalsRecompute(user.AccountId);
                     _precomputer.PrecomputeUser(user.AccountId);
                     _ = _notifications.NotifyBackfillCompleteAsync(user.AccountId);
@@ -375,19 +387,19 @@ public sealed class BackfillOrchestrator
             var totalPairs = chartedSongIds.Count * GlobalLeaderboardScraper.AllInstruments.Count;
             _persistence.Meta.EnqueueBackfill(accountId, totalPairs);
             _persistence.Meta.StartBackfill(accountId);
-            if (canRunCompleteHistoryRecon)
-            {
-                _persistence.Meta.EnqueueHistoryRecon(
+            var historyAdmissionRevision = canRunCompleteHistoryRecon
+                ? _persistence.Meta.AdmitHistoryRecon(
                     accountId,
                     expectedHistoryPairs,
                     HistoryReconstructor.CurrentReconstructionVersion,
-                    historyWindowFingerprint);
-            }
+                    historyWindowFingerprint)
+                : 0;
             var historyProcessed = canRunCompleteHistoryRecon
                 ? _persistence.Meta.GetProcessedHistoryReconPairs(
                     accountId,
                     HistoryReconstructor.CurrentReconstructionVersion,
-                    historyWindowFingerprint)
+                    historyWindowFingerprint,
+                    historyAdmissionRevision)
                 : null;
 
             users.Add(new UserWorkItem
@@ -406,6 +418,7 @@ public sealed class BackfillOrchestrator
                 HistoryWindowFingerprint = canRunCompleteHistoryRecon
                     ? historyWindowFingerprint
                     : "",
+                HistoryAdmissionRevision = historyAdmissionRevision,
             });
         }
 
@@ -433,8 +446,19 @@ public sealed class BackfillOrchestrator
             {
                 try
                 {
-                    _resultProcessor.FlushStagedData(user.AccountId);
-                    _persistence.Meta.CompleteBackfill(user.AccountId, rankingsPending: true);
+                    var stagedCommitted = user.Purposes.HasFlag(WorkPurpose.HistoryRecon)
+                        ? _resultProcessor.FlushStagedData(
+                            user.AccountId,
+                            user.HistoryReconstructionVersion,
+                            user.HistoryWindowFingerprint,
+                            user.HistoryAdmissionRevision)
+                        : FlushBackfillOnly(user.AccountId);
+                    if (!stagedCommitted)
+                        throw new InvalidOperationException(
+                            $"Staged data identity was stale for {user.AccountId}.");
+                    if (!TryCompleteBackfill(user.AccountId, chartedSongIds))
+                        throw new InvalidOperationException(
+                            $"Backfill coverage remained incomplete for {user.AccountId}.");
                     _persistence.Meta.QueueRivalsRecompute(user.AccountId);
                     _precomputer.PrecomputeUser(user.AccountId);
                     _ = _notifications.NotifyBackfillCompleteAsync(user.AccountId);
@@ -572,7 +596,7 @@ public sealed class BackfillOrchestrator
             chartedSongIds.Count * GlobalLeaderboardScraper.AllInstruments.Count;
         foreach (var accountId in accountsToReconstruct)
         {
-            _persistence.Meta.EnqueueHistoryRecon(
+            var historyAdmissionRevision = _persistence.Meta.AdmitHistoryRecon(
                 accountId,
                 expectedHistoryPairs,
                 HistoryReconstructor.CurrentReconstructionVersion,
@@ -580,7 +604,8 @@ public sealed class BackfillOrchestrator
             var alreadyProcessed = _persistence.Meta.GetProcessedHistoryReconPairs(
                 accountId,
                 HistoryReconstructor.CurrentReconstructionVersion,
-                historyWindowFingerprint);
+                historyWindowFingerprint,
+                historyAdmissionRevision);
             users.Add(new UserWorkItem
             {
                 AccountId = accountId,
@@ -591,6 +616,7 @@ public sealed class BackfillOrchestrator
                 HistoryReconstructionVersion =
                     HistoryReconstructor.CurrentReconstructionVersion,
                 HistoryWindowFingerprint = historyWindowFingerprint,
+                HistoryAdmissionRevision = historyAdmissionRevision,
             });
         }
 
@@ -641,28 +667,60 @@ public sealed class BackfillOrchestrator
                 user.AccountId,
                 "History reconstruction identity was missing.",
                 user.HistoryReconstructionVersion,
-                user.HistoryWindowFingerprint);
+                user.HistoryWindowFingerprint,
+                user.HistoryAdmissionRevision);
             return false;
         }
 
         var processed = _persistence.Meta.GetProcessedHistoryReconPairs(
             user.AccountId,
             user.HistoryReconstructionVersion,
-            user.HistoryWindowFingerprint);
+            user.HistoryWindowFingerprint,
+            user.HistoryAdmissionRevision);
         if (processed.Count < expectedHistoryPairs)
         {
             _persistence.Meta.FailHistoryRecon(
                 user.AccountId,
                 $"History reconstruction incomplete: {processed.Count}/{expectedHistoryPairs} song/instrument pairs.",
                 user.HistoryReconstructionVersion,
-                user.HistoryWindowFingerprint);
+                user.HistoryWindowFingerprint,
+                user.HistoryAdmissionRevision);
             return false;
         }
 
         _persistence.Meta.CompleteHistoryRecon(
             user.AccountId,
             user.HistoryReconstructionVersion,
-            user.HistoryWindowFingerprint);
+            user.HistoryWindowFingerprint,
+            user.HistoryAdmissionRevision);
+        return true;
+    }
+
+    private bool FlushBackfillOnly(string accountId)
+    {
+        _resultProcessor.FlushStagedData(accountId);
+        return true;
+    }
+
+    private bool TryCompleteBackfill(
+        string accountId,
+        IReadOnlyCollection<string> chartedSongIds)
+    {
+        var expected = chartedSongIds
+            .SelectMany(songId =>
+                GlobalLeaderboardScraper.AllInstruments.Select(
+                    instrument => (SongId: songId, Instrument: instrument)))
+            .ToHashSet();
+        var checkedPairs = _persistence.Meta.GetCheckedBackfillPairs(accountId);
+        if (!checkedPairs.SetEquals(expected))
+        {
+            _persistence.Meta.EnqueueBackfill(accountId, expected.Count);
+            return false;
+        }
+
+        _persistence.Meta.CompleteBackfill(
+            accountId,
+            rankingsPending: true);
         return true;
     }
 

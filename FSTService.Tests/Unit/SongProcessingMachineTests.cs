@@ -94,7 +94,7 @@ public class SongProcessingMachineTests : IDisposable
         _scraper.LookupMultipleAccountsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IReadOnlyList<string>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<AdaptiveConcurrencyLimiter?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(), true)
             .Returns(callInfo =>
             {
                 var targets = callInfo.ArgAt<IReadOnlyList<string>>(2);
@@ -124,7 +124,7 @@ public class SongProcessingMachineTests : IDisposable
         // Should have made one batch call per song/instrument, each containing both users.
         await _scraper.Received(2 * AllInstrumentCount).LookupMultipleAccountsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Is<IReadOnlyList<string>>(l => l.Count == 2),
-            "token", "caller", Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<CancellationToken>());
+            "token", "caller", Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<CancellationToken>(), true);
     }
 
     // ─── Seasonal queries per user needs ────────────────────
@@ -135,7 +135,7 @@ public class SongProcessingMachineTests : IDisposable
         _scraper.LookupMultipleAccountsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IReadOnlyList<string>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<AdaptiveConcurrencyLimiter?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(), true)
             .Returns(new List<LeaderboardEntry>());
 
         _scraper.LookupMultipleAccountSessionsAsync(
@@ -458,6 +458,146 @@ public class SongProcessingMachineTests : IDisposable
     }
 
     [Fact]
+    public async Task ProcessSongForUsersAsync_PreReleaseSeason_IsSkippedByAuthoritativeFirstSeenFloor()
+    {
+        const string accountId = "pre-release-user";
+        const string fingerprint = "pre-release-fingerprint";
+        var revision = _metaDb.Db.AdmitHistoryRecon(
+            accountId,
+            1,
+            HistoryReconstructor.CurrentReconstructionVersion,
+            fingerprint);
+        _scraper.LookupMultipleAccountSessionsAsync(
+            "song-pre-release",
+            "Solo_Guitar",
+            "season015",
+            Arg.Any<IReadOnlyList<string>>(),
+            "token",
+            "caller",
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>(),
+            true)
+            .Returns([]);
+        var machine = CreateMachine();
+
+        await machine.ProcessSongForUsersAsync(
+            "song-pre-release",
+            ["Solo_Guitar"],
+            [
+                new UserWorkItem
+                {
+                    AccountId = accountId,
+                    Purposes = WorkPurpose.HistoryRecon,
+                    SeasonsNeeded = [14, 15],
+                    HistoryReconstructionVersion =
+                        HistoryReconstructor.CurrentReconstructionVersion,
+                    HistoryWindowFingerprint = fingerprint,
+                    HistoryAdmissionRevision = revision,
+                },
+            ],
+            new Dictionary<int, string>
+            {
+                [14] = "season014",
+                [15] = "season015",
+            },
+            "token",
+            "caller",
+            _pool,
+            isHighPriority: false,
+            batchSize: 500,
+            EpicTrafficKind.Background,
+            CancellationToken.None,
+            songFirstSeenSeason: 15);
+
+        await _scraper.DidNotReceive().LookupMultipleAccountSessionsAsync(
+            "song-pre-release",
+            "Solo_Guitar",
+            "season014",
+            Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>(),
+            true);
+        Assert.Contains(
+            ("song-pre-release", "Solo_Guitar"),
+            _metaDb.Db.GetProcessedHistoryReconPairs(
+                accountId,
+                HistoryReconstructor.CurrentReconstructionVersion,
+                fingerprint,
+                revision));
+    }
+
+    [Fact]
+    public async Task ProcessSongForUsersAsync_AlltimeFailure_CannotBeHiddenByHistorySuccess()
+    {
+        const string accountId = "alltime-failure-user";
+        const string songId = "song-alltime-failure";
+        const string fingerprint = "alltime-failure-fingerprint";
+        var revision = _metaDb.Db.AdmitHistoryRecon(
+            accountId,
+            1,
+            HistoryReconstructor.CurrentReconstructionVersion,
+            fingerprint);
+        _scraper.LookupMultipleAccountsAsync(
+            songId,
+            "Solo_Guitar",
+            Arg.Any<IReadOnlyList<string>>(),
+            "token",
+            "caller",
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>(),
+            true)
+            .Returns(Task.FromException<List<LeaderboardEntry>>(
+                new HttpRequestException("alltime failed")));
+        _scraper.LookupMultipleAccountSessionsAsync(
+            songId,
+            "Solo_Guitar",
+            "season015",
+            Arg.Any<IReadOnlyList<string>>(),
+            "token",
+            "caller",
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>(),
+            true)
+            .Returns([]);
+        var machine = CreateMachine();
+
+        var result = await machine.ProcessSongForUsersAsync(
+            songId,
+            ["Solo_Guitar"],
+            [
+                new UserWorkItem
+                {
+                    AccountId = accountId,
+                    Purposes = WorkPurpose.Backfill | WorkPurpose.HistoryRecon,
+                    AllTimeNeeded = true,
+                    SeasonsNeeded = [15],
+                    HistoryReconstructionVersion =
+                        HistoryReconstructor.CurrentReconstructionVersion,
+                    HistoryWindowFingerprint = fingerprint,
+                    HistoryAdmissionRevision = revision,
+                },
+            ],
+            new Dictionary<int, string> { [15] = "season015" },
+            "token",
+            "caller",
+            _pool,
+            isHighPriority: false,
+            batchSize: 500,
+            EpicTrafficKind.Background,
+            CancellationToken.None);
+
+        Assert.False(result.RequiredLookupsSucceeded);
+        Assert.Empty(_metaDb.Db.GetCheckedBackfillPairs(accountId));
+        Assert.Empty(_metaDb.Db.GetProcessedHistoryReconPairs(
+            accountId,
+            HistoryReconstructor.CurrentReconstructionVersion,
+            fingerprint,
+            revision));
+    }
+
+    [Fact]
     public async Task ProcessSongForUsersAsync_cancellation_keeps_callbacks_from_completed_instruments()
     {
         static async Task<List<T>> WaitUntilCancelledAsync<T>(CancellationToken ct)
@@ -531,7 +671,7 @@ public class SongProcessingMachineTests : IDisposable
         _scraper.LookupMultipleAccountsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IReadOnlyList<string>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<AdaptiveConcurrencyLimiter?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(), true)
             .Returns(new List<LeaderboardEntry>());
 
         var machine = CreateMachine();
@@ -547,7 +687,7 @@ public class SongProcessingMachineTests : IDisposable
         await _scraper.Received(AllInstrumentCount * 2).LookupMultipleAccountsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IReadOnlyList<string>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<AdaptiveConcurrencyLimiter?>(),
-            Arg.Any<CancellationToken>());
+            Arg.Any<CancellationToken>(), true);
     }
 
     // ─── Already-checked pairs skipped ──────────────────────
@@ -558,7 +698,7 @@ public class SongProcessingMachineTests : IDisposable
         _scraper.LookupMultipleAccountsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IReadOnlyList<string>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<AdaptiveConcurrencyLimiter?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(), true)
             .Returns(new List<LeaderboardEntry>());
 
         var machine = CreateMachine();
@@ -592,7 +732,7 @@ public class SongProcessingMachineTests : IDisposable
         _scraper.LookupMultipleAccountsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IReadOnlyList<string>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<AdaptiveConcurrencyLimiter?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(), true)
             .Returns(async callInfo =>
             {
                 await Task.Delay(5000, callInfo.ArgAt<CancellationToken>(6));

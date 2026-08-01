@@ -2356,9 +2356,22 @@ public sealed class MetaDatabaseTests : IDisposable
     [Fact]
     public async Task HistoryRecon_stale_identity_writes_cannot_overwrite_active_fingerprint()
     {
-        Db.EnqueueHistoryRecon("acct-stale", 1, 1, "fingerprint-1");
-        Db.StartHistoryRecon("acct-stale", 1, "fingerprint-1");
-        Db.EnqueueHistoryRecon("acct-stale", 1, 1, "fingerprint-2");
+        var staleRevision = Db.AdmitHistoryRecon(
+            "acct-stale",
+            1,
+            1,
+            "fingerprint-1");
+        Db.StartHistoryRecon(
+            "acct-stale",
+            1,
+            "fingerprint-1",
+            staleRevision);
+        var activeRevision = Db.AdmitHistoryRecon(
+            "acct-stale",
+            1,
+            1,
+            "fingerprint-2");
+        Assert.True(activeRevision > staleRevision);
 
         await Task.WhenAll(
             Task.Run(() => Db.MarkHistoryReconSongProcessed(
@@ -2366,38 +2379,82 @@ public sealed class MetaDatabaseTests : IDisposable
                 "song-stale",
                 "Solo_Guitar",
                 1,
-                "fingerprint-1")),
+                "fingerprint-1",
+                staleRevision)),
             Task.Run(() => Db.UpdateHistoryReconProgress(
                 "acct-stale",
                 99,
                 99,
                 99,
                 1,
-                "fingerprint-1")),
+                "fingerprint-1",
+                staleRevision)),
             Task.Run(() => Db.CompleteHistoryRecon(
                 "acct-stale",
                 1,
-                "fingerprint-1")),
+                "fingerprint-1",
+                staleRevision)),
             Task.Run(() => Db.FailHistoryRecon(
                 "acct-stale",
                 "stale failure",
                 1,
-                "fingerprint-1")));
+                "fingerprint-1",
+                staleRevision)));
 
         var status = Db.GetHistoryReconStatus("acct-stale");
         Assert.Equal("pending", status?.Status);
         Assert.Equal("fingerprint-2", status?.WindowFingerprint);
+        Assert.Equal(activeRevision, status?.AdmissionRevision);
         Assert.Equal(0, status?.SongsProcessed);
         Assert.Equal(0, status?.SeasonsQueried);
         Assert.Equal(0, status?.HistoryEntriesFound);
         Assert.Empty(Db.GetProcessedHistoryReconPairs(
             "acct-stale",
             1,
-            "fingerprint-1"));
+            "fingerprint-1",
+            staleRevision));
         Assert.Empty(Db.GetProcessedHistoryReconPairs(
             "acct-stale",
             1,
-            "fingerprint-2"));
+            "fingerprint-2",
+            activeRevision));
+    }
+
+    [Fact]
+    public void HistoryRecon_same_fingerprint_readmission_advances_fence_and_preserves_progress()
+    {
+        var firstRevision = Db.AdmitHistoryRecon(
+            "acct-readmit",
+            1,
+            1,
+            "fingerprint");
+        Db.MarkHistoryReconSongProcessed(
+            "acct-readmit",
+            "song-a",
+            "Solo_Guitar",
+            1,
+            "fingerprint",
+            firstRevision);
+
+        var secondRevision = Db.AdmitHistoryRecon(
+            "acct-readmit",
+            1,
+            1,
+            "fingerprint");
+
+        Assert.True(secondRevision > firstRevision);
+        Assert.Contains(
+            ("song-a", "Solo_Guitar"),
+            Db.GetProcessedHistoryReconPairs(
+                "acct-readmit",
+                1,
+                "fingerprint",
+                secondRevision));
+        Assert.Empty(Db.GetProcessedHistoryReconPairs(
+            "acct-readmit",
+            1,
+            "fingerprint",
+            firstRevision));
     }
 
     // ═══ SeasonWindows ══════════════════════════════════════════

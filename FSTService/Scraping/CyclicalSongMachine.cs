@@ -437,6 +437,7 @@ public class CyclicalSongMachine
             seasonLookupIdMap[w.SeasonNumber] = HistoryReconstructor.GetSeasonLookupId(w);
 
         var instruments = GlobalLeaderboardScraper.AllInstruments;
+        var firstSeenBySong = _persistence.Meta.GetAllFirstSeenSeasons();
 
         // Get access token for the cycle
         var accessToken = await _tokenManager.GetAccessTokenAsync(ct);
@@ -457,6 +458,9 @@ public class CyclicalSongMachine
             out var currentSeasonLookupId);
         var activeHistoryWindowFingerprint =
             HistoryReconstructor.ComputeWindowFingerprint(seasonWindows);
+        var activeMaxSeason = seasonWindows.Count == 0
+            ? 0
+            : seasonWindows.Max(static window => window.SeasonNumber);
 
         // ═══════════════════════════════════════════════════════
         // CORE PASS — alltime + current season for ALL users
@@ -485,6 +489,12 @@ public class CyclicalSongMachine
                 songId,
                 currentSeason,
                 currentSeasonLookupId),
+            songId => firstSeenBySong.TryGetValue(songId, out var firstSeen)
+                && firstSeen.CalculationVersion == FirstSeenSeasonCalculator.CurrentVersion
+                && firstSeen.WindowFingerprint == activeHistoryWindowFingerprint
+                && firstSeen.MaxSeason == activeMaxSeason
+                ? firstSeen.FirstSeenSeason
+                : null,
             coreSeasonLookupIdMap, accessToken, callerAccountId, opts,
             reportScopeCompletion: true,
             canRecordAttachment: attachment =>
@@ -545,6 +555,12 @@ public class CyclicalSongMachine
                     currentSeason,
                     currentSeasonLookupId,
                     activeHistoryWindowFingerprint),
+                songId => firstSeenBySong.TryGetValue(songId, out var firstSeen)
+                    && firstSeen.CalculationVersion == FirstSeenSeasonCalculator.CurrentVersion
+                    && firstSeen.WindowFingerprint == activeHistoryWindowFingerprint
+                    && firstSeen.MaxSeason == activeMaxSeason
+                    ? firstSeen.FirstSeenSeason
+                    : null,
                 historicalSeasonLookupIdMap, accessToken, callerAccountId, opts,
                 reportScopeCompletion: false,
                 canRecordAttachment: static _ => true,
@@ -579,6 +595,7 @@ public class CyclicalSongMachine
         IReadOnlyList<SongCycleEntry> songsToProcess,
         IReadOnlyList<string> instruments,
         Func<string, SongPassWork> gatherUsers,
+        Func<string, int?> getSongFirstSeenSeason,
         IReadOnlyDictionary<int, string> seasonLookupIdMap,
         string accessToken,
         string callerAccountId,
@@ -642,7 +659,8 @@ public class CyclicalSongMachine
                             opts.LookupBatchSize, work.EpicTrafficKind, passCt,
                             reportScopeCompletion
                                 ? CreateScopeCompletionCallback(work.Attachments)
-                                : null);
+                                : null,
+                            getSongFirstSeenSeason(songEntry.SongId));
 
                         // Check CDN throttle state and surface to each user's sync progress.
                         // Throttle when limiter DOP drops below 25% of max.
@@ -876,6 +894,7 @@ public class CyclicalSongMachine
                     HistoryAlreadyProcessed = user.HistoryAlreadyProcessed,
                     HistoryReconstructionVersion = user.HistoryReconstructionVersion,
                     HistoryWindowFingerprint = user.HistoryWindowFingerprint,
+                    HistoryAdmissionRevision = user.HistoryAdmissionRevision,
                 });
             }
 
@@ -962,6 +981,7 @@ public class CyclicalSongMachine
                     HistoryAlreadyProcessed = user.HistoryAlreadyProcessed,
                     HistoryReconstructionVersion = user.HistoryReconstructionVersion,
                     HistoryWindowFingerprint = user.HistoryWindowFingerprint,
+                    HistoryAdmissionRevision = user.HistoryAdmissionRevision,
                 });
             }
 
@@ -1077,6 +1097,7 @@ public class CyclicalSongMachine
                                 existing.HistoryWindowFingerprint,
                                 user.HistoryWindowFingerprint,
                                 StringComparison.Ordinal)
+                            && existing.HistoryAdmissionRevision == user.HistoryAdmissionRevision
                             ? existing.HistoryReconstructionVersion
                             : 0,
                     HistoryWindowFingerprint =
@@ -1085,8 +1106,18 @@ public class CyclicalSongMachine
                                 existing.HistoryWindowFingerprint,
                                 user.HistoryWindowFingerprint,
                                 StringComparison.Ordinal)
+                            && existing.HistoryAdmissionRevision == user.HistoryAdmissionRevision
                             ? existing.HistoryWindowFingerprint
                             : "",
+                    HistoryAdmissionRevision =
+                        existing.HistoryReconstructionVersion == user.HistoryReconstructionVersion
+                            && string.Equals(
+                                existing.HistoryWindowFingerprint,
+                                user.HistoryWindowFingerprint,
+                                StringComparison.Ordinal)
+                            && existing.HistoryAdmissionRevision == user.HistoryAdmissionRevision
+                            ? existing.HistoryAdmissionRevision
+                            : 0,
                 };
             }
             else

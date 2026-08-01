@@ -154,20 +154,28 @@ public interface IMetaDatabase : IDisposable
     // ── History reconstruction ───────────────────────────────────────
     void EnqueueHistoryRecon(string accountId, int totalSongsToProcess);
     void EnqueueHistoryRecon(string accountId, int totalSongsToProcess, int reconstructionVersion, string windowFingerprint);
+    long AdmitHistoryRecon(string accountId, int totalSongsToProcess, int reconstructionVersion, string windowFingerprint);
     List<HistoryReconStatusInfo> GetPendingHistoryRecons();
     HistoryReconStatusInfo? GetHistoryReconStatus(string accountId);
     void StartHistoryRecon(string accountId);
     void StartHistoryRecon(string accountId, int reconstructionVersion, string windowFingerprint);
+    void StartHistoryRecon(string accountId, int reconstructionVersion, string windowFingerprint, long admissionRevision);
     void CompleteHistoryRecon(string accountId);
     void CompleteHistoryRecon(string accountId, int reconstructionVersion, string windowFingerprint);
+    void CompleteHistoryRecon(string accountId, int reconstructionVersion, string windowFingerprint, long admissionRevision);
     void FailHistoryRecon(string accountId, string errorMessage);
     void FailHistoryRecon(string accountId, string errorMessage, int reconstructionVersion, string windowFingerprint);
+    void FailHistoryRecon(string accountId, string errorMessage, int reconstructionVersion, string windowFingerprint, long admissionRevision);
     void UpdateHistoryReconProgress(string accountId, int songsProcessed, int seasonsQueried, int historyEntriesFound);
     void UpdateHistoryReconProgress(string accountId, int songsProcessed, int seasonsQueried, int historyEntriesFound, int reconstructionVersion, string windowFingerprint);
+    void UpdateHistoryReconProgress(string accountId, int songsProcessed, int seasonsQueried, int historyEntriesFound, int reconstructionVersion, string windowFingerprint, long admissionRevision);
     void MarkHistoryReconSongProcessed(string accountId, string songId, string instrument);
     void MarkHistoryReconSongProcessed(string accountId, string songId, string instrument, int reconstructionVersion, string windowFingerprint);
+    void MarkHistoryReconSongProcessed(string accountId, string songId, string instrument, int reconstructionVersion, string windowFingerprint, long admissionRevision);
     HashSet<(string SongId, string Instrument)> GetProcessedHistoryReconPairs(string accountId);
     HashSet<(string SongId, string Instrument)> GetProcessedHistoryReconPairs(string accountId, int reconstructionVersion, string windowFingerprint);
+    HashSet<(string SongId, string Instrument)> GetProcessedHistoryReconPairs(string accountId, int reconstructionVersion, string windowFingerprint, long admissionRevision);
+    bool CommitStagedHistoryData(string accountId, IReadOnlyList<ScoreChangeRecord> scoreChanges, IReadOnlyList<HistoryReconProgressWrite> historyProgress, int reconstructionVersion, string windowFingerprint, long admissionRevision);
 
     // ── Season windows ───────────────────────────────────────────────
     void UpsertSeasonWindow(int seasonNumber, string eventId, string windowId, string sourceKind = "legacy");
@@ -186,8 +194,9 @@ public interface IMetaDatabase : IDisposable
 
     // ── First seen season ────────────────────────────────────────────
     HashSet<string> GetSongIdsWithFirstSeenVersion(int currentVersion);
-    void UpsertFirstSeenSeason(string songId, int? firstSeenSeason, int? minObservedSeason, int estimatedSeason, string? probeResult, int calculationVersion);
-    Dictionary<string, (int? FirstSeenSeason, int EstimatedSeason, int? CalculationVersion)> GetAllFirstSeenSeasons();
+    HashSet<string> GetSongIdsWithFirstSeenVersion(int currentVersion, string windowFingerprint, int maxSeason);
+    void UpsertFirstSeenSeason(string songId, int? firstSeenSeason, int? minObservedSeason, int estimatedSeason, string? probeResult, int calculationVersion, string windowFingerprint = "", int maxSeason = 0);
+    Dictionary<string, FirstSeenSeasonInfo> GetAllFirstSeenSeasons();
 
     // ── Leaderboard population ───────────────────────────────────────
     void RaiseLeaderboardPopulationFloor(string songId, string instrument, long floor);

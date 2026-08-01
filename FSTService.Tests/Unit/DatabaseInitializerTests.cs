@@ -372,10 +372,15 @@ public class DatabaseInitializerTests : IDisposable
                     DROP COLUMN source_kind;
                 ALTER TABLE history_recon_status
                     DROP COLUMN reconstruction_version,
-                    DROP COLUMN window_fingerprint;
+                    DROP COLUMN window_fingerprint,
+                    DROP COLUMN admission_revision;
                 ALTER TABLE history_recon_progress
                     DROP COLUMN reconstruction_version,
-                    DROP COLUMN window_fingerprint;
+                    DROP COLUMN window_fingerprint,
+                    DROP COLUMN admission_revision;
+                ALTER TABLE song_first_seen_season
+                    DROP COLUMN window_fingerprint,
+                    DROP COLUMN max_season;
                 """;
             dropCmd.ExecuteNonQuery();
         }
@@ -421,6 +426,20 @@ public class DatabaseInitializerTests : IDisposable
                     WHERE table_schema = 'public'
                       AND table_name = 'history_recon_progress'
                       AND column_name = 'reconstruction_version'
+                      AND is_nullable = 'NO'),
+                EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'history_recon_status'
+                      AND column_name = 'admission_revision'
+                      AND is_nullable = 'NO'),
+                EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'song_first_seen_season'
+                      AND column_name = 'window_fingerprint'
                       AND is_nullable = 'NO')
             """;
         using var reader = cmd.ExecuteReader();
@@ -430,6 +449,8 @@ public class DatabaseInitializerTests : IDisposable
         Assert.True(reader.GetBoolean(2));
         Assert.True(reader.GetBoolean(3));
         Assert.True(reader.GetBoolean(4));
+        Assert.True(reader.GetBoolean(5));
+        Assert.True(reader.GetBoolean(6));
     }
 
     [Fact]
