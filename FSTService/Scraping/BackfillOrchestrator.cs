@@ -73,11 +73,17 @@ public sealed class BackfillOrchestrator
         int maxAccounts,
         CancellationToken ct)
     {
-        var deferredBackfills = _persistence.Meta.GetDeferredBackfills();
-        if (deferredBackfills.Count == 0)
+        var queuedBackfills = _persistence.Meta.GetDeferredBackfills()
+            .Concat(_persistence.Meta.GetPendingBackfills())
+            .GroupBy(
+                static backfill => backfill.AccountId,
+                StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .ToList();
+        if (queuedBackfills.Count == 0)
             return 0;
 
-        var selectedBackfills = deferredBackfills
+        var selectedBackfills = queuedBackfills
             .OrderBy(static backfill => backfill.AccountId, StringComparer.OrdinalIgnoreCase)
             .Take(Math.Max(1, maxAccounts))
             .ToList();
@@ -190,6 +196,7 @@ public sealed class BackfillOrchestrator
                 "Queued registration backfill completed: {Updated} entries, {Sessions} sessions, {ApiCalls} API calls for {Users} users.",
                 result.EntriesUpdated, result.SessionsInserted, result.ApiCalls, result.UsersProcessed);
 
+            var completionFailed = false;
             foreach (var user in users)
             {
                 try
@@ -218,7 +225,19 @@ public sealed class BackfillOrchestrator
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
+                    completionFailed = true;
                     _log.LogWarning(ex, "Post-backfill actions failed for queued registration account {AccountId}.", user.AccountId);
+                    var totalPairs = totalsByAccount.TryGetValue(
+                        user.AccountId,
+                        out var total)
+                        ? total
+                        : chartedSongIds.Count
+                          * GlobalLeaderboardScraper.AllInstruments.Count;
+                    _persistence.Meta.DeferBackfill(
+                        user.AccountId,
+                        totalPairs,
+                        "worker_backfill_completion_retry");
+                    _syncTracker.BeginQueued(user.AccountId, totalPairs);
                 }
             }
 
@@ -230,7 +249,7 @@ public sealed class BackfillOrchestrator
                     _leaderboardAllCache.IsFrozen);
             }
 
-            return users.Count;
+            return completionFailed ? 0 : users.Count;
         }
         catch (OperationCanceledException)
         {

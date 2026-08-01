@@ -97,7 +97,7 @@ first on the next pass.
 
 | Setting | Default |
 |---|---:|
-| `Scraper__RegisteredUserRefreshTimeout` | `00:10:00` |
+| `Scraper__RegisteredUserRefreshTimeout` | `00:00:00` (progress watchdog owns hangs) |
 | `Scraper__RegisteredPlayerBandDiscoveryTimeout` | `00:05:00` |
 | `Scraper__RegisteredBandTargetedProcessingTimeout` | `00:05:00` |
 | `Scraper__RegisteredPlayerBandDiscoveryMaxLookupsPerPass` | `80` |

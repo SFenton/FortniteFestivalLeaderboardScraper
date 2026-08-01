@@ -456,10 +456,11 @@ public sealed class ScraperOptions
     public TimeSpan PostScrapeRefreshTimeout { get; set; } = TimeSpan.FromMinutes(5);
 
     /// <summary>
-    /// Registered-player solo refresh timeout. When unset, the legacy
-    /// <see cref="PostScrapeRefreshTimeout"/> value is used.
+    /// Registered-player solo refresh wall-clock timeout. Zero disables the
+    /// wall-clock cap so the progress-aware worker watchdog owns hang recovery.
+    /// When unset, the legacy <see cref="PostScrapeRefreshTimeout"/> value is used.
     /// </summary>
-    public TimeSpan? RegisteredUserRefreshTimeout { get; set; }
+    public TimeSpan? RegisteredUserRefreshTimeout { get; set; } = TimeSpan.Zero;
 
     /// <summary>
     /// Registered-player band-discovery timeout. When unset, the legacy

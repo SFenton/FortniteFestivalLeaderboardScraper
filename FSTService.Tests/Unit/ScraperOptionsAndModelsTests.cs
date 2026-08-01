@@ -31,6 +31,7 @@ public class ScraperOptionsAndModelsTests
         Assert.False(opts.RunOnce);
         Assert.False(opts.ResolveOnly);
         Assert.Null(opts.TestSongQuery);
+        Assert.Equal(TimeSpan.Zero, opts.RegisteredUserRefreshTimeout);
         Assert.Equal(RegistrationBackfillMode.BackgroundLowPriority, opts.RegistrationBackfillMode);
     }
 

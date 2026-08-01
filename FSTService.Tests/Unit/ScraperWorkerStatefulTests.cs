@@ -191,6 +191,40 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
     }
 
     [Fact]
+    public async Task RunQueuedRegistrationBackfillBatch_PendingBackfill_IsClaimedAndCompleted()
+    {
+        _metaDb.EnqueueBackfill("acctPending", 9);
+
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>("token"));
+        _tokenManager.AccountId.Returns("callerAcct");
+        _historyReconstructor.DiscoverSeasonWindowsAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<SeasonWindowInfo>>(
+            [
+                new()
+                {
+                    WindowId = "s1",
+                    SeasonNumber = 1,
+                    EventId = "evt1",
+                },
+            ]));
+
+        var orchestrator = CreateBackfillOrchestrator();
+        var claimed = await orchestrator.RunQueuedRegistrationBackfillBatchAsync(
+            _festivalService,
+            maxAccounts: 4,
+            CancellationToken.None);
+
+        Assert.Equal(1, claimed);
+        Assert.Equal(
+            "complete",
+            _metaDb.GetBackfillStatus("acctPending")?.Status);
+    }
+
+    [Fact]
     public async Task RunQueuedRegistrationBackfillBatch_ForegroundMode_AttachesHighPriorityAndReleasesGate()
     {
         _metaDb.DeferBackfill("acctForeground", 9, "worker_backfill_queue");
