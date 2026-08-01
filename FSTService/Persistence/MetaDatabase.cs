@@ -2970,11 +2970,22 @@ public sealed class MetaDatabase : IMetaDatabase
     }
 
     public int RegisterKnownBandsForAccountActivity(string accountId)
+        => RegisterKnownBandsForAccountActivities([accountId]);
+
+    public int RegisterKnownBandsForAccountActivities(IEnumerable<string> accountIds)
     {
-        if (string.IsNullOrWhiteSpace(accountId))
+        ArgumentNullException.ThrowIfNull(accountIds);
+
+        var normalizedAccountIds = accountIds
+            .Where(static accountId => !string.IsNullOrWhiteSpace(accountId))
+            .Select(static accountId => accountId.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (normalizedAccountIds.Length == 0)
             return 0;
 
-        var normalizedAccountId = accountId.Trim();
+        var requestedAccountIds = normalizedAccountIds.ToHashSet(
+            StringComparer.OrdinalIgnoreCase);
         using var conn = _ds.OpenConnection();
 
         var knownBands = new List<(string BandType, string TeamKey)>();
@@ -2985,19 +2996,22 @@ public sealed class MetaDatabase : IMetaDatabase
                 FROM (
                     SELECT band_type, team_key
                     FROM band_team_membership
-                    WHERE account_id = @accountId
+                    WHERE account_id = ANY(@accountIds)
                     UNION
                     SELECT band_type, team_key
                     FROM band_members
-                    WHERE account_id = @accountId
+                    WHERE account_id = ANY(@accountIds)
                     UNION
                     SELECT band_type, team_key
-                    FROM band_search_team_projection
-                    WHERE @accountId = ANY(member_account_ids)
+                    FROM band_search_member_projection
+                    WHERE account_id = ANY(@accountIds)
                 ) AS known_band
                 ORDER BY band_type, team_key
                 """;
-            lookupCmd.Parameters.AddWithValue("accountId", normalizedAccountId);
+            lookupCmd.Parameters.Add(
+                "accountIds",
+                NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+                normalizedAccountIds;
 
             using var reader = lookupCmd.ExecuteReader();
             while (reader.Read())
@@ -3005,7 +3019,7 @@ public sealed class MetaDatabase : IMetaDatabase
                 var bandType = reader.GetString(0);
                 var teamKey = reader.GetString(1);
                 var memberAccountIds = teamKey.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                if (!memberAccountIds.Contains(normalizedAccountId, StringComparer.OrdinalIgnoreCase))
+                if (!memberAccountIds.Any(requestedAccountIds.Contains))
                     continue;
 
                 knownBands.Add((bandType, teamKey));

@@ -2153,6 +2153,30 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void RegisterKnownBandsForAccountActivities_registers_distinct_bands_for_all_requested_accounts()
+    {
+        InsertBandProjection("Band_Duets", "acct1:acct2", ["acct1", "acct2"]);
+        InsertBandProjection("Band_Trios", "acct2:acct3:acct4", ["acct2", "acct3", "acct4"]);
+
+        var registered = Db.RegisterKnownBandsForAccountActivities(
+            [" acct1 ", "acct3", "ACCT1", ""]);
+
+        Assert.Equal(2, registered);
+        var registeredBands = Db.GetRegisteredBands();
+        Assert.Equal(2, registeredBands.Count);
+        Assert.Contains(
+            registeredBands,
+            band => band.BandType == "Band_Duets"
+                    && band.TeamKey == "acct1:acct2");
+        Assert.Contains(
+            registeredBands,
+            band => band.BandType == "Band_Trios"
+                    && band.TeamKey == "acct2:acct3:acct4");
+        Assert.Null(Db.GetBackfillStatus("acct2"));
+        Assert.Null(Db.GetBackfillStatus("acct4"));
+    }
+
+    [Fact]
     public void RegisterDiscoveredBandActivity_registers_exact_band_without_member_backfills()
     {
         Db.RegisterUser("web-tracker", "acct1");
@@ -2307,7 +2331,14 @@ public sealed class MetaDatabaseTests : IDisposable
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             INSERT INTO band_search_team_projection (band_type, team_key, band_id, appearance_count, member_account_ids, updated_at)
-            VALUES (@bandType, @teamKey, @bandId, @appearanceCount, @memberAccountIds, @updatedAt)
+            VALUES (@bandType, @teamKey, @bandId, @appearanceCount, @memberAccountIds, @updatedAt);
+
+            INSERT INTO band_search_member_projection (
+                account_id, band_type, team_key, band_id, appearance_count,
+                team_appearance_count, updated_at)
+            SELECT member_account_id, @bandType, @teamKey, @bandId,
+                   @appearanceCount, @appearanceCount, @updatedAt
+            FROM unnest(@memberAccountIds::text[]) AS member(member_account_id);
             """;
         cmd.Parameters.AddWithValue("bandType", bandType);
         cmd.Parameters.AddWithValue("teamKey", teamKey);

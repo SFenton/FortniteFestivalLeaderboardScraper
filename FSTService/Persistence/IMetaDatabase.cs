@@ -97,6 +97,7 @@ public interface IMetaDatabase : IDisposable
     void TouchWebRegistrationActivity(string accountId);
     SelectedBandRegistrationResult RegisterSelectedBandActivity(string bandType, string teamKey, string? bandId = null);
     int RegisterKnownBandsForAccountActivity(string accountId);
+    int RegisterKnownBandsForAccountActivities(IEnumerable<string> accountIds);
     void RegisterDiscoveredBandActivity(string bandType, string teamKey, IReadOnlyList<string> memberAccountIds);
     List<RegisteredBandInfo> GetRegisteredBands();
     void EnsureRegisteredBandProcessingStatus(string sourceId, string bandType, string teamKey, int totalLookupsToCheck);
