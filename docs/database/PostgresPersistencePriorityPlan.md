@@ -434,6 +434,8 @@ CATALOG-1 is an additive storage foundation, not a public read cutover.
 | Restart fidelity | Exact per-song `provider_json` is loaded before legacy columns; provider fixture save/reload produces the same catalog hash and payload | Accepted |
 | Live capture | `FestivalPersistence.SaveSongsVersionedAsync` commits compatibility columns, provider JSON, and the exact versioned singleton under the publication lock | Accepted |
 | Provider refresh gate | Sync returns request/parse/safety-merge evidence plus an optional exact token; failed, zero-song, partially parsed, duplicate-ID, or blocked-eviction responses do not write `provider_exact` | Accepted |
+| Initialization/local state | Artwork persistence has a local-only contract and cannot update provider JSON or the exact live catalog after a failed startup refresh | Accepted |
+| In-process concurrency | One semaphore covers fetch, merge, snapshot, and persistence, preventing concurrent shop/service/worker refreshes from mutating an exact capture before token return | Accepted |
 | Publication cut | The worker explicitly persists the exact catalog it will consume; `ScrapeOrchestrator` verifies the token, and allocation copies only the same exact version/hash into `publication_song_catalog` | Accepted |
 | Immutability | Publication validates but never rewrites the catalog snapshot; subsequent live syncs cannot change an allocated generation | Accepted |
 | Bootstrap | Legacy-column reconstruction is labeled inexact and remains `building`; existing unproven ready bindings are downgraded, and only a fresh provider capture can make a new working binding ready | Accepted |
@@ -446,10 +448,11 @@ No production schema, process, worker, or endpoint was changed as part of this
 code phase. Deployment and live scrape/publication parity remain separate
 promotion gates. Code validation passed `175/175` targeted Release tests plus
 the `FSTService` Release build. The review-blocker repair expands that proof to
-`308/308` targeted Release tests covering provider fixtures/restart fidelity,
+`312/312` targeted Release tests covering provider fixtures/restart fidelity,
 original-schema migration, rollback-writer invalidation, cross-process locking,
 token races, failed/safety-merged provider refresh rejection, catalog
-consumers, and feature defaults.
+consumers, initialization image-save isolation, concurrent sync serialization,
+and feature defaults.
 
 ## LOGICAL-RETIRE decision and execution package (2026-07-25 to 2026-07-28)
 

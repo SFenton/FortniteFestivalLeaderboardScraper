@@ -7,7 +7,9 @@ using Newtonsoft.Json;
 
 namespace FortniteFestival.Core.Persistence
 {
-    public class FileJsonPersistence : IFestivalPersistence
+    public class FileJsonPersistence :
+        IFestivalPersistence,
+        ILocalSongStatePersistence
     {
         private readonly string _path;
 
@@ -53,6 +55,12 @@ namespace FortniteFestival.Core.Persistence
         }
 
         public Task SaveSongsAsync(IEnumerable<Song> songs)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task SaveSongLocalStateAsync(
+            IEnumerable<SongLocalState> states)
         {
             return Task.CompletedTask;
         }

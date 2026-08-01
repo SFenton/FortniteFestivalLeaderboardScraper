@@ -12,7 +12,8 @@ namespace FSTService.Persistence;
 /// </summary>
 public sealed class FestivalPersistence :
     IFestivalPersistence,
-    IVersionedSongCatalogPersistence
+    IVersionedSongCatalogPersistence,
+    ILocalSongStatePersistence
 {
     private readonly NpgsqlDataSource _ds;
 
@@ -74,6 +75,7 @@ public sealed class FestivalPersistence :
 
             var song = new Song
             {
+                _title = r.IsDBNull(1) ? null : r.GetString(1),
                 track = new Track
                 {
                     su = r.IsDBNull(0) ? null : r.GetString(0),
@@ -284,6 +286,36 @@ public sealed class FestivalPersistence :
             SongCatalogSnapshotBuilder.SchemaVersion,
             catalogSnapshot.ContentHash,
             catalogSnapshot.SongCount);
+    }
+
+    public async Task SaveSongLocalStateAsync(
+        IEnumerable<SongLocalState> states)
+    {
+        var localStates = states
+            .Where(static state =>
+                !string.IsNullOrWhiteSpace(state.SongId))
+            .ToArray();
+        if (localStates.Length == 0)
+            return;
+
+        await using var conn = await _ds.OpenConnectionAsync();
+        await using var tx = await conn.BeginTransactionAsync();
+        foreach (var state in localStates)
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                UPDATE songs
+                SET image_path = @imagePath
+                WHERE song_id = @songId
+                """;
+            cmd.Parameters.AddWithValue("songId", state.SongId);
+            cmd.Parameters.AddWithValue(
+                "imagePath",
+                (object?)state.ImagePath ?? DBNull.Value);
+            await cmd.ExecuteNonQueryAsync();
+        }
+        await tx.CommitAsync();
     }
 
     public Task<IList<LeaderboardData>> LoadScoresAsync()

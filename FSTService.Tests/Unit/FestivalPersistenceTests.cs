@@ -311,6 +311,149 @@ public sealed class FestivalPersistenceTests : IDisposable
         Assert.Equal(originalToken.ContentHash, ReadLiveCatalogHash());
     }
 
+    [Fact]
+    public async Task Failed_initialization_uses_local_save_without_exact_persistence()
+    {
+        var persistence = new TrackingInitializationPersistence(
+        [
+            new Song
+            {
+                _title = "Legacy Song",
+                track = new Track
+                {
+                    su = "legacy-song",
+                    tt = "Legacy Song",
+                    an = "Legacy Artist",
+                },
+            },
+        ]);
+        var service = new FestivalService(
+            persistence,
+            CreateProviderClient(
+                System.Net.HttpStatusCode.ServiceUnavailable,
+                """{"errorCode":"errors.com.epicgames.service_unavailable"}"""));
+
+        await service.InitializeAsync();
+
+        Assert.Equal(0, persistence.VersionedSaveCount);
+        Assert.Equal(0, persistence.ProviderSaveCount);
+        Assert.Equal(1, persistence.LocalSaveCount);
+        var localState = Assert.Single(persistence.LastLocalStates);
+        Assert.Equal("legacy-song", localState.SongId);
+    }
+
+    [Fact]
+    public async Task Failed_initialization_keeps_legacy_bootstrap_inexact()
+    {
+        await using (var conn = await _dataSource.OpenConnectionAsync())
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                DELETE FROM live_song_catalog
+                WHERE id = TRUE;
+                INSERT INTO songs (
+                    song_id, title, artist, active_date, last_modified,
+                    image_path, provider_json)
+                VALUES (
+                    'legacy-song', 'Legacy Song', 'Legacy Artist',
+                    '2026-07-30T00:00:00Z',
+                    '2026-07-31T00:00:00Z',
+                    '/local/legacy.jpg',
+                    NULL)
+                ON CONFLICT (song_id) DO UPDATE SET
+                    title = EXCLUDED.title,
+                    artist = EXCLUDED.artist,
+                    image_path = EXCLUDED.image_path,
+                    provider_json = NULL;
+                """;
+            await cmd.ExecuteNonQueryAsync();
+        }
+        await DatabaseInitializer.EnsureSchemaAsync(_dataSource);
+        var before = ReadLiveCatalogState();
+        var service = new FestivalService(
+            new FestivalPersistence(_dataSource),
+            CreateProviderClient(
+                System.Net.HttpStatusCode.ServiceUnavailable,
+                """{"errorCode":"errors.com.epicgames.service_unavailable"}"""));
+
+        await service.InitializeAsync();
+
+        var after = ReadLiveCatalogState();
+        Assert.Equal(before, after);
+        Assert.False(after.IsExact);
+        Assert.Equal(
+            "legacy_columns_reconstructed",
+            after.SourceKind);
+    }
+
+    [Fact]
+    public async Task Local_image_save_does_not_change_exact_catalog_token()
+    {
+        var persistence = new FestivalPersistence(_dataSource);
+        var song = CreateSong("song-a", "Alpha");
+        var token = await persistence.SaveSongsVersionedAsync([song]);
+
+        await persistence.SaveSongLocalStateAsync(
+        [
+            new SongLocalState("song-a", "/local/alpha.jpg"),
+        ]);
+
+        Assert.Equal(token.ContentHash, ReadLiveCatalogHash());
+        await using var conn = await _dataSource.OpenConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT catalog_version, image_path
+            FROM live_song_catalog
+            CROSS JOIN songs
+            WHERE live_song_catalog.id = TRUE
+              AND songs.song_id = 'song-a'
+            """;
+        await using var reader = await cmd.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(token.CatalogVersion, reader.GetInt64(0));
+        Assert.Equal("/local/alpha.jpg", reader.GetString(1));
+    }
+
+    [Fact]
+    public async Task Concurrent_exact_and_inexact_syncs_are_fully_serialized()
+    {
+        var exactPayload = CreateProviderPayload(20, "Exact");
+        var partialPayload = CreateProviderPayload(1, "Partial");
+        var handler = new CoordinatedProviderHandler(
+            exactPayload,
+            partialPayload);
+        var service = new FestivalService(
+            new FestivalPersistence(_dataSource),
+            new HttpClient(handler)
+            {
+                BaseAddress = new Uri(
+                    "https://fortnitecontent-website-prod07.ol.epicgames.com"),
+            });
+
+        var exactTask = service.SyncSongsWithResultAsync();
+        await handler.FirstRequestStarted.Task.WaitAsync(
+            TimeSpan.FromSeconds(5));
+        var inexactTask = service.SyncSongsWithResultAsync();
+        await Task.Delay(100);
+        Assert.Equal(1, handler.RequestCount);
+        Assert.False(handler.SecondRequestStarted.Task.IsCompleted);
+
+        handler.ReleaseFirstResponse.TrySetResult(true);
+        var exact = await exactTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(exact.IsExact);
+        Assert.NotNull(exact.PersistenceToken);
+
+        await handler.SecondRequestStarted.Task.WaitAsync(
+            TimeSpan.FromSeconds(5));
+        var inexact = await inexactTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(inexact.IsExact);
+        Assert.True(inexact.SafetyMergeApplied);
+        Assert.Null(inexact.PersistenceToken);
+        Assert.Equal(
+            exact.PersistenceToken.ContentHash,
+            ReadLiveCatalogHash());
+    }
+
     private static Song CreateSong(string songId, string title) =>
         new()
         {
@@ -390,6 +533,26 @@ public sealed class FestivalPersistenceTests : IDisposable
                 "https://fortnitecontent-website-prod07.ol.epicgames.com"),
         };
 
+    private static string CreateProviderPayload(
+        int count,
+        string titlePrefix)
+    {
+        var payload = Enumerable.Range(1, count)
+            .ToDictionary(
+                index => $"song-{index:D2}",
+                index => (object)new
+                {
+                    _title = $"{titlePrefix} {index:D2}",
+                    track = new
+                    {
+                        su = $"song-{index:D2}",
+                        tt = $"{titlePrefix} {index:D2}",
+                        an = "Artist",
+                    },
+                });
+        return JsonSerializer.Serialize(payload);
+    }
+
     private static void SetSongs(
         FestivalService service,
         IEnumerable<Song> songs)
@@ -418,6 +581,28 @@ public sealed class FestivalPersistenceTests : IDisposable
         return (string)cmd.ExecuteScalar()!;
     }
 
+    private (
+        long CatalogVersion,
+        string ContentHash,
+        string SourceKind,
+        bool IsExact) ReadLiveCatalogState()
+    {
+        using var conn = _dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT catalog_version, content_hash, source_kind, is_exact
+            FROM live_song_catalog
+            WHERE id = TRUE
+            """;
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        return (
+            reader.GetInt64(0),
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.GetBoolean(3));
+    }
+
     private sealed class StaticProviderHandler : HttpMessageHandler
     {
         private readonly System.Net.HttpStatusCode _statusCode;
@@ -441,6 +626,113 @@ public sealed class FestivalPersistenceTests : IDisposable
                     System.Text.Encoding.UTF8,
                     "application/json"),
             });
+    }
+
+    private sealed class CoordinatedProviderHandler : HttpMessageHandler
+    {
+        private readonly string _firstContent;
+        private readonly string _secondContent;
+        private int _requestCount;
+
+        public CoordinatedProviderHandler(
+            string firstContent,
+            string secondContent)
+        {
+            _firstContent = firstContent;
+            _secondContent = secondContent;
+        }
+
+        public int RequestCount => Volatile.Read(ref _requestCount);
+        public TaskCompletionSource<bool> FirstRequestStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<bool> SecondRequestStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<bool> ReleaseFirstResponse { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var requestNumber = Interlocked.Increment(
+                ref _requestCount);
+            string content;
+            if (requestNumber == 1)
+            {
+                FirstRequestStarted.TrySetResult(true);
+                await ReleaseFirstResponse.Task.WaitAsync(
+                    cancellationToken);
+                content = _firstContent;
+            }
+            else
+            {
+                SecondRequestStarted.TrySetResult(true);
+                content = _secondContent;
+            }
+
+            return new HttpResponseMessage(
+                System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    content,
+                    System.Text.Encoding.UTF8,
+                    "application/json"),
+            };
+        }
+    }
+
+    private sealed class TrackingInitializationPersistence :
+        IFestivalPersistence,
+        IVersionedSongCatalogPersistence,
+        ILocalSongStatePersistence
+    {
+        private readonly IList<Song> _songs;
+
+        public TrackingInitializationPersistence(IList<Song> songs)
+        {
+            _songs = songs;
+        }
+
+        public int VersionedSaveCount { get; private set; }
+        public int ProviderSaveCount { get; private set; }
+        public int LocalSaveCount { get; private set; }
+        public IReadOnlyList<SongLocalState> LastLocalStates { get; private set; } =
+            Array.Empty<SongLocalState>();
+
+        public Task<IList<LeaderboardData>> LoadScoresAsync() =>
+            Task.FromResult<IList<LeaderboardData>>([]);
+
+        public Task SaveScoresAsync(IEnumerable<LeaderboardData> scores) =>
+            Task.CompletedTask;
+
+        public Task<IList<Song>> LoadSongsAsync() =>
+            Task.FromResult(_songs);
+
+        public Task SaveSongsAsync(IEnumerable<Song> songs)
+        {
+            ProviderSaveCount++;
+            return Task.CompletedTask;
+        }
+
+        public Task<SongCatalogPersistenceToken> SaveSongsVersionedAsync(
+            IEnumerable<Song> songs)
+        {
+            VersionedSaveCount++;
+            return Task.FromResult(
+                new SongCatalogPersistenceToken(
+                    1,
+                    SongCatalogSnapshotBuilder.SchemaVersion,
+                    new string('a', 64),
+                    songs.Count()));
+        }
+
+        public Task SaveSongLocalStateAsync(
+            IEnumerable<SongLocalState> states)
+        {
+            LocalSaveCount++;
+            LastLocalStates = states.ToArray();
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class ThrowingVersionedPersistence :

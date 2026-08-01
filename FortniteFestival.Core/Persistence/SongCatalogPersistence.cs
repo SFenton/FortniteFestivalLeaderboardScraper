@@ -60,4 +60,22 @@ namespace FortniteFestival.Core.Persistence
         Task<SongCatalogPersistenceToken> SaveSongsVersionedAsync(
             IEnumerable<Song> songs);
     }
+
+    public sealed class SongLocalState
+    {
+        public string SongId { get; }
+        public string ImagePath { get; }
+
+        public SongLocalState(string songId, string imagePath)
+        {
+            SongId = songId;
+            ImagePath = imagePath;
+        }
+    }
+
+    public interface ILocalSongStatePersistence
+    {
+        Task SaveSongLocalStateAsync(
+            IEnumerable<SongLocalState> states);
+    }
 }

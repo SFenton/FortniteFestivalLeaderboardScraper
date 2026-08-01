@@ -46,7 +46,9 @@ namespace FortniteFestival.Core.Persistence
         }
     }
 
-    public class SqlitePersistence : IFestivalPersistence
+    public class SqlitePersistence :
+        IFestivalPersistence,
+        ILocalSongStatePersistence
     {
         private readonly string _dbPath;
 
@@ -744,6 +746,33 @@ ON CONFLICT(SongId) DO UPDATE SET Title=$title, Artist=$artist, ActiveDate=$acti
             {
                 PersistenceLog.Write("SaveSongsAsync failed: " + ex);
                 throw;
+            }
+        }
+
+        public async Task SaveSongLocalStateAsync(
+            IEnumerable<SongLocalState> states)
+        {
+            using (var conn = new SqliteConnection(ConnectionString))
+            {
+                await conn.OpenAsync();
+                using (var tx = conn.BeginTransaction())
+                using (var cmd = conn.CreateCommand())
+                {
+                    cmd.Transaction = tx;
+                    cmd.CommandText =
+                        "UPDATE Songs SET ImagePath=$image WHERE SongId=$id";
+                    cmd.Parameters.Add(new SqliteParameter("$image", ""));
+                    cmd.Parameters.Add(new SqliteParameter("$id", ""));
+                    foreach (var state in states)
+                    {
+                        cmd.Parameters[0].Value =
+                            state.ImagePath ?? string.Empty;
+                        cmd.Parameters[1].Value =
+                            state.SongId ?? string.Empty;
+                        await cmd.ExecuteNonQueryAsync();
+                    }
+                    tx.Commit();
+                }
             }
         }
     }

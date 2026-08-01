@@ -70,6 +70,8 @@ namespace FortniteFestival.Core.Services
         };
 #endif
         private readonly object _sync = new object();
+        private readonly SemaphoreSlim _songSyncGate =
+            new SemaphoreSlim(1, 1);
         private readonly ConcurrentDictionary<string, LeaderboardData> _scores =
             new ConcurrentDictionary<string, LeaderboardData>();
         private readonly Dictionary<string, Song> _songs = new Dictionary<string, Song>();
@@ -251,6 +253,7 @@ namespace FortniteFestival.Core.Services
 
         public async Task<SongCatalogSyncResult> SyncSongsWithResultAsync()
         {
+            await _songSyncGate.WaitAsync().ConfigureAwait(false);
             try
             {
                 List<Song> list;
@@ -478,6 +481,7 @@ namespace FortniteFestival.Core.Services
             finally
             {
                 _songSyncComplete = true;
+                _songSyncGate.Release();
                 // flush removed
             }
         }
@@ -581,11 +585,25 @@ namespace FortniteFestival.Core.Services
                     }
                     SongProgress?.Invoke(idx, total, $"Img {display}", false);
                 }
-                if (_persistence != null)
+                if (_persistence is ILocalSongStatePersistence localPersistence)
                 {
                     try
                     {
-                        await _persistence.SaveSongsAsync(_songs.Values).ConfigureAwait(false);
+                        SongLocalState[] localStates;
+                        lock (_sync)
+                        {
+                            localStates = _songs.Values
+                                .Where(song =>
+                                    !string.IsNullOrEmpty(song.track?.su))
+                                .Select(song =>
+                                    new SongLocalState(
+                                        song.track.su,
+                                        song.imagePath))
+                                .ToArray();
+                        }
+                        await localPersistence
+                            .SaveSongLocalStateAsync(localStates)
+                            .ConfigureAwait(false);
                     }
                     catch { }
                 }

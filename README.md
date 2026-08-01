@@ -117,6 +117,11 @@ storage is additive and `Features__EnablePublicationReadContext` remains
 in place; legacy writes remain accepted but automatically invalidate exactness
 when their content changes. No schema or data removal is required.
 
+Provider catalog refreshes are serialized per `FestivalService` instance
+through fetch, merge, snapshot, and persistence. Artwork/image updates use a
+separate local-state writer that can only update `songs.image_path`; failed or
+safety-merged initialization therefore cannot stamp a provider-exact catalog.
+
 Improvement notifications can be recovered for the already-published scrape
 without starting a full scrape:
 

@@ -740,6 +740,14 @@ endpoint reader:
   allocating a scrape. Failed, partial, zero-song, or safety-merged refreshes
   abort the pass with no `scrape_log`, generation, ready binding, or live
   exactness promotion;
+- a per-service semaphore serializes the complete provider fetch, merge,
+  canonical snapshot, and persistence operation used by startup, shop refresh,
+  the catalog worker, and the scrape worker. A queued inexact refresh cannot
+  mutate objects participating in an exact capture before its token returns;
+- `SyncImagesAsync` persists only `SongLocalState` through
+  `ILocalSongStatePersistence`. PostgreSQL updates `songs.image_path` without
+  touching `provider_json`, `live_song_catalog`, catalog versions, hashes, or
+  exactness;
 - `ScrapeOrchestrator` snapshots the same songs used to build scrape requests,
   verifies their hash/count against the persistence token, and
   `StartScrapeRun` rejects any service/worker race before inserting a scrape
