@@ -759,7 +759,8 @@ endpoint reader:
   replaced wholesale by the first complete, fully parsed provider response,
   allowing legacy stale rows to converge to an exact source. A rejected bulk
   eviction does not downgrade baseline trust or replace the persisted token;
-  repeated identical partial responses remain rejected;
+  it also does not apply partial provider mutations to the in-memory exact
+  baseline, so repeated identical partial responses remain rejected;
 - `ScrapeOrchestrator` snapshots the same songs used to build scrape requests,
   verifies their hash/count against the persistence token, and
   `StartScrapeRun` rejects any service/worker race before inserting a scrape

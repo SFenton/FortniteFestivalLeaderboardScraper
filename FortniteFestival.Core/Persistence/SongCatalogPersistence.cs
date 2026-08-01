@@ -81,6 +81,6 @@ namespace FortniteFestival.Core.Persistence
 
     public interface ISongCatalogBaselineTrustPersistence
     {
-        Task<bool> HasExactSongCatalogAsync();
+        Task<SongCatalogPersistenceToken> GetExactSongCatalogTokenAsync();
     }
 }

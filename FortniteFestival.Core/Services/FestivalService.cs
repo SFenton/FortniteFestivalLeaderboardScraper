@@ -80,6 +80,7 @@ namespace FortniteFestival.Core.Services
         private bool _initialized;
         private bool _songSyncComplete;
         private bool _songCatalogBaselineTrusted;
+        private SongCatalogPersistenceToken _trustedSongCatalogToken;
         private volatile bool _authFailed;
         private volatile bool _imagesSyncComplete; // ensure images are downloaded before queries allowed
         private string _imageRoot; // root folder containing images subfolder
@@ -235,13 +236,16 @@ namespace FortniteFestival.Core.Services
                 {
                     try
                     {
-                        _songCatalogBaselineTrusted = await trust
-                            .HasExactSongCatalogAsync()
+                        _trustedSongCatalogToken = await trust
+                            .GetExactSongCatalogTokenAsync()
                             .ConfigureAwait(false);
+                        _songCatalogBaselineTrusted =
+                            _trustedSongCatalogToken != null;
                     }
                     catch (Exception ex)
                     {
                         _songCatalogBaselineTrusted = false;
+                        _trustedSongCatalogToken = null;
                         LogLine(
                             "Song catalog baseline trust probe failed: "
                             + ex.Message);
@@ -458,14 +462,17 @@ namespace FortniteFestival.Core.Services
                         }
                     }
 
-                    foreach (var s in list)
+                    if (!safetyMergeApplied)
                     {
-                        if (_songs.TryGetValue(s.track.su, out var existing))
-                            existing.ReplaceProviderDataFrom(s);
-                        else
-                            _songs[s.track.su] = s;
+                        foreach (var s in list)
+                        {
+                            if (_songs.TryGetValue(s.track.su, out var existing))
+                                existing.ReplaceProviderDataFrom(s);
+                            else
+                                _songs[s.track.su] = s;
+                        }
+                        _songsDirty = true;
                     }
-                    _songsDirty = true;
                     songsToPersist = _songs.Values.ToArray();
                 }
 
@@ -481,7 +488,10 @@ namespace FortniteFestival.Core.Services
                     // incomplete provider mutation, so that in-memory
                     // baseline is no longer trusted.
                     if (!safetyMergeApplied)
+                    {
                         _songCatalogBaselineTrusted = false;
+                        _trustedSongCatalogToken = null;
+                    }
                     if (failureReason == null)
                     {
                         failureReason =
@@ -521,6 +531,7 @@ namespace FortniteFestival.Core.Services
                         .ConfigureAwait(false);
                 }
 
+                _trustedSongCatalogToken = persistenceToken;
                 return new SongCatalogSyncResult(
                     providerRequestSucceeded: true,
                     isExact: true,

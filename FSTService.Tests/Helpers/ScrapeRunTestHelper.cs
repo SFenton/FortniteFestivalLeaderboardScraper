@@ -40,7 +40,13 @@ internal static class ScrapeRunTestHelper
         var meta = new MetaDatabase(
             dataSource,
             NullLogger<MetaDatabase>.Instance);
-        var allocatedScrapeId = meta.StartScrapeRun();
+        var catalogToken = new FestivalPersistence(dataSource)
+            .GetExactSongCatalogTokenAsync()
+            .GetAwaiter()
+            .GetResult()
+            ?? throw new InvalidOperationException(
+                "Test scrape allocation requires an exact catalog token.");
+        var allocatedScrapeId = meta.StartScrapeRun(catalogToken);
         if (allocatedScrapeId != scrapeId)
         {
             throw new InvalidOperationException(

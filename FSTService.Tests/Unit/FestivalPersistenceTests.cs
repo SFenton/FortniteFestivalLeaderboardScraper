@@ -299,7 +299,11 @@ public sealed class FestivalPersistenceTests : IDisposable
             CreateProviderClient(
                 System.Net.HttpStatusCode.OK,
                 partialPayload));
-        SetSongs(service, loadedSongs, trustedBaseline: true);
+        SetSongs(
+            service,
+            loadedSongs,
+            trustedBaseline: true,
+            trustedToken: originalToken);
 
         var result = await service.SyncSongsWithResultAsync();
 
@@ -327,7 +331,11 @@ public sealed class FestivalPersistenceTests : IDisposable
             CreateProviderClient(
                 System.Net.HttpStatusCode.OK,
                 partialPayload));
-        SetSongs(service, loadedSongs, trustedBaseline: true);
+        SetSongs(
+            service,
+            loadedSongs,
+            trustedBaseline: true,
+            trustedToken: originalToken);
 
         var first = await service.SyncSongsWithResultAsync();
         var second = await service.SyncSongsWithResultAsync();
@@ -339,7 +347,19 @@ public sealed class FestivalPersistenceTests : IDisposable
         Assert.True(second.SafetyMergeApplied);
         Assert.Null(second.PersistenceToken);
         Assert.Equal(20, service.Songs.Count);
+        Assert.Equal(
+            "Song 01 provider title",
+            service.Songs.Single(
+                static song => song.track.su == "song-01")._title);
         Assert.Equal(originalToken.ContentHash, ReadLiveCatalogHash());
+        var retainedToken = GetTrustedToken(service);
+        Assert.NotNull(retainedToken);
+        Assert.Equal(
+            originalToken.CatalogVersion,
+            retainedToken.CatalogVersion);
+        Assert.Equal(
+            originalToken.ContentHash,
+            retainedToken.ContentHash);
         var live = ReadLiveCatalogState();
         Assert.True(live.IsExact);
         Assert.Equal("provider_exact", live.SourceKind);
@@ -675,7 +695,8 @@ public sealed class FestivalPersistenceTests : IDisposable
     private static void SetSongs(
         FestivalService service,
         IEnumerable<Song> songs,
-        bool trustedBaseline = false)
+        bool trustedBaseline = false,
+        SongCatalogPersistenceToken? trustedToken = null)
     {
         var flags = BindingFlags.NonPublic | BindingFlags.Instance;
         var songsField =
@@ -691,6 +712,19 @@ public sealed class FestivalPersistenceTests : IDisposable
             "_songCatalogBaselineTrusted",
             flags)!;
         trustedField.SetValue(service, trustedBaseline);
+        var tokenField = typeof(FestivalService).GetField(
+            "_trustedSongCatalogToken",
+            flags)!;
+        tokenField.SetValue(service, trustedToken);
+    }
+
+    private static SongCatalogPersistenceToken? GetTrustedToken(
+        FestivalService service)
+    {
+        var field = typeof(FestivalService).GetField(
+            "_trustedSongCatalogToken",
+            BindingFlags.NonPublic | BindingFlags.Instance)!;
+        return (SongCatalogPersistenceToken?)field.GetValue(service);
     }
 
     private string ReadLiveCatalogHash()

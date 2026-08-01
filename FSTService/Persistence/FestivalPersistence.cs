@@ -319,24 +319,31 @@ public sealed class FestivalPersistence :
         await tx.CommitAsync();
     }
 
-    public async Task<bool> HasExactSongCatalogAsync()
+    public async Task<SongCatalogPersistenceToken>
+        GetExactSongCatalogTokenAsync()
     {
         await using var conn = await _ds.OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT EXISTS (
-                SELECT 1
-                FROM live_song_catalog
-                WHERE id = TRUE
-                  AND is_exact
-                  AND source_kind = 'provider_exact'
-                  AND schema_version = @schemaVersion
-            )
+            SELECT catalog_version, schema_version, content_hash, song_count
+            FROM live_song_catalog
+            WHERE id = TRUE
+              AND is_exact
+              AND source_kind = 'provider_exact'
+              AND schema_version = @schemaVersion
             """;
         cmd.Parameters.AddWithValue(
             "schemaVersion",
             SongCatalogSnapshotBuilder.SchemaVersion);
-        return (bool)(await cmd.ExecuteScalarAsync())!;
+        await using var reader = await cmd.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+            return null!;
+
+        return new SongCatalogPersistenceToken(
+            reader.GetInt64(0),
+            reader.GetInt32(1),
+            reader.GetString(2),
+            reader.GetInt32(3));
     }
 
     public Task<IList<LeaderboardData>> LoadScoresAsync()
