@@ -78,4 +78,9 @@ namespace FortniteFestival.Core.Persistence
         Task SaveSongLocalStateAsync(
             IEnumerable<SongLocalState> states);
     }
+
+    public interface ISongCatalogBaselineTrustPersistence
+    {
+        Task<bool> HasExactSongCatalogAsync();
+    }
 }

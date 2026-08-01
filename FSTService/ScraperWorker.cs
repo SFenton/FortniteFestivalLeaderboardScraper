@@ -11,6 +11,24 @@ using Microsoft.Extensions.Options;
 
 namespace FSTService;
 
+internal sealed record ScrapeCatalogSelection(
+    FestivalService Service,
+    SongCatalogPersistenceToken Token,
+    long PublicationId);
+
+internal sealed class SongCatalogCaptureException : InvalidOperationException
+{
+    public SongCatalogSyncResult Capture { get; }
+
+    public SongCatalogCaptureException(SongCatalogSyncResult capture)
+        : base(
+            "Exact provider song catalog refresh failed: "
+            + (capture.FailureReason ?? "no exact persistence token"))
+    {
+        Capture = capture;
+    }
+}
+
 /// <summary>
 /// Background worker that continuously scrapes Fortnite Festival leaderboard scores.
 ///
@@ -373,6 +391,67 @@ public sealed class ScraperWorker : BackgroundService
         }
     }
 
+    internal ScrapeCatalogSelection LoadResumeSongCatalog(
+        long scrapeId)
+    {
+        var catalog = _persistence.Meta
+            .GetPublicationSongCatalogForScrape(scrapeId)
+            ?? throw new InvalidOperationException(
+                $"Scrape {scrapeId} has no exact ready publication song catalog.");
+        var songs = SongCatalogSnapshotBuilder.DeserializeCatalog(
+            catalog.CatalogJson);
+        var token = new SongCatalogPersistenceToken(
+            catalog.CatalogVersion,
+            catalog.SchemaVersion,
+            catalog.ContentHash,
+            catalog.SongCount);
+        SongCatalogSnapshotBuilder.ValidateToken(
+            SongCatalogSnapshotBuilder.Create(songs),
+            token);
+        return new ScrapeCatalogSelection(
+            FestivalService.CreateFromSongCatalogSnapshot(songs),
+            token,
+            catalog.PublicationId);
+    }
+
+    internal async Task<ScrapeCatalogSelection>
+        ResolveSongCatalogForPassAsync(
+            FestivalService service,
+            ScrapeResumeState? resumeState)
+    {
+        if (resumeState is not null)
+            return LoadResumeSongCatalog(resumeState.ScrapeId);
+
+        var capture = await service.SyncSongsWithResultAsync();
+        if (!capture.IsExact || capture.PersistenceToken is null)
+            throw new SongCatalogCaptureException(capture);
+
+        return new ScrapeCatalogSelection(
+            service,
+            capture.PersistenceToken,
+            PublicationId: 0);
+    }
+
+    internal static IReadOnlyList<
+        GlobalLeaderboardScraper.SongScrapeRequest>
+        BuildCatalogScrapeRequests(
+            FestivalService service,
+            ScraperOptions options)
+    {
+        var instruments = ScrapeOrchestrator.GetEnabledInstruments(
+            options);
+        return service.Songs
+            .Where(static song => song.track?.su is not null)
+            .Select(song =>
+                new GlobalLeaderboardScraper.SongScrapeRequest
+                {
+                    SongId = song.track.su,
+                    Instruments = instruments,
+                    Label = song.track.tt,
+                })
+            .ToList();
+    }
+
     // ─── Auth helpers ───────────────────────────────────────────
 
     private async Task<bool> EnsureAuthenticatedAsync(CancellationToken ct)
@@ -456,6 +535,9 @@ public sealed class ScraperWorker : BackgroundService
                 : null;
             if (opts.ResumeScrapeId > 0)
                 ValidateResumeScrape(opts, resolvedPhases, resumeState);
+            bool anyScrapePhase =
+                resolvedPhases.HasFlag(ScrapePhase.SoloScrape)
+                || resolvedPhases.HasFlag(ScrapePhase.BandScrape);
 
             PruneStaleWebRegistrationsIfEligible(opts);
 
@@ -472,45 +554,58 @@ public sealed class ScraperWorker : BackgroundService
                 return;
             }
 
-            // Re-sync the song catalog in case new songs appeared
-            var songCatalogCapture =
-                await service.SyncSongsWithResultAsync();
-            if (!songCatalogCapture.IsExact
-                || songCatalogCapture.PersistenceToken is null)
+            ScrapeCatalogSelection catalogSelection;
+            try
             {
-                passDetail =
-                    $"Exact provider song catalog refresh failed: " +
-                    $"{songCatalogCapture.FailureReason ?? "no exact persistence token"}";
+                catalogSelection =
+                    await ResolveSongCatalogForPassAsync(
+                        service,
+                        resumeState);
+            }
+            catch (SongCatalogCaptureException ex)
+            {
+                var capture = ex.Capture;
+                passDetail = ex.Message;
                 _log.LogError(
                     "Aborting scrape before allocation because the provider song catalog is not exact. " +
                     "RequestSucceeded={RequestSucceeded}, SafetyMerge={SafetyMerge}, " +
                     "ProviderSongs={ProviderSongs}, CatalogSongs={CatalogSongs}, " +
                     "DroppedObjects={DroppedObjects}, Reason={Reason}",
-                    songCatalogCapture.ProviderRequestSucceeded,
-                    songCatalogCapture.SafetyMergeApplied,
-                    songCatalogCapture.ProviderSongCount,
-                    songCatalogCapture.CatalogSongCount,
-                    songCatalogCapture.DroppedProviderObjectCount,
-                    songCatalogCapture.FailureReason);
+                    capture.ProviderRequestSucceeded,
+                    capture.SafetyMergeApplied,
+                    capture.ProviderSongCount,
+                    capture.CatalogSongCount,
+                    capture.DroppedProviderObjectCount,
+                    capture.FailureReason);
                 return;
             }
-            var songCatalogToken =
-                songCatalogCapture.PersistenceToken;
-            _persistence.InvalidateTotalSongCount();
+
+            var passService = catalogSelection.Service;
+            var songCatalogToken = catalogSelection.Token;
+            if (resumeState is not null)
+            {
+                _log.LogInformation(
+                    "Resume scrape {ScrapeId} pinned to publication {PublicationId} song catalog version {CatalogVersion} ({SongCount} songs); provider refresh skipped.",
+                    resumeState.ScrapeId,
+                    catalogSelection.PublicationId,
+                    catalogSelection.Token.CatalogVersion,
+                    catalogSelection.Token.SongCount);
+            }
+            else
+            {
+                _persistence.InvalidateTotalSongCount();
+            }
 
             // Keep this worker's local song list current for scrape requests. Public
             // /api/songs freshness, song-change pushes, and path generation are owned
             // by SongCatalogRefreshWorker in fstservice.
-            PrimeSongsCache();
+            PrimeSongsCache(passService);
 
             // ── Core scrape: delegate to ScrapeOrchestrator ──
             // Freeze all response caches so API consumers see consistent (stale) data
             // throughout the scrape + post-scrape enrichment + precomputation cycle.
             _lifecycle.ScrapeStarting();
             publicReadsFrozen = true;
-
-            bool anyScrapePhase = resolvedPhases.HasFlag(ScrapePhase.SoloScrape)
-                               || resolvedPhases.HasFlag(ScrapePhase.BandScrape);
 
             ScrapePassResult? result = null;
             var authFailureAborted = false;
@@ -522,8 +617,8 @@ public sealed class ScraperWorker : BackgroundService
                     result = await _scrapeOrchestrator.RunAsync(
                         accessToken,
                         _tokenManager.AccountId!,
-                        service,
-                        songCatalogToken,
+                        passService,
+                        songCatalogToken!,
                         ct,
                         _tokenManager);
                     _workerStatus?.CompleteOperation("scrape.leaderboards");
@@ -587,15 +682,9 @@ public sealed class ScraperWorker : BackgroundService
                 CallerAccountId = _tokenManager.AccountId!,
                 RegisteredIds = _persistence.Meta.GetRegisteredAccountIds(),
                 Aggregates = new Persistence.GlobalLeaderboardPersistence.PipelineAggregates(),
-                ScrapeRequests = service.Songs
-                    .Where(s => s.track?.su is not null)
-                    .Select(s => new Scraping.GlobalLeaderboardScraper.SongScrapeRequest
-                    {
-                        SongId = s.track.su,
-                        Instruments = Scraping.ScrapeOrchestrator.GetEnabledInstruments(opts),
-                        Label = s.track.tt,
-                    })
-                    .ToList(),
+                ScrapeRequests = BuildCatalogScrapeRequests(
+                    passService,
+                    opts),
                 DegreeOfParallelism = opts.DegreeOfParallelism,
                 EpicReportedOver100Pages = resumeState is not null && opts.ResumeEpicReportedOver100Pages,
                 LeaderboardScrapeCompleted = !anyScrapePhase,
@@ -666,7 +755,11 @@ public sealed class ScraperWorker : BackgroundService
                 {
                     _workerStatus?.BeginOperation("scrape.post_process", "Post-processing leaderboard update", phase: "PostScrapeEnrichment");
                     postProcessOperationActive = true;
-                    await _postScrapeOrchestrator.RunAsync(ctx, service, postScrapePhases, ct);
+                    await _postScrapeOrchestrator.RunAsync(
+                        ctx,
+                        passService,
+                        postScrapePhases,
+                        ct);
                     postProcessCompleted = true;
                 }
                 catch (OperationCanceledException ex)
@@ -733,7 +826,12 @@ public sealed class ScraperWorker : BackgroundService
             {
                 try
                 {
-                    await _postScrapeOrchestrator.RunDeferredRegistrationSyncAsync(ctx, service, postScrapePhases, ct);
+                    await _postScrapeOrchestrator
+                        .RunDeferredRegistrationSyncAsync(
+                            ctx,
+                            passService,
+                            postScrapePhases,
+                            ct);
                 }
                 catch (OperationCanceledException ex)
                 {
@@ -825,7 +923,8 @@ public sealed class ScraperWorker : BackgroundService
                         int? expectedPublishedScopeCount = null;
                         if (_persistence.WritePublishedScopeSources)
                         {
-                            if (!resolvedPhases.HasFlag(ScrapePhase.SoloScrape))
+                            if (!resolvedPhases.HasFlag(ScrapePhase.SoloScrape)
+                                && resumeState is null)
                             {
                                 throw new InvalidOperationException(
                                     "Published scope-source promotion requires the solo scrape phase.");
@@ -970,7 +1069,7 @@ public sealed class ScraperWorker : BackgroundService
             if (publicReadsFrozen)
             {
                 if (publishedNewState)
-                    PrimeSongsCache();
+                    PrimeSongsCache(passService);
 
                 if (passStatus == "completed")
                     _lifecycle.ScrapeCompleted();
@@ -1181,11 +1280,17 @@ public sealed class ScraperWorker : BackgroundService
 
     // ─── Songs cache priming ────────────────────────────────────
 
-    private void PrimeSongsCache()
+    private void PrimeSongsCache(FestivalService? service = null)
     {
         try
         {
-            _songsCache.Prime(_festivalService, _pathDataStore, _persistence.Meta, _persistence, _precomputer, _jsonOpts);
+            _songsCache.Prime(
+                service ?? _festivalService,
+                _pathDataStore,
+                _persistence.Meta,
+                _persistence,
+                _precomputer,
+                _jsonOpts);
         }
         catch (Exception ex)
         {

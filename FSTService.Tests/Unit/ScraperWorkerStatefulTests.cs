@@ -413,8 +413,116 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
     // ═══════════════════════════════════════════════════════════════
 
     [Fact]
+    public async Task Resume_catalog_ignores_live_provider_drift()
+    {
+        var catalogPersistence = new FestivalPersistence(
+            _metaFixture.DataSource);
+        var resumeSongs = new[]
+        {
+            new Song
+            {
+                _title = "Resume One",
+                track = new Track
+                {
+                    su = "resume-1",
+                    tt = "Resume One",
+                    an = "Artist",
+                },
+            },
+            new Song
+            {
+                _title = "Resume Two",
+                track = new Track
+                {
+                    su = "resume-2",
+                    tt = "Resume Two",
+                    an = "Artist",
+                },
+            },
+        };
+        var resumeToken =
+            await catalogPersistence.SaveSongsVersionedAsync(
+                resumeSongs);
+        var scrapeId = _metaDb.StartScrapeRun(resumeToken);
+
+        await catalogPersistence.SaveSongsVersionedAsync(
+        [
+            new Song
+            {
+                _title = "Drifted Live Song",
+                track = new Track
+                {
+                    su = "live-drift",
+                    tt = "Drifted Live Song",
+                    an = "Different Artist",
+                },
+            },
+        ]);
+
+        var opts = new ScraperOptions
+        {
+            DataDirectory = _tempDir,
+            DegreeOfParallelism = 2,
+        };
+        var worker = CreateWorker(opts);
+        var providerHandler = new CountingProviderFailureHandler();
+        var liveService = new FestivalService(
+            catalogPersistence,
+            new HttpClient(providerHandler)
+            {
+                BaseAddress = new Uri(
+                    "https://fortnitecontent-website-prod07.ol.epicgames.com"),
+            });
+        var resumeState = new ScrapeResumeState(
+            scrapeId,
+            DateTime.UtcNow.AddHours(-1),
+            "running",
+            null,
+            1,
+            1,
+            0,
+            0,
+            []);
+
+        var selection = await worker.ResolveSongCatalogForPassAsync(
+            liveService,
+            resumeState);
+        var requests = ScraperWorker.BuildCatalogScrapeRequests(
+            selection.Service,
+            opts);
+        var expectedPairs =
+            ScrapeOrchestrator.BuildExpectedSoloLeaderboardPairs(
+                requests);
+
+        Assert.Equal(
+            ["resume-1", "resume-2"],
+            selection.Service.Songs
+                .Select(static song => song.track.su)
+                .OrderBy(static songId => songId)
+                .ToArray());
+        Assert.Equal(resumeToken.ContentHash, selection.Token.ContentHash);
+        Assert.DoesNotContain(
+            requests,
+            static request => request.SongId == "live-drift");
+        Assert.All(
+            expectedPairs,
+            static pair => Assert.StartsWith("resume-", pair.SongId));
+        Assert.Equal(
+            resumeSongs.Length
+            * ScrapeOrchestrator.GetEnabledInstruments(opts).Count,
+            expectedPairs.Count);
+        Assert.Equal(0, providerHandler.RequestCount);
+    }
+
+    [Fact]
     public async Task RunScrapePass_FailedProviderSyncCannotPromoteLegacyCatalog()
     {
+        var opts = new ScraperOptions
+        {
+            DataDirectory = _tempDir,
+            DegreeOfParallelism = 2,
+        };
+        var worker = CreateWorker(opts);
         using (var conn = _metaFixture.DataSource.OpenConnection())
         using (var cmd = conn.CreateCommand())
         {
@@ -444,12 +552,6 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         _tokenManager.AccountId.Returns("callerAcct");
         var service = CreateServiceWithFailedProviderSync(
             ("legacy-song", "Legacy Song", "Legacy Artist"));
-        var opts = new ScraperOptions
-        {
-            DataDirectory = _tempDir,
-            DegreeOfParallelism = 2,
-        };
-        var worker = CreateWorker(opts);
         var scrapeCountBefore = CountScrapeRuns();
 
         await InvokePrivateAsync(
@@ -912,5 +1014,26 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         Assert.True(state.Count > 0, $"No dat hashes found — PathGenerator returned no results. Handler requests: {handler.Requests.Count}");
         Assert.True(allScores.ContainsKey("testSong"), $"testSong not in max scores. Hashes: {string.Join(",", state.Keys)}");
         Assert.Equal(99999, allScores["testSong"].MaxLeadScore);
+    }
+
+    private sealed class CountingProviderFailureHandler :
+        HttpMessageHandler
+    {
+        private int _requestCount;
+
+        public int RequestCount => Volatile.Read(ref _requestCount);
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _requestCount);
+            return Task.FromResult(new HttpResponseMessage(
+                System.Net.HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new StringContent(
+                    """{"errorCode":"errors.com.epicgames.service_unavailable"}"""),
+            });
+        }
     }
 }

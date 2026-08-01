@@ -32,6 +32,7 @@ public interface IMetaDatabase : IDisposable
     PublicationPointerState GetPublicationPointerState();
     PublicationGenerationInfo? GetPublicationGeneration(long publicationId);
     PublicationGenerationInfo? GetPublicationGenerationForScrape(long scrapeId);
+    PublicationSongCatalogInfo? GetPublicationSongCatalogForScrape(long scrapeId);
     IReadOnlyList<PublicationSurfaceBinding> GetPublicationSurfaceBindings(long publicationId);
     bool IsBandCurrentProjectionGloballyPublished();
     bool ShouldShowLeaderboardEntryTotals();

@@ -299,7 +299,7 @@ public sealed class FestivalPersistenceTests : IDisposable
             CreateProviderClient(
                 System.Net.HttpStatusCode.OK,
                 partialPayload));
-        SetSongs(service, loadedSongs);
+        SetSongs(service, loadedSongs, trustedBaseline: true);
 
         var result = await service.SyncSongsWithResultAsync();
 
@@ -454,6 +454,91 @@ public sealed class FestivalPersistenceTests : IDisposable
             ReadLiveCatalogHash());
     }
 
+    [Fact]
+    public async Task Exact_provider_response_replaces_large_untrusted_legacy_baseline()
+    {
+        await using (var conn = await _dataSource.OpenConnectionAsync())
+        await using (var tx = await conn.BeginTransactionAsync())
+        {
+            await using (var clear = conn.CreateCommand())
+            {
+                clear.Transaction = tx;
+                clear.CommandText = """
+                    DELETE FROM live_song_catalog
+                    WHERE id = TRUE;
+                    """;
+                await clear.ExecuteNonQueryAsync();
+            }
+
+            for (var index = 1; index <= 20; index++)
+            {
+                await using var insert = conn.CreateCommand();
+                insert.Transaction = tx;
+                insert.CommandText = """
+                    INSERT INTO songs (
+                        song_id, title, artist, active_date,
+                        last_modified, provider_json)
+                    VALUES (
+                        @songId, @title, 'Legacy Artist',
+                        '2026-07-30T00:00:00Z',
+                        '2026-07-31T00:00:00Z',
+                        NULL)
+                    ON CONFLICT (song_id) DO UPDATE SET
+                        title = EXCLUDED.title,
+                        artist = EXCLUDED.artist,
+                        provider_json = NULL
+                    """;
+                insert.Parameters.AddWithValue(
+                    "songId",
+                    $"legacy-{index:D2}");
+                insert.Parameters.AddWithValue(
+                    "title",
+                    $"Legacy {index:D2}");
+                await insert.ExecuteNonQueryAsync();
+            }
+            await tx.CommitAsync();
+        }
+        await DatabaseInitializer.EnsureSchemaAsync(_dataSource);
+        Assert.False(ReadLiveCatalogState().IsExact);
+
+        var replacementPayload = JsonSerializer.Serialize(
+            new Dictionary<string, object>
+            {
+                ["provider-new"] = new
+                {
+                    _title = "Provider New",
+                    track = new
+                    {
+                        su = "provider-new",
+                        tt = "Provider New",
+                        an = "Provider Artist",
+                    },
+                },
+            });
+        var service = new FestivalService(
+            new FestivalPersistence(_dataSource),
+            CreateProviderClient(
+                System.Net.HttpStatusCode.OK,
+                replacementPayload));
+
+        await service.InitializeAsync();
+
+        var onlySong = Assert.Single(service.Songs);
+        Assert.Equal("provider-new", onlySong.track.su);
+        var live = ReadLiveCatalogState();
+        Assert.True(live.IsExact);
+        Assert.Equal("provider_exact", live.SourceKind);
+        await using var verifyConn =
+            await _dataSource.OpenConnectionAsync();
+        await using var verify = verifyConn.CreateCommand();
+        verify.CommandText = """
+            SELECT song_count
+            FROM live_song_catalog
+            WHERE id = TRUE
+            """;
+        Assert.Equal(1, (int)(await verify.ExecuteScalarAsync())!);
+    }
+
     private static Song CreateSong(string songId, string title) =>
         new()
         {
@@ -555,7 +640,8 @@ public sealed class FestivalPersistenceTests : IDisposable
 
     private static void SetSongs(
         FestivalService service,
-        IEnumerable<Song> songs)
+        IEnumerable<Song> songs,
+        bool trustedBaseline = false)
     {
         var flags = BindingFlags.NonPublic | BindingFlags.Instance;
         var songsField =
@@ -567,6 +653,10 @@ public sealed class FestivalPersistenceTests : IDisposable
         foreach (var song in songs)
             dictionary[song.track.su] = song;
         dirtyField.SetValue(service, true);
+        var trustedField = typeof(FestivalService).GetField(
+            "_songCatalogBaselineTrusted",
+            flags)!;
+        trustedField.SetValue(service, trustedBaseline);
     }
 
     private string ReadLiveCatalogHash()

@@ -40,6 +40,16 @@ public sealed record PublicationSurfaceBinding(
     string Status,
     DateTime BuiltAtUtc);
 
+public sealed record PublicationSongCatalogInfo(
+    long PublicationId,
+    long ScrapeId,
+    long CatalogVersion,
+    int SchemaVersion,
+    string CatalogJson,
+    string ContentHash,
+    int SongCount,
+    DateTime SourceCapturedAtUtc);
+
 public static class PublicationGenerationSchema
 {
     public const long AdvisoryLockKey = 5067481511116519500L;

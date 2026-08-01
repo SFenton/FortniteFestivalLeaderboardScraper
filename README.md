@@ -121,6 +121,10 @@ Provider catalog refreshes are serialized per `FestivalService` instance
 through fetch, merge, snapshot, and persistence. Artwork/image updates use a
 separate local-state writer that can only update `songs.image_path`; failed or
 safety-merged initialization therefore cannot stamp a provider-exact catalog.
+Resume-only post-processing skips provider refresh and reloads the resumed
+scrape's immutable publication catalog for song lists, requests, and expected
+scopes. Bulk-removal protection applies only to a trusted exact baseline; a
+complete provider response replaces reconstructed/inexact legacy state.
 
 Improvement notifications can be recovered for the already-published scrape
 without starting a full scrape:

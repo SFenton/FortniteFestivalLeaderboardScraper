@@ -763,6 +763,56 @@ public sealed class MetaDatabase : IMetaDatabase
         return reader.Read() ? ReadPublicationGeneration(reader) : null;
     }
 
+    public PublicationSongCatalogInfo? GetPublicationSongCatalogForScrape(
+        long scrapeId)
+    {
+        using var conn = _ds.OpenConnection();
+        EnsureScrapePublicationStateTable(conn);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT
+                catalog.publication_id,
+                generation.scrape_id,
+                catalog.catalog_version,
+                catalog.schema_version,
+                catalog.catalog_json::text,
+                catalog.content_hash,
+                catalog.song_count,
+                catalog.source_captured_at
+            FROM publication_generations generation
+            JOIN publication_song_catalog catalog
+              ON catalog.publication_id = generation.publication_id
+            JOIN publication_surface_bindings binding
+              ON binding.publication_id = generation.publication_id
+             AND binding.surface_name = 'song_catalog'
+            WHERE generation.scrape_id = @scrapeId
+              AND catalog.is_exact
+              AND catalog.source_kind = 'provider_exact'
+              AND catalog.schema_version = @schemaVersion
+              AND binding.binding_kind = 'generation_catalog_snapshot'
+              AND binding.status = 'ready'
+              AND binding.row_count = catalog.song_count
+              AND binding.content_hash = catalog.content_hash
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        cmd.Parameters.AddWithValue(
+            "schemaVersion",
+            SongCatalogSnapshotBuilder.SchemaVersion);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return null;
+
+        return new PublicationSongCatalogInfo(
+            reader.GetInt64(0),
+            reader.GetInt64(1),
+            reader.GetInt64(2),
+            reader.GetInt32(3),
+            reader.GetString(4),
+            reader.GetString(5),
+            reader.GetInt32(6),
+            reader.GetDateTime(7));
+    }
+
     public IReadOnlyList<PublicationSurfaceBinding> GetPublicationSurfaceBindings(
         long publicationId)
     {

@@ -13,7 +13,8 @@ namespace FSTService.Persistence;
 public sealed class FestivalPersistence :
     IFestivalPersistence,
     IVersionedSongCatalogPersistence,
-    ILocalSongStatePersistence
+    ILocalSongStatePersistence,
+    ISongCatalogBaselineTrustPersistence
 {
     private readonly NpgsqlDataSource _ds;
 
@@ -316,6 +317,26 @@ public sealed class FestivalPersistence :
             await cmd.ExecuteNonQueryAsync();
         }
         await tx.CommitAsync();
+    }
+
+    public async Task<bool> HasExactSongCatalogAsync()
+    {
+        await using var conn = await _ds.OpenConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM live_song_catalog
+                WHERE id = TRUE
+                  AND is_exact
+                  AND source_kind = 'provider_exact'
+                  AND schema_version = @schemaVersion
+            )
+            """;
+        cmd.Parameters.AddWithValue(
+            "schemaVersion",
+            SongCatalogSnapshotBuilder.SchemaVersion);
+        return (bool)(await cmd.ExecuteScalarAsync())!;
     }
 
     public Task<IList<LeaderboardData>> LoadScoresAsync()

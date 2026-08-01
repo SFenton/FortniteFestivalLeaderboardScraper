@@ -748,6 +748,16 @@ endpoint reader:
   `ILocalSongStatePersistence`. PostgreSQL updates `songs.image_path` without
   touching `provider_json`, `live_song_catalog`, catalog versions, hashes, or
   exactness;
+- resume-only recovery resolves the exact ready
+  `publication_song_catalog` for the resumed scrape, validates its token, and
+  creates an isolated `FestivalService` snapshot. All resume post-process song
+  lists, scrape requests, expected scope pairs, rankings, rivals, precompute,
+  cleanup, and cache priming use that snapshot; no provider refresh or new
+  publication allocation occurs;
+- the 10% eviction guard applies only when the loaded in-memory baseline came
+  from a trusted exact live catalog. A reconstructed/inexact baseline is
+  replaced wholesale by the first complete, fully parsed provider response,
+  allowing legacy stale rows to converge to an exact source;
 - `ScrapeOrchestrator` snapshots the same songs used to build scrape requests,
   verifies their hash/count against the persistence token, and
   `StartScrapeRun` rejects any service/worker race before inserting a scrape

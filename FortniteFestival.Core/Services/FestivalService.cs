@@ -79,6 +79,7 @@ namespace FortniteFestival.Core.Services
         private bool _songsDirty;
         private bool _initialized;
         private bool _songSyncComplete;
+        private bool _songCatalogBaselineTrusted;
         private volatile bool _authFailed;
         private volatile bool _imagesSyncComplete; // ensure images are downloaded before queries allowed
         private string _imageRoot; // root folder containing images subfolder
@@ -143,6 +144,33 @@ namespace FortniteFestival.Core.Services
             _contentClient = contentClient ?? _httpContent;
         }
 
+        public static FestivalService CreateFromSongCatalogSnapshot(
+            IEnumerable<Song> songs)
+        {
+            if (songs == null)
+                throw new ArgumentNullException(nameof(songs));
+
+            var service = new FestivalService(null);
+            lock (service._sync)
+            {
+                foreach (var song in songs)
+                {
+                    if (string.IsNullOrEmpty(song?.track?.su))
+                    {
+                        throw new InvalidOperationException(
+                            "Song catalog snapshot contains a song without an ID.");
+                    }
+                    service._songs[song.track.su] = song;
+                }
+                service._songsDirty = true;
+                service._songCatalogBaselineTrusted = true;
+                service._songSyncComplete = true;
+                service._imagesSyncComplete = true;
+                service._initialized = true;
+            }
+            return service;
+        }
+
         public void SetLogging(bool enabled) { /* no-op */ }
 
         private void LogLine(string msg)
@@ -202,6 +230,22 @@ namespace FortniteFestival.Core.Services
                         _songsDirty = true;
                     }
                     // removed info log (loaded songs)
+                }
+                if (_persistence is ISongCatalogBaselineTrustPersistence trust)
+                {
+                    try
+                    {
+                        _songCatalogBaselineTrusted = await trust
+                            .HasExactSongCatalogAsync()
+                            .ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        _songCatalogBaselineTrusted = false;
+                        LogLine(
+                            "Song catalog baseline trust probe failed: "
+                            + ex.Message);
+                    }
                 }
             }
             // Establish image root and /images subfolder early
@@ -393,7 +437,8 @@ namespace FortniteFestival.Core.Services
                     if (stale.Count > 0 && _songs.Count > 0)
                     {
                         double evictionPct = (double)stale.Count / _songs.Count * 100;
-                        if (evictionPct > 10)
+                        if (_songCatalogBaselineTrusted
+                            && evictionPct > 10)
                         {
                             safetyMergeApplied = true;
                             failureReason =
@@ -429,6 +474,7 @@ namespace FortniteFestival.Core.Services
                     && !safetyMergeApplied;
                 if (!isExact)
                 {
+                    _songCatalogBaselineTrusted = false;
                     if (failureReason == null)
                     {
                         failureReason =
@@ -453,6 +499,7 @@ namespace FortniteFestival.Core.Services
                         persistenceToken: null);
                 }
 
+                _songCatalogBaselineTrusted = true;
                 SongCatalogPersistenceToken persistenceToken = null;
                 if (_persistence is IVersionedSongCatalogPersistence versioned)
                 {
