@@ -2139,9 +2139,8 @@ public sealed class PostScrapeOrchestrator
 
     private void RegisterKnownBandsForAccounts(IEnumerable<string> accountIds)
     {
-        var registeredBands = 0;
-        foreach (var accountId in accountIds.Distinct(StringComparer.OrdinalIgnoreCase))
-            registeredBands += _persistence.Meta.RegisterKnownBandsForAccountActivity(accountId);
+        var registeredBands = _persistence.Meta.RegisterKnownBandsForAccountActivities(
+            accountIds);
 
         if (registeredBands > 0)
             _log.LogDebug("Registered or refreshed {BandCount} known band(s) for tracked player history processing.", registeredBands);

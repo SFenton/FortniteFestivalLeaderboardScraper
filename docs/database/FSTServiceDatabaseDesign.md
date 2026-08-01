@@ -497,6 +497,15 @@ Band-partitioned source/current families use `Band_Duets`, `Band_Trios`, and
 | `band_search_team_projection`, `band_search_member_projection`, `band_search_projection_state` | Derived search projection | `BandSearchProjectionBuilder` | Service search/profile reads; rebuildable |
 | `band_extraction_source_state` | Durable work/source metadata | Band extraction pipeline | Prevents ambiguous source generation |
 
+Registered-player activity resolves known teams through the indexed
+`account_id` paths on `band_team_membership`, `band_members`, and
+`band_search_member_projection`. The worker batches all requested accounts in
+one query. It must not probe
+`account_id = ANY(band_search_team_projection.member_account_ids)`: that
+unnestable array predicate has no supporting index and previously caused one
+full 12 GB team-projection scan per registered account at every scrape
+boundary.
+
 ### Band rankings and rank history
 
 | Tables | Class | Owner/callers | Publication/retention |
