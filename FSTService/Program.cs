@@ -83,6 +83,8 @@ var registrationSyncWorkerRequested = args.Any(arg => arg.Equals("--registration
     || builder.Configuration.GetValue<bool>($"{ScraperOptions.Section}:RegistrationSyncWorkerOnly");
 var runOnceRequested = args.Any(arg => arg.Equals("--once", StringComparison.OrdinalIgnoreCase))
     || builder.Configuration.GetValue<bool>($"{ScraperOptions.Section}:RunOnce");
+var backfillOnlyRequested = args.Any(arg => arg.Equals("--backfill-only", StringComparison.OrdinalIgnoreCase))
+    || builder.Configuration.GetValue<bool>($"{ScraperOptions.Section}:BackfillOnly");
 var hostedWorkerMode = HostedWorkerModeResolver.Resolve(
     apiOnlyRequested,
     scraperWorkerDisabled,
@@ -625,7 +627,10 @@ else
 {
     builder.Services.AddHostedService<WorkerStatusHeartbeatService>();
     builder.Services.AddHostedService<ScraperWorker>();
-    if (HostedWorkerModeResolver.ShouldRunRegistrationBackfillWorker(hostedWorkerMode, runOnceRequested))
+    if (HostedWorkerModeResolver.ShouldRunRegistrationBackfillWorker(
+            hostedWorkerMode,
+            runOnceRequested,
+            backfillOnlyRequested))
         builder.Services.AddHostedService<RegistrationBackfillWorker>();
     builder.Services.AddHostedService<BandRankHistoryWorker>();
 }

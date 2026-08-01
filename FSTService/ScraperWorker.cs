@@ -267,6 +267,8 @@ public sealed class ScraperWorker : BackgroundService
         // Main scrape loop
         while (!stoppingToken.IsCancellationRequested)
         {
+            var publishedBeforePass =
+                _persistence.Meta.GetPublishedScrapeRun()?.Id;
             await RunScrapePassAsync(_festivalService, opts, stoppingToken);
             await EnsureImprovementNotificationsCompleteBeforeNextScrapeAsync(stoppingToken);
             lastScrapeEndUtc = DateTime.UtcNow;
@@ -282,6 +284,20 @@ public sealed class ScraperWorker : BackgroundService
 
             if (opts.RunOnce)
             {
+                var publishedAfterPass =
+                    _persistence.Meta.GetPublishedScrapeRun()?.Id;
+                if (publishedAfterPass.HasValue
+                    && publishedAfterPass != publishedBeforePass)
+                {
+                    await DrainRegistrationWorkAfterRunOnceAsync(
+                        opts,
+                        stoppingToken);
+                }
+                else
+                {
+                    _log.LogWarning(
+                        "Skipping post-run registration drain because the run-once pass did not publish a new scrape.");
+                }
                 _log.LogInformation("--once: scrape + resolve pass complete. Exiting.");
                 break;
             }
@@ -300,6 +316,88 @@ public sealed class ScraperWorker : BackgroundService
         _log.LogInformation("ScraperWorker stopping.");
         _workerStatus?.MarkOffline("ScraperWorker stopping");
 
+    }
+
+    private async Task DrainRegistrationWorkAfterRunOnceAsync(
+        ScraperOptions opts,
+        CancellationToken ct)
+    {
+        _workerStatus?.BeginOperation(
+            "registration.post_run_once",
+            "Draining queued registration work after publication",
+            phase: "PostPublication");
+        try
+        {
+            var claimed = await RegistrationBackfillWorker
+                .RunAvailableRegistrationWorkAsync(
+                    opts.RegistrationBackfillBatchSize,
+                    (batchSize, token) =>
+                        _backfillOrchestrator
+                            .RunQueuedRegistrationBackfillBatchAsync(
+                                _festivalService,
+                                batchSize,
+                                token),
+                    token => _backfillOrchestrator.RunHistoryReconAsync(
+                        _festivalService,
+                        token),
+                    () => _persistence.Meta.GetPendingBackfills().Count > 0
+                          || _persistence.Meta.GetDeferredBackfills().Count > 0,
+                    claimedInBatch => _log.LogInformation(
+                        "Claimed {Count} post-publication registration backfill account(s).",
+                        claimedInBatch),
+                    ct);
+
+            var remainingBackfills =
+                _persistence.Meta.GetPendingBackfills()
+                    .Concat(_persistence.Meta.GetDeferredBackfills())
+                    .Select(static backfill => backfill.AccountId)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count();
+            var remainingHistory = _persistence.Meta
+                .GetRegisteredAccountIds()
+                .Count(accountId =>
+                    _persistence.Meta.GetBackfillStatus(accountId)?.Status
+                        == "complete"
+                    && _persistence.Meta.GetHistoryReconStatus(accountId)?.Status
+                        != "complete");
+            if (remainingBackfills > 0 || remainingHistory > 0)
+            {
+                var detail =
+                    $"deferred with {remainingBackfills} backfill and " +
+                    $"{remainingHistory} history item(s) remaining";
+                _workerStatus?.CompleteOperation(
+                    "registration.post_run_once",
+                    "deferred",
+                    detail);
+                _log.LogWarning(
+                    "Post-publication registration drain remains incomplete: {Backfills} backfill and {History} history item(s).",
+                    remainingBackfills,
+                    remainingHistory);
+                return;
+            }
+
+            _workerStatus?.CompleteOperation(
+                "registration.post_run_once",
+                detail: claimed > 0
+                    ? $"claimed {claimed} backfill account(s)"
+                    : "no queued backfill accounts");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _workerStatus?.CompleteOperation(
+                "registration.post_run_once",
+                "cancelled");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _workerStatus?.FailOperation(
+                "registration.post_run_once",
+                ex);
+            _log.LogError(
+                ex,
+                "Post-publication registration work failed; durable queues remain for the next worker.");
+        }
     }
 
     private async Task EnsureImprovementNotificationsCompleteBeforeNextScrapeAsync(
@@ -700,37 +798,6 @@ public sealed class ScraperWorker : BackgroundService
             else
             {
                 _log.LogWarning("Skipping publication cleanup because post-process orchestration did not complete cleanly.");
-            }
-
-            if (postProcessCompleted)
-            {
-                try
-                {
-                    await _postScrapeOrchestrator.RunDeferredRegistrationSyncAsync(ctx, service, postScrapePhases, ct);
-                }
-                catch (OperationCanceledException ex)
-                {
-                    passDetail = $"Deferred registration sync was cancelled: {ex.Message}";
-                    RecordFailedCandidateIsolation(
-                        ctx.ScrapeId,
-                        "Deferred registration sync cancellation",
-                        ex.Message,
-                        ref publicReadsReleased);
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    postProcessCompleted = false;
-                    passDetail = $"Deferred registration sync failed: {ex.Message}";
-                    _log.LogError(
-                        ex,
-                        "Deferred registration sync failed after the candidate cache cut. Published state will remain unchanged.");
-                    RecordFailedCandidateIsolation(
-                        ctx.ScrapeId,
-                        "Deferred registration sync",
-                        ex.Message,
-                        ref publicReadsReleased);
-                }
             }
 
             // ── Cleanup: storage/query-health work that must not delay fresh data publication ──

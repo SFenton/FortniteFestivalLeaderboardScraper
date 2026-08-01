@@ -29,7 +29,10 @@ internal static class HostedWorkerModeResolver
 
     public static bool ShouldRunRegistrationBackfillWorker(
         HostedWorkerMode mode,
-        bool runOnceRequested) =>
+        bool runOnceRequested,
+        bool backfillOnlyRequested = false) =>
         mode == HostedWorkerMode.RegistrationSyncWorker ||
-        (mode == HostedWorkerMode.FullWorker && !runOnceRequested);
+        (mode == HostedWorkerMode.FullWorker
+         && !runOnceRequested
+         && !backfillOnlyRequested);
 }

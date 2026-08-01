@@ -1925,7 +1925,8 @@ public sealed class PostScrapeOrchestrator
 
     /// <summary>
     /// Refresh stale/missing entries for registered users using the song processing machine.
-    /// Also processes pending backfill and history recon users in the same run.
+    /// Registration backfill and history reconstruction remain on their dedicated
+    /// resumable workers so publication freshness cannot inherit historical backlog.
     /// All songs are processed in parallel, bounded by the shared DOP pool.
     /// </summary>
     internal async Task<SongProcessingMachine.MachineResult> RefreshRegisteredUsersAsync(ScrapePassContext ctx, CancellationToken ct)
@@ -2000,10 +2001,7 @@ public sealed class PostScrapeOrchestrator
 
             var chartedSongIds = ctx.ScrapeRequests.Select(r => r.SongId).ToList();
             var currentSeason = instrumentMaxSeason ?? 1;
-            var allSeasons = seasonWindows.Select(w => w.SeasonNumber).ToHashSet();
-            var canRunCompleteHistoryRecon = allSeasons.Count > 0;
-            var pendingBackfills = _persistence.Meta.GetPendingBackfills();
-            RegisterKnownBandsForAccounts(ctx.RegisteredIds.Concat(pendingBackfills.Select(static bf => bf.AccountId)));
+            RegisterKnownBandsForAccounts(ctx.RegisteredIds);
 
             // ── Build user list ──────────────────────────────────
             var users = new List<UserWorkItem>();
@@ -2024,51 +2022,6 @@ public sealed class PostScrapeOrchestrator
                 });
             }
 
-            // Pending backfill users
-            foreach (var bf in pendingBackfills)
-            {
-                var alreadyChecked = _persistence.Meta.GetCheckedBackfillPairs(bf.AccountId);
-                users.Add(new UserWorkItem
-                {
-                    AccountId = bf.AccountId,
-                    Purposes = canRunCompleteHistoryRecon
-                        ? WorkPurpose.Backfill | WorkPurpose.HistoryRecon
-                        : WorkPurpose.Backfill,
-                    AllTimeNeeded = true,
-                    SeasonsNeeded = canRunCompleteHistoryRecon ? new HashSet<int>(allSeasons) : [],
-                    AlreadyChecked = alreadyChecked,
-                });
-            }
-
-            // Pending history recon users
-            foreach (var accountId in ctx.RegisteredIds)
-            {
-                var backfillStatus = _persistence.Meta.GetBackfillStatus(accountId);
-                if (backfillStatus?.Status != "complete") continue;
-
-                var reconStatus = _persistence.Meta.GetHistoryReconStatus(accountId);
-                if (reconStatus?.Status == "complete") continue;
-
-                if (!canRunCompleteHistoryRecon)
-                {
-                    _persistence.Meta.EnqueueHistoryRecon(accountId, chartedSongIds.Count);
-                    continue;
-                }
-
-                if (pendingBackfills.Any(b => b.AccountId.Equals(accountId, StringComparison.OrdinalIgnoreCase)))
-                    continue;
-
-                var alreadyProcessed = _persistence.Meta.GetProcessedHistoryReconPairs(accountId);
-                users.Add(new UserWorkItem
-                {
-                    AccountId = accountId,
-                    Purposes = WorkPurpose.HistoryRecon,
-                    AllTimeNeeded = false,
-                    SeasonsNeeded = new HashSet<int>(allSeasons),
-                    AlreadyChecked = alreadyProcessed,
-                });
-            }
-
             // ── Attach to the cyclical machine ──────────────────
             _progress.SetSubOperation("processing_songs");
             var result = await _cyclicalMachine.AttachAsync(
@@ -2081,44 +2034,6 @@ public sealed class PostScrapeOrchestrator
             if (result.EntriesUpdated > 0 || result.SessionsInserted > 0)
                 _log.LogInformation("Song machine updated {Entries} entries, {Sessions} sessions for {Users} users.",
                     result.EntriesUpdated, result.SessionsInserted, result.UsersProcessed);
-
-            // ── Handle per-user completion inline ────────────────
-            _progress.SetSubOperation("completing_user_actions");
-            foreach (var user in users.Where(u => u.Purposes.HasFlag(WorkPurpose.Backfill)))
-            {
-                try
-                {
-                    _persistence.Meta.CompleteBackfill(user.AccountId, rankingsPending: true);
-                    _rivalsOrchestrator.ComputeForUser(user.AccountId);
-                    _ = _notifications.NotifyBackfillCompleteAsync(user.AccountId);
-
-                    if (!user.Purposes.HasFlag(WorkPurpose.HistoryRecon))
-                        EnsureHistoryReconPending(user.AccountId, chartedSongIds.Count);
-                }
-                catch (Exception ex)
-                {
-                    _log.LogWarning(ex, "Post-backfill actions failed for {AccountId}.", user.AccountId);
-                }
-            }
-
-            foreach (var user in users.Where(u => u.Purposes.HasFlag(WorkPurpose.HistoryRecon)))
-            {
-                try
-                {
-                    var reconStatus = _persistence.Meta.GetHistoryReconStatus(user.AccountId);
-                    if (reconStatus?.Status == "complete") continue;
-
-                    if (reconStatus is null)
-                        _persistence.Meta.EnqueueHistoryRecon(user.AccountId, 0);
-
-                    _persistence.Meta.CompleteHistoryRecon(user.AccountId);
-                    _ = _notifications.NotifyHistoryReconCompleteAsync(user.AccountId);
-                }
-                catch (Exception ex)
-                {
-                    _log.LogWarning(ex, "Post-history-recon actions failed for {AccountId}.", user.AccountId);
-                }
-            }
 
             return result;
         }
@@ -2144,13 +2059,6 @@ public sealed class PostScrapeOrchestrator
 
         if (registeredBands > 0)
             _log.LogDebug("Registered or refreshed {BandCount} known band(s) for tracked player history processing.", registeredBands);
-    }
-
-    private void EnsureHistoryReconPending(string accountId, int totalSongsToProcess)
-    {
-        var reconStatus = _persistence.Meta.GetHistoryReconStatus(accountId);
-        if (reconStatus?.Status != "complete")
-            _persistence.Meta.EnqueueHistoryRecon(accountId, totalSongsToProcess);
     }
 
     private async Task<IReadOnlyCollection<SoloCurrentProjectionScopeKey>> BuildSoloProjectionScopesForNotificationsAsync(

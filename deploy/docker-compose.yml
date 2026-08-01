@@ -166,8 +166,8 @@ services:
       - Scraper__InitialDop=${INITIAL_DOP:-4}
       # ── Bound post-scrape registered-user refresh so CDN/proxy stalls do not block rankings/notifications. ──
       - Scraper__PostScrapeRefreshTimeout=${POST_SCRAPE_REFRESH_TIMEOUT:-00:05:00}
-      # ── Solo refresh measured 6m27s at the accepted 2 RPS / concurrency-1 proxy baseline. ──
-      - Scraper__RegisteredUserRefreshTimeout=${REGISTERED_USER_REFRESH_TIMEOUT:-00:10:00}
+      # ── Progressing solo refresh is uncapped; the durable no-progress watchdog owns hangs. ──
+      - Scraper__RegisteredUserRefreshTimeout=${REGISTERED_USER_REFRESH_TIMEOUT:-00:00:00}
       # ── Band discovery/targeted work checkpoints each successful lookup and uses bounded per-pass budgets. ──
       - Scraper__RegisteredPlayerBandDiscoveryTimeout=${REGISTERED_PLAYER_BAND_DISCOVERY_TIMEOUT:-00:05:00}
       - Scraper__RegisteredBandTargetedProcessingTimeout=${REGISTERED_BAND_TARGETED_PROCESSING_TIMEOUT:-00:05:00}

@@ -330,6 +330,17 @@ marker exists on a legacy row).
 | `backfill_status`, `backfill_progress`, `history_recon_status`, `history_recon_progress`, `deep_scrape_queue` | Durable work state | Worker queues/orchestrators | Preserve failed/incomplete work for replay |
 | `user_sessions`, `epic_user_tokens` | Security-sensitive durable state | Authentication subsystem | Never include values in logs, reports, fixtures, or exports; restore with access controls |
 
+The publication-critical registered-user refresh contains only recurring
+all-time/current-season `PostScrape` work. Registration backfill and history
+reconstruction remain on the resumable registration/deferred workers and keep
+their profiles in no-store `202` state until a later ranked publication. The
+solo refresh has no absolute wall-clock timeout; the progress-aware worker
+watchdog owns true hangs without cancelling a phase that is still advancing.
+Continuous workers drain pending/deferred backfills before history-only work.
+A successful run-once scrape performs the same durable drain only after the
+new publication and notification gate completes; a failed run-once scrape
+leaves the queues untouched for the next worker.
+
 SERVICE-1/WORKER-5 consolidate competing registration consumers, catalog
 ownership, and token refresh ownership.
 

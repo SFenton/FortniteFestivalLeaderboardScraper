@@ -55,6 +55,74 @@ public class RegistrationBackfillWorkerTests
     }
 
     [Fact]
+    public async Task RunAvailableRegistrationWorkAsync_DrainsHistoryWhenNoBackfillClaimsWork()
+    {
+        var historyRuns = 0;
+
+        var claimed = await RegistrationBackfillWorker
+            .RunAvailableRegistrationWorkAsync(
+                batchSize: 4,
+                runBatchAsync: static (_, _) => Task.FromResult(0),
+                runHistoryReconAsync: _ =>
+                {
+                    historyRuns++;
+                    return Task.CompletedTask;
+                },
+                hasQueuedBackfills: static () => false,
+                onBatchClaimed: static _ => { },
+                ct: CancellationToken.None);
+
+        Assert.Equal(0, claimed);
+        Assert.Equal(1, historyRuns);
+    }
+
+    [Fact]
+    public async Task RunAvailableRegistrationWorkAsync_RunsHistoryAfterBackfillsDrain()
+    {
+        var claims = new Queue<int>([1, 0]);
+        var historyRuns = 0;
+
+        var claimed = await RegistrationBackfillWorker
+            .RunAvailableRegistrationWorkAsync(
+                batchSize: 4,
+                runBatchAsync: (_, _) =>
+                    Task.FromResult(claims.Dequeue()),
+                runHistoryReconAsync: _ =>
+                {
+                    historyRuns++;
+                    return Task.CompletedTask;
+                },
+                hasQueuedBackfills: static () => false,
+                onBatchClaimed: static _ => { },
+                ct: CancellationToken.None);
+
+        Assert.Equal(1, claimed);
+        Assert.Equal(1, historyRuns);
+    }
+
+    [Fact]
+    public async Task RunAvailableRegistrationWorkAsync_DoesNotRunHistoryAfterFailedBackfill()
+    {
+        var historyRuns = 0;
+
+        var claimed = await RegistrationBackfillWorker
+            .RunAvailableRegistrationWorkAsync(
+                batchSize: 4,
+                runBatchAsync: static (_, _) => Task.FromResult(0),
+                runHistoryReconAsync: _ =>
+                {
+                    historyRuns++;
+                    return Task.CompletedTask;
+                },
+                hasQueuedBackfills: static () => true,
+                onBatchClaimed: static _ => { },
+                ct: CancellationToken.None);
+
+        Assert.Equal(0, claimed);
+        Assert.Equal(0, historyRuns);
+    }
+
+    [Fact]
     public async Task BackgroundWorkCoordinator_WaitsForActiveWriterBeforeScrapeContinues()
     {
         var coordinator = new BackgroundWorkCoordinator();

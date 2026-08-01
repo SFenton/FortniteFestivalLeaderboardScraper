@@ -1,4 +1,5 @@
 using FortniteFestival.Core.Services;
+using FSTService.Persistence;
 using Microsoft.Extensions.Options;
 
 namespace FSTService.Scraping;
@@ -14,6 +15,7 @@ public sealed class RegistrationBackfillWorker : BackgroundService
     private readonly FestivalService _festivalService;
     private readonly CyclicalSongMachine _cyclicalMachine;
     private readonly BackfillOrchestrator _backfillOrchestrator;
+    private readonly IMetaDatabase _metaDb;
     private readonly BackgroundWorkCoordinator _coordinator;
     private readonly IOptions<ScraperOptions> _options;
     private readonly ILogger<RegistrationBackfillWorker> _log;
@@ -23,6 +25,7 @@ public sealed class RegistrationBackfillWorker : BackgroundService
         FestivalService festivalService,
         CyclicalSongMachine cyclicalMachine,
         BackfillOrchestrator backfillOrchestrator,
+        IMetaDatabase metaDb,
         BackgroundWorkCoordinator coordinator,
         IOptions<ScraperOptions> options,
         ILogger<RegistrationBackfillWorker> log)
@@ -31,6 +34,7 @@ public sealed class RegistrationBackfillWorker : BackgroundService
         _festivalService = festivalService;
         _cyclicalMachine = cyclicalMachine;
         _backfillOrchestrator = backfillOrchestrator;
+        _metaDb = metaDb;
         _coordinator = coordinator;
         _options = options;
         _log = log;
@@ -59,12 +63,17 @@ public sealed class RegistrationBackfillWorker : BackgroundService
                                _coordinator.BackgroundToken))
                     {
                         var opts = _options.Value;
-                        var claimed = await DrainQueuedRegistrationBackfillsAsync(
+                        var claimed = await RunAvailableRegistrationWorkAsync(
                             opts.RegistrationBackfillBatchSize,
                             (batchSize, token) => _backfillOrchestrator.RunQueuedRegistrationBackfillBatchAsync(
                                 _festivalService,
                                 batchSize,
                                 token),
+                            token => _backfillOrchestrator.RunHistoryReconAsync(
+                                _festivalService,
+                                token),
+                            () => _metaDb.GetPendingBackfills().Count > 0
+                                  || _metaDb.GetDeferredBackfills().Count > 0,
                             claimedInBatch => _log.LogInformation(
                                 "Claimed {Count} queued registration backfill account(s).",
                                 claimedInBatch),
@@ -117,5 +126,24 @@ public sealed class RegistrationBackfillWorker : BackgroundService
 
         ct.ThrowIfCancellationRequested();
         return totalClaimed;
+    }
+
+    internal static async Task<int> RunAvailableRegistrationWorkAsync(
+        int batchSize,
+        Func<int, CancellationToken, Task<int>> runBatchAsync,
+        Func<CancellationToken, Task> runHistoryReconAsync,
+        Func<bool> hasQueuedBackfills,
+        Action<int> onBatchClaimed,
+        CancellationToken ct)
+    {
+        var claimed = await DrainQueuedRegistrationBackfillsAsync(
+            batchSize,
+            runBatchAsync,
+            onBatchClaimed,
+            ct);
+        if (!hasQueuedBackfills())
+            await runHistoryReconAsync(ct);
+
+        return claimed;
     }
 }

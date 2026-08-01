@@ -290,7 +290,7 @@ if data_profile == "notification-db-only":
         raise SystemExit(
             "ERROR: data profile notification-db-only requires "
             "ImprovementNotifications__FailScrapeOnError=false")
-    exact_value("Scraper__RegisteredUserRefreshTimeout", "00:10:00")
+    exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
     exact_value("Scraper__RegisteredPlayerBandDiscoveryTimeout", "00:05:00")
     exact_value("Scraper__RegisteredBandTargetedProcessingTimeout", "00:05:00")
     for name in (

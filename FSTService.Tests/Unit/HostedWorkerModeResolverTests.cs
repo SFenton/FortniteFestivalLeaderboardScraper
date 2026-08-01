@@ -49,14 +49,16 @@ public class HostedWorkerModeResolverTests
     }
 
     [Theory]
-    [InlineData((int)HostedWorkerMode.FullWorker, false, true)]
-    [InlineData((int)HostedWorkerMode.FullWorker, true, false)]
-    [InlineData((int)HostedWorkerMode.RegistrationSyncWorker, true, true)]
-    [InlineData((int)HostedWorkerMode.ApiOnly, false, false)]
-    [InlineData((int)HostedWorkerMode.FrontendOnly, false, false)]
+    [InlineData((int)HostedWorkerMode.FullWorker, false, false, true)]
+    [InlineData((int)HostedWorkerMode.FullWorker, true, false, false)]
+    [InlineData((int)HostedWorkerMode.FullWorker, false, true, false)]
+    [InlineData((int)HostedWorkerMode.RegistrationSyncWorker, true, true, true)]
+    [InlineData((int)HostedWorkerMode.ApiOnly, false, false, false)]
+    [InlineData((int)HostedWorkerMode.FrontendOnly, false, false, false)]
     public void ShouldRunRegistrationBackfillWorker_IsolatesFullWorkerRunOnce(
         int modeValue,
         bool runOnceRequested,
+        bool backfillOnlyRequested,
         bool expected)
     {
         var mode = (HostedWorkerMode)modeValue;
@@ -65,6 +67,7 @@ public class HostedWorkerModeResolverTests
             expected,
             HostedWorkerModeResolver.ShouldRunRegistrationBackfillWorker(
                 mode,
-                runOnceRequested));
+                runOnceRequested,
+                backfillOnlyRequested));
     }
 }
