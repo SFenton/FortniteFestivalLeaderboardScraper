@@ -34,6 +34,7 @@ Options:
   --data-profile P         Select the paired data profile:
                              notification-db-only
                              publication-cache-generation
+                             registered-refresh-repair
                            Every run-once config requires a data profile.
   --compose-dir DIR        Production compose directory
   -h, --help               Show help
@@ -93,7 +94,7 @@ case "$THROUGHPUT_PROFILE" in
 esac
 
 case "$DATA_PROFILE" in
-    none|notification-db-only|publication-cache-generation)
+    none|notification-db-only|publication-cache-generation|registered-refresh-repair)
         ;;
     *)
         printf 'ERROR: unknown data profile: %s\n' "$DATA_PROFILE" >&2
@@ -323,6 +324,29 @@ if data_profile == "publication-cache-generation":
         if boolean(name):
             raise SystemExit(
                 f"ERROR: data profile publication-cache-generation requires {name}=false")
+if data_profile == "registered-refresh-repair":
+    if worker.get("image") != "fstservice:registered-refresh-fd5bb561":
+        raise SystemExit(
+            "ERROR: data profile registered-refresh-repair requires "
+            "fstservice:registered-refresh-fd5bb561")
+    exact_value("Scraper__EnabledPhases", "All")
+    exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
+    for name in (
+        "Features__EnforcePublicationCriticalPhases",
+        "Features__EnforceScopeCompletenessManifests",
+        "Features__RequireSuccessfulScrapeWriters",
+        "Features__WritePublishedScopeSources",
+    ):
+        if not boolean(name):
+            raise SystemExit(
+                f"ERROR: data profile registered-refresh-repair requires {name}=true")
+    for name in (
+        "Features__WriteLogicalLeaderboardVersions",
+        "Features__SkipUnchangedPhysicalLeaderboardSnapshots",
+    ):
+        if boolean(name):
+            raise SystemExit(
+                f"ERROR: data profile registered-refresh-repair requires {name}=false")
 if canonical != 30:
     raise SystemExit(f"ERROR: canonical PIA service count must be 30, found {canonical}")
 if expected > canonical:
