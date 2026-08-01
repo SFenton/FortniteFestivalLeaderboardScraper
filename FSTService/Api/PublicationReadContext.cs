@@ -71,11 +71,22 @@ public sealed class PublicationReadContextService
         CancellationToken ct)
     {
         var conn = await _dataSource.OpenConnectionAsync(ct);
-        var tx = await conn.BeginTransactionAsync(
-            System.Data.IsolationLevel.ReadCommitted,
-            ct);
+        NpgsqlTransaction? tx = null;
         try
         {
+            await using (var leaseTimeout = conn.CreateCommand())
+            {
+                // The dedicated lock pool intentionally holds an idle transaction
+                // for the HTTP request lifetime. Production's general 60-second
+                // timeout must not silently terminate that publication barrier.
+                leaseTimeout.CommandText =
+                    "SET idle_in_transaction_session_timeout = 0";
+                await leaseTimeout.ExecuteNonQueryAsync(ct);
+            }
+
+            tx = await conn.BeginTransactionAsync(
+                System.Data.IsolationLevel.ReadCommitted,
+                ct);
             await using (var advisoryLock = conn.CreateCommand())
             {
                 advisoryLock.Transaction = tx;
@@ -111,7 +122,8 @@ public sealed class PublicationReadContextService
         }
         catch
         {
-            await tx.DisposeAsync();
+            if (tx is not null)
+                await tx.DisposeAsync();
             await conn.DisposeAsync();
             throw;
         }
@@ -160,6 +172,70 @@ public static class PublicationReadContextHttpContextExtensions
         httpContext.Items.TryGetValue(ContextKey, out var value)
             ? value as PublicationReadContext
             : null;
+}
+
+/// <summary>
+/// Holds the shared publication lock for publication-bound reads during a
+/// frozen transition even while full request pinning remains disabled.
+/// </summary>
+public sealed class PublicationBoundaryReadLeaseMiddleware
+{
+    private readonly RequestDelegate _next;
+
+    public PublicationBoundaryReadLeaseMiddleware(RequestDelegate next)
+    {
+        _next = next;
+    }
+
+    public async Task InvokeAsync(
+        HttpContext context,
+        PublicationReadContextService publicationService,
+        PublicReadGateService publicReadGate)
+    {
+        if (context.WebSockets.IsWebSocketRequest
+            || context.GetPublicationReadContext() is not null
+            || context.GetEndpoint()?.Metadata
+                .GetMetadata<PublicationBound>() is null)
+        {
+            await _next(context);
+            return;
+        }
+
+        await using var lease = await publicationService.AcquireAsync(
+            context.RequestAborted);
+        if (!lease.Pointers.CurrentPublicationId.HasValue
+            || !lease.Pointers.PublishedScrapeId.HasValue)
+        {
+            if (publicReadGate.FailedCandidateIsolationActive)
+            {
+                context.Response.Headers.CacheControl = "no-store";
+                await Results.Problem(
+                        title: "Published data unavailable",
+                        detail: "No current publication generation is available.",
+                        statusCode: StatusCodes.Status503ServiceUnavailable)
+                    .ExecuteAsync(context);
+                return;
+            }
+
+            await _next(context);
+            return;
+        }
+
+        var publicationId = lease.Pointers.CurrentPublicationId.Value;
+        context.Response.Headers[
+            PublicationReadContextMiddleware.PublicationHeader] =
+            publicationId.ToString(
+                System.Globalization.CultureInfo.InvariantCulture);
+        context.Response.Headers.Append(
+            "Vary",
+            PublicationReadContextMiddleware.PublicationHeader);
+        context.SetPublicationReadContext(new PublicationReadContext(
+            publicationId,
+            lease.Pointers.PublishedScrapeId.Value,
+            lease.Pointers.PublishedAtUtc));
+
+        await _next(context);
+    }
 }
 
 public sealed class PublicationReadContextMiddleware

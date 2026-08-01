@@ -43,11 +43,25 @@ public sealed record AdminPrivate : ApiPublicationClassification
     public string Reason { get; }
 }
 
+/// <summary>
+/// The endpoint owns failed-candidate isolation after the outer route cache.
+/// It must serve a stable published response or fail closed before live reads.
+/// </summary>
+public sealed record EndpointHandlesFailedCandidateRead
+{
+    public static EndpointHandlesFailedCandidateRead Instance { get; } = new();
+
+    private EndpointHandlesFailedCandidateRead()
+    {
+    }
+}
+
 /// <summary>A route/method/classification tuple suitable for publication matrix test generation.</summary>
 public sealed record ClassifiedApiRouteDescription(
     string RoutePattern,
     IReadOnlyList<string> HttpMethods,
-    ApiPublicationClassification Classification)
+    ApiPublicationClassification Classification,
+    bool HandlesFailedCandidateRead = false)
 {
     public string MethodDisplay => string.Join(",", HttpMethods);
 
@@ -71,65 +85,65 @@ public static class ApiPublicationRouteCatalog
         // Publication-bound songs, shop content, and generated path artifacts.
         Publication(HttpMethods.Get, "/api/shop"),
         Publication(HttpMethods.Get, "/api/songs"),
-        Publication(HttpMethods.Get, "/api/songs/member-score-filter"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/songs/member-score-filter"),
         Publication(HttpMethods.Get, "/api/paths/{songId}/{instrument}/{difficulty}"),
         Publication(HttpMethods.Get, "/api/paths/{songId}/{instrument}/{difficulty}/data"),
 
         // Publication-bound song leaderboard data.
-        Publication(HttpMethods.Get, "/api/leaderboard/{songId}/bands/all"),
-        Publication(HttpMethods.Get, "/api/leaderboard/{songId}/bands/{bandType}"),
-        Publication(HttpMethods.Get, "/api/leaderboard/{songId}/members/scores"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/leaderboard/{songId}/bands/all"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/leaderboard/{songId}/bands/{bandType}"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/leaderboard/{songId}/members/scores"),
         Publication(HttpMethods.Get, "/api/leaderboard/{songId}/{instrument}"),
-        Publication(HttpMethods.Get, "/api/leaderboard-rank-offsets/{songId}/{instrument}"),
-        Publication(HttpMethods.Get, "/api/leaderboard/{songId}/all"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/leaderboard-rank-offsets/{songId}/{instrument}"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/leaderboard/{songId}/all"),
 
         // Publication-bound player profiles, history, bands, and exports.
-        Publication(HttpMethods.Get, "/api/player/{accountId}"),
-        Publication(HttpMethods.Get, "/api/player/{accountId}/stats"),
-        Publication(HttpMethods.Get, "/api/player/{accountId}/bands"),
-        Publication(HttpMethods.Get, "/api/player/{accountId}/bands/{bandType}"),
-        Publication(HttpMethods.Get, "/api/player/{accountId}/history"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/player/{accountId}"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/player/{accountId}/stats"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/player/{accountId}/bands"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/player/{accountId}/bands/{bandType}"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/player/{accountId}/history"),
         Publication(HttpMethods.Get, "/api/player/{accountId}/export"),
         Publication(HttpMethods.Get, "/api/bands/{bandType}/{teamKey}/export"),
 
         // Publication-bound rivals and score/rank notification feeds.
-        Publication(HttpMethods.Get, "/api/player/{accountId}/leaderboard-rivals/{instrument}"),
-        Publication(HttpMethods.Get, "/api/player/{accountId}/leaderboard-rivals/{instrument}/{rivalId}"),
-        Publication(HttpMethods.Get, "/api/player/{accountId}/rivals"),
-        Publication(HttpMethods.Get, "/api/player/{accountId}/rivals/suggestions"),
-        Publication(HttpMethods.Get, "/api/player/{accountId}/rivals/all"),
-        Publication(HttpMethods.Get, "/api/player/{accountId}/rivals/{combo}"),
-        Publication(HttpMethods.Get, "/api/player/{accountId}/rivals/{combo}/{rivalId}"),
-        Publication(HttpMethods.Get, "/api/player/{accountId}/rivals/{rivalId}/songs/{instrument}"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/player/{accountId}/leaderboard-rivals/{instrument}"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/player/{accountId}/leaderboard-rivals/{instrument}/{rivalId}"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/player/{accountId}/rivals"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/player/{accountId}/rivals/suggestions"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/player/{accountId}/rivals/all"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/player/{accountId}/rivals/{combo}"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/player/{accountId}/rivals/{combo}/{rivalId}"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/player/{accountId}/rivals/{rivalId}/songs/{instrument}"),
         Publication(HttpMethods.Get, "/api/player/{accountId}/notifications"),
         Publication(HttpMethods.Get, "/api/rankings/bands/{bandType}/{teamKey}/notifications"),
         Publication(HttpMethods.Get, "/api/bands/{bandId}/notifications"),
 
         // Publication-bound rankings, bands, and ranking history.
-        Publication(HttpMethods.Get, "/api/rankings/selected-members"),
-        Publication(HttpMethods.Get, "/api/rankings/family/{scopeId}"),
-        Publication(HttpMethods.Get, "/api/rankings/family/{scopeId}/{accountId}"),
-        Publication(HttpMethods.Get, "/api/rankings/{instrument}"),
-        Publication(HttpMethods.Get, "/api/rankings/{instrument}/{accountId}"),
-        Publication(HttpMethods.Get, "/api/rankings/{instrument}/{accountId}/history"),
-        Publication(HttpMethods.Get, "/api/rankings/composite"),
-        Publication(HttpMethods.Get, "/api/rankings/composite/{accountId}"),
-        Publication(HttpMethods.Get, "/api/rankings/combo"),
-        Publication(HttpMethods.Get, "/api/rankings/combo/{accountId}"),
-        Publication(HttpMethods.Get, "/api/rankings/bands/{bandType}/combos"),
-        Publication(HttpMethods.Get, "/api/rankings/bands/{bandType}"),
-        Publication(HttpMethods.Get, "/api/bands/search"),
-        Publication(HttpMethods.Get, "/api/bands/{bandId}"),
-        Publication(HttpMethods.Get, "/api/rankings/bands/{bandType}/{teamKey}/history"),
-        Publication(HttpMethods.Get, "/api/rankings/bands/{bandType}/{teamKey}/songs"),
-        Publication(HttpMethods.Get, "/api/rankings/bands/{bandType}/{teamKey}/song-rows"),
-        Publication(HttpMethods.Get, "/api/rankings/bands/{bandType}/{teamKey}"),
-        Publication(HttpMethods.Get, "/api/rankings/{instrument}/{accountId}/neighborhood"),
-        Publication(HttpMethods.Get, "/api/rankings/composite/{accountId}/neighborhood"),
-        Publication(HttpMethods.Get, "/api/rankings/overview"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/rankings/selected-members"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/rankings/family/{scopeId}"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/rankings/family/{scopeId}/{accountId}"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/rankings/{instrument}"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/rankings/{instrument}/{accountId}"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/rankings/{instrument}/{accountId}/history"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/rankings/composite"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/rankings/composite/{accountId}"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/rankings/combo"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/rankings/combo/{accountId}"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/rankings/bands/{bandType}/combos"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/rankings/bands/{bandType}"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/bands/search"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/bands/{bandId}"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/rankings/bands/{bandType}/{teamKey}/history"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/rankings/bands/{bandType}/{teamKey}/songs"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/rankings/bands/{bandType}/{teamKey}/song-rows"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/rankings/bands/{bandType}/{teamKey}"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/rankings/{instrument}/{accountId}/neighborhood"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/rankings/composite/{accountId}/neighborhood"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/rankings/overview"),
 
         // Publication-bound derived catalog/population reads.
-        Publication(HttpMethods.Get, "/api/firstseen"),
+        PublicationWithEndpointFallback(HttpMethods.Get, "/api/firstseen"),
         Publication(HttpMethods.Get, "/api/leaderboard-population"),
 
         // Live operational state and controls.
@@ -169,6 +183,8 @@ public static class ApiPublicationRouteCatalog
 
     private static readonly IReadOnlyDictionary<RouteKey, ApiPublicationClassification> Classifications =
         BuildClassifications();
+    private static readonly IReadOnlySet<RouteKey> EndpointFallbacks =
+        BuildEndpointFallbacks();
 
     public static IReadOnlyList<ClassifiedApiRouteDescription> Routes { get; } =
         Array.AsReadOnly(Definitions);
@@ -183,6 +199,17 @@ public static class ApiPublicationRouteCatalog
 
         throw new InvalidOperationException(
             $"API route {httpMethod} {routePattern} has no explicit publication classification.");
+    }
+
+    internal static bool HandlesFailedCandidateRead(
+        string httpMethod,
+        string routePattern)
+    {
+        var key = new RouteKey(
+            httpMethod.ToUpperInvariant(),
+            ApiPublicationEndpointDescriptions.CanonicalizeRoutePattern(
+                routePattern));
+        return EndpointFallbacks.Contains(key);
     }
 
     private static IReadOnlyDictionary<RouteKey, ApiPublicationClassification> BuildClassifications()
@@ -201,8 +228,34 @@ public static class ApiPublicationRouteCatalog
         return result;
     }
 
+    private static IReadOnlySet<RouteKey> BuildEndpointFallbacks()
+    {
+        var result = new HashSet<RouteKey>();
+        foreach (var route in Definitions.Where(
+                     static route => route.HandlesFailedCandidateRead))
+        {
+            foreach (var method in route.HttpMethods)
+            {
+                result.Add(new RouteKey(
+                    method.ToUpperInvariant(),
+                    route.RoutePattern));
+            }
+        }
+
+        return result;
+    }
+
     private static ClassifiedApiRouteDescription Publication(string method, string pattern)
         => new(pattern, [method], PublicationBound.Instance);
+
+    private static ClassifiedApiRouteDescription PublicationWithEndpointFallback(
+        string method,
+        string pattern)
+        => new(
+            pattern,
+            [method],
+            PublicationBound.Instance,
+            HandlesFailedCandidateRead: true);
 
     private static ClassifiedApiRouteDescription Operational(string method, string pattern, string reason)
         => new(pattern, [method], new OperationalLive(reason));
@@ -244,7 +297,12 @@ public static class ApiPublicationEndpointDescriptions
                 $"{GetMethodDisplay(endpoint)} {routePattern} has {classifications.Count} publication classifications; expected exactly one.");
         }
 
-        return new ClassifiedApiRouteDescription(routePattern, GetHttpMethods(endpoint), classifications[0]);
+        return new ClassifiedApiRouteDescription(
+            routePattern,
+            GetHttpMethods(endpoint),
+            classifications[0],
+            endpoint.Metadata.GetMetadata<EndpointHandlesFailedCandidateRead>()
+                is not null);
     }
 
     public static IReadOnlyList<string> GetHttpMethods(RouteEndpoint endpoint)
@@ -297,6 +355,20 @@ public static class ApiPublicationEndpointDescriptions
                             $"{method} {description.RoutePattern} is classified as " +
                             $"{description.Classification.GetType().Name}; catalog requires " +
                             $"{expected.GetType().Name}");
+                    }
+
+                    var expectedEndpointFallback =
+                        ApiPublicationRouteCatalog.HandlesFailedCandidateRead(
+                            method,
+                            description.RoutePattern);
+                    if (description.HandlesFailedCandidateRead
+                        != expectedEndpointFallback)
+                    {
+                        failures.Add(
+                            $"{method} {description.RoutePattern} failed-candidate " +
+                            $"endpoint ownership is " +
+                            $"{description.HandlesFailedCandidateRead}; catalog " +
+                            $"requires {expectedEndpointFallback}");
                     }
                 }
             }
@@ -363,7 +435,16 @@ internal static class ClassifiedApiEndpointMappingExtensions
     private static RouteHandlerBuilder Classify(RouteHandlerBuilder builder, string method, string pattern)
     {
         if (ApiPublicationEndpointDescriptions.IsApiRoutePattern(pattern))
+        {
             builder.WithApiPublicationClassification(method, pattern);
+            if (ApiPublicationRouteCatalog.HandlesFailedCandidateRead(
+                    method,
+                    pattern))
+            {
+                builder.WithMetadata(
+                    EndpointHandlesFailedCandidateRead.Instance);
+            }
+        }
 
         return builder;
     }

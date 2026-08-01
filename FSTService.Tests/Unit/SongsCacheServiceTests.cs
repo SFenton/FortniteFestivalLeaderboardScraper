@@ -54,10 +54,12 @@ public class SongsCacheServiceTests
     [Fact]
     public void Get_ExpiredButFrozen_ReturnsStaleData()
     {
-        var cache = new SongsCacheService(() => true, TimeSpan.Zero);
+        var frozen = false;
+        var cache = new SongsCacheService(() => frozen, TimeSpan.Zero);
         var data = System.Text.Encoding.UTF8.GetBytes("stale");
         var etag = cache.Set(data);
 
+        frozen = true;
         var cached = cache.Get();
 
         Assert.NotNull(cached);
@@ -75,6 +77,23 @@ public class SongsCacheServiceTests
     }
 
     [Fact]
+    public void PublicationChange_DiscardsCachedSongs()
+    {
+        long? publicationId = 1;
+        var cache = new SongsCacheService(
+            static () => false,
+            TimeSpan.FromMinutes(5),
+            static () => false,
+            () => publicationId);
+        cache.Set(System.Text.Encoding.UTF8.GetBytes("publication-1"));
+        Assert.NotNull(cache.Get());
+
+        publicationId = 2;
+
+        Assert.Null(cache.Get());
+    }
+
+    [Fact]
     public void GetStale_ExpiredAndNotFrozen_ReturnsCachedData()
     {
         var cache = new SongsCacheService(() => false, TimeSpan.Zero);
@@ -87,6 +106,27 @@ public class SongsCacheServiceTests
         Assert.NotNull(stale);
         Assert.Equal(data, stale!.Value.Json);
         Assert.Equal(etag, stale.Value.ETag);
+    }
+
+    [Fact]
+    public void FailedCandidateIsolation_ClearsAndRejectsCacheWrites()
+    {
+        var failedCandidateIsolation = false;
+        var cache = new SongsCacheService(
+            static () => false,
+            TimeSpan.FromMinutes(5),
+            () => failedCandidateIsolation);
+        cache.Set(System.Text.Encoding.UTF8.GetBytes("published"));
+        Assert.NotNull(cache.Get());
+
+        failedCandidateIsolation = true;
+
+        Assert.Null(cache.Get());
+        cache.Set(System.Text.Encoding.UTF8.GetBytes("candidate"));
+
+        failedCandidateIsolation = false;
+
+        Assert.Null(cache.Get());
     }
 
     [Fact]

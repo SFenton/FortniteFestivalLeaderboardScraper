@@ -86,6 +86,46 @@ public sealed class ApiPublicationClassificationTests
     public void AdminDiagnosticAndAuthRoutes_AreAdminPrivate()
         => AssertRoutesHaveClassification<AdminPrivate>(AdminPrivateRoutes);
 
+    [Fact]
+    public void FailedCandidateEndpointOwnership_MatchesTheIntentionalRouteCatalog()
+    {
+        var actual = ApiPublicationEndpointDescriptions
+            .Describe(GetEndpointDataSource())
+            .SelectMany(route => route.HttpMethods.Select(method =>
+                $"{method} {route.RoutePattern} " +
+                $"{route.HandlesFailedCandidateRead}"))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        var expected = ApiPublicationRouteCatalog.Routes
+            .SelectMany(route => route.HttpMethods.Select(method =>
+                $"{method} {route.RoutePattern} " +
+                $"{route.HandlesFailedCandidateRead}"))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(expected, actual);
+    }
+
+    [Theory]
+    [InlineData("/api/player/{accountId}/export")]
+    [InlineData("/api/bands/{bandType}/{teamKey}/export")]
+    [InlineData("/api/rankings/bands/{bandType}/{teamKey}/notifications")]
+    [InlineData("/api/bands/{bandId}/notifications")]
+    [InlineData("/api/leaderboard-population")]
+    public void FailedCandidateUnguardedRoutes_RemainOuterBlocked(
+        string routePattern)
+    {
+        var route = Assert.Single(
+            ApiPublicationEndpointDescriptions
+                .Describe(GetEndpointDataSource()),
+            candidate => string.Equals(
+                candidate.RoutePattern,
+                routePattern,
+                StringComparison.Ordinal));
+
+        Assert.False(route.HandlesFailedCandidateRead);
+    }
+
     [Theory]
     [InlineData("/api/example")]
     [InlineData("api/example")]

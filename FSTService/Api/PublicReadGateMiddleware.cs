@@ -18,6 +18,9 @@ public sealed class PublicReadGateMiddleware
         }
 
         var state = gate.GetState();
+        var publicationBound =
+            context.GetEndpoint()?.Metadata.GetMetadata<PublicationBound>()
+            is not null;
         if (state.IsFrozen && IsApiRequest(context.Request))
         {
             context.Response.Headers["X-FST-Public-Read-Mode"] = "published";
@@ -25,7 +28,12 @@ public sealed class PublicReadGateMiddleware
                 context.Response.Headers["X-FST-Public-Read-Freeze-Reason"] = state.Reason;
         }
 
-        if (gate.RequiresCachedReads && RequiresPublishedData(context.Request))
+        if (gate.RequiresCachedReads
+            && publicationBound
+            && RequiresPublishedData(context.Request)
+            && !FailedCandidateReadRoutingPolicy.EndpointHandlesRead(
+                context,
+                gate))
         {
             context.Response.Headers.CacheControl = "no-store";
             context.Response.Headers["Retry-After"] = "30";
@@ -89,4 +97,14 @@ public sealed class PublicReadGateMiddleware
         => path.EndsWith("/notifications", StringComparison.OrdinalIgnoreCase)
            && (path.StartsWith("/api/rankings/bands/", StringComparison.OrdinalIgnoreCase)
                || path.StartsWith("/api/bands/", StringComparison.OrdinalIgnoreCase));
+}
+
+internal static class FailedCandidateReadRoutingPolicy
+{
+    internal static bool EndpointHandlesRead(
+        HttpContext context,
+        PublicReadGateService gate)
+        => gate.FailedCandidateIsolationActive
+           && context.GetEndpoint()?.Metadata
+               .GetMetadata<EndpointHandlesFailedCandidateRead>() is not null;
 }

@@ -70,12 +70,6 @@ public static partial class ApiEndpoints
             }
             else
             {
-                if (lbCache.RequiresCachedReads && lbCache.IsFrozen && normalizedComboId is null)
-                {
-                    var cachedResult = serveGenericCachedPreview();
-                    if (cachedResult is not null) return cachedResult;
-                }
-
                 if (lbCache.IsFrozen)
                 {
                     var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, lbCache);
@@ -432,7 +426,9 @@ public static partial class ApiEndpoints
             string instrument,
             GlobalLeaderboardPersistence persistence,
             IPathDataStore pathStore,
-            ScrapeTimePrecomputer precomputer) =>
+            ScrapeTimePrecomputer precomputer,
+            [FromKeyedServices("LeaderboardAllCache")]
+            ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
             if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
@@ -442,6 +438,11 @@ public static partial class ApiEndpoints
             var cached = precomputer.TryGet(cacheKey);
             var cachedResult = CacheHelper.ServeIfCached(httpContext, cached);
             if (cachedResult is not null) return cachedResult;
+
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(
+                httpContext,
+                publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
 
             var allMax = pathStore.GetAllMaxScores();
             if (!allMax.TryGetValue(songId, out var maxScores))

@@ -110,6 +110,12 @@ public sealed class ScrapeLifecycleNotifier
         ReleasePublicReads();
     }
 
+    public void InvalidateInProcessCaches()
+    {
+        foreach (var cache in _caches)
+            cache.InvalidateAll();
+    }
+
     private void ReleasePublicReads()
     {
         try
@@ -126,7 +132,7 @@ public sealed class ScrapeLifecycleNotifier
         foreach (var cache in _caches)
         {
             cache.Unfreeze();
-            cache.InvalidateAll();
         }
+        InvalidateInProcessCaches();
     }
 }

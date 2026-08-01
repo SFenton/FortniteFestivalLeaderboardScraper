@@ -15,20 +15,43 @@ public sealed class SongsCacheService
 {
     private readonly object _lock = new();
     private readonly Func<bool> _isFrozen;
+    private readonly Func<bool> _isFailedCandidateIsolation;
+    private readonly Func<long?>? _publicationIdProvider;
     private readonly TimeSpan _cacheTtl;
     private byte[]? _cachedJson;
     private string? _etag;
     private DateTime _cachedAt;
+    private long? _publicationId;
     private static readonly TimeSpan DefaultCacheTtl = TimeSpan.FromMinutes(5);
 
-    public SongsCacheService(PublicReadGateService? publicReadGate = null)
-        : this(() => publicReadGate?.IsFrozen ?? false, DefaultCacheTtl)
+    public SongsCacheService(
+        PublicReadGateService? publicReadGate = null,
+        Func<long?>? publicationIdProvider = null)
+        : this(
+            () => publicReadGate?.IsFrozen ?? false,
+            DefaultCacheTtl,
+            () => publicReadGate?.FailedCandidateIsolationActive ?? false,
+            publicationIdProvider)
     {
     }
 
     public SongsCacheService(Func<bool> isFrozen, TimeSpan cacheTtl)
+        : this(isFrozen, cacheTtl, static () => false, null)
+    {
+    }
+
+    internal SongsCacheService(
+        Func<bool> isFrozen,
+        TimeSpan cacheTtl,
+        Func<bool> isFailedCandidateIsolation,
+        Func<long?>? publicationIdProvider = null)
     {
         _isFrozen = isFrozen ?? throw new ArgumentNullException(nameof(isFrozen));
+        _isFailedCandidateIsolation =
+            isFailedCandidateIsolation
+            ?? throw new ArgumentNullException(
+                nameof(isFailedCandidateIsolation));
+        _publicationIdProvider = publicationIdProvider;
         _cacheTtl = cacheTtl;
     }
 
@@ -39,6 +62,11 @@ public sealed class SongsCacheService
     {
         lock (_lock)
         {
+            if (ClearForFailedCandidateIsolation())
+                return null;
+            if (ClearForPublicationMismatch())
+                return null;
+
             if (_cachedJson is not null && (_isFrozen() || DateTime.UtcNow - _cachedAt < _cacheTtl))
                 return (_cachedJson, _etag!);
             return null;
@@ -53,6 +81,11 @@ public sealed class SongsCacheService
     {
         lock (_lock)
         {
+            if (ClearForFailedCandidateIsolation())
+                return null;
+            if (ClearForPublicationMismatch())
+                return null;
+
             return _cachedJson is null ? null : (_cachedJson, _etag!);
         }
     }
@@ -65,9 +98,15 @@ public sealed class SongsCacheService
         var etag = ResponseCacheService.ComputeETag(json);
         lock (_lock)
         {
+            if (ClearForFailedCandidateIsolation())
+                return etag;
+            if (_isFrozen())
+                return etag;
+
             _cachedJson = json;
             _etag = etag;
             _cachedAt = DateTime.UtcNow;
+            _publicationId = _publicationIdProvider?.Invoke();
         }
         return etag;
     }
@@ -81,7 +120,34 @@ public sealed class SongsCacheService
         {
             _cachedJson = null;
             _etag = null;
+            _publicationId = null;
         }
+    }
+
+    private bool ClearForFailedCandidateIsolation()
+    {
+        if (!_isFailedCandidateIsolation())
+            return false;
+
+        _cachedJson = null;
+        _etag = null;
+        _publicationId = null;
+        return true;
+    }
+
+    private bool ClearForPublicationMismatch()
+    {
+        if (_publicationIdProvider is null
+            || _cachedJson is null
+            || _publicationId == _publicationIdProvider())
+        {
+            return false;
+        }
+
+        _cachedJson = null;
+        _etag = null;
+        _publicationId = null;
+        return true;
     }
 
     /// <summary>

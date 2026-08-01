@@ -13,17 +13,20 @@ public sealed class ResponseCacheService : IDisposable
     private readonly TimeSpan _ttl;
     private readonly PublicReadGateService? _publicReadGate;
     private readonly bool _requireCachedReadsWhenFrozen;
+    private readonly Func<long?>? _publicationIdProvider;
     private readonly Timer _evictionTimer;
     private volatile bool _frozen;
 
     public ResponseCacheService(
         TimeSpan ttl,
         PublicReadGateService? publicReadGate = null,
-        bool requireCachedReadsWhenFrozen = false)
+        bool requireCachedReadsWhenFrozen = false,
+        Func<long?>? publicationIdProvider = null)
     {
         _ttl = ttl;
         _publicReadGate = publicReadGate;
         _requireCachedReadsWhenFrozen = requireCachedReadsWhenFrozen;
+        _publicationIdProvider = publicationIdProvider;
         _evictionTimer = new Timer(_ => Cleanup(), null, ttl, ttl);
     }
 
@@ -51,8 +54,22 @@ public sealed class ResponseCacheService : IDisposable
     /// </summary>
     public (byte[] Json, string ETag)? Get(string key)
     {
-        if (_cache.TryGetValue(key, out var entry) && (IsFrozen || DateTime.UtcNow - entry.CachedAt < _ttl))
-            return (entry.Json, entry.ETag);
+        if (IsFailedCandidateIsolationActive())
+            return null;
+
+        if (_cache.TryGetValue(key, out var entry))
+        {
+            var currentPublicationId = _publicationIdProvider?.Invoke();
+            if (_publicationIdProvider is not null
+                && entry.PublicationId != currentPublicationId)
+            {
+                _cache.TryRemove(key, out _);
+                return null;
+            }
+
+            if (IsFrozen || DateTime.UtcNow - entry.CachedAt < _ttl)
+                return (entry.Json, entry.ETag);
+        }
         return null;
     }
 
@@ -62,7 +79,16 @@ public sealed class ResponseCacheService : IDisposable
     public string Set(string key, byte[] json)
     {
         var etag = ComputeETag(json);
-        _cache[key] = new CacheEntry(json, etag, DateTime.UtcNow);
+        if (IsFailedCandidateIsolationActive())
+            return etag;
+        if (IsFrozen)
+            return etag;
+
+        _cache[key] = new CacheEntry(
+            json,
+            etag,
+            DateTime.UtcNow,
+            _publicationIdProvider?.Invoke());
         return etag;
     }
 
@@ -121,5 +147,21 @@ public sealed class ResponseCacheService : IDisposable
         _evictionTimer.Dispose();
     }
 
-    private sealed record CacheEntry(byte[] Json, string ETag, DateTime CachedAt);
+    private bool IsFailedCandidateIsolationActive()
+    {
+        if (_publicReadGate?.FailedCandidateIsolationActive != true)
+            return false;
+
+        // Candidate and published responses share these legacy process caches.
+        // Clear and bypass them while strict isolation is active so an in-flight
+        // request cannot repopulate candidate data after failure cleanup.
+        _cache.Clear();
+        return true;
+    }
+
+    private sealed record CacheEntry(
+        byte[] Json,
+        string ETag,
+        DateTime CachedAt,
+        long? PublicationId);
 }

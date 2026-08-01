@@ -1,4 +1,5 @@
 using FSTService.Persistence;
+using FSTService.Scraping;
 
 namespace FSTService.Api;
 
@@ -8,17 +9,23 @@ public sealed class PublicationChangeMonitorService : BackgroundService
     private readonly StartupInitializer _startup;
     private readonly IMetaDatabase _metaDb;
     private readonly NotificationService _notifications;
+    private readonly ScrapeLifecycleNotifier _scrapeLifecycle;
+    private readonly SongsCacheService _songsCache;
     private readonly ILogger<PublicationChangeMonitorService> _log;
 
     public PublicationChangeMonitorService(
         StartupInitializer startup,
         IMetaDatabase metaDb,
         NotificationService notifications,
+        ScrapeLifecycleNotifier scrapeLifecycle,
+        SongsCacheService songsCache,
         ILogger<PublicationChangeMonitorService> log)
     {
         _startup = startup;
         _metaDb = metaDb;
         _notifications = notifications;
+        _scrapeLifecycle = scrapeLifecycle;
+        _songsCache = songsCache;
         _log = log;
     }
 
@@ -35,6 +42,11 @@ public sealed class PublicationChangeMonitorService : BackgroundService
                     _metaDb.GetPublicationPointerState().CurrentPublicationId;
                 if (!previousPublicationId.HasValue)
                 {
+                    if (currentPublicationId.HasValue)
+                    {
+                        _scrapeLifecycle.InvalidateInProcessCaches();
+                        _songsCache.Invalidate();
+                    }
                     previousPublicationId = currentPublicationId;
                     await Task.Delay(PollInterval, stoppingToken);
                     continue;
@@ -51,6 +63,8 @@ public sealed class PublicationChangeMonitorService : BackgroundService
                     "Publication changed from {PreviousPublicationId} to {CurrentPublicationId}; rotating API WebSockets.",
                     previousPublicationId,
                     currentPublicationId);
+                _scrapeLifecycle.InvalidateInProcessCaches();
+                _songsCache.Invalidate();
                 await _notifications.NotifyPublicationChangedAsync(
                     currentPublicationId.Value);
                 previousPublicationId = currentPublicationId;

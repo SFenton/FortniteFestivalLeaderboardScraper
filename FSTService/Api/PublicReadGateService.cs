@@ -10,6 +10,7 @@ public sealed class PublicReadGateService
     private readonly object _lock = new();
     private PublicReadFreezeState _cachedState = PublicReadFreezeState.NotFrozen;
     private bool _cachedRequiresCachedReads;
+    private bool _cachedFailedCandidateIsolation;
     private DateTime _cachedAtUtc = DateTime.MinValue;
 
     public PublicReadGateService(IMetaDatabase metaDb, ILogger<PublicReadGateService> log)
@@ -32,12 +33,26 @@ public sealed class PublicReadGateService
         }
     }
 
+    public bool FailedCandidateIsolationActive
+    {
+        get
+        {
+            _ = GetState();
+            lock (_lock)
+                return _cachedFailedCandidateIsolation;
+        }
+    }
+
     public PublicReadFreezeState GetState()
     {
         var now = DateTime.UtcNow;
         lock (_lock)
         {
-            if (now - _cachedAtUtc < CacheTtl)
+            // A permissive state is never reused across requests: the next request
+            // after a failed scrape must observe strict isolation immediately.
+            // Strict/fail-closed states remain briefly cached to bound DB load.
+            if (_cachedRequiresCachedReads
+                && now - _cachedAtUtc < CacheTtl)
                 return _cachedState;
 
             try
@@ -46,6 +61,8 @@ public sealed class PublicReadGateService
                 var failedCandidateIsolation =
                     _metaDb.GetFailedCandidateReadIsolationState()
                     ?? PublicReadFreezeState.NotFrozen;
+                _cachedFailedCandidateIsolation =
+                    failedCandidateIsolation.IsFrozen;
                 _cachedRequiresCachedReads = failedCandidateIsolation.IsFrozen;
                 _cachedState = freezeState.IsFrozen ? freezeState : failedCandidateIsolation;
             }
@@ -58,6 +75,7 @@ public sealed class PublicReadGateService
                     null,
                     "read-safety-state-unavailable");
                 _cachedRequiresCachedReads = true;
+                _cachedFailedCandidateIsolation = false;
             }
 
             _cachedAtUtc = now;
@@ -70,7 +88,6 @@ public sealed class PublicReadGateService
         lock (_lock)
         {
             _cachedAtUtc = DateTime.MinValue;
-            _cachedRequiresCachedReads = false;
         }
     }
 }

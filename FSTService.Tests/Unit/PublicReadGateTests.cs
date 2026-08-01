@@ -150,6 +150,62 @@ public class PublicReadGateTests
     }
 
     [Fact]
+    public void ResponseCache_DiscardsProcessEntriesDuringFailedCandidateIsolation()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            PublicReadFreezeState.NotFrozen);
+        metaDb.GetFailedCandidateReadIsolationState().Returns(
+            PublicReadFreezeState.NotFrozen);
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        using var cache = new ResponseCacheService(
+            TimeSpan.FromMinutes(5),
+            gate);
+        var publishedJson = Encoding.UTF8.GetBytes(
+            """{"source":"published"}""");
+
+        cache.Set("player:account:::", publishedJson);
+        Assert.NotNull(cache.Get("player:account:::"));
+
+        metaDb.GetFailedCandidateReadIsolationState().Returns(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1263,
+                MetaDatabase.FailedCandidateReadIsolationReason));
+
+        Assert.Null(cache.Get("player:account:::"));
+        cache.Set(
+            "player:account:::",
+            Encoding.UTF8.GetBytes("""{"source":"candidate"}"""));
+
+        metaDb.GetFailedCandidateReadIsolationState().Returns(
+            PublicReadFreezeState.NotFrozen);
+        gate.Invalidate();
+
+        Assert.Null(cache.Get("player:account:::"));
+    }
+
+    [Fact]
+    public void ResponseCache_RejectsEntriesFromAnotherPublication()
+    {
+        long? publicationId = 1;
+        using var cache = new ResponseCacheService(
+            TimeSpan.FromMinutes(5),
+            publicationIdProvider: () => publicationId);
+        var json = Encoding.UTF8.GetBytes("""{"publicationId":1}""");
+
+        cache.Set("player:account:::", json);
+        Assert.NotNull(cache.Get("player:account:::"));
+
+        publicationId = 2;
+
+        Assert.Null(cache.Get("player:account:::"));
+    }
+
+    [Fact]
     public void ResponseCache_CanRequireCachedReadsDuringNormalFreeze()
     {
         var metaDb = Substitute.For<IMetaDatabase>();
@@ -168,7 +224,7 @@ public class PublicReadGateTests
     }
 
     [Fact]
-    public void PublicReadGate_CachesUntilInvalidated()
+    public void PublicReadGate_RechecksPermissiveStateWithoutInvalidation()
     {
         var metaDb = Substitute.For<IMetaDatabase>();
         metaDb.GetPublicReadFreezeState().Returns(
@@ -177,12 +233,61 @@ public class PublicReadGateTests
         var gate = new PublicReadGateService(metaDb, NullLogger<PublicReadGateService>.Instance);
 
         Assert.False(gate.IsFrozen);
-        Assert.False(gate.IsFrozen);
+        Assert.True(gate.IsFrozen);
+        metaDb.Received(2).GetPublicReadFreezeState();
+    }
+
+    [Fact]
+    public void PublicReadGate_ActivatesFailedCandidateIsolationWithoutManualInvalidation()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1263,
+                "post-process"));
+        metaDb.GetFailedCandidateReadIsolationState().Returns(
+            PublicReadFreezeState.NotFrozen);
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+
+        Assert.False(gate.RequiresCachedReads);
+
+        metaDb.GetFailedCandidateReadIsolationState().Returns(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1263,
+                MetaDatabase.FailedCandidateReadIsolationReason));
+
+        Assert.True(gate.RequiresCachedReads);
+        Assert.True(gate.FailedCandidateIsolationActive);
+    }
+
+    [Fact]
+    public void PublicReadGate_InvalidationDoesNotClearFailClosedFlags()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            PublicReadFreezeState.NotFrozen);
+        metaDb.GetFailedCandidateReadIsolationState().Returns(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1263,
+                MetaDatabase.FailedCandidateReadIsolationReason));
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+
+        Assert.True(gate.RequiresCachedReads);
 
         gate.Invalidate();
 
-        Assert.True(gate.IsFrozen);
-        metaDb.Received(2).GetPublicReadFreezeState();
+        Assert.True(gate.RequiresCachedReads);
+        Assert.True(gate.FailedCandidateIsolationActive);
     }
 
     [Fact]
@@ -315,6 +420,9 @@ public class PublicReadGateTests
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Get;
         context.Request.Path = "/api/player/account/export";
+        SetPublicationEndpoint(
+            context,
+            "/api/player/{accountId}/export");
         context.RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider();
         context.Response.Body = new MemoryStream();
 
@@ -326,6 +434,129 @@ public class PublicReadGateTests
         Assert.Equal(
             MetaDatabase.FailedCandidateReadIsolationReason,
             context.Response.Headers["X-FST-Public-Read-Freeze-Reason"]);
+    }
+
+    [Fact]
+    public async Task PublicReadGateMiddleware_AllowsEndpointOwnedFailedCandidateRead()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            PublicReadFreezeState.NotFrozen);
+        metaDb.GetFailedCandidateReadIsolationState().Returns(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1263,
+                MetaDatabase.FailedCandidateReadIsolationReason));
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var nextCalled = false;
+        var middleware = new PublicReadGateMiddleware(context =>
+        {
+            nextCalled = true;
+            context.Response.StatusCode = StatusCodes.Status204NoContent;
+            return Task.CompletedTask;
+        });
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/player/account";
+        SetPublicationEndpoint(
+            context,
+            "/api/player/{accountId}",
+            handlesFailedCandidateRead: true);
+        context.RequestServices = new ServiceCollection()
+            .AddLogging()
+            .BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context, gate);
+
+        Assert.True(nextCalled);
+        Assert.Equal(
+            StatusCodes.Status204NoContent,
+            context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PublicReadGateMiddleware_DoesNotDelegateWhenSafetyStateIsUnavailable()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            _ => throw new InvalidOperationException("database unavailable"));
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var nextCalled = false;
+        var middleware = new PublicReadGateMiddleware(_ =>
+        {
+            nextCalled = true;
+            return Task.CompletedTask;
+        });
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/player/account";
+        SetPublicationEndpoint(
+            context,
+            "/api/player/{accountId}",
+            handlesFailedCandidateRead: true);
+        context.RequestServices = new ServiceCollection()
+            .AddLogging()
+            .BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context, gate);
+
+        Assert.False(nextCalled);
+        Assert.Equal(
+            StatusCodes.Status503ServiceUnavailable,
+            context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PublicReadGateMiddleware_AllowsOperationalRouteDuringFailedCandidateIsolation()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            PublicReadFreezeState.NotFrozen);
+        metaDb.GetFailedCandidateReadIsolationState().Returns(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1263,
+                MetaDatabase.FailedCandidateReadIsolationReason));
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var nextCalled = false;
+        var middleware = new PublicReadGateMiddleware(context =>
+        {
+            nextCalled = true;
+            context.Response.StatusCode = StatusCodes.Status204NoContent;
+            return Task.CompletedTask;
+        });
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/status";
+        context.SetEndpoint(new RouteEndpoint(
+            _ => Task.CompletedTask,
+            RoutePatternFactory.Parse("/api/status"),
+            order: 0,
+            new EndpointMetadataCollection(
+                new HttpMethodMetadata([HttpMethods.Get]),
+                new OperationalLive("test")),
+            displayName: "status"));
+        context.RequestServices = new ServiceCollection()
+            .AddLogging()
+            .BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context, gate);
+
+        Assert.True(nextCalled);
+        Assert.Equal(
+            StatusCodes.Status204NoContent,
+            context.Response.StatusCode);
     }
 
     [Fact]
@@ -609,6 +840,54 @@ public class PublicReadGateTests
     }
 
     [Fact]
+    public async Task PublicApiResponseCacheMiddleware_DelegatesMarkedFailedCandidateReadToEndpoint()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            PublicReadFreezeState.NotFrozen);
+        metaDb.GetFailedCandidateReadIsolationState().Returns(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1263,
+                MetaDatabase.FailedCandidateReadIsolationReason));
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var nextCalled = false;
+        var middleware = new PublicApiResponseCacheMiddleware(context =>
+        {
+            nextCalled = true;
+            context.Response.StatusCode = StatusCodes.Status204NoContent;
+            return Task.CompletedTask;
+        }, NullLogger<PublicApiResponseCacheMiddleware>.Instance);
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/player/account";
+        SetPublicationEndpoint(
+            context,
+            "/api/player/{accountId}",
+            handlesFailedCandidateRead: true);
+        context.RequestServices = new ServiceCollection()
+            .AddLogging()
+            .BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+        var telemetry = new PublicApiCacheTelemetry();
+
+        await middleware.InvokeAsync(context, metaDb, gate, telemetry);
+
+        Assert.True(nextCalled);
+        Assert.Equal(
+            StatusCodes.Status204NoContent,
+            context.Response.StatusCode);
+        Assert.Equal(
+            "endpoint",
+            context.Response.Headers["X-FST-Public-Cache"]);
+        Assert.Equal(1, telemetry.Snapshot().Bypassed);
+        metaDb.DidNotReceive().GetCachedResponse(Arg.Any<string>());
+    }
+
+    [Fact]
     public async Task PublicApiResponseCacheMiddleware_RecordsPublicationBoundBypassDuringFreeze()
     {
         var metaDb = Substitute.For<IMetaDatabase>();
@@ -704,15 +983,22 @@ public class PublicReadGateTests
     private static void SetPublicationEndpoint(
         HttpContext context,
         string routePattern,
-        string method = "GET")
+        string method = "GET",
+        bool handlesFailedCandidateRead = false)
     {
+        var metadata = handlesFailedCandidateRead
+            ? new EndpointMetadataCollection(
+                new HttpMethodMetadata([method]),
+                PublicationBound.Instance,
+                EndpointHandlesFailedCandidateRead.Instance)
+            : new EndpointMetadataCollection(
+                new HttpMethodMetadata([method]),
+                PublicationBound.Instance);
         context.SetEndpoint(new RouteEndpoint(
             _ => Task.CompletedTask,
             RoutePatternFactory.Parse(routePattern),
             order: 0,
-            new EndpointMetadataCollection(
-                new HttpMethodMetadata([method]),
-                PublicationBound.Instance),
+            metadata,
             displayName: routePattern));
     }
 }

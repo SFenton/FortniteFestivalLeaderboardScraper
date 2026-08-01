@@ -359,7 +359,13 @@ builder.Services.AddSingleton<SharedDopPool>(sp =>
 builder.Services.AddSingleton<FirstSeenSeasonCalculator>();
 builder.Services.AddSingleton<FSTService.Api.NotificationService>();
 builder.Services.AddSingleton<FSTService.Scraping.UserSyncProgressTracker>();
-builder.Services.AddSingleton<FSTService.Api.SongsCacheService>();
+builder.Services.AddSingleton(sp =>
+    new FSTService.Api.SongsCacheService(
+        sp.GetRequiredService<FSTService.Api.PublicReadGateService>(),
+        () => sp
+            .GetRequiredService<FSTService.Api.PublicationReadContextService>()
+            .GetPointers()
+            .CurrentPublicationId));
 builder.Services.AddSingleton<FSTService.Api.ShopCacheService>();
 builder.Services.AddSingleton<FSTService.Api.PublicReadGateService>();
 builder.Services.AddSingleton(sp =>
@@ -376,24 +382,44 @@ builder.Services.AddSingleton<FSTService.Api.PublicationReadContextService>(sp =
 builder.Services.AddSingleton<FSTService.Api.PublicApiCacheTelemetry>();
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("PlayerCache",
     (sp, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(2),
-        sp.GetRequiredService<FSTService.Api.PublicReadGateService>()));
+        sp.GetRequiredService<FSTService.Api.PublicReadGateService>(),
+        publicationIdProvider: () => sp
+            .GetRequiredService<FSTService.Api.PublicationReadContextService>()
+            .GetPointers()
+            .CurrentPublicationId));
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("LeaderboardAllCache",
     (sp, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(5),
-        sp.GetRequiredService<FSTService.Api.PublicReadGateService>()));
+        sp.GetRequiredService<FSTService.Api.PublicReadGateService>(),
+        publicationIdProvider: () => sp
+            .GetRequiredService<FSTService.Api.PublicationReadContextService>()
+            .GetPointers()
+            .CurrentPublicationId));
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("NeighborhoodCache",
     (sp, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(2),
-        sp.GetRequiredService<FSTService.Api.PublicReadGateService>()));
+        sp.GetRequiredService<FSTService.Api.PublicReadGateService>(),
+        publicationIdProvider: () => sp
+            .GetRequiredService<FSTService.Api.PublicationReadContextService>()
+            .GetPointers()
+            .CurrentPublicationId));
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("RivalsCache",
     (sp, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(5),
         sp.GetRequiredService<FSTService.Api.PublicReadGateService>(),
-        requireCachedReadsWhenFrozen: true));
+        requireCachedReadsWhenFrozen: true,
+        publicationIdProvider: () => sp
+            .GetRequiredService<FSTService.Api.PublicationReadContextService>()
+            .GetPointers()
+            .CurrentPublicationId));
 builder.Services.AddSingleton<RivalsCalculator>();
 builder.Services.AddSingleton<RivalsOrchestrator>();
 builder.Services.AddSingleton<LeaderboardRivalsCalculator>();
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("LeaderboardRivalsCache",
     (sp, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(5),
         sp.GetRequiredService<FSTService.Api.PublicReadGateService>(),
-        requireCachedReadsWhenFrozen: true));
+        requireCachedReadsWhenFrozen: true,
+        publicationIdProvider: () => sp
+            .GetRequiredService<FSTService.Api.PublicationReadContextService>()
+            .GetPointers()
+            .CurrentPublicationId));
 builder.Services.AddSingleton<ScrapeLifecycleNotifier>();
 builder.Services.AddSingleton<BackgroundWorkCoordinator>();
 builder.Services.AddSingleton<RankingsCalculator>();
@@ -748,6 +774,7 @@ app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseMiddleware<FSTService.Api.PublicationReadContextMiddleware>();
+app.UseMiddleware<FSTService.Api.PublicationBoundaryReadLeaseMiddleware>();
 app.UseMiddleware<FSTService.Api.PublicApiResponseCacheMiddleware>();
 app.UseMiddleware<FSTService.Api.PublicReadGateMiddleware>();
 app.Use(async (context, next) =>
