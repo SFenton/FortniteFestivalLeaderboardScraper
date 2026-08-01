@@ -162,6 +162,42 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public async Task FailScrapeRun_waits_for_publication_read_leases()
+    {
+        var publishedId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(publishedId, 1, 1, 1, 1);
+        Db.PublishScrapeRun(publishedId, promoteCachedResponses: false);
+        var candidateId = Db.StartScrapeRun();
+
+        using var readConn = DataSource.OpenConnection();
+        using var readTx = readConn.BeginTransaction();
+        using (var acquire = readConn.CreateCommand())
+        {
+            acquire.Transaction = readTx;
+            acquire.CommandText =
+                "SELECT pg_advisory_xact_lock_shared(@lockKey)";
+            acquire.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+            acquire.ExecuteNonQuery();
+        }
+
+        var failTask = Task.Run(() => Db.FailScrapeRun(
+            candidateId,
+            MetaDatabase.PostProcessReadIsolationFailurePhase,
+            "test failure"));
+        await Task.Delay(100);
+        Assert.False(failTask.IsCompleted);
+
+        readTx.Commit();
+        await failTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var isolation = Db.GetFailedCandidateReadIsolationState();
+        Assert.True(isolation.IsFrozen);
+        Assert.Equal(candidateId, isolation.ScrapeId);
+    }
+
+    [Fact]
     public async Task Legacy_rollback_writer_invalidates_exact_catalog_token()
     {
         var persistence = new FestivalPersistence(DataSource);

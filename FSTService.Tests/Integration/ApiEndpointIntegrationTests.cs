@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Reflection;
 using System.IO.Compression;
+using System.Text;
 using System.Text.Json;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Persistence;
@@ -673,6 +674,26 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var publishedId = metaDb.StartScrapeRun();
         metaDb.CompleteScrapeRun(publishedId, 2, 2, 2, 2);
         metaDb.PublishScrapeRun(publishedId, promoteCachedResponses: false);
+        var publishedPlayerJson = Encoding.UTF8.GetBytes(
+            """
+            {
+              "accountId": "acct_published",
+              "totalScores": 1,
+              "scores": []
+            }
+            """);
+        metaDb.BulkSetCachedResponses(
+        [
+            (
+                "player:acct_published:::",
+                publishedPlayerJson,
+                ResponseCacheService.ComputeETag(publishedPlayerJson))
+        ]);
+        metaDb.RegisterUser("web-tracker", "acct_pending");
+        metaDb.DeferBackfill(
+            "acct_pending",
+            10,
+            "test_pending_publication");
         var activeId = metaDb.StartScrapeRun();
 
         using (var conn = dataSource.OpenConnection())
@@ -794,7 +815,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             activeId,
             MetaDatabase.FailedCandidateReadIsolationFailurePhase,
             "derived state changed before the candidate was abandoned");
-        services.GetRequiredService<PublicReadGateService>().Invalidate();
 
         var isolatedBoardResponse = await client.GetAsync(
             "/api/leaderboard/service_published_song/Solo_Guitar");
@@ -805,6 +825,40 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             .ToArray();
         Assert.Equal([110_000, 100_000], isolatedScores);
         Assert.DoesNotContain(900_000, isolatedScores);
+
+        var isolatedPlayerResponse = await client.GetAsync(
+            "/api/player/acct_published");
+        Assert.Equal(HttpStatusCode.OK, isolatedPlayerResponse.StatusCode);
+        var isolatedPlayer = await isolatedPlayerResponse.Content
+            .ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(
+            "acct_published",
+            isolatedPlayer.GetProperty("accountId").GetString());
+
+        var pendingPlayerResponse = await client.GetAsync(
+            "/api/player/acct_pending");
+        Assert.Equal(
+            HttpStatusCode.Accepted,
+            pendingPlayerResponse.StatusCode);
+        Assert.Equal(
+            "no-store",
+            pendingPlayerResponse.Headers.CacheControl?.ToString());
+
+        var pendingHistoryResponse = await client.GetAsync(
+            "/api/player/acct_pending/history");
+        Assert.Equal(
+            HttpStatusCode.Accepted,
+            pendingHistoryResponse.StatusCode);
+        Assert.Equal(
+            "no-store",
+            pendingHistoryResponse.Headers.CacheControl?.ToString());
+
+        var selectedBandResponse = await client.GetAsync(
+            "/api/leaderboard/service_published_song/bands/all" +
+            "?accountId=acct_published");
+        Assert.Equal(
+            HttpStatusCode.ServiceUnavailable,
+            selectedBandResponse.StatusCode);
 
         var isolatedExportResponse = await client.GetAsync("/api/player/acct_published/export");
         Assert.Equal(HttpStatusCode.ServiceUnavailable, isolatedExportResponse.StatusCode);

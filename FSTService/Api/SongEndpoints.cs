@@ -31,6 +31,11 @@ public static partial class ApiEndpoints
                 }
             }
 
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(
+                httpContext,
+                publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
+
             // ── Build response ───────────────────────────────────
             var jsonOpts = httpContext.RequestServices
                 .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
@@ -53,9 +58,6 @@ public static partial class ApiEndpoints
                     httpContext.Response.ContentType = "application/json; charset=utf-8";
                     return CacheHelper.ServeIfCached(httpContext, stale)!;
                 }
-
-                var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
-                if (frozenMiss is not null) return frozenMiss;
 
                 throw;
             }

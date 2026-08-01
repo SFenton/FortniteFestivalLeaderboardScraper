@@ -26,6 +26,18 @@ public sealed class PublicApiResponseCacheMiddleware
 
         var publicationBound =
             context.GetEndpoint()?.Metadata.GetMetadata<PublicationBound>() is not null;
+        if (FailedCandidateReadRoutingPolicy.EndpointHandlesRead(
+                context,
+                gate))
+        {
+            if (publicationBound)
+                telemetry.Record(context, PublicApiCacheOutcome.Bypassed);
+            context.Response.Headers["X-FST-Public-Cache"] =
+                "endpoint";
+            await _next(context);
+            return;
+        }
+
         if (!PublicApiResponseCachePolicy.IsCacheableRequest(context.Request, out var cacheKey))
         {
             if (publicationBound && gate.IsFrozen)
@@ -55,7 +67,8 @@ public sealed class PublicApiResponseCacheMiddleware
             }
 
             context.Response.Headers["X-FST-Public-Cache"] = "miss";
-            if (gate.RequiresCachedReads &&
+            if (publicationBound &&
+                gate.RequiresCachedReads &&
                 PublicReadGateMiddleware.RequiresPublishedData(context.Request))
             {
                 if (publicationBound)

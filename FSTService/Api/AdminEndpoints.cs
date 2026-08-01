@@ -149,13 +149,23 @@ public static partial class ApiEndpoints
 
         // ─── FirstSeenSeason endpoints ────────────────────
 
-        app.MapGet("/api/firstseen", (HttpContext httpContext, IMetaDatabase metaDb, ScrapeTimePrecomputer precomputer) =>
+        app.MapGet("/api/firstseen", (
+            HttpContext httpContext,
+            IMetaDatabase metaDb,
+            ScrapeTimePrecomputer precomputer,
+            [FromKeyedServices("LeaderboardAllCache")]
+            ResponseCacheService publicationCache) =>
         {
             // ── Check precomputed store ──
             {
                 var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet("firstseen"));
                 if (result is not null) return result;
             }
+
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(
+                httpContext,
+                publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
 
             var all = metaDb.GetAllFirstSeenSeasons();
             var songs = all.Select(kvp => new

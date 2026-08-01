@@ -725,6 +725,32 @@ The first completed source cut is the API response cache:
 - watchdog recovery marks the generation failed, clears the working pointer,
   and deletes its keyed staging.
 
+Failed-candidate isolation distinguishes two cache layers. The outer
+route-shaped cache may serve an exact persisted hit, but it has no producer
+for endpoint-internal keys such as `player:*`, `history:v2:*`, and
+`rankings:*`. An exact route catalog therefore marks only handlers that own
+their failed-candidate behavior: they must serve the current publication's
+internal cache, return conservative sync state such as no-store HTTP `202`, or
+call `ServeUnavailableIfFrozen` before any live/unversioned read. Both public
+read middlewares honor the same marker. Export, leaderboard-population, and
+rank-derived notification routes remain outer-blocked until their sources are
+generation-addressable. Safety-state lookup failure never delegates to the
+endpoint. Legacy in-process response caches are cleared and bypassed during
+failed-candidate isolation so late in-flight writes cannot repopulate
+candidate data. Process and songs-cache entries carry the current publication
+ID and are discarded after a pointer change; neither cache accepts writes
+while public reads are frozen. Every publication-bound read holds the shared
+publication advisory lease during a frozen transition even while full client
+pinning remains disabled. `FailScrapeRun` takes the matching exclusive lock
+before activating isolation, so an in-flight response cannot cross the
+failure boundary. The dedicated read-lock pool disables
+`idle_in_transaction_session_timeout` for these request-lifetime leases so the
+production 60-second general timeout cannot silently drop the barrier. The
+service also clears process and songs caches when the durable publication
+pointer first appears or changes.
+Rank-offset and first-seen cache misses now fail closed, and `/api/songs`
+checks the strict gate before attempting a cold live rebuild.
+
 The legacy `api_response_cache` tables remain as rollback/current-service
 compatibility mirrors until request pinning is promoted.
 

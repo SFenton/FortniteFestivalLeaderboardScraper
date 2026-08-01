@@ -357,6 +357,17 @@ public sealed class MetaDatabase : IMetaDatabase
         using var tx = conn.BeginTransaction();
         var now = DateTime.UtcNow;
 
+        using (var publicationLock = conn.CreateCommand())
+        {
+            publicationLock.Transaction = tx;
+            publicationLock.CommandText =
+                "SELECT pg_advisory_xact_lock(@lockKey)";
+            publicationLock.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+            publicationLock.ExecuteNonQuery();
+        }
+
         using (var cmd = conn.CreateCommand())
         {
             cmd.Transaction = tx;
