@@ -423,6 +423,7 @@ public class HistoryReconstructor
         int totalHistoryEntries = 0;
         int songsProcessed = alreadyProcessed.Count;
         int seasonsQueried = 0;
+        int failedPairs = 0;
 
         _progress.SetAdaptiveLimiter(pool.Limiter);
 
@@ -488,9 +489,9 @@ public class HistoryReconstructor
             catch (Exception ex)
             {
                 _log.LogWarning(ex,
-                    "History recon failed for {AccountId}/{Song}/{Instrument}. Skipping.",
+                    "History recon failed for {AccountId}/{Song}/{Instrument}. Leaving it pending for retry.",
                     accountId, songId, instrument);
-                Interlocked.Increment(ref songsProcessed);
+                Interlocked.Increment(ref failedPairs);
                 _progress.ReportPhaseItemComplete();
             }
         }
@@ -499,6 +500,18 @@ public class HistoryReconstructor
 
         // Final update
         _metaDb.UpdateHistoryReconProgress(accountId, songsProcessed, seasonsQueried, totalHistoryEntries);
+        if (failedPairs > 0)
+        {
+            _metaDb.FailHistoryRecon(
+                accountId,
+                $"{failedPairs} song/instrument pair(s) had incomplete required seasonal lookups.");
+            _log.LogWarning(
+                "History reconstruction incomplete for {AccountId}: {FailedPairs} pair(s) remain pending after required lookup failures.",
+                accountId,
+                failedPairs);
+            return totalHistoryEntries;
+        }
+
         _metaDb.CompleteHistoryRecon(accountId);
 
         _log.LogInformation(
@@ -543,15 +556,22 @@ public class HistoryReconstructor
 
         // Build the list of seasons to query
         var seasonsToQuery = new List<(int Season, SeasonWindowInfo Window)>();
+        var missingSeasons = new List<int>();
         for (int s = startSeason; s <= maxSeason; s++)
         {
             var window = seasonWindows.FirstOrDefault(w => w.SeasonNumber == s);
             if (window is null)
             {
-                _log.LogDebug("No window found for season {Season}. Skipping.", s);
+                missingSeasons.Add(s);
                 continue;
             }
             seasonsToQuery.Add((s, window));
+        }
+
+        if (missingSeasons.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Missing required season window(s) for {songId}/{instrument}: {string.Join(", ", missingSeasons)}.");
         }
 
         if (seasonsToQuery.Count == 0)
@@ -560,17 +580,19 @@ public class HistoryReconstructor
         // Query all seasons in parallel, collecting ALL sessions from each.
         // Each season query acquires/releases the shared DOP pool (low priority).
         var allSessions = new ConcurrentDictionary<int, List<SessionHistoryEntry>>();
+        var lookupFailures = new ConcurrentQueue<Exception>();
         int queriesMade = 0;
 
         var tasks = seasonsToQuery.Select(async item =>
         {
             var (s, window) = item;
+            var lookupId = GetSeasonLookupId(window);
             var lowToken = await pool.AcquireLowAsync(ct);
             try
             {
                 using var admittedRequest = pool.TrafficCoordinator.BeginAdmittedRequest();
                 var sessions = await _scraper.LookupSeasonalSessionsAsync(
-                    songId, instrument, window.WindowId,
+                    songId, instrument, lookupId,
                     accountId, accessToken, callerAccountId, pool.Limiter, ct);
                 Interlocked.Increment(ref queriesMade);
                 _progress.ReportPhaseRequest();
@@ -584,8 +606,9 @@ public class HistoryReconstructor
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _log.LogDebug(ex, "Seasonal lookup failed for {Song}/{Instrument}/season_{Season}.",
-                    songId, instrument, s);
+                _log.LogDebug(ex, "Seasonal lookup failed for {Song}/{Instrument}/{LookupId} (season {Season}).",
+                    songId, instrument, lookupId, s);
+                lookupFailures.Enqueue(ex);
                 Interlocked.Increment(ref queriesMade);
                 _progress.ReportPhaseRequest();
             }
@@ -596,6 +619,13 @@ public class HistoryReconstructor
         }).ToList();
 
         await Task.WhenAll(tasks);
+
+        if (!lookupFailures.IsEmpty)
+        {
+            throw new AggregateException(
+                $"Required seasonal lookup failed for {songId}/{instrument}.",
+                lookupFailures);
+        }
 
         if (allSessions.IsEmpty)
             return (0, queriesMade);

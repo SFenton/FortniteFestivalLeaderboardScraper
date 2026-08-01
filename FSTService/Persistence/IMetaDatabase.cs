@@ -125,9 +125,9 @@ public interface IMetaDatabase : IDisposable
     void CompleteRegisteredBandProcessing(string sourceId, string bandType, string teamKey, int lookupsChecked, int entriesFound);
     void FailRegisteredBandProcessing(string sourceId, string bandType, string teamKey, string errorMessage);
     void UpdateRegisteredBandProcessingProgress(string sourceId, string bandType, string teamKey, int lookupsChecked, int entriesFound, int totalLookupsToCheck);
-    void MarkRegisteredBandLookupChecked(string sourceId, string bandType, string teamKey, string songId, string scope, int season, bool entryFound);
+    void MarkRegisteredBandLookupChecked(string sourceId, string bandType, string teamKey, string songId, string scope, int season, bool entryFound, string? windowId = null);
     List<RegisteredBandLookupProgressInfo> GetCheckedRegisteredBandLookups(string sourceId, string bandType, string teamKey);
-    void MarkRegisteredPlayerBandDiscoveryChecked(string accountId, string songId, string bandType, string scope, int season, bool entryFound);
+    void MarkRegisteredPlayerBandDiscoveryChecked(string accountId, string songId, string bandType, string scope, int season, bool entryFound, string? windowId = null);
     List<RegisteredPlayerBandDiscoveryProgressInfo> GetCheckedRegisteredPlayerBandDiscoveryLookups(string accountId);
     int PruneStaleWebRegistrations(DateTime staleBeforeUtc);
     string? GetAccountIdForUsername(string username);

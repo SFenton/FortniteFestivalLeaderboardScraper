@@ -356,6 +356,51 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public async Task EnsureSchemaAsync_adds_registered_band_window_identity_columns_idempotently()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using (var dropConn = _metaFixture.DataSource.OpenConnection())
+        using (var dropCmd = dropConn.CreateCommand())
+        {
+            dropCmd.CommandText = """
+                ALTER TABLE registered_band_processing_progress
+                    DROP COLUMN window_id;
+                ALTER TABLE registered_player_band_discovery_progress
+                    DROP COLUMN window_id;
+                """;
+            dropCmd.ExecuteNonQuery();
+        }
+
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT
+                EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'registered_band_processing_progress'
+                      AND column_name = 'window_id'
+                      AND is_nullable = 'NO'),
+                EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'registered_player_band_discovery_progress'
+                      AND column_name = 'window_id'
+                      AND is_nullable = 'NO')
+            """;
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.True(reader.GetBoolean(0));
+        Assert.True(reader.GetBoolean(1));
+    }
+
+    [Fact]
     public async Task EnsureSchemaAsync_creates_worker_correctness_ledgers()
     {
         await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);

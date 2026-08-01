@@ -8,7 +8,7 @@ namespace FSTService.Scraping;
 /// leaderboard system by probing leaderboards directly via binary search.
 ///
 /// Algorithm per song:
-///   1. Get the sorted list of known seasons from season_windows.
+///   1. Get the sorted authoritative SeasonWindowInfo list.
 ///   2. Binary search: probe LookupSeasonalAsync for the mid-point season.
 ///      - Valid response (200 or no_score_found) → song existed → search earlier.
 ///      - HttpRequestException (400) → song didn&apos;t exist → search later.
@@ -24,8 +24,9 @@ public class FirstSeenSeasonCalculator
     /// Bump this constant to force recalculation of all songs.
     /// v1 = original MIN(season) + single probe approach.
     /// v2 = binary search across all seasons.
+    /// v3 = authoritative discovered window IDs; retries v2 rollover misses.
     /// </summary>
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
 
     private readonly ILeaderboardQuerier _scraper;
     private readonly GlobalLeaderboardPersistence _persistence;
@@ -55,7 +56,8 @@ public class FirstSeenSeasonCalculator
         string accessToken,
         string callerAccountId,
         SharedDopPool pool,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IReadOnlyList<SeasonWindowInfo>? authoritativeSeasonWindows = null)
     {
         // Get all song IDs from the catalog
         var allSongs = festivalService.Songs
@@ -83,14 +85,18 @@ public class FirstSeenSeasonCalculator
 
         _progress.BeginPhaseProgress(songsToCalculate.Count);
 
-        // Get known seasons sorted ascending
-        var seasonWindows = _metaDb.GetSeasonWindows();
-        var seasons = seasonWindows
-            .Select(w => w.SeasonNumber)
-            .OrderBy(n => n)
+        // Get authoritative season windows sorted ascending. The caller may pass a
+        // freshly discovered rollover window that has not existed for a prior pass.
+        var seasonWindows = (authoritativeSeasonWindows ?? _metaDb.GetSeasonWindows())
+            .Where(static window => window.SeasonNumber > 0)
+            .GroupBy(static window => window.SeasonNumber)
+            .Select(static group =>
+                group.LastOrDefault(static window => !string.IsNullOrWhiteSpace(window.WindowId))
+                ?? group.Last())
+            .OrderBy(static window => window.SeasonNumber)
             .ToList();
 
-        if (seasons.Count == 0)
+        if (seasonWindows.Count == 0)
         {
             _log.LogWarning("FirstSeenSeason: no season windows discovered. Cannot calculate.");
             return 0;
@@ -104,7 +110,7 @@ public class FirstSeenSeasonCalculator
         }
 
         _log.LogInformation("FirstSeenSeason: binary searching across {SeasonCount} seasons for {SongCount} song(s)...",
-            seasons.Count, songsToCalculate.Count);
+            seasonWindows.Count, songsToCalculate.Count);
 
         int calculated = 0;
 
@@ -113,13 +119,13 @@ public class FirstSeenSeasonCalculator
             try
             {
                 var result = await BinarySearchFirstSeenAsync(
-                    songId, seasons, accessToken, callerAccountId, pool, ct);
+                    songId, seasonWindows, accessToken, callerAccountId, pool, ct);
 
                 var minObserved = songMinSeasons.GetValueOrDefault(songId);
 
                 _metaDb.UpsertFirstSeenSeason(
                     songId, result.FirstSeenSeason, minObserved,
-                    result.FirstSeenSeason ?? seasons[^1],
+                    result.FirstSeenSeason ?? seasonWindows[^1].SeasonNumber,
                     result.ProbeResult, CurrentVersion);
 
                 _progress.ReportPhaseItemComplete();
@@ -133,7 +139,7 @@ public class FirstSeenSeasonCalculator
                 var minObserved = songMinSeasons.GetValueOrDefault(songId);
                 _metaDb.UpsertFirstSeenSeason(
                     songId, minObserved, minObserved,
-                    minObserved ?? seasons[^1],
+                    minObserved ?? seasonWindows[^1].SeasonNumber,
                     "binary_search_failed", CurrentVersion);
 
                 _progress.ReportPhaseItemComplete();
@@ -154,24 +160,26 @@ public class FirstSeenSeasonCalculator
     /// An HttpRequestException (400) means it did not.
     /// </summary>
     internal async Task<(int? FirstSeenSeason, string ProbeResult)> BinarySearchFirstSeenAsync(
-        string songId, IReadOnlyList<int> seasons,
+        string songId, IReadOnlyList<SeasonWindowInfo> seasonWindows,
         string accessToken, string callerAccountId,
         SharedDopPool pool, CancellationToken ct)
     {
-        int lo = 0, hi = seasons.Count - 1;
+        int lo = 0, hi = seasonWindows.Count - 1;
         int? bestFound = null;
+        string? bestLookupId = null;
         int probeCount = 0;
 
         while (lo <= hi)
         {
             int mid = lo + (hi - lo) / 2;
-            int season = seasons[mid];
-            bool exists = await ProbeSeasonAsync(songId, season, accessToken, callerAccountId, pool, ct);
+            var window = seasonWindows[mid];
+            bool exists = await ProbeSeasonAsync(songId, window, accessToken, callerAccountId, pool, ct);
             probeCount++;
 
             if (exists)
             {
-                bestFound = season;
+                bestFound = window.SeasonNumber;
+                bestLookupId = HistoryReconstructor.GetSeasonLookupId(window);
                 hi = mid - 1; // search earlier
             }
             else
@@ -183,14 +191,13 @@ public class FirstSeenSeasonCalculator
         if (bestFound is null)
         {
             _log.LogDebug("FirstSeenSeason: {SongId} not found in any of {Count} seasons after {Probes} probes.",
-                songId, seasons.Count, probeCount);
+                songId, seasonWindows.Count, probeCount);
             return (null, $"not_found_in_any_season({probeCount}_probes)");
         }
 
-        var prefix = HistoryReconstructor.GetSeasonPrefix(bestFound.Value);
-        _log.LogDebug("FirstSeenSeason: {SongId} first seen in {Prefix} after {Probes} probes.",
-            songId, prefix, probeCount);
-        return (bestFound.Value, $"found_{prefix}_via_binary_search({probeCount}_probes)");
+        _log.LogDebug("FirstSeenSeason: {SongId} first seen in {LookupId} after {Probes} probes.",
+            songId, bestLookupId, probeCount);
+        return (bestFound.Value, $"found_{bestLookupId}_via_binary_search({probeCount}_probes)");
     }
 
     /// <summary>
@@ -198,18 +205,18 @@ public class FirstSeenSeasonCalculator
     /// Returns true if the API returns a valid response (song existed), false on HttpRequestException.
     /// </summary>
     private async Task<bool> ProbeSeasonAsync(
-        string songId, int seasonNumber,
+        string songId, SeasonWindowInfo window,
         string accessToken, string callerAccountId,
         SharedDopPool pool, CancellationToken ct)
     {
-        var seasonPrefix = HistoryReconstructor.GetSeasonPrefix(seasonNumber);
+        var seasonLookupId = HistoryReconstructor.GetSeasonLookupId(window);
         var lowToken = await pool.AcquireLowAsync(ct);
 
         try
         {
             using var admittedRequest = pool.TrafficCoordinator.BeginAdmittedRequest();
             await _scraper.LookupSeasonalAsync(
-                songId, "Solo_Guitar", seasonPrefix,
+                songId, "Solo_Guitar", seasonLookupId,
                 callerAccountId, accessToken, callerAccountId, ct: ct);
 
             pool.ReportSuccess();

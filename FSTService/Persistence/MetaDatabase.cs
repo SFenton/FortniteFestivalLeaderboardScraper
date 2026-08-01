@@ -3875,18 +3875,19 @@ public sealed class MetaDatabase : IMetaDatabase
         cmd.ExecuteNonQuery();
     }
 
-    public void MarkRegisteredBandLookupChecked(string sourceId, string bandType, string teamKey, string songId, string scope, int season, bool entryFound)
+    public void MarkRegisteredBandLookupChecked(string sourceId, string bandType, string teamKey, string songId, string scope, int season, bool entryFound, string? windowId = null)
     {
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             INSERT INTO registered_band_processing_progress
-                (source_id, band_type, team_key, song_id, scope, season, checked, entry_found, checked_at)
-            VALUES (@sourceId, @bandType, @teamKey, @songId, @scope, @season, 1, @found, @now)
+                (source_id, band_type, team_key, song_id, scope, season, checked, entry_found, checked_at, window_id)
+            VALUES (@sourceId, @bandType, @teamKey, @songId, @scope, @season, 1, @found, @now, @windowId)
             ON CONFLICT (source_id, band_type, team_key, song_id, scope, season) DO UPDATE SET
                 checked = 1,
                 entry_found = EXCLUDED.entry_found,
-                checked_at = EXCLUDED.checked_at
+                checked_at = EXCLUDED.checked_at,
+                window_id = EXCLUDED.window_id
             """;
         AddRegisteredBandKeyParameters(cmd, sourceId, bandType, teamKey);
         cmd.Parameters.AddWithValue("songId", songId);
@@ -3894,6 +3895,9 @@ public sealed class MetaDatabase : IMetaDatabase
         cmd.Parameters.AddWithValue("season", season);
         cmd.Parameters.AddWithValue("found", entryFound ? 1 : 0);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.Parameters.AddWithValue(
+            "windowId",
+            RegisteredBandLookupIdentity.ResolveWindowId(scope, season, windowId));
         cmd.ExecuteNonQuery();
     }
 
@@ -3902,7 +3906,7 @@ public sealed class MetaDatabase : IMetaDatabase
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT song_id, scope, season, entry_found
+            SELECT song_id, scope, season, entry_found, window_id
             FROM registered_band_processing_progress
             WHERE source_id = @sourceId AND band_type = @bandType AND team_key = @teamKey AND checked = 1
             """;
@@ -3910,22 +3914,28 @@ public sealed class MetaDatabase : IMetaDatabase
         var rows = new List<RegisteredBandLookupProgressInfo>();
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
-            rows.Add(new RegisteredBandLookupProgressInfo(reader.GetString(0), reader.GetString(1), reader.GetInt32(2), reader.GetInt32(3) != 0));
+            rows.Add(new RegisteredBandLookupProgressInfo(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetInt32(2),
+                reader.GetInt32(3) != 0,
+                reader.GetString(4)));
         return rows;
     }
 
-    public void MarkRegisteredPlayerBandDiscoveryChecked(string accountId, string songId, string bandType, string scope, int season, bool entryFound)
+    public void MarkRegisteredPlayerBandDiscoveryChecked(string accountId, string songId, string bandType, string scope, int season, bool entryFound, string? windowId = null)
     {
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             INSERT INTO registered_player_band_discovery_progress
-                (account_id, song_id, band_type, scope, season, checked, entry_found, checked_at)
-            VALUES (@accountId, @songId, @bandType, @scope, @season, 1, @found, @now)
+                (account_id, song_id, band_type, scope, season, checked, entry_found, checked_at, window_id)
+            VALUES (@accountId, @songId, @bandType, @scope, @season, 1, @found, @now, @windowId)
             ON CONFLICT (account_id, song_id, band_type, scope, season) DO UPDATE SET
                 checked = 1,
                 entry_found = EXCLUDED.entry_found,
-                checked_at = EXCLUDED.checked_at
+                checked_at = EXCLUDED.checked_at,
+                window_id = EXCLUDED.window_id
             """;
         cmd.Parameters.AddWithValue("accountId", accountId);
         cmd.Parameters.AddWithValue("songId", songId);
@@ -3934,6 +3944,9 @@ public sealed class MetaDatabase : IMetaDatabase
         cmd.Parameters.AddWithValue("season", season);
         cmd.Parameters.AddWithValue("found", entryFound ? 1 : 0);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.Parameters.AddWithValue(
+            "windowId",
+            RegisteredBandLookupIdentity.ResolveWindowId(scope, season, windowId));
         cmd.ExecuteNonQuery();
     }
 
@@ -3942,7 +3955,7 @@ public sealed class MetaDatabase : IMetaDatabase
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT song_id, band_type, scope, season, entry_found
+            SELECT song_id, band_type, scope, season, entry_found, window_id
             FROM registered_player_band_discovery_progress
             WHERE account_id = @accountId AND checked = 1
             """;
@@ -3956,7 +3969,8 @@ public sealed class MetaDatabase : IMetaDatabase
                 reader.GetString(1),
                 reader.GetString(2),
                 reader.GetInt32(3),
-                reader.GetInt32(4) != 0));
+                reader.GetInt32(4) != 0,
+                reader.GetString(5)));
         }
         return rows;
     }

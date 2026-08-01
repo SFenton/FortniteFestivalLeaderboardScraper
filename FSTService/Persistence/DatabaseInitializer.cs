@@ -1107,8 +1107,12 @@ public static class DatabaseInitializer
             checked     INTEGER     NOT NULL DEFAULT 0,
             entry_found INTEGER     NOT NULL DEFAULT 0,
             checked_at  TIMESTAMPTZ,
+            window_id   TEXT        NOT NULL DEFAULT '',
             PRIMARY KEY (source_id, band_type, team_key, song_id, scope, season)
         );
+
+        ALTER TABLE registered_band_processing_progress
+            ADD COLUMN IF NOT EXISTS window_id TEXT NOT NULL DEFAULT '';
 
         CREATE INDEX IF NOT EXISTS ix_registered_band_processing_progress_band
             ON registered_band_processing_progress (source_id, band_type, team_key);
@@ -1122,8 +1126,12 @@ public static class DatabaseInitializer
             checked     INTEGER     NOT NULL DEFAULT 0,
             entry_found INTEGER     NOT NULL DEFAULT 0,
             checked_at  TIMESTAMPTZ,
+            window_id   TEXT        NOT NULL DEFAULT '',
             PRIMARY KEY (account_id, song_id, band_type, scope, season)
         );
+
+        ALTER TABLE registered_player_band_discovery_progress
+            ADD COLUMN IF NOT EXISTS window_id TEXT NOT NULL DEFAULT '';
 
         CREATE INDEX IF NOT EXISTS ix_registered_player_band_discovery_progress_account
             ON registered_player_band_discovery_progress (account_id);

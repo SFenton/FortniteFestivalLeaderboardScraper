@@ -30,6 +30,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     private readonly FirstSeenSeasonCalculator _firstSeenCalculator;
     private readonly AccountNameResolver _nameResolver;
     private readonly PostScrapeRefresher _refresher;
+    private readonly HistoryReconstructor _historyReconstructor;
     private readonly SongProcessingMachine _machine;
     private readonly CyclicalSongMachine _cyclicalMachine;
     private readonly SharedDopPool _pool;
@@ -87,6 +88,15 @@ public class PostScrapeOrchestratorTests : IDisposable
         _refresher = Substitute.For<PostScrapeRefresher>(
             scraper, _persistence, new ScrapeProgressTracker(),
             Substitute.For<ILogger<PostScrapeRefresher>>());
+        _historyReconstructor = Substitute.For<HistoryReconstructor>(
+            scraper,
+            _persistence,
+            new HttpClient(),
+            new ScrapeProgressTracker(),
+            new UserSyncProgressTracker(
+                new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()),
+                Substitute.For<ILogger<UserSyncProgressTracker>>()),
+            Substitute.For<ILogger<HistoryReconstructor>>());
 
         _machine = Substitute.For<SongProcessingMachine>(
             scraper, new BatchResultProcessor(_persistence, Substitute.For<ILogger<BatchResultProcessor>>()),
@@ -132,7 +142,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             _persistence, _firstSeenCalculator, _nameResolver,
             _refresher,
             serviceProvider,
-            Substitute.For<HistoryReconstructor>(scraper, _persistence, new HttpClient(), new ScrapeProgressTracker(), new UserSyncProgressTracker(new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), Substitute.For<ILogger<HistoryReconstructor>>()),
+            _historyReconstructor,
             _pool,
             _cyclicalMachine,
             rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, _notifications,
@@ -1927,10 +1937,35 @@ public class PostScrapeOrchestratorTests : IDisposable
             .Returns("test-token");
         _tokenManager.AccountId.Returns("caller-1");
 
+        var callOrder = new List<string>();
+        var discoveredWindows = new[]
+        {
+            new SeasonWindowInfo
+            {
+                SeasonNumber = 15,
+                EventId = "season15-event",
+                WindowId = "season_15_competitive",
+            },
+        };
+        _historyReconstructor.DiscoverSeasonWindowsAsync(
+            "test-token",
+            "caller-1",
+            Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                callOrder.Add("discover");
+                return discoveredWindows;
+            });
         _firstSeenCalculator.CalculateAsync(
             Arg.Any<FestivalService>(), Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<SharedDopPool>(), Arg.Any<CancellationToken>())
-            .Returns(5);
+            Arg.Any<SharedDopPool>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IReadOnlyList<SeasonWindowInfo>?>())
+            .Returns(call =>
+            {
+                callOrder.Add("calculate");
+                Assert.Same(discoveredWindows, call.ArgAt<IReadOnlyList<SeasonWindowInfo>>(5));
+                return 5;
+            });
 
         var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
         var ctx = CreateContext();
@@ -1940,7 +1975,12 @@ public class PostScrapeOrchestratorTests : IDisposable
         // FirstSeenCalculator should have been called with the token
         await _firstSeenCalculator.Received(1).CalculateAsync(
             Arg.Any<FestivalService>(), "test-token", "caller-1",
-            Arg.Any<SharedDopPool>(), Arg.Any<CancellationToken>());
+            Arg.Any<SharedDopPool>(), Arg.Any<CancellationToken>(),
+            Arg.Is<IReadOnlyList<SeasonWindowInfo>?>(windows =>
+                windows != null &&
+                windows.Count == 1 &&
+                windows[0].WindowId == "season_15_competitive"));
+        Assert.Equal(["discover", "calculate"], callOrder);
     }
 
     [Fact]
@@ -1952,7 +1992,8 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         _firstSeenCalculator.CalculateAsync(
             Arg.Any<FestivalService>(), Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<SharedDopPool>(), Arg.Any<CancellationToken>())
+            Arg.Any<SharedDopPool>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IReadOnlyList<SeasonWindowInfo>?>())
             .ThrowsAsync(new InvalidOperationException("test error"));
 
         var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);

@@ -1429,6 +1429,9 @@ Use one token owner or an atomic, locked, permission-restricted shared store.
   expected/checked/missing/oldest/current-scrape coverage.
 - Carry one authoritative discovered current season into the cyclical machine
   so a rollover season cannot be stripped by a lagging instrument maximum.
+- Resolve that same exact window before FirstSeenSeason, registered-band
+  discovery/processing, and legacy history reconstruction; invalidate stale
+  progress/version state and fail completion on missing required coverage.
 - Keep registration backfill, history reconstruction, and solo-projection
   dirty-scope persistence outside this recurring-refresh ledger.
 

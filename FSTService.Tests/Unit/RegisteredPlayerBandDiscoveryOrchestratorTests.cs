@@ -93,6 +93,105 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_NoncanonicalWindow_InvalidatesConventionalDiscoveryProgress()
+    {
+        const string accountId = "acct1";
+        const string windowId = "season_14_competitive";
+        Db.RegisterUser("web-tracker", accountId);
+        foreach (var bandType in new[] { "Band_Duets", "Band_Trios", "Band_Quad" })
+        {
+            Db.MarkRegisteredPlayerBandDiscoveryChecked(
+                accountId,
+                "song-a",
+                bandType,
+                "alltime",
+                0,
+                false);
+        }
+        Db.MarkRegisteredPlayerBandDiscoveryChecked(
+            accountId,
+            "song-a",
+            "Band_Duets",
+            "season",
+            14,
+            false,
+            "season014");
+
+        var strategy = new FakeDiscoveryStrategy(null);
+        var orchestrator = CreateOrchestrator(strategy, maxLookupsPerAccount: 1);
+        using var pool = new SharedDopPool(1, 1, 1, 100, Substitute.For<ILogger>());
+
+        var result = await orchestrator.RunAsync(
+            ["song-a"],
+            [
+                new SeasonWindowInfo
+                {
+                    SeasonNumber = 14,
+                    EventId = "season14-event",
+                    WindowId = windowId,
+                },
+            ],
+            "token",
+            "caller",
+            pool);
+
+        Assert.Equal(1, result.LookupsChecked);
+        var call = Assert.Single(strategy.Calls);
+        Assert.Equal("Band_Duets", call.Intent.BandType);
+        Assert.Equal(RegisteredBandLookupScope.Season, call.Intent.Scope);
+        Assert.Equal(windowId, call.Intent.WindowId);
+
+        var progress = Db.GetCheckedRegisteredPlayerBandDiscoveryLookups(accountId);
+        Assert.Equal(
+            windowId,
+            Assert.Single(progress, row =>
+                row.BandType == "Band_Duets" &&
+                row.Scope == "season").WindowId);
+    }
+
+    [Fact]
+    public async Task DirectDiscoveryStrategy_sends_exact_noncanonical_window_id()
+    {
+        const string windowId = "season_14_competitive";
+        var scraper = Substitute.For<ILeaderboardQuerier>();
+        scraper.FindBandsForAccountAsync(
+            "song-a",
+            "Band_Duets",
+            "acct1",
+            windowId,
+            "token",
+            "caller",
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>())
+            .Returns([]);
+        var strategy = new DirectRegisteredPlayerBandDiscoveryStrategy(scraper);
+        var intent = new RegisteredPlayerBandDiscoveryIntent(
+            "song-a",
+            "Band_Duets",
+            RegisteredBandLookupScope.Season,
+            14,
+            windowId);
+
+        await strategy.FetchAsync(
+            "acct1",
+            intent,
+            "token",
+            "caller",
+            limiter: null,
+            CancellationToken.None);
+
+        await scraper.Received(1).FindBandsForAccountAsync(
+            "song-a",
+            "Band_Duets",
+            "acct1",
+            windowId,
+            "token",
+            "caller",
+            null,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task RunAsync_ResumesWithLeastRecentlyProcessedAccountWithinPassBudget()
     {
         Db.RegisterUser("device-1", "acct1");

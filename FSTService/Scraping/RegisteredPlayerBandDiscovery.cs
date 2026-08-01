@@ -7,10 +7,12 @@ internal sealed record RegisteredPlayerBandDiscoveryIntent(
     string SongId,
     string BandType,
     RegisteredBandLookupScope Scope,
-    int Season)
+    int Season,
+    string WindowId)
 {
     public string ProgressScope => Scope == RegisteredBandLookupScope.AllTime ? "alltime" : "season";
-    public string WindowId => Scope == RegisteredBandLookupScope.AllTime ? "alltime" : HistoryReconstructor.GetSeasonPrefix(Season);
+    public (string SongId, string BandType, string Scope, int Season, string WindowId) ProgressKey =>
+        (SongId, BandType, ProgressScope, Season, WindowId);
 }
 
 internal sealed record RegisteredPlayerBandDiscoveryLookupResult(IReadOnlyList<BandLeaderboardEntry> Entries)
@@ -216,22 +218,34 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestrator
         IReadOnlyList<SeasonWindowInfo> seasonWindows)
     {
         var distinctSongIds = songIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        var seasons = seasonWindows
-            .Select(static window => window.SeasonNumber)
-            .Where(static season => season > 0)
-            .Distinct()
-            .OrderDescending()
+        var windows = seasonWindows
+            .Where(static window => window.SeasonNumber > 0)
+            .GroupBy(static window => window.SeasonNumber)
+            .Select(static group =>
+                group.LastOrDefault(static window => !string.IsNullOrWhiteSpace(window.WindowId))
+                ?? group.Last())
+            .OrderByDescending(static window => window.SeasonNumber)
             .ToList();
 
-        var intents = new List<RegisteredPlayerBandDiscoveryIntent>(distinctSongIds.Count * BandTypes.Length * (1 + seasons.Count));
+        var intents = new List<RegisteredPlayerBandDiscoveryIntent>(distinctSongIds.Count * BandTypes.Length * (1 + windows.Count));
         foreach (var bandType in BandTypes)
         foreach (var songId in distinctSongIds)
-            intents.Add(new RegisteredPlayerBandDiscoveryIntent(songId, bandType, RegisteredBandLookupScope.AllTime, 0));
+            intents.Add(new RegisteredPlayerBandDiscoveryIntent(
+                songId,
+                bandType,
+                RegisteredBandLookupScope.AllTime,
+                0,
+                "alltime"));
 
-        foreach (var season in seasons)
+        foreach (var window in windows)
         foreach (var bandType in BandTypes)
         foreach (var songId in distinctSongIds)
-            intents.Add(new RegisteredPlayerBandDiscoveryIntent(songId, bandType, RegisteredBandLookupScope.Season, season));
+            intents.Add(new RegisteredPlayerBandDiscoveryIntent(
+                songId,
+                bandType,
+                RegisteredBandLookupScope.Season,
+                window.SeasonNumber,
+                HistoryReconstructor.GetSeasonLookupId(window)));
 
         return intents;
     }
@@ -247,11 +261,19 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestrator
     {
         var checkedProgress = _metaDb.GetCheckedRegisteredPlayerBandDiscoveryLookups(accountId);
         var checkedKeys = checkedProgress
-            .Select(static row => (row.SongId, row.BandType, row.Scope, row.Season))
+            .Select(static row => (
+                row.SongId,
+                row.BandType,
+                row.Scope,
+                row.Season,
+                WindowId: RegisteredBandLookupIdentity.ResolveWindowId(
+                    row.Scope,
+                    row.Season,
+                    row.WindowId)))
             .ToHashSet();
 
         var pendingIntents = allIntents
-            .Where(intent => !checkedKeys.Contains((intent.SongId, intent.BandType, intent.ProgressScope, intent.Season)))
+            .Where(intent => !checkedKeys.Contains(intent.ProgressKey))
             .ToList();
 
         var maxLookups = _options.RegisteredPlayerBandDiscoveryMaxLookupsPerAccount;
@@ -314,7 +336,8 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestrator
                         intent.SongId,
                         intent.ProgressScope,
                         intent.Season,
-                        true);
+                        true,
+                        intent.WindowId);
 
                     if (!impactedTeams.TryGetValue(intent.BandType, out var teams))
                     {
@@ -333,7 +356,8 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestrator
                 intent.BandType,
                 intent.ProgressScope,
                 intent.Season,
-                found);
+                found,
+                intent.WindowId);
 
             lookupsChecked++;
         }

@@ -362,9 +362,40 @@ public class HistoryReconstructorInstanceTests : IDisposable
     // â”€â”€â”€ Seasonal lookup failure â†’ skipped, continues â”€â”€â”€
 
     [Fact]
-    public async Task ReconstructAccountAsync_SeasonalLookupFails_SkipsSongContinues()
+    public async Task ReconstructAccountAsync_BlankWindowFailure_UsesFallbackAndRemainsPending()
     {
-        var (recon, scraperHandler, _) = CreateReconstructor();
+        var scraper = Substitute.For<ILeaderboardQuerier>();
+        scraper.LookupSeasonalSessionsAsync(
+            "songA",
+            "Solo_Guitar",
+            "evergreen",
+            "acct1",
+            "token",
+            "caller",
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>())
+            .Returns(new List<SessionHistoryEntry>());
+        scraper.LookupSeasonalSessionsAsync(
+            "songA",
+            "Solo_Guitar",
+            "season002",
+            "acct1",
+            "token",
+            "caller",
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>())
+            .Returns(Task.FromException<List<SessionHistoryEntry>?>(
+                new HttpRequestException("required lookup failed")));
+        var progress = new ScrapeProgressTracker();
+        var recon = new HistoryReconstructor(
+            scraper,
+            _persistence,
+            new HttpClient(),
+            progress,
+            new UserSyncProgressTracker(
+                new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()),
+                Substitute.For<ILogger<UserSyncProgressTracker>>()),
+            _log);
 
         var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
         guitarDb.UpsertEntries("songA", [new LeaderboardEntry
@@ -375,31 +406,31 @@ public class HistoryReconstructorInstanceTests : IDisposable
 
         var windows = new List<SeasonWindowInfo>
         {
-            new() { SeasonNumber = 1, EventId = "e1", WindowId = "season_1" },
-            new() { SeasonNumber = 2, EventId = "e2", WindowId = "season_2" },
+            new() { SeasonNumber = 1, EventId = "", WindowId = "" },
+            new() { SeasonNumber = 2, EventId = "", WindowId = "" },
         };
-
-        // Season 1 lookup throws error
-        scraperHandler.EnqueueException(new HttpRequestException("connection error"));
-        // Season 2 lookup returns score
-        scraperHandler.EnqueueJsonOk("""
-        [{
-            "teamId":"acct1","rank":50,"percentile":0.5,
-            "sessionHistory":[{"endTime":"2024-04-01T00:00:00Z","trackedStats":{"SCORE":5000}}]
-        }]
-        """);
 
         var result = await recon.ReconstructAccountAsync(
             "acct1", windows, "token", "caller", _pool);
 
-        // Only season 2 entry exists (season 1 failed)
-        Assert.Equal(1, result);
+        Assert.Equal(0, result);
+        Assert.Equal("error", _metaDb.Db.GetHistoryReconStatus("acct1")?.Status);
+        Assert.Empty(_metaDb.Db.GetProcessedHistoryReconPairs("acct1"));
+        await scraper.Received(1).LookupSeasonalSessionsAsync(
+            "songA",
+            "Solo_Guitar",
+            "season002",
+            "acct1",
+            "token",
+            "caller",
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>());
     }
 
     // â”€â”€â”€ Missing season window â†’ skipped â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
-    public async Task ReconstructAccountAsync_MissingSeason_SkipsIt()
+    public async Task ReconstructAccountAsync_MissingRequiredSeason_RemainsPending()
     {
         var (recon, scraperHandler, _) = CreateReconstructor();
 
@@ -417,25 +448,13 @@ public class HistoryReconstructorInstanceTests : IDisposable
             new() { SeasonNumber = 3, EventId = "e3", WindowId = "season_3" },
         };
 
-        // Season 1: 1000, Season 3: 3000
-        scraperHandler.EnqueueJsonOk("""
-        [{
-            "teamId":"acct1","rank":500,"percentile":0.1,
-            "sessionHistory":[{"endTime":"2024-01-01T00:00:00Z","trackedStats":{"SCORE":1000}}]
-        }]
-        """);
-        scraperHandler.EnqueueJsonOk("""
-        [{
-            "teamId":"acct1","rank":200,"percentile":0.3,
-            "sessionHistory":[{"endTime":"2024-07-01T00:00:00Z","trackedStats":{"SCORE":3000}}]
-        }]
-        """);
-
         var result = await recon.ReconstructAccountAsync(
             "acct1", windows, "token", "caller", _pool);
 
-        // Both seasons found, both have increasing scores
-        Assert.Equal(2, result);
+        Assert.Equal(0, result);
+        Assert.Equal("error", _metaDb.Db.GetHistoryReconStatus("acct1")?.Status);
+        Assert.Empty(_metaDb.Db.GetProcessedHistoryReconPairs("acct1"));
+        Assert.Empty(scraperHandler.Requests);
     }
 
     // â”€â”€â”€ No entry from seasonal lookup â†’ counted as query but no entry â”€â”€

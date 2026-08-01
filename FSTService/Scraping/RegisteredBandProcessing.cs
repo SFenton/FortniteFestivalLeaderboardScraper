@@ -9,13 +9,31 @@ internal enum RegisteredBandLookupScope
     Season,
 }
 
+internal static class RegisteredBandLookupIdentity
+{
+    public static string ResolveWindowId(
+        string scope,
+        int season,
+        string? windowId)
+    {
+        if (!string.IsNullOrWhiteSpace(windowId))
+            return windowId;
+
+        return string.Equals(scope, "alltime", StringComparison.Ordinal)
+            ? "alltime"
+            : HistoryReconstructor.GetSeasonPrefix(season);
+    }
+}
+
 internal sealed record RegisteredBandLookupIntent(
     string SongId,
     RegisteredBandLookupScope Scope,
-    int Season)
+    int Season,
+    string WindowId)
 {
     public string ProgressScope => Scope == RegisteredBandLookupScope.AllTime ? "alltime" : "season";
-    public string WindowId => Scope == RegisteredBandLookupScope.AllTime ? "alltime" : HistoryReconstructor.GetSeasonPrefix(Season);
+    public (string SongId, string Scope, int Season, string WindowId) ProgressKey =>
+        (SongId, ProgressScope, Season, WindowId);
 }
 
 internal sealed record RegisteredBandLookupResult(IReadOnlyList<BandLeaderboardEntry> Entries)
@@ -233,12 +251,33 @@ public sealed class RegisteredBandProcessingOrchestrator
             registeredBand.BandType,
             registeredBand.TeamKey);
         var checkedKeys = checkedProgress
-            .Select(static row => (row.SongId, row.Scope, row.Season))
+            .Select(static row => (
+                row.SongId,
+                row.Scope,
+                row.Season,
+                WindowId: RegisteredBandLookupIdentity.ResolveWindowId(
+                    row.Scope,
+                    row.Season,
+                    row.WindowId)))
             .ToHashSet();
-        var entriesFound = checkedProgress.Count(static row => row.EntryFound);
+        var currentIntentKeys = allIntents
+            .Select(static intent => intent.ProgressKey)
+            .ToHashSet();
+        var matchedProgress = checkedProgress
+            .Where(row => currentIntentKeys.Contains((
+                row.SongId,
+                row.Scope,
+                row.Season,
+                RegisteredBandLookupIdentity.ResolveWindowId(
+                    row.Scope,
+                    row.Season,
+                    row.WindowId))))
+            .ToList();
+        var matchedCheckedCount = matchedProgress.Count;
+        var entriesFound = matchedProgress.Count(static row => row.EntryFound);
 
         var pendingIntents = allIntents
-            .Where(intent => !checkedKeys.Contains((intent.SongId, intent.ProgressScope, intent.Season)))
+            .Where(intent => !checkedKeys.Contains(intent.ProgressKey))
             .ToList();
 
         var maxLookups = _options.RegisteredBandProcessingMaxLookupsPerBand;
@@ -249,13 +288,13 @@ public sealed class RegisteredBandProcessingOrchestrator
 
         if (pendingIntents.Count == 0)
         {
-            if (checkedProgress.Count >= allIntents.Count)
+            if (matchedCheckedCount >= allIntents.Count)
             {
                 _metaDb.CompleteRegisteredBandProcessing(
                     registeredBand.SourceId,
                     registeredBand.BandType,
                     registeredBand.TeamKey,
-                    checkedProgress.Count,
+                    matchedCheckedCount,
                     entriesFound);
             }
 
@@ -340,10 +379,11 @@ public sealed class RegisteredBandProcessingOrchestrator
                 intent.SongId,
                 intent.ProgressScope,
                 intent.Season,
-                found);
+                found,
+                intent.WindowId);
 
             lookupsChecked++;
-            var totalChecked = checkedProgress.Count + lookupsChecked;
+            var totalChecked = matchedCheckedCount + lookupsChecked;
             _metaDb.UpdateRegisteredBandProcessingProgress(
                 registeredBand.SourceId,
                 registeredBand.BandType,
@@ -375,20 +415,30 @@ public sealed class RegisteredBandProcessingOrchestrator
         IReadOnlyList<SeasonWindowInfo> seasonWindows)
     {
         var distinctSongIds = songIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        var seasons = seasonWindows
-            .Select(static window => window.SeasonNumber)
-            .Where(static season => season > 0)
-            .Distinct()
-            .OrderDescending()
+        var windows = seasonWindows
+            .Where(static window => window.SeasonNumber > 0)
+            .GroupBy(static window => window.SeasonNumber)
+            .Select(static group =>
+                group.LastOrDefault(static window => !string.IsNullOrWhiteSpace(window.WindowId))
+                ?? group.Last())
+            .OrderByDescending(static window => window.SeasonNumber)
             .ToList();
 
-        var intents = new List<RegisteredBandLookupIntent>(distinctSongIds.Count * (1 + seasons.Count));
+        var intents = new List<RegisteredBandLookupIntent>(distinctSongIds.Count * (1 + windows.Count));
         foreach (var songId in distinctSongIds)
-            intents.Add(new RegisteredBandLookupIntent(songId, RegisteredBandLookupScope.AllTime, 0));
+            intents.Add(new RegisteredBandLookupIntent(
+                songId,
+                RegisteredBandLookupScope.AllTime,
+                0,
+                "alltime"));
 
-        foreach (var season in seasons)
+        foreach (var window in windows)
         foreach (var songId in distinctSongIds)
-            intents.Add(new RegisteredBandLookupIntent(songId, RegisteredBandLookupScope.Season, season));
+            intents.Add(new RegisteredBandLookupIntent(
+                songId,
+                RegisteredBandLookupScope.Season,
+                window.SeasonNumber,
+                HistoryReconstructor.GetSeasonLookupId(window)));
 
         return intents;
     }

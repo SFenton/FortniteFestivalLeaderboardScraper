@@ -259,6 +259,66 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         Assert.Equal(FirstSeenSeasonCalculator.CurrentVersion, all["song1"].CalculationVersion);
     }
 
+    [Fact]
+    public async Task CalculateAsync_V2RolloverMiss_RetriesWithExactDiscoveredWindow()
+    {
+        const string windowId = "season_15_competitive";
+        var scraper = Substitute.For<ILeaderboardQuerier>();
+        scraper.LookupSeasonalAsync(
+            "song1",
+            "Solo_Guitar",
+            windowId,
+            "caller",
+            "token",
+            "caller",
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>())
+            .Returns((LeaderboardEntry?)null);
+        var calculator = new FirstSeenSeasonCalculator(
+            scraper,
+            _persistence,
+            _progress,
+            _log);
+        var service = CreateServiceWithSongs([MakeSong("song1")]);
+        _metaDb.Db.UpsertFirstSeenSeason(
+            "song1",
+            null,
+            null,
+            15,
+            "not_found_in_any_season(1_probes)",
+            calculationVersion: 2);
+        var windows = new[]
+        {
+            new SeasonWindowInfo
+            {
+                SeasonNumber = 15,
+                EventId = "season15-event",
+                WindowId = windowId,
+            },
+        };
+
+        var result = await calculator.CalculateAsync(
+            service,
+            "token",
+            "caller",
+            _pool,
+            authoritativeSeasonWindows: windows);
+
+        Assert.Equal(1, result);
+        var stored = _metaDb.Db.GetAllFirstSeenSeasons()["song1"];
+        Assert.Equal(15, stored.FirstSeenSeason);
+        Assert.Equal(FirstSeenSeasonCalculator.CurrentVersion, stored.CalculationVersion);
+        await scraper.Received(1).LookupSeasonalAsync(
+            "song1",
+            "Solo_Guitar",
+            windowId,
+            "caller",
+            "token",
+            "caller",
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>());
+    }
+
     // ─── Idempotent re-run: no extra API calls ──────────
 
     [Fact]

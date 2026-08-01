@@ -123,6 +123,11 @@ instrument maximum that is still one season behind, and that exact seasonal
 lookup must finish successfully before the scope is marked complete. Nonblank
 discovered window IDs are sent unchanged; conventional `seasonNNN` lookup IDs
 are used only for synthetic rows whose persisted window ID is blank.
+FirstSeenSeason discovery now precedes probing and calculation version `3`
+retries version `2` rollover misses. Registered-band discovery/targeted
+progress stores the exact lookup ID so an ID change reopens that season.
+Legacy history reconstruction likewise remains pending when any required
+window is missing or its lookup fails.
 
 The worker emits `Registered-user refresh coverage (before|after)` with
 `expectedScopes`, `checkedScopes`, `missingScopes`, `oldestCheckedAtUtc`,

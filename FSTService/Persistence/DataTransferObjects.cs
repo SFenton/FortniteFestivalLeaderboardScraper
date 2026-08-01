@@ -158,14 +158,16 @@ public sealed record RegisteredBandLookupProgressInfo(
     string SongId,
     string Scope,
     int Season,
-    bool EntryFound);
+    bool EntryFound,
+    string WindowId);
 
 public sealed record RegisteredPlayerBandDiscoveryProgressInfo(
     string SongId,
     string BandType,
     string Scope,
     int Season,
-    bool EntryFound);
+    bool EntryFound,
+    string WindowId);
 
 /// <summary>
 /// DTO for a discovered season window.

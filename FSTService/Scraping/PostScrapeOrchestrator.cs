@@ -1850,9 +1850,28 @@ public sealed class PostScrapeOrchestrator
                 var firstSeenToken = await _tokenManager.GetAccessTokenAsync(ct);
                 if (firstSeenToken is not null)
                 {
+                    IReadOnlyList<SeasonWindowInfo> firstSeenSeasonWindows;
+                    try
+                    {
+                        firstSeenSeasonWindows = await _historyReconstructor.DiscoverSeasonWindowsAsync(
+                            firstSeenToken,
+                            _tokenManager.AccountId!,
+                            ct);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _log.LogWarning(
+                            ex,
+                            "Season window discovery failed before FirstSeenSeason. Using stored windows.");
+                        firstSeenSeasonWindows = _persistence.Meta.GetSeasonWindows();
+                    }
+
+                    if (firstSeenSeasonWindows.Count == 0)
+                        firstSeenSeasonWindows = _persistence.Meta.GetSeasonWindows();
+
                     var firstSeenCount = await _firstSeenCalculator.CalculateAsync(
                         service, firstSeenToken, _tokenManager.AccountId!,
-                        _pool, ct);
+                        _pool, ct, firstSeenSeasonWindows);
                     if (firstSeenCount > 0)
                         _log.LogInformation("Calculated FirstSeenSeason for {Count} song(s).", firstSeenCount);
                     _progress.CompleteBranch("first_seen", "complete",

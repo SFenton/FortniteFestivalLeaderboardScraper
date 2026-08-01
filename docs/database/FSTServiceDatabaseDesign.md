@@ -329,7 +329,7 @@ marker exists on a legacy row).
 | `account_names` | Durable source/cache of Epic identity | Worker resolver; API/search readers | Refreshable, but historical account IDs remain stable |
 | `registered_users`, `registered_bands` | Durable source | API activity/registration and worker consumers | Activity-based retention must preserve idempotent claims |
 | `registered_user_refresh_scope_progress` | Durable recurring-refresh work state | `PostScrapeOrchestrator`, `CyclicalSongMachine`, `MetaDatabase` | One latest successful checkpoint per `(song_id, instrument)` with `status`, `checked_at`, nullable positive `scrape_id`, and explicit `scrape`/`phase_only` provenance; the small partial `checked_at` index supports fairness/coverage reads |
-| `registered_band_processing_status`, `registered_band_processing_progress`, `registered_player_band_discovery_progress` | Durable work state | Registration/backfill workers | Resume/idempotency state; prune only completed stale work |
+| `registered_band_processing_status`, `registered_band_processing_progress`, `registered_player_band_discovery_progress` | Durable work state | Registration/backfill workers | Resume/idempotency state includes exact seasonal `window_id`; a changed/noncanonical ID invalidates the prior season checkpoint without changing the compact primary key |
 | `backfill_status`, `backfill_progress`, `history_recon_status`, `history_recon_progress`, `deep_scrape_queue` | Durable work state | Worker queues/orchestrators | Preserve failed/incomplete work for replay |
 | `user_sessions`, `epic_user_tokens` | Security-sensitive durable state | Authentication subsystem | Never include values in logs, reports, fixtures, or exports; restore with access controls |
 
@@ -374,6 +374,21 @@ lookup ID; only synthetic blank-window rows fall back to the conventional
 `seasonNNN` prefix. A rollover window `N` therefore cannot be replaced by an
 instrument maximum of `N-1` or a reconstructed prefix; the exact discovered
 season `N` lookup must succeed before the scope callback can checkpoint.
+
+The enrichment branch resolves/persists authoritative windows before
+FirstSeenSeason probes and passes those rows directly to
+`FirstSeenSeasonCalculator`. Calculation version `3` invalidates version `2`
+results so rollover misses latched under reconstructed `seasonNNN` IDs are
+retried with exact discovered IDs. Registered-band targeted processing and
+registered-player band discovery carry the same exact ID through lookup
+intents and durable progress; legacy blank progress resolves to its
+conventional ID, while a newly discovered noncanonical ID forces a recheck.
+
+The legacy `HistoryReconstructor.ReconstructAccountAsync` path also resolves
+blank synthetic windows through `GetSeasonLookupId`. Missing windows or failed
+required seasonal calls leave the song/instrument unprocessed and the account
+history status in error for retry; partial required coverage is never marked
+complete.
 
 The worker logs bounded before/after coverage over only the current charted
 songs and nine solo instruments: expected scopes, checked scopes, missing

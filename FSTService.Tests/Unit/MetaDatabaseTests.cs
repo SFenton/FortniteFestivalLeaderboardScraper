@@ -2658,8 +2658,8 @@ public sealed class MetaDatabaseTests : IDisposable
         var progress = Db.GetCheckedRegisteredPlayerBandDiscoveryLookups("acct1");
 
         Assert.Equal(2, progress.Count);
-        Assert.Contains(progress, row => row.SongId == "song-a" && row.BandType == "Band_Duets" && row.Scope == "alltime" && row.Season == 0 && row.EntryFound);
-        Assert.Contains(progress, row => row.SongId == "song-a" && row.BandType == "Band_Trios" && row.Scope == "season" && row.Season == 14 && !row.EntryFound);
+        Assert.Contains(progress, row => row.SongId == "song-a" && row.BandType == "Band_Duets" && row.Scope == "alltime" && row.Season == 0 && row.WindowId == "alltime" && row.EntryFound);
+        Assert.Contains(progress, row => row.SongId == "song-a" && row.BandType == "Band_Trios" && row.Scope == "season" && row.Season == 14 && row.WindowId == "season014" && !row.EntryFound);
         Assert.Empty(Db.GetCheckedRegisteredPlayerBandDiscoveryLookups("acct2"));
     }
 
@@ -2677,6 +2677,7 @@ public sealed class MetaDatabaseTests : IDisposable
         var progress = Db.GetCheckedRegisteredBandLookups("web-band-tracker", "Band_Duets", "acct1:acct2");
         Assert.Single(progress);
         Assert.True(progress[0].EntryFound);
+        Assert.Equal("alltime", progress[0].WindowId);
 
         var inProgress = Db.GetRegisteredBandProcessingStatus("web-band-tracker", "Band_Duets", "acct1:acct2");
         Assert.Equal("in_progress", inProgress?.Status);
