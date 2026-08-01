@@ -160,22 +160,10 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
 
     private void InsertScrapeLog(long scrapeId, bool completed)
     {
-        using var conn = _metaFixture.DataSource.OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO scrape_log (id, started_at, completed_at, status)
-            VALUES (
-                @scrapeId,
-                now(),
-                CASE WHEN @completed THEN now() ELSE NULL END,
-                CASE WHEN @completed THEN 'completed' ELSE 'running' END)
-            ON CONFLICT (id) DO UPDATE SET
-                completed_at = EXCLUDED.completed_at,
-                status = EXCLUDED.status
-            """;
-        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
-        cmd.Parameters.AddWithValue("completed", completed);
-        cmd.ExecuteNonQuery();
+        ScrapeRunTestHelper.EnsureAllocated(
+            _metaFixture.DataSource,
+            scrapeId,
+            completed);
     }
 
     private void DeleteScrapeLog(long scrapeId)
@@ -183,7 +171,7 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         using var conn = _metaFixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "DELETE FROM scrape_log WHERE id = @scrapeId";
-        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
         cmd.ExecuteNonQuery();
     }
 
@@ -999,7 +987,6 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
     {
         using var glp = CreatePersistence(SnapshotReuseFeatures());
         InsertScrapeLog(42, completed: true);
-        InsertScrapeLog(43, completed: false);
         var expectedPairs = new[]
         {
             ("song_changed", "Solo_Guitar"),
@@ -1041,6 +1028,7 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
             42,
             promoteCachedResponses: false,
             expectedPublishedScopeCount: 1);
+        InsertScrapeLog(43, completed: false);
 
         var changedEntries = new[]
         {

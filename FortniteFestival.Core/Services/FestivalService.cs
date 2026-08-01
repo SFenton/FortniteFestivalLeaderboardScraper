@@ -474,7 +474,14 @@ namespace FortniteFestival.Core.Services
                     && !safetyMergeApplied;
                 if (!isExact)
                 {
-                    _songCatalogBaselineTrusted = false;
+                    // A blocked bulk eviction leaves the persisted exact
+                    // baseline authoritative. Keep applying the threshold to
+                    // every repeated partial response. Parse/duplicate
+                    // failures are different: they may have applied an
+                    // incomplete provider mutation, so that in-memory
+                    // baseline is no longer trusted.
+                    if (!safetyMergeApplied)
+                        _songCatalogBaselineTrusted = false;
                     if (failureReason == null)
                     {
                         failureReason =

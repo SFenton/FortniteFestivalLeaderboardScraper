@@ -125,6 +125,8 @@ Resume-only post-processing skips provider refresh and reloads the resumed
 scrape's immutable publication catalog for song lists, requests, and expected
 scopes. Bulk-removal protection applies only to a trusted exact baseline; a
 complete provider response replaces reconstructed/inexact legacy state.
+Rejected bulk-removal responses leave that trusted baseline/token intact, so
+identical consecutive partial responses remain rejected.
 
 Improvement notifications can be recovered for the already-published scrape
 without starting a full scrape:

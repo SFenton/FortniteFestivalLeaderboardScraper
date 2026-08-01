@@ -30,15 +30,10 @@ public sealed class InstrumentDatabaseTests : IDisposable
 
     private void InsertScrape(long scrapeId)
     {
-        using var conn = _fixture.DataSource.OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO scrape_log (id, started_at, completed_at)
-            VALUES (@scrapeId, now(), now())
-            ON CONFLICT (id) DO NOTHING
-            """;
-        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
-        cmd.ExecuteNonQuery();
+        ScrapeRunTestHelper.EnsureAllocated(
+            _fixture.DataSource,
+            scrapeId,
+            completed: true);
     }
 
     private void InsertSnapshot(long snapshotId, string songId, string accountId, int score)
@@ -1959,13 +1954,13 @@ public sealed class InstrumentDatabaseTests : IDisposable
 
     private void SetPublicationState(int publishedScrapeId, bool publicReadsFrozen)
     {
+        ScrapeRunTestHelper.EnsureAllocated(
+            _fixture.DataSource,
+            publishedScrapeId,
+            completed: true);
         using var conn = _fixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO scrape_log (id, started_at, completed_at)
-            VALUES (@publishedScrapeId, @now, @now)
-            ON CONFLICT (id) DO NOTHING;
-
             INSERT INTO scrape_publication_state
             (id, published_scrape_id, published_at, public_reads_frozen, public_reads_frozen_at, public_reads_frozen_reason, updated_at)
             VALUES (TRUE, @publishedScrapeId, @now, @publicReadsFrozen, CASE WHEN @publicReadsFrozen THEN @now ELSE NULL END, CASE WHEN @publicReadsFrozen THEN 'publish' ELSE NULL END, @now)

@@ -438,6 +438,8 @@ CATALOG-1 is an additive storage foundation, not a public read cutover.
 | In-process concurrency | One semaphore covers fetch, merge, snapshot, and persistence, preventing concurrent shop/service/worker refreshes from mutating an exact capture before token return | Accepted |
 | Resume catalog pin | Resume-only phases skip provider refresh and load the resumed scrape's exact publication catalog for service songs, request construction, and expected scope-source pairs | Accepted |
 | Baseline trust | The 10% stale guard protects only trusted exact baselines; complete provider responses replace reconstructed/inexact legacy baselines regardless of stale percentage | Accepted |
+| Repeated partials | A rejected >10% eviction retains the last exact baseline/token, so consecutive identical partial responses remain rejected and cannot later persist a truncated exact catalog | Accepted |
+| Test fixture parity | Scrape-backed persistence/export/projection/retention fixtures allocate through `StartScrapeRun`, retaining exact catalog generations and bindings instead of bypassing production invariants with direct `scrape_log` inserts | Accepted |
 | Publication cut | The worker explicitly persists the exact catalog it will consume; `ScrapeOrchestrator` verifies the token, and allocation copies only the same exact version/hash into `publication_song_catalog` | Accepted |
 | Immutability | Publication validates but never rewrites the catalog snapshot; subsequent live syncs cannot change an allocated generation | Accepted |
 | Bootstrap | Legacy-column reconstruction is labeled inexact and remains `building`; existing unproven ready bindings are downgraded, and only a fresh provider capture can make a new working binding ready | Accepted |
@@ -450,11 +452,12 @@ No production schema, process, worker, or endpoint was changed as part of this
 code phase. Deployment and live scrape/publication parity remain separate
 promotion gates. Code validation passed `175/175` targeted Release tests plus
 the `FSTService` Release build. The review-blocker repair expands that proof to
-`314/314` targeted Release tests covering provider fixtures/restart fidelity,
+`466/466` targeted Release tests covering provider fixtures/restart fidelity,
 original-schema migration, rollback-writer invalidation, cross-process locking,
 token races, failed/safety-merged provider refresh rejection, catalog
 consumers, initialization image-save isolation, concurrent sync serialization,
-resume catalog drift, untrusted legacy replacement, and feature defaults.
+resume catalog drift, untrusted legacy replacement, consecutive partial
+responses, production-shaped scrape fixture allocation, and feature defaults.
 
 ## LOGICAL-RETIRE decision and execution package (2026-07-25 to 2026-07-28)
 

@@ -312,6 +312,40 @@ public sealed class FestivalPersistenceTests : IDisposable
     }
 
     [Fact]
+    public async Task Consecutive_partial_responses_never_downgrade_trusted_guard()
+    {
+        var persistence = new FestivalPersistence(_dataSource);
+        var loadedSongs = Enumerable.Range(1, 20)
+            .Select(index =>
+                CreateSong($"song-{index:D2}", $"Song {index:D2}"))
+            .ToArray();
+        var originalToken =
+            await persistence.SaveSongsVersionedAsync(loadedSongs);
+        var partialPayload = CreateProviderPayload(1, "Partial");
+        var service = new FestivalService(
+            persistence,
+            CreateProviderClient(
+                System.Net.HttpStatusCode.OK,
+                partialPayload));
+        SetSongs(service, loadedSongs, trustedBaseline: true);
+
+        var first = await service.SyncSongsWithResultAsync();
+        var second = await service.SyncSongsWithResultAsync();
+
+        Assert.False(first.IsExact);
+        Assert.True(first.SafetyMergeApplied);
+        Assert.Null(first.PersistenceToken);
+        Assert.False(second.IsExact);
+        Assert.True(second.SafetyMergeApplied);
+        Assert.Null(second.PersistenceToken);
+        Assert.Equal(20, service.Songs.Count);
+        Assert.Equal(originalToken.ContentHash, ReadLiveCatalogHash());
+        var live = ReadLiveCatalogState();
+        Assert.True(live.IsExact);
+        Assert.Equal("provider_exact", live.SourceKind);
+    }
+
+    [Fact]
     public async Task Failed_initialization_uses_local_save_without_exact_persistence()
     {
         var persistence = new TrackingInitializationPersistence(

@@ -31,13 +31,22 @@ public sealed class PlayerDataExportPublishedSourceTests : IDisposable
     [Fact]
     public void Published_solo_export_uses_per_scope_source_instead_of_active_snapshot()
     {
+        ScrapeRunTestHelper.EnsureAllocated(
+            _fixture.DataSource,
+            40,
+            completed: true);
+        ScrapeRunTestHelper.EnsureAllocated(
+            _fixture.DataSource,
+            41,
+            completed: true);
+        ScrapeRunTestHelper.EnsureAllocated(
+            _fixture.DataSource,
+            42,
+            completed: true);
         using (var conn = _fixture.DataSource.OpenConnection())
         using (var cmd = conn.CreateCommand())
         {
             cmd.CommandText = """
-                INSERT INTO scrape_log (id, started_at, completed_at)
-                VALUES (40, now(), now()), (41, now(), now()), (42, now(), now());
-
                 INSERT INTO songs (song_id, title, artist, lead_diff)
                 VALUES
                     ('song_1', 'Song 1', 'Artist', 3),

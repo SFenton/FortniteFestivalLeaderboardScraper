@@ -130,13 +130,26 @@ public sealed class DatabaseRetentionMaintenanceServiceTests : IDisposable
 
     private void SeedSnapshotRetentionCandidate()
     {
+        var now = DateTime.UtcNow;
+        ScrapeRunTestHelper.EnsureAllocated(
+            _fixture.DataSource,
+            100,
+            completed: true,
+            startedAtUtc: now.AddDays(-3),
+            completedAtUtc: now.AddDays(-3));
+        ScrapeRunTestHelper.EnsureAllocated(
+            _fixture.DataSource,
+            101,
+            completed: true,
+            startedAtUtc: now.AddDays(-2),
+            completedAtUtc: now.AddDays(-2));
+        ScrapeRunTestHelper.EnsureAllocated(
+            _fixture.DataSource,
+            102,
+            completed: true,
+            startedAtUtc: now.AddDays(-1),
+            completedAtUtc: now.AddDays(-1));
         Execute("""
-            INSERT INTO scrape_log (id, started_at, completed_at)
-            VALUES
-                (100, now() - INTERVAL '3 days', now() - INTERVAL '3 days'),
-                (101, now() - INTERVAL '2 days', now() - INTERVAL '2 days'),
-                (102, now() - INTERVAL '1 day', now() - INTERVAL '1 day');
-
             INSERT INTO leaderboard_snapshot_state (song_id, instrument, active_snapshot_id, scrape_id, is_finalized, updated_at)
             VALUES ('song-a', 'Solo_Guitar', 102, 102, true, now());
 
@@ -178,6 +191,34 @@ public sealed class DatabaseRetentionMaintenanceServiceTests : IDisposable
 
     private void SeedMetadataRetentionRows()
     {
+        ScrapeRunTestHelper.EnsureAllocated(
+            _fixture.DataSource,
+            80,
+            completed: true,
+            startedAtUtc: new DateTime(
+                2024, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+            completedAtUtc: new DateTime(
+                2024, 1, 1, 1, 0, 0, DateTimeKind.Utc));
+        ScrapeRunTestHelper.EnsureAllocated(
+            _fixture.DataSource,
+            81,
+            completed: true,
+            startedAtUtc: new DateTime(
+                2024, 1, 2, 0, 0, 0, DateTimeKind.Utc),
+            completedAtUtc: new DateTime(
+                2024, 1, 2, 1, 0, 0, DateTimeKind.Utc));
+        ScrapeRunTestHelper.EnsureAllocated(
+            _fixture.DataSource,
+            82,
+            completed: false,
+            startedAtUtc: new DateTime(
+                2024, 1, 3, 0, 0, 0, DateTimeKind.Utc));
+        ScrapeRunTestHelper.EnsureAllocated(
+            _fixture.DataSource,
+            83,
+            completed: false,
+            startedAtUtc: new DateTime(
+                2024, 1, 4, 0, 0, 0, DateTimeKind.Utc));
         Execute("""
             CREATE TABLE IF NOT EXISTS band_rank_history_jobs (
                 job_id                 BIGSERIAL PRIMARY KEY,
@@ -199,13 +240,6 @@ public sealed class DatabaseRetentionMaintenanceServiceTests : IDisposable
                 updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
                 PRIMARY KEY (job_id, ranking_scope, combo_id)
             );
-
-            INSERT INTO scrape_log (id, started_at, completed_at)
-            VALUES
-                (80, TIMESTAMPTZ '2024-01-01T00:00:00Z', TIMESTAMPTZ '2024-01-01T01:00:00Z'),
-                (81, TIMESTAMPTZ '2024-01-02T00:00:00Z', TIMESTAMPTZ '2024-01-02T01:00:00Z'),
-                (82, TIMESTAMPTZ '2024-01-03T00:00:00Z', NULL),
-                (83, TIMESTAMPTZ '2024-01-04T00:00:00Z', NULL);
 
             INSERT INTO rank_history_snapshot_stats (instrument, snapshot_date, snapshot_taken_at, total_charted_songs, ranked_account_count)
             VALUES
