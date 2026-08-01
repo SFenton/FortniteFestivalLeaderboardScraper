@@ -399,9 +399,9 @@ required seasonal calls leave the song/instrument unprocessed and the account
 history status in error for retry; partial required coverage is never marked
 complete. The batched `SongProcessingMachine` path uses strict lookup failure
 propagation for history users and marks a pair only after every required
-seasonal lookup succeeds. Version `1` plus the SHA-256 exact-window fingerprint
-invalidates legacy completed status/progress and prevents a changed window map
-from reusing stale pair completion.
+seasonal lookup succeeds. Version `2` plus the SHA-256 exact-window fingerprint
+invalidates version `1` completed status/progress and prevents a changed window
+map from reusing stale pair completion.
 
 Multi-season history users do not mark progress in the fast core pass. Their
 full season set, including the current season, runs coherently in the history
@@ -415,6 +415,9 @@ Backfill and history resume sets are independent on each work item:
 history. Versioned status, counter, failure, pair-upsert, and completion writes
 all require the active identity, with the progress upsert locking that status
 row. Late work from fingerprint F1 therefore cannot overwrite an activated F2.
+Coverage gates enumerate the exact current catalog song/instrument pairs:
+obsolete removed-song rows are ignored, while any missing current pair blocks
+backfill or history completion.
 
 History/backfill durability adds a monotonic admission revision to that
 identity. Staged seasonal score-history rows and history pair progress promote
@@ -432,7 +435,8 @@ authoritative FirstSeen metadata pending.
 `song_first_seen_season` rows bind calculation version to the authoritative
 window fingerprint and maximum season. A null/not-found result is reopened
 whenever either changes, preventing an older terminal miss from surviving a
-new season window.
+new season window. Null/not-found rows also remain retryable within the same
+binding so a newly released catalog song does not wait for another rollover.
 
 The worker logs bounded before/after coverage over only the current charted
 songs and nine solo instruments: expected scopes, checked scopes, missing

@@ -693,7 +693,7 @@ public sealed class PostScrapeOrchestrator
             {
                 _persistence.Meta.QueueRivalsRecompute(user.AccountId);
 
-                if (!TryCompleteHistoryRecon(user, expectedHistoryPairs))
+                if (!TryCompleteHistoryRecon(user, chartedSongIds))
                 {
                     throw new InvalidOperationException(
                         $"Deferred registration history reconstruction remained incomplete for {user.AccountId}.");
@@ -2200,15 +2200,19 @@ public sealed class PostScrapeOrchestrator
 
     private bool TryCompleteHistoryRecon(
         UserWorkItem user,
-        int expectedHistoryPairs)
+        IReadOnlyCollection<string> chartedSongIds)
     {
         var processed = _persistence.Meta.GetProcessedHistoryReconPairs(
             user.AccountId,
             user.HistoryReconstructionVersion,
             user.HistoryWindowFingerprint,
             user.HistoryAdmissionRevision);
-        if (processed.Count < expectedHistoryPairs)
+        if (!BackfillOrchestrator.HasExpectedPairCoverage(
+                chartedSongIds,
+                processed))
         {
+            var expectedHistoryPairs =
+                chartedSongIds.Count * GlobalLeaderboardScraper.AllInstruments.Count;
             _persistence.Meta.FailHistoryRecon(
                 user.AccountId,
                 $"History reconstruction incomplete: {processed.Count}/{expectedHistoryPairs} song/instrument pairs.",
@@ -2236,7 +2240,7 @@ public sealed class PostScrapeOrchestrator
                     instrument => (SongId: songId, Instrument: instrument)))
             .ToHashSet();
         var checkedPairs = _persistence.Meta.GetCheckedBackfillPairs(accountId);
-        if (!checkedPairs.SetEquals(expected))
+        if (!expected.IsSubsetOf(checkedPairs))
         {
             _persistence.Meta.DeferBackfill(
                 accountId,

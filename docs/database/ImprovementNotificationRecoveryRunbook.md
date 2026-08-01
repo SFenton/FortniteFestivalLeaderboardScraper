@@ -146,6 +146,10 @@ or stale-token rejection discards both. Backfill completion requires exact
 all-time pair coverage independently of history completion. Legacy history
 queries through the authoritative current season, and FirstSeen rows reopen
 when the authoritative window fingerprint or maximum season advances.
+History reconstruction version `2` invalidates version `1`, and current
+catalog pair enumeration ignores obsolete removed-song progress without
+allowing counts to hide a missing current pair. FirstSeen null/not-found rows
+retry even when the window binding is unchanged.
 
 The worker emits `Registered-user refresh coverage (before|after)` with
 `expectedScopes`, `checkedScopes`, `missingScopes`, `oldestCheckedAtUtc`,

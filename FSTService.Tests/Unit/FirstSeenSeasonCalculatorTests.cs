@@ -509,6 +509,60 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
             Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task CalculateAsync_NotFoundRow_RetriesWithinSameWindowBinding()
+    {
+        var windows = new[]
+        {
+            new SeasonWindowInfo
+            {
+                SeasonNumber = 15,
+                WindowId = "season_15_competitive",
+                SourceKind = "event_api",
+                IsFreshAuthoritative = true,
+            },
+        };
+        var fingerprint = HistoryReconstructor.ComputeWindowFingerprint(windows);
+        _metaDb.Db.UpsertFirstSeenSeason(
+            "song1",
+            null,
+            null,
+            15,
+            "not_found_in_any_season",
+            FirstSeenSeasonCalculator.CurrentVersion,
+            fingerprint,
+            maxSeason: 15);
+        var scraper = Substitute.For<ILeaderboardQuerier>();
+        scraper.LookupSeasonalAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            "season_15_competitive",
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>())
+            .Returns((LeaderboardEntry?)null);
+        var calculator = new FirstSeenSeasonCalculator(
+            scraper,
+            _persistence,
+            _progress,
+            _log);
+
+        var result = await calculator.CalculateAsync(
+            CreateServiceWithSongs([MakeSong("song1")]),
+            "token",
+            "caller",
+            _pool,
+            authoritativeSeasonWindows: windows,
+            authoritativeDiscoveryFresh: true);
+
+        Assert.Equal(1, result);
+        Assert.Equal(
+            15,
+            _metaDb.Db.GetAllFirstSeenSeasons()["song1"].FirstSeenSeason);
+    }
+
     // ─── Idempotent re-run: no extra API calls ──────────
 
     [Fact]

@@ -476,7 +476,7 @@ public class DatabaseInitializerTests : IDisposable
                     10,
                     10,
                     @now,
-                    0,
+                    1,
                     '');
                 INSERT INTO history_recon_progress (
                     account_id,
@@ -492,7 +492,7 @@ public class DatabaseInitializerTests : IDisposable
                     'Solo_Guitar',
                     1,
                     @now,
-                    0,
+                    1,
                     '');
                 """;
             cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
@@ -513,7 +513,7 @@ public class DatabaseInitializerTests : IDisposable
         Assert.Equal("pending", reader.GetString(0));
         Assert.Equal(0, reader.GetInt32(1));
         Assert.True(reader.IsDBNull(2));
-        Assert.Equal(0, reader.GetInt32(3));
+        Assert.Equal(1, reader.GetInt32(3));
     }
 
     [Fact]

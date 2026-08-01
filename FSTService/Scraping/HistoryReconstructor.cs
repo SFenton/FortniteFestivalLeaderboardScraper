@@ -29,7 +29,7 @@ namespace FSTService.Scraping;
 /// </summary>
 public class HistoryReconstructor
 {
-    public const int CurrentReconstructionVersion = 1;
+    public const int CurrentReconstructionVersion = 2;
 
     private static readonly TimeSpan DefaultSeasonWindowDiscoveryTimeout = TimeSpan.FromSeconds(45);
 

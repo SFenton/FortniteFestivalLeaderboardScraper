@@ -337,6 +337,24 @@ public class CyclicalSongMachineTests
         Assert.False(attachment.IsFullyComplete);
     }
 
+    [Fact]
+    public void ExpectedPairCoverage_IgnoresObsoleteRowsButRejectsMissingCurrentPair()
+    {
+        var completed = GlobalLeaderboardScraper.AllInstruments
+            .Select(instrument => (SongId: "song-current", Instrument: instrument))
+            .ToHashSet();
+        completed.Add(("song-removed", "Solo_Guitar"));
+
+        Assert.True(BackfillOrchestrator.HasExpectedPairCoverage(
+            ["song-current"],
+            completed));
+
+        completed.Remove(("song-current", "Solo_Guitar"));
+        Assert.False(BackfillOrchestrator.HasExpectedPairCoverage(
+            ["song-current"],
+            completed));
+    }
+
     // ── Helper: invoke private static DeduplicateUsers via reflection ──
 
     private static CyclicalSongMachine.MachineAttachment CreateAttachment(

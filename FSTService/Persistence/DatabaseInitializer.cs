@@ -1230,9 +1230,9 @@ public static class DatabaseInitializer
             seasons_queried = 0,
             history_entries_found = 0,
             completed_at = NULL,
-            error_message = 'history_reconstruction_v1_required'
+            error_message = 'history_reconstruction_v2_required'
         WHERE status = 'complete'
-          AND reconstruction_version < 1;
+          AND reconstruction_version < 2;
 
         CREATE INDEX IF NOT EXISTS ix_hr_status
             ON history_recon_status (status);

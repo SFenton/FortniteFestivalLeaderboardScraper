@@ -248,7 +248,7 @@ public sealed class BackfillOrchestrator
 
                     if (user.Purposes.HasFlag(WorkPurpose.HistoryRecon))
                     {
-                        if (TryCompleteHistoryRecon(user, expectedHistoryPairs))
+                        if (TryCompleteHistoryRecon(user, chartedSongIds))
                             _ = _notifications.NotifyHistoryReconCompleteAsync(user.AccountId);
                     }
                     else
@@ -477,7 +477,7 @@ public sealed class BackfillOrchestrator
                     if (!user.Purposes.HasFlag(WorkPurpose.HistoryRecon))
                         continue;
 
-                    if (TryCompleteHistoryRecon(user, expectedHistoryPairs))
+                    if (TryCompleteHistoryRecon(user, chartedSongIds))
                         _ = _notifications.NotifyHistoryReconCompleteAsync(user.AccountId);
                 }
                 catch (Exception ex)
@@ -640,7 +640,7 @@ public sealed class BackfillOrchestrator
             {
                 try
                 {
-                    if (TryCompleteHistoryRecon(user, expectedHistoryPairs))
+                    if (TryCompleteHistoryRecon(user, chartedSongIds))
                         _ = _notifications.NotifyHistoryReconCompleteAsync(user.AccountId);
                 }
                 catch (Exception ex)
@@ -658,7 +658,7 @@ public sealed class BackfillOrchestrator
 
     private bool TryCompleteHistoryRecon(
         UserWorkItem user,
-        int expectedHistoryPairs)
+        IReadOnlyCollection<string> chartedSongIds)
     {
         if (user.HistoryReconstructionVersion <= 0
             || string.IsNullOrWhiteSpace(user.HistoryWindowFingerprint))
@@ -677,8 +677,10 @@ public sealed class BackfillOrchestrator
             user.HistoryReconstructionVersion,
             user.HistoryWindowFingerprint,
             user.HistoryAdmissionRevision);
-        if (processed.Count < expectedHistoryPairs)
+        if (!HasExpectedPairCoverage(chartedSongIds, processed))
         {
+            var expectedHistoryPairs =
+                chartedSongIds.Count * GlobalLeaderboardScraper.AllInstruments.Count;
             _persistence.Meta.FailHistoryRecon(
                 user.AccountId,
                 $"History reconstruction incomplete: {processed.Count}/{expectedHistoryPairs} song/instrument pairs.",
@@ -712,7 +714,7 @@ public sealed class BackfillOrchestrator
                     instrument => (SongId: songId, Instrument: instrument)))
             .ToHashSet();
         var checkedPairs = _persistence.Meta.GetCheckedBackfillPairs(accountId);
-        if (!checkedPairs.SetEquals(expected))
+        if (!expected.IsSubsetOf(checkedPairs))
         {
             _persistence.Meta.EnqueueBackfill(accountId, expected.Count);
             return false;
@@ -721,6 +723,20 @@ public sealed class BackfillOrchestrator
         _persistence.Meta.CompleteBackfill(
             accountId,
             rankingsPending: true);
+        return true;
+    }
+
+    internal static bool HasExpectedPairCoverage(
+        IReadOnlyCollection<string> chartedSongIds,
+        IReadOnlySet<(string SongId, string Instrument)> completedPairs)
+    {
+        foreach (var songId in chartedSongIds)
+        foreach (var instrument in GlobalLeaderboardScraper.AllInstruments)
+        {
+            if (!completedPairs.Contains((songId, instrument)))
+                return false;
+        }
+
         return true;
     }
 

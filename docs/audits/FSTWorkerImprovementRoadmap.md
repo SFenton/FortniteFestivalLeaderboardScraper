@@ -1441,6 +1441,9 @@ Use one token owner or an atomic, locked, permission-restricted shared store.
 - Fence atomic score/progress promotion with a monotonic admission revision,
   require exact all-time coverage before backfill completion, and bind
   FirstSeen terminal results to the authoritative window fingerprint/max.
+- Bump history semantics to version 2, compare explicit current-catalog pairs
+  while ignoring obsolete rows, and keep FirstSeen misses retryable without
+  waiting for a season rollover.
 - Keep registration backfill, history reconstruction, and solo-projection
   dirty-scope persistence outside this recurring-refresh ledger.
 
