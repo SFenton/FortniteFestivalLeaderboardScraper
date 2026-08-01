@@ -7,6 +7,7 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Npgsql;
 using NSubstitute;
 
 namespace FSTService.Tests.Unit;
@@ -180,7 +181,7 @@ public class DatabaseInitializerTests : IDisposable
                 EXISTS (
                     SELECT 1
                     FROM pg_constraint
-                    WHERE conname = 'ck_registered_user_refresh_scope_provenance'
+                    WHERE conname = 'ck_registered_user_refresh_scope_provenance_v2'
                       AND conrelid =
                         'registered_user_refresh_scope_progress'::regclass
                       AND convalidated
@@ -209,7 +210,7 @@ public class DatabaseInitializerTests : IDisposable
         {
             cmd.CommandText = """
                 ALTER TABLE registered_user_refresh_scope_progress
-                    DROP CONSTRAINT ck_registered_user_refresh_scope_provenance;
+                    DROP CONSTRAINT ck_registered_user_refresh_scope_provenance_v2;
                 ALTER TABLE registered_user_refresh_scope_progress
                     DROP COLUMN provenance;
                 ALTER TABLE registered_user_refresh_scope_progress
@@ -256,6 +257,102 @@ public class DatabaseInitializerTests : IDisposable
         Assert.Equal(1272, reader.GetInt64(0));
         Assert.Equal("scrape", reader.GetString(1));
         Assert.Equal("YES", reader.GetString(2));
+    }
+
+    [Fact]
+    public async Task EnsureSchemaAsync_replaces_prior_provenance_constraint_and_enforces_null_semantics()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using (var conn = _metaFixture.DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                ALTER TABLE registered_user_refresh_scope_progress
+                    DROP CONSTRAINT ck_registered_user_refresh_scope_provenance_v2;
+                ALTER TABLE registered_user_refresh_scope_progress
+                    ADD CONSTRAINT ck_registered_user_refresh_scope_provenance
+                    CHECK (
+                        (provenance = 'scrape' AND scrape_id > 0)
+                        OR (provenance = 'phase_only' AND scrape_id IS NULL));
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using var verifyConn = _metaFixture.DataSource.OpenConnection();
+        using (var verifyConstraint = verifyConn.CreateCommand())
+        {
+            verifyConstraint.CommandText = """
+                SELECT
+                    NOT EXISTS (
+                        SELECT 1
+                        FROM pg_constraint
+                        WHERE conname = 'ck_registered_user_refresh_scope_provenance'
+                          AND conrelid =
+                            'registered_user_refresh_scope_progress'::regclass),
+                    EXISTS (
+                        SELECT 1
+                        FROM pg_constraint
+                        WHERE conname = 'ck_registered_user_refresh_scope_provenance_v2'
+                          AND conrelid =
+                            'registered_user_refresh_scope_progress'::regclass
+                          AND convalidated)
+                """;
+            using var reader = verifyConstraint.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.True(reader.GetBoolean(0));
+            Assert.True(reader.GetBoolean(1));
+        }
+
+        using (var invalid = verifyConn.CreateCommand())
+        {
+            invalid.CommandText = """
+                INSERT INTO registered_user_refresh_scope_progress (
+                    song_id,
+                    instrument,
+                    status,
+                    checked_at,
+                    scrape_id,
+                    provenance)
+                VALUES (
+                    'invalid-null-scrape',
+                    'Solo_Guitar',
+                    'complete',
+                    @now,
+                    NULL,
+                    'scrape')
+                """;
+            invalid.Parameters.AddWithValue("now", DateTime.UtcNow);
+
+            var exception = Assert.Throws<PostgresException>(
+                () => invalid.ExecuteNonQuery());
+            Assert.Equal(PostgresErrorCodes.CheckViolation, exception.SqlState);
+        }
+
+        using (var valid = verifyConn.CreateCommand())
+        {
+            valid.CommandText = """
+                INSERT INTO registered_user_refresh_scope_progress (
+                    song_id,
+                    instrument,
+                    status,
+                    checked_at,
+                    scrape_id,
+                    provenance)
+                VALUES (
+                    'valid-null-phase-only',
+                    'Solo_Guitar',
+                    'complete',
+                    @now,
+                    NULL,
+                    'phase_only')
+                """;
+            valid.Parameters.AddWithValue("now", DateTime.UtcNow);
+            Assert.Equal(1, valid.ExecuteNonQuery());
+        }
     }
 
     [Fact]

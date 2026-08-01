@@ -976,9 +976,11 @@ public static class DatabaseInitializer
             PRIMARY KEY (song_id, instrument),
             CONSTRAINT ck_registered_user_refresh_scope_status
                 CHECK (status IN ('complete')),
-            CONSTRAINT ck_registered_user_refresh_scope_provenance
+            CONSTRAINT ck_registered_user_refresh_scope_provenance_v2
                 CHECK (
-                    (provenance = 'scrape' AND scrape_id > 0)
+                    (provenance = 'scrape'
+                        AND scrape_id IS NOT NULL
+                        AND scrape_id > 0)
                     OR (provenance = 'phase_only' AND scrape_id IS NULL))
         );
 
@@ -1006,13 +1008,15 @@ public static class DatabaseInitializer
             IF NOT EXISTS (
                 SELECT 1
                 FROM pg_constraint
-                WHERE conname = 'ck_registered_user_refresh_scope_provenance'
+                WHERE conname = 'ck_registered_user_refresh_scope_provenance_v2'
                   AND conrelid = 'registered_user_refresh_scope_progress'::regclass
             ) THEN
                 ALTER TABLE registered_user_refresh_scope_progress
-                    ADD CONSTRAINT ck_registered_user_refresh_scope_provenance
+                    ADD CONSTRAINT ck_registered_user_refresh_scope_provenance_v2
                     CHECK (
-                        (provenance = 'scrape' AND scrape_id > 0)
+                        (provenance = 'scrape'
+                            AND scrape_id IS NOT NULL
+                            AND scrape_id > 0)
                         OR (provenance = 'phase_only' AND scrape_id IS NULL))
                     NOT VALID;
             END IF;
@@ -1024,12 +1028,26 @@ public static class DatabaseInitializer
             IF EXISTS (
                 SELECT 1
                 FROM pg_constraint
-                WHERE conname = 'ck_registered_user_refresh_scope_provenance'
+                WHERE conname = 'ck_registered_user_refresh_scope_provenance_v2'
                   AND conrelid = 'registered_user_refresh_scope_progress'::regclass
                   AND NOT convalidated
             ) THEN
                 ALTER TABLE registered_user_refresh_scope_progress
-                    VALIDATE CONSTRAINT ck_registered_user_refresh_scope_provenance;
+                    VALIDATE CONSTRAINT ck_registered_user_refresh_scope_provenance_v2;
+            END IF;
+        END
+        $$;
+
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'ck_registered_user_refresh_scope_provenance'
+                  AND conrelid = 'registered_user_refresh_scope_progress'::regclass
+            ) THEN
+                ALTER TABLE registered_user_refresh_scope_progress
+                    DROP CONSTRAINT ck_registered_user_refresh_scope_provenance;
             END IF;
         END
         $$;
