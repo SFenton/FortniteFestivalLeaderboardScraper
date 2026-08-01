@@ -37,6 +37,7 @@ function prefetchBandsGroup(queryClient: QueryClient, accountId: string, group: 
     queryKey: queryKeys.playerBandsList(accountId, group, PREFETCH_PAGE, PREFETCH_PAGE_SIZE),
     queryFn: ({ signal }) => api.getPlayerBandsList(accountId, group, PREFETCH_PAGE, PREFETCH_PAGE_SIZE, { signal }),
     staleTime: PREFETCH_STALE_TIME_MS,
+    retry: false,
   });
 }
 
