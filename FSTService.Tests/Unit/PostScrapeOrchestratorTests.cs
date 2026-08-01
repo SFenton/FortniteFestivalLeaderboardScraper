@@ -468,10 +468,11 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task RefreshRegisteredUsers_SeasonRollover_QueriesDiscoveredSeasonBeforeCheckpoint()
+    public async Task RefreshRegisteredUsers_SeasonRollover_UsesNoncanonicalWindowBeforeCheckpoint()
     {
         const int instrumentMaxSeason = 14;
         const int discoveredSeason = 15;
+        const string discoveredWindowId = "season_15_competitive";
         const string songId = "song-rollover";
         const string accountId = "user-rollover";
 
@@ -531,7 +532,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             true)
             .Returns(call =>
             {
-                Assert.Equal("season015", call.ArgAt<string>(2));
+                Assert.Equal(discoveredWindowId, call.ArgAt<string>(2));
                 if (call.ArgAt<string>(1) == "Solo_Guitar")
                 {
                     guitarSeasonLookupStarted.TrySetResult(true);
@@ -570,7 +571,7 @@ public class PostScrapeOrchestratorTests : IDisposable
                 {
                     SeasonNumber = discoveredSeason,
                     EventId = "season015_event",
-                    WindowId = "season015",
+                    WindowId = discoveredWindowId,
                 },
             ]);
 
@@ -629,7 +630,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         await querier.Received(1).LookupMultipleAccountSessionsAsync(
             songId,
             "Solo_Guitar",
-            "season015",
+            discoveredWindowId,
             Arg.Is<IReadOnlyList<string>>(accounts =>
                 accounts.Count == 1 && accounts[0] == accountId),
             "test-access-token",
@@ -640,7 +641,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         await querier.DidNotReceive().LookupMultipleAccountSessionsAsync(
             songId,
             "Solo_Guitar",
-            "season014",
+            "season015",
             Arg.Any<IReadOnlyList<string>>(),
             Arg.Any<string>(),
             Arg.Any<string>(),

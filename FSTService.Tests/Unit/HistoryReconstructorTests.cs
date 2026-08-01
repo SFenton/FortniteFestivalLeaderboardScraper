@@ -36,6 +36,25 @@ public class HistoryReconstructorTests
         Assert.Equal(expected, HistoryReconstructor.GetSeasonPrefix(season));
     }
 
+    [Fact]
+    public void GetSeasonLookupId_prefers_discovered_window_and_falls_back_for_synthetic_rows()
+    {
+        Assert.Equal(
+            "season_15_competitive",
+            HistoryReconstructor.GetSeasonLookupId(new SeasonWindowInfo
+            {
+                SeasonNumber = 15,
+                WindowId = "season_15_competitive",
+            }));
+        Assert.Equal(
+            "season015",
+            HistoryReconstructor.GetSeasonLookupId(new SeasonWindowInfo
+            {
+                SeasonNumber = 15,
+                WindowId = "",
+            }));
+    }
+
     [Theory]
     [InlineData("Season1", 1)]
     [InlineData("Season10", 10)]

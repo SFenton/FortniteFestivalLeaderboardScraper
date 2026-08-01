@@ -120,7 +120,9 @@ Supported phase-only `SoloRefreshUsers` execution stores a null scrape ID with
 `provenance='phase_only'`; it must not fail or synthesize a scrape ledger row.
 At season rollover, the discovered highest window is authoritative over an
 instrument maximum that is still one season behind, and that exact seasonal
-lookup must finish successfully before the scope is marked complete.
+lookup must finish successfully before the scope is marked complete. Nonblank
+discovered window IDs are sent unchanged; conventional `seasonNNN` lookup IDs
+are used only for synthetic rows whose persisted window ID is blank.
 
 The worker emits `Registered-user refresh coverage (before|after)` with
 `expectedScopes`, `checkedScopes`, `missingScopes`, `oldestCheckedAtUtc`,

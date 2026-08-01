@@ -425,9 +425,9 @@ public class CyclicalSongMachine
         // ── Stamp join index on attachments that haven't been stamped yet ──
         StampJoinIndices(startIndex: 0);
 
-        var seasonPrefixMap = new Dictionary<int, string>();
+        var seasonLookupIdMap = new Dictionary<int, string>();
         foreach (var w in seasonWindows)
-            seasonPrefixMap[w.SeasonNumber] = HistoryReconstructor.GetSeasonPrefix(w.SeasonNumber);
+            seasonLookupIdMap[w.SeasonNumber] = HistoryReconstructor.GetSeasonLookupId(w);
 
         var instruments = GlobalLeaderboardScraper.AllInstruments;
 
@@ -452,9 +452,9 @@ public class CyclicalSongMachine
         var coreSongs = DetermineSongsToProcess(songList);
 
         // Season prefix map limited to current season only
-        var coreSeasonPrefixMap = new Dictionary<int, string>();
-        if (seasonPrefixMap.TryGetValue(currentSeason, out var curPrefix))
-            coreSeasonPrefixMap[currentSeason] = curPrefix;
+        var coreSeasonLookupIdMap = new Dictionary<int, string>();
+        if (seasonLookupIdMap.TryGetValue(currentSeason, out var currentLookupId))
+            coreSeasonLookupIdMap[currentSeason] = currentLookupId;
 
         if (OwnsProgress)
         {
@@ -470,7 +470,7 @@ public class CyclicalSongMachine
         await RunSongPassAsync(
             coreSongs, instruments,
             songId => GatherCoreUsersForSong(songId, currentSeason),
-            coreSeasonPrefixMap, accessToken, callerAccountId, opts,
+            coreSeasonLookupIdMap, accessToken, callerAccountId, opts,
             reportScopeCompletion: true, ct);
         MarkCycleProgress();
 
@@ -499,10 +499,10 @@ public class CyclicalSongMachine
             }
         }
 
-        if (anyNeedHistorical && seasonPrefixMap.Count > 1)
+        if (anyNeedHistorical && seasonLookupIdMap.Count > 1)
         {
-            var historicalSeasonPrefixMap = new Dictionary<int, string>(seasonPrefixMap);
-            historicalSeasonPrefixMap.Remove(currentSeason);
+            var historicalSeasonLookupIdMap = new Dictionary<int, string>(seasonLookupIdMap);
+            historicalSeasonLookupIdMap.Remove(currentSeason);
 
             // Historical pass always covers all songs (backfill users need full coverage)
             var historicalSongs = new List<SongCycleEntry>();
@@ -519,12 +519,12 @@ public class CyclicalSongMachine
 
             _log.LogInformation(
                 "CyclicalSongMachine historical pass: {Songs} songs, {Seasons} seasons, {Users} backfill users.",
-                historicalSongs.Count, historicalSeasonPrefixMap.Count, historicalUserCount);
+                historicalSongs.Count, historicalSeasonLookupIdMap.Count, historicalUserCount);
 
             await RunSongPassAsync(
                 historicalSongs, instruments,
                 songId => GatherHistoricalUsersForSong(songId, currentSeason),
-                historicalSeasonPrefixMap, accessToken, callerAccountId, opts,
+                historicalSeasonLookupIdMap, accessToken, callerAccountId, opts,
                 reportScopeCompletion: false, ct);
             MarkCycleProgress();
 
@@ -556,7 +556,7 @@ public class CyclicalSongMachine
         IReadOnlyList<SongCycleEntry> songsToProcess,
         IReadOnlyList<string> instruments,
         Func<string, SongPassWork> gatherUsers,
-        IReadOnlyDictionary<int, string> seasonPrefixMap,
+        IReadOnlyDictionary<int, string> seasonLookupIdMap,
         string accessToken,
         string callerAccountId,
         ScraperOptions opts,
@@ -613,7 +613,7 @@ public class CyclicalSongMachine
                         }
 
                         var result = await _inner.ProcessSongForUsersAsync(
-                            songEntry.SongId, instruments, users, seasonPrefixMap,
+                            songEntry.SongId, instruments, users, seasonLookupIdMap,
                             accessToken, callerAccountId, _pool, highPriority,
                             opts.LookupBatchSize, work.EpicTrafficKind, passCt,
                             reportScopeCompletion
@@ -650,13 +650,13 @@ public class CyclicalSongMachine
                             {
                                 _syncTracker.ReportHistoryItem(
                                     user.AccountId,
-                                    seasonsQueried: seasonPrefixMap.Count,
+                                    seasonsQueried: seasonLookupIdMap.Count,
                                     entriesFound: result.SessionsInserted);
                             }
                             else if (user.Purposes.HasFlag(WorkPurpose.PostScrape)
                                      && !_syncTracker.IsActiveHigherPriority(user.AccountId))
                             {
-                                int units = instruments.Count * ((user.AllTimeNeeded ? 1 : 0) + seasonPrefixMap.Count);
+                                int units = instruments.Count * ((user.AllTimeNeeded ? 1 : 0) + seasonLookupIdMap.Count);
                                 _syncTracker.ReportPostScrapeWork(
                                     user.AccountId,
                                     completedUnits: units,

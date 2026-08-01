@@ -81,10 +81,10 @@ public class SongProcessingMachine
 
         var instruments = GlobalLeaderboardScraper.AllInstruments;
 
-        // Build season prefix lookup
-        var seasonPrefixMap = new Dictionary<int, string>();
+        // Build exact seasonal lookup IDs from discovered windows.
+        var seasonLookupIdMap = new Dictionary<int, string>();
         foreach (var w in seasonWindows)
-            seasonPrefixMap[w.SeasonNumber] = HistoryReconstructor.GetSeasonPrefix(w.SeasonNumber);
+            seasonLookupIdMap[w.SeasonNumber] = HistoryReconstructor.GetSeasonLookupId(w);
 
         int totalUpdated = 0;
         int totalSessions = 0;
@@ -121,7 +121,7 @@ public class SongProcessingMachine
             async (songId, iterCt) =>
         {
             var result = await ProcessSongAsync(
-                songId, instruments, users, seasonPrefixMap,
+                songId, instruments, users, seasonLookupIdMap,
                     accessToken, callerAccountId, pool, isHighPriority, batchSize, trafficKind, iterCt);
 
             Interlocked.Add(ref totalUpdated, result.EntriesUpdated);
@@ -138,7 +138,7 @@ public class SongProcessingMachine
             {
                 _syncTracker.ReportHistoryItem(
                     user.AccountId,
-                    seasonsQueried: seasonPrefixMap.Count,
+                    seasonsQueried: seasonLookupIdMap.Count,
                     entriesFound: result.SessionsInserted);
             }
 

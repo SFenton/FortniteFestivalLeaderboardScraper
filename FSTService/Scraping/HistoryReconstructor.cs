@@ -260,6 +260,15 @@ public class HistoryReconstructor
     }
 
     /// <summary>
+    /// Resolve the exact seasonal API lookup ID. Discovered nonblank window IDs
+    /// are authoritative; synthetic rows use the conventional season prefix.
+    /// </summary>
+    internal static string GetSeasonLookupId(SeasonWindowInfo window)
+        => string.IsNullOrWhiteSpace(window.WindowId)
+            ? GetSeasonPrefix(window.SeasonNumber)
+            : window.WindowId;
+
+    /// <summary>
     /// Probe for season windows by convention using FNLookup event ID format:
     /// Season 1 = "evergreen", Season 2+ = "season00N".
     /// Uses a known charted song and a known instrument to probe.

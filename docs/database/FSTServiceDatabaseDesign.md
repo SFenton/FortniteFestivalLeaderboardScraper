@@ -368,10 +368,12 @@ provenance. Full scrapes store their positive scrape ID. Supported phase-only
 PostScrape chooses one authoritative current season as the maximum of the
 discovered/persisted season windows and the instrument-observation fallback,
 then passes that exact value in its attachment options. The cyclical machine
-merges supplied windows and uses the declared value for core clamping and
-prefix selection. A rollover window `N` therefore cannot be replaced by an
-instrument maximum of `N-1`; the exact season `N` lookup must succeed before
-the scope callback can checkpoint.
+merges supplied windows and uses the declared value for core clamping.
+Each nonblank discovered `SeasonWindowInfo.WindowId` is the authoritative
+lookup ID; only synthetic blank-window rows fall back to the conventional
+`seasonNNN` prefix. A rollover window `N` therefore cannot be replaced by an
+instrument maximum of `N-1` or a reconstructed prefix; the exact discovered
+season `N` lookup must succeed before the scope callback can checkpoint.
 
 The worker logs bounded before/after coverage over only the current charted
 songs and nine solo instruments: expected scopes, checked scopes, missing
