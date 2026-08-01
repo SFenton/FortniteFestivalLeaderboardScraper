@@ -220,20 +220,28 @@ internal static class SongCatalogSnapshotBuilder
         if (intensity is null)
             return null;
 
-        var node = new JsonObject
-        {
-            ["pb"] = intensity.pb,
-            ["pd"] = intensity.pd,
-            ["vl"] = intensity.vl,
-            ["pg"] = intensity.pg,
-            ["gr"] = intensity.gr,
-            ["ds"] = intensity.ds,
-            ["ba"] = intensity.ba,
-            ["bd"] = intensity.bd,
-        };
+        var node = new JsonObject();
+        AddIfPresent(node, intensity, "pb", intensity.pb);
+        AddIfPresent(node, intensity, "pd", intensity.pd);
+        AddIfPresent(node, intensity, "vl", intensity.vl);
+        AddIfPresent(node, intensity, "pg", intensity.pg);
+        AddIfPresent(node, intensity, "gr", intensity.gr);
+        AddIfPresent(node, intensity, "ds", intensity.ds);
+        AddIfPresent(node, intensity, "ba", intensity.ba);
+        AddIfPresent(node, intensity, "bd", intensity.bd);
         Add(node, "_type", intensity._type);
         AddExtensions(node, intensity.providerFields);
         return node;
+    }
+
+    private static void AddIfPresent(
+        JsonObject target,
+        In intensity,
+        string name,
+        int value)
+    {
+        if (intensity.HasProviderProperty(name))
+            target[name] = value;
     }
 
     private static void Add(JsonObject target, string name, string? value)

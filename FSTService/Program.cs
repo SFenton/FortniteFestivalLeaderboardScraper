@@ -513,7 +513,7 @@ builder.Services.AddHttpClient(nameof(HistoryReconstructor))
 
 // ─── Path Generation ────────────────────────────────────────
 
-builder.Services.AddHttpClient<PathGenerator>()
+builder.Services.AddHttpClient("PathGeneration")
     .ConfigureHttpClient(c => c.Timeout = System.Threading.Timeout.InfiniteTimeSpan)
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
     {
@@ -522,6 +522,15 @@ builder.Services.AddHttpClient<PathGenerator>()
         PooledConnectionLifetime = TimeSpan.FromMinutes(5),
         AutomaticDecompression = System.Net.DecompressionMethods.All,
     });
+builder.Services.AddSingleton<PathGenerationCoordinator>(sp =>
+    new PathGenerationCoordinator(
+        sp.GetRequiredService<IHttpClientFactory>().CreateClient("PathGeneration"),
+        sp.GetRequiredService<IPathDataStore>(),
+        sp.GetRequiredService<SongsCacheService>(),
+        sp.GetRequiredService<IOptions<ScraperOptions>>(),
+        sp.GetRequiredService<ScrapeProgressTracker>(),
+        sp.GetRequiredService<ILogger<PathGenerationCoordinator>>()));
+builder.Services.AddSingleton<PathArtifactResolver>();
 
 // Core FestivalService — song catalog sync. Shared with API for /api/songs.
 builder.Services.AddSingleton<FestivalService>(sp =>

@@ -251,6 +251,11 @@ public sealed class SongsCacheService
                     },
                     populationTiers = songPopTiers,
                     pathsGeneratedAt = ms?.GeneratedAt,
+                    pathArtifactGenerationId = ms?.ArtifactGenerationId,
+                    pathExpectedInstruments = ms?.ExpectedInstruments,
+                    pathChoptVersion = ms?.CHOptVersion,
+                    pathChoptBinarySha256 = ms?.CHOptBinarySha256,
+                    pathGenerationProfile = ms?.GenerationProfile,
                 };
             })
             .ToList();

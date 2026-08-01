@@ -16,16 +16,20 @@ const FADE_MS = TRANSITION_MS;
 
 interface PathImageProps {
   songId: string;
+  generationId?: string;
   instrument: InstrumentKey;
   difficulty: Difficulty;
 }
 
-export function PathImage({ songId, instrument, difficulty }: PathImageProps) {
+export function PathImage({ songId, generationId, instrument, difficulty }: PathImageProps) {
   const { t } = useTranslation();
   const [phase, setPhase] = useState<ImagePhase>(ImagePhase.Spinner);
   const [displaySrc, setDisplaySrc] = useState('');
   const [error, setError] = useState(false);
-  const targetSrc = `/api/paths/${songId}/${instrument}/${difficulty}`;
+  const generationQuery = generationId
+    ? `?generationId=${encodeURIComponent(generationId)}`
+    : '';
+  const targetSrc = `/api/paths/${songId}/${instrument}/${difficulty}${generationQuery}`;
   const pendingRef = useRef(targetSrc);
   const imgRef = useRef<HTMLImageElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);

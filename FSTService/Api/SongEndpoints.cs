@@ -136,36 +136,15 @@ public static partial class ApiEndpoints
             string songId,
             string instrument,
             string difficulty,
-            IOptions<ScraperOptions> options) =>
-        {
-            // Validate instrument name to prevent path traversal
-            var allowedInstruments = new HashSet<string>(StringComparer.Ordinal)
-            {
-                "Solo_Guitar", "Solo_Bass", "Solo_Drums",
-                "Solo_Vocals", "Solo_PeripheralGuitar", "Solo_PeripheralBass"
-            };
-            if (!allowedInstruments.Contains(instrument))
-                return Results.BadRequest(new { error = "Invalid instrument name." });
-
-            var allowedDifficulties = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "easy", "medium", "hard", "expert"
-            };
-            if (!allowedDifficulties.Contains(difficulty))
-                return Results.BadRequest(new { error = "Invalid difficulty. Use easy, medium, hard, or expert." });
-
-            var dataDir = Path.GetFullPath(options.Value.DataDirectory);
-            var imagePath = Path.Combine(dataDir, "paths", songId, instrument, $"{difficulty.ToLowerInvariant()}.png");
-
-            // Ensure the resolved path is still within the data directory
-            if (!Path.GetFullPath(imagePath).StartsWith(dataDir, StringComparison.OrdinalIgnoreCase))
-                return Results.BadRequest(new { error = "Invalid path." });
-
-            if (!File.Exists(imagePath))
-                return Results.NotFound(new { error = "Path image not yet generated for this song/instrument/difficulty." });
-
-            return Results.File(imagePath, "image/png");
-        })
+            string? generationId,
+            PathArtifactResolver resolver) =>
+            GetPathArtifactResult(
+                songId,
+                instrument,
+                difficulty,
+                "png",
+                generationId,
+                resolver))
         .WithTags("Paths")
         .RequireRateLimiting("public");
 
@@ -174,35 +153,63 @@ public static partial class ApiEndpoints
             string songId,
             string instrument,
             string difficulty,
-            IOptions<ScraperOptions> options) =>
-        {
-            var allowedInstruments = new HashSet<string>(StringComparer.Ordinal)
-            {
-                "Solo_Guitar", "Solo_Bass", "Solo_Drums",
-                "Solo_Vocals", "Solo_PeripheralGuitar", "Solo_PeripheralBass"
-            };
-            if (!allowedInstruments.Contains(instrument))
-                return Results.BadRequest(new { error = "Invalid instrument name." });
-
-            var allowedDifficulties = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "easy", "medium", "hard", "expert"
-            };
-            if (!allowedDifficulties.Contains(difficulty))
-                return Results.BadRequest(new { error = "Invalid difficulty. Use easy, medium, hard, or expert." });
-
-            var dataDir = Path.GetFullPath(options.Value.DataDirectory);
-            var jsonPath = Path.Combine(dataDir, "paths", songId, instrument, $"{difficulty.ToLowerInvariant()}.json");
-
-            if (!Path.GetFullPath(jsonPath).StartsWith(dataDir, StringComparison.OrdinalIgnoreCase))
-                return Results.BadRequest(new { error = "Invalid path." });
-
-            if (!File.Exists(jsonPath))
-                return Results.NotFound(new { error = "Path data not yet generated for this song/instrument/difficulty." });
-
-            return Results.File(jsonPath, "application/json");
-        })
+            string? generationId,
+            PathArtifactResolver resolver) =>
+            GetPathArtifactResult(
+                songId,
+                instrument,
+                difficulty,
+                "json",
+                generationId,
+                resolver))
         .WithTags("Paths")
         .RequireRateLimiting("public");
+    }
+
+    internal static IResult GetPathArtifactResult(
+        string songId,
+        string instrument,
+        string difficulty,
+        string extension,
+        string? generationId,
+        PathArtifactResolver resolver)
+    {
+        if (!PathGenerationInstruments.Definitions.Any(
+                definition => definition.Instrument == instrument))
+        {
+            return Results.BadRequest(new { error = "Invalid instrument name." });
+        }
+
+        if (!PathGenerationInstruments.Difficulties.Contains(
+                difficulty,
+                StringComparer.OrdinalIgnoreCase))
+        {
+            return Results.BadRequest(new
+            {
+                error = "Invalid difficulty. Use easy, medium, hard, or expert.",
+            });
+        }
+
+        var artifact = resolver.Resolve(
+            songId,
+            instrument,
+            difficulty,
+            extension,
+            generationId);
+        if (artifact is null)
+            return Results.BadRequest(new { error = "Invalid path." });
+        if (!File.Exists(artifact.FilePath))
+        {
+            return Results.NotFound(new
+            {
+                error = extension == "png"
+                    ? "Path image not yet generated for this song/instrument/difficulty."
+                    : "Path data not yet generated for this song/instrument/difficulty.",
+            });
+        }
+
+        return Results.File(
+            artifact.FilePath,
+            extension == "png" ? "image/png" : "application/json");
     }
 }

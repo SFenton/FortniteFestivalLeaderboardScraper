@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Reflection;
+using FortniteFestival.Core;
 using FortniteFestival.Core.Persistence;
 using FortniteFestival.Core.Services;
 using FSTService.Api;
@@ -117,9 +119,32 @@ public sealed class SongsCachePrimeTests
         Assert.Equal(0, season);
     }
 
+    [Fact]
+    public void BuildSongsJson_exposes_metadata_for_the_promoted_generation()
+    {
+        using var fx = new BuildSongsJsonFixture();
+        fx.AddSongWithPathMetadata("path-song", "generation-42");
+
+        var bytes = fx.Invoke();
+        using var document = JsonDocument.Parse(bytes);
+        var song = Assert.Single(document.RootElement.GetProperty("songs").EnumerateArray());
+
+        Assert.Equal("generation-42", song.GetProperty("pathArtifactGenerationId").GetString());
+        Assert.Equal(
+            ["Solo_Guitar"],
+            song.GetProperty("pathExpectedInstruments")
+                .EnumerateArray()
+                .Select(element => element.GetString()!)
+                .ToArray());
+        Assert.Equal("4.5.6", song.GetProperty("pathChoptVersion").GetString());
+        Assert.Equal(new string('c', 64), song.GetProperty("pathChoptBinarySha256").GetString());
+        Assert.Equal("profile-v3", song.GetProperty("pathGenerationProfile").GetString());
+    }
+
     private sealed class BuildSongsJsonFixture : IDisposable
     {
         private readonly InMemoryMetaDatabase _metaFixture = new();
+        private readonly Npgsql.NpgsqlDataSource _pathDataSource;
         public MetaDatabase MetaDb { get; }
         public GlobalLeaderboardPersistence Persistence { get; }
         public PathDataStore PathStore { get; }
@@ -138,7 +163,8 @@ public sealed class SongsCachePrimeTests
                 Options.Create(new FeatureOptions()));
             Persistence.Initialize();
 
-            PathStore = new PathDataStore(SharedPostgresContainer.CreateDatabase());
+            _pathDataSource = SharedPostgresContainer.CreateDatabase();
+            PathStore = new PathDataStore(_pathDataSource);
             Precomputer = new ScrapeTimePrecomputer(
                 Persistence, MetaDb, PathStore,
                 new ScrapeProgressTracker(),
@@ -170,17 +196,70 @@ public sealed class SongsCachePrimeTests
 
         public int InvokeAndReadCurrentSeason()
         {
-            var bytes = SongsCacheService.BuildSongsJson(
-                FestivalSvc, PathStore, MetaDb, Persistence, Precomputer,
-                new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            var bytes = Invoke();
             using var doc = JsonDocument.Parse(bytes);
             return doc.RootElement.GetProperty("currentSeason").GetInt32();
+        }
+
+        public byte[] Invoke()
+            => SongsCacheService.BuildSongsJson(
+                FestivalSvc,
+                PathStore,
+                MetaDb,
+                Persistence,
+                Precomputer,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        public void AddSongWithPathMetadata(
+            string songId,
+            string generationId)
+        {
+            using (var conn = _pathDataSource.OpenConnection())
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = """
+                    INSERT INTO songs (song_id, title, artist)
+                    VALUES (@songId, 'Path Song', 'Artist')
+                    """;
+                cmd.Parameters.AddWithValue("songId", songId);
+                cmd.ExecuteNonQuery();
+            }
+
+            PathStore.UpdateMaxScores(
+                songId,
+                new SongMaxScores
+                {
+                    MaxLeadScore = 123456,
+                    CHOptVersion = "4.5.6",
+                    CHOptBinarySha256 = new string('c', 64),
+                    GenerationProfile = "profile-v3",
+                    ArtifactGenerationId = generationId,
+                    ExpectedInstruments = ["Solo_Guitar"],
+                },
+                "dat-hash");
+
+            var flags = BindingFlags.NonPublic | BindingFlags.Instance;
+            var songsField = typeof(FestivalService).GetField("_songs", flags)!;
+            var dirtyField = typeof(FestivalService).GetField("_songsDirty", flags)!;
+            var songs = (Dictionary<string, Song>)songsField.GetValue(FestivalSvc)!;
+            songs[songId] = new Song
+            {
+                track = new Track
+                {
+                    su = songId,
+                    tt = "Path Song",
+                    an = "Artist",
+                    @in = new In { gr = 0 },
+                },
+            };
+            dirtyField.SetValue(FestivalSvc, true);
         }
 
         public void Dispose()
         {
             Persistence.Dispose();
             MetaDb.Dispose();
+            _pathDataSource.Dispose();
             _metaFixture.Dispose();
         }
     }

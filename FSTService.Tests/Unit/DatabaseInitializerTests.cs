@@ -140,6 +140,35 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public async Task EnsureSchemaAsync_creates_idempotent_path_generation_atomicity_schema()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT
+                to_regclass('public.path_generation_errors') IS NOT NULL,
+                COUNT(*) = 5
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'songs'
+              AND column_name = ANY(ARRAY[
+                  'chopt_binary_sha256',
+                  'path_generation_profile',
+                  'path_artifact_generation_id',
+                  'path_expected_instruments',
+                  'path_generation_revision'
+              ])
+            """;
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.True(reader.GetBoolean(0));
+        Assert.True(reader.GetBoolean(1));
+    }
+
+    [Fact]
     public async Task EnsureSchemaAsync_creates_idempotent_registered_user_refresh_scope_schema()
     {
         await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);

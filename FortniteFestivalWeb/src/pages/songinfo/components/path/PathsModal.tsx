@@ -102,11 +102,12 @@ function usePathsModalStyles() {
 type PathsModalProps = {
   visible: boolean;
   songId: string;
+  generationId?: string;
   sig?: string;
   onClose: () => void;
 };
 
-export default function PathsModal({ visible, songId, sig, onClose }: PathsModalProps) {
+export default function PathsModal({ visible, songId, generationId, sig, onClose }: PathsModalProps) {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
   const vvHeight = useVisualViewportHeight();
@@ -306,7 +307,7 @@ export default function PathsModal({ visible, songId, sig, onClose }: PathsModal
         {isMobile ? (
           <>
             {choptDisplay === 'text' && <PathDataHeader isMobile />}
-            <PathImage songId={songId} instrument={selected} difficulty={difficulty} displayMode={choptDisplay} isMobile columnOrder={columnOrder} />
+            <PathImage songId={songId} generationId={generationId} instrument={selected} difficulty={difficulty} displayMode={choptDisplay} isMobile columnOrder={columnOrder} />
             <div style={st.controls}>
               <div style={{ ...st.accordion, maxHeight: instOpen ? 160 : 0 }}>
                 <div style={{ ...st.accordionInner, paddingTop: 0, paddingBottom: Gap.md }}>
@@ -426,7 +427,7 @@ export default function PathsModal({ visible, songId, sig, onClose }: PathsModal
           </div>
         )}
         {!isMobile && choptDisplay === 'text' && <PathDataHeader isMobile={false} columnOrder={columnOrder} onColumnOrderChange={setColumnOrder} />}
-        {!isMobile && <PathImage songId={songId} instrument={selected} difficulty={difficulty} displayMode={choptDisplay} isMobile={false} columnOrder={columnOrder} />}
+        {!isMobile && <PathImage songId={songId} generationId={generationId} instrument={selected} difficulty={difficulty} displayMode={choptDisplay} isMobile={false} columnOrder={columnOrder} />}
       </div>
         {showUnavailableAlert && (
           <ConfirmAlert
@@ -460,15 +461,18 @@ const FADE_MS = 300;
 const MIN_SPINNER_MS = 400;
 const MIN_TEXT_SPINNER_MS = 500;
 
-function PathImage({ songId, instrument, difficulty, displayMode, isMobile, columnOrder }: { songId: string; instrument: InstrumentKey; difficulty: Difficulty; displayMode: ChoptDisplay; isMobile: boolean; columnOrder?: ColumnKey[] }) {
+function PathImage({ songId, generationId, instrument, difficulty, displayMode, isMobile, columnOrder }: { songId: string; generationId?: string; instrument: InstrumentKey; difficulty: Difficulty; displayMode: ChoptDisplay; isMobile: boolean; columnOrder?: ColumnKey[] }) {
   const { t } = useTranslation();
+  const generationQuery = generationId
+    ? `?generationId=${encodeURIComponent(generationId)}`
+    : '';
 
   // ── Image mode state ──
   const [phase, setPhase] = useState<Phase>('spinner');
   const [displaySrc, setDisplaySrc] = useState('');
   const [error, setError] = useState(false);
   const targetSrc = withCurrentPublicationId(
-    `/api/paths/${songId}/${instrument}/${difficulty}`,
+    `/api/paths/${songId}/${instrument}/${difficulty}${generationQuery}`,
   );
   const pendingRef = useRef(targetSrc);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -508,7 +512,7 @@ function PathImage({ songId, instrument, difficulty, displayMode, isMobile, colu
     textDataRef.current = null;
     const controller = new AbortController();
     fetchWithPublication(
-      `/api/paths/${songId}/${instrument}/${difficulty}/data`,
+      `/api/paths/${songId}/${instrument}/${difficulty}/data${generationQuery}`,
       { signal: controller.signal },
     )
       .then(res => {
@@ -526,7 +530,7 @@ function PathImage({ songId, instrument, difficulty, displayMode, isMobile, colu
       });
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayMode, songId, instrument, difficulty]);
+  }, [displayMode, songId, generationId, instrument, difficulty, generationQuery]);
 
   // ── Text mode: instrument/difficulty change while already in text mode ──
   const prevTextParams = useRef({ songId, instrument, difficulty });

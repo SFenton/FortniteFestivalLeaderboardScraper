@@ -71,11 +71,42 @@ public static class DatabaseInitializer
             dat_file_hash        TEXT,
             song_last_modified   TEXT,
             paths_generated_at   TIMESTAMPTZ,
-            chopt_version        TEXT
+            chopt_version        TEXT,
+            chopt_binary_sha256  TEXT,
+            path_generation_profile TEXT,
+            path_artifact_generation_id TEXT,
+            path_expected_instruments TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+            path_generation_revision BIGINT NOT NULL DEFAULT 0
         );
 
         ALTER TABLE songs
             ADD COLUMN IF NOT EXISTS provider_json JSONB;
+        ALTER TABLE songs
+            ADD COLUMN IF NOT EXISTS chopt_binary_sha256 TEXT;
+        ALTER TABLE songs
+            ADD COLUMN IF NOT EXISTS path_generation_profile TEXT;
+        ALTER TABLE songs
+            ADD COLUMN IF NOT EXISTS path_artifact_generation_id TEXT;
+        ALTER TABLE songs
+            ADD COLUMN IF NOT EXISTS path_expected_instruments TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
+        ALTER TABLE songs
+            ADD COLUMN IF NOT EXISTS path_generation_revision BIGINT NOT NULL DEFAULT 0;
+
+        CREATE TABLE IF NOT EXISTS path_generation_errors (
+            id                      BIGSERIAL PRIMARY KEY,
+            attempt_id              TEXT        NOT NULL,
+            song_id                 TEXT        NOT NULL,
+            dat_file_hash           TEXT,
+            chopt_version           TEXT,
+            chopt_binary_sha256     TEXT,
+            path_generation_profile TEXT,
+            expected_instruments    TEXT[]      NOT NULL DEFAULT ARRAY[]::TEXT[],
+            failure_stage           TEXT        NOT NULL,
+            instrument              TEXT,
+            difficulty              TEXT,
+            detail                  TEXT        NOT NULL CHECK (length(detail) <= 2048),
+            created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
 
         -- =====================================================================
         -- LEADERBOARD ENTRIES (partitioned by instrument)

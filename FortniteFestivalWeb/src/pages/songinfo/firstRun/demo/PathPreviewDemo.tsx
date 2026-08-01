@@ -31,12 +31,16 @@ export default function PathPreviewDemo() {
   const [selectedDiff, setSelectedDiff] = useState<Difficulty>('expert');
 
   // Pick a stable random demo song
-  const songId = useMemo(() => {
+  const demoSong = useMemo(() => {
     const demoSongs = songs.filter(s => s.artist?.includes('Epic Games') && s.songId);
     const pool = demoSongs.length > 0 ? demoSongs : songs;
     if (!pool.length) return null;
-    return pool[Math.floor(Math.random() * pool.length)]!.songId;
+    return pool[Math.floor(Math.random() * pool.length)]!;
   }, [songs]);
+  const songId = demoSong?.songId ?? null;
+  const generationQuery = demoSong?.pathArtifactGenerationId
+    ? `?generationId=${encodeURIComponent(demoSong.pathArtifactGenerationId)}`
+    : '';
 
   // Exact production ImagePhase state machine (mirrors PathImage.tsx)
   const [phase, setPhase] = useState<ImagePhase>(ImagePhase.Spinner);
@@ -47,7 +51,7 @@ export default function PathPreviewDemo() {
 
   const targetSrc = songId
     ? withCurrentPublicationId(
-      `/api/paths/${songId}/${selectedInst}/${selectedDiff}`,
+      `/api/paths/${songId}/${selectedInst}/${selectedDiff}${generationQuery}`,
     )
     : '';
 

@@ -7,18 +7,64 @@ namespace FortniteFestival.Core
 {
     public class In
     {
-        public int pb { get; set; }
-        public int pd { get; set; }
-        public int vl { get; set; }
-        public int pg { get; set; }
+        private readonly HashSet<string> _presentProviderProperties =
+            new(StringComparer.Ordinal);
+        private int _pb;
+        private int _pd;
+        private int _vl;
+        private int _pg;
+        private int _gr;
+        private int _ds;
+        private int _ba;
+        private int _bd;
+
+        public int pb
+        {
+            get => _pb;
+            set { _pb = value; _presentProviderProperties.Add(nameof(pb)); }
+        }
+        public int pd
+        {
+            get => _pd;
+            set { _pd = value; _presentProviderProperties.Add(nameof(pd)); }
+        }
+        public int vl
+        {
+            get => _vl;
+            set { _vl = value; _presentProviderProperties.Add(nameof(vl)); }
+        }
+        public int pg
+        {
+            get => _pg;
+            set { _pg = value; _presentProviderProperties.Add(nameof(pg)); }
+        }
         public string _type { get; set; }
-        public int gr { get; set; }
-        public int ds { get; set; }
-        public int ba { get; set; }
-        public int bd { get; set; } // pro vocals difficulty (may be absent; treat 0 as missing until normalized)
+        public int gr
+        {
+            get => _gr;
+            set { _gr = value; _presentProviderProperties.Add(nameof(gr)); }
+        }
+        public int ds
+        {
+            get => _ds;
+            set { _ds = value; _presentProviderProperties.Add(nameof(ds)); }
+        }
+        public int ba
+        {
+            get => _ba;
+            set { _ba = value; _presentProviderProperties.Add(nameof(ba)); }
+        }
+        public int bd
+        {
+            get => _bd;
+            set { _bd = value; _presentProviderProperties.Add(nameof(bd)); }
+        } // pro vocals difficulty (may be absent; treat 0 as missing until normalized)
 
         [JsonExtensionData]
         public Dictionary<string, JsonElement> providerFields { get; set; }
+
+        public bool HasProviderProperty(string propertyName)
+            => _presentProviderProperties.Contains(propertyName);
     }
 
     public class Track

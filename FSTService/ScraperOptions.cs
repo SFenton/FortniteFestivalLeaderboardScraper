@@ -360,6 +360,12 @@ public sealed class ScraperOptions
     public bool EnablePathGeneration { get; set; } = true;
 
     /// <summary>
+    /// Versioned identity for the CHOpt arguments and artifact contract.
+    /// Change this value whenever path-generation semantics change.
+    /// </summary>
+    public string PathGenerationProfile { get; set; } = "chopt-fnf-ew0-s20-json-png-v1";
+
+    /// <summary>
     /// Maximum pages to fetch per leaderboard (100 entries per page).
     /// Caps the number of tasks spawned per song/instrument, regardless of what Epic reports.
     /// Default 100 = top 10,000 entries. Set to 0 for unlimited.

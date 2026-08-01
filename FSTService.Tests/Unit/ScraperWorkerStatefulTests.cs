@@ -959,13 +959,13 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         {
             fakeChopt = Path.Combine(_tempDir, "fake_chopt.bat");
             File.WriteAllText(fakeChopt,
-                "@echo off\necho Total score: 99999\nset \"out=\"\n:p\nif \"%~1\"==\"\" goto d\nif \"%~1\"==\"-o\" set \"out=%~2\"\nshift\ngoto p\n:d\nif defined out echo PNG>\"%out%\"\n");
+                "@echo off\nif \"%~1\"==\"--version\" echo CHOpt 1.10.3& exit /b 0\nset \"out=\"\n:p\nif \"%~1\"==\"\" goto d\nif \"%~1\"==\"-o\" set \"out=%~2\"\nshift\ngoto p\n:d\nif defined out powershell -NoProfile -Command \"[IO.File]::WriteAllBytes('%out%', [byte[]](137,80,78,71,13,10,26,10,70,65,75,69))\"\necho {\"totalScore\":99999}\n");
         }
         else
         {
             fakeChopt = Path.Combine(_tempDir, "fake_chopt.sh");
             File.WriteAllText(fakeChopt,
-                "#!/bin/sh\necho 'Total score: 99999'\no=\"\"\nwhile [ \"$#\" -gt 0 ]; do case \"$1\" in -o) o=\"$2\"; shift ;; esac; shift; done\n[ -n \"$o\" ] && echo PNG > \"$o\"\n");
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'CHOpt 1.10.3'; exit 0; fi\no=\"\"\nwhile [ \"$#\" -gt 0 ]; do case \"$1\" in -o) o=\"$2\"; shift ;; esac; shift; done\n[ -n \"$o\" ] && printf '\\211PNG\\r\\n\\032\\nFAKE' > \"$o\"\necho '{\"totalScore\":99999}'\n");
             File.SetUnixFileMode(fakeChopt,
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
@@ -1042,10 +1042,10 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         await worker.TryGeneratePathsAsync(service, force: false, CancellationToken.None);
 
         // Verify path generation ran by checking the worker's PathDataStore via reflection
-        var state = store.GetPathGenerationState();
+        var state = store.GetPathGenerationStates();
         var allScores = store.GetAllMaxScores();
 
-        Assert.True(state.Count > 0, $"No dat hashes found — PathGenerator returned no results. Handler requests: {handler.Requests.Count}");
+        Assert.True(state.Count > 0, $"No dat hashes found — path generation returned no results. Handler requests: {handler.Requests.Count}");
         Assert.True(allScores.ContainsKey("testSong"), $"testSong not in max scores. Hashes: {string.Join(",", state.Keys)}");
         Assert.Equal(99999, allScores["testSong"].MaxLeadScore);
     }

@@ -7,7 +7,13 @@ namespace FSTService.Scraping;
 /// </summary>
 public interface IPathDataStore
 {
-    Dictionary<string, (string Hash, string? LastModified)> GetPathGenerationState();
+    Dictionary<string, PathGenerationState> GetPathGenerationStates();
+    PathGenerationState? GetPathGenerationState(string songId);
     Dictionary<string, SongMaxScores> GetAllMaxScores();
-    void UpdateMaxScores(string songId, SongMaxScores scores, string datFileHash, string? songLastModified = null);
+    Task<PathGenerationPromotionOutcome> TryPromoteGenerationAsync(
+        PathGenerationPromotion promotion,
+        CancellationToken ct);
+    Task AppendPathGenerationErrorAsync(
+        PathGenerationError error,
+        CancellationToken ct);
 }

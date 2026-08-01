@@ -735,7 +735,7 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             CHOptPath = Path.Combine(_tempDir, "nonexistent_chopt"),
         });
 
-        // PathGenerator will fail (no CHOpt binary) but TryGeneratePathsAsync
+        // The coordinator will fail (no CHOpt binary) but TryGeneratePathsAsync
         // should catch the exception and not propagate it
         await worker.TryGeneratePathsAsync(service, force: false, CancellationToken.None);
         // If we get here, the method caught the error gracefully

@@ -1,0 +1,1059 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Net;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using FortniteFestival.Core;
+using FSTService.Api;
+using FSTService.Persistence;
+using FSTService.Scraping;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+
+namespace FSTService.Tests.Unit;
+
+public sealed class PathGenerationCoordinatorTests : IDisposable
+{
+    private readonly string _dataDirectory;
+    private readonly byte[] _midiKey = new byte[32];
+    private readonly byte[] _encryptedDat;
+
+    public PathGenerationCoordinatorTests()
+    {
+        _dataDirectory = Path.Combine(
+            Directory.GetCurrentDirectory(),
+            ".test-temp",
+            $"path-generation-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_dataDirectory);
+        RandomNumberGenerator.Fill(_midiKey);
+        _encryptedDat = EncryptMidi(BuildMinimalMidi(), _midiKey);
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            if (Directory.Exists(_dataDirectory))
+                Directory.Delete(_dataDirectory, recursive: true);
+        }
+        catch
+        {
+        }
+    }
+
+    [Fact]
+    public void Song_request_treats_present_difficulty_zero_as_expected()
+    {
+        var song = CreateSong("difficulty-zero", new In { gr = 9, ba = 9 });
+        using var provider = JsonDocument.Parse(
+            """
+            {
+              "track": {
+                "su": "difficulty-zero",
+                "mu": "https://example.invalid/difficulty-zero.dat",
+                "in": { "gr": 0 }
+              }
+            }
+            """);
+        song.providerJson = provider.RootElement.Clone();
+
+        var request = SongPathRequest.FromSong(song);
+
+        Assert.NotNull(request);
+        Assert.Equal(["Solo_Guitar"], request!.ExpectedInstruments);
+    }
+
+    [Fact]
+    public async Task Unsupported_instruments_are_not_invoked()
+    {
+        var logPath = Path.Combine(_dataDirectory, "invocations.log");
+        var chopt = CreateChoptScript(new ChoptBehavior(InvocationLog: logPath));
+        var store = new FakePathDataStore();
+        store.EnsureSong("supported-only");
+        var handler = new StaticDatHandler(_encryptedDat);
+        var coordinator = CreateCoordinator(chopt, store, handler);
+
+        var result = await coordinator.GeneratePathsAsync(
+            [CreateSong("supported-only", new In { gr = 0 })],
+            force: false,
+            CancellationToken.None);
+
+        Assert.Equal(1, result.Promoted);
+        var invocations = File.ReadAllLines(logPath);
+        Assert.Equal(4, invocations.Length);
+        Assert.All(invocations, line => Assert.Contains("-i guitar", line));
+        Assert.All(invocations, line => Assert.Contains(".path-work", line));
+        Assert.DoesNotContain(invocations, line => line.Contains("-i bass", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            invocations,
+            line => line.Contains(
+                Path.Combine("paths", "supported-only"),
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Partial_expected_failure_preserves_old_pointer_scores_and_files()
+    {
+        var chopt = CreateChoptScript(new ChoptBehavior(
+            FailInstrument: "bass",
+            FailDifficulty: "hard"));
+        var store = new FakePathDataStore();
+        var runtime = await CreateCoordinator(chopt, store).DetectRuntimeIdentityAsync(
+            chopt,
+            CancellationToken.None);
+        var old = SeedCompleteGeneration(
+            store,
+            "partial",
+            "old-generation",
+            runtime,
+            ["Solo_Guitar", "Solo_Bass"],
+            MidiCryptor.ComputeHash(_encryptedDat),
+            "2026-08-01T00:00:00.0000000Z");
+        var oldImage = Path.Combine(
+            old.GenerationDirectory,
+            "Solo_Guitar",
+            "expert.png");
+        var oldBytes = File.ReadAllBytes(oldImage);
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            new StaticDatHandler(_encryptedDat));
+
+        var result = await coordinator.GeneratePathsAsync(
+            [
+                CreateSong(
+                    "partial",
+                    new In { gr = 0, ba = 0 },
+                    UtcDate(2)),
+            ],
+            force: false,
+            CancellationToken.None);
+
+        Assert.Equal(1, result.Failed);
+        var state = store.GetPathGenerationState("partial");
+        Assert.NotNull(state);
+        Assert.Equal("old-generation", state!.ArtifactGenerationId);
+        Assert.Equal(111_111, state.MaxScores.MaxLeadScore);
+        Assert.Equal(111_111, state.MaxScores.MaxBassScore);
+        Assert.Equal(oldBytes, File.ReadAllBytes(oldImage));
+        Assert.Single(store.Errors);
+    }
+
+    [Theory]
+    [InlineData("malformed-json")]
+    [InlineData("missing-png")]
+    [InlineData("empty-png")]
+    [InlineData("bad-png")]
+    [InlineData("zero-expert")]
+    public async Task Invalid_artifacts_fail_without_promotion(string mode)
+    {
+        var chopt = CreateChoptScript(new ChoptBehavior(Mode: mode));
+        var store = new FakePathDataStore();
+        store.EnsureSong("invalid");
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            new StaticDatHandler(_encryptedDat));
+
+        var result = await coordinator.GeneratePathsAsync(
+            [CreateSong("invalid", new In { gr = 0 })],
+            force: false,
+            CancellationToken.None);
+
+        Assert.Equal(1, result.Failed);
+        var state = store.GetPathGenerationState("invalid");
+        Assert.NotNull(state);
+        Assert.Null(state!.ArtifactGenerationId);
+        Assert.Null(state.MaxScores.MaxLeadScore);
+        Assert.Single(store.Errors);
+        Assert.Equal("artifact_validation", store.Errors[0].FailureStage);
+        AssertNoStagingAttempts();
+    }
+
+    [Fact]
+    public async Task Stale_legacy_files_are_not_used_to_rescue_failed_generation()
+    {
+        var legacyImage = Path.Combine(
+            _dataDirectory,
+            "paths",
+            "stale",
+            "Solo_Guitar",
+            "expert.png");
+        Directory.CreateDirectory(Path.GetDirectoryName(legacyImage)!);
+        WriteValidPng(legacyImage);
+        var legacyBytes = File.ReadAllBytes(legacyImage);
+
+        var chopt = CreateChoptScript(new ChoptBehavior(Mode: "missing-png"));
+        var store = new FakePathDataStore();
+        store.Seed(new PathGenerationState(
+            "stale",
+            3,
+            "old-hash",
+            null,
+            DateTime.UtcNow.AddDays(-1),
+            "1.0.0",
+            "old-binary",
+            "old-profile",
+            null,
+            ["Solo_Guitar"],
+            new SongMaxScores { MaxLeadScore = 77_777 }));
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            new StaticDatHandler(_encryptedDat));
+
+        var result = await coordinator.GeneratePathsAsync(
+            [CreateSong("stale", new In { gr = 0 })],
+            force: false,
+            CancellationToken.None);
+
+        Assert.Equal(1, result.Failed);
+        Assert.Null(store.GetPathGenerationState("stale")!.ArtifactGenerationId);
+        Assert.Equal(77_777, store.GetPathGenerationState("stale")!.MaxScores.MaxLeadScore);
+        Assert.Equal(legacyBytes, File.ReadAllBytes(legacyImage));
+    }
+
+    [Fact]
+    public async Task Complete_generation_moves_immutably_then_promotes_all_metadata()
+    {
+        var chopt = CreateChoptScript();
+        var store = new FakePathDataStore();
+        var runtime = await CreateCoordinator(chopt, store).DetectRuntimeIdentityAsync(
+            chopt,
+            CancellationToken.None);
+        var old = SeedCompleteGeneration(
+            store,
+            "success",
+            "old-generation",
+            runtime with { Profile = "old-profile" },
+            ["Solo_Guitar"],
+            "old-hash",
+            "2026-07-01T00:00:00.0000000Z");
+        var oldImage = Path.Combine(
+            old.GenerationDirectory,
+            "Solo_Guitar",
+            "expert.png");
+        var oldBytes = File.ReadAllBytes(oldImage);
+        var handler = new StaticDatHandler(_encryptedDat);
+        var cache = new SongsCacheService();
+        cache.Set("""{"stale":true}"""u8.ToArray());
+        var coordinator = CreateCoordinator(chopt, store, handler, cache: cache);
+
+        var result = await coordinator.GeneratePathsAsync(
+            [
+                CreateSong(
+                    "success",
+                    new In { gr = 0 },
+                    UtcDate(1)),
+            ],
+            force: false,
+            CancellationToken.None);
+
+        Assert.Equal(1, result.Promoted);
+        var state = store.GetPathGenerationState("success")!;
+        Assert.NotEqual("old-generation", state.ArtifactGenerationId);
+        Assert.Equal(MidiCryptor.ComputeHash(_encryptedDat), state.DatFileHash);
+        Assert.Equal("2026-08-01T00:00:00.0000000Z", state.SongLastModified);
+        Assert.Equal("1.10.3", state.ChoptVersion);
+        Assert.Equal(runtime.BinarySha256, state.ChoptBinarySha256);
+        Assert.Equal("chopt-fnf-ew0-s20-json-png-v1", state.GenerationProfile);
+        Assert.Equal(["Solo_Guitar"], state.ExpectedInstruments);
+        Assert.Equal(123_456, state.MaxScores.MaxLeadScore);
+        Assert.True(PathArtifactResolver.IsGenerationComplete(_dataDirectory, state));
+        Assert.Equal(oldBytes, File.ReadAllBytes(oldImage));
+        Assert.Null(cache.Get());
+    }
+
+    [Fact]
+    public async Task Database_failure_after_move_leaves_orphan_unreachable()
+    {
+        var chopt = CreateChoptScript();
+        var store = new FakePathDataStore();
+        var runtime = await CreateCoordinator(chopt, store).DetectRuntimeIdentityAsync(
+            chopt,
+            CancellationToken.None);
+        SeedCompleteGeneration(
+            store,
+            "db-failure",
+            "old-generation",
+            runtime with { Profile = "old-profile" },
+            ["Solo_Guitar"],
+            "old-hash",
+            null);
+        store.ThrowOnPromotion = true;
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            new StaticDatHandler(_encryptedDat));
+
+        var result = await coordinator.GeneratePathsAsync(
+            [CreateSong("db-failure", new In { gr = 0 })],
+            force: true,
+            CancellationToken.None);
+
+        Assert.Equal(1, result.Failed);
+        Assert.Equal(
+            "old-generation",
+            store.GetPathGenerationState("db-failure")!.ArtifactGenerationId);
+        var generationsRoot = Path.Combine(
+            _dataDirectory,
+            "paths",
+            "db-failure",
+            "generations");
+        Assert.True(Directory.EnumerateDirectories(generationsRoot).Count() >= 2);
+        Assert.Contains(store.Errors, error => error.FailureStage == "persistence");
+    }
+
+    [Fact]
+    public async Task Cancellation_kills_process_tree_and_preserves_old_generation()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var childPidPath = Path.Combine(_dataDirectory, "child.pid");
+        var startedPath = Path.Combine(_dataDirectory, "child.started");
+        var chopt = CreateChoptScript(new ChoptBehavior(
+            Mode: "process-tree",
+            ChildPidPath: childPidPath,
+            StartedPath: startedPath));
+        var store = new FakePathDataStore();
+        var runtime = await CreateCoordinator(chopt, store).DetectRuntimeIdentityAsync(
+            chopt,
+            CancellationToken.None);
+        SeedCompleteGeneration(
+            store,
+            "cancel",
+            "old-generation",
+            runtime with { Profile = "old-profile" },
+            ["Solo_Guitar"],
+            "old-hash",
+            null);
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            new StaticDatHandler(_encryptedDat));
+        using var cts = new CancellationTokenSource();
+
+        var generation = coordinator.GeneratePathsAsync(
+            [CreateSong("cancel", new In { gr = 0 })],
+            force: true,
+            cts.Token);
+        await WaitForFileAsync(startedPath, TimeSpan.FromSeconds(10));
+        var childPid = int.Parse(await File.ReadAllTextAsync(childPidPath));
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => generation);
+        await WaitForProcessExitAsync(childPid, TimeSpan.FromSeconds(10));
+        Assert.Equal(
+            "old-generation",
+            store.GetPathGenerationState("cancel")!.ArtifactGenerationId);
+        Assert.Contains(store.Errors, error => error.FailureStage == "cancelled");
+        AssertNoStagingAttempts();
+    }
+
+    [Fact]
+    public async Task Concurrent_calls_on_one_coordinator_serialize_and_second_skips()
+    {
+        var logPath = Path.Combine(_dataDirectory, "serialized.log");
+        var chopt = CreateChoptScript(new ChoptBehavior(InvocationLog: logPath));
+        var store = new FakePathDataStore();
+        store.EnsureSong("serialized");
+        var handler = new StaticDatHandler(_encryptedDat);
+        var coordinator = CreateCoordinator(chopt, store, handler);
+        var song = CreateSong(
+            "serialized",
+            new In { gr = 0 },
+            UtcDate(1));
+
+        var first = coordinator.GeneratePathsAsync(
+            [song],
+            force: false,
+            CancellationToken.None);
+        var second = coordinator.GeneratePathsAsync(
+            [song],
+            force: false,
+            CancellationToken.None);
+        var results = await Task.WhenAll(first, second);
+
+        Assert.Equal(1, results.Sum(result => result.Promoted));
+        Assert.Equal(1, results.Sum(result => result.Skipped));
+        Assert.Equal(2, handler.RequestCount);
+        Assert.Equal(4, File.ReadAllLines(logPath).Length);
+    }
+
+    [Fact]
+    public async Task Cross_coordinator_race_uses_compare_and_swap()
+    {
+        var chopt = CreateChoptScript();
+        var store = new FakePathDataStore { PromotionBarrierCount = 2 };
+        store.EnsureSong("cas");
+        var first = CreateCoordinator(
+            chopt,
+            store,
+            new StaticDatHandler(_encryptedDat));
+        var second = CreateCoordinator(
+            chopt,
+            store,
+            new StaticDatHandler(_encryptedDat));
+        var song = CreateSong("cas", new In { gr = 0 });
+
+        var results = await Task.WhenAll(
+            first.GeneratePathsAsync([song], true, CancellationToken.None),
+            second.GeneratePathsAsync([song], true, CancellationToken.None));
+
+        Assert.Equal(1, results.Sum(result => result.Promoted));
+        Assert.Equal(1, results.Sum(result => result.Conflicted));
+        Assert.Contains(store.Errors, error => error.FailureStage == "concurrency");
+    }
+
+    [Theory]
+    [InlineData("version")]
+    [InlineData("binary")]
+    [InlineData("profile")]
+    public async Task Same_dat_regenerates_when_runtime_identity_changes(string changedField)
+    {
+        var chopt = CreateChoptScript();
+        var store = new FakePathDataStore();
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            new StaticDatHandler(_encryptedDat));
+        var runtime = await coordinator.DetectRuntimeIdentityAsync(
+            chopt,
+            CancellationToken.None);
+        var storedRuntime = changedField switch
+        {
+            "version" => runtime with { Version = "0.9.0" },
+            "binary" => runtime with { BinarySha256 = new string('0', 64) },
+            "profile" => runtime with { Profile = "old-profile" },
+            _ => runtime,
+        };
+        var lastModified = "2026-08-01T00:00:00.0000000Z";
+        SeedCompleteGeneration(
+            store,
+            $"identity-{changedField}",
+            "old-generation",
+            storedRuntime,
+            ["Solo_Guitar"],
+            MidiCryptor.ComputeHash(_encryptedDat),
+            lastModified);
+
+        var result = await coordinator.GeneratePathsAsync(
+            [
+                CreateSong(
+                    $"identity-{changedField}",
+                    new In { gr = 0 },
+                    UtcDate(1)),
+            ],
+            force: false,
+            CancellationToken.None);
+
+        Assert.Equal(1, result.Promoted);
+        Assert.NotEqual(
+            "old-generation",
+            store.GetPathGenerationState($"identity-{changedField}")!.ArtifactGenerationId);
+    }
+
+    [Fact]
+    public async Task Same_dat_regenerates_when_expected_set_changes()
+    {
+        var chopt = CreateChoptScript();
+        var store = new FakePathDataStore();
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            new StaticDatHandler(_encryptedDat));
+        var runtime = await coordinator.DetectRuntimeIdentityAsync(
+            chopt,
+            CancellationToken.None);
+        var lastModified = "2026-08-01T00:00:00.0000000Z";
+        SeedCompleteGeneration(
+            store,
+            "expected-change",
+            "old-generation",
+            runtime,
+            ["Solo_Guitar"],
+            MidiCryptor.ComputeHash(_encryptedDat),
+            lastModified);
+
+        var result = await coordinator.GeneratePathsAsync(
+            [
+                CreateSong(
+                    "expected-change",
+                    new In { gr = 0, ba = 0 },
+                    UtcDate(1)),
+            ],
+            false,
+            CancellationToken.None);
+
+        Assert.Equal(1, result.Promoted);
+        var state = store.GetPathGenerationState("expected-change")!;
+        Assert.Equal(["Solo_Guitar", "Solo_Bass"], state.ExpectedInstruments);
+        Assert.Equal(123_456, state.MaxScores.MaxBassScore);
+    }
+
+    [Fact]
+    public async Task Same_dat_regenerates_when_current_artifact_set_is_incomplete()
+    {
+        var chopt = CreateChoptScript();
+        var store = new FakePathDataStore();
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            new StaticDatHandler(_encryptedDat));
+        var runtime = await coordinator.DetectRuntimeIdentityAsync(
+            chopt,
+            CancellationToken.None);
+        var seeded = SeedCompleteGeneration(
+            store,
+            "incomplete-generation",
+            "old-generation",
+            runtime,
+            ["Solo_Guitar"],
+            MidiCryptor.ComputeHash(_encryptedDat),
+            "2026-08-01T00:00:00.0000000Z");
+        File.Delete(Path.Combine(
+            seeded.GenerationDirectory,
+            "Solo_Guitar",
+            "hard.json"));
+
+        var result = await coordinator.GeneratePathsAsync(
+            [
+                CreateSong(
+                    "incomplete-generation",
+                    new In { gr = 0 },
+                    UtcDate(1)),
+            ],
+            false,
+            CancellationToken.None);
+
+        Assert.Equal(1, result.Promoted);
+        Assert.NotEqual(
+            "old-generation",
+            store.GetPathGenerationState("incomplete-generation")!.ArtifactGenerationId);
+    }
+
+    [Fact]
+    public async Task Actual_version_is_parsed_and_persisted()
+    {
+        var chopt = CreateChoptScript(new ChoptBehavior(Version: "7.8.9-beta.2"));
+        var store = new FakePathDataStore();
+        store.EnsureSong("version");
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            new StaticDatHandler(_encryptedDat));
+
+        var result = await coordinator.GeneratePathsAsync(
+            [CreateSong("version", new In { gr = 0 })],
+            false,
+            CancellationToken.None);
+
+        Assert.Equal(1, result.Promoted);
+        Assert.Equal(
+            "7.8.9-beta.2",
+            store.GetPathGenerationState("version")!.ChoptVersion);
+    }
+
+    [Fact]
+    public async Task Unparseable_runtime_version_blocks_download_and_promotion()
+    {
+        var chopt = CreateChoptScript(new ChoptBehavior(Version: "unknown"));
+        var store = new FakePathDataStore();
+        store.EnsureSong("bad-version");
+        var handler = new StaticDatHandler(_encryptedDat);
+        var coordinator = CreateCoordinator(chopt, store, handler);
+
+        var result = await coordinator.GeneratePathsAsync(
+            [CreateSong("bad-version", new In { gr = 0 })],
+            false,
+            CancellationToken.None);
+
+        Assert.Equal(1, result.Failed);
+        Assert.Equal(0, handler.RequestCount);
+        Assert.Null(store.GetPathGenerationState("bad-version")!.ArtifactGenerationId);
+        Assert.Contains(store.Errors, error => error.FailureStage == "runtime_version");
+    }
+
+    [Fact]
+    public async Task Repeated_failures_append_distinct_error_rows()
+    {
+        var chopt = CreateChoptScript(new ChoptBehavior(Mode: "malformed-json"));
+        var store = new FakePathDataStore();
+        store.EnsureSong("errors");
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            new StaticDatHandler(_encryptedDat));
+        var song = CreateSong("errors", new In { gr = 0 });
+
+        await coordinator.GeneratePathsAsync([song], true, CancellationToken.None);
+        await coordinator.GeneratePathsAsync([song], true, CancellationToken.None);
+
+        Assert.Equal(2, store.Errors.Count);
+        Assert.Equal(2, store.Errors.Select(error => error.AttemptId).Distinct().Count());
+        Assert.All(store.Errors, error => Assert.True(error.Detail.Length <= 2048));
+    }
+
+    private PathGenerationCoordinator CreateCoordinator(
+        string choptPath,
+        FakePathDataStore store,
+        HttpMessageHandler? handler = null,
+        string profile = "chopt-fnf-ew0-s20-json-png-v1",
+        SongsCacheService? cache = null)
+    {
+        var options = Options.Create(new ScraperOptions
+        {
+            DataDirectory = _dataDirectory,
+            CHOptPath = choptPath,
+            MidiEncryptionKey = Convert.ToHexString(_midiKey),
+            EnablePathGeneration = true,
+            PathGenerationParallelism = 2,
+            PathGenerationProfile = profile,
+        });
+        return new PathGenerationCoordinator(
+            new HttpClient(handler ?? new StaticDatHandler(_encryptedDat)),
+            store,
+            cache ?? new SongsCacheService(),
+            options,
+            new ScrapeProgressTracker(),
+            NullLogger<PathGenerationCoordinator>.Instance);
+    }
+
+    private Song CreateSong(
+        string songId,
+        In intensity,
+        DateTime? lastModified = null)
+        => new()
+        {
+            track = new Track
+            {
+                su = songId,
+                tt = $"Song {songId}",
+                an = "Artist",
+                mu = $"https://example.invalid/{songId}.dat",
+                @in = intensity,
+            },
+            lastModified = lastModified ?? DateTime.MinValue,
+        };
+
+    private SeededGeneration SeedCompleteGeneration(
+        FakePathDataStore store,
+        string songId,
+        string generationId,
+        PathGenerationRuntimeIdentity runtime,
+        string[] expected,
+        string datHash,
+        string? lastModified)
+    {
+        var generationDirectory = PathArtifactResolver.GetGenerationDirectory(
+            _dataDirectory,
+            songId,
+            generationId);
+        Directory.CreateDirectory(generationDirectory);
+        var scores = new SongMaxScores
+        {
+            GeneratedAt = DateTime.UtcNow.AddDays(-1).ToString("o"),
+            CHOptVersion = runtime.Version,
+            CHOptBinarySha256 = runtime.BinarySha256,
+            GenerationProfile = runtime.Profile,
+            ArtifactGenerationId = generationId,
+            ExpectedInstruments = expected,
+        };
+        var expertScores = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var instrument in expected)
+        {
+            scores.SetByInstrument(instrument, 111_111);
+            expertScores[instrument] = 111_111;
+            var instrumentDirectory = Path.Combine(
+                generationDirectory,
+                instrument);
+            Directory.CreateDirectory(instrumentDirectory);
+            foreach (var difficulty in PathGenerationInstruments.Difficulties)
+            {
+                WriteValidPng(Path.Combine(
+                    instrumentDirectory,
+                    $"{difficulty}.png"));
+                File.WriteAllText(
+                    Path.Combine(instrumentDirectory, $"{difficulty}.json"),
+                    difficulty == "expert"
+                        ? """{"totalScore":111111}"""
+                        : """{"totalScore":100}""");
+            }
+        }
+
+        File.WriteAllText(
+            Path.Combine(
+                generationDirectory,
+                PathArtifactResolver.ManifestFileName),
+            System.Text.Json.JsonSerializer.Serialize(
+                new PathArtifactManifest(
+                    generationId,
+                    songId,
+                    datHash,
+                    lastModified,
+                    runtime.Version,
+                    runtime.BinarySha256,
+                    runtime.Profile,
+                    expected,
+                    expertScores,
+                    DateTime.UtcNow.AddDays(-1)),
+                PathArtifactManifest.JsonOptions));
+        store.Seed(new PathGenerationState(
+            songId,
+            1,
+            datHash,
+            lastModified,
+            DateTime.UtcNow.AddDays(-1),
+            runtime.Version,
+            runtime.BinarySha256,
+            runtime.Profile,
+            generationId,
+            expected,
+            scores));
+        return new SeededGeneration(generationDirectory);
+    }
+
+    private string CreateChoptScript(ChoptBehavior? behavior = null)
+    {
+        behavior ??= new ChoptBehavior();
+        if (OperatingSystem.IsWindows())
+            return CreateWindowsChoptScript(behavior);
+
+        var path = Path.Combine(
+            _dataDirectory,
+            $"fake-chopt-{Guid.NewGuid():N}.sh");
+        var invocationLog = ShellQuote(behavior.InvocationLog ?? "");
+        var childPidPath = ShellQuote(behavior.ChildPidPath ?? "");
+        var startedPath = ShellQuote(behavior.StartedPath ?? "");
+        var script = $$"""
+            #!/bin/sh
+            if [ "$1" = "--version" ]; then
+              echo "CHOpt {{behavior.Version}}"
+              exit {{behavior.VersionExitCode}}
+            fi
+            out=""
+            instrument=""
+            difficulty=""
+            while [ "$#" -gt 0 ]; do
+              case "$1" in
+                -o) out="$2"; shift ;;
+                -i) instrument="$2"; shift ;;
+                -d) difficulty="$2"; shift ;;
+              esac
+              shift
+            done
+            if [ -n {{invocationLog}} ]; then
+              printf '%s\n' "-i $instrument -d $difficulty -o $out" >> {{invocationLog}}
+            fi
+            if [ "{{behavior.Mode}}" = "process-tree" ]; then
+              sleep 30 &
+              child="$!"
+              printf '%s' "$child" > {{childPidPath}}
+              printf 'started' > {{startedPath}}
+              wait "$child"
+            fi
+            if [ "$instrument" = "{{behavior.FailInstrument}}" ] && [ "$difficulty" = "{{behavior.FailDifficulty}}" ]; then
+              echo "forced failure" >&2
+              exit 7
+            fi
+            case "{{behavior.Mode}}" in
+              missing-png) ;;
+              empty-png) : > "$out" ;;
+              bad-png) printf 'not-a-png' > "$out" ;;
+              *) printf '\211PNG\r\n\032\nFAKE' > "$out" ;;
+            esac
+            case "{{behavior.Mode}}" in
+              malformed-json) printf '{' ;;
+              zero-expert)
+                if [ "$difficulty" = "expert" ]; then
+                  printf '{"totalScore":0}'
+                else
+                  printf '{"totalScore":100}'
+                fi
+                ;;
+              *) printf '{"totalScore":123456}' ;;
+            esac
+            """;
+        File.WriteAllText(path, script);
+        File.SetUnixFileMode(
+            path,
+            UnixFileMode.UserRead |
+            UnixFileMode.UserWrite |
+            UnixFileMode.UserExecute);
+        return path;
+    }
+
+    private string CreateWindowsChoptScript(ChoptBehavior behavior)
+    {
+        var path = Path.Combine(
+            _dataDirectory,
+            $"fake-chopt-{Guid.NewGuid():N}.bat");
+        var mode = behavior.Mode.Replace("\"", "");
+        var script = $$"""
+            @echo off
+            if "%~1"=="--version" (
+              echo CHOpt {{behavior.Version}}
+              exit /b {{behavior.VersionExitCode}}
+            )
+            set "out="
+            set "instrument="
+            set "difficulty="
+            :parse
+            if "%~1"=="" goto done
+            if "%~1"=="-o" set "out=%~2"
+            if "%~1"=="-i" set "instrument=%~2"
+            if "%~1"=="-d" set "difficulty=%~2"
+            shift
+            goto parse
+            :done
+            if "{{mode}}"=="missing-png" goto json
+            if "{{mode}}"=="empty-png" type nul > "%out%" & goto json
+            if "{{mode}}"=="bad-png" echo bad> "%out%" & goto json
+            powershell -NoProfile -Command "[IO.File]::WriteAllBytes('%out%', [byte[]](137,80,78,71,13,10,26,10,70,65,75,69))"
+            :json
+            if "{{mode}}"=="malformed-json" echo {
+            if "{{mode}}"=="zero-expert" echo {"totalScore":0}
+            if not "{{mode}}"=="malformed-json" if not "{{mode}}"=="zero-expert" echo {"totalScore":123456}
+            """;
+        File.WriteAllText(path, script);
+        return path;
+    }
+
+    private static string ShellQuote(string value)
+        => $"'{value.Replace("'", "'\"'\"'")}'";
+
+    private static async Task WaitForFileAsync(
+        string path,
+        TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (File.Exists(path))
+                return;
+            await Task.Delay(25);
+        }
+
+        throw new TimeoutException($"File was not created: {path}");
+    }
+
+    private static async Task WaitForProcessExitAsync(
+        int processId,
+        TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                using var process = Process.GetProcessById(processId);
+                if (process.HasExited)
+                    return;
+            }
+            catch (ArgumentException)
+            {
+                return;
+            }
+
+            await Task.Delay(50);
+        }
+
+        Assert.Fail($"Child process {processId} was still running after cancellation.");
+    }
+
+    private static void WriteValidPng(string path)
+        => File.WriteAllBytes(
+            path,
+            [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x46, 0x41, 0x4b, 0x45]);
+
+    private void AssertNoStagingAttempts()
+    {
+        var workDirectory = Path.Combine(_dataDirectory, ".path-work");
+        if (Directory.Exists(workDirectory))
+            Assert.Empty(Directory.EnumerateDirectories(workDirectory));
+    }
+
+    private static DateTime UtcDate(int day)
+        => new(2026, 8, day, 0, 0, 0, DateTimeKind.Utc);
+
+    private static byte[] BuildMinimalMidi()
+    {
+        using var stream = new MemoryStream();
+        stream.Write("MThd"u8);
+        WriteBigEndian32(stream, 6);
+        WriteBigEndian16(stream, 1);
+        WriteBigEndian16(stream, 1);
+        WriteBigEndian16(stream, 480);
+        var track = new byte[] { 0x00, 0xff, 0x2f, 0x00 };
+        stream.Write("MTrk"u8);
+        WriteBigEndian32(stream, track.Length);
+        stream.Write(track);
+        return stream.ToArray();
+    }
+
+    private static byte[] EncryptMidi(byte[] midi, byte[] key)
+    {
+        using var aes = Aes.Create();
+        aes.Key = key;
+        aes.Mode = CipherMode.ECB;
+        aes.Padding = PaddingMode.Zeros;
+        var padded = new byte[(midi.Length + 15) / 16 * 16];
+        Array.Copy(midi, padded, midi.Length);
+        return aes.CreateEncryptor().TransformFinalBlock(
+            padded,
+            0,
+            padded.Length);
+    }
+
+    private static void WriteBigEndian32(Stream stream, int value)
+    {
+        stream.WriteByte((byte)(value >> 24));
+        stream.WriteByte((byte)(value >> 16));
+        stream.WriteByte((byte)(value >> 8));
+        stream.WriteByte((byte)value);
+    }
+
+    private static void WriteBigEndian16(Stream stream, int value)
+    {
+        stream.WriteByte((byte)(value >> 8));
+        stream.WriteByte((byte)value);
+    }
+
+    private sealed record ChoptBehavior(
+        string Version = "1.10.3",
+        int VersionExitCode = 0,
+        string Mode = "success",
+        string FailInstrument = "",
+        string FailDifficulty = "",
+        string? InvocationLog = null,
+        string? ChildPidPath = null,
+        string? StartedPath = null);
+
+    private sealed record SeededGeneration(string GenerationDirectory);
+
+    private sealed class StaticDatHandler(byte[] content) : HttpMessageHandler
+    {
+        private int _requestCount;
+        public int RequestCount => Volatile.Read(ref _requestCount);
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _requestCount);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(content),
+            });
+        }
+    }
+
+    private sealed class FakePathDataStore : IPathDataStore
+    {
+        private readonly ConcurrentDictionary<string, PathGenerationState> _states =
+            new(StringComparer.Ordinal);
+        private readonly object _promotionLock = new();
+        private readonly TaskCompletionSource _promotionBarrier =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _promotionArrivals;
+
+        public List<PathGenerationError> Errors { get; } = [];
+        public bool ThrowOnPromotion { get; set; }
+        public int PromotionBarrierCount { get; set; }
+
+        public void EnsureSong(string songId)
+            => Seed(new PathGenerationState(
+                songId,
+                0,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                [],
+                new SongMaxScores()));
+
+        public void Seed(PathGenerationState state)
+            => _states[state.SongId] = state;
+
+        public Dictionary<string, PathGenerationState> GetPathGenerationStates()
+            => _states.ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value,
+                StringComparer.Ordinal);
+
+        public PathGenerationState? GetPathGenerationState(string songId)
+            => _states.TryGetValue(songId, out var state) ? state : null;
+
+        public Dictionary<string, SongMaxScores> GetAllMaxScores()
+            => _states
+                .Where(pair => pair.Value.MaxScores.GetByInstrument("Solo_Guitar") is not null ||
+                               pair.Value.MaxScores.GetByInstrument("Solo_Bass") is not null ||
+                               pair.Value.MaxScores.GetByInstrument("Solo_Drums") is not null ||
+                               pair.Value.MaxScores.GetByInstrument("Solo_Vocals") is not null ||
+                               pair.Value.MaxScores.GetByInstrument("Solo_PeripheralGuitar") is not null ||
+                               pair.Value.MaxScores.GetByInstrument("Solo_PeripheralBass") is not null)
+                .ToDictionary(
+                    pair => pair.Key,
+                    pair => pair.Value.MaxScores,
+                    StringComparer.Ordinal);
+
+        public async Task<PathGenerationPromotionOutcome> TryPromoteGenerationAsync(
+            PathGenerationPromotion promotion,
+            CancellationToken ct)
+        {
+            if (PromotionBarrierCount > 0)
+            {
+                if (Interlocked.Increment(ref _promotionArrivals) >= PromotionBarrierCount)
+                    _promotionBarrier.TrySetResult();
+                await _promotionBarrier.Task.WaitAsync(ct);
+            }
+
+            if (ThrowOnPromotion)
+                throw new InvalidOperationException("Injected persistence failure.");
+
+            lock (_promotionLock)
+            {
+                if (!_states.TryGetValue(promotion.SongId, out var current))
+                    return PathGenerationPromotionOutcome.SongMissing;
+                if (current.Revision != promotion.ExpectedRevision)
+                    return PathGenerationPromotionOutcome.Conflict;
+
+                var scores = promotion.MaxScores;
+                scores.GeneratedAt = promotion.GeneratedAtUtc.ToString("o");
+                scores.CHOptVersion = promotion.Runtime.Version;
+                scores.CHOptBinarySha256 = promotion.Runtime.BinarySha256;
+                scores.GenerationProfile = promotion.Runtime.Profile;
+                scores.ArtifactGenerationId = promotion.ArtifactGenerationId;
+                scores.ExpectedInstruments = promotion.ExpectedInstruments.ToArray();
+                _states[promotion.SongId] = new PathGenerationState(
+                    promotion.SongId,
+                    current.Revision + 1,
+                    promotion.DatFileHash,
+                    promotion.SongLastModified,
+                    promotion.GeneratedAtUtc,
+                    promotion.Runtime.Version,
+                    promotion.Runtime.BinarySha256,
+                    promotion.Runtime.Profile,
+                    promotion.ArtifactGenerationId,
+                    promotion.ExpectedInstruments.ToArray(),
+                    scores);
+                return PathGenerationPromotionOutcome.Promoted;
+            }
+        }
+
+        public Task AppendPathGenerationErrorAsync(
+            PathGenerationError error,
+            CancellationToken ct)
+        {
+            lock (Errors)
+                Errors.Add(error);
+            return Task.CompletedTask;
+        }
+
+    }
+}

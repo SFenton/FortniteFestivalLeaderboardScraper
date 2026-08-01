@@ -51,7 +51,7 @@ public sealed class ScraperWorker : BackgroundService
     private readonly PostScrapeOrchestrator _postScrapeOrchestrator;
     private readonly BackfillOrchestrator _backfillOrchestrator;
     private readonly CyclicalSongMachine _cyclicalMachine;
-    private readonly PathGenerator _pathGenerator;
+    private readonly PathGenerationCoordinator _pathGeneration;
     private readonly IPathDataStore _pathDataStore;
     private readonly SongsCacheService _songsCache;
     private readonly ResponseCacheService _playerCache;
@@ -84,7 +84,7 @@ public sealed class ScraperWorker : BackgroundService
         PostScrapeOrchestrator postScrapeOrchestrator,
         BackfillOrchestrator backfillOrchestrator,
         CyclicalSongMachine cyclicalMachine,
-        PathGenerator pathGenerator,
+        PathGenerationCoordinator pathGeneration,
         IPathDataStore IPathDataStore,
         SongsCacheService songsCache,
         [FromKeyedServices("PlayerCache")] ResponseCacheService playerCache,
@@ -111,7 +111,7 @@ public sealed class ScraperWorker : BackgroundService
         _postScrapeOrchestrator = postScrapeOrchestrator;
         _backfillOrchestrator = backfillOrchestrator;
         _cyclicalMachine = cyclicalMachine;
-        _pathGenerator = pathGenerator;
+        _pathGeneration = pathGeneration;
         _pathDataStore = IPathDataStore;
         _songsCache = songsCache;
         _playerCache = playerCache;
@@ -1275,7 +1275,7 @@ public sealed class ScraperWorker : BackgroundService
     /// Downloads encrypted MIDI from Epic, decrypts, runs CHOpt, stores results.
     /// Safe to call as fire-and-forget — errors are logged but don't block scraping.
     /// </summary>
-    [ExcludeFromCodeCoverage] // Error/persist paths fully tested via PathGeneratorOrchestrationTests; Coverlet async state machine gap on catch block
+    [ExcludeFromCodeCoverage] // Coordinator error paths are covered independently; Coverlet misses this async catch state.
     internal async Task TryGeneratePathsAsync(FestivalService service, bool force, CancellationToken ct)
     {
         var opts = _options.Value;
@@ -1287,55 +1287,10 @@ public sealed class ScraperWorker : BackgroundService
             var songs = service.Songs.Where(s => s.track?.su is not null && !string.IsNullOrEmpty(s.track.mu)).ToList();
             if (songs.Count == 0) return;
 
-            // Load existing path generation state to detect changes
-            var existingState = _pathDataStore.GetPathGenerationState();
-
-            var requests = songs.Select(s =>
-            {
-                existingState.TryGetValue(s.track.su, out var state);
-                return new PathGenerator.SongPathRequest(
-                    s.track.su,
-                    s.track.tt ?? s.track.su,
-                    s.track.an ?? "Unknown",
-                    s.track.mu,
-                    s.lastModified == DateTime.MinValue ? null : s.lastModified,
-                    state.Hash,
-                    state.LastModified);
-            }).ToList();
-
-            var ownsProgress = _progress.BeginPathGeneration(requests.Count);
-
-            var results = await _pathGenerator.GeneratePathsAsync(requests, force, ct);
-
-            if (results.Count == 0)
-            {
-                if (ownsProgress) _progress.EndPathGeneration();
-                return;
-            }
-
-            // Persist max scores to the Songs DB
-            foreach (var result in results)
-            {
-                var scores = new SongMaxScores
-                {
-                    GeneratedAt = DateTime.UtcNow.ToString("o"),
-                    CHOptVersion = "1.10.3", // TODO: detect from binary
-                };
-                foreach (var pr in result.Results.Where(r => r.Difficulty == "expert"))
-                    scores.SetByInstrument(pr.Instrument, pr.MaxScore);
-
-                // Find the song's lastModified to store alongside
-                var song = songs.FirstOrDefault(s => s.track.su == result.SongId);
-                var songLastMod = song?.lastModified is { } lm && lm != DateTime.MinValue ? lm.ToString("o") : null;
-                _pathDataStore.UpdateMaxScores(result.SongId, scores, result.DatFileHash, songLastMod);
-            }
-
-            PrimeSongsCache();
-            if (ownsProgress) _progress.EndPathGeneration();
+            await _pathGeneration.GeneratePathsAsync(songs, force, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _progress.EndPathGeneration();
             _log.LogWarning(ex, "Path generation failed. Scraping continues unaffected.");
         }
     }

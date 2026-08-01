@@ -233,13 +233,11 @@ public static partial class ApiEndpoints
         app.MapPost("/api/admin/regenerate-paths", async (
             string? songId,
             bool? force,
-            PathGenerator pathGenerator,
-            IPathDataStore pathStore,
+            PathGenerationCoordinator pathGeneration,
             FestivalService festivalService,
-            ScrapeProgressTracker progress,
             IHostApplicationLifetime lifetime,
             IOptions<ScraperOptions> scraperOptions,
-            ILogger<PathGenerator> logger) =>
+            ILogger<PathGenerationCoordinator> logger) =>
         {
             if (!scraperOptions.Value.EnablePathGeneration)
                 return Results.BadRequest(new { error = "Path generation is disabled." });
@@ -251,26 +249,11 @@ public static partial class ApiEndpoints
                     return Results.Problem("Song catalog is empty.");
             }
 
-            var existingState = pathStore.GetPathGenerationState();
             var allSongs = festivalService.Songs
                 .Where(s => s.track?.su is not null && !string.IsNullOrEmpty(s.track.mu))
                 .Where(s => songId is null || s.track.su == songId)
                 .ToList();
-
-            var songs = allSongs.Select(s =>
-            {
-                existingState.TryGetValue(s.track.su, out var state);
-                return new PathGenerator.SongPathRequest(
-                    s.track.su,
-                    s.track.tt ?? s.track.su,
-                    s.track.an ?? "Unknown",
-                    s.track.mu,
-                    s.lastModified == DateTime.MinValue ? null : s.lastModified,
-                    state.Hash,
-                    state.LastModified);
-            }).ToList();
-
-            if (songs.Count == 0)
+            if (allSongs.Count == 0)
                 return Results.NotFound(new { error = "No matching songs found." });
 
             // Fire-and-forget — use app shutdown token, not the request token
@@ -278,29 +261,18 @@ public static partial class ApiEndpoints
             var appStopping = lifetime.ApplicationStopping;
             _ = Task.Run(async () =>
             {
-                progress.BeginPathGeneration(songs.Count);
                 try
                 {
-                    var results = await pathGenerator.GeneratePathsAsync(songs, force ?? false, appStopping);
-                    foreach (var result in results)
-                    {
-                        var scores = new SongMaxScores
-                        {
-                            GeneratedAt = DateTime.UtcNow.ToString("o"),
-                            CHOptVersion = "1.10.3",
-                        };
-                        foreach (var pr in result.Results.Where(r => r.Difficulty == "expert"))
-                            scores.SetByInstrument(pr.Instrument, pr.MaxScore);
-                        var songEntry = allSongs.FirstOrDefault(s => s.track.su == result.SongId);
-                        var lastMod = songEntry?.lastModified is { } lm && lm != DateTime.MinValue ? lm.ToString("o") : null;
-                        pathStore.UpdateMaxScores(result.SongId, scores, result.DatFileHash, lastMod);
-                    }
-                    progress.EndPathGeneration();
-                    logger.LogInformation("Admin path regeneration complete: {Count} song(s) updated.", results.Count);
+                    await pathGeneration.GeneratePathsAsync(
+                        allSongs,
+                        force ?? false,
+                        appStopping);
+                }
+                catch (OperationCanceledException) when (appStopping.IsCancellationRequested)
+                {
                 }
                 catch (Exception ex)
                 {
-                    progress.EndPathGeneration();
                     logger.LogError(ex, "Admin path regeneration failed.");
                 }
             }, appStopping);
@@ -309,7 +281,7 @@ public static partial class ApiEndpoints
             {
                 message = songId is not null
                     ? $"Path regeneration started for song {songId}."
-                    : $"Path regeneration started for {songs.Count} song(s).",
+                    : $"Path regeneration started for {allSongs.Count} song(s).",
                 force = force ?? false,
             });
         })

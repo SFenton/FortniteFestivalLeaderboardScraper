@@ -119,6 +119,12 @@ export type ServerSong = {
   genres?: string[];
   difficulty?: SongDifficulty;
   maxScores?: Partial<Record<ServerInstrumentKey, number>>;
+  pathsGeneratedAt?: string;
+  pathArtifactGenerationId?: string;
+  pathExpectedInstruments?: ServerInstrumentKey[];
+  pathChoptVersion?: string;
+  pathChoptBinarySha256?: string;
+  pathGenerationProfile?: string;
   /** Population tiers per instrument for client-side filtered-total computation. */
   populationTiers?: Partial<Record<ServerInstrumentKey, PopulationTierData>> | null;
 };

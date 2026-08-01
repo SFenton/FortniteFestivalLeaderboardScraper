@@ -333,6 +333,66 @@ marker exists on a legacy row).
 | `backfill_status`, `backfill_progress`, `history_recon_status`, `history_recon_progress`, `deep_scrape_queue` | Durable work state | Worker queues/orchestrators | Preserve failed/incomplete work for replay. History status/progress is bound to a reconstruction version and exact season-window fingerprint |
 | `user_sessions`, `epic_user_tokens` | Security-sensitive durable state | Authentication subsystem | Never include values in logs, reports, fixtures, or exports; restore with access controls |
 
+#### Atomic CHOpt path generations
+
+`PathGenerationCoordinator` is the only runtime owner for automatic, admin,
+and worker/startup path generation. It derives the expected instrument set from
+raw chart-property presence (`gr`, `ba`, `ds`, `vl`, `pg`, `pb`); a present
+property with difficulty `0` is charted, while an absent property is never
+invoked.
+
+CHOpt writes only beneath the configured
+`DataDirectory/.path-work/<attempt-id>/` staging directory. A candidate is
+complete only when every expected instrument has successful easy, medium,
+hard, and expert invocations, each PNG has a PNG signature and nonzero payload,
+each JSON document parses, and every expert JSON has a positive `totalScore`.
+The coordinator detects the bounded runtime `CHOpt --version` value and binary
+SHA-256 before generation. `Scraper:PathGenerationProfile` versions the
+argument and artifact contract.
+
+Validated artifacts move on the same filesystem to the immutable layout:
+
+```text
+DataDirectory/paths/<song-id>/generations/<generation-id>/
+  generation.json
+  <instrument>/<difficulty>.png
+  <instrument>/<difficulty>.json
+```
+
+Only after that move does one short row-locked/CAS transaction update all of
+the following together:
+
+| `songs` field | Meaning |
+|---|---|
+| `path_artifact_generation_id` | Reachable immutable artifact generation |
+| `path_expected_instruments` | Canonical raw-property-derived expected set |
+| `path_generation_revision` | Per-song CAS revision |
+| six `max_*_score` fields | Positive expert maxima for the expected set; unsupported instruments remain null |
+| `dat_file_hash`, `song_last_modified` | Exact candidate inputs |
+| `paths_generated_at` | Successful promotion time |
+| `chopt_version`, `chopt_binary_sha256` | Actual runtime identity |
+| `path_generation_profile` | CHOpt argument/artifact contract identity |
+
+`path_generation_errors` is append-only and deliberately has no secondary
+index. It records bounded detail plus attempt, song, known DAT/runtime
+identity, expected set, stage, instrument, difficulty, and timestamp. Failed
+validation, cancellation, move, database write, or CAS leaves the old pointer,
+maxima, hashes, timestamps, and runtime identity unchanged. A database failure
+after the immutable move may leave an orphan directory, but it is unreachable
+and safe for a later separately approved retention pass.
+
+Path image, path JSON, and `/api/songs` metadata resolve the same database
+generation pointer. The web client supplies `pathArtifactGenerationId` to both
+artifact requests, so URL caching is generation-specific and a pointer change
+is rejected instead of mixing image and JSON generations. Rows with a null
+pointer retain the legacy
+`paths/<song-id>/<instrument>/<difficulty>.*` read layout; rows with a non-null
+pointer never fall back to legacy or stale files. Promotion does not alter
+scrape IDs, publication pointers, public-read freeze state, rankings, history,
+or notification delivery. The additive columns and error table are
+idempotent; deployment still follows the explicit schema-initializer hold
+described above, with normal lock/long-query checks before the initializer.
+
 The publication-critical registered-user refresh contains only recurring
 all-time/current-season `PostScrape` work. Registration backfill and history
 reconstruction remain on the resumable registration/deferred workers and keep

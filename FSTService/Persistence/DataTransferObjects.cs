@@ -1032,6 +1032,10 @@ public sealed class SongMaxScores
     public int? MaxProBassScore { get; set; }
     public string? GeneratedAt { get; set; }
     public string? CHOptVersion { get; set; }
+    public string? CHOptBinarySha256 { get; set; }
+    public string? GenerationProfile { get; set; }
+    public string? ArtifactGenerationId { get; set; }
+    public IReadOnlyList<string> ExpectedInstruments { get; set; } = [];
 
     /// <summary>
     /// Get max score by instrument DB name (e.g., "Solo_Guitar").

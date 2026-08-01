@@ -36,11 +36,11 @@ public sealed class PathDataStoreTests : IDisposable
         EnsureSongRow("song3");
         _store.UpdateMaxScores("song3", new SongMaxScores { MaxLeadScore = 50000 }, "abc123");
 
-        var state = _store.GetPathGenerationState();
+        var state = _store.GetPathGenerationStates();
 
         Assert.Single(state);
         Assert.True(state.ContainsKey("song3"));
-        Assert.Equal("abc123", state["song3"].Hash);
+        Assert.Equal("abc123", state["song3"].DatFileHash);
     }
 
     [Fact]
@@ -57,10 +57,10 @@ public sealed class PathDataStoreTests : IDisposable
         var scores = new SongMaxScores { MaxLeadScore = 50000 };
         _store.UpdateMaxScores("song1", scores, "hash1", "2026-01-01T00:00:00Z");
 
-        var state = _store.GetPathGenerationState();
+        var state = _store.GetPathGenerationStates();
         Assert.True(state.ContainsKey("song1"));
-        Assert.Equal("hash1", state["song1"].Hash);
-        Assert.Equal("2026-01-01T00:00:00Z", state["song1"].LastModified);
+        Assert.Equal("hash1", state["song1"].DatFileHash);
+        Assert.Equal("2026-01-01T00:00:00Z", state["song1"].SongLastModified);
     }
 
     [Fact]
@@ -70,10 +70,10 @@ public sealed class PathDataStoreTests : IDisposable
         var scores = new SongMaxScores { MaxLeadScore = 50000 };
         _store.UpdateMaxScores("song1", scores, "hash1");
 
-        var state = _store.GetPathGenerationState();
+        var state = _store.GetPathGenerationStates();
         Assert.True(state.ContainsKey("song1"));
-        Assert.Equal("hash1", state["song1"].Hash);
-        Assert.Null(state["song1"].LastModified);
+        Assert.Equal("hash1", state["song1"].DatFileHash);
+        Assert.Null(state["song1"].SongLastModified);
     }
 
     [Fact]
@@ -112,8 +112,8 @@ public sealed class PathDataStoreTests : IDisposable
         var scores = new SongMaxScores { MaxLeadScore = 50000 };
         _store.UpdateMaxScores("song1", scores, "hash_abc");
 
-        var state = _store.GetPathGenerationState();
-        Assert.Equal("hash_abc", state["song1"].Hash);
+        var state = _store.GetPathGenerationStates();
+        Assert.Equal("hash_abc", state["song1"].DatFileHash);
     }
 
     [Fact]
@@ -133,6 +133,88 @@ public sealed class PathDataStoreTests : IDisposable
         Assert.Equal(100000, all["song1"].MaxLeadScore);
         Assert.Null(all["song1"].MaxBassScore);
         Assert.Equal(120000, all["song1"].MaxDrumsScore);
+    }
+
+    [Fact]
+    public async Task TryPromoteGenerationAsync_updates_all_fields_atomically_and_rejects_stale_revision()
+    {
+        EnsureSongRow("atomic");
+        var runtime = new PathGenerationRuntimeIdentity(
+            "2.3.4",
+            new string('a', 64),
+            "profile-v2");
+        var promotion = new PathGenerationPromotion(
+            "attempt-1",
+            "atomic",
+            0,
+            "generation-1",
+            "dat-hash",
+            "2026-08-01T00:00:00.0000000Z",
+            DateTime.UtcNow,
+            runtime,
+            ["Solo_Guitar"],
+            new SongMaxScores { MaxLeadScore = 123456 });
+
+        var promoted = await _store.TryPromoteGenerationAsync(
+            promotion,
+            CancellationToken.None);
+        var conflict = await _store.TryPromoteGenerationAsync(
+            promotion with
+            {
+                AttemptId = "attempt-2",
+                ArtifactGenerationId = "generation-2",
+            },
+            CancellationToken.None);
+
+        Assert.Equal(PathGenerationPromotionOutcome.Promoted, promoted);
+        Assert.Equal(PathGenerationPromotionOutcome.Conflict, conflict);
+        var state = _store.GetPathGenerationState("atomic");
+        Assert.NotNull(state);
+        Assert.Equal(1, state!.Revision);
+        Assert.Equal("generation-1", state.ArtifactGenerationId);
+        Assert.Equal("dat-hash", state.DatFileHash);
+        Assert.Equal(runtime.Version, state.ChoptVersion);
+        Assert.Equal(runtime.BinarySha256, state.ChoptBinarySha256);
+        Assert.Equal(runtime.Profile, state.GenerationProfile);
+        Assert.Equal(["Solo_Guitar"], state.ExpectedInstruments);
+        Assert.Equal(123456, state.MaxScores.MaxLeadScore);
+    }
+
+    [Fact]
+    public async Task AppendPathGenerationErrorAsync_is_append_only_and_bounds_detail()
+    {
+        var detail = new string('x', 3000);
+        var error = new PathGenerationError(
+            "attempt-1",
+            "song-errors",
+            "dat-hash",
+            "1.2.3",
+            new string('b', 64),
+            "profile",
+            ["Solo_Guitar"],
+            "artifact_validation",
+            "Solo_Guitar",
+            "expert",
+            detail,
+            DateTime.UtcNow);
+
+        await _store.AppendPathGenerationErrorAsync(error, CancellationToken.None);
+        await _store.AppendPathGenerationErrorAsync(
+            error with { AttemptId = "attempt-2" },
+            CancellationToken.None);
+
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT COUNT(*), MAX(length(detail))
+            FROM path_generation_errors
+            WHERE song_id = @songId
+            """;
+        cmd.Parameters.AddWithValue("songId", "song-errors");
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(2, reader.GetInt64(0));
+        Assert.Equal(2048, reader.GetInt32(1));
     }
 }
 

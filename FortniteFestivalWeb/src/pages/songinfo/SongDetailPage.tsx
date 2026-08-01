@@ -642,7 +642,7 @@ export default function SongDetailPage() {
       }
       after={<>
         {/* v8 ignore start -- songId always truthy from route params */}
-        {songId && canViewPaths && <PathsModal visible={pathsOpen} songId={songId} sig={song?.sig} onClose={() => setPathsOpen(false)} />}
+        {songId && canViewPaths && <PathsModal visible={pathsOpen} songId={songId} generationId={song?.pathArtifactGenerationId} sig={song?.sig} onClose={() => setPathsOpen(false)} />}
         {/* v8 ignore stop */}
       </>}
     >

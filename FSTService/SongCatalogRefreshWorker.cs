@@ -17,11 +17,10 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
     private readonly FestivalService _festivalService;
     private readonly StartupInitializer _startup;
     private readonly GlobalLeaderboardPersistence _persistence;
-    private readonly PathGenerator _pathGenerator;
+    private readonly PathGenerationCoordinator _pathGeneration;
     private readonly IPathDataStore _pathDataStore;
     private readonly SongsCacheService _songsCache;
     private readonly ScrapeTimePrecomputer _precomputer;
-    private readonly ScrapeProgressTracker _progress;
     private readonly NotificationService _notifications;
     private readonly IOptions<ScraperOptions> _options;
     private readonly System.Text.Json.JsonSerializerOptions _jsonOpts;
@@ -31,11 +30,10 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
         FestivalService festivalService,
         StartupInitializer startup,
         GlobalLeaderboardPersistence persistence,
-        PathGenerator pathGenerator,
+        PathGenerationCoordinator pathGeneration,
         IPathDataStore pathDataStore,
         SongsCacheService songsCache,
         ScrapeTimePrecomputer precomputer,
-        ScrapeProgressTracker progress,
         NotificationService notifications,
         IOptions<ScraperOptions> options,
         IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> jsonOptions,
@@ -44,11 +42,10 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
         _festivalService = festivalService;
         _startup = startup;
         _persistence = persistence;
-        _pathGenerator = pathGenerator;
+        _pathGeneration = pathGeneration;
         _pathDataStore = pathDataStore;
         _songsCache = songsCache;
         _precomputer = precomputer;
-        _progress = progress;
         _notifications = notifications;
         _options = options;
         _jsonOpts = jsonOptions.Value.SerializerOptions;
@@ -108,11 +105,7 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
                 _log.LogDebug("Song catalog refresh: {Total} songs in catalog (no changes).", after);
             }
 
-            if (await TryGeneratePathsAsync(force: false, ct))
-            {
-                PrimeSongsCache();
-                await _notifications.NotifySongsChangedAsync(_festivalService.Songs.Count, 0);
-            }
+            await TryGeneratePathsAsync(force: false, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -126,7 +119,6 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
         if (!opts.EnablePathGeneration)
             return false;
 
-        var ownsProgress = false;
         try
         {
             var songs = _festivalService.Songs
@@ -135,55 +127,16 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
             if (songs.Count == 0)
                 return false;
 
-            var existingState = _pathDataStore.GetPathGenerationState();
-            var requests = songs.Select(s =>
-            {
-                existingState.TryGetValue(s.track.su, out var state);
-                return new PathGenerator.SongPathRequest(
-                    s.track.su,
-                    s.track.tt ?? s.track.su,
-                    s.track.an ?? "Unknown",
-                    s.track.mu,
-                    s.lastModified == DateTime.MinValue ? null : s.lastModified,
-                    state.Hash,
-                    state.LastModified);
-            }).ToList();
-
-            ownsProgress = _progress.BeginPathGeneration(requests.Count);
-            var results = await _pathGenerator.GeneratePathsAsync(requests, force, ct);
-            if (results.Count == 0)
-                return false;
-
-            foreach (var result in results)
-            {
-                var scores = new SongMaxScores
-                {
-                    GeneratedAt = DateTime.UtcNow.ToString("o"),
-                    CHOptVersion = "1.10.3",
-                };
-
-                foreach (var pathResult in result.Results.Where(r => r.Difficulty == "expert"))
-                    scores.SetByInstrument(pathResult.Instrument, pathResult.MaxScore);
-
-                var song = songs.FirstOrDefault(s => s.track.su == result.SongId);
-                var songLastModified = song?.lastModified is { } lastModified && lastModified != DateTime.MinValue
-                    ? lastModified.ToString("o")
-                    : null;
-                _pathDataStore.UpdateMaxScores(result.SongId, scores, result.DatFileHash, songLastModified);
-            }
-
-            _log.LogInformation("Path generation updated {Count} song(s).", results.Count);
-            return true;
+            var result = await _pathGeneration.GeneratePathsAsync(
+                songs,
+                force,
+                ct);
+            return result.Changed;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(ex, "Path generation failed. Song catalog refresh continues unaffected.");
             return false;
-        }
-        finally
-        {
-            if (ownsProgress)
-                _progress.EndPathGeneration();
         }
     }
 

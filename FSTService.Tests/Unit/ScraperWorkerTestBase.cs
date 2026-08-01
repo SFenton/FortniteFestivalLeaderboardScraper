@@ -151,13 +151,15 @@ public abstract class ScraperWorkerTestBase : IDisposable
         var options = Options.Create(opts);
 
         var http = httpHandler != null ? new HttpClient(httpHandler) : new HttpClient();
-        var pathGenerator = new PathGenerator(
+        var pathDataStore = new PathDataStore(SharedPostgresContainer.CreateDatabase());
+        var songsCache = new Api.SongsCacheService();
+        var pathGeneration = new PathGenerationCoordinator(
             http,
+            pathDataStore,
+            songsCache,
             options,
             _progress,
-            Substitute.For<ILogger<PathGenerator>>());
-
-        var pathDataStore = new PathDataStore(SharedPostgresContainer.CreateDatabase());
+            Substitute.For<ILogger<PathGenerationCoordinator>>());
 
         var notifications = new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>());
 
@@ -275,8 +277,8 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _festivalService, dbInitializer,
             scrapeOrchestrator, postScrapeOrchestrator, backfillOrchestrator,
             _cyclicalMachine,
-            pathGenerator, pathDataStore,
-            new Api.SongsCacheService(),
+            pathGeneration, pathDataStore,
+            songsCache,
             playerCache,
             leaderboardAllCache,
             lifecycle,

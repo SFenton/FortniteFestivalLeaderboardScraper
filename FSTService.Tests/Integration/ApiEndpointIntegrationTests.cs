@@ -6748,7 +6748,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                     .ConfigurePrimaryHttpMessageHandler(noOpHandler);
                 services.AddHttpClient<HistoryReconstructor>()
                     .ConfigurePrimaryHttpMessageHandler(noOpHandler);
-                services.AddHttpClient<PathGenerator>()
+                services.AddHttpClient("PathGeneration")
                     .ConfigurePrimaryHttpMessageHandler(noOpHandler);
                 services.AddHttpClient<EpicAuthService>()
                     .ConfigurePrimaryHttpMessageHandler(noOpHandler);

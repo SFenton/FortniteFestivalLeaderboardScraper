@@ -1341,6 +1341,30 @@ Record:
 Read stdout/stderr concurrently, kill the process tree on cancellation, and use
 the configured FST data directory for scratch.
 
+**Implementation status (2026-08-01): accepted in code; deployment/repair not
+part of this wave**
+
+- One singleton `PathGenerationCoordinator` owns catalog-refresh, admin, and
+  worker/startup callers, including progress and songs-cache invalidation.
+- Per-song in-process serialization plus a PostgreSQL row lock/CAS prevents
+  admin/background or multi-process races from overwriting a newer generation.
+- Scratch is unique and same-filesystem under
+  `DataDirectory/.path-work/<attempt-id>`; CHOpt never writes the live layout.
+- Every expected raw-chart instrument and all four difficulties must pass
+  strict PNG/JSON validation before an immutable generation is moved and its
+  pointer, maxima, DAT identity, timestamps, and runtime identity are promoted
+  atomically.
+- Runtime identity includes bounded `--version`, binary SHA-256, and the
+  generation profile. Any identity change invalidates the skip.
+- Cancellation drains stdout/stderr concurrently, kills the complete process
+  tree, removes staging, preserves the prior pointer, and appends a bounded
+  error row.
+- Image and JSON readers follow the same generation pointer and use its ID as a
+  cache-busting request value; only null-pointer legacy rows use the old layout.
+- Notification delivery and the four-song maintenance repair remain disabled
+  and separate. Production validation still uses the owning `full-scrape-ab`
+  gate; this code acceptance does not authorize live repair or deployment.
+
 ## Phase WORKER-4: Reduce post-process and ranking time
 
 **Decision:** Accepted A/B program  
