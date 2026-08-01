@@ -869,14 +869,34 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task CyclicalSongMachine_HistoryPair_WaitsForFullSeasonPassSuccess()
+    public async Task CyclicalSongMachine_HistoryPair_RetriesFullMultiSeasonPassBeforeCheckpoint()
     {
         const string accountId = "history-user";
-        const string fingerprint = "history-fingerprint";
+        var windows = new[]
+        {
+            new SeasonWindowInfo
+            {
+                SeasonNumber = 14,
+                WindowId = "season014",
+                SourceKind = "event_api",
+            },
+            new SeasonWindowInfo
+            {
+                SeasonNumber = 15,
+                WindowId = "season015",
+                SourceKind = "event_api",
+            },
+        };
+        var fingerprint = HistoryReconstructor.ComputeWindowFingerprint(windows);
         _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
             .Returns("test-access-token");
         _tokenManager.AccountId.Returns("caller-001");
 
+        var season14Attempts = 0;
+        var retryStarted = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRetry = new TaskCompletionSource<List<SessionHistoryEntry>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         var querier = Substitute.For<ILeaderboardQuerier>();
         querier.LookupMultipleAccountSessionsAsync(
             "song-history",
@@ -888,8 +908,17 @@ public class PostScrapeOrchestratorTests : IDisposable
             Arg.Any<AdaptiveConcurrencyLimiter?>(),
             Arg.Any<CancellationToken>(),
             true)
-            .Returns(Task.FromException<List<SessionHistoryEntry>>(
-                new HttpRequestException("season 14 failed")));
+            .Returns(_ =>
+            {
+                if (Interlocked.Increment(ref season14Attempts) == 1)
+                {
+                    return Task.FromException<List<SessionHistoryEntry>>(
+                        new HttpRequestException("season 14 failed"));
+                }
+
+                retryStarted.TrySetResult(true);
+                return releaseRetry.Task;
+            });
         querier.LookupMultipleAccountSessionsAsync(
             "song-history",
             Arg.Any<string>(),
@@ -937,7 +966,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             HistoryReconstructor.CurrentReconstructionVersion,
             fingerprint);
 
-        await cyclicalMachine.AttachAsync(
+        var attachmentTask = cyclicalMachine.AttachAsync(
             [
                 new UserWorkItem
                 {
@@ -951,31 +980,38 @@ public class PostScrapeOrchestratorTests : IDisposable
                 },
             ],
             ["song-history"],
-            [
-                new SeasonWindowInfo
-                {
-                    SeasonNumber = 14,
-                    WindowId = "season014",
-                    SourceKind = "event_api",
-                },
-                new SeasonWindowInfo
-                {
-                    SeasonNumber = 15,
-                    WindowId = "season015",
-                    SourceKind = "event_api",
-                },
-            ],
+            windows,
             SongMachineSource.HistoryRecon,
             isHighPriority: false);
 
+        await retryStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Empty(_metaDb.GetProcessedHistoryReconPairs(
             accountId,
             HistoryReconstructor.CurrentReconstructionVersion,
             fingerprint));
+        releaseRetry.SetResult([]);
+        await attachmentTask.WaitAsync(TimeSpan.FromSeconds(20));
+
+        Assert.Contains(
+            ("song-history", "Solo_Guitar"),
+            _metaDb.GetProcessedHistoryReconPairs(
+                accountId,
+                HistoryReconstructor.CurrentReconstructionVersion,
+                fingerprint));
+        await querier.Received(2).LookupMultipleAccountSessionsAsync(
+            "song-history",
+            "Solo_Guitar",
+            "season014",
+            Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>(),
+            true);
         await querier.Received().LookupMultipleAccountSessionsAsync(
             "song-history",
-            Arg.Any<string>(),
-            "season014",
+            "Solo_Guitar",
+            "season015",
             Arg.Any<IReadOnlyList<string>>(),
             Arg.Any<string>(),
             Arg.Any<string>(),

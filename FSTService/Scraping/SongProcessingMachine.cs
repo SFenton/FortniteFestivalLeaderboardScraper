@@ -317,7 +317,7 @@ public class SongProcessingMachine
             foreach (var user in users)
             {
                 if (user.Purposes.HasFlag(WorkPurpose.HistoryRecon)
-                    && !user.IsAlreadyChecked(songId, instrument))
+                    && !user.IsHistoryAlreadyProcessed(songId, instrument))
                 {
                     _resultProcessor.MarkHistoryReconProcessed(
                         user.AccountId,
@@ -361,7 +361,11 @@ public class SongProcessingMachine
         var requiredLookupsSucceeded = true;
 
         var alltimeUsers = users
-            .Where(u => u.AllTimeNeeded && !u.IsAlreadyChecked(songId, instrument))
+            .Where(u =>
+                u.AllTimeNeeded
+                && !(u.Purposes.HasFlag(WorkPurpose.Backfill)
+                     && !u.Purposes.HasFlag(WorkPurpose.PostScrape)
+                     && u.IsBackfillAlreadyChecked(songId, instrument)))
             .ToList();
 
         if (alltimeUsers.Count > 0)
@@ -462,7 +466,12 @@ public class SongProcessingMachine
         foreach (var user in users)
         {
             if (user.SeasonsNeeded.Count == 0) continue;
-            if (user.IsAlreadyChecked(songId, instrument)) continue;
+            if (user.Purposes.HasFlag(WorkPurpose.HistoryRecon)
+                && !user.Purposes.HasFlag(WorkPurpose.PostScrape)
+                && user.IsHistoryAlreadyProcessed(songId, instrument))
+            {
+                continue;
+            }
 
             foreach (var season in user.SeasonsNeeded)
             {

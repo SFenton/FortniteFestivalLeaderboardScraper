@@ -371,6 +371,93 @@ public class SongProcessingMachineTests : IDisposable
     }
 
     [Fact]
+    public async Task ProcessSongForUsersAsync_BackfillResume_DoesNotSuppressHistoryRetry()
+    {
+        const string accountId = "combined-user";
+        const string songId = "song-combined";
+        const string fingerprint = "combined-fingerprint";
+        _metaDb.Db.EnqueueHistoryRecon(
+            accountId,
+            1,
+            HistoryReconstructor.CurrentReconstructionVersion,
+            fingerprint);
+        _scraper.LookupMultipleAccountSessionsAsync(
+            songId,
+            "Solo_Guitar",
+            "season015",
+            Arg.Any<IReadOnlyList<string>>(),
+            "token",
+            "caller",
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>(),
+            true)
+            .Returns(
+                _ => Task.FromException<List<SessionHistoryEntry>>(
+                    new HttpRequestException("first history attempt failed")),
+                _ => Task.FromResult(new List<SessionHistoryEntry>()));
+        var user = new UserWorkItem
+        {
+            AccountId = accountId,
+            Purposes = WorkPurpose.Backfill | WorkPurpose.HistoryRecon,
+            AllTimeNeeded = true,
+            SeasonsNeeded = [15],
+            BackfillAlreadyChecked = [(songId, "Solo_Guitar")],
+            HistoryAlreadyProcessed = [],
+            HistoryReconstructionVersion =
+                HistoryReconstructor.CurrentReconstructionVersion,
+            HistoryWindowFingerprint = fingerprint,
+        };
+        var machine = CreateMachine();
+
+        await machine.ProcessSongForUsersAsync(
+            songId,
+            ["Solo_Guitar"],
+            [user],
+            new Dictionary<int, string> { [15] = "season015" },
+            "token",
+            "caller",
+            _pool,
+            isHighPriority: false,
+            batchSize: 500,
+            EpicTrafficKind.Background,
+            CancellationToken.None);
+
+        Assert.Empty(_metaDb.Db.GetProcessedHistoryReconPairs(
+            accountId,
+            HistoryReconstructor.CurrentReconstructionVersion,
+            fingerprint));
+
+        await machine.ProcessSongForUsersAsync(
+            songId,
+            ["Solo_Guitar"],
+            [user],
+            new Dictionary<int, string> { [15] = "season015" },
+            "token",
+            "caller",
+            _pool,
+            isHighPriority: false,
+            batchSize: 500,
+            EpicTrafficKind.Background,
+            CancellationToken.None);
+
+        await _scraper.DidNotReceiveWithAnyArgs().LookupMultipleAccountsAsync(
+            default!,
+            default!,
+            default!,
+            default!,
+            default!,
+            default,
+            default,
+            default);
+        Assert.Contains(
+            (songId, "Solo_Guitar"),
+            _metaDb.Db.GetProcessedHistoryReconPairs(
+                accountId,
+                HistoryReconstructor.CurrentReconstructionVersion,
+                fingerprint));
+    }
+
+    [Fact]
     public async Task ProcessSongForUsersAsync_cancellation_keeps_callbacks_from_completed_instruments()
     {
         static async Task<List<T>> WaitUntilCancelledAsync<T>(CancellationToken ct)

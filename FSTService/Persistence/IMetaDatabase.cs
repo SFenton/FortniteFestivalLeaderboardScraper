@@ -157,10 +157,13 @@ public interface IMetaDatabase : IDisposable
     List<HistoryReconStatusInfo> GetPendingHistoryRecons();
     HistoryReconStatusInfo? GetHistoryReconStatus(string accountId);
     void StartHistoryRecon(string accountId);
+    void StartHistoryRecon(string accountId, int reconstructionVersion, string windowFingerprint);
     void CompleteHistoryRecon(string accountId);
     void CompleteHistoryRecon(string accountId, int reconstructionVersion, string windowFingerprint);
     void FailHistoryRecon(string accountId, string errorMessage);
+    void FailHistoryRecon(string accountId, string errorMessage, int reconstructionVersion, string windowFingerprint);
     void UpdateHistoryReconProgress(string accountId, int songsProcessed, int seasonsQueried, int historyEntriesFound);
+    void UpdateHistoryReconProgress(string accountId, int songsProcessed, int seasonsQueried, int historyEntriesFound, int reconstructionVersion, string windowFingerprint);
     void MarkHistoryReconSongProcessed(string accountId, string songId, string instrument);
     void MarkHistoryReconSongProcessed(string accountId, string songId, string instrument, int reconstructionVersion, string windowFingerprint);
     HashSet<(string SongId, string Instrument)> GetProcessedHistoryReconPairs(string accountId);

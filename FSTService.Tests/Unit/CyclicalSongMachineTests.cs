@@ -301,6 +301,42 @@ public class CyclicalSongMachineTests
         Assert.False(attachment.IsFullyComplete);
     }
 
+    [Fact]
+    public void LateHistoricalAttachment_WithDifferentFingerprint_RemainsDeferred()
+    {
+        var attachment = new CyclicalSongMachine.MachineAttachment(
+            attachmentNumber: 2,
+            callerId: "late-history",
+            users:
+            [
+                new UserWorkItem
+                {
+                    AccountId = "history-user",
+                    Purposes = WorkPurpose.HistoryRecon,
+                    SeasonsNeeded = [14, 15],
+                    HistoryReconstructionVersion =
+                        HistoryReconstructor.CurrentReconstructionVersion,
+                    HistoryWindowFingerprint = "fingerprint-2",
+                },
+            ],
+            songIds: ["song-a"],
+            seasonWindows: [],
+            source: SongMachineSource.HistoryRecon,
+            isHighPriority: false,
+            preserveProgressPhaseOnIdle: false,
+            epicTrafficKind: EpicTrafficKind.Background,
+            options: null,
+            callerCt: CancellationToken.None);
+        attachment.StampJoinIndex(1);
+        attachment.MarkCyclePassComplete();
+
+        Assert.False(CyclicalSongMachine.AttachmentMatchesHistoryFingerprint(
+            attachment,
+            "fingerprint-1"));
+        Assert.True(attachment.NeedsLoopBack);
+        Assert.False(attachment.IsFullyComplete);
+    }
+
     // ── Helper: invoke private static DeduplicateUsers via reflection ──
 
     private static CyclicalSongMachine.MachineAttachment CreateAttachment(

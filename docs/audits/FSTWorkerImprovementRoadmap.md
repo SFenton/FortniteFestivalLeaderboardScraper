@@ -1435,6 +1435,9 @@ Use one token owner or an atomic, locked, permission-restricted shared store.
 - Snapshot the active cyclical window fingerprint so mismatched late
   attachments defer, and version history pair completion by the exact window
   map so legacy/changed-window state cannot remain falsely complete.
+- Keep backfill/history resume sets independent, run all history seasons
+  coherently, and condition every history write on the active fingerprint so
+  stale workers cannot overwrite a newer reconstruction identity.
 - Keep registration backfill, history reconstruction, and solo-projection
   dirty-scope persistence outside this recurring-refresh ledger.
 

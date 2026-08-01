@@ -403,6 +403,19 @@ seasonal lookup succeeds. Version `1` plus the SHA-256 exact-window fingerprint
 invalidates legacy completed status/progress and prevents a changed window map
 from reusing stale pair completion.
 
+Multi-season history users do not mark progress in the fast core pass. Their
+full season set, including the current season, runs coherently in the history
+pass; a failed required lookup leaves the song missing so the attachment
+retries instead of completing. Historical admission checks the same current
+window and full-window fingerprint as the cycle snapshot.
+
+Backfill and history resume sets are independent on each work item:
+`BackfillAlreadyChecked` suppresses only all-time backfill calls, while
+`HistoryAlreadyProcessed` suppresses only version/fingerprint-matched seasonal
+history. Versioned status, counter, failure, pair-upsert, and completion writes
+all require the active identity, with the progress upsert locking that status
+row. Late work from fingerprint F1 therefore cannot overwrite an activated F2.
+
 The worker logs bounded before/after coverage over only the current charted
 songs and nine solo instruments: expected scopes, checked scopes, missing
 scopes, oldest checked timestamp/age, and rows completed by the current scrape.

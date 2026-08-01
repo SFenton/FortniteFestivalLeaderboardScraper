@@ -58,8 +58,20 @@ public abstract class SongMachineWorkItem
 public sealed class UserWorkItem : SongMachineWorkItem
 {
     public required string AccountId { get; init; }
+    public HashSet<(string SongId, string Instrument)>? BackfillAlreadyChecked { get; init; }
+    public HashSet<(string SongId, string Instrument)>? HistoryAlreadyProcessed { get; init; }
     public int HistoryReconstructionVersion { get; init; }
     public string HistoryWindowFingerprint { get; init; } = "";
+
+    public bool IsBackfillAlreadyChecked(string songId, string instrument)
+        => (BackfillAlreadyChecked
+            ?? (Purposes.HasFlag(WorkPurpose.Backfill) ? AlreadyChecked : null))
+            ?.Contains((songId, instrument)) == true;
+
+    public bool IsHistoryAlreadyProcessed(string songId, string instrument)
+        => (HistoryAlreadyProcessed
+            ?? (Purposes.HasFlag(WorkPurpose.HistoryRecon) ? AlreadyChecked : null))
+            ?.Contains((songId, instrument)) == true;
 }
 
 /// <summary>

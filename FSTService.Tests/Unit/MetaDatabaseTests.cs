@@ -2305,6 +2305,7 @@ public sealed class MetaDatabaseTests : IDisposable
     [Fact]
     public void HistoryReconProgress_tracks_processed_pairs()
     {
+        Db.EnqueueHistoryRecon("acct_1", 2);
         Db.MarkHistoryReconSongProcessed("acct_1", "song_1", "Solo_Guitar");
         Db.MarkHistoryReconSongProcessed("acct_1", "song_2", "Solo_Bass");
 
@@ -2350,6 +2351,53 @@ public sealed class MetaDatabaseTests : IDisposable
             "acct-versioned",
             1,
             "fingerprint-b"));
+    }
+
+    [Fact]
+    public async Task HistoryRecon_stale_identity_writes_cannot_overwrite_active_fingerprint()
+    {
+        Db.EnqueueHistoryRecon("acct-stale", 1, 1, "fingerprint-1");
+        Db.StartHistoryRecon("acct-stale", 1, "fingerprint-1");
+        Db.EnqueueHistoryRecon("acct-stale", 1, 1, "fingerprint-2");
+
+        await Task.WhenAll(
+            Task.Run(() => Db.MarkHistoryReconSongProcessed(
+                "acct-stale",
+                "song-stale",
+                "Solo_Guitar",
+                1,
+                "fingerprint-1")),
+            Task.Run(() => Db.UpdateHistoryReconProgress(
+                "acct-stale",
+                99,
+                99,
+                99,
+                1,
+                "fingerprint-1")),
+            Task.Run(() => Db.CompleteHistoryRecon(
+                "acct-stale",
+                1,
+                "fingerprint-1")),
+            Task.Run(() => Db.FailHistoryRecon(
+                "acct-stale",
+                "stale failure",
+                1,
+                "fingerprint-1")));
+
+        var status = Db.GetHistoryReconStatus("acct-stale");
+        Assert.Equal("pending", status?.Status);
+        Assert.Equal("fingerprint-2", status?.WindowFingerprint);
+        Assert.Equal(0, status?.SongsProcessed);
+        Assert.Equal(0, status?.SeasonsQueried);
+        Assert.Equal(0, status?.HistoryEntriesFound);
+        Assert.Empty(Db.GetProcessedHistoryReconPairs(
+            "acct-stale",
+            1,
+            "fingerprint-1"));
+        Assert.Empty(Db.GetProcessedHistoryReconPairs(
+            "acct-stale",
+            1,
+            "fingerprint-2"));
     }
 
     // ═══ SeasonWindows ══════════════════════════════════════════

@@ -497,7 +497,10 @@ public class HistoryReconstructor
             reconstructable.Count,
             CurrentReconstructionVersion,
             windowFingerprint);
-        _metaDb.StartHistoryRecon(accountId);
+        _metaDb.StartHistoryRecon(
+            accountId,
+            CurrentReconstructionVersion,
+            windowFingerprint);
 
         // Get already-processed pairs (for resumption)
         var alreadyProcessed = _metaDb.GetProcessedHistoryReconPairs(
@@ -583,7 +586,9 @@ public class HistoryReconstructor
                 {
                     _metaDb.UpdateHistoryReconProgress(accountId, processed,
                         Volatile.Read(ref seasonsQueried),
-                        Volatile.Read(ref totalHistoryEntries));
+                        Volatile.Read(ref totalHistoryEntries),
+                        CurrentReconstructionVersion,
+                        windowFingerprint);
 
                     _log.LogDebug(
                         "History recon progress: {Processed}/{Total} songs, DOP={Dop}.",
@@ -604,12 +609,20 @@ public class HistoryReconstructor
         await Task.WhenAll(tasks);
 
         // Final update
-        _metaDb.UpdateHistoryReconProgress(accountId, songsProcessed, seasonsQueried, totalHistoryEntries);
+        _metaDb.UpdateHistoryReconProgress(
+            accountId,
+            songsProcessed,
+            seasonsQueried,
+            totalHistoryEntries,
+            CurrentReconstructionVersion,
+            windowFingerprint);
         if (failedPairs > 0)
         {
             _metaDb.FailHistoryRecon(
                 accountId,
-                $"{failedPairs} song/instrument pair(s) had incomplete required seasonal lookups.");
+                $"{failedPairs} song/instrument pair(s) had incomplete required seasonal lookups.",
+                CurrentReconstructionVersion,
+                windowFingerprint);
             _log.LogWarning(
                 "History reconstruction incomplete for {AccountId}: {FailedPairs} pair(s) remain pending after required lookup failures.",
                 accountId,

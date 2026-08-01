@@ -164,6 +164,14 @@ public sealed class BackfillOrchestrator
                     HistoryReconstructor.CurrentReconstructionVersion,
                     historyWindowFingerprint);
             }
+            var backfillChecked = _persistence.Meta.GetCheckedBackfillPairs(
+                backfill.AccountId);
+            var historyProcessed = canRunCompleteHistoryRecon
+                ? _persistence.Meta.GetProcessedHistoryReconPairs(
+                    backfill.AccountId,
+                    HistoryReconstructor.CurrentReconstructionVersion,
+                    historyWindowFingerprint)
+                : null;
 
             users.Add(new UserWorkItem
             {
@@ -173,7 +181,8 @@ public sealed class BackfillOrchestrator
                     : WorkPurpose.Backfill,
                 AllTimeNeeded = true,
                 SeasonsNeeded = canRunCompleteHistoryRecon ? new HashSet<int>(allSeasons) : [],
-                AlreadyChecked = _persistence.Meta.GetCheckedBackfillPairs(backfill.AccountId),
+                BackfillAlreadyChecked = backfillChecked,
+                HistoryAlreadyProcessed = historyProcessed,
                 HistoryReconstructionVersion = canRunCompleteHistoryRecon
                     ? HistoryReconstructor.CurrentReconstructionVersion
                     : 0,
@@ -362,7 +371,7 @@ public sealed class BackfillOrchestrator
             chartedSongIds.Count * GlobalLeaderboardScraper.AllInstruments.Count;
         foreach (var accountId in accountIds)
         {
-            var alreadyChecked = _persistence.Meta.GetCheckedBackfillPairs(accountId);
+            var backfillChecked = _persistence.Meta.GetCheckedBackfillPairs(accountId);
             var totalPairs = chartedSongIds.Count * GlobalLeaderboardScraper.AllInstruments.Count;
             _persistence.Meta.EnqueueBackfill(accountId, totalPairs);
             _persistence.Meta.StartBackfill(accountId);
@@ -374,6 +383,12 @@ public sealed class BackfillOrchestrator
                     HistoryReconstructor.CurrentReconstructionVersion,
                     historyWindowFingerprint);
             }
+            var historyProcessed = canRunCompleteHistoryRecon
+                ? _persistence.Meta.GetProcessedHistoryReconPairs(
+                    accountId,
+                    HistoryReconstructor.CurrentReconstructionVersion,
+                    historyWindowFingerprint)
+                : null;
 
             users.Add(new UserWorkItem
             {
@@ -383,7 +398,8 @@ public sealed class BackfillOrchestrator
                     : WorkPurpose.Backfill,
                 AllTimeNeeded = true,
                 SeasonsNeeded = canRunCompleteHistoryRecon ? new HashSet<int>(allSeasons) : [],
-                AlreadyChecked = alreadyChecked,
+                BackfillAlreadyChecked = backfillChecked,
+                HistoryAlreadyProcessed = historyProcessed,
                 HistoryReconstructionVersion = canRunCompleteHistoryRecon
                     ? HistoryReconstructor.CurrentReconstructionVersion
                     : 0,
@@ -571,7 +587,7 @@ public sealed class BackfillOrchestrator
                 Purposes = WorkPurpose.HistoryRecon,
                 AllTimeNeeded = false,
                 SeasonsNeeded = new HashSet<int>(allSeasons),
-                AlreadyChecked = alreadyProcessed,
+                HistoryAlreadyProcessed = alreadyProcessed,
                 HistoryReconstructionVersion =
                     HistoryReconstructor.CurrentReconstructionVersion,
                 HistoryWindowFingerprint = historyWindowFingerprint,
@@ -623,7 +639,9 @@ public sealed class BackfillOrchestrator
         {
             _persistence.Meta.FailHistoryRecon(
                 user.AccountId,
-                "History reconstruction identity was missing.");
+                "History reconstruction identity was missing.",
+                user.HistoryReconstructionVersion,
+                user.HistoryWindowFingerprint);
             return false;
         }
 
@@ -635,7 +653,9 @@ public sealed class BackfillOrchestrator
         {
             _persistence.Meta.FailHistoryRecon(
                 user.AccountId,
-                $"History reconstruction incomplete: {processed.Count}/{expectedHistoryPairs} song/instrument pairs.");
+                $"History reconstruction incomplete: {processed.Count}/{expectedHistoryPairs} song/instrument pairs.",
+                user.HistoryReconstructionVersion,
+                user.HistoryWindowFingerprint);
             return false;
         }
 

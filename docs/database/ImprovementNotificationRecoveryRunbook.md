@@ -135,6 +135,10 @@ completion.
 The cyclical machine snapshots the active season/window fingerprint. Late
 attachments requesting a different fingerprint wait for a new cycle rather
 than joining the active pass and receiving an all-time-only checkpoint.
+Multi-season history runs all reconstruction seasons, including current, in
+one coherent history pass. Backfill and history resume keys are separate, and
+all versioned history writes are conditional on the active fingerprint so a
+late prior run cannot overwrite newer progress or completion.
 
 The worker emits `Registered-user refresh coverage (before|after)` with
 `expectedScopes`, `checkedScopes`, `missingScopes`, `oldestCheckedAtUtc`,

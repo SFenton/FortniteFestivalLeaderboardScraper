@@ -637,6 +637,12 @@ public sealed class PostScrapeOrchestrator
                 expectedHistoryPairs,
                 HistoryReconstructor.CurrentReconstructionVersion,
                 historyWindowFingerprint);
+            var backfillChecked = _persistence.Meta.GetCheckedBackfillPairs(
+                backfill.AccountId);
+            var historyProcessed = _persistence.Meta.GetProcessedHistoryReconPairs(
+                backfill.AccountId,
+                HistoryReconstructor.CurrentReconstructionVersion,
+                historyWindowFingerprint);
 
             users.Add(new UserWorkItem
             {
@@ -644,7 +650,8 @@ public sealed class PostScrapeOrchestrator
                 Purposes = WorkPurpose.Backfill | WorkPurpose.HistoryRecon,
                 AllTimeNeeded = true,
                 SeasonsNeeded = new HashSet<int>(allSeasons),
-                AlreadyChecked = _persistence.Meta.GetCheckedBackfillPairs(backfill.AccountId),
+                BackfillAlreadyChecked = backfillChecked,
+                HistoryAlreadyProcessed = historyProcessed,
                 HistoryReconstructionVersion =
                     HistoryReconstructor.CurrentReconstructionVersion,
                 HistoryWindowFingerprint = historyWindowFingerprint,
@@ -2197,7 +2204,9 @@ public sealed class PostScrapeOrchestrator
         {
             _persistence.Meta.FailHistoryRecon(
                 user.AccountId,
-                $"History reconstruction incomplete: {processed.Count}/{expectedHistoryPairs} song/instrument pairs.");
+                $"History reconstruction incomplete: {processed.Count}/{expectedHistoryPairs} song/instrument pairs.",
+                user.HistoryReconstructionVersion,
+                user.HistoryWindowFingerprint);
             return false;
         }
 

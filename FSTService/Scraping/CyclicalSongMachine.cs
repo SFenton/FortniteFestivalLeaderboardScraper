@@ -455,6 +455,8 @@ public class CyclicalSongMachine
         seasonLookupIdMap.TryGetValue(
             currentSeason,
             out var currentSeasonLookupId);
+        var activeHistoryWindowFingerprint =
+            HistoryReconstructor.ComputeWindowFingerprint(seasonWindows);
 
         // ═══════════════════════════════════════════════════════
         // CORE PASS — alltime + current season for ALL users
@@ -484,7 +486,10 @@ public class CyclicalSongMachine
                 currentSeason,
                 currentSeasonLookupId),
             coreSeasonLookupIdMap, accessToken, callerAccountId, opts,
-            reportScopeCompletion: true, ct);
+            reportScopeCompletion: true,
+            canRecordAttachment: attachment =>
+                !AttachmentNeedsHistorical(attachment, currentSeason),
+            ct);
         MarkCycleProgress();
 
         // Flush backfill summary counters so API shows progress mid-cycle
@@ -515,7 +520,6 @@ public class CyclicalSongMachine
         if (anyNeedHistorical && seasonLookupIdMap.Count > 1)
         {
             var historicalSeasonLookupIdMap = new Dictionary<int, string>(seasonLookupIdMap);
-            historicalSeasonLookupIdMap.Remove(currentSeason);
 
             // Historical pass always covers all songs (backfill users need full coverage)
             var historicalSongs = new List<SongCycleEntry>();
@@ -536,9 +540,15 @@ public class CyclicalSongMachine
 
             await RunSongPassAsync(
                 historicalSongs, instruments,
-                songId => GatherHistoricalUsersForSong(songId, currentSeason),
+                songId => GatherHistoricalUsersForSong(
+                    songId,
+                    currentSeason,
+                    currentSeasonLookupId,
+                    activeHistoryWindowFingerprint),
                 historicalSeasonLookupIdMap, accessToken, callerAccountId, opts,
-                reportScopeCompletion: false, ct);
+                reportScopeCompletion: false,
+                canRecordAttachment: static _ => true,
+                ct);
             MarkCycleProgress();
 
             foreach (var (_, att) in _attachments)
@@ -574,6 +584,7 @@ public class CyclicalSongMachine
         string callerAccountId,
         ScraperOptions opts,
         bool reportScopeCompletion,
+        Func<MachineAttachment, bool> canRecordAttachment,
         CancellationToken ct)
     {
         int maxConcurrentSongs = opts.SongMachineDop;
@@ -645,7 +656,14 @@ public class CyclicalSongMachine
                         }
 
                         foreach (var attachment in work.Attachments)
-                            attachment.RecordSongResult(songEntry.SongId, result);
+                        {
+                            if (canRecordAttachment(attachment)
+                                && (result.RequiredLookupsSucceeded
+                                    || !AttachmentRequiresSuccessfulLookups(attachment)))
+                            {
+                                attachment.RecordSongResult(songEntry.SongId, result);
+                            }
+                        }
 
                         foreach (var user in users)
                         {
@@ -854,6 +872,8 @@ public class CyclicalSongMachine
                     AllTimeNeeded = user.AllTimeNeeded,
                     SeasonsNeeded = coreSeasons,
                     AlreadyChecked = user.AlreadyChecked,
+                    BackfillAlreadyChecked = user.BackfillAlreadyChecked,
+                    HistoryAlreadyProcessed = user.HistoryAlreadyProcessed,
                     HistoryReconstructionVersion = user.HistoryReconstructionVersion,
                     HistoryWindowFingerprint = user.HistoryWindowFingerprint,
                 });
@@ -896,7 +916,11 @@ public class CyclicalSongMachine
     /// Gather users for the <b>historical pass</b> (remaining seasons, no alltime).
     /// Only includes users whose original <c>SeasonsNeeded</c> contains historical seasons.
     /// </summary>
-    private SongPassWork GatherHistoricalUsersForSong(string songId, int currentSeason)
+    private SongPassWork GatherHistoricalUsersForSong(
+        string songId,
+        int currentSeason,
+        string? currentSeasonLookupId,
+        string activeHistoryWindowFingerprint)
     {
         var users = new List<UserWorkItem>();
         var attachments = new List<MachineAttachment>();
@@ -908,6 +932,16 @@ public class CyclicalSongMachine
             if (att.IsCompleted) continue;
             if (!att.SongIds.Contains(songId)) continue;
             if (!AttachmentNeedsHistorical(att, currentSeason)) continue;
+            if (!AttachmentMatchesCurrentSeason(
+                    att,
+                    currentSeason,
+                    currentSeasonLookupId)
+                || !AttachmentMatchesHistoryFingerprint(
+                    att,
+                    activeHistoryWindowFingerprint))
+            {
+                continue;
+            }
 
             var attachmentUsers = new List<UserWorkItem>();
             foreach (var user in att.Users)
@@ -924,6 +958,8 @@ public class CyclicalSongMachine
                     AllTimeNeeded = false, // Already done in core pass
                     SeasonsNeeded = historicalSeasons,
                     AlreadyChecked = user.AlreadyChecked,
+                    BackfillAlreadyChecked = user.BackfillAlreadyChecked,
+                    HistoryAlreadyProcessed = user.HistoryAlreadyProcessed,
                     HistoryReconstructionVersion = user.HistoryReconstructionVersion,
                     HistoryWindowFingerprint = user.HistoryWindowFingerprint,
                 });
@@ -944,6 +980,33 @@ public class CyclicalSongMachine
             epicTrafficKind,
             attachments);
     }
+
+    internal static bool AttachmentMatchesHistoryFingerprint(
+        MachineAttachment attachment,
+        string activeHistoryWindowFingerprint)
+    {
+        var requestedFingerprints = attachment.Users
+            .Where(static user =>
+                user.Purposes.HasFlag(WorkPurpose.HistoryRecon))
+            .Select(static user => user.HistoryWindowFingerprint)
+            .Where(static fingerprint =>
+                !string.IsNullOrWhiteSpace(fingerprint))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        return requestedFingerprints.Length == 0
+            || (requestedFingerprints.Length == 1
+                && string.Equals(
+                    requestedFingerprints[0],
+                    activeHistoryWindowFingerprint,
+                    StringComparison.Ordinal));
+    }
+
+    internal static bool AttachmentRequiresSuccessfulLookups(
+        MachineAttachment attachment)
+        => attachment.Options?.OnScopesCompleted is not null
+           || attachment.Users.Any(static user =>
+               user.Purposes.HasFlag(WorkPurpose.HistoryRecon));
 
     private static EpicTrafficKind CombineTrafficKind(EpicTrafficKind current, EpicTrafficKind next)
         => current == EpicTrafficKind.ForegroundRegistration || next == EpicTrafficKind.ForegroundRegistration
@@ -992,6 +1055,13 @@ public class CyclicalSongMachine
                         mergedChecked.UnionWith(user.AlreadyChecked);
                 }
 
+                var mergedBackfillChecked = MergeCheckedPairs(
+                    existing.BackfillAlreadyChecked,
+                    user.BackfillAlreadyChecked);
+                var mergedHistoryProcessed = MergeCheckedPairs(
+                    existing.HistoryAlreadyProcessed,
+                    user.HistoryAlreadyProcessed);
+
                 merged[user.AccountId] = new UserWorkItem
                 {
                     AccountId = user.AccountId,
@@ -999,6 +1069,8 @@ public class CyclicalSongMachine
                     AllTimeNeeded = existing.AllTimeNeeded || user.AllTimeNeeded,
                     SeasonsNeeded = mergedSeasons,
                     AlreadyChecked = mergedChecked,
+                    BackfillAlreadyChecked = mergedBackfillChecked,
+                    HistoryAlreadyProcessed = mergedHistoryProcessed,
                     HistoryReconstructionVersion =
                         existing.HistoryReconstructionVersion == user.HistoryReconstructionVersion
                             && string.Equals(
@@ -1023,6 +1095,19 @@ public class CyclicalSongMachine
             }
         }
         return merged.Values.ToList();
+    }
+
+    private static HashSet<(string SongId, string Instrument)>? MergeCheckedPairs(
+        HashSet<(string SongId, string Instrument)>? first,
+        HashSet<(string SongId, string Instrument)>? second)
+    {
+        if (first is null && second is null)
+            return null;
+
+        var merged = new HashSet<(string SongId, string Instrument)>(first ?? []);
+        if (second is not null)
+            merged.UnionWith(second);
+        return merged;
     }
 
     private int GetTotalUserCount()
