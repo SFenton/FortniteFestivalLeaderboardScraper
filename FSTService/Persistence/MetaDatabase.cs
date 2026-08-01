@@ -3106,6 +3106,193 @@ public sealed class MetaDatabase : IMetaDatabase
     // ── Registered users ─────────────────────────────────────────────
 
     public HashSet<string> GetRegisteredAccountIds() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT DISTINCT account_id FROM registered_users"; var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase); using var r = cmd.ExecuteReader(); while (r.Read()) ids.Add(r.GetString(0)); return ids; }
+    public IReadOnlyList<string> GetRegisteredUserRefreshSongOrder(
+        IReadOnlyCollection<string> songIds,
+        IReadOnlyCollection<string> instruments)
+    {
+        var requestedSongs = songIds
+            .Where(static songId => !string.IsNullOrWhiteSpace(songId))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (requestedSongs.Length == 0)
+            return [];
+
+        var requestedInstruments = instruments
+            .Where(static instrument => !string.IsNullOrWhiteSpace(instrument))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (requestedInstruments.Length == 0)
+            return requestedSongs.OrderBy(static songId => songId, StringComparer.Ordinal).ToArray();
+
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            WITH requested_songs AS (
+                SELECT DISTINCT song_id
+                FROM unnest(@songIds::text[]) AS requested(song_id)
+            ),
+            coverage AS (
+                SELECT
+                    requested.song_id,
+                    COUNT(progress.instrument)::INTEGER AS checked_scopes,
+                    MIN(progress.checked_at) AS oldest_checked_at
+                FROM requested_songs requested
+                LEFT JOIN registered_user_refresh_scope_progress progress
+                  ON progress.song_id = requested.song_id
+                 AND progress.instrument = ANY(@instruments)
+                 AND progress.status = 'complete'
+                GROUP BY requested.song_id
+            )
+            SELECT song_id
+            FROM coverage
+            ORDER BY
+                (@instrumentCount - checked_scopes) DESC,
+                oldest_checked_at ASC NULLS FIRST,
+                song_id
+            """;
+        cmd.Parameters.Add("songIds", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = requestedSongs;
+        cmd.Parameters.Add("instruments", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = requestedInstruments;
+        cmd.Parameters.AddWithValue("instrumentCount", requestedInstruments.Length);
+
+        var ordered = new List<string>(requestedSongs.Length);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            ordered.Add(reader.GetString(0));
+        return ordered;
+    }
+
+    public int UpsertRegisteredUserRefreshScopes(
+        long scrapeId,
+        IReadOnlyCollection<SoloCurrentProjectionScopeKey> scopes,
+        DateTime checkedAtUtc)
+    {
+        if (scrapeId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(scrapeId), scrapeId, "Scrape ID must be positive.");
+
+        var normalizedScopes = scopes
+            .Where(static scope =>
+                !string.IsNullOrWhiteSpace(scope.SongId) &&
+                !string.IsNullOrWhiteSpace(scope.Instrument))
+            .Distinct()
+            .OrderBy(static scope => scope.SongId, StringComparer.Ordinal)
+            .ThenBy(static scope => scope.Instrument, StringComparer.Ordinal)
+            .ToArray();
+        if (normalizedScopes.Length == 0)
+            return 0;
+
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO registered_user_refresh_scope_progress (
+                song_id,
+                instrument,
+                status,
+                checked_at,
+                scrape_id)
+            SELECT
+                scope.song_id,
+                scope.instrument,
+                'complete',
+                @checkedAt,
+                @scrapeId
+            FROM unnest(
+                @songIds::text[],
+                @instruments::text[]) AS scope(song_id, instrument)
+            ON CONFLICT (song_id, instrument) DO UPDATE SET
+                status = EXCLUDED.status,
+                checked_at = EXCLUDED.checked_at,
+                scrape_id = EXCLUDED.scrape_id
+            WHERE registered_user_refresh_scope_progress.scrape_id < EXCLUDED.scrape_id
+               OR (
+                    registered_user_refresh_scope_progress.scrape_id = EXCLUDED.scrape_id
+                AND registered_user_refresh_scope_progress.checked_at <= EXCLUDED.checked_at)
+            """;
+        cmd.Parameters.Add("songIds", NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            normalizedScopes.Select(static scope => scope.SongId).ToArray();
+        cmd.Parameters.Add("instruments", NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            normalizedScopes.Select(static scope => scope.Instrument).ToArray();
+        cmd.Parameters.AddWithValue("checkedAt", NormalizeUtc(checkedAtUtc));
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        return cmd.ExecuteNonQuery();
+    }
+
+    public RegisteredUserRefreshCoverageInfo GetRegisteredUserRefreshCoverage(
+        IReadOnlyCollection<string> songIds,
+        IReadOnlyCollection<string> instruments,
+        long currentScrapeId,
+        DateTime observedAtUtc)
+    {
+        var requestedSongs = songIds
+            .Where(static songId => !string.IsNullOrWhiteSpace(songId))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var requestedInstruments = instruments
+            .Where(static instrument => !string.IsNullOrWhiteSpace(instrument))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var expectedScopes = checked(requestedSongs.Length * requestedInstruments.Length);
+        if (expectedScopes == 0)
+        {
+            return new RegisteredUserRefreshCoverageInfo(
+                0,
+                0,
+                0,
+                null,
+                null,
+                0);
+        }
+
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            WITH requested_songs AS (
+                SELECT DISTINCT song_id
+                FROM unnest(@songIds::text[]) AS requested(song_id)
+            ),
+            requested_instruments AS (
+                SELECT DISTINCT instrument
+                FROM unnest(@instruments::text[]) AS requested(instrument)
+            )
+            SELECT
+                COUNT(progress.instrument)::INTEGER AS checked_scopes,
+                MIN(progress.checked_at) AS oldest_checked_at,
+                COUNT(progress.instrument) FILTER (
+                    WHERE progress.scrape_id = @currentScrapeId)::INTEGER
+                    AS current_scrape_completions
+            FROM requested_songs song
+            CROSS JOIN requested_instruments instrument
+            LEFT JOIN registered_user_refresh_scope_progress progress
+              ON progress.song_id = song.song_id
+             AND progress.instrument = instrument.instrument
+             AND progress.status = 'complete'
+            """;
+        cmd.Parameters.Add("songIds", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = requestedSongs;
+        cmd.Parameters.Add("instruments", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = requestedInstruments;
+        cmd.Parameters.AddWithValue("currentScrapeId", currentScrapeId);
+
+        using var reader = cmd.ExecuteReader();
+        reader.Read();
+        var checkedScopes = reader.GetInt32(0);
+        var oldestCheckedAtUtc = reader.IsDBNull(1)
+            ? (DateTime?)null
+            : NormalizeUtc(reader.GetDateTime(1));
+        var currentScrapeCompletions = reader.GetInt32(2);
+        var observedUtc = NormalizeUtc(observedAtUtc);
+        var oldestCheckedAge = oldestCheckedAtUtc is DateTime oldest
+            ? observedUtc - oldest
+            : (TimeSpan?)null;
+        if (oldestCheckedAge is TimeSpan age && age < TimeSpan.Zero)
+            oldestCheckedAge = TimeSpan.Zero;
+
+        return new RegisteredUserRefreshCoverageInfo(
+            expectedScopes,
+            checkedScopes,
+            expectedScopes - checkedScopes,
+            oldestCheckedAtUtc,
+            oldestCheckedAge,
+            currentScrapeCompletions);
+    }
+
     public List<string> GetRegisteredAccountIdsForBandDiscovery()
     {
         using var conn = _ds.OpenConnection();

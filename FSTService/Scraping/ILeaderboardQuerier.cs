@@ -31,12 +31,15 @@ public interface ILeaderboardQuerier
     /// <summary>
     /// Fetch alltime entries for multiple accounts on one song/instrument in a single
     /// batched V2 POST. Pages through the response (25 entries per page) until all
-    /// requested accounts are returned or no more results.
+    /// requested accounts are returned or no more results. When
+    /// <paramref name="throwOnFailure"/> is true, unexpected API/parse failures are
+    /// propagated so callers can distinguish complete empty coverage from failed work.
     /// </summary>
     Task<List<LeaderboardEntry>> LookupMultipleAccountsAsync(
         string songId, string instrument, IReadOnlyList<string> targetAccountIds,
         string accessToken, string callerAccountId,
-        AdaptiveConcurrencyLimiter? limiter = null, CancellationToken ct = default);
+        AdaptiveConcurrencyLimiter? limiter = null, CancellationToken ct = default,
+        bool throwOnFailure = false);
 
     /// <summary>Fetch a player's entry in a specific seasonal window (V2 POST).</summary>
     Task<LeaderboardEntry?> LookupSeasonalAsync(
@@ -53,13 +56,16 @@ public interface ILeaderboardQuerier
     /// <summary>
     /// Fetch all sessions for multiple accounts on one song/instrument in a seasonal window.
     /// Returns a flat list of sessions across all accounts (each tagged with its AccountId).
-    /// Pages through the V2 response (25 entries per page).
+    /// Pages through the V2 response (25 entries per page). When
+    /// <paramref name="throwOnFailure"/> is true, unexpected API/parse failures are
+    /// propagated so callers can withhold completion checkpoints.
     /// </summary>
     Task<List<SessionHistoryEntry>> LookupMultipleAccountSessionsAsync(
         string songId, string instrument, string seasonPrefix,
         IReadOnlyList<string> targetAccountIds,
         string accessToken, string callerAccountId,
-        AdaptiveConcurrencyLimiter? limiter = null, CancellationToken ct = default);
+        AdaptiveConcurrencyLimiter? limiter = null, CancellationToken ct = default,
+        bool throwOnFailure = false);
 
     /// <summary>Fetch a specific band team's alltime or seasonal entry via V2 exact-team lookup.</summary>
     Task<BandLeaderboardEntry?> LookupBandAsync(

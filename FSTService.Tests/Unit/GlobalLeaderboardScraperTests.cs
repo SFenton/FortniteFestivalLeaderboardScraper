@@ -743,6 +743,44 @@ public class GlobalLeaderboardScraperTests
     }
 
     [Fact]
+    public async Task LookupMultipleAccountsAsync_StrictCompletion_accepts_legitimate_event_not_found()
+    {
+        var (scraper, handler) = CreateScraper();
+        handler.EnqueueJsonResponse(
+            HttpStatusCode.NotFound,
+            """{"errorCode":"com.epicgames.events.event_not_found","errorMessage":"Event not found"}""");
+
+        var result = await scraper.LookupMultipleAccountsAsync(
+            "new-song",
+            "Solo_Guitar",
+            ["target"],
+            "token",
+            "acct",
+            throwOnFailure: true);
+
+        Assert.Empty(result);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task LookupMultipleAccountsAsync_StrictCompletion_propagates_api_failure()
+    {
+        var (scraper, handler) = CreateScraper();
+        handler.EnqueueJsonResponse(
+            HttpStatusCode.Forbidden,
+            """{"errorCode":"forbidden","errorMessage":"Denied"}""");
+
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            scraper.LookupMultipleAccountsAsync(
+                "song1",
+                "Solo_Guitar",
+                ["target"],
+                "token",
+                "acct",
+                throwOnFailure: true));
+    }
+
+    [Fact]
     public async Task FetchBandPageAsync_EventNotFound_ReturnsEmptySuccess()
     {
         var (scraper, handler) = CreateScraper();

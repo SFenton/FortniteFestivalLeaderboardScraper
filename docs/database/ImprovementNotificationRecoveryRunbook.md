@@ -106,6 +106,22 @@ first on the next pass.
 `Scraper__PostScrapeRefreshTimeout` remains the backward-compatible fallback
 when a dedicated timeout is not configured.
 
+Recurring solo refresh coverage is durable in
+`registered_user_refresh_scope_progress`. Each pass still includes every
+charted song, but missing scopes run first and complete scopes follow by their
+oldest `checked_at`. A scope advances only after all required registered-user
+all-time/current-season batches succeed; successful empty/known missing
+leaderboards count, while transport/API failure does not. Checkpoints are
+written from the live attachment callback, so a timeout or cancellation keeps
+all scopes that finished before the boundary.
+
+The worker emits `Registered-user refresh coverage (before|after)` with
+`expectedScopes`, `checkedScopes`, `missingScopes`, `oldestCheckedAtUtc`,
+`oldestCheckedAge`, and `currentScrapeCompletions`. These reads are bounded to
+the current charted-song/instrument cross product. A growing missing count or
+oldest age indicates recurring backlog; registration backfill/history and
+solo-projection dirty scopes are intentionally not represented by this table.
+
 ## 2026-07-29 normal-path qualification
 
 Scrape `1268` installed and exercised the complete publication/recovery

@@ -1413,6 +1413,27 @@ dependency consumption, or durable event publishing exits or becomes stale.
 
 Use one token owner or an atomic, locked, permission-restricted shared store.
 
+### WORKER-5.4 - Persist recurring registered-user refresh fairness
+
+**Decision:** Code accepted; production qualification pending.
+
+- Persist the latest successful `(song_id, instrument)` PostScrape checkpoint
+  with `checked_at`, status, and scrape ID after each completed scope rather
+  than only when the attachment returns.
+- Keep every charted song in each pass, ordering missing coverage first and
+  then least-recently checked coverage.
+- Treat successful empty/recognized missing leaderboards as complete, but
+  never checkpoint swallowed transport, API, payload, or required-window
+  failure.
+- Preserve finished checkpoints across timeout/cancellation and log bounded
+  expected/checked/missing/oldest/current-scrape coverage.
+- Keep registration backfill, history reconstruction, and solo-projection
+  dirty-scope persistence outside this recurring-refresh ledger.
+
+Promotion requires one normal scrape showing monotonic current-scrape
+completions, a reduced or stable missing backlog, no regression in
+backfill/history ownership, and unchanged publication/public-read parity.
+
 ## Phase WORKER-6: Consolidate dead and duplicate paths
 
 **Decision:** Accepted after reachability proof

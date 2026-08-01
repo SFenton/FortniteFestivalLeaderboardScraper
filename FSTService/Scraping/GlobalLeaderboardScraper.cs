@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -334,7 +335,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         string accessToken,
         string callerAccountId,
         AdaptiveConcurrencyLimiter? limiter = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool throwOnFailure = false)
     {
         if (targetAccountIds.Count == 0) return [];
         if (!SupportsSongInstrument(songId, instrument)) return [];
@@ -390,21 +392,30 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             {
                 _log.LogWarning(ex, "Batch lookup failed for {Label} at fromIndex={FromIndex}.",
                     label, fromIndex);
+                if (throwOnFailure)
+                    throw;
                 break;
             }
 
             if (!res.IsSuccessStatusCode)
             {
                 var body = await res.Content.ReadAsStringAsync(ct);
+                var statusCode = res.StatusCode;
+                res.Dispose();
                 if (body.Contains("no_score_found", StringComparison.Ordinal))
-                {
-                    res.Dispose();
                     break; // No more results
-                }
+                if (IsMissingBatchLeaderboard(statusCode, fromIndex, body))
+                    break;
 
                 _log.LogWarning("Batch lookup returned {Status} for {Label}: {Body}",
-                    res.StatusCode, label, body);
-                res.Dispose();
+                    statusCode, label, body);
+                if (throwOnFailure)
+                {
+                    throw new HttpRequestException(
+                        $"Batch leaderboard lookup failed: {label} returned {(int)statusCode}",
+                        null,
+                        statusCode);
+                }
                 break;
             }
 
@@ -415,7 +426,14 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             }
             res.Dispose();
 
-            if (pageEntries is null || pageEntries.Count == 0)
+            if (pageEntries is null)
+            {
+                if (throwOnFailure)
+                    throw new InvalidDataException($"Batch leaderboard lookup returned an invalid payload for {label}.");
+                break;
+            }
+
+            if (pageEntries.Count == 0)
                 break; // No more results
 
             // Filter to only requested targets (exclude caller's own entry)
@@ -450,7 +468,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         string accessToken,
         string callerAccountId,
         AdaptiveConcurrencyLimiter? limiter = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool throwOnFailure = false)
     {
         if (targetAccountIds.Count == 0) return [];
         if (!SupportsSongInstrument(songId, instrument)) return [];
@@ -504,6 +523,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             {
                 _log.LogWarning(ex, "Batch session lookup failed for {Label} at fromIndex={FromIndex}.",
                     label, fromIndex);
+                if (throwOnFailure)
+                    throw;
                 break;
             }
 
@@ -513,6 +534,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 var statusCode = res.StatusCode;
                 res.Dispose();
                 if (body.Contains("no_score_found", StringComparison.Ordinal))
+                    break;
+                if (IsMissingBatchLeaderboard(statusCode, fromIndex, body))
                     break;
                 _log.LogWarning("Batch session lookup returned {Status} for {Label}: {Body}",
                     statusCode, label, body);
@@ -525,6 +548,14 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                         $"Seasonal leaderboard not found: {label} returned {(int)statusCode}",
                         null, statusCode);
 
+                if (throwOnFailure)
+                {
+                    throw new HttpRequestException(
+                        $"Batch session lookup failed: {label} returned {(int)statusCode}",
+                        null,
+                        statusCode);
+                }
+
                 break;
             }
 
@@ -535,7 +566,12 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 using var doc = await System.Text.Json.JsonDocument.ParseAsync(stream, cancellationToken: ct);
                 var root = doc.RootElement;
                 if (root.ValueKind != System.Text.Json.JsonValueKind.Array)
+                {
+                    res.Dispose();
+                    if (throwOnFailure)
+                        throw new InvalidDataException($"Batch session lookup returned an invalid payload for {label}.");
                     break;
+                }
 
                 foreach (var e in root.EnumerateArray())
                 {
@@ -564,6 +600,16 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
         return allSessions;
     }
+
+    private static bool IsMissingBatchLeaderboard(
+        HttpStatusCode statusCode,
+        int fromIndex,
+        string body) =>
+        fromIndex == 0 &&
+        statusCode == HttpStatusCode.NotFound &&
+        body.Contains(
+            "com.epicgames.events.event_not_found",
+            StringComparison.Ordinal);
 
     /// <summary>
     /// Fetch one exact band team's V2 row. <paramref name="windowId"/> is either

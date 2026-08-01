@@ -331,7 +331,8 @@ public abstract class ScraperWorkerTestBase : IDisposable
             Arg.Any<bool>(),
             Arg.Any<CancellationToken>(),
             Arg.Any<bool>(),
-            Arg.Any<EpicTrafficKind>())
+            Arg.Any<EpicTrafficKind>(),
+            Arg.Any<CyclicalSongMachine.AttachmentOptions?>())
             .Returns(new SongProcessingMachine.MachineResult());
         return mock;
     }

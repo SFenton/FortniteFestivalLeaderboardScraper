@@ -174,7 +174,9 @@ public class PostScrapeOrchestratorTests : IDisposable
             Arg.Any<SongMachineSource>(),
             Arg.Any<bool>(),
             Arg.Any<CancellationToken>(),
-            Arg.Any<bool>())
+            Arg.Any<bool>(),
+            Arg.Any<EpicTrafficKind>(),
+            Arg.Any<CyclicalSongMachine.AttachmentOptions?>())
             .Returns(new SongProcessingMachine.MachineResult());
         return mock;
     }
@@ -317,7 +319,83 @@ public class PostScrapeOrchestratorTests : IDisposable
             Arg.Any<SongMachineSource>(),
             Arg.Any<bool>(),
             Arg.Any<CancellationToken>(),
-            preserveProgressPhaseOnIdle: true);
+            preserveProgressPhaseOnIdle: true,
+            Arg.Any<EpicTrafficKind>(),
+            Arg.Is<CyclicalSongMachine.AttachmentOptions?>(options =>
+                options != null && options.PreserveSongOrder));
+    }
+
+    [Fact]
+    public async Task RefreshRegisteredUsers_orders_least_covered_songs_and_logs_bounded_telemetry()
+    {
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns("test-access-token");
+        _tokenManager.AccountId.Returns("caller-001");
+
+        var old = new DateTime(2026, 7, 20, 12, 0, 0, DateTimeKind.Utc);
+        var fresh = new DateTime(2026, 7, 31, 12, 0, 0, DateTimeKind.Utc);
+        _metaDb.UpsertRegisteredUserRefreshScopes(
+            100,
+            GlobalLeaderboardScraper.AllInstruments.Select(instrument =>
+                new SoloCurrentProjectionScopeKey("song-old", instrument)).ToArray(),
+            old);
+        _metaDb.UpsertRegisteredUserRefreshScopes(
+            101,
+            GlobalLeaderboardScraper.AllInstruments.Select(instrument =>
+                new SoloCurrentProjectionScopeKey("song-fresh", instrument)).ToArray(),
+            fresh);
+
+        var ctx = CreateContext(
+            scrapeId: 200,
+            registeredIds: new HashSet<string> { "user-1" },
+            scrapeRequests:
+            [
+                new GlobalLeaderboardScraper.SongScrapeRequest
+                {
+                    SongId = "song-fresh",
+                    Instruments = GlobalLeaderboardScraper.AllInstruments,
+                },
+                new GlobalLeaderboardScraper.SongScrapeRequest
+                {
+                    SongId = "song-missing",
+                    Instruments = GlobalLeaderboardScraper.AllInstruments,
+                },
+                new GlobalLeaderboardScraper.SongScrapeRequest
+                {
+                    SongId = "song-old",
+                    Instruments = GlobalLeaderboardScraper.AllInstruments,
+                },
+            ]);
+
+        await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
+
+        await _cyclicalMachine.Received(1).AttachAsync(
+            Arg.Any<IReadOnlyList<UserWorkItem>>(),
+            Arg.Is<IReadOnlyList<string>>(songs =>
+                songs.SequenceEqual(
+                    new[] { "song-missing", "song-old", "song-fresh" },
+                    StringComparer.Ordinal)),
+            Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
+            SongMachineSource.PostScrape,
+            true,
+            Arg.Any<CancellationToken>(),
+            true,
+            Arg.Any<EpicTrafficKind>(),
+            Arg.Is<CyclicalSongMachine.AttachmentOptions?>(options =>
+                options != null &&
+                options.PreserveSongOrder &&
+                options.OnScopesCompleted != null));
+
+        Assert.Contains(_log.Entries, entry =>
+            entry.Message.Contains("coverage (before)", StringComparison.Ordinal) &&
+            entry.Message.Contains("expectedScopes=27", StringComparison.Ordinal) &&
+            entry.Message.Contains("checkedScopes=18", StringComparison.Ordinal) &&
+            entry.Message.Contains("missingScopes=9", StringComparison.Ordinal) &&
+            entry.Message.Contains("oldestCheckedAtUtc=", StringComparison.Ordinal) &&
+            entry.Message.Contains("oldestCheckedAge=", StringComparison.Ordinal) &&
+            entry.Message.Contains("currentScrapeCompletions=0", StringComparison.Ordinal));
+        Assert.Contains(_log.Entries, entry =>
+            entry.Message.Contains("coverage (after)", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -348,7 +426,9 @@ public class PostScrapeOrchestratorTests : IDisposable
             Arg.Any<SongMachineSource>(),
             Arg.Any<bool>(),
             Arg.Any<CancellationToken>(),
-            Arg.Any<bool>())
+            Arg.Any<bool>(),
+            Arg.Any<EpicTrafficKind>(),
+            Arg.Any<CyclicalSongMachine.AttachmentOptions?>())
             .ThrowsAsync(new InvalidOperationException("API error"));
 
         var ctx = CreateContext(registeredIds: new HashSet<string> { "user-1" });
@@ -358,7 +438,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task RefreshRegisteredUsers_WhenSongMachineTimesOut_PropagatesVisibleTimeout()
+    public async Task RefreshRegisteredUsers_WhenSongMachineTimesOut_PreservesCompletedScopeCheckpoint()
     {
         _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
             .Returns("test-access-token");
@@ -372,8 +452,17 @@ public class PostScrapeOrchestratorTests : IDisposable
             Arg.Any<SongMachineSource>(),
             Arg.Any<bool>(),
             Arg.Any<CancellationToken>(),
-            Arg.Any<bool>())
-            .Returns(call => WaitUntilCancelledAsync(call.Arg<CancellationToken>()));
+            Arg.Any<bool>(),
+            Arg.Any<EpicTrafficKind>(),
+            Arg.Any<CyclicalSongMachine.AttachmentOptions?>())
+            .Returns(async call =>
+            {
+                var options = call.Arg<CyclicalSongMachine.AttachmentOptions?>();
+                Assert.NotNull(options?.OnScopesCompleted);
+                await options!.OnScopesCompleted!(
+                    [new SoloCurrentProjectionScopeKey("song-timeout", "Solo_Guitar")]);
+                return await WaitUntilCancelledAsync(call.Arg<CancellationToken>());
+            });
 
         var scraper = Substitute.For<GlobalLeaderboardScraper>(
             new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0, null);
@@ -411,6 +500,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             }), _log, null);
 
         var ctx = CreateContext(
+            scrapeId: 1273,
             registeredIds: new HashSet<string> { "user-1" },
             scrapeRequests:
             [
@@ -429,6 +519,16 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5), $"Refresh should be bounded but took {sw.Elapsed}.");
         Assert.Contains(_log.Entries, e => e.Message.Contains("Post-scrape registered-user refresh timed out", StringComparison.Ordinal));
+        var coverage = _metaDb.GetRegisteredUserRefreshCoverage(
+            ["song-timeout"],
+            GlobalLeaderboardScraper.AllInstruments,
+            currentScrapeId: 1273,
+            DateTime.UtcNow);
+        Assert.Equal(1, coverage.CheckedScopes);
+        Assert.Equal(1, coverage.CurrentScrapeCompletions);
+        Assert.Contains(_log.Entries, entry =>
+            entry.Message.Contains("coverage (after)", StringComparison.Ordinal) &&
+            entry.Message.Contains("currentScrapeCompletions=1", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -499,6 +599,8 @@ public class PostScrapeOrchestratorTests : IDisposable
             default!,
             default!,
             default!,
+            default,
+            default,
             default,
             default,
             default,
@@ -1640,7 +1742,10 @@ public class PostScrapeOrchestratorTests : IDisposable
             SongMachineSource.PostScrape,
             Arg.Is<bool>(static value => value),
             Arg.Any<CancellationToken>(),
-            preserveProgressPhaseOnIdle: true);
+            preserveProgressPhaseOnIdle: true,
+            Arg.Any<EpicTrafficKind>(),
+            Arg.Is<CyclicalSongMachine.AttachmentOptions?>(options =>
+                options != null && options.PreserveSongOrder));
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•

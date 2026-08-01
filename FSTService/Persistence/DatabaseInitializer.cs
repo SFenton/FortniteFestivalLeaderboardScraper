@@ -966,6 +966,21 @@ public static class DatabaseInitializer
         SET last_activity_at = COALESCE(last_activity_at, last_sync_at, last_login_at, registered_at)
         WHERE last_activity_at IS NULL;
 
+        CREATE TABLE IF NOT EXISTS registered_user_refresh_scope_progress (
+            song_id     TEXT        NOT NULL,
+            instrument  TEXT        NOT NULL,
+            status      TEXT        NOT NULL DEFAULT 'complete',
+            checked_at  TIMESTAMPTZ NOT NULL,
+            scrape_id   BIGINT      NOT NULL,
+            PRIMARY KEY (song_id, instrument),
+            CONSTRAINT ck_registered_user_refresh_scope_status
+                CHECK (status IN ('complete'))
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_registered_user_refresh_scope_checked_at
+            ON registered_user_refresh_scope_progress (checked_at, song_id, instrument)
+            WHERE status = 'complete';
+
         CREATE TABLE IF NOT EXISTS registered_bands (
             source_id           TEXT        NOT NULL,
             band_type           TEXT        NOT NULL,

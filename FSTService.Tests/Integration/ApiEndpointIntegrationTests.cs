@@ -6613,7 +6613,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
     private sealed class ImmediateCyclicalSongMachine : CyclicalSongMachine
     {
-        public override Task<SongProcessingMachine.MachineResult> AttachAsync(
+        public override async Task<SongProcessingMachine.MachineResult> AttachAsync(
             IReadOnlyList<UserWorkItem> users,
             IReadOnlyList<string> songIds,
             IReadOnlyList<SeasonWindowInfo> seasonWindows,
@@ -6621,13 +6621,22 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             bool isHighPriority,
             CancellationToken ct = default,
             bool preserveProgressPhaseOnIdle = false,
-            EpicTrafficKind epicTrafficKind = EpicTrafficKind.Background)
+            EpicTrafficKind epicTrafficKind = EpicTrafficKind.Background,
+            AttachmentOptions? attachmentOptions = null)
         {
-            return Task.FromResult(new SongProcessingMachine.MachineResult
+            var completedScopes = songIds
+                .SelectMany(static songId => GlobalLeaderboardScraper.AllInstruments.Select(
+                    instrument => new SoloCurrentProjectionScopeKey(songId, instrument)))
+                .ToArray();
+            if (attachmentOptions?.OnScopesCompleted is not null)
+                await attachmentOptions.OnScopesCompleted(completedScopes);
+
+            return new SongProcessingMachine.MachineResult
             {
                 EntriesUpdated = songIds.Count * GlobalLeaderboardScraper.AllInstruments.Count * users.Count,
                 UsersProcessed = users.Count,
-            });
+                CompletedScopes = completedScopes,
+            };
         }
     }
 

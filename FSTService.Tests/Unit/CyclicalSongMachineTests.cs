@@ -155,7 +155,7 @@ public class CyclicalSongMachineTests
         };
 
         await Task.WhenAll(Enumerable.Range(0, 5_000)
-            .Select(i => Task.Run(() => attachment.RecordSongResult(i % 1_000, result))));
+            .Select(i => Task.Run(() => attachment.RecordSongResult($"song-{i % 1_000}", result))));
 
         Assert.Equal(5_000, attachment.TotalEntriesUpdated);
         Assert.Equal(10_000, attachment.TotalSessionsInserted);
@@ -165,7 +165,8 @@ public class CyclicalSongMachineTests
         attachment.MarkCyclePassComplete();
 
         Assert.True(attachment.IsFullyComplete);
-        Assert.Empty(attachment.GetMissingSongIndices(1_000));
+        Assert.Empty(attachment.GetMissingSongIndices(
+            Enumerable.Range(0, 1_000).Select(i => $"song-{i}").ToArray()));
     }
 
     [Fact]
@@ -254,13 +255,62 @@ public class CyclicalSongMachineTests
             () => attachment.Completion.Task);
     }
 
+    [Fact]
+    public void BuildSongList_honors_preferred_fairness_order_then_sorts_remaining_songs()
+    {
+        var normal = CreateAttachment(
+            ["song-b", "song-a"],
+            attachmentNumber: 1);
+        var preferred = CreateAttachment(
+            ["song-z", "song-a"],
+            attachmentNumber: 2,
+            preserveSongOrder: true);
+
+        var ordered = CyclicalSongMachine.BuildSongList([normal, preferred]);
+
+        Assert.Equal(["song-z", "song-a", "song-b"], ordered);
+    }
+
+    [Fact]
+    public void BuildSongList_without_preferred_order_sorts_union_by_song_id()
+    {
+        var first = CreateAttachment(["song-z", "song-a"], attachmentNumber: 1);
+        var second = CreateAttachment(["song-b", "song-a"], attachmentNumber: 2);
+
+        var ordered = CyclicalSongMachine.BuildSongList([first, second]);
+
+        Assert.Equal(["song-a", "song-b", "song-z"], ordered);
+    }
+
+    [Fact]
+    public void MachineAttachment_tracks_completed_song_ids_across_cycle_reordering()
+    {
+        var attachment = CreateAttachment(
+            ["song-a", "song-b", "song-c"],
+            preserveSongOrder: true);
+        attachment.RecordSongResult(
+            "song-b",
+            new SongProcessingMachine.SongStepResult());
+        attachment.MarkCyclePassComplete();
+
+        var missingIndices = attachment.GetMissingSongIndices(
+            ["song-c", "song-b", "song-a"]).ToArray();
+
+        Assert.Equal([0, 2], missingIndices);
+        Assert.True(attachment.NeedsLoopBack);
+        Assert.False(attachment.IsFullyComplete);
+    }
+
     // ── Helper: invoke private static DeduplicateUsers via reflection ──
 
     private static CyclicalSongMachine.MachineAttachment CreateAttachment(
         IReadOnlyList<string> songIds,
-        bool preserveProgressPhaseOnIdle = false)
+        bool preserveProgressPhaseOnIdle = false,
+        int attachmentNumber = 1,
+        bool preserveSongOrder = false)
     {
         return new CyclicalSongMachine.MachineAttachment(
+            attachmentNumber: attachmentNumber,
             callerId: "test-caller",
             users:
             [
@@ -278,6 +328,9 @@ public class CyclicalSongMachineTests
             isHighPriority: true,
             preserveProgressPhaseOnIdle: preserveProgressPhaseOnIdle,
             epicTrafficKind: EpicTrafficKind.Background,
+            options: preserveSongOrder
+                ? new CyclicalSongMachine.AttachmentOptions(PreserveSongOrder: true)
+                : null,
             callerCt: CancellationToken.None);
     }
 

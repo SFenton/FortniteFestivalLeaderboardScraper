@@ -168,6 +168,227 @@ public class SongProcessingMachineTests : IDisposable
             "token", "caller", Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task ProcessSongForUsersAsync_reports_scope_after_all_required_lookups_succeed()
+    {
+        _scraper.LookupMultipleAccountsAsync(
+            "song-success", "Solo_Guitar", Arg.Any<IReadOnlyList<string>>(),
+            "token", "caller", Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>(), true)
+            .Returns([]);
+        _scraper.LookupMultipleAccountSessionsAsync(
+            "song-success", "Solo_Guitar", "season013",
+            Arg.Any<IReadOnlyList<string>>(), "token", "caller",
+            Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<CancellationToken>(), true)
+            .Returns([]);
+
+        var completed = new List<SoloCurrentProjectionScopeKey>();
+        var machine = CreateMachine();
+        var result = await machine.ProcessSongForUsersAsync(
+            "song-success",
+            ["Solo_Guitar"],
+            [
+                new UserWorkItem
+                {
+                    AccountId = "user1",
+                    Purposes = WorkPurpose.PostScrape,
+                    AllTimeNeeded = true,
+                    SeasonsNeeded = [13],
+                },
+            ],
+            new Dictionary<int, string> { [13] = "season013" },
+            "token",
+            "caller",
+            _pool,
+            isHighPriority: true,
+            batchSize: 500,
+            EpicTrafficKind.Background,
+            CancellationToken.None,
+            scopes =>
+            {
+                completed.AddRange(scopes);
+                return ValueTask.CompletedTask;
+            });
+
+        var expected = new SoloCurrentProjectionScopeKey("song-success", "Solo_Guitar");
+        Assert.True(result.RequiredLookupsSucceeded);
+        Assert.Equal([expected], result.CompletedScopes);
+        Assert.Equal([expected], completed);
+    }
+
+    [Fact]
+    public async Task ProcessSongForUsersAsync_reliable_completion_checks_all_account_chunks_after_empty_result()
+    {
+        _scraper.LookupMultipleAccountsAsync(
+            "song-chunks", "Solo_Guitar", Arg.Any<IReadOnlyList<string>>(),
+            "token", "caller", Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>(), true)
+            .Returns([]);
+        _scraper.LookupMultipleAccountSessionsAsync(
+            "song-chunks", "Solo_Guitar", "season013",
+            Arg.Any<IReadOnlyList<string>>(), "token", "caller",
+            Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<CancellationToken>(), true)
+            .Returns([]);
+
+        var completed = new List<SoloCurrentProjectionScopeKey>();
+        var machine = CreateMachine();
+        await machine.ProcessSongForUsersAsync(
+            "song-chunks",
+            ["Solo_Guitar"],
+            [
+                new UserWorkItem
+                {
+                    AccountId = "user1",
+                    Purposes = WorkPurpose.PostScrape,
+                    AllTimeNeeded = true,
+                    SeasonsNeeded = [13],
+                },
+                new UserWorkItem
+                {
+                    AccountId = "user2",
+                    Purposes = WorkPurpose.PostScrape,
+                    AllTimeNeeded = true,
+                    SeasonsNeeded = [13],
+                },
+            ],
+            new Dictionary<int, string> { [13] = "season013" },
+            "token",
+            "caller",
+            _pool,
+            isHighPriority: true,
+            batchSize: 1,
+            EpicTrafficKind.Background,
+            CancellationToken.None,
+            scopes =>
+            {
+                completed.AddRange(scopes);
+                return ValueTask.CompletedTask;
+            });
+
+        await _scraper.Received(2).LookupMultipleAccountSessionsAsync(
+            "song-chunks", "Solo_Guitar", "season013",
+            Arg.Is<IReadOnlyList<string>>(targets => targets.Count == 1),
+            "token", "caller", Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>(), true);
+        Assert.Equal(
+            [new SoloCurrentProjectionScopeKey("song-chunks", "Solo_Guitar")],
+            completed);
+    }
+
+    [Fact]
+    public async Task ProcessSongForUsersAsync_does_not_report_scope_when_required_lookup_fails()
+    {
+        _scraper.LookupMultipleAccountsAsync(
+            "song-failure", "Solo_Guitar", Arg.Any<IReadOnlyList<string>>(),
+            "token", "caller", Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>(), true)
+            .Returns([]);
+        _scraper.LookupMultipleAccountSessionsAsync(
+            "song-failure", "Solo_Guitar", "season013",
+            Arg.Any<IReadOnlyList<string>>(), "token", "caller",
+            Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<CancellationToken>(), true)
+            .Returns(Task.FromException<List<SessionHistoryEntry>>(
+                new HttpRequestException("seasonal transport failure")));
+
+        var completed = new List<SoloCurrentProjectionScopeKey>();
+        var machine = CreateMachine();
+        var result = await machine.ProcessSongForUsersAsync(
+            "song-failure",
+            ["Solo_Guitar"],
+            [
+                new UserWorkItem
+                {
+                    AccountId = "user1",
+                    Purposes = WorkPurpose.PostScrape,
+                    AllTimeNeeded = true,
+                    SeasonsNeeded = [13],
+                },
+            ],
+            new Dictionary<int, string> { [13] = "season013" },
+            "token",
+            "caller",
+            _pool,
+            isHighPriority: true,
+            batchSize: 500,
+            EpicTrafficKind.Background,
+            CancellationToken.None,
+            scopes =>
+            {
+                completed.AddRange(scopes);
+                return ValueTask.CompletedTask;
+            });
+
+        Assert.False(result.RequiredLookupsSucceeded);
+        Assert.Empty(result.CompletedScopes);
+        Assert.Empty(completed);
+    }
+
+    [Fact]
+    public async Task ProcessSongForUsersAsync_cancellation_keeps_callbacks_from_completed_instruments()
+    {
+        static async Task<List<T>> WaitUntilCancelledAsync<T>(CancellationToken ct)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            return [];
+        }
+
+        _scraper.LookupMultipleAccountsAsync(
+            "song-cancel", Arg.Any<string>(), Arg.Any<IReadOnlyList<string>>(),
+            "token", "caller", Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>(), true)
+            .Returns(call => call.ArgAt<string>(1) == "Solo_Guitar"
+                ? Task.FromResult(new List<LeaderboardEntry>())
+                : WaitUntilCancelledAsync<LeaderboardEntry>(call.ArgAt<CancellationToken>(6)));
+        _scraper.LookupMultipleAccountSessionsAsync(
+            "song-cancel", Arg.Any<string>(), "season013",
+            Arg.Any<IReadOnlyList<string>>(), "token", "caller",
+            Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<CancellationToken>(), true)
+            .Returns(call => call.ArgAt<string>(1) == "Solo_Guitar"
+                ? Task.FromResult(new List<SessionHistoryEntry>())
+                : WaitUntilCancelledAsync<SessionHistoryEntry>(call.ArgAt<CancellationToken>(7)));
+
+        var completed = new List<SoloCurrentProjectionScopeKey>();
+        var firstCallback = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cts = new CancellationTokenSource();
+        var machine = CreateMachine();
+        var processing = machine.ProcessSongForUsersAsync(
+            "song-cancel",
+            ["Solo_Guitar", "Solo_Bass"],
+            [
+                new UserWorkItem
+                {
+                    AccountId = "user1",
+                    Purposes = WorkPurpose.PostScrape,
+                    AllTimeNeeded = true,
+                    SeasonsNeeded = [13],
+                },
+            ],
+            new Dictionary<int, string> { [13] = "season013" },
+            "token",
+            "caller",
+            _pool,
+            isHighPriority: true,
+            batchSize: 500,
+            EpicTrafficKind.Background,
+            cts.Token,
+            scopes =>
+            {
+                lock (completed)
+                    completed.AddRange(scopes);
+                firstCallback.TrySetResult(true);
+                return ValueTask.CompletedTask;
+            });
+
+        await firstCallback.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => processing);
+        Assert.Equal(
+            [new SoloCurrentProjectionScopeKey("song-cancel", "Solo_Guitar")],
+            completed);
+    }
+
     // ─── Batch chunking ─────────────────────────────────────
 
     [Fact]

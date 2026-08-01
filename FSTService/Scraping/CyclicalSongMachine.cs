@@ -9,9 +9,10 @@ namespace FSTService.Scraping;
 
 /// <summary>
 /// A persistent, cyclical song-processing loop that callers <b>attach to</b> mid-cycle.
-/// Songs iterate in a fixed, deterministic order (sorted by song ID). Late-arriving
-/// callers join the current cycle, ride it to completion, then loop back through any
-/// songs they missed. The machine goes idle when all callers' work is done.
+/// Songs iterate in a deterministic order. Attachments may supply a preferred order;
+/// remaining songs are appended by song ID. Late-arriving callers join the current
+/// cycle, ride it to completion, then loop back through any songs they missed. The
+/// machine goes idle when all callers' work is done.
 ///
 /// <para>Replaces the transient <see cref="SongProcessingMachine"/> as the primary
 /// entry point for post-scrape refresh, backfill, and history reconstruction.</para>
@@ -119,6 +120,10 @@ public class CyclicalSongMachine
     /// <param name="source">Which orchestrator is attaching (for progress tracking).</param>
     /// <param name="isHighPriority">True for post-scrape, false for backfill.</param>
     /// <param name="ct">Cancellation token for this caller.</param>
+    /// <param name="attachmentOptions">
+    /// Optional caller-local ordering and incremental successful-scope callback.
+    /// Other attachments remain unchanged when omitted.
+    /// </param>
     /// <returns>Aggregated result for this caller's users when all songs are processed.</returns>
     public virtual Task<SongProcessingMachine.MachineResult> AttachAsync(
         IReadOnlyList<UserWorkItem> users,
@@ -128,13 +133,26 @@ public class CyclicalSongMachine
         bool isHighPriority,
         CancellationToken ct = default,
         bool preserveProgressPhaseOnIdle = false,
-        EpicTrafficKind epicTrafficKind = EpicTrafficKind.Background)
+        EpicTrafficKind epicTrafficKind = EpicTrafficKind.Background,
+        AttachmentOptions? attachmentOptions = null)
     {
         if (users.Count == 0)
             return Task.FromResult(new SongProcessingMachine.MachineResult());
 
-        var callerId = $"attach-{Interlocked.Increment(ref _attachmentCounter)}";
-        var attachment = new MachineAttachment(callerId, users, songIds, seasonWindows, source, isHighPriority, preserveProgressPhaseOnIdle, epicTrafficKind, ct);
+        var attachmentNumber = Interlocked.Increment(ref _attachmentCounter);
+        var callerId = $"attach-{attachmentNumber}";
+        var attachment = new MachineAttachment(
+            attachmentNumber,
+            callerId,
+            users,
+            songIds,
+            seasonWindows,
+            source,
+            isHighPriority,
+            preserveProgressPhaseOnIdle,
+            epicTrafficKind,
+            attachmentOptions,
+            ct);
 
         _attachments[callerId] = attachment;
         _progress.RegisterAttachment(callerId, source, users, songIds.Count);
@@ -451,7 +469,8 @@ public class CyclicalSongMachine
         await RunSongPassAsync(
             coreSongs, instruments,
             songId => GatherCoreUsersForSong(songId, currentSeason),
-            coreSeasonPrefixMap, accessToken, callerAccountId, opts, ct);
+            coreSeasonPrefixMap, accessToken, callerAccountId, opts,
+            reportScopeCompletion: true, ct);
         MarkCycleProgress();
 
         // Flush backfill summary counters so API shows progress mid-cycle
@@ -504,7 +523,8 @@ public class CyclicalSongMachine
             await RunSongPassAsync(
                 historicalSongs, instruments,
                 songId => GatherHistoricalUsersForSong(songId, currentSeason),
-                historicalSeasonPrefixMap, accessToken, callerAccountId, opts, ct);
+                historicalSeasonPrefixMap, accessToken, callerAccountId, opts,
+                reportScopeCompletion: false, ct);
             MarkCycleProgress();
 
             foreach (var (_, att) in _attachments)
@@ -539,6 +559,7 @@ public class CyclicalSongMachine
         string accessToken,
         string callerAccountId,
         ScraperOptions opts,
+        bool reportScopeCompletion,
         CancellationToken ct)
     {
         int maxConcurrentSongs = opts.SongMachineDop;
@@ -593,7 +614,10 @@ public class CyclicalSongMachine
                         var result = await _inner.ProcessSongForUsersAsync(
                             songEntry.SongId, instruments, users, seasonPrefixMap,
                             accessToken, callerAccountId, _pool, highPriority,
-                            opts.LookupBatchSize, work.EpicTrafficKind, passCt);
+                            opts.LookupBatchSize, work.EpicTrafficKind, passCt,
+                            reportScopeCompletion
+                                ? CreateScopeCompletionCallback(work.Attachments)
+                                : null);
 
                         // Check CDN throttle state and surface to each user's sync progress.
                         // Throttle when limiter DOP drops below 25% of max.
@@ -606,11 +630,8 @@ public class CyclicalSongMachine
                                 isThrottled ? "throttle_cdn_busy" : null);
                         }
 
-                        foreach (var (_, att) in _attachments)
-                        {
-                            if (att.IsCompleted) continue;
-                            att.RecordSongResult(songEntry.GlobalIndex, result);
-                        }
+                        foreach (var attachment in work.Attachments)
+                            attachment.RecordSongResult(songEntry.SongId, result);
 
                         foreach (var user in users)
                         {
@@ -705,27 +726,48 @@ public class CyclicalSongMachine
     // ─── Song list building ─────────────────────────────────
 
     /// <summary>
-    /// Build a deterministically sorted song list from all attachments' song IDs.
-    /// Uses the union of all provided song IDs, sorted for deterministic ordering.
+    /// Build a deterministic song list from all attachments' song IDs.
+    /// Preferred attachment orders are honored first; remaining songs are sorted.
     /// </summary>
     private List<string> BuildSortedSongList()
+        => BuildSongList(_attachments.Values);
+
+    internal static List<string> BuildSongList(IEnumerable<MachineAttachment> attachments)
     {
-        var allSongIds = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var (_, att) in _attachments)
+        var attachmentList = attachments
+            .Where(static attachment => !attachment.IsCompleted)
+            .OrderBy(static attachment => attachment.AttachmentNumber)
+            .ToArray();
+        var result = new List<string>();
+        var added = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var attachment in attachmentList.Where(
+                     static attachment => attachment.Options?.PreserveSongOrder == true))
         {
-            foreach (var songId in att.SongIds)
-                allSongIds.Add(songId);
+            foreach (var songId in attachment.SongIds)
+            {
+                if (added.Add(songId))
+                    result.Add(songId);
+            }
         }
 
-        var sorted = allSongIds.ToList();
-        sorted.Sort(StringComparer.Ordinal);
-        return sorted;
+        var remaining = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var attachment in attachmentList)
+        {
+            foreach (var songId in attachment.SongIds)
+            {
+                if (!added.Contains(songId))
+                    remaining.Add(songId);
+            }
+        }
+
+        result.AddRange(remaining);
+        return result;
     }
 
     /// <summary>
-    /// Determine which songs to process in this cycle pass. On the first pass,
-    /// process all songs. On loop-back passes, process only the missed range
-    /// for attachments that joined mid-cycle.
+    /// Determine which songs to process in this cycle pass. On loop-back passes,
+    /// process only song IDs still missing for at least one attachment.
     /// </summary>
     private List<SongCycleEntry> DetermineSongsToProcess(IReadOnlyList<string> fullSongList)
     {
@@ -736,21 +778,12 @@ public class CyclicalSongMachine
         {
             if (att.IsCompleted) continue;
 
-            foreach (int idx in att.GetMissingSongIndices(fullSongList.Count))
+            foreach (int idx in att.GetMissingSongIndices(fullSongList))
                 neededIndices.Add(idx);
         }
 
-        // If no specific indices needed (all attachments joined at 0), process everything
-        if (neededIndices.Count == 0)
-        {
-            for (int i = 0; i < fullSongList.Count; i++)
-                result.Add(new SongCycleEntry(fullSongList[i], i));
-        }
-        else
-        {
-            foreach (int idx in neededIndices.OrderBy(i => i))
-                result.Add(new SongCycleEntry(fullSongList[idx], idx));
-        }
+        foreach (int idx in neededIndices.OrderBy(i => i))
+            result.Add(new SongCycleEntry(fullSongList[idx], idx));
 
         return result;
     }
@@ -858,6 +891,25 @@ public class CyclicalSongMachine
         => current == EpicTrafficKind.ForegroundRegistration || next == EpicTrafficKind.ForegroundRegistration
             ? EpicTrafficKind.ForegroundRegistration
             : EpicTrafficKind.Background;
+
+    private static Func<IReadOnlyCollection<SoloCurrentProjectionScopeKey>, ValueTask>? CreateScopeCompletionCallback(
+        IReadOnlyList<MachineAttachment> attachments)
+    {
+        var callbacks = attachments
+            .Select(static attachment => attachment.Options?.OnScopesCompleted)
+            .Where(static callback => callback is not null)
+            .Cast<Func<IReadOnlyCollection<SoloCurrentProjectionScopeKey>, ValueTask>>()
+            .ToArray();
+
+        if (callbacks.Length == 0)
+            return null;
+
+        return async scopes =>
+        {
+            foreach (var callback in callbacks)
+                await callback(scopes);
+        };
+    }
 
     /// <summary>
     /// Deduplicate users by AccountId, merging purposes, alltime requirement, and seasons
@@ -1146,6 +1198,7 @@ public class CyclicalSongMachine
     /// </summary>
     internal sealed class MachineAttachment
     {
+        public int AttachmentNumber { get; }
         public string CallerId { get; }
         public IReadOnlyList<UserWorkItem> Users { get; }
         public IReadOnlyList<string> SongIds { get; }
@@ -1154,6 +1207,7 @@ public class CyclicalSongMachine
         public bool IsHighPriority { get; }
         public bool PreserveProgressPhaseOnIdle { get; }
         public EpicTrafficKind EpicTrafficKind { get; }
+        public AttachmentOptions? Options { get; }
         public TaskCompletionSource<SongProcessingMachine.MachineResult> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         /// <summary>The song index at which this attachment joined the cycle. -1 = not yet stamped.</summary>
@@ -1161,9 +1215,6 @@ public class CyclicalSongMachine
 
         /// <summary>Whether the first pass of the cycle is complete for this attachment.</summary>
         private bool _firstPassComplete;
-
-        /// <summary>Whether the loop-back pass (songs before join index) is complete.</summary>
-        private bool _loopBackComplete;
 
         /// <summary>Whether the attachment has been completed (TCS set).</summary>
         public bool IsCompleted => Completion.Task.IsCompleted;
@@ -1173,8 +1224,10 @@ public class CyclicalSongMachine
         public int TotalSessionsInserted;
         public int TotalApiCalls;
         public ConcurrentDictionary<SoloCurrentProjectionScopeKey, byte> UpdatedScopes { get; } = [];
+        public ConcurrentDictionary<SoloCurrentProjectionScopeKey, byte> CompletedScopes { get; } = [];
 
-        private readonly ConcurrentDictionary<int, byte> _processedSongIndices = [];
+        private readonly ConcurrentDictionary<string, byte> _processedSongIds =
+            new(StringComparer.Ordinal);
         private readonly CancellationToken _callerCt;
         private readonly HashSet<string> _songIdSet;
         private readonly object _workGate = new();
@@ -1182,6 +1235,7 @@ public class CyclicalSongMachine
         private bool _cancellationRequested;
 
         public MachineAttachment(
+            int attachmentNumber,
             string callerId,
             IReadOnlyList<UserWorkItem> users,
             IReadOnlyList<string> songIds,
@@ -1190,8 +1244,10 @@ public class CyclicalSongMachine
             bool isHighPriority,
             bool preserveProgressPhaseOnIdle,
             EpicTrafficKind epicTrafficKind,
+            AttachmentOptions? options,
             CancellationToken callerCt)
         {
+            AttachmentNumber = attachmentNumber;
             CallerId = callerId;
             Users = users;
             SongIds = songIds;
@@ -1200,6 +1256,7 @@ public class CyclicalSongMachine
             IsHighPriority = isHighPriority;
             PreserveProgressPhaseOnIdle = preserveProgressPhaseOnIdle;
             EpicTrafficKind = epicTrafficKind;
+            Options = options;
             _callerCt = callerCt;
             _songIdSet = new HashSet<string>(songIds, StringComparer.Ordinal);
         }
@@ -1249,66 +1306,51 @@ public class CyclicalSongMachine
                 TryCancel();
         }
 
-        /// <summary>Whether this attachment needs a loop-back pass for missed songs.</summary>
-        public bool NeedsLoopBack => _firstPassComplete && !_loopBackComplete && JoinedAtSongIndex > 0;
+        /// <summary>Whether this attachment needs another cycle for missed songs.</summary>
+        public bool NeedsLoopBack => _firstPassComplete && !HasProcessedAllSongs;
 
         /// <summary>Whether this attachment is fully done (all songs processed).</summary>
-        public bool IsFullyComplete
-        {
-            get
-            {
-                if (IsCompleted) return true;
-                if (!_firstPassComplete) return false;
-                if (JoinedAtSongIndex == 0) return true; // Joined at start — no loop-back needed
-                return _loopBackComplete;
-            }
-        }
+        public bool IsFullyComplete => IsCompleted || (_firstPassComplete && HasProcessedAllSongs);
+
+        private bool HasProcessedAllSongs =>
+            _songIdSet.All(songId => _processedSongIds.ContainsKey(songId));
 
         /// <summary>
         /// Get the song indices that this attachment still needs processed.
-        /// On the first pass, returns everything from joinIndex..totalSongs-1.
-        /// On loop-back, returns 0..joinIndex-1.
+        /// Uses song IDs rather than prior-cycle indices so a preferred ordering may
+        /// change between cycles without losing or falsely completing work.
         /// </summary>
-        public IEnumerable<int> GetMissingSongIndices(int totalSongs)
+        public IEnumerable<int> GetMissingSongIndices(IReadOnlyList<string> fullSongList)
         {
             if (IsCompleted) yield break;
 
-            if (!_firstPassComplete)
+            for (int i = 0; i < fullSongList.Count; i++)
             {
-                // First pass: all songs (joined at 0) or from joinIndex onward
-                for (int i = JoinedAtSongIndex; i < totalSongs; i++)
-                {
-                    if (!_processedSongIndices.ContainsKey(i))
-                        yield return i;
-                }
-            }
-            else if (NeedsLoopBack)
-            {
-                // Loop-back: songs before join index
-                for (int i = 0; i < JoinedAtSongIndex; i++)
-                {
-                    if (!_processedSongIndices.ContainsKey(i))
-                        yield return i;
-                }
+                var songId = fullSongList[i];
+                if (_songIdSet.Contains(songId) && !_processedSongIds.ContainsKey(songId))
+                    yield return i;
             }
         }
 
-        public void RecordSongResult(int songIndex, SongProcessingMachine.SongStepResult result)
+        public void RecordSongResult(string songId, SongProcessingMachine.SongStepResult result)
         {
-            _processedSongIndices.TryAdd(songIndex, 0);
+            if (!_songIdSet.Contains(songId))
+                return;
+
+            _processedSongIds.TryAdd(songId, 0);
             Interlocked.Add(ref TotalEntriesUpdated, result.EntriesUpdated);
             Interlocked.Add(ref TotalSessionsInserted, result.SessionsInserted);
             Interlocked.Add(ref TotalApiCalls, result.ApiCalls);
             foreach (var scope in result.UpdatedScopes)
                 UpdatedScopes.TryAdd(scope, 0);
+            foreach (var scope in result.CompletedScopes)
+                CompletedScopes.TryAdd(scope, 0);
         }
 
         public void MarkCyclePassComplete()
         {
             if (!_firstPassComplete)
                 _firstPassComplete = true;
-            else if (NeedsLoopBack)
-                _loopBackComplete = true;
         }
 
         public void Complete()
@@ -1320,6 +1362,7 @@ public class CyclicalSongMachine
                 ApiCalls = TotalApiCalls,
                 UsersProcessed = Users.Count,
                 UpdatedScopes = UpdatedScopes.Keys.ToArray(),
+                CompletedScopes = CompletedScopes.Keys.ToArray(),
             });
         }
 
@@ -1333,4 +1376,8 @@ public class CyclicalSongMachine
             Completion.TrySetException(exception);
         }
     }
+
+    public sealed record AttachmentOptions(
+        bool PreserveSongOrder = false,
+        Func<IReadOnlyCollection<SoloCurrentProjectionScopeKey>, ValueTask>? OnScopesCompleted = null);
 }

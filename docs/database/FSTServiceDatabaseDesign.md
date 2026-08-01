@@ -328,6 +328,7 @@ marker exists on a legacy row).
 | `publication_song_catalog` | Immutable generation snapshot | `MetaDatabase.StartScrapeRun`, publication retention | One row per publication; ready only when its exact version/hash token matches the catalog selected by the scrape; retained only for current, previous, and working pointers |
 | `account_names` | Durable source/cache of Epic identity | Worker resolver; API/search readers | Refreshable, but historical account IDs remain stable |
 | `registered_users`, `registered_bands` | Durable source | API activity/registration and worker consumers | Activity-based retention must preserve idempotent claims |
+| `registered_user_refresh_scope_progress` | Durable recurring-refresh work state | `PostScrapeOrchestrator`, `CyclicalSongMachine`, `MetaDatabase` | One latest successful checkpoint per `(song_id, instrument)` with `status`, `checked_at`, and `scrape_id`; the small partial `checked_at` index supports fairness/coverage reads |
 | `registered_band_processing_status`, `registered_band_processing_progress`, `registered_player_band_discovery_progress` | Durable work state | Registration/backfill workers | Resume/idempotency state; prune only completed stale work |
 | `backfill_status`, `backfill_progress`, `history_recon_status`, `history_recon_progress`, `deep_scrape_queue` | Durable work state | Worker queues/orchestrators | Preserve failed/incomplete work for replay |
 | `user_sessions`, `epic_user_tokens` | Security-sensitive durable state | Authentication subsystem | Never include values in logs, reports, fixtures, or exports; restore with access controls |
@@ -342,6 +343,34 @@ Continuous workers drain pending/deferred backfills before history-only work.
 A successful run-once scrape performs the same durable drain only after the
 new publication and notification gate completes; a failed run-once scrape
 leaves the queues untouched for the next worker.
+
+Recurring refresh fairness is scope-based because every registered account is
+batched together for a song/instrument. Before each pass,
+`MetaDatabase.GetRegisteredUserRefreshSongOrder` keeps the complete current
+charted-song set but orders songs with missing scope checkpoints first, then
+least-recently checked coverage. `CyclicalSongMachine` preserves that preferred
+order while tracking completion by song ID so a concurrent attachment or
+loop-back cycle cannot corrupt progress when ordering changes.
+
+`registered_user_refresh_scope_progress` is updated incrementally through the
+PostScrape attachment callback, not from the final machine result. A
+song/instrument checkpoint is eligible only after every required all-time and
+current-season batch succeeds. Successful empty and recognized Epic
+`event_not_found` responses are complete; transport failures, unexpected API
+statuses, invalid payloads, missing required season windows, cancellation, and
+other incomplete lookups do not advance that scope. Already completed scopes
+remain durable if a later scope, timeout, process exit, or cancellation ends
+the attachment. Upserts reject stale writes: an older scrape never wins, and
+`checked_at` advances monotonically within the same scrape.
+
+The worker logs bounded before/after coverage over only the current charted
+songs and nine solo instruments: expected scopes, checked scopes, missing
+scopes, oldest checked timestamp/age, and rows completed by the current scrape.
+There is currently no pass cap; fairness changes ordering only. Registration
+backfill/history progress and solo-projection dirty-scope persistence remain
+separate contracts. Rollback is code-only: older workers ignore the additive
+table and index, which should be retained for audit/retry continuity unless a
+later maintenance decision explicitly drops them.
 
 SERVICE-1/WORKER-5 consolidate competing registration consumers, catalog
 ownership, and token refresh ownership.

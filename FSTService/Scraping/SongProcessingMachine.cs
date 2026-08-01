@@ -91,6 +91,7 @@ public class SongProcessingMachine
         int totalApiCalls = 0;
         int songsCompleted = 0;
         var updatedScopes = new ConcurrentDictionary<SoloCurrentProjectionScopeKey, byte>();
+        var completedScopes = new ConcurrentDictionary<SoloCurrentProjectionScopeKey, byte>();
 
         // Users doing history recon get per-song progress via WebSocket
         var historyReconUsers = users
@@ -129,6 +130,8 @@ public class SongProcessingMachine
             Interlocked.Increment(ref songsCompleted);
             foreach (var scope in result.UpdatedScopes)
                 updatedScopes.TryAdd(scope, 0);
+            foreach (var scope in result.CompletedScopes)
+                completedScopes.TryAdd(scope, 0);
 
             // Report per-user progress for history recon users
             foreach (var user in historyReconUsers)
@@ -157,6 +160,7 @@ public class SongProcessingMachine
             ApiCalls = totalApiCalls,
             UsersProcessed = users.Count,
             UpdatedScopes = updatedScopes.Keys.ToArray(),
+            CompletedScopes = completedScopes.Keys.ToArray(),
         };
     }
 
@@ -176,9 +180,11 @@ public class SongProcessingMachine
         bool isHighPriority,
         int batchSize,
         EpicTrafficKind trafficKind,
-        CancellationToken ct)
+        CancellationToken ct,
+        Func<IReadOnlyCollection<SoloCurrentProjectionScopeKey>, ValueTask>? onScopesCompleted = null)
         => await ProcessSongAsync(songId, instruments, users, seasonPrefixMap,
-            accessToken, callerAccountId, pool, isHighPriority, batchSize, trafficKind, ct);
+            accessToken, callerAccountId, pool, isHighPriority, batchSize, trafficKind, ct,
+            onScopesCompleted);
 
     /// <summary>
     /// Process one song across all instruments for all users.
@@ -195,12 +201,16 @@ public class SongProcessingMachine
         bool isHighPriority,
         int batchSize,
         EpicTrafficKind trafficKind,
-        CancellationToken ct)
+        CancellationToken ct,
+        Func<IReadOnlyCollection<SoloCurrentProjectionScopeKey>, ValueTask>? onScopesCompleted = null)
     {
         int entriesUpdated = 0;
         int sessionsInserted = 0;
         int apiCalls = 0;
+        int instrumentsWithSuccessfulLookups = 0;
         var updatedScopes = new ConcurrentDictionary<SoloCurrentProjectionScopeKey, byte>();
+        var completedScopes = new ConcurrentDictionary<SoloCurrentProjectionScopeKey, byte>();
+        var requireReliableCompletion = onScopesCompleted is not null;
 
         // Shared across all instruments: when a pad instrument discovers
         // that a season returns no data (BadRequest or empty), record it
@@ -212,13 +222,20 @@ public class SongProcessingMachine
             var result = await ProcessSongInstrumentAsync(
                 songId, instrument, users, seasonPrefixMap,
                 accessToken, callerAccountId, pool, isHighPriority, batchSize, trafficKind, ct,
-                missingSeasonsForSong);
+                requireReliableCompletion, missingSeasonsForSong);
 
             Interlocked.Add(ref entriesUpdated, result.EntriesUpdated);
             Interlocked.Add(ref sessionsInserted, result.SessionsInserted);
             Interlocked.Add(ref apiCalls, result.ApiCalls);
             foreach (var scope in result.UpdatedScopes)
                 updatedScopes.TryAdd(scope, 0);
+            foreach (var scope in result.CompletedScopes)
+                completedScopes.TryAdd(scope, 0);
+            if (result.RequiredLookupsSucceeded)
+                Interlocked.Increment(ref instrumentsWithSuccessfulLookups);
+
+            if (onScopesCompleted is not null && result.CompletedScopes.Count > 0)
+                await onScopesCompleted(result.CompletedScopes);
         }).ToList();
 
         await Task.WhenAll(instrumentTasks);
@@ -229,6 +246,8 @@ public class SongProcessingMachine
             SessionsInserted = sessionsInserted,
             ApiCalls = apiCalls,
             UpdatedScopes = updatedScopes.Keys.ToArray(),
+            CompletedScopes = completedScopes.Keys.ToArray(),
+            RequiredLookupsSucceeded = instrumentsWithSuccessfulLookups == instruments.Count,
         };
     }
 
@@ -249,6 +268,7 @@ public class SongProcessingMachine
         int batchSize,
         EpicTrafficKind trafficKind,
         CancellationToken ct,
+        bool requireReliableCompletion,
         ConcurrentDictionary<int, bool>? missingSeasonsForSong = null)
     {
         int entriesUpdated = 0;
@@ -258,7 +278,7 @@ public class SongProcessingMachine
         // ─── Alltime lookups (async task) ─────────────────────
         var alltimeTask = RunAlltimeLookups(
             songId, instrument, users, accessToken, callerAccountId,
-            pool, isHighPriority, batchSize, trafficKind, ct);
+            pool, isHighPriority, batchSize, trafficKind, ct, requireReliableCompletion);
 
         // ─── Seasonal session lookups (async task) ────────────
         // Skip seasons that predate the instrument's launch:
@@ -268,7 +288,8 @@ public class SongProcessingMachine
 
         var seasonalTask = RunSeasonalLookups(
             songId, instrument, users, seasonPrefixMap, accessToken, callerAccountId,
-            pool, isHighPriority, batchSize, trafficKind, ct, songFirstSeason, missingSeasonsForSong);
+            pool, isHighPriority, batchSize, trafficKind, ct, requireReliableCompletion,
+            songFirstSeason, missingSeasonsForSong);
 
         // Both phases use the SharedDopPool for backpressure — total API
         // concurrency remains bounded regardless of in-flight overlap.
@@ -282,6 +303,10 @@ public class SongProcessingMachine
         }
 
         var updatedScopes = results.SelectMany(r => r.UpdatedScopes).Distinct().ToArray();
+        var requiredLookupsSucceeded = results.All(static result => result.RequiredLookupsSucceeded);
+        var completedScopes = requireReliableCompletion && requiredLookupsSucceeded
+            ? [new SoloCurrentProjectionScopeKey(songId, instrument)]
+            : Array.Empty<SoloCurrentProjectionScopeKey>();
 
         // Mark history recon processed for users doing that work
         foreach (var user in users)
@@ -296,6 +321,8 @@ public class SongProcessingMachine
             SessionsInserted = sessionsInserted,
             ApiCalls = apiCalls,
             UpdatedScopes = updatedScopes,
+            CompletedScopes = completedScopes,
+            RequiredLookupsSucceeded = requiredLookupsSucceeded,
         };
     }
 
@@ -312,10 +339,12 @@ public class SongProcessingMachine
         bool isHighPriority,
         int batchSize,
         EpicTrafficKind trafficKind,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool requireReliableCompletion)
     {
         int entriesUpdated = 0;
         int apiCalls = 0;
+        var requiredLookupsSucceeded = true;
 
         var alltimeUsers = users
             .Where(u => u.AllTimeNeeded && !u.IsAlreadyChecked(songId, instrument))
@@ -338,7 +367,8 @@ public class SongProcessingMachine
                     Interlocked.Increment(ref apiCalls);
                     return _scraper.LookupMultipleAccountsAsync(
                         songId, instrument, targetIds,
-                        accessToken, callerAccountId, limiter: pool.Limiter, ct);
+                        accessToken, callerAccountId, limiter: pool.Limiter, ct,
+                        throwOnFailure: requireReliableCompletion);
                 };
 
                 var lookupResult = await _lookupRunner.TryRunAsync(
@@ -349,7 +379,10 @@ public class SongProcessingMachine
                     work,
                     ex => _log.LogDebug(ex, "Alltime batch failed for {Song}/{Instrument}.", songId, instrument));
                 if (!lookupResult.Succeeded || lookupResult.Value is null)
+                {
+                    requiredLookupsSucceeded = false;
                     continue;
+                }
 
                 var entries = lookupResult.Value;
 
@@ -375,6 +408,7 @@ public class SongProcessingMachine
             EntriesUpdated = entriesUpdated,
             ApiCalls = apiCalls,
             UpdatedScopes = entriesUpdated > 0 ? [new SoloCurrentProjectionScopeKey(songId, instrument)] : [],
+            RequiredLookupsSucceeded = requiredLookupsSucceeded,
         };
     }
 
@@ -393,11 +427,13 @@ public class SongProcessingMachine
         int batchSize,
         EpicTrafficKind trafficKind,
         CancellationToken ct,
+        bool requireReliableCompletion,
         int songFirstSeason = 1,
         ConcurrentDictionary<int, bool>? missingSeasonsForSong = null)
     {
         int sessionsInserted = 0;
         int apiCalls = 0;
+        var requiredLookupsSucceeded = true;
 
         // Identify which accounts need history recon (chronological OldScore across all seasons)
         var historyReconAccounts = new HashSet<string>(
@@ -416,12 +452,16 @@ public class SongProcessingMachine
 
             foreach (var season in user.SeasonsNeeded)
             {
-                if (!seasonPrefixMap.ContainsKey(season)) continue;
-
                 // Optimization A: skip seasons before the song was charted
                 if (season < songFirstSeason)
                 {
                     skippedSeasonCombos++;
+                    continue;
+                }
+
+                if (!seasonPrefixMap.ContainsKey(season))
+                {
+                    requiredLookupsSucceeded = false;
                     continue;
                 }
 
@@ -458,7 +498,8 @@ public class SongProcessingMachine
                     Interlocked.Increment(ref apiCalls);
                     return _scraper.LookupMultipleAccountSessionsAsync(
                         songId, instrument, seasonPrefix, targetIds,
-                        accessToken, callerAccountId, limiter: pool.Limiter, ct);
+                        accessToken, callerAccountId, limiter: pool.Limiter, ct,
+                        throwOnFailure: requireReliableCompletion);
                 };
 
                 var lookupResult = await _lookupRunner.TryRunAsync(
@@ -471,9 +512,11 @@ public class SongProcessingMachine
                         songId, instrument, seasonPrefix));
                 if (!lookupResult.Succeeded || lookupResult.Value is null)
                 {
+                    requiredLookupsSucceeded = false;
+
                     // If the first batch fails (BadRequest = song not charted in this season),
                     // mark so other instruments can skip this season and earlier ones.
-                    if (offset == 0)
+                    if (!requireReliableCompletion && offset == 0)
                         missingSeasonsForSong?.TryAdd(season, true);
 
                     continue;
@@ -485,10 +528,15 @@ public class SongProcessingMachine
                 // the song likely didn't exist in this season (BadRequest or genuinely empty).
                 // However, we can't distinguish BadRequest from "no users played this season"
                 // at this level (the scraper swallows BadRequest as empty list).
-                // Only break out of the batch loop for this season — do NOT mark
-                // missingSeasonsForSong, as users may have scores in earlier seasons.
+                // Legacy callers stop after that first empty batch. Reliable scope
+                // completion still checks later account chunks before checkpointing.
+                // Do not mark missingSeasonsForSong; users may have earlier scores.
                 if (offset == 0 && sessions.Count == 0)
+                {
+                    if (requireReliableCompletion && seasonUsers.Count > chunk.Count)
+                        continue;
                     break; // No point sending more batches for this season
+                }
 
                 // DB processing runs outside the DOP slot.
                 // Split: HistoryRecon users accumulate for cross-season OldScore,
@@ -543,7 +591,12 @@ public class SongProcessingMachine
                 _progress.ReportPhaseEntryUpdated(reconCount);
         }
 
-        return new SongStepResult { SessionsInserted = sessionsInserted, ApiCalls = apiCalls };
+        return new SongStepResult
+        {
+            SessionsInserted = sessionsInserted,
+            ApiCalls = apiCalls,
+            RequiredLookupsSucceeded = requiredLookupsSucceeded,
+        };
     }
 
     /// <summary>
@@ -567,6 +620,7 @@ public class SongProcessingMachine
         public int ApiCalls { get; init; }
         public int UsersProcessed { get; init; }
         public IReadOnlyList<SoloCurrentProjectionScopeKey> UpdatedScopes { get; init; } = [];
+        public IReadOnlyList<SoloCurrentProjectionScopeKey> CompletedScopes { get; init; } = [];
     }
 
     /// <summary>Result of processing one song step.</summary>
@@ -576,5 +630,7 @@ public class SongProcessingMachine
         public int SessionsInserted { get; init; }
         public int ApiCalls { get; init; }
         public IReadOnlyList<SoloCurrentProjectionScopeKey> UpdatedScopes { get; init; } = [];
+        public IReadOnlyList<SoloCurrentProjectionScopeKey> CompletedScopes { get; init; } = [];
+        public bool RequiredLookupsSucceeded { get; init; } = true;
     }
 }

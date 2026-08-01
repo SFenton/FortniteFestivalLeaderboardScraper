@@ -93,6 +93,18 @@ public interface IMetaDatabase : IDisposable
 
     // ── Registered users ─────────────────────────────────────────────
     HashSet<string> GetRegisteredAccountIds();
+    IReadOnlyList<string> GetRegisteredUserRefreshSongOrder(
+        IReadOnlyCollection<string> songIds,
+        IReadOnlyCollection<string> instruments);
+    int UpsertRegisteredUserRefreshScopes(
+        long scrapeId,
+        IReadOnlyCollection<SoloCurrentProjectionScopeKey> scopes,
+        DateTime checkedAtUtc);
+    RegisteredUserRefreshCoverageInfo GetRegisteredUserRefreshCoverage(
+        IReadOnlyCollection<string> songIds,
+        IReadOnlyCollection<string> instruments,
+        long currentScrapeId,
+        DateTime observedAtUtc);
     List<string> GetRegisteredAccountIdsForBandDiscovery();
     bool IsAccountRegistered(string accountId);
     bool RegisterUser(string deviceId, string accountId);
@@ -360,3 +372,11 @@ public sealed record SelectedBandRegistrationResult(
     bool Registered,
     string BandId,
     IReadOnlyList<string> MemberAccountIds);
+
+public sealed record RegisteredUserRefreshCoverageInfo(
+    int ExpectedScopes,
+    int CheckedScopes,
+    int MissingScopes,
+    DateTime? OldestCheckedAtUtc,
+    TimeSpan? OldestCheckedAge,
+    int CurrentScrapeCompletions);

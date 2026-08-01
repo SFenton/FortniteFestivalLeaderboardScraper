@@ -1999,9 +1999,19 @@ public sealed class PostScrapeOrchestrator
             if (ctx.RegisteredIds.Count == 0)
                 return new SongProcessingMachine.MachineResult();
 
-            var chartedSongIds = ctx.ScrapeRequests.Select(r => r.SongId).ToList();
+            var chartedSongIds = ctx.ScrapeRequests
+                .Select(static request => request.SongId)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            var orderedSongIds = _persistence.Meta.GetRegisteredUserRefreshSongOrder(
+                chartedSongIds,
+                GlobalLeaderboardScraper.AllInstruments);
             var currentSeason = instrumentMaxSeason ?? 1;
             RegisterKnownBandsForAccounts(ctx.RegisteredIds);
+            LogRegisteredUserRefreshCoverage(
+                "before",
+                orderedSongIds,
+                ctx.ScrapeId);
 
             // ── Build user list ──────────────────────────────────
             var users = new List<UserWorkItem>();
@@ -2024,12 +2034,35 @@ public sealed class PostScrapeOrchestrator
 
             // ── Attach to the cyclical machine ──────────────────
             _progress.SetSubOperation("processing_songs");
-            var result = await _cyclicalMachine.AttachAsync(
-                users, chartedSongIds, seasonWindows,
-                SongMachineSource.PostScrape,
-                isHighPriority: true,
-                ct: refreshCt,
-                preserveProgressPhaseOnIdle: true);
+            var attachmentOptions = new CyclicalSongMachine.AttachmentOptions(
+                PreserveSongOrder: true,
+                OnScopesCompleted: scopes =>
+                {
+                    _persistence.Meta.UpsertRegisteredUserRefreshScopes(
+                        ctx.ScrapeId,
+                        scopes,
+                        DateTime.UtcNow);
+                    return ValueTask.CompletedTask;
+                });
+
+            SongProcessingMachine.MachineResult result;
+            try
+            {
+                result = await _cyclicalMachine.AttachAsync(
+                    users, orderedSongIds, seasonWindows,
+                    SongMachineSource.PostScrape,
+                    isHighPriority: true,
+                    ct: refreshCt,
+                    preserveProgressPhaseOnIdle: true,
+                    attachmentOptions: attachmentOptions);
+            }
+            finally
+            {
+                LogRegisteredUserRefreshCoverage(
+                    "after",
+                    orderedSongIds,
+                    ctx.ScrapeId);
+            }
 
             if (result.EntriesUpdated > 0 || result.SessionsInserted > 0)
                 _log.LogInformation("Song machine updated {Entries} entries, {Sessions} sessions for {Users} users.",
@@ -2049,6 +2082,37 @@ public sealed class PostScrapeOrchestrator
         {
             _log.LogWarning(ex, "Song processing machine failed. Will retry next pass.");
             throw;
+        }
+    }
+
+    private void LogRegisteredUserRefreshCoverage(
+        string stage,
+        IReadOnlyCollection<string> songIds,
+        long scrapeId)
+    {
+        try
+        {
+            var coverage = _persistence.Meta.GetRegisteredUserRefreshCoverage(
+                songIds,
+                GlobalLeaderboardScraper.AllInstruments,
+                scrapeId,
+                DateTime.UtcNow);
+            _log.LogInformation(
+                "Registered-user refresh coverage ({Stage}): expectedScopes={ExpectedScopes}, checkedScopes={CheckedScopes}, missingScopes={MissingScopes}, oldestCheckedAtUtc={OldestCheckedAtUtc}, oldestCheckedAge={OldestCheckedAge}, currentScrapeCompletions={CurrentScrapeCompletions}.",
+                stage,
+                coverage.ExpectedScopes,
+                coverage.CheckedScopes,
+                coverage.MissingScopes,
+                coverage.OldestCheckedAtUtc,
+                coverage.OldestCheckedAge,
+                coverage.CurrentScrapeCompletions);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(
+                ex,
+                "Unable to read bounded registered-user refresh coverage telemetry for stage {Stage}.",
+                stage);
         }
     }
 
