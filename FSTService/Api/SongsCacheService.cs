@@ -460,8 +460,9 @@ public sealed class SongsCacheService
                 "Published song catalog is not bound to the current publication.");
         }
 
-        var songs = SongCatalogSnapshotBuilder.DeserializeCatalog(
-            catalog.CatalogJson);
+        var songs = SongCatalogSnapshotBuilder.DeserializeCatalogForFallback(
+            catalog.CatalogJson,
+            catalog.SchemaVersion);
         if (songs.Count != catalog.SongCount)
         {
             throw new InvalidOperationException(

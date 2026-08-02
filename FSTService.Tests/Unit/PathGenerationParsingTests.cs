@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FortniteFestival.Core;
 using FSTService.Persistence;
 using FSTService.Scraping;
@@ -12,6 +13,24 @@ public sealed class PathGenerationParsingTests
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
     private const string UndecodablePngBase64 =
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAUlEQVR4duaE5gAAAABJRU5ErkJggg==";
+
+    [Fact]
+    public void Published_catalog_fallback_accepts_legacy_schema_without_weakening_exact_decode()
+    {
+        const string legacyCatalog =
+            """{"songs":[{"_title":"Legacy","track":{"su":"legacy-song","tt":"Legacy","an":"Artist","in":{"pg":1}}}]}""";
+
+        var songs = SongCatalogSnapshotBuilder.DeserializeCatalogForFallback(
+            legacyCatalog,
+            schemaVersion: 1);
+
+        var song = Assert.Single(songs);
+        Assert.Equal("legacy-song", song.track.su);
+        Assert.Equal(JsonValueKind.Object, song.providerJson?.ValueKind);
+        Assert.Throws<InvalidOperationException>(
+            () => SongCatalogSnapshotBuilder.DeserializeCatalog(
+                legacyCatalog));
+    }
 
     [Theory]
     [InlineData("CHOpt 1.10.3", "", "1.10.3")]

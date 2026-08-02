@@ -145,6 +145,34 @@ internal static class SongCatalogSnapshotBuilder
             .ToList();
     }
 
+    internal static IList<Song> DeserializeCatalogForFallback(
+        string catalogJson,
+        int schemaVersion)
+    {
+        if (schemaVersion == SchemaVersion)
+            return DeserializeCatalog(catalogJson);
+        if (schemaVersion != 1)
+        {
+            throw new InvalidOperationException(
+                "The published fallback song catalog has an unsupported schema.");
+        }
+
+        using var document = JsonDocument.Parse(catalogJson);
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty("songs", out var songs) ||
+            songs.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidOperationException(
+                "The legacy published fallback song catalog is invalid.");
+        }
+
+        return songs.EnumerateArray()
+            .Select(static song =>
+                DeserializeProviderSong(song.GetRawText()))
+            .ToList();
+    }
+
     internal static void ValidateToken(
         SongCatalogSnapshot snapshot,
         SongCatalogPersistenceToken token)
