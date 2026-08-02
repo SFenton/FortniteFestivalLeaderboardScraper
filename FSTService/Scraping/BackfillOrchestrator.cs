@@ -564,29 +564,46 @@ public sealed class BackfillOrchestrator
         var allSeasons = seasonWindows.Select(w => w.SeasonNumber).ToHashSet();
         var historyWindowFingerprint = HistoryReconstructor.ComputeWindowFingerprint(
             seasonWindows);
+        var chartedSongIds = service.Songs
+            .Select(static song => song.track?.su)
+            .Where(static songId => !string.IsNullOrWhiteSpace(songId))
+            .Select(static songId => songId!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (chartedSongIds.Count == 0)
+            return;
+
         accountsToReconstruct = accountsToReconstruct
             .Where(accountId =>
             {
                 var status = _persistence.Meta.GetHistoryReconStatus(accountId);
-                return status?.Status != "complete"
+                if (status?.Status != "complete"
                     || status.ReconstructionVersion
-                        != HistoryReconstructor.CurrentReconstructionVersion
+                    != HistoryReconstructor.CurrentReconstructionVersion
                     || !string.Equals(
                         status.WindowFingerprint,
                         historyWindowFingerprint,
-                        StringComparison.Ordinal);
+                        StringComparison.Ordinal))
+                {
+                    return true;
+                }
+
+                var processed = _persistence.Meta.GetProcessedHistoryReconPairs(
+                    accountId,
+                    status.ReconstructionVersion,
+                    status.WindowFingerprint,
+                    status.AdmissionRevision);
+                return !HasCurrentHistoryCompletion(
+                    status,
+                    historyWindowFingerprint,
+                    chartedSongIds,
+                    processed);
             })
             .ToList();
 
         if (accountsToReconstruct.Count == 0)
             return;
-
-        var chartedSongIds = service.Songs
-            .Where(s => s.track?.su is not null)
-            .Select(s => s.track.su!)
-            .ToList();
-
-        if (chartedSongIds.Count == 0) return;
 
         RegisterKnownBandsForAccounts(accountsToReconstruct);
 
@@ -738,6 +755,22 @@ public sealed class BackfillOrchestrator
         }
 
         return true;
+    }
+
+    internal static bool HasCurrentHistoryCompletion(
+        HistoryReconStatusInfo? status,
+        string activeWindowFingerprint,
+        IReadOnlyCollection<string> chartedSongIds,
+        IReadOnlySet<(string SongId, string Instrument)> completedPairs)
+    {
+        return status?.Status == "complete"
+            && status.ReconstructionVersion
+                == HistoryReconstructor.CurrentReconstructionVersion
+            && string.Equals(
+                status.WindowFingerprint,
+                activeWindowFingerprint,
+                StringComparison.Ordinal)
+            && HasExpectedPairCoverage(chartedSongIds, completedPairs);
     }
 
     private void RegisterKnownBandsForAccounts(IEnumerable<string> accountIds)

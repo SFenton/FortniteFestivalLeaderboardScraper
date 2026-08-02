@@ -528,7 +528,9 @@ all require the active identity, with the progress upsert locking that status
 row. Late work from fingerprint F1 therefore cannot overwrite an activated F2.
 Coverage gates enumerate the exact current catalog song/instrument pairs:
 obsolete removed-song rows are ignored, while any missing current pair blocks
-backfill or history completion.
+backfill or history completion. The history-only drain applies that same
+coverage test before its completed-status fast path; adding or reintroducing a
+charted song therefore reopens an otherwise version/window-matched account.
 
 History/backfill durability adds a monotonic admission revision to that
 identity. Staged seasonal score-history rows and history pair progress promote

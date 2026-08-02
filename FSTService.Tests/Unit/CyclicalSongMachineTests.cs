@@ -355,6 +355,34 @@ public class CyclicalSongMachineTests
             completed));
     }
 
+    [Fact]
+    public void CompletedHistory_ReopensWhenCurrentCatalogPairIsMissing()
+    {
+        var status = new HistoryReconStatusInfo
+        {
+            Status = "complete",
+            ReconstructionVersion =
+                HistoryReconstructor.CurrentReconstructionVersion,
+            WindowFingerprint = "active-window",
+            AdmissionRevision = 7,
+        };
+        var completed = GlobalLeaderboardScraper.AllInstruments
+            .Select(instrument => (SongId: "song-existing", Instrument: instrument))
+            .ToHashSet();
+
+        Assert.True(BackfillOrchestrator.HasCurrentHistoryCompletion(
+            status,
+            "active-window",
+            ["song-existing"],
+            completed));
+
+        Assert.False(BackfillOrchestrator.HasCurrentHistoryCompletion(
+            status,
+            "active-window",
+            ["song-existing", "song-added"],
+            completed));
+    }
+
     // ── Helper: invoke private static DeduplicateUsers via reflection ──
 
     private static CyclicalSongMachine.MachineAttachment CreateAttachment(
