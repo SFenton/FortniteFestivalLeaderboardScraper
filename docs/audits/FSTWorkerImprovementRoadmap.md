@@ -1470,6 +1470,19 @@ deployment/repair remain separate**
   PostgreSQL 17 `NULLS NOT DISTINCT` index. No worker path gets divergent
   null-specific SQL.
 
+**Scrape 1274 network-lane decision**
+
+- Initial DOP `64` is rejected and retired from startup tooling. The accepted
+  `1600/64/8` profile is again pinned to initial DOP `50`, aggregate DOP `200`,
+  and page concurrency `50`.
+- Main fetch was approximately `2:52:33`, only `0.96%` faster than scrape
+  `1273`; network plus writer was approximately `3:36:35`, a `19.4%`
+  regression. The declared first-window `5%` rate gain was not achieved.
+- Pre-publication correctness remained exact at `8,364/8,364` complete
+  manifests, `596,242` pages, `59,450,135` reported entries, and zero writer
+  failures. Shared terminal publication/parity gates remain pending and do not
+  alter this independent performance rejection.
+
 ## Phase WORKER-4: Reduce post-process and ranking time
 
 **Decision:** Accepted A/B program  

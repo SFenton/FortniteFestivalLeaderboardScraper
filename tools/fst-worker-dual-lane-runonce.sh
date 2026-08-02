@@ -15,7 +15,6 @@ notification DB-only data lane, then optionally starts exactly one worker pass.
 
 Options:
   --network-profile P   candidate-800-32-4, candidate-1600-64-8,
-                        candidate-1600-64-8-initial64,
                         or candidate-2880-128-16
   --check               Validate only (default)
   --recreate            Validate and recreate the run-once worker
@@ -59,12 +58,6 @@ case "$NETWORK_PROFILE" in
         PER_ENDPOINT_RPS=64
         PER_ENDPOINT_CONCURRENCY=8
         INITIAL_DOP=50
-        ;;
-    candidate-1600-64-8-initial64)
-        MAX_RPS=1600
-        PER_ENDPOINT_RPS=64
-        PER_ENDPOINT_CONCURRENCY=8
-        INITIAL_DOP=64
         ;;
     candidate-2880-128-16)
         MAX_RPS=2880

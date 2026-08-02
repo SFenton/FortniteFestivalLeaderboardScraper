@@ -392,6 +392,27 @@ The named profile is `candidate-1600-64-8-initial64`. It is paired only with
 the `catalog-path-notification-source-cut` data profile and does not authorize
 an unpaired worker start.
 
+### Scrape 1274 decision
+
+Scrape `1274` rejected the initial-DOP-only candidate:
+
+- the first-fifteen-minute useful/logical rate remained approximately
+  `59-63` requests/s and missed the declared `5%` improvement;
+- main fetch completed in approximately `2:52:33`, only about `0.96%` faster
+  than scrape `1273`'s `2:54:13.380`;
+- network plus writer completed in approximately `3:36:35`, about `19.4%`
+  slower than scrape `1273`'s `3:01:27.380`;
+- exact correctness remained strong before post-processing:
+  `8,364/8,364` complete manifests, `596,242` pages, `59,450,135` reported
+  entries, and zero writer failures.
+
+Repository tests/builds overlapped the main fetch, so scrape `1274` cannot
+support a pristine promotion claim. That caveat does not change the decision:
+the uncontaminated early-rate gate failed and the pure-fetch gain was under
+`1%`. The `candidate-1600-64-8-initial64` startup profile is retired. The
+accepted `candidate-1600-64-8` profile now fail-closes unless initial DOP is
+exactly `50`, aggregate DOP is `200`, and page concurrency is `50`.
+
 The bounded runner now atomically creates
 `/home/sfenton/Docker/FestivalServiceTracker/.fst-bounded-network-canary-active.json`
 after proving the worker is offline and removes it only at terminal cleanup.

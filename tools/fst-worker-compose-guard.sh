@@ -29,7 +29,6 @@ Options:
                              baseline-up-to-800-32-4 (default)
                              candidate-800-32-4
                              candidate-1600-64-8
-                             candidate-1600-64-8-initial64
                              candidate-2880-128-16
                            Candidate profiles require --recreate-runonce for startup.
   --data-profile P         Select the paired data profile:
@@ -77,12 +76,6 @@ case "$THROUGHPUT_PROFILE" in
         PROFILE_EXACT=true
         ;;
     candidate-1600-64-8)
-        PROFILE_MAX_AGGREGATE_RPS=1600
-        PROFILE_MAX_PER_ENDPOINT_RPS=64
-        PROFILE_MAX_PER_ENDPOINT_CONCURRENCY=8
-        PROFILE_EXACT=true
-        ;;
-    candidate-1600-64-8-initial64)
         PROFILE_MAX_AGGREGATE_RPS=1600
         PROFILE_MAX_PER_ENDPOINT_RPS=64
         PROFILE_MAX_PER_ENDPOINT_CONCURRENCY=8
@@ -279,14 +272,14 @@ page_concurrency = integer("Scraper__PageConcurrency")
 curl_temp_directory = str(environment.get("Scraper__ProxyCurlTempDirectory", "")).strip()
 if require_run_once and not run_once:
     raise SystemExit("ERROR: merged run-once config must set Scraper__RunOnce=true")
-if profile_name == "candidate-1600-64-8-initial64":
-    if initial_dop != 64:
+if profile_name == "candidate-1600-64-8":
+    if initial_dop != 50:
         raise SystemExit(
-            "ERROR: candidate-1600-64-8-initial64 requires "
-            f"Scraper__InitialDop=64, found {initial_dop}")
+            "ERROR: candidate-1600-64-8 requires "
+            f"Scraper__InitialDop=50, found {initial_dop}")
     if degree_of_parallelism != 200 or page_concurrency != 50:
         raise SystemExit(
-            "ERROR: candidate-1600-64-8-initial64 requires "
+            "ERROR: candidate-1600-64-8 requires "
             "Scraper__DegreeOfParallelism=200 and Scraper__PageConcurrency=50")
 if data_profile == "notification-db-only":
     exact_value("Scraper__EnabledPhases", "None")
