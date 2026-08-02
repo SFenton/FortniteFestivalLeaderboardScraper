@@ -1428,6 +1428,20 @@ deployment/repair remain separate**
   path promotions/errors.
 - The four-song repair remains blocked after publication until the exact
   staged manifest produces two identical projected notification digests.
+- The nullable `score_history` dedup package is also explicit and independent
+  of worker startup. Schema initialization adds only immutable audit tables;
+  neither `fstworker` nor `StartupInitializer` can merge rows or replace the
+  index automatically.
+- While scrape `1274` runs, implementation and tests are repository-local
+  only. Do not invoke execute, deploy, restart containers, or touch scrape
+  evidence. A future execute requires a clean boundary because its
+  `SHARE ROW EXCLUSIVE` table lock allows reads but temporarily blocks all
+  `score_history` writers; lock acquisition fails after three seconds and
+  each statement after 180 seconds.
+- After promotion, the shared five-column `ON CONFLICT` paths used by direct,
+  small-batch, COPY-merge, and staged reconstruction writes rely on the same
+  PostgreSQL 17 `NULLS NOT DISTINCT` index. No worker path gets divergent
+  null-specific SQL.
 
 ## Phase WORKER-4: Reduce post-process and ranking time
 

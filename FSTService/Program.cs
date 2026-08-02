@@ -74,6 +74,8 @@ builder.Services.Configure<Microsoft.AspNetCore.ResponseCompression.BrotliCompre
 
 var improvementNotificationRecoveryRequested = args.Any(
     arg => arg.Equals("--recover-improvement-notifications", StringComparison.OrdinalIgnoreCase));
+var scoreHistoryDedupMaintenanceCommand =
+    ScoreHistoryDedupMaintenanceCommand.Parse(args);
 var initializeSchemaOnlyRequested = args.Any(
     arg => arg.Equals(
         "--initialize-schema-only",
@@ -109,9 +111,19 @@ if (improvementNotificationRecoveryRequested && improvementNotificationMaintenan
     throw new ArgumentException(
         "Notification recovery and notification maintenance cannot run in the same process.");
 }
+if (scoreHistoryDedupMaintenanceCommand is not null
+    && (improvementNotificationRecoveryRequested
+        || improvementNotificationMaintenanceRequested
+        || initializeSchemaOnlyRequested))
+{
+    throw new ArgumentException(
+        "Score-history dedup maintenance cannot run with another one-shot " +
+        "schema or notification command.");
+}
 
 var apiOnlyRequested = improvementNotificationRecoveryRequested
     || improvementNotificationMaintenanceRequested
+    || scoreHistoryDedupMaintenanceCommand is not null
     || initializeSchemaOnlyRequested
     || args.Any(arg => arg.Equals("--api-only", StringComparison.OrdinalIgnoreCase))
     || builder.Configuration.GetValue<bool>($"{ScraperOptions.Section}:ApiOnly");
@@ -367,6 +379,7 @@ builder.Services.AddSingleton<FSTService.Persistence.Maintenance.DeferredRetenti
 builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationService>();
 builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationRecoveryService>();
 builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationMaintenanceService>();
+builder.Services.AddSingleton<FSTService.Persistence.ScoreHistoryDedupMaintenanceService>();
 
 // ─── Shared services ────────────────────────────────────────
 
@@ -710,6 +723,22 @@ if (initializeSchemaOnlyRequested)
         app.Services.GetRequiredService<NpgsqlDataSource>());
     schemaLog.LogInformation(
         "--initialize-schema-only: database schema is current. Exiting.");
+    return;
+}
+
+// Explicit one-shot score_history null-timestamp dedup maintenance.
+if (scoreHistoryDedupMaintenanceCommand is not null)
+{
+    var maintenance = app.Services.GetRequiredService<
+        FSTService.Persistence.ScoreHistoryDedupMaintenanceService>();
+    object report = scoreHistoryDedupMaintenanceCommand.Execute
+        ? await maintenance.ExecuteAsync(
+            scoreHistoryDedupMaintenanceCommand.ExpectedDigest!,
+            CancellationToken.None)
+        : await maintenance.DryRunAsync(CancellationToken.None);
+    Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(report));
+    if (report is ScoreHistoryDedupDryRunReport { CanExecute: false })
+        Environment.ExitCode = 2;
     return;
 }
 

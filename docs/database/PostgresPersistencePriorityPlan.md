@@ -1781,6 +1781,26 @@ Decision tier: lower immediate storage reclaim, good operational efficiency.
 | Bloat | High-dead derived/history tables | Refreshed P7 stats show about 4.93-17.17% dead tuples on candidates | Vacuum/repack/rebuild after headroom | Relation size down | Parity/maintenance gate |
 | Hot reads | Status/songs/member-score/cache paths | Count scans, fan-out, live cache writes | Maintained counters/projections, batched reads | p95/query count down | Response parity |
 
+## Nullable score-history uniqueness maintenance
+
+The repository now contains an explicit audited implementation for the known
+nullable `score_history` duplicate set. It is not a startup cleanup and is not
+approved for execution during scrape `1274`. Normal schema initialization adds
+only immutable, retention-independent run/original-row audit tables.
+
+The default dry run is repeatable-read/read-only and produces a deterministic
+digest plus counts, affected identities, semantic variance, per-group maxima,
+sizes, index definition, and merge plan. Execute requires that exact digest,
+uses a three-second lock timeout and 180-second statement timeout, blocks on
+any nonzero score or invariant-field variance, audits all originals, and
+atomically promotes `ix_sh_dedup` to `UNIQUE ... NULLS NOT DISTINCT`.
+
+Schedule the estimated 15-150 second write-blocking transaction only at a
+clean parity-gated boundary. Preserve the stored rollback SQL, which validates
+unchanged merged survivors, restores every original row/ID, and recreates the
+legacy unique index. The full procedure is
+`docs/database/ScoreHistoryDedupMaintenanceRunbook.md`.
+
 ## Required proof package for every reclaim action
 
 Before any parity-gated reclaim action, produce a short proof package:

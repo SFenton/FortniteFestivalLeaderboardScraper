@@ -708,7 +708,8 @@ and retained old-table rollback; bounded unlogged samples are evaluation-only.
 
 | Tables | Class | Owner/callers | Retention |
 |---|---|---|---|
-| `score_history` | Durable user-visible history | `MetaDatabase`, player/ranking services | Preserve score/rank/season/timestamp semantics; nullable-time uniqueness repair is PG-3/PG-7 |
+| `score_history` | Durable user-visible history | `MetaDatabase`, player/ranking services | Preserve score/rank/season/timestamp semantics. The explicit audited PG-3/PG-7 maintenance command promotes `ix_sh_dedup` to five-column `UNIQUE ... NULLS NOT DISTINCT`; no row cleanup runs at startup. |
+| `score_history_dedup_maintenance_runs`, `score_history_dedup_original_rows` | Immutable maintenance audit/restore source | Explicit `ScoreHistoryDedupMaintenanceService` CLI only | Retention-independent. Stores non-null CLI/database/digest/index provenance and every affected original row before merge/delete; triggers reject update, delete, truncate, and post-seal original-row append. |
 | `player_score_observations` | Empty retained rollback schema for the retired non-authoritative observation surface | Solo-history and band-member writers remain independently default-off in deployed code/config; no production reader | OBSERVATION-RETIRE truncated `10,167,937` rows after scrape `1267` parity, reclaiming `12,682,330,112` database bytes while preserving the table, union view, indexes, primary key, and sequence |
 | `player_stats`, `player_stats_tiers` | Derived projection | Player stats calculator/API | Rebuildable for a published generation |
 | `account_rankings`, `account_ranking_stats` | Derived ranking projection | Rankings pipeline | Rebuildable; generation/source must remain auditable |
@@ -825,6 +826,36 @@ Lead subjects, preventing a later routine pass from reinterpreting the same
 maintenance movement. It does not refresh projections, touch player-song or
 band state, create visible events, expire/supersede visible events, or request
 notification-feed WebSocket invalidation.
+
+The nullable `score_history` repair is a separate explicit one-shot safety
+gate. `--score-history-dedup-maintenance` defaults to a canonical
+`REPEATABLE READ`, `READ ONLY` dry run. Its digest binds sorted original rows,
+per-group selected survivor/rank/time values, the merge contract, and the
+structured current index state while excluding transaction/report clocks,
+planner estimates, and relation sizes. Reports include total/null/duplicate
+rows, groups/excess, affected account/song IDs, per-group maxima and semantic
+variance, table/index sizes, and exact merge semantics.
+
+Execute additionally requires `--score-history-dedup-execute` and
+`--expected-score-history-dedup-digest`. Under a transaction advisory lock and
+`SHARE ROW EXCLUSIVE` lock on `score_history`, it re-reads and verifies the
+digest before reserving an audit ID. Any duplicate with `new_score != 0`, or
+variation outside `id`, `new_rank`, `all_time_rank`, and `changed_at`, blocks
+before writes. A passing transaction stores every original row, preserves the
+lowest ID, earliest `changed_at`, and minimum positive/non-null ranks, deletes
+only non-survivors, then builds the PostgreSQL 17 `NULLS NOT DISTINCT`
+replacement under a temporary name. Reads remain available during the index
+scan/build; the final old-index drop/new-index rename creates a brief
+`ACCESS EXCLUSIVE` pause immediately before commit. Existing five-column
+`ON CONFLICT` paths therefore become null-safe without query-specific
+predicates.
+
+The immutable run stores executable rollback SQL. Rollback verifies the target
+index and unchanged merged survivors, drops the nulls-not-distinct index,
+restores exact audited originals, recreates the legacy ordinary unique index,
+and advances the sequence without rewinding it. Full commands and lock/runtime
+planning are in
+`docs/database/ScoreHistoryDedupMaintenanceRunbook.md`.
 
 ### Dirty, shadow, and audit-only surfaces
 
@@ -1193,6 +1224,13 @@ transaction uses local two-second lock and fifteen-second statement timeouts,
 so notification ALTER locks cannot survive into publication reconciliation.
 No secondary index is added to the existing event tables.
 
+The score-history dedup audit schema is likewise additive and runs in its own
+short schema transaction with the same two-second lock and fifteen-second
+statement timeouts. It creates only the immutable run/original-row audit
+tables, trigger function, triggers, and small digest lookup index. It does not
+scan, merge, delete, or index-rebuild `score_history`; those actions exist only
+behind the explicit maintenance execute digest gate.
+
 ## Retention and maintenance
 
 - `DatabaseRetentionMaintenanceService` skips cleanup under measured database
@@ -1215,6 +1253,8 @@ No secondary index is added to the existing event tables.
   unbounded `pg_repack` are prohibited at current headroom.
 - Archive/prune operations require exact object/range manifests, checksums,
   rehydration, live-scrape parity, rollback, and post-action route validation.
+- Score-history dedup audit rows have no scrape-log foreign key, expiry, or
+  retention path. Preserve them after execute and after any rollback.
 
 ## Backup, restore, and rollback
 
@@ -1242,6 +1282,12 @@ PG-0 uses this non-destructive interim path:
 5. Validate schema/constraints, row counts, min/max keys and timestamps,
    fingerprints/checksums, and representative API fixtures.
 6. Drop the isolated target after evidence is persisted.
+
+The bounded `score_history` dedup restore path is independent of the general
+database restore drill: retrieve `rollback_sql` from the immutable maintenance
+run and execute it only under the runbook's maintenance gate. It restores all
+audited IDs/values and the legacy index in one fail-closed transaction; the
+audit evidence remains.
 
 Run the implemented drill with:
 

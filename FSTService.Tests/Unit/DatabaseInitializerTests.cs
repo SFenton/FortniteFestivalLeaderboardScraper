@@ -184,6 +184,7 @@ public class DatabaseInitializerTests : IDisposable
             new[]
             {
                 "improvement-notifications",
+                "score-history-dedup-audit",
                 "main-publication",
             },
             plan.Select(static step => step.Name));
@@ -193,7 +194,118 @@ public class DatabaseInitializerTests : IDisposable
         Assert.Equal("2s", notification.LockTimeout);
         Assert.Equal("15s", notification.StatementTimeout);
         Assert.Contains(ImprovementNotificationSchema.Sql, notification.Sql);
-        Assert.False(plan[1].UseShortTransaction);
+        var scoreHistoryAudit = plan[1];
+        Assert.True(scoreHistoryAudit.UseShortTransaction);
+        Assert.Equal(20, scoreHistoryAudit.CommandTimeoutSeconds);
+        Assert.Equal("2s", scoreHistoryAudit.LockTimeout);
+        Assert.Equal("15s", scoreHistoryAudit.StatementTimeout);
+        Assert.Equal(
+            ScoreHistoryDedupMaintenanceSchema.Sql,
+            scoreHistoryAudit.Sql);
+        Assert.False(plan[2].UseShortTransaction);
+    }
+
+    [Fact]
+    public async Task EnsureSchemaAsync_creates_immutable_score_history_dedup_audit_schema()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using (var inspect = conn.CreateCommand())
+        {
+            inspect.CommandText = """
+                SELECT
+                    to_regclass(
+                        'public.score_history_dedup_maintenance_runs')
+                        IS NOT NULL,
+                    to_regclass(
+                        'public.score_history_dedup_original_rows')
+                        IS NOT NULL,
+                    COUNT(*) FILTER (
+                        WHERE trigger_row.tgname =
+                            'trg_reject_score_history_dedup_run_mutation'
+                          AND NOT trigger_row.tgisinternal) = 1,
+                    COUNT(*) FILTER (
+                        WHERE trigger_row.tgname =
+                            'trg_reject_score_history_dedup_original_mutation'
+                          AND NOT trigger_row.tgisinternal) = 1,
+                    NOT EXISTS (
+                        SELECT 1
+                        FROM pg_constraint constraint_row
+                        WHERE constraint_row.conrelid =
+                            'score_history_dedup_maintenance_runs'::regclass
+                          AND constraint_row.contype = 'f')
+                FROM pg_trigger trigger_row
+                WHERE trigger_row.tgrelid IN (
+                    'score_history_dedup_maintenance_runs'::regclass,
+                    'score_history_dedup_original_rows'::regclass);
+                """;
+            using var reader = inspect.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.True(reader.GetBoolean(0));
+            Assert.True(reader.GetBoolean(1));
+            Assert.True(reader.GetBoolean(2));
+            Assert.True(reader.GetBoolean(3));
+            Assert.True(reader.GetBoolean(4));
+        }
+
+        using (var insert = conn.CreateCommand())
+        {
+            insert.CommandText = """
+                INSERT INTO score_history_dedup_maintenance_runs (
+                    maintenance_purpose,
+                    maintenance_contract_version,
+                    execution_source,
+                    dry_run_digest,
+                    canonical_candidate_data,
+                    safety_classification,
+                    database_name,
+                    database_user,
+                    server_version_num,
+                    duplicate_row_count,
+                    duplicate_group_count,
+                    excess_row_count,
+                    affected_account_count,
+                    affected_song_count,
+                    original_rows_audited,
+                    survivor_rows_updated,
+                    rows_deleted,
+                    index_replaced,
+                    index_definition_before,
+                    index_definition_after,
+                    rollback_sql)
+                VALUES (
+                    'score_history_null_timestamp_dedup_v1',
+                    1,
+                    'explicit_cli',
+                    @digest,
+                    '{}',
+                    'ready',
+                    current_database(),
+                    current_user,
+                    current_setting('server_version_num')::INTEGER,
+                    0, 0, 0, 0, 0, 0, 0, 0,
+                    TRUE,
+                    'legacy',
+                    'null-safe',
+                    'rollback')
+                RETURNING maintenance_run_id;
+                """;
+            insert.Parameters.AddWithValue("digest", new string('a', 64));
+            var runId = Convert.ToInt64(insert.ExecuteScalar());
+
+            using var mutate = conn.CreateCommand();
+            mutate.CommandText = """
+                UPDATE score_history_dedup_maintenance_runs
+                SET rollback_sql = 'changed'
+                WHERE maintenance_run_id = @runId;
+                """;
+            mutate.Parameters.AddWithValue("runId", runId);
+            var exception = Assert.Throws<PostgresException>(
+                () => mutate.ExecuteNonQuery());
+            Assert.Equal("55000", exception.SqlState);
+        }
     }
 
     [Fact]

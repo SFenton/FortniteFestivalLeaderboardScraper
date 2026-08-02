@@ -67,6 +67,30 @@ node --test tools/secret-scan.test.mjs
 node tools/secret-scan.mjs
 ```
 
+Nullable `score_history` dedup is an explicit audited maintenance command, not
+a startup migration. Dry run is the default and is PostgreSQL
+`REPEATABLE READ`/`READ ONLY`; execute requires both flags:
+
+```bash
+# Dry run
+dotnet FSTService.dll --score-history-dedup-maintenance
+
+# Execute only after two matching accepted dry runs and a maintenance gate
+dotnet FSTService.dll \
+  --score-history-dedup-maintenance \
+  --score-history-dedup-execute \
+  --expected-score-history-dedup-digest <sha256>
+```
+
+The execute transaction immutably audits every original row, merges only the
+approved zero-score/rank-metadata duplicates, and replaces `ix_sh_dedup` with
+PostgreSQL 17 `UNIQUE ... NULLS NOT DISTINCT`. It is fail-closed on unexpected
+history, digest drift, or lock timeout. Schema initialization adds only the
+audit tables. See
+[`docs/database/ScoreHistoryDedupMaintenanceRunbook.md`](docs/database/ScoreHistoryDedupMaintenanceRunbook.md)
+for maintenance-window checks, locks, runtime estimate, validation, and exact
+per-run rollback SQL.
+
 Worker correctness rollout uses three rollback-safe environment switches:
 
 - `Features__EnforceScopeCompletenessManifests=true`

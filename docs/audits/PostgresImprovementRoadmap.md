@@ -950,9 +950,28 @@ and search projection ownership.
 
 ### PG-3.4 - Repair nullable score-history uniqueness
 
-Manifest the 1,074 known excess rows and design `NULLS NOT DISTINCT`, a partial
-unique index, or a generated key. Actual row cleanup and constraint promotion
-move to PG-7 after backup/restore and live-scrape parity.
+The 2026-08-02 read-only inventory measured `705,687` rows / about `441 MB`,
+including `1,631` null timestamps and `324` duplicate key groups with `1,074`
+excess rows. Every duplicate group has `new_score = 0`; only `id`, `new_rank`,
+`all_time_rank`, and `changed_at` vary.
+
+The explicit audited implementation is now present in the worktree but is not
+committed, deployed, or executed. It adds only immutable audit schema during
+normal schema initialization. The one-shot CLI defaults to repeatable-read,
+read-only dry run; execute requires the exact canonical SHA-256, re-reads under
+a short-timeout write-blocking table lock, audits every original row, applies
+the lowest-ID/earliest-time/minimum-positive-rank merge, deletes only
+non-survivors, and atomically replaces `ix_sh_dedup` with PostgreSQL 17
+`UNIQUE ... NULLS NOT DISTINCT`.
+
+Unexpected nonzero scores or semantic variance fail closed before writes.
+Focused PostgreSQL 17 tests cover deterministic zero-write dry run, digest and
+variance rejection, exact audit/merge counts, null-conflict idempotency across
+the direct/small/COPY/staged repository paths, index persistence across schema
+init, retry idempotency, immutable audit, and exact stored rollback SQL.
+Production execution remains PG-7 maintenance-window work after the required
+live-scrape parity, health, lock, and restore gates. See
+`docs/database/ScoreHistoryDedupMaintenanceRunbook.md`.
 
 ### PG-3 urgent low-scratch reclaim - accepted 2026-07-13
 
@@ -1800,8 +1819,12 @@ Do not blindly increase buffers. Measure:
 4. Prefer partition-level or streaming low-scratch operations.
 5. Use `pg_repack` only when the FST drive has enough scratch for the exact
    object and indexes.
-6. Clean the manifested nullable score-history duplicates and promote the
-   uniqueness constraint.
+6. At a clean boundary, run two matching accepted
+   `--score-history-dedup-maintenance` dry runs, then execute only with
+   `--score-history-dedup-execute
+   --expected-score-history-dedup-digest <sha256>`. Preserve the immutable
+   audit and per-run rollback SQL; validate zero duplicate groups and
+   `indnullsnotdistinct = true`.
 7. Validate disk, WAL, locks, counts, ranges, fingerprints, routes, and restore
    after every object.
 

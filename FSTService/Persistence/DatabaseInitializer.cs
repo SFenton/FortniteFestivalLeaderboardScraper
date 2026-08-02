@@ -105,6 +105,13 @@ public static class DatabaseInitializer
                 LockTimeout: NotificationSchemaLockTimeout,
                 StatementTimeout: NotificationSchemaStatementTimeout),
             new(
+                Name: "score-history-dedup-audit",
+                Sql: ScoreHistoryDedupMaintenanceSchema.Sql,
+                CommandTimeoutSeconds: NotificationSchemaCommandTimeoutSeconds,
+                UseShortTransaction: true,
+                LockTimeout: NotificationSchemaLockTimeout,
+                StatementTimeout: NotificationSchemaStatementTimeout),
+            new(
                 Name: "main-publication",
                 Sql:
                     $"{Schema}{Environment.NewLine}{Environment.NewLine}" +
