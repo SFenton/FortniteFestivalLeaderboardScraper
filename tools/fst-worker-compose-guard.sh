@@ -29,12 +29,14 @@ Options:
                              baseline-up-to-800-32-4 (default)
                              candidate-800-32-4
                              candidate-1600-64-8
+                             candidate-1600-64-8-initial64
                              candidate-2880-128-16
                            Candidate profiles require --recreate-runonce for startup.
   --data-profile P         Select the paired data profile:
                              notification-db-only
                              publication-cache-generation
                              registered-refresh-repair
+                             catalog-path-notification-source-cut
                            Every run-once config requires a data profile.
   --compose-dir DIR        Production compose directory
   -h, --help               Show help
@@ -80,6 +82,12 @@ case "$THROUGHPUT_PROFILE" in
         PROFILE_MAX_PER_ENDPOINT_CONCURRENCY=8
         PROFILE_EXACT=true
         ;;
+    candidate-1600-64-8-initial64)
+        PROFILE_MAX_AGGREGATE_RPS=1600
+        PROFILE_MAX_PER_ENDPOINT_RPS=64
+        PROFILE_MAX_PER_ENDPOINT_CONCURRENCY=8
+        PROFILE_EXACT=true
+        ;;
     candidate-2880-128-16)
         PROFILE_MAX_AGGREGATE_RPS=2880
         PROFILE_MAX_PER_ENDPOINT_RPS=128
@@ -94,7 +102,7 @@ case "$THROUGHPUT_PROFILE" in
 esac
 
 case "$DATA_PROFILE" in
-    none|notification-db-only|publication-cache-generation|registered-refresh-repair)
+    none|notification-db-only|publication-cache-generation|registered-refresh-repair|catalog-path-notification-source-cut)
         ;;
     *)
         printf 'ERROR: unknown data profile: %s\n' "$DATA_PROFILE" >&2
@@ -265,9 +273,21 @@ run_once = (
     if "Scraper__RunOnce" in environment
     else False
 )
+initial_dop = integer("Scraper__InitialDop")
+degree_of_parallelism = integer("Scraper__DegreeOfParallelism")
+page_concurrency = integer("Scraper__PageConcurrency")
 curl_temp_directory = str(environment.get("Scraper__ProxyCurlTempDirectory", "")).strip()
 if require_run_once and not run_once:
     raise SystemExit("ERROR: merged run-once config must set Scraper__RunOnce=true")
+if profile_name == "candidate-1600-64-8-initial64":
+    if initial_dop != 64:
+        raise SystemExit(
+            "ERROR: candidate-1600-64-8-initial64 requires "
+            f"Scraper__InitialDop=64, found {initial_dop}")
+    if degree_of_parallelism != 200 or page_concurrency != 50:
+        raise SystemExit(
+            "ERROR: candidate-1600-64-8-initial64 requires "
+            "Scraper__DegreeOfParallelism=200 and Scraper__PageConcurrency=50")
 if data_profile == "notification-db-only":
     exact_value("Scraper__EnabledPhases", "None")
     if not boolean("ImprovementNotifications__Enabled"):
@@ -347,6 +367,38 @@ if data_profile == "registered-refresh-repair":
         if boolean(name):
             raise SystemExit(
                 f"ERROR: data profile registered-refresh-repair requires {name}=false")
+if data_profile == "catalog-path-notification-source-cut":
+    if worker.get("image") != "fstservice:atomic-path-notify-abb8701f":
+        raise SystemExit(
+            "ERROR: data profile catalog-path-notification-source-cut requires "
+            "fstservice:atomic-path-notify-abb8701f")
+    exact_value("Scraper__EnabledPhases", "All")
+    exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
+    exact_value("Scraper__EnableAutomaticPathGeneration", "false")
+    for name in (
+        "Features__EnforcePublicationCriticalPhases",
+        "Features__EnforceScopeCompletenessManifests",
+        "Features__RequireSuccessfulScrapeWriters",
+        "Features__WritePublishedScopeSources",
+        "ImprovementNotifications__Enabled",
+        "ImprovementNotifications__IncludePlayers",
+        "ImprovementNotifications__IncludeBands",
+        "ImprovementNotifications__IncludeSongEvents",
+        "ImprovementNotifications__IncludeRankings",
+    ):
+        if not boolean(name):
+            raise SystemExit(
+                "ERROR: data profile catalog-path-notification-source-cut "
+                f"requires {name}=true")
+    for name in (
+        "Features__WriteLogicalLeaderboardVersions",
+        "Features__SkipUnchangedPhysicalLeaderboardSnapshots",
+        "ImprovementNotifications__FailScrapeOnError",
+    ):
+        if boolean(name):
+            raise SystemExit(
+                "ERROR: data profile catalog-path-notification-source-cut "
+                f"requires {name}=false")
 if canonical != 30:
     raise SystemExit(f"ERROR: canonical PIA service count must be 30, found {canonical}")
 if expected > canonical:

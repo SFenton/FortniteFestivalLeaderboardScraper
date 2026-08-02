@@ -371,6 +371,27 @@ not authorize an unpaired worker start.
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1273-dual-lane-20260801`.
 
+### Scrape 1274 initial-ramp candidate
+
+The next paired full scrape keeps the accepted `1600 / 64 / 8`, aggregate DOP
+`200`, learned maximum `200`, page concurrency `50`, curl transport, and exact
+25-exit pool unchanged. Its only network variable is initial DOP `50 -> 64`.
+
+- **Hypothesis:** reduce the first fifteen minutes of AIMD ramp time without
+  increasing retry amplification, three-minute error windows, or public load.
+- **Target:** first-fifteen-minute useful request rate improves at least `5%`;
+  terminal pure fetch and network-plus-writer must not regress more than `5%`
+  against scrape `1273`.
+- **Correctness:** exact manifests, zero writer failures, zero exhausted retry
+  chains, healthy exits, successful publication/notifications, and continuous
+  public health remain mandatory.
+- **Rollback:** restore initial DOP `50`; all other accepted network values are
+  identical.
+
+The named profile is `candidate-1600-64-8-initial64`. It is paired only with
+the `catalog-path-notification-source-cut` data profile and does not authorize
+an unpaired worker start.
+
 The bounded runner now atomically creates
 `/home/sfenton/Docker/FestivalServiceTracker/.fst-bounded-network-canary-active.json`
 after proving the worker is offline and removes it only at terminal cleanup.

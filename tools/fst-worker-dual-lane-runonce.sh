@@ -15,6 +15,7 @@ notification DB-only data lane, then optionally starts exactly one worker pass.
 
 Options:
   --network-profile P   candidate-800-32-4, candidate-1600-64-8,
+                        candidate-1600-64-8-initial64,
                         or candidate-2880-128-16
   --check               Validate only (default)
   --recreate            Validate and recreate the run-once worker
@@ -51,16 +52,25 @@ case "$NETWORK_PROFILE" in
         MAX_RPS=800
         PER_ENDPOINT_RPS=32
         PER_ENDPOINT_CONCURRENCY=4
+        INITIAL_DOP=50
         ;;
     candidate-1600-64-8)
         MAX_RPS=1600
         PER_ENDPOINT_RPS=64
         PER_ENDPOINT_CONCURRENCY=8
+        INITIAL_DOP=50
+        ;;
+    candidate-1600-64-8-initial64)
+        MAX_RPS=1600
+        PER_ENDPOINT_RPS=64
+        PER_ENDPOINT_CONCURRENCY=8
+        INITIAL_DOP=64
         ;;
     candidate-2880-128-16)
         MAX_RPS=2880
         PER_ENDPOINT_RPS=128
         PER_ENDPOINT_CONCURRENCY=16
+        INITIAL_DOP=50
         ;;
     *)
         printf 'ERROR: unsupported network profile: %s\n' "$NETWORK_PROFILE" >&2
@@ -77,7 +87,7 @@ fi
 guard_args=(
     --compose-dir "$COMPOSE_DIR"
     --throughput-profile "$NETWORK_PROFILE"
-    --data-profile notification-db-only
+    --data-profile catalog-path-notification-source-cut
     "$guard_action"
 )
 if $CONFIG_ONLY; then
@@ -85,10 +95,14 @@ if $CONFIG_ONLY; then
 fi
 
 RUN_ONCE=true \
-ENABLED_PHASES=None \
+ENABLED_PHASES=All \
 PIA_MAX_REQUESTS_PER_SECOND="$MAX_RPS" \
 PIA_PROXY_MAX_REQUESTS_PER_SECOND_PER_ENDPOINT="$PER_ENDPOINT_RPS" \
 PIA_PROXY_MAX_CONCURRENT_REQUESTS_PER_ENDPOINT="$PER_ENDPOINT_CONCURRENCY" \
+PIA_INITIAL_DOP="$INITIAL_DOP" \
+PIA_DEGREE_OF_PARALLELISM=200 \
+PIA_PAGE_CONCURRENCY=50 \
+ENABLE_AUTOMATIC_PATH_GENERATION=false \
 REGISTERED_USER_REFRESH_TIMEOUT=00:00:00 \
 REGISTERED_PLAYER_BAND_DISCOVERY_TIMEOUT=00:05:00 \
 REGISTERED_BAND_TARGETED_PROCESSING_TIMEOUT=00:05:00 \

@@ -1414,6 +1414,21 @@ deployment/repair remain separate**
   path regeneration, ranking recomputation, notification delivery, or the
   four-song repair.
 
+**Scrape 1274 data-lane gate**
+
+- Production schema initialization and service-only deployment passed with
+  automatic path generation disabled, `697` legacy rows, zero pending/atomic
+  rows, zero path errors, and unchanged HTTP `200` public/legacy path reads.
+- The next full-scrape data profile is
+  `catalog-path-notification-source-cut` on
+  `fstservice:atomic-path-notify-abb8701f`.
+- Acceptance requires a schema-v2 `provider_exact` live catalog, a ready
+  `generation_catalog_snapshot` binding for the new publication, generation
+  cache/public parity, completed routine notifications, and zero automatic
+  path promotions/errors.
+- The four-song repair remains blocked after publication until the exact
+  staged manifest produces two identical projected notification digests.
+
 ## Phase WORKER-4: Reduce post-process and ranking time
 
 **Decision:** Accepted A/B program  
