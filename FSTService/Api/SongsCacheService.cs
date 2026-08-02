@@ -460,13 +460,31 @@ public sealed class SongsCacheService
                 "Published song catalog is not bound to the current publication.");
         }
 
-        var songs = SongCatalogSnapshotBuilder.DeserializeCatalogForFallback(
-            catalog.CatalogJson,
-            catalog.SchemaVersion);
-        if (songs.Count != catalog.SongCount)
+        var publishedSongs =
+            SongCatalogSnapshotBuilder.DeserializeCatalogForFallback(
+                catalog.CatalogJson,
+                catalog.SchemaVersion)
+            .ToArray();
+        if (publishedSongs.Length != catalog.SongCount)
         {
             throw new InvalidOperationException(
                 "Published song catalog count does not match its binding.");
+        }
+
+        IReadOnlyList<Song> songs = publishedSongs;
+        var liveCatalog = (metaDb as MetaDatabase)?
+            .GetLiveExactSongCatalogFallback();
+        if (liveCatalog is { } live &&
+            live.SongCount == catalog.SongCount)
+        {
+            var liveSongs =
+                SongCatalogSnapshotBuilder.DeserializeCatalogForFallback(
+                    live.CatalogJson,
+                    live.SchemaVersion)
+                .ToArray();
+            songs = SelectPublishedFallbackSongs(
+                publishedSongs,
+                liveSongs);
         }
 
         var service = FestivalService.CreateFromSongCatalogSnapshot(songs);
@@ -477,6 +495,40 @@ public sealed class SongsCacheService
             persistence,
             precomputer,
             jsonOpts);
+    }
+
+    internal static IReadOnlyList<Song> SelectPublishedFallbackSongs(
+        IReadOnlyList<Song> publishedSongs,
+        IReadOnlyList<Song> liveSongs)
+    {
+        if (publishedSongs.Count != liveSongs.Count)
+            return publishedSongs;
+
+        var liveById = new Dictionary<string, Song>(
+            StringComparer.Ordinal);
+        foreach (var liveSong in liveSongs)
+        {
+            var songId = liveSong.track?.su;
+            if (string.IsNullOrWhiteSpace(songId) ||
+                !liveById.TryAdd(songId, liveSong))
+            {
+                return publishedSongs;
+            }
+        }
+
+        foreach (var publishedSong in publishedSongs)
+        {
+            var songId = publishedSong.track?.su;
+            if (string.IsNullOrWhiteSpace(songId) ||
+                !liveById.TryGetValue(songId, out var liveSong) ||
+                publishedSong.lastModified.ToUniversalTime() !=
+                    liveSong.lastModified.ToUniversalTime())
+            {
+                return publishedSongs;
+            }
+        }
+
+        return liveSongs;
     }
 
     internal static IEnumerable<Song> OrderSongsForPublicResponse(IEnumerable<Song> songs) =>

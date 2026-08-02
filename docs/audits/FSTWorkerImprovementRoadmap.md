@@ -1386,6 +1386,16 @@ deployment/repair remain separate**
   immutable song catalog. It is allowed only while automatic path generation
   is disabled and does not relax isolation for player, ranking, history, band,
   or other derived routes.
+- Publication `6`'s legacy catalog intentionally lacks richer provider display
+  fields such as album art. The fallback now uses the live provider-exact
+  metadata only when all published/live song IDs and normalized provider
+  `lastModified` timestamps match exactly; otherwise it retains the sparse
+  published payload. This restores song thumbnails and page background art
+  without admitting a different catalog generation.
+- Registered refresh also emits a throttled worker-operation heartbeat after
+  persisted scope batches. The external watchdog still reads the durable scope
+  table, while API status and general monitors no longer show a stale
+  `UpdatedAtUtc` throughout a progressing network-bound refresh.
 - Cancellation drains stdout/stderr concurrently, kills the complete process
   tree, removes staging, preserves the prior pointer, and appends a bounded
   error row.

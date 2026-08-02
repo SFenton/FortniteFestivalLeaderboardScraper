@@ -461,7 +461,25 @@ public class PostScrapeOrchestratorTests : IDisposable
                 },
             ]);
 
+        _workerStatus.BeginOperation(
+            "scrape.post_process",
+            "Post-processing leaderboard update",
+            phase: "PostScrapeEnrichment",
+            subOperation: "RefreshRegisteredUsers",
+            detail: "Running RefreshRegisteredUsers");
+        var operationBefore = _metaDb.GetWorkerStatus(
+            WorkerStatusPublisher.ScraperWorkerKey)!.CurrentOperation!;
+
         await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
+
+        var operationAfter = _metaDb.GetWorkerStatus(
+            WorkerStatusPublisher.ScraperWorkerKey)!.CurrentOperation!;
+        Assert.True(
+            operationAfter.UpdatedAtUtc >= operationBefore.UpdatedAtUtc);
+        Assert.Contains(
+            "completed scope batch persisted",
+            operationAfter.Detail,
+            StringComparison.Ordinal);
 
         using var conn = _metaFixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();

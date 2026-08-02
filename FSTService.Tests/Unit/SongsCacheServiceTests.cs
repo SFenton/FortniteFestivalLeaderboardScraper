@@ -202,6 +202,50 @@ public class SongsCacheServiceTests
     }
 
     [Fact]
+    public void Published_fallback_uses_richer_live_metadata_only_for_exact_identity()
+    {
+        var timestamp = new DateTime(
+            2026,
+            8,
+            1,
+            12,
+            0,
+            0,
+            DateTimeKind.Utc);
+        var published = new Song
+        {
+            lastModified = timestamp,
+            track = new Track
+            {
+                su = "song-1",
+                tt = "Song",
+            },
+        };
+        var live = new Song
+        {
+            lastModified = timestamp,
+            track = new Track
+            {
+                su = "song-1",
+                tt = "Song",
+                au = "https://cdn.example/song.jpg",
+            },
+        };
+
+        var selected = SongsCacheService.SelectPublishedFallbackSongs(
+            [published],
+            [live]);
+
+        Assert.Same(live, Assert.Single(selected));
+
+        live.lastModified = timestamp.AddSeconds(1);
+        selected = SongsCacheService.SelectPublishedFallbackSongs(
+            [published],
+            [live]);
+        Assert.Same(published, Assert.Single(selected));
+    }
+
+    [Fact]
     public void Active_failed_candidate_isolation_blocks_cache_install()
     {
         var safety = new PublicReadCacheSafetySnapshot(

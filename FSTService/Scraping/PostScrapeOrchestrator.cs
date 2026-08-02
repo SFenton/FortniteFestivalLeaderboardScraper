@@ -18,6 +18,9 @@ namespace FSTService.Scraping;
 /// </summary>
 public sealed class PostScrapeOrchestrator
 {
+    private static readonly TimeSpan RegisteredRefreshOperationHeartbeatInterval =
+        TimeSpan.FromSeconds(15);
+
     private const int PlayerStatsTierAccountChunkSize = 512;
     private static readonly IReadOnlyDictionary<string, IReadOnlyCollection<string>> EmptyImpactedTeams =
         new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.OrdinalIgnoreCase);
@@ -2105,6 +2108,7 @@ public sealed class PostScrapeOrchestrator
 
             // ── Attach to the cyclical machine ──────────────────
             _progress.SetSubOperation("processing_songs");
+            long nextOperationHeartbeatTicks = 0;
             var attachmentOptions = new CyclicalSongMachine.AttachmentOptions(
                 PreserveSongOrder: true,
                 OnScopesCompleted: scopes =>
@@ -2113,6 +2117,20 @@ public sealed class PostScrapeOrchestrator
                         ctx.ScrapeId,
                         scopes,
                         DateTime.UtcNow);
+                    var nowTicks = DateTime.UtcNow.Ticks;
+                    var scheduledTicks = Volatile.Read(
+                        ref nextOperationHeartbeatTicks);
+                    if (nowTicks >= scheduledTicks &&
+                        Interlocked.CompareExchange(
+                            ref nextOperationHeartbeatTicks,
+                            nowTicks +
+                                RegisteredRefreshOperationHeartbeatInterval.Ticks,
+                            scheduledTicks) == scheduledTicks)
+                    {
+                        UpdatePostProcessOperation(
+                            "RefreshRegisteredUsers",
+                            "Refreshing registered users; completed scope batch persisted");
+                    }
                     return ValueTask.CompletedTask;
                 },
                 CurrentSeason: currentSeason,

@@ -889,6 +889,33 @@ public sealed class MetaDatabase : IMetaDatabase
             reader.GetDateTime(7));
     }
 
+    internal (int SchemaVersion, string CatalogJson, int SongCount)?
+        GetLiveExactSongCatalogFallback()
+    {
+        using var conn = _ds.OpenConnection();
+        EnsureScrapePublicationStateTable(conn);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT schema_version, catalog_json::text, song_count
+            FROM live_song_catalog
+            WHERE id = TRUE
+              AND is_exact
+              AND source_kind = 'provider_exact'
+              AND schema_version = @schemaVersion
+            """;
+        cmd.Parameters.AddWithValue(
+            "schemaVersion",
+            SongCatalogSnapshotBuilder.SchemaVersion);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return null;
+
+        return (
+            reader.GetInt32(0),
+            reader.GetString(1),
+            reader.GetInt32(2));
+    }
+
     public IReadOnlyList<PublicationSurfaceBinding> GetPublicationSurfaceBindings(
         long publicationId)
     {

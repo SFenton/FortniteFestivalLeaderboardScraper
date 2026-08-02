@@ -512,6 +512,10 @@ published scrape only when automatic path generation is disabled. The bound
 catalog's publication ID, row count, and content hash must match the current
 binding. A schema-v2 provider-exact ready binding is preferred; the current
 legacy-reconstructed building binding is accepted only for this fallback.
+Richer live provider metadata such as album art is merged only when the
+published and live catalogs contain the same unique song IDs and every
+normalized provider `lastModified` timestamp matches. A mismatch preserves the
+sparse published catalog instead of crossing generations.
 Other publication-bound routes remain under their existing
 stable-cache/published resolver or HTTP `503` behavior.
 
