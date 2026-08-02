@@ -61,6 +61,42 @@ describe("FST worker no-progress watchdog", () => {
     assert.equal(decision.idleForSeconds, 600);
   });
 
+  it("accepts recent durable registered refresh scope progress", () => {
+    const decision = evaluateNoProgressObservation(
+      observation({
+        operation: {
+          OperationKey: "scrape.post_process",
+          SubOperation: "RefreshRegisteredUsers",
+          StartedAtUtc: "2026-07-27T10:00:00Z",
+          UpdatedAtUtc: "2026-07-27T17:00:00Z"
+        },
+        registeredRefreshProgressAt: "2026-07-27T17:58:00Z"
+      }),
+      { idleSeconds: 2700 }
+    );
+
+    assert.equal(decision.decision, "healthy");
+    assert.equal(decision.idleForSeconds, 120);
+  });
+
+  it("ignores registered refresh progress outside that sub-operation", () => {
+    const decision = evaluateNoProgressObservation(
+      observation({
+        operation: {
+          OperationKey: "scrape.post_process",
+          SubOperation: "BandMaintenance",
+          StartedAtUtc: "2026-07-27T10:00:00Z",
+          UpdatedAtUtc: "2026-07-27T17:00:00Z"
+        },
+        registeredRefreshProgressAt: "2026-07-27T17:58:00Z"
+      }),
+      { idleSeconds: 2700 }
+    );
+
+    assert.equal(decision.decision, "timeout");
+    assert.equal(decision.reason, "no_phase_progress");
+  });
+
   it("builds guarded recovery that preserves and unfreezes the prior publication", () => {
     const sql = buildRecoverySql({
       scrapeId: 1266,
@@ -69,8 +105,9 @@ describe("FST worker no-progress watchdog", () => {
       workerMessage: "worker stopped"
     });
 
-    assert.match(sql, new RegExp(`failure_phase = '${NO_PROGRESS_FAILURE_PHASE}'`));
+    assert.match(sql, new RegExp(NO_PROGRESS_FAILURE_PHASE));
     assert.match(sql, /published_id <> 1236/);
+    assert.match(sql, /candidate_status NOT IN \('running', 'failed'\)/);
     assert.match(sql, /published_scrape_id = 1266/);
     assert.match(sql, /candidate_mappings <> 0/);
     assert.match(sql, /active_worker_queries <> 0/);

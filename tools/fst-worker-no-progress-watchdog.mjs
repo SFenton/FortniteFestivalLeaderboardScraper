@@ -30,6 +30,10 @@ export function evaluateNoProgressObservation(
 
   const nowMs = parseTimestamp(observation.observedAt, "observedAt");
   const operation = observation.operation ?? {};
+  const subOperation =
+    operation.SubOperation
+    ?? operation.subOperation
+    ?? "";
   const progressCandidates = [
     operation.UpdatedAtUtc,
     operation.updatedAtUtc,
@@ -37,10 +41,17 @@ export function evaluateNoProgressObservation(
     operation.startedAtUtc,
     observation.latestPhaseProgressAt,
     observation.scrapeStartedAt
-  ]
+  ];
+  if (
+    subOperation === "RefreshRegisteredUsers"
+    && observation.registeredRefreshProgressAt
+  ) {
+    progressCandidates.push(observation.registeredRefreshProgressAt);
+  }
+  const parsedProgressCandidates = progressCandidates
     .filter(Boolean)
     .map(value => parseTimestamp(value, "progress timestamp"));
-  const latestProgressMs = Math.max(...progressCandidates);
+  const latestProgressMs = Math.max(...parsedProgressCandidates);
   const idleForSeconds = Math.max(0, (nowMs - latestProgressMs) / 1000);
 
   const phaseStartedValue =
@@ -153,8 +164,8 @@ BEGIN
     IF published_id <> ${normalizedPublishedId} THEN
         RAISE EXCEPTION 'expected published scrape ${normalizedPublishedId}, found %', published_id;
     END IF;
-    IF candidate_status <> 'running' THEN
-        RAISE EXCEPTION 'expected scrape ${normalizedScrapeId} running, found %', candidate_status;
+    IF candidate_status NOT IN ('running', 'failed') THEN
+        RAISE EXCEPTION 'expected scrape ${normalizedScrapeId} running or failed after worker stop, found %', candidate_status;
     END IF;
     IF candidate_mappings <> 0 THEN
         RAISE EXCEPTION 'scrape ${normalizedScrapeId} owns % published-source rows', candidate_mappings;
@@ -178,10 +189,16 @@ BEGIN
     UPDATE scrape_log
     SET status = 'failed',
         failed_at = COALESCE(failed_at, recovery_at),
-        failure_phase = '${NO_PROGRESS_FAILURE_PHASE}',
-        failure_message = ${quoteLiteral(failureMessage)}
+        failure_phase = CASE
+            WHEN status = 'running' THEN '${NO_PROGRESS_FAILURE_PHASE}'
+            ELSE failure_phase
+        END,
+        failure_message = CASE
+            WHEN status = 'running' THEN ${quoteLiteral(failureMessage)}
+            ELSE failure_message
+        END
     WHERE id = ${normalizedScrapeId}
-      AND status = 'running'
+      AND status IN ('running', 'failed')
       AND NOT EXISTS (
           SELECT 1
           FROM scrape_publication_state
@@ -197,8 +214,14 @@ BEGIN
         UPDATE publication_generations
         SET status = 'failed',
             failed_at = COALESCE(failed_at, recovery_at),
-            failure_phase = '${NO_PROGRESS_FAILURE_PHASE}',
-            failure_message = ${quoteLiteral(failureMessage)}
+            failure_phase = CASE
+                WHEN status = 'failed' THEN failure_phase
+                ELSE '${NO_PROGRESS_FAILURE_PHASE}'
+            END,
+            failure_message = CASE
+                WHEN status = 'failed' THEN failure_message
+                ELSE ${quoteLiteral(failureMessage)}
+            END
         WHERE scrape_id = ${normalizedScrapeId}
           AND status NOT IN ('current', 'retained', 'retired');
 
@@ -369,6 +392,11 @@ worker_activity AS (
     WHERE datname = current_database()
       AND pid <> pg_backend_pid()
       AND (application_name = 'fstworker-scraper'${clientPredicate})
+),
+registered_refresh_progress AS (
+    SELECT max(checked_at) AS progress_at
+    FROM registered_user_refresh_scope_progress
+    WHERE scrape_id = (SELECT id FROM latest_scrape)
 )
 SELECT json_build_object(
     'observedAt', clock_timestamp(),
@@ -386,6 +414,7 @@ SELECT json_build_object(
     'operation', worker.current_operation_json,
     'latestPhaseProgressAt', phase.progress_at,
     'latestPhase', phase.phase,
+    'registeredRefreshProgressAt', refresh.progress_at,
     'activeWorkerQueries', activity.active_queries,
     'oldestWorkerQueryStartedAt', activity.oldest_query_started_at,
     'candidatePublishedScopeRows', (
@@ -399,6 +428,7 @@ CROSS JOIN scrape_publication_state publication
 LEFT JOIN service_worker_status worker ON worker.worker_key = 'scraper'
 CROSS JOIN latest_phase phase
 CROSS JOIN worker_activity activity
+CROSS JOIN registered_refresh_progress refresh
 WHERE publication.id = TRUE;
 `;
   const output = run(
