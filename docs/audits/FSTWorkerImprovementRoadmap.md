@@ -1606,6 +1606,12 @@ Use one token owner or an atomic, locked, permission-restricted shared store.
   waiting for a season rollover.
 - Keep registration backfill, history reconstruction, and solo-projection
   dirty-scope persistence outside this recurring-refresh ledger.
+- Treat durable history `pending` as queued, not actively building. Only
+  `in_progress` displays history reconstruction progress. HTTP and WebSocket
+  state now agree on this distinction and history-phase counters use
+  `history_entries_found` rather than carrying a completed backfill's entry
+  count, preventing the SFentonX `72 entries found` subtitle from
+  disappearing/reappearing while no history worker owns the row.
 
 Promotion requires one normal scrape showing monotonic current-scrape
 completions, a reduced or stable missing backlog, no regression in

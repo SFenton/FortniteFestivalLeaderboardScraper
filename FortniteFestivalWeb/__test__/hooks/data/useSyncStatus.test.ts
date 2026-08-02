@@ -311,6 +311,44 @@ describe('useSyncStatus', () => {
     expect(result.current.historyProgress).toBe(0.3);
   });
 
+  it('shows pending history as queued without stale backfill entries', async () => {
+    mockGetStatus.mockResolvedValue({
+      accountId: 'acc1',
+      isTracked: true,
+      backfill: {
+        status: 'complete',
+        songsChecked: 100,
+        totalSongsToCheck: 100,
+        entriesFound: 72,
+        startedAt: null,
+        completedAt: null,
+      },
+      historyRecon: {
+        status: 'pending',
+        songsProcessed: 0,
+        totalSongsToProcess: 0,
+        seasonsQueried: 0,
+        historyEntriesFound: 0,
+        startedAt: null,
+        completedAt: null,
+      },
+      rivals: null,
+      postScrape: null,
+    } as any);
+
+    const { result } = renderHook(
+      () => useSyncStatus('acc1', { track: false, useWebSocket: false }),
+      { wrapper },
+    );
+    await flush();
+
+    expect(result.current.isSyncing).toBe(true);
+    expect(result.current.phase).toBe('queued');
+    expect(result.current.entriesFound).toBe(0);
+    expect(result.current.itemsCompleted).toBe(0);
+    expect(result.current.totalItems).toBe(0);
+  });
+
   it('detects complete state', async () => {
     mockGetStatus.mockResolvedValue({
       backfill: { status: 'complete', songsChecked: 100, totalSongsToCheck: 100, entriesFound: 10, startedAt: null, completedAt: null },
