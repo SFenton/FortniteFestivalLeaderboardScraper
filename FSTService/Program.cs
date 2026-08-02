@@ -74,6 +74,10 @@ builder.Services.Configure<Microsoft.AspNetCore.ResponseCompression.BrotliCompre
 
 var improvementNotificationRecoveryRequested = args.Any(
     arg => arg.Equals("--recover-improvement-notifications", StringComparison.OrdinalIgnoreCase));
+var initializeSchemaOnlyRequested = args.Any(
+    arg => arg.Equals(
+        "--initialize-schema-only",
+        StringComparison.OrdinalIgnoreCase));
 var improvementNotificationMaintenanceRequested = args.Any(
     arg => arg.Equals(
         "--notification-maintenance-pro-lead-max-score-repair",
@@ -108,6 +112,7 @@ if (improvementNotificationRecoveryRequested && improvementNotificationMaintenan
 
 var apiOnlyRequested = improvementNotificationRecoveryRequested
     || improvementNotificationMaintenanceRequested
+    || initializeSchemaOnlyRequested
     || args.Any(arg => arg.Equals("--api-only", StringComparison.OrdinalIgnoreCase))
     || builder.Configuration.GetValue<bool>($"{ScraperOptions.Section}:ApiOnly");
 var scraperWorkerDisabled = args.Any(arg => arg.Equals("--no-scraper-worker", StringComparison.OrdinalIgnoreCase))
@@ -693,6 +698,19 @@ else if (hostedWorkerMode == HostedWorkerMode.FrontendOnly)
 else if (hostedWorkerMode == HostedWorkerMode.RegistrationSyncWorker)
 {
     app.Logger.LogInformation("Registration sync worker mode enabled; scheduled scrape and band rank-history workers were not registered. Song catalog refresh and registration sync remain active.");
+}
+
+if (initializeSchemaOnlyRequested)
+{
+    var schemaLog = app.Services.GetRequiredService<ILoggerFactory>()
+        .CreateLogger("SchemaInitialization");
+    schemaLog.LogInformation(
+        "--initialize-schema-only: applying idempotent database schema...");
+    await FSTService.Persistence.DatabaseInitializer.EnsureSchemaAsync(
+        app.Services.GetRequiredService<NpgsqlDataSource>());
+    schemaLog.LogInformation(
+        "--initialize-schema-only: database schema is current. Exiting.");
+    return;
 }
 
 // One-shot precompute: --precompute

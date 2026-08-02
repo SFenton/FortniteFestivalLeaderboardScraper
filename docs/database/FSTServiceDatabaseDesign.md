@@ -56,6 +56,16 @@ replace this monolithic path and localized `Ensure*Schema` calls with a
 versioned migration ledger, advisory lock, and bounded lock/statement
 timeouts.
 
+The current one-off command is:
+
+```bash
+docker compose run --rm --no-deps fstservice \
+  --initialize-schema-only
+```
+
+It applies idempotent schema only and exits without precompute, scrape,
+rankings, notifications, or path generation.
+
 WORKER-0A live windows use
 `tools/postgres-worker-correctness-monitor.sh --scrape-id <id> --output
 <same-drive-path>` for 60-second public-health/resource/status samples and
