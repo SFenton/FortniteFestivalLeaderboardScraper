@@ -138,9 +138,6 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
     private bool SupportsSongInstrument(string songId, string instrument)
     {
-        if (!instrument.Equals("Solo_PeripheralVocals", StringComparison.OrdinalIgnoreCase))
-            return true;
-
         if (_festivalService is null)
             return true;
 
@@ -149,10 +146,50 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             if (!string.Equals(candidate.track?.su, songId, StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            return candidate.track?.HasProVocalsChart ?? false;
+            return TrackSupportsInstrument(
+                candidate.track,
+                instrument);
         }
 
         return true;
+    }
+
+    internal static bool TrackSupportsInstrument(
+        Track? track,
+        string instrument)
+    {
+        var intensity = track?.@in;
+        if (intensity is null)
+            return false;
+
+        return instrument switch
+        {
+            "Solo_Guitar" =>
+                intensity.HasProviderProperty("gr") &&
+                Track.HasChartedDifficulty(intensity.gr),
+            "Solo_Bass" =>
+                intensity.HasProviderProperty("ba") &&
+                Track.HasChartedDifficulty(intensity.ba),
+            "Solo_Drums" =>
+                intensity.HasProviderProperty("ds") &&
+                Track.HasChartedDifficulty(intensity.ds),
+            "Solo_Vocals" =>
+                intensity.HasProviderProperty("vl") &&
+                Track.HasChartedDifficulty(intensity.vl),
+            "Solo_PeripheralGuitar" =>
+                intensity.HasProviderProperty("pg") &&
+                Track.HasChartedDifficulty(intensity.pg),
+            "Solo_PeripheralBass" =>
+                intensity.HasProviderProperty("pb") &&
+                Track.HasChartedDifficulty(intensity.pb),
+            "Solo_PeripheralDrums" or "Solo_PeripheralCymbals" =>
+                intensity.HasProviderProperty("pd") &&
+                Track.HasChartedDifficulty(intensity.pd),
+            "Solo_PeripheralVocals" =>
+                intensity.HasProviderProperty("bd") &&
+                Track.HasChartedDifficulty(intensity.bd),
+            _ => true,
+        };
     }
 
     /// <summary>
@@ -540,9 +577,9 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 _log.LogWarning("Batch session lookup returned {Status} for {Label}: {Body}",
                     statusCode, label, body);
 
-                // BadRequest on the first page means the leaderboard doesn't exist
-                // for this season (song not charted). Throw so callers can detect
-                // and skip earlier seasons for other instruments.
+                // Other first-page BadRequest responses remain failures. Known
+                // invalid/uninstantiated leaderboards are handled above as a
+                // terminal empty scope, including under strict completion.
                 if ((int)statusCode == 400 && fromIndex == 0)
                     throw new HttpRequestException(
                         $"Seasonal leaderboard not found: {label} returned {(int)statusCode}",
@@ -606,10 +643,17 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int fromIndex,
         string body) =>
         fromIndex == 0 &&
-        statusCode == HttpStatusCode.NotFound &&
-        body.Contains(
-            "com.epicgames.events.event_not_found",
-            StringComparison.Ordinal);
+        (
+            statusCode == HttpStatusCode.NotFound &&
+            body.Contains(
+                "com.epicgames.events.event_not_found",
+                StringComparison.Ordinal)
+            ||
+            statusCode == HttpStatusCode.BadRequest &&
+            body.Contains(
+                "com.epicgames.events.invalid_leaderboard",
+                StringComparison.Ordinal)
+        );
 
     /// <summary>
     /// Fetch one exact band team's V2 row. <paramref name="windowId"/> is either

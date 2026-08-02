@@ -1396,6 +1396,15 @@ deployment/repair remain separate**
   persisted scope batches. The external watchdog still reads the durable scope
   table, while API status and general monitors no longer show a stale
   `UpdatedAtUtc` throughout a progressing network-bound refresh.
+- Scrape `1275` proved that liveness alone was insufficient: strict refresh
+  completion retried Epic's terminal
+  `com.epicgames.events.invalid_leaderboard` responses forever, leaving
+  hundreds of mostly plastic-instrument scopes incomplete while successful
+  scopes kept refreshing the watchdog timestamp. Known first-page
+  invalid/uninstantiated leaderboards are now terminal empty scopes under
+  strict completion, while unknown BadRequest and transient transport failures
+  remain retryable. Exact provider chart metadata is also honored for every
+  solo instrument rather than only mic mode.
 - Cancellation drains stdout/stderr concurrently, kills the complete process
   tree, removes staging, preserves the prior pointer, and appends a bounded
   error row.

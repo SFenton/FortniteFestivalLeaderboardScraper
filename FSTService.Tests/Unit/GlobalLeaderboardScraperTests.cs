@@ -183,6 +183,49 @@ public class GlobalLeaderboardScraperTests
         Assert.Equal(0, result.Requests);
     }
 
+    [Theory]
+    [InlineData("Solo_Guitar", true)]
+    [InlineData("Solo_Bass", false)]
+    [InlineData("Solo_Drums", false)]
+    [InlineData("Solo_Vocals", false)]
+    [InlineData("Solo_PeripheralGuitar", false)]
+    [InlineData("Solo_PeripheralBass", false)]
+    [InlineData("Solo_PeripheralDrums", false)]
+    [InlineData("Solo_PeripheralCymbals", false)]
+    [InlineData("Solo_PeripheralVocals", false)]
+    public void TrackSupportsInstrument_RequiresProviderChartMetadata(
+        string instrument,
+        bool expected)
+    {
+        var track = new Track
+        {
+            @in = new In { gr = 0 },
+        };
+
+        Assert.Equal(
+            expected,
+            GlobalLeaderboardScraper.TrackSupportsInstrument(
+                track,
+                instrument));
+    }
+
+    [Theory]
+    [InlineData("Solo_PeripheralDrums")]
+    [InlineData("Solo_PeripheralCymbals")]
+    public void TrackSupportsInstrument_MapsPlasticDrumsToBothModes(
+        string instrument)
+    {
+        var track = new Track
+        {
+            @in = new In { pd = 0 },
+        };
+
+        Assert.True(
+            GlobalLeaderboardScraper.TrackSupportsInstrument(
+                track,
+                instrument));
+    }
+
     [Fact]
     public void AllInstruments_Contains9Instruments()
     {
@@ -753,6 +796,47 @@ public class GlobalLeaderboardScraperTests
         var result = await scraper.LookupMultipleAccountsAsync(
             "new-song",
             "Solo_Guitar",
+            ["target"],
+            "token",
+            "acct",
+            throwOnFailure: true);
+
+        Assert.Empty(result);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task LookupMultipleAccountsAsync_StrictCompletion_accepts_uninstantiated_leaderboard()
+    {
+        var (scraper, handler) = CreateScraper();
+        handler.EnqueueJsonResponse(
+            HttpStatusCode.BadRequest,
+            """{"errorCode":"com.epicgames.events.invalid_leaderboard","errorMessage":"Leaderboard has not been instantiated"}""");
+
+        var result = await scraper.LookupMultipleAccountsAsync(
+            "new-song",
+            "Solo_PeripheralDrums",
+            ["target"],
+            "token",
+            "acct",
+            throwOnFailure: true);
+
+        Assert.Empty(result);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task LookupMultipleAccountSessionsAsync_StrictCompletion_accepts_uninstantiated_leaderboard()
+    {
+        var (scraper, handler) = CreateScraper();
+        handler.EnqueueJsonResponse(
+            HttpStatusCode.BadRequest,
+            """{"errorCode":"com.epicgames.events.invalid_leaderboard","errorMessage":"Leaderboard has not been instantiated"}""");
+
+        var result = await scraper.LookupMultipleAccountSessionsAsync(
+            "new-song",
+            "Solo_PeripheralDrums",
+            "season015",
             ["target"],
             "token",
             "acct",
