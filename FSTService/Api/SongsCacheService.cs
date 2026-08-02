@@ -434,6 +434,49 @@ public sealed class SongsCacheService
         return JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
     }
 
+    public static byte[] BuildPublishedSongsJson(
+        IPathDataStore pathStore,
+        IMetaDatabase metaDb,
+        GlobalLeaderboardPersistence persistence,
+        ScrapeTimePrecomputer precomputer,
+        JsonSerializerOptions jsonOpts)
+    {
+        var pointers = metaDb.GetPublicationPointerState();
+        if (pointers.PublishedScrapeId is not long publishedScrapeId ||
+            pointers.CurrentPublicationId is not long currentPublicationId)
+        {
+            throw new InvalidOperationException(
+                "No current published song catalog is available.");
+        }
+
+        var catalog = metaDb.GetPublicationSongCatalogForScrape(
+            publishedScrapeId)
+            ?? throw new InvalidOperationException(
+                $"Published scrape {publishedScrapeId} has no bound song catalog.");
+        if (catalog.PublicationId != currentPublicationId)
+        {
+            throw new InvalidOperationException(
+                "Published song catalog is not bound to the current publication.");
+        }
+
+        var songs = SongCatalogSnapshotBuilder.DeserializeCatalog(
+            catalog.CatalogJson);
+        if (songs.Count != catalog.SongCount)
+        {
+            throw new InvalidOperationException(
+                "Published song catalog count does not match its binding.");
+        }
+
+        var service = FestivalService.CreateFromSongCatalogSnapshot(songs);
+        return BuildSongsJson(
+            service,
+            pathStore,
+            metaDb,
+            persistence,
+            precomputer,
+            jsonOpts);
+    }
+
     internal static IEnumerable<Song> OrderSongsForPublicResponse(IEnumerable<Song> songs) =>
         songs
             .Where(static song => song.track?.su is not null)

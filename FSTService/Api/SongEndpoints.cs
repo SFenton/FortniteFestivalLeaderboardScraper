@@ -17,7 +17,7 @@ public static partial class ApiEndpoints
 
     public static void MapSongEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/songs", (HttpContext httpContext, FestivalService service, IPathDataStore pathStore, IMetaDatabase metaDb, GlobalLeaderboardPersistence persistence, SongsCacheService songsCache, ScrapeTimePrecomputer precomputer, ILoggerFactory loggerFactory, [FromKeyedServices("LeaderboardAllCache")] ResponseCacheService publicationCache) =>
+        app.MapGet("/api/songs", (HttpContext httpContext, FestivalService service, IPathDataStore pathStore, IMetaDatabase metaDb, GlobalLeaderboardPersistence persistence, SongsCacheService songsCache, ScrapeTimePrecomputer precomputer, PublicReadGateService publicReadGate, IOptions<ScraperOptions> scraperOptions, ILoggerFactory loggerFactory, [FromKeyedServices("LeaderboardAllCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
 
@@ -28,6 +28,42 @@ public static partial class ApiEndpoints
                 {
                     httpContext.Response.ContentType = "application/json; charset=utf-8";
                     return result;
+                }
+            }
+
+            if (publicReadGate.FailedCandidateIsolationActive &&
+                !scraperOptions.Value.EnableAutomaticPathGeneration)
+            {
+                try
+                {
+                    var fallbackJsonOptions = httpContext.RequestServices
+                        .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
+                        .Value.SerializerOptions;
+                    var publishedJson =
+                        SongsCacheService.BuildPublishedSongsJson(
+                            pathStore,
+                            metaDb,
+                            persistence,
+                            precomputer,
+                            fallbackJsonOptions);
+                    httpContext.Response.Headers.CacheControl = "no-store";
+                    httpContext.Response.Headers.ETag =
+                        ResponseCacheService.ComputeETag(publishedJson);
+                    httpContext.Response.Headers["X-FST-Songs-Source"] =
+                        "published-catalog-fallback";
+                    httpContext.Response.ContentType =
+                        "application/json; charset=utf-8";
+                    return Results.Bytes(
+                        publishedJson,
+                        "application/json");
+                }
+                catch (Exception ex)
+                {
+                    loggerFactory
+                        .CreateLogger("FSTService.Api.SongEndpoints")
+                        .LogWarning(
+                            ex,
+                            "Failed to build the published /api/songs fallback during failed-candidate isolation.");
                 }
             }
 

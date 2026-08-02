@@ -1378,6 +1378,14 @@ deployment/repair remain separate**
   own promotion revision fence. A content-mutation epoch starts before the
   PostgreSQL promotion and ends after it returns, so no cache build can span
   commit. An open text modal resets when its generation ID changes.
+- Failed scrape `1274` exposed the remaining cold-start case:
+  failed-candidate isolation correctly discarded the API process cache, leaving
+  exact `/api/songs` unavailable even though automatic path generation was
+  disabled and publication `6` remained authoritative. The endpoint now owns a
+  narrow no-store fallback built from the current publication's bound
+  immutable song catalog. It is allowed only while automatic path generation
+  is disabled and does not relax isolation for player, ranking, history, band,
+  or other derived routes.
 - Cancellation drains stdout/stderr concurrently, kills the complete process
   tree, removes staging, preserves the prior pointer, and appends a bounded
   error row.
@@ -1389,8 +1397,8 @@ deployment/repair remain separate**
   non-configurable visible-delivery cap of zero; public reads/source
   cursors/expiry/supersession accept only visible routine rows, while
   maintenance evidence uses non-expiring audit/quarantine tables.
-- The repository worktree now adds the previously missing executable repair
-  path, but it is not committed, deployed, or executed. A shared
+- Commit `9b44e0d4` adds the previously missing executable repair path; it is
+  not yet deployed or executed. A shared
   `pg_try_advisory_lock` lease excludes exact repair, automatic, admin, worker,
   and ranking maintenance work. Promotion/ranking also hold the publication
   lock so no scrape can be allocated or published concurrently.

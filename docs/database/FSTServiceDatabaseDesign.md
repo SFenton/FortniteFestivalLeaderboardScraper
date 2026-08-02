@@ -505,6 +505,14 @@ process-cache entries and broadcasts a same-publication refresh so connected
 web clients clear React Query and songs caches before reading the repaired
 state.
 
+Failed-candidate `/api/songs` recovery is publication-owned rather than a live
+candidate bypass. When the process cache is empty, failed-candidate isolation
+may build a no-store response from `publication_song_catalog` for the current
+published scrape only when automatic path generation is disabled. The bound
+catalog's publication ID and song count must match the current pointers. Other
+publication-bound routes remain under their existing stable-cache/published
+resolver or HTTP `503` behavior.
+
 The publication-critical registered-user refresh contains only recurring
 all-time/current-season `PostScrape` work. Registration backfill and history
 reconstruction remain on the resumable registration/deferred workers and keep

@@ -663,6 +663,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             builder.ConfigureServices(services =>
             {
                 services.PostConfigure<FeatureOptions>(options => options.UsePublishedScopeSources = true);
+                services.PostConfigure<ScraperOptions>(
+                    options => options.EnableAutomaticPathGeneration = false);
             });
         });
         using var client = factory.CreateClient();
@@ -825,6 +827,16 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             .ToArray();
         Assert.Equal([110_000, 100_000], isolatedScores);
         Assert.DoesNotContain(900_000, isolatedScores);
+
+        var isolatedSongsResponse = await client.GetAsync("/api/songs");
+        Assert.Equal(HttpStatusCode.OK, isolatedSongsResponse.StatusCode);
+        Assert.Equal(
+            "published-catalog-fallback",
+            isolatedSongsResponse.Headers.GetValues(
+                "X-FST-Songs-Source").Single());
+        Assert.Equal(
+            "no-store",
+            isolatedSongsResponse.Headers.CacheControl?.ToString());
 
         var isolatedPlayerResponse = await client.GetAsync(
             "/api/player/acct_published");
