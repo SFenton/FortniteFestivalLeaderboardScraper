@@ -5,6 +5,33 @@
 **Mode:** Read-only best-practices, performance, correctness, and consolidation audit  
 **Implementation status:** No web application changes were made during this audit.
 
+## Publication-maintenance retry update - 2026-08-01
+
+**Decision:** Accepted and deployed.
+
+- React Query no longer retries HTTP `502`, `503`, or `504` responses. These
+  responses represent a deliberate maintenance/publication boundary or an
+  upstream outage; immediate client retries previously multiplied user-visible
+  errors and service load without improving availability.
+- Player-band background prefetch is explicitly single-attempt.
+- HTTP `408`, `425`, `429`, network failures, and ordinary retryable errors
+  retain the existing bounded policy.
+- Focused retry/error tests passed `5/5`; the TypeScript/Vite production build
+  completed successfully.
+- Production now runs `festivalweb:maintenance-retry-2f88be87-clean`
+  (`sha256:722dfb281aeffe615dc4ea79ed3d826836d35fe94145d3fd76a897456c7765ba`).
+  Rollback is `festivalweb:atomic-pub-phase2-fb6e143b`.
+- Post-deploy browser validation loaded
+  `assets/index-CK5f0Quw.js`, rendered Nick Bodnick at adjusted Max Score %
+  rank `4` / `93.9%`, produced zero current console errors, and returned HTTP
+  `200` for publication, service info, player, sync status, notifications,
+  bands, shop, rankings, and account-name refresh (`/api/songs` correctly
+  revalidated with HTTP `304`).
+- Publication `6` / scrape `1273` remained current and unfrozen; FSTService,
+  FestivalWeb, and PostgreSQL stayed healthy. This web-only deployment did not
+  restart or re-arm `fstworker`.
+- Implementation commit `2f88be87` is pushed.
+
 ## Autonomous execution update — 2026-07-10
 
 ### WEB-0.1 source and package type errors

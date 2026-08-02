@@ -332,6 +332,45 @@ c6 remains rejected on correctness and no new network candidate is armed.
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-correction-followup-20260730T055228Z`.
 
+### Scrape 1272 rejection and scrape 1273 `1600 / 64 / 8` acceptance
+
+Scrape `1272` reran exact `800 / 32 / 4` with the generation-cache data lane.
+It completed `8,364/8,364` manifests and zero writer failures, but pure fetch
+was `4:14:01.298` and network plus writer was `4:51:57.820`. Those results
+were `3.64%` and `1.17%` slower than scrape `1271`, so the unchanged network
+lane was rejected. The scrape later failed closed in registered-user refresh;
+that publication failure does not invalidate the completed network
+measurement.
+
+Scrape `1273` then qualified exact `candidate-1600-64-8` through a complete
+publishing window:
+
+- global/per-exit/concurrent limits were `1600 / 64 / 8`;
+- aggregate DOP was `200`, initial DOP `50`, learned max DOP `200`, and page
+  concurrency `50`;
+- pure fetch completed in `2:54:13.380` at `57.006` useful manifest pages/s;
+- network plus writer completed in `3:01:27.380` at `54.733` useful manifest
+  pages/s;
+- those boundaries improved `28.92%` and `37.13%` over scrape `1271`;
+- all `8,364/8,364` manifests completed with `595,897` manifest pages,
+  `59,414,653` reported entries, and zero writer failures;
+- transport recorded `607,268` logical requests, at least `637,250` wire
+  sends, `28,491` CDN blocks (`4.47%`), `1.0494` amplification, zero exhausted
+  retry chains, zero unauthorized responses, zero HTTP `429`, and 17 primary
+  HTTP `503`;
+- publication `6`, notifications, post-publication registration work, public
+  route parity, and the run-once worker exit all completed successfully.
+
+Decision: `candidate-1600-64-8` is the accepted full-scrape network baseline.
+The higher block rate is an accepted throughput trade because retries,
+manifests, publication, and public correctness all passed. `800 / 32 / 4`
+remains the independently reversible rollback profile. Automatic scheduling
+remains held until a new paired data-lane card is armed; this acceptance does
+not authorize an unpaired worker start.
+
+Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/scrape-1273-dual-lane-20260801`.
+
 The bounded runner now atomically creates
 `/home/sfenton/Docker/FestivalServiceTracker/.fst-bounded-network-canary-active.json`
 after proving the worker is offline and removes it only at terminal cleanup.
@@ -341,11 +380,12 @@ inside an active bounded-canary window. The runner independently polls
 `fstworker` every 250 ms and stops its own stage container if a noncompliant
 start still occurs.
 
-A future full run must reach at least `42.271` pure-fetch pages/s, or no more
-than `3:53:45.040` for `592,849` pages. Writer drain remains a separately
-reported data-path metric. The live pair is
-`publication-cache-lock-live-ab` (`44a1fe9a`,
-`fstservice:publication-lock-44a1fe9a`).
+Future network candidates use scrape `1273` as the matched baseline:
+`57.006` pure-fetch pages/s and `54.733` pages/s through writer drain. Writer
+drain remains separately reported. A candidate must still preserve exact
+scope/payload parity, retry amplification <=`1.50`, combined `429`+`503`
+<=`5%`, at least `80%` healthy unique exits, successful publication, and
+continuous public health.
 
 The canary now has repository-owned buildable source in
 `tools/FstNetworkCanary`, bounded distinct-alternate recovery,
@@ -428,13 +468,13 @@ tools/fst-worker-dual-lane-runonce.sh \
   --recreate
 ```
 
-Do not advance the production wrapper to `candidate-1600-64-8` or
-`candidate-2880-128-16`; that sequence stopped at the rejected `1600` result.
-`candidate-800-32-5` also remains absent because it missed the bounded
-performance gate. `candidate-800-32-6` remains absent because its isolated
-attempt failed matched-control correctness; a duplicate attempt was also
-invalidated by concurrent scrape `1270`. Do not add c6 to the wrapper/guard or
-repeat it unchanged.
+Use `candidate-1600-64-8` as the accepted network profile for the next paired
+full scrape. Do not advance to `candidate-2880-128-16` without a new bounded
+qualification and paired full-scrape card. `candidate-800-32-5` remains
+rejected because it missed the bounded performance gate.
+`candidate-800-32-6` remains rejected because its isolated attempt failed
+matched-control correctness; a duplicate attempt was also invalidated by
+concurrent scrape `1270`. Do not repeat c6 unchanged.
 
 Recovery evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/proxy-recovery-20260713T171754Z`.
