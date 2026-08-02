@@ -1384,9 +1384,35 @@ deployment/repair remain separate**
 - Image and JSON readers follow the same generation pointer and use its ID as a
   cache-busting request value; only null-pointer legacy rows use the old layout.
 - Notification delivery and the four-song maintenance repair remain disabled
-  and separate. Production validation still requires clean-boundary schema
-  initialization, legacy-read smoke tests, final independent review, and the
-  notification quarantine gate; this code does not authorize live repair.
+  and separate. The notification quarantine gate is now implemented in the
+  worktree for exact purpose
+  `maintenance_pro_lead_max_score_repair_v1`, but is not committed, deployed,
+  or executed. Its visible-delivery cap is a non-configurable zero; public
+  reads/source cursors/expiry/supersession accept only visible routine rows,
+  while maintenance evidence uses non-expiring audit/quarantine tables.
+- The repair gate requires two identical read-only canonical SHA-256 dry runs
+  bound to the same completed, unfrozen published scrape and exact four-song
+  staged manifest. The manifest binds sorted song IDs, current
+  revision/catalog/max-score identities, proposed positive maxima, immutable
+  generation IDs/DAT hashes, and runtime identity when present. Dry run
+  projects Pro Lead rankings from current entries/stats/history with the normal
+  1.05 fallback and Bayesian formula rather than reading post-repair live
+  rankings. Its digest binds scrape ID, manifest, total-charted identity, and
+  projected candidates.
+- Safe operation is stage/manifest, double projected dry run, separate
+  promotion/ranking rebuild, then execute before ordinary detection. Execute
+  requires exact promoted identities and byte-exact actual-versus-projected
+  candidate equality before quarantine/baseline writes. Independently proven
+  player/band score observations remain ordinary external work. Missing state,
+  another-instrument movement without that evidence, ambiguous attribution, or
+  other non-denominator candidates block. Passing execute cannot broadcast or
+  expose an event, and its immutable non-null published scrape provenance is
+  not erased by `scrape_log` retention.
+- Production validation still requires clean-boundary schema initialization,
+  legacy/default-visible read smoke tests, final independent review, and the
+  two matching live dry-run reports. This code does not authorize deployment,
+  path regeneration, ranking recomputation, notification delivery, or the
+  four-song repair.
 
 ## Phase WORKER-4: Reduce post-process and ranking time
 

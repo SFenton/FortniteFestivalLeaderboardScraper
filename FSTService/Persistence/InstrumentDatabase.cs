@@ -2143,7 +2143,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 SELECT le.account_id
                 FROM {GetPartitionName("leaderboard_entries")} le
                 WHERE le.song_id = ss.song_id
-                  AND le.score > CAST(ss.max_score * 1.05 AS INTEGER)
+                  AND le.score > FLOOR(ss.max_score * 1.05)::INTEGER
                 ORDER BY le.score DESC
             ) le
             WHERE ss.max_score IS NOT NULL";
@@ -2167,7 +2167,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             FROM {GetPartitionName("song_stats")} ss
             JOIN current_rows ON current_rows.song_id = ss.song_id
             WHERE ss.max_score IS NOT NULL
-              AND current_rows.score > CAST(ss.max_score * 1.05 AS INTEGER)
+              AND current_rows.score > FLOOR(ss.max_score * 1.05)::INTEGER
             ORDER BY ss.song_id, current_rows.score DESC
             """;
         cmd.Parameters.AddWithValue("instrument", Instrument);
@@ -2199,9 +2199,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         var computedAt = DateTime.UtcNow;
         cmd.CommandText =
             "WITH ValidEntries AS (" +
-            "SELECT le.song_id, le.account_id, le.score, le.accuracy, le.is_full_combo, le.stars, COALESCE(NULLIF(le.api_rank, 0), le.rank) AS effective_rank, ss.entry_count, ss.log_weight, ss.max_score FROM leaderboard_entries le JOIN song_stats ss ON ss.song_id = le.song_id AND ss.instrument = le.instrument WHERE le.instrument = @instrument AND le.score <= COALESCE(CAST(ss.max_score * @threshold AS INTEGER), le.score + 1) AND ss.entry_count > 0 AND COALESCE(NULLIF(le.api_rank, 0), le.rank) > 0 " +
+            "SELECT le.song_id, le.account_id, le.score, le.accuracy, le.is_full_combo, le.stars, COALESCE(NULLIF(le.api_rank, 0), le.rank) AS effective_rank, ss.entry_count, ss.log_weight, ss.max_score FROM leaderboard_entries le JOIN song_stats ss ON ss.song_id = le.song_id AND ss.instrument = le.instrument WHERE le.instrument = @instrument AND le.score <= COALESCE(FLOOR(ss.max_score * @threshold)::INTEGER, le.score + 1) AND ss.entry_count > 0 AND COALESCE(NULLIF(le.api_rank, 0), le.rank) > 0 " +
             "UNION ALL " +
-            "SELECT vso.song_id, vso.account_id, vso.score, COALESCE(vso.accuracy, 0), COALESCE(vso.is_full_combo, false), COALESCE(vso.stars, 0), (SELECT COUNT(*) + 1 FROM leaderboard_entries le2 JOIN song_stats ss2 ON ss2.song_id = le2.song_id AND ss2.instrument = le2.instrument WHERE le2.song_id = vso.song_id AND le2.instrument = @instrument AND le2.score > vso.score AND le2.score <= COALESCE(CAST(ss2.max_score * @threshold AS INTEGER), le2.score + 1) AND le2.account_id != vso.account_id), ss.entry_count, ss.log_weight, ss.max_score FROM valid_score_overrides vso JOIN song_stats ss ON ss.song_id = vso.song_id AND ss.instrument = vso.instrument WHERE vso.instrument = @instrument AND ss.entry_count > 0), " +
+            "SELECT vso.song_id, vso.account_id, vso.score, COALESCE(vso.accuracy, 0), COALESCE(vso.is_full_combo, false), COALESCE(vso.stars, 0), (SELECT COUNT(*) + 1 FROM leaderboard_entries le2 JOIN song_stats ss2 ON ss2.song_id = le2.song_id AND ss2.instrument = le2.instrument WHERE le2.song_id = vso.song_id AND le2.instrument = @instrument AND le2.score > vso.score AND le2.score <= COALESCE(FLOOR(ss2.max_score * @threshold)::INTEGER, le2.score + 1) AND le2.account_id != vso.account_id), ss.entry_count, ss.log_weight, ss.max_score FROM valid_score_overrides vso JOIN song_stats ss ON ss.song_id = vso.song_id AND ss.instrument = vso.instrument WHERE vso.instrument = @instrument AND ss.entry_count > 0), " +
             "Aggregated AS (" +
             "SELECT v.account_id, COUNT(*) AS songs_played, @totalCharted AS total_charted_songs, CAST(COUNT(*) AS DOUBLE PRECISION) / @totalCharted AS coverage, AVG(CAST(v.effective_rank AS DOUBLE PRECISION) / v.entry_count) AS raw_skill_rating, SUM((CAST(v.effective_rank AS DOUBLE PRECISION) / v.entry_count) * v.log_weight) / NULLIF(SUM(v.log_weight), 0) AS weighted_rating, CAST(SUM(CASE WHEN v.is_full_combo THEN 1 ELSE 0 END) AS DOUBLE PRECISION) / @totalCharted AS fc_rate, SUM(v.score) AS total_score, AVG(CASE WHEN v.max_score IS NOT NULL AND v.max_score > 0 THEN LEAST(CAST(v.score AS DOUBLE PRECISION) / v.max_score, @threshold) ELSE NULL END) AS max_score_percent, AVG(v.accuracy) AS avg_accuracy, SUM(CASE WHEN v.is_full_combo THEN 1 ELSE 0 END) AS full_combo_count, AVG(v.stars) AS avg_stars, MIN(v.effective_rank) AS best_rank, AVG(CAST(v.effective_rank AS DOUBLE PRECISION)) AS avg_rank FROM ValidEntries v GROUP BY v.account_id), " +
             "WithBayesian AS (SELECT *, (songs_played * raw_skill_rating + @m * @C) / (songs_played + @m) AS adjusted_skill_rating, (songs_played * COALESCE(weighted_rating, 1.0) + @m * @C) / (songs_played + @m) AS adjusted_weighted_rating, (songs_played * COALESCE(max_score_percent, 0.5) + @m * @C) / (songs_played + @m) AS adjusted_max_score_percent FROM Aggregated), " +
@@ -3272,6 +3272,24 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     private string BuildCurrentStateResolvedEntriesSql()
     {
+        if (UsePublishedScopeSources)
+        {
+            return $"""
+                WITH {PublishedSoloScopeSql.CurrentResolvedEntriesCte}
+                SELECT song_id,
+                       account_id,
+                       score,
+                       accuracy,
+                       is_full_combo,
+                       stars,
+                       rank,
+                       api_rank,
+                       first_seen_at,
+                       end_time
+                FROM resolved_rows
+                """;
+        }
+
         var allowLegacyRows = UsePublishedScopeSources ? "FALSE" : "TRUE";
         return
         $"""
@@ -3557,13 +3575,13 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             "SELECT le.song_id, le.account_id, le.score, le.accuracy, le.is_full_combo, le.stars, " +
             "COALESCE(NULLIF(le.api_rank, 0), le.rank) AS effective_rank, ss.entry_count, ss.log_weight, ss.max_score " +
             "FROM leaderboard_entries le JOIN song_stats ss ON ss.song_id = le.song_id AND ss.instrument = le.instrument " +
-            "WHERE le.instrument = @instrument AND le.score <= COALESCE(CAST(ss.max_score * @threshold AS INTEGER), le.score + 1) " +
+            "WHERE le.instrument = @instrument AND le.score <= COALESCE(FLOOR(ss.max_score * @threshold)::INTEGER, le.score + 1) " +
             "AND ss.entry_count > 0 AND COALESCE(NULLIF(le.api_rank, 0), le.rank) > 0 AND le.account_id = ANY(@accounts) " +
             "UNION ALL " +
             "SELECT vso.song_id, vso.account_id, vso.score, COALESCE(vso.accuracy, 0), COALESCE(vso.is_full_combo, false), COALESCE(vso.stars, 0), " +
             "(SELECT COUNT(*) + 1 FROM leaderboard_entries le2 JOIN song_stats ss2 ON ss2.song_id = le2.song_id AND ss2.instrument = le2.instrument " +
             "WHERE le2.song_id = vso.song_id AND le2.instrument = @instrument AND le2.score > vso.score " +
-            "AND le2.score <= COALESCE(CAST(ss2.max_score * @threshold AS INTEGER), le2.score + 1) AND le2.account_id != vso.account_id), " +
+            "AND le2.score <= COALESCE(FLOOR(ss2.max_score * @threshold)::INTEGER, le2.score + 1) AND le2.account_id != vso.account_id), " +
             "ss.entry_count, ss.log_weight, ss.max_score " +
             "FROM valid_score_overrides vso JOIN song_stats ss ON ss.song_id = vso.song_id AND ss.instrument = vso.instrument " +
             "WHERE vso.instrument = @instrument AND ss.entry_count > 0 AND vso.account_id = ANY(@accounts)), " +
@@ -4194,7 +4212,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                            JOIN song_stats ss2 ON ss2.song_id = current_rows2.song_id AND ss2.instrument = @instrument
                            WHERE current_rows2.song_id = vso.song_id
                              AND current_rows2.score > vso.score
-                             AND current_rows2.score <= COALESCE(CAST(ss2.max_score * @threshold AS INTEGER), current_rows2.score + 1)
+                             AND current_rows2.score <= COALESCE(FLOOR(ss2.max_score * @threshold)::INTEGER, current_rows2.score + 1)
                              AND current_rows2.account_id != vso.account_id
                        ) AS effective_rank,
                        ss.entry_count, ss.log_weight, ss.max_score
@@ -4239,12 +4257,12 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         cmd.CommandText =
             "WITH ValidEntries AS (" +
             "SELECT song_id, account_id, score, accuracy, is_full_combo, stars, effective_rank, entry_count, log_weight, max_score " +
-            "FROM _valid_entries WHERE score <= COALESCE(CAST(max_score * @threshold AS INTEGER), score + 1) " +
+            "FROM _valid_entries WHERE score <= COALESCE(FLOOR(max_score * @threshold)::INTEGER, score + 1) " +
             "UNION ALL " +
             "SELECT o.song_id, o.account_id, o.score, o.accuracy, o.is_full_combo, o.stars, " +
             "(SELECT COUNT(*) + 1 FROM _valid_entries le2 " +
             "WHERE le2.song_id = o.song_id AND le2.score > o.score " +
-            "AND le2.score <= COALESCE(CAST(le2.max_score * @threshold AS INTEGER), le2.score + 1) AND le2.account_id != o.account_id), " +
+            "AND le2.score <= COALESCE(FLOOR(le2.max_score * @threshold)::INTEGER, le2.score + 1) AND le2.account_id != o.account_id), " +
             "o.entry_count, o.log_weight, o.max_score " +
             "FROM _valid_entries_overrides o), " +
             "Aggregated AS (" +

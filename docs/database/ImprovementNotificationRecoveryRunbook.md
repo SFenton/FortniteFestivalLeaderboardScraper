@@ -36,6 +36,151 @@ The run audit records the exact baseline-row counts.
 non-baseline `mode='execute'` run for every configured player/band and
 song/ranking lane can mark the published scrape complete.
 
+## Pro Lead max-score repair notification gate
+
+This is separate from routine recovery. It is only for purpose
+`maintenance_pro_lead_max_score_repair_v1`; there is no configurable purpose
+or delivery cap. The code and database both fix visible delivery at exactly
+zero.
+
+Before any controlled repair, stage all four immutable path generations without
+promoting them. Create a strict JSON manifest with `manifestVersion: 1` and
+exactly four unique song rows in ordinal `songId` order. Every row binds:
+
+- the current `path_generation_revision`, catalog `last_modified`, and current
+  `max_pro_lead_score`;
+- a positive proposed Pro Lead maximum;
+- a unique staged artifact generation ID and 64-character DAT SHA-256; and
+- mandatory CHOpt version, binary SHA-256, and generation profile.
+
+Each of the four `songs` elements uses these exact camel-case properties:
+
+```json
+{
+  "songId": "example-song-id",
+  "expectedCurrentPathRevision": 123,
+  "expectedCatalogLastModified": "2026-08-01T12:34:56.0000000Z",
+  "currentOldProLeadMaxScore": 100000,
+  "proposedProLeadMaxScore": 101000,
+  "stagedArtifactGenerationId": "immutable-generation-id",
+  "stagedDatFileHash": "64-lowercase-hex-characters",
+  "stagedChoptVersion": "required-version",
+  "stagedChoptBinarySha256": "required-64-lowercase-hex-characters",
+  "stagedGenerationProfile": "required-profile"
+}
+```
+
+The maintenance command rejects missing, extra, duplicated, unsorted, stale, or
+already-active identities. The manifest file must be a nonempty regular `.json`
+file no larger than 256 KiB; symbolic links and unknown JSON properties are
+rejected. Do not put URLs, credentials, tokens, or other secrets in it.
+
+Run the read-only surface twice against the same published scrape and exact
+manifest. The contract-bearing image must already have completed its normal
+startup schema ensure; this command does not install or repair schema:
+
+```bash
+docker compose run --rm --no-deps --entrypoint dotnet fstservice \
+  FSTService.dll \
+  --notification-maintenance-pro-lead-max-score-repair \
+  --published-scrape-id <id> \
+  --notification-maintenance-manifest <repair-manifest.json>
+```
+
+Save both JSON results. The SHA-256 `dryRunDigest` values and canonical sorted
+candidate arrays must match. The canonical digest binds the published scrape
+ID, exact normalized manifest, catalog/ranking total-charted count, and
+projected candidates. It excludes timestamps, detection/repair run IDs, UUIDs,
+and generated notification GUIDs. The report includes total, allowed, rejected,
+and per-classification counts; per-subject maximum numeric and rank movement;
+and the zero-cap decision.
+
+Dry run opens a repeatable-read, read-only transaction. It does not refresh
+solo or band projections and does not write detection runs, events,
+maintenance audit rows, or improvement state. It fails closed unless:
+
+- the expected scrape is still published, completed, and unfrozen;
+- its notification marker is completed and matches the published scrape;
+- completed visible routine player and band runs cover both song and ranking
+  lanes for that scrape; and
+- the four current song rows, published exact catalog timestamps, and
+  `song_stats` maxima exactly match the manifest, and current Pro Lead
+  `total_charted_songs` agrees with that published charted-song catalog; and
+- every maintenance-attributed candidate is only a Pro Lead
+  (`Solo_PeripheralGuitar`) `max_score_percent_rank` movement.
+
+The projection does not read live `account_rankings` for proposed ranks. It
+recomputes the complete Pro Lead population read-only from
+`current_leaderboard_entries`, `song_stats`, and `score_history`, substituting
+the four proposed maxima. Current scores remain valid through the same
+`max_score * 1.05` cutoff as normal rankings. An over-cutoff current score uses
+that account/song's best historical score at or below the cutoff, or is omitted
+when no fallback exists. Max-score percent uses the normal Bayesian adjustment
+`(songs_played * raw + 50 * 0.5) / (songs_played + 50)` and the normal ranking
+tie breakers.
+
+Direct player/band score observations may coexist only when the gate can
+independently classify them as routine work outside maintenance. They are not
+quarantined or baselined and remain owned by the normal post-scrape workflow.
+Missing rank state, another-instrument movement without ordinary-score
+evidence, ambiguous Pro Lead attribution, and other unclassified
+aggregate/rank changes block execute.
+
+Execute is deliberately a separate, fully bound command:
+
+```bash
+docker compose run --rm --no-deps --entrypoint dotnet fstservice \
+  FSTService.dll \
+  --notification-maintenance-pro-lead-max-score-repair \
+  --notification-maintenance-execute \
+  --published-scrape-id <id> \
+  --notification-maintenance-manifest <repair-manifest.json> \
+  --expected-notification-dry-run-digest <sha256>
+```
+
+Execute is run only after a separately controlled promotion of those exact four
+staged generations and a separately completed ranking rebuild. It requires each
+song to have advanced exactly one revision and to expose the manifest's
+proposed maximum, generation ID, DAT hash, catalog identity, and supplied
+runtime identity in both path state and `song_stats`. It locks the published
+scrape and Pro Lead ranking/stat surfaces, rebuilds the same projection, and
+requires the actual `account_rankings` notification candidate set to equal the
+projection byte-for-byte before opening the audit/baseline write path.
+
+Any scrape, manifest, digest, identity, projected-versus-actual candidate, stale
+input, or rejected-classification mismatch fails closed. A passing execute
+persists non-expiring audit/quarantine rows and selectively updates only the
+allowed Pro Lead
+`player_rank_improvement_state.max_score_percent_rank` rows. It creates zero
+visible events, does not expire or supersede existing visible events, does not
+touch player-song/band state, and does not broadcast
+`notification_feed_changed`.
+
+The required sequence is:
+
+1. stage immutable path artifacts and the exact manifest;
+2. obtain two identical projected dry-run digests before any live mutation;
+3. promote those generations and rebuild rankings separately;
+4. run execute with the same manifest/digest before ordinary detection; and
+5. only then allow the normal notification lane to resume.
+
+The command above is an evidence gate, not authorization to regenerate paths,
+recompute rankings, deploy, notify users, or run the four-song repair. The
+maintenance audit stores the published scrape ID as a non-null immutable
+integer without a retention-coupled `scrape_log` foreign key, so scrape-log
+retention cannot erase its provenance.
+
+### Rollback
+
+Before any quarantine row exists, rollback is simply to omit the one-shot
+maintenance command; the additive columns/tables may remain unused. After a
+maintenance execute, do not roll back to an image that lacks
+`delivery_state='visible'` public filters. Roll back only to a
+contract-bearing image, leave quarantine evidence intact, and restore the
+pre-repair Pro Lead ranking/state snapshot if the associated data repair is
+reverted. Dropping columns/tables is neither required nor safe during normal
+rollback.
+
 ## Durable completion
 
 Publication atomically sets the improvement marker in

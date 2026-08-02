@@ -8,17 +8,78 @@ namespace FSTService.Persistence;
 /// </summary>
 public static class DatabaseInitializer
 {
+    private const int NotificationSchemaCommandTimeoutSeconds = 20;
+    private const string NotificationSchemaLockTimeout = "2s";
+    private const string NotificationSchemaStatementTimeout = "15s";
+    private const string NotificationSchemaPrerequisites = """
+        CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+        CREATE TABLE IF NOT EXISTS scrape_log (
+            id              SERIAL      PRIMARY KEY,
+            started_at      TIMESTAMPTZ NOT NULL,
+            completed_at    TIMESTAMPTZ,
+            songs_scraped   INTEGER,
+            total_entries   INTEGER,
+            total_requests  INTEGER,
+            total_bytes     BIGINT,
+            epic_reported_over_100_pages BOOLEAN NOT NULL DEFAULT FALSE
+        );
+
+        CREATE TABLE IF NOT EXISTS scrape_publication_state (
+            id                  BOOLEAN     PRIMARY KEY DEFAULT TRUE CHECK (id),
+            published_scrape_id INTEGER     REFERENCES scrape_log(id),
+            published_at        TIMESTAMPTZ,
+            public_reads_frozen BOOLEAN     NOT NULL DEFAULT FALSE,
+            public_reads_frozen_at TIMESTAMPTZ,
+            public_reads_frozen_scrape_id INTEGER REFERENCES scrape_log(id),
+            public_reads_frozen_reason TEXT,
+            band_projection_generation BIGINT,
+            updated_at          TIMESTAMPTZ NOT NULL
+        );
+        """;
+
     public static async Task EnsureSchemaAsync(NpgsqlDataSource dataSource, CancellationToken ct = default)
     {
         await using var conn = await dataSource.OpenConnectionAsync(ct);
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandTimeout = 0; // No timeout — schema init must complete before the service can start
-        cmd.CommandText =
-            $"{Schema}{Environment.NewLine}{Environment.NewLine}" +
-            $"{BandRankingStorageNames.GetCurrentSchemaSql()}{Environment.NewLine}{Environment.NewLine}" +
-            $"{ImprovementNotificationSchema.Sql}{Environment.NewLine}{Environment.NewLine}" +
-            PublicationGenerationSchema.Sql;
-        await cmd.ExecuteNonQueryAsync(ct);
+        foreach (var step in GetSchemaInitializationPlan())
+        {
+            if (step.UseShortTransaction)
+            {
+                await using var tx = await conn.BeginTransactionAsync(ct);
+                await using (var timeout = conn.CreateCommand())
+                {
+                    timeout.Transaction = tx;
+                    timeout.CommandTimeout = NotificationSchemaCommandTimeoutSeconds;
+                    timeout.CommandText = """
+                        SELECT set_config('lock_timeout', @lockTimeout, true);
+                        SELECT set_config('statement_timeout', @statementTimeout, true);
+                        """;
+                    timeout.Parameters.AddWithValue(
+                        "lockTimeout",
+                        NotificationSchemaLockTimeout);
+                    timeout.Parameters.AddWithValue(
+                        "statementTimeout",
+                        NotificationSchemaStatementTimeout);
+                    await timeout.ExecuteNonQueryAsync(ct);
+                }
+
+                await using (var cmd = conn.CreateCommand())
+                {
+                    cmd.Transaction = tx;
+                    cmd.CommandTimeout = step.CommandTimeoutSeconds;
+                    cmd.CommandText = step.Sql;
+                    await cmd.ExecuteNonQueryAsync(ct);
+                }
+
+                await tx.CommitAsync(ct);
+                continue;
+            }
+
+            await using var unbounded = conn.CreateCommand();
+            unbounded.CommandTimeout = step.CommandTimeoutSeconds;
+            unbounded.CommandText = step.Sql;
+            await unbounded.ExecuteNonQueryAsync(ct);
+        }
 
         // Advance SERIAL sequences after COPY-style explicit ID inserts, but never rewind them after retention/deletion.
         await using var seqCmd = conn.CreateCommand();
@@ -29,6 +90,32 @@ public static class DatabaseInitializer
             """;
         await seqCmd.ExecuteNonQueryAsync(ct);
     }
+
+    internal static IReadOnlyList<DatabaseSchemaInitializationStep>
+        GetSchemaInitializationPlan() =>
+        [
+            new(
+                Name: "improvement-notifications",
+                Sql:
+                    $"{NotificationSchemaPrerequisites}" +
+                    $"{Environment.NewLine}{Environment.NewLine}" +
+                    ImprovementNotificationSchema.Sql,
+                CommandTimeoutSeconds: NotificationSchemaCommandTimeoutSeconds,
+                UseShortTransaction: true,
+                LockTimeout: NotificationSchemaLockTimeout,
+                StatementTimeout: NotificationSchemaStatementTimeout),
+            new(
+                Name: "main-publication",
+                Sql:
+                    $"{Schema}{Environment.NewLine}{Environment.NewLine}" +
+                    $"{BandRankingStorageNames.GetCurrentSchemaSql()}" +
+                    $"{Environment.NewLine}{Environment.NewLine}" +
+                    PublicationGenerationSchema.Sql,
+                CommandTimeoutSeconds: 0,
+                UseShortTransaction: false,
+                LockTimeout: null,
+                StatementTimeout: null),
+        ];
 
     // ── Complete DDL ──────────────────────────────────────────────────────
 
@@ -2599,3 +2686,11 @@ public static class DatabaseInitializer
 
         """;
 }
+
+internal sealed record DatabaseSchemaInitializationStep(
+    string Name,
+    string Sql,
+    int CommandTimeoutSeconds,
+    bool UseShortTransaction,
+    string? LockTimeout,
+    string? StatementTimeout);

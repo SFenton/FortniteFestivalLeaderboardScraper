@@ -176,6 +176,126 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public void SchemaInitializationPlanSeparatesShortNotificationMigration()
+    {
+        var plan = DatabaseInitializer.GetSchemaInitializationPlan();
+
+        Assert.Equal(
+            new[]
+            {
+                "improvement-notifications",
+                "main-publication",
+            },
+            plan.Select(static step => step.Name));
+        var notification = plan[0];
+        Assert.True(notification.UseShortTransaction);
+        Assert.Equal(20, notification.CommandTimeoutSeconds);
+        Assert.Equal("2s", notification.LockTimeout);
+        Assert.Equal("15s", notification.StatementTimeout);
+        Assert.Contains(ImprovementNotificationSchema.Sql, notification.Sql);
+        Assert.False(plan[1].UseShortTransaction);
+    }
+
+    [Fact]
+    public async Task MaintenanceAuditPublishedScrapeProvenanceIsDurableAndImmutable()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        int scrapeId;
+        using (var insertScrape = conn.CreateCommand())
+        {
+            insertScrape.CommandText = """
+                INSERT INTO scrape_log (
+                    started_at, completed_at, status,
+                    songs_scraped, total_entries, total_requests, total_bytes)
+                VALUES (
+                    now(), now(), 'completed',
+                    0, 0, 0, 0)
+                RETURNING id;
+                """;
+            scrapeId = (int)insertScrape.ExecuteScalar()!;
+        }
+
+        using (var insertRun = conn.CreateCommand())
+        {
+            insertRun.CommandText = """
+                INSERT INTO improvement_notification_maintenance_runs (
+                    notification_purpose,
+                    notification_cause,
+                    delivery_state,
+                    published_scrape_id,
+                    dry_run_digest,
+                    canonical_candidate_data,
+                    repair_manifest,
+                    total_charted_songs)
+                VALUES (
+                    'maintenance_pro_lead_max_score_repair_v1',
+                    'max_score_recompute',
+                    'quarantined',
+                    @scrapeId,
+                    @digest,
+                    '{}',
+                    '{"manifestVersion":1,"songs":[]}'::jsonb,
+                    4);
+                """;
+            insertRun.Parameters.AddWithValue("scrapeId", scrapeId);
+            insertRun.Parameters.AddWithValue("digest", new string('a', 64));
+            Assert.Equal(1, insertRun.ExecuteNonQuery());
+        }
+
+        using (var deleteScrape = conn.CreateCommand())
+        {
+            deleteScrape.CommandText = "DELETE FROM scrape_log WHERE id = @scrapeId;";
+            deleteScrape.Parameters.AddWithValue("scrapeId", scrapeId);
+            Assert.Equal(1, deleteScrape.ExecuteNonQuery());
+        }
+
+        using (var inspect = conn.CreateCommand())
+        {
+            inspect.CommandText = """
+                SELECT run.published_scrape_id,
+                       column_row.is_nullable = 'NO',
+                       NOT EXISTS (
+                           SELECT 1
+                           FROM pg_constraint constraint_row
+                           JOIN pg_attribute attribute
+                             ON attribute.attrelid = constraint_row.conrelid
+                            AND attribute.attnum = ANY(constraint_row.conkey)
+                           WHERE constraint_row.conrelid =
+                               'improvement_notification_maintenance_runs'::regclass
+                             AND constraint_row.contype = 'f'
+                             AND attribute.attname = 'published_scrape_id'
+                       )
+                FROM improvement_notification_maintenance_runs run
+                CROSS JOIN information_schema.columns column_row
+                WHERE column_row.table_schema = 'public'
+                  AND column_row.table_name =
+                      'improvement_notification_maintenance_runs'
+                  AND column_row.column_name = 'published_scrape_id';
+                """;
+            using var reader = inspect.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.Equal(scrapeId, reader.GetInt32(0));
+            Assert.True(reader.GetBoolean(1));
+            Assert.True(reader.GetBoolean(2));
+        }
+
+        using var mutate = conn.CreateCommand();
+        mutate.CommandText = """
+            UPDATE improvement_notification_maintenance_runs
+            SET published_scrape_id = @replacement
+            WHERE published_scrape_id = @scrapeId;
+            """;
+        mutate.Parameters.AddWithValue("replacement", scrapeId + 1);
+        mutate.Parameters.AddWithValue("scrapeId", scrapeId);
+        var exception = Assert.Throws<PostgresException>(
+            () => mutate.ExecuteNonQuery());
+        Assert.Equal("55000", exception.SqlState);
+    }
+
+    [Fact]
     public async Task EnsureSchemaAsync_creates_idempotent_registered_user_refresh_scope_schema()
     {
         await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);

@@ -764,8 +764,9 @@ partial result.
 | `user_rivals`, `rival_song_samples`, `rival_song_fingerprints`, `rival_instrument_state`, `rivals_status`, `rivals_dirty_songs` | Derived durable user projection/work state | Rivals calculator and API | Rebuild from published source; dirty/status rows are resumable work |
 | `leaderboard_rivals`, `leaderboard_rival_song_samples` | Derived public projection | Rankings/rivals pipeline | Generation must match published leaderboard source |
 | `player_improvement_state`, `player_rank_improvement_state`, `band_improvement_state`, `band_rank_improvement_state`, `band_improvement_subjects` | Durable detection state | Improvement detector | Idempotency/delta state. Subjects registered after the prior completed detection run are baselined once before events are emitted, preventing back-catalog first-play/first-score spam while preserving later improvements. |
-| `player_improvement_events`, `band_improvement_events`, `improvement_detection_runs` | Durable event/audit | Improvement detector/service | Bounded retention with replay identity. Detection runs record `published_scrape_id` and selective new-subject baseline counts so publication completion and catch-up are auditable. |
-| `service_notifications` | Durable notification outbox/read model | `ImprovementNotificationService` | Expiry cleanup is bounded; future process split must preserve replay |
+| `player_improvement_events`, `band_improvement_events`, `improvement_detection_runs` | Durable event/audit | Improvement detector/service | Bounded retention with replay identity. `notification_purpose`, `notification_cause`, and `delivery_state` default existing/routine rows to visible. Public reads, source cursors, expiry, and supersession operate only on `delivery_state='visible'`. Detection runs record `published_scrape_id` and selective new-subject baseline counts so publication completion and catch-up are auditable. |
+| `service_notifications` | Durable notification outbox/read model | `ImprovementNotificationService` | Existing and item-shop rows default to visible routine metadata. Public reads and expiry cleanup require `delivery_state='visible'`; future process split must preserve replay. |
+| `improvement_notification_maintenance_runs`, `improvement_notification_maintenance_candidates` | Non-public maintenance audit/quarantine | `ImprovementNotificationMaintenanceService` | Purpose `maintenance_pro_lead_max_score_repair_v1` has a compile-time and database-enforced visible delivery cap of exactly zero. The run stores the exact manifest, total-charted count, and canonical projected classification. Its `published_scrape_id` is a non-null immutable integer with no retention-coupled `scrape_log` FK. Only maintenance-attributed candidates enter quarantine; those rows have no expiry column and never participate in public reads, routine supersession, source cursors, or WebSocket invalidation. |
 | `api_response_cache`, `api_response_cache_staging` | Cache | Precompute/publication path | Staging swaps atomically after long band snapshot work; keep its exclusive lock at transaction end; safe to clear and regenerate from published source |
 
 Notification recovery and registered-phase budget operations are documented in
@@ -776,6 +777,44 @@ changing public response contracts. Recovery reads
 `improvement_notifications_projection_scopes` from the publication ledger and
 fails closed when the plan is absent or not ready; it never substitutes an
 all-current-scope rebuild implicitly.
+
+The Pro Lead max-score repair uses a separate purpose-specific notification
+gate. Its strict manifest contains exactly four ordinal-sorted unique song IDs,
+their expected current path revisions/catalog timestamps/old Pro Lead maxima,
+positive proposed maxima, staged generation IDs and DAT hashes, and complete
+runtime identity when available. The read-only dry run requires the expected
+published scrape to be completed, unfrozen, notification-complete, and backed
+by completed visible routine player and band song/rank runs. Current song and
+`song_stats` identities plus the published exact catalog timestamps must match
+the manifest, and current Pro Lead ranking total-charted values must agree with
+that published charted-song catalog.
+
+Proposed ranks are not read from live `account_rankings`. The gate projects the
+full Pro Lead population from `current_leaderboard_entries`, `song_stats`, and
+`score_history` using the normal 1.05 current-score cutoff, best-valid-history
+fallback, Bayesian maximum-score-percent adjustment (`m=50`, `C=0.5`), and
+rank tie breakers. The canonical SHA-256 binds the published scrape ID,
+normalized manifest, total-charted count, and sorted projected candidates,
+while excluding timestamps, run IDs, UUIDs, and generated GUIDs. Only
+`Solo_PeripheralGuitar` `max_score_percent_rank` movement is classified as
+denominator-derived maintenance. Direct player/band score observations remain
+ordinary work outside quarantine/baselining. Missing state, another instrument
+without ordinary-score evidence, ambiguous attribution, or any other
+unclassified aggregate/rank movement blocks execute.
+
+After separately promoting exactly those staged generations and rebuilding
+rankings, execute requires the same published scrape, manifest, and digest.
+Every path row must have advanced exactly one revision and match the proposed
+maximum, generation ID, DAT hash, catalog identity, and supplied runtime
+identity; `song_stats` must expose the proposed maximum. Execute recomputes the
+projection and requires the actual `account_rankings` candidate set to match it
+exactly before any audit/quarantine/baseline write. A passing execute stores
+only the quarantine/audit evidence and selectively advances
+`player_rank_improvement_state.max_score_percent_rank` for the allowed Pro
+Lead subjects, preventing a later routine pass from reinterpreting the same
+maintenance movement. It does not refresh projections, touch player-song or
+band state, create visible events, expire/supersede visible events, or request
+notification-feed WebSocket invalidation.
 
 ### Dirty, shadow, and audit-only surfaces
 
@@ -1134,6 +1173,15 @@ ambiguous mapping. Runtime freeze/publish calls first use a read-only schema
 probe; missing legacy columns are repaired in a separate short transaction
 with a five-second lock timeout, so schema DDL locks are not retained through
 cache and band-ranking publication work.
+
+The notification-maintenance schema is also additive. Constant defaults make
+pre-existing notification rows visible without a data backfill or table
+rewrite. `DatabaseInitializer` creates only the two notification prerequisites,
+then runs and commits the complete notification schema in its own command and
+transaction before the unbounded main/publication schema batch. That
+transaction uses local two-second lock and fifteen-second statement timeouts,
+so notification ALTER locks cannot survive into publication reconciliation.
+No secondary index is added to the existing event tables.
 
 ## Retention and maintenance
 

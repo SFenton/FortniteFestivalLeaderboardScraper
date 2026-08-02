@@ -43,6 +43,8 @@ public sealed class ImprovementNotificationService
                 FROM improvement_detection_runs
                 WHERE status = 'completed'
                   AND mode = 'execute'
+                  AND notification_purpose = 'routine_score_observation_v1'
+                  AND delivery_state = 'visible'
                   AND NOT baseline_only
                   AND include_players
                 ORDER BY completed_at DESC, run_id DESC
@@ -53,6 +55,8 @@ public sealed class ImprovementNotificationService
                 FROM improvement_detection_runs
                 WHERE status = 'completed'
                   AND mode = 'execute'
+                  AND notification_purpose = 'routine_score_observation_v1'
+                  AND delivery_state = 'visible'
                   AND NOT baseline_only
                   AND include_bands
                 ORDER BY completed_at DESC, run_id DESC
@@ -464,6 +468,7 @@ public sealed class ImprovementNotificationService
             FROM player_improvement_events
             CROSS JOIN publication
             WHERE account_id = @accountId
+              AND delivery_state = 'visible'
               AND (@includeExpired OR expires_at > now())
               AND (
                   NOT publication.public_reads_frozen
@@ -515,7 +520,8 @@ public sealed class ImprovementNotificationService
                                      detected_at,
                                      expires_at
                         FROM service_notifications
-                        WHERE (@includeExpired OR expires_at > now())
+                        WHERE delivery_state = 'visible'
+                            AND (@includeExpired OR expires_at > now())
                             AND (@kind IS NULL OR notification_kind = @kind)
                             AND (@instrument IS NULL)
                             AND (@songId IS NULL OR song_id = @songId)
@@ -554,10 +560,12 @@ public sealed class ImprovementNotificationService
             cmd.CommandText = """
                 INSERT INTO service_notifications (
                     notification_kind, song_id, title, artist, album_art, payload,
-                    detected_at, expires_at, source, source_key)
+                    detected_at, expires_at, source, source_key,
+                    notification_purpose, notification_cause, delivery_state)
                 VALUES (
                     @kind, @songId, @title, @artist, @albumArt, @payload,
-                    @detectedAt, @expiresAt, 'item_shop', @sourceKey)
+                    @detectedAt, @expiresAt, 'item_shop', @sourceKey,
+                    'routine_item_shop_observation_v1', 'item_shop_observation', 'visible')
                 ON CONFLICT (notification_kind, song_id, source_key) DO NOTHING
                 RETURNING 1;
                 """;
@@ -581,7 +589,11 @@ public sealed class ImprovementNotificationService
     {
         using var conn = _dataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "DELETE FROM service_notifications WHERE expires_at <= @detectedAt;";
+        cmd.CommandText = """
+            DELETE FROM service_notifications
+            WHERE delivery_state = 'visible'
+              AND expires_at <= @detectedAt;
+            """;
         cmd.Parameters.AddWithValue("detectedAt", detectedAtUtc);
         return cmd.ExecuteNonQuery();
     }
@@ -901,6 +913,7 @@ public sealed class ImprovementNotificationService
             JOIN band_improvement_subjects s ON s.band_subject_id = e.band_subject_id
             CROSS JOIN publication
             WHERE (@bandSubjectId IS NULL OR s.band_subject_id = @bandSubjectId)
+              AND e.delivery_state = 'visible'
               AND (@bandType IS NULL OR s.band_type = @bandType)
               AND (@teamKey IS NULL OR s.team_key = @teamKey)
               AND (@includeExpired OR e.expires_at > now())
@@ -966,7 +979,8 @@ public sealed class ImprovementNotificationService
                                      detected_at,
                                      expires_at
                         FROM service_notifications
-                        WHERE (@includeExpired OR expires_at > now())
+                        WHERE delivery_state = 'visible'
+                            AND (@includeExpired OR expires_at > now())
                             AND (@kind IS NULL OR notification_kind = @kind)
                             AND (@rankingScope = 'overall' OR @rankingScope = 'all')
                             AND (@comboId IS NULL)
@@ -1011,6 +1025,8 @@ public sealed class ImprovementNotificationService
             SELECT run_id, completed_at
             FROM improvement_detection_runs
             WHERE status = 'completed'
+              AND notification_purpose = 'routine_score_observation_v1'
+              AND delivery_state = 'visible'
               AND (@includePlayers = false OR include_players)
               AND (@includeBands = false OR include_bands)
             ORDER BY run_id DESC
@@ -1070,6 +1086,8 @@ public sealed class ImprovementNotificationService
             SELECT completed_at
             FROM improvement_detection_runs
             WHERE status = 'completed'
+              AND notification_purpose = 'routine_score_observation_v1'
+              AND delivery_state = 'visible'
               AND (
                   (@includePlayers AND include_players)
                   OR (NOT @includePlayers AND include_bands)
@@ -1093,9 +1111,11 @@ public sealed class ImprovementNotificationService
         cmd.CommandText = """
             INSERT INTO improvement_detection_runs (
                 published_scrape_id, scope, mode, source, baseline_only, include_players, include_bands,
-                include_song_events, include_rankings, prune_expired)
+                include_song_events, include_rankings, prune_expired,
+                notification_purpose, notification_cause, delivery_state)
             VALUES (@publishedScrapeId, @scope, @mode, @source, @baselineOnly, @includePlayers, @includeBands,
-                    @includeSongEvents, @includeRankings, @pruneExpired)
+                    @includeSongEvents, @includeRankings, @pruneExpired,
+                    'routine_score_observation_v1', 'score_observation', 'visible')
             RETURNING run_id;
             """;
         cmd.Parameters.Add("publishedScrapeId", NpgsqlDbType.Integer).Value =
@@ -1188,8 +1208,8 @@ public sealed class ImprovementNotificationService
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = execute
-            ? $"DELETE FROM {tableName} WHERE expires_at <= @detectedAt;"
-            : $"SELECT COUNT(*) FROM {tableName} WHERE expires_at <= @detectedAt;";
+            ? $"DELETE FROM {tableName} WHERE delivery_state = 'visible' AND expires_at <= @detectedAt;"
+            : $"SELECT COUNT(*) FROM {tableName} WHERE delivery_state = 'visible' AND expires_at <= @detectedAt;";
         cmd.Parameters.AddWithValue("detectedAt", detectedAt);
         return execute ? cmd.ExecuteNonQuery() : Convert.ToInt64(cmd.ExecuteScalar());
     }
@@ -1730,16 +1750,19 @@ public sealed class ImprovementNotificationService
                 FROM (SELECT DISTINCT account_id, song_id FROM coalesced_event_rows) lanes
                 WHERE existing.account_id = lanes.account_id
                   AND existing.song_id = lanes.song_id
+                  AND existing.delivery_state = 'visible'
                   AND existing.expires_at > now()
                 RETURNING 1
             ), inserted AS (
                 INSERT INTO player_improvement_events (
                     run_id, account_id, event_kind, song_id, instrument, metric,
                     old_numeric, new_numeric, old_rank, new_rank, payload,
-                    detected_at, expires_at, source)
+                    detected_at, expires_at, source,
+                    notification_purpose, notification_cause, delivery_state)
                 SELECT @runId, account_id, event_kind, song_id, instrument, metric,
                        old_numeric, new_numeric, old_rank, new_rank, payload,
-                       @detectedAt, @expiresAt, @source
+                       @detectedAt, @expiresAt, @source,
+                       'routine_score_observation_v1', 'score_observation', 'visible'
                 FROM coalesced_event_rows
                 RETURNING 1
             )
@@ -1829,6 +1852,7 @@ public sealed class ImprovementNotificationService
                 WHERE existing.account_id = lanes.account_id
                   AND existing.song_id IS NULL
                   AND existing.instrument IS NOT DISTINCT FROM lanes.instrument
+                  AND existing.delivery_state = 'visible'
                   AND existing.event_kind IN (
                       'player_total_score_improved',
                       'player_total_score_rank_improved',
@@ -1842,10 +1866,12 @@ public sealed class ImprovementNotificationService
                 INSERT INTO player_improvement_events (
                     run_id, account_id, event_kind, instrument, metric,
                     old_numeric, new_numeric, old_rank, new_rank, payload,
-                    detected_at, expires_at, source)
+                    detected_at, expires_at, source,
+                    notification_purpose, notification_cause, delivery_state)
                 SELECT @runId, account_id, event_kind, instrument, metric,
                        old_numeric, new_numeric, old_rank, new_rank, payload,
-                       @detectedAt, @expiresAt, @source
+                       @detectedAt, @expiresAt, @source,
+                       'routine_score_observation_v1', 'score_observation', 'visible'
                 FROM coalesced_event_rows
                 RETURNING 1
             )
@@ -2221,16 +2247,19 @@ public sealed class ImprovementNotificationService
                   AND existing.song_id = lanes.song_id
                   AND existing.ranking_scope = lanes.ranking_scope
                   AND existing.combo_id = lanes.combo_id
+                  AND existing.delivery_state = 'visible'
                   AND existing.expires_at > now()
                 RETURNING 1
             ), inserted AS (
                 INSERT INTO band_improvement_events (
                     run_id, band_subject_id, event_kind, song_id, ranking_scope, combo_id, metric,
                     old_numeric, new_numeric, old_rank, new_rank, payload,
-                    detected_at, expires_at, source)
+                    detected_at, expires_at, source,
+                    notification_purpose, notification_cause, delivery_state)
                 SELECT @runId, band_subject_id, event_kind, song_id, ranking_scope, combo_id, metric,
                        old_numeric, new_numeric, old_rank, new_rank, payload,
-                       @detectedAt, @expiresAt, @source
+                       @detectedAt, @expiresAt, @source,
+                       'routine_score_observation_v1', 'score_observation', 'visible'
                 FROM coalesced_event_rows
                 RETURNING 1
             )
@@ -2361,6 +2390,7 @@ public sealed class ImprovementNotificationService
                   AND existing.song_id IS NULL
                   AND existing.ranking_scope = lanes.ranking_scope
                   AND existing.combo_id = lanes.combo_id
+                  AND existing.delivery_state = 'visible'
                   AND existing.event_kind IN (
                       'band_total_score_rank_improved',
                       'band_weighted_rank_improved',
@@ -2376,16 +2406,19 @@ public sealed class ImprovementNotificationService
                   AND existing.ranking_scope = lanes.ranking_scope
                   AND existing.combo_id = lanes.combo_id
                   AND existing.metric IS NOT DISTINCT FROM lanes.metric
+                  AND existing.delivery_state = 'visible'
                   AND existing.expires_at > now()
                 RETURNING 1
             ), inserted AS (
                 INSERT INTO band_improvement_events (
                     run_id, band_subject_id, event_kind, ranking_scope, combo_id, metric,
                     old_numeric, new_numeric, old_rank, new_rank, payload,
-                    detected_at, expires_at, source)
+                    detected_at, expires_at, source,
+                    notification_purpose, notification_cause, delivery_state)
                 SELECT @runId, band_subject_id, event_kind, ranking_scope, combo_id, metric,
                        old_numeric, new_numeric, old_rank, new_rank, payload,
-                       @detectedAt, @expiresAt, @source
+                       @detectedAt, @expiresAt, @source,
+                       'routine_score_observation_v1', 'score_observation', 'visible'
                 FROM coalesced_event_rows
                 RETURNING 1
             )

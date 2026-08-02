@@ -41,6 +41,9 @@ public sealed class RankingsCalculator
     /// <summary>Maximum threshold multiplier (+5.0% leeway).</summary>
     private const double MaxThresholdMultiplier = 1.05;
 
+    internal static int ComputeMaxScoreThreshold(int maxScore)
+        => (int)(maxScore * MaxThresholdMultiplier);
+
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly IMetaDatabase _metaDb;
     private readonly IPathDataStore _pathStore;
@@ -212,7 +215,8 @@ public sealed class RankingsCalculator
                 foreach (var (accountId, songId) in overThreshold)
                 {
                     if (maxScoresForInstrument.TryGetValue(songId, out var raw) && raw.HasValue)
-                        thresholds[(accountId, songId)] = (int)(raw.Value * MaxThresholdMultiplier);
+                        thresholds[(accountId, songId)] =
+                            ComputeMaxScoreThreshold(raw.Value);
                 }
 
                 if (thresholds.Count > 0)

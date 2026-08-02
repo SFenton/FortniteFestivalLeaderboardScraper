@@ -74,7 +74,40 @@ builder.Services.Configure<Microsoft.AspNetCore.ResponseCompression.BrotliCompre
 
 var improvementNotificationRecoveryRequested = args.Any(
     arg => arg.Equals("--recover-improvement-notifications", StringComparison.OrdinalIgnoreCase));
+var improvementNotificationMaintenanceRequested = args.Any(
+    arg => arg.Equals(
+        "--notification-maintenance-pro-lead-max-score-repair",
+        StringComparison.OrdinalIgnoreCase));
+var improvementNotificationMaintenanceExecuteRequested = args.Any(
+    arg => arg.Equals(
+        "--notification-maintenance-execute",
+        StringComparison.OrdinalIgnoreCase));
+var improvementNotificationMaintenanceManifestRequested = args.Any(
+    arg => arg.Equals(
+        "--notification-maintenance-manifest",
+        StringComparison.OrdinalIgnoreCase));
+if (improvementNotificationMaintenanceExecuteRequested
+    && !improvementNotificationMaintenanceRequested)
+{
+    throw new ArgumentException(
+        "--notification-maintenance-execute requires " +
+        "--notification-maintenance-pro-lead-max-score-repair.");
+}
+if (improvementNotificationMaintenanceManifestRequested
+    && !improvementNotificationMaintenanceRequested)
+{
+    throw new ArgumentException(
+        "--notification-maintenance-manifest requires " +
+        "--notification-maintenance-pro-lead-max-score-repair.");
+}
+if (improvementNotificationRecoveryRequested && improvementNotificationMaintenanceRequested)
+{
+    throw new ArgumentException(
+        "Notification recovery and notification maintenance cannot run in the same process.");
+}
+
 var apiOnlyRequested = improvementNotificationRecoveryRequested
+    || improvementNotificationMaintenanceRequested
     || args.Any(arg => arg.Equals("--api-only", StringComparison.OrdinalIgnoreCase))
     || builder.Configuration.GetValue<bool>($"{ScraperOptions.Section}:ApiOnly");
 var scraperWorkerDisabled = args.Any(arg => arg.Equals("--no-scraper-worker", StringComparison.OrdinalIgnoreCase))
@@ -328,6 +361,7 @@ builder.Services.AddSingleton<FSTService.Persistence.Maintenance.IDatabaseRetent
 builder.Services.AddSingleton<FSTService.Persistence.Maintenance.DeferredRetentionMaintenanceRunner>();
 builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationService>();
 builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationRecoveryService>();
+builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationMaintenanceService>();
 
 // ─── Shared services ────────────────────────────────────────
 
@@ -703,6 +737,110 @@ else if (hostedWorkerMode == HostedWorkerMode.RegistrationSyncWorker)
         precompLog.LogInformation("--precompute: precomputed responses persisted to PostgreSQL. Exiting.");
         return;
     }
+}
+
+// One-shot notification safety gate for the controlled Pro Lead max-score repair.
+if (improvementNotificationMaintenanceRequested)
+{
+    var maintenanceLog = app.Services.GetRequiredService<ILoggerFactory>()
+        .CreateLogger("ImprovementNotificationMaintenance");
+
+    long? expectedPublishedScrapeId = null;
+    string? expectedDryRunDigest = null;
+    string? manifestPath = null;
+    for (var i = 0; i < args.Length; i++)
+    {
+        if (args[i].Equals("--published-scrape-id", StringComparison.OrdinalIgnoreCase))
+        {
+            if (i + 1 >= args.Length
+                || !long.TryParse(args[i + 1], out var parsedScrapeId)
+                || parsedScrapeId <= 0)
+            {
+                throw new ArgumentException(
+                    "--published-scrape-id requires a positive integer.");
+            }
+
+            expectedPublishedScrapeId = parsedScrapeId;
+        }
+        else if (args[i].Equals(
+                     "--expected-notification-dry-run-digest",
+                     StringComparison.OrdinalIgnoreCase))
+        {
+            if (i + 1 >= args.Length || string.IsNullOrWhiteSpace(args[i + 1]))
+            {
+                throw new ArgumentException(
+                    "--expected-notification-dry-run-digest requires a SHA-256 digest.");
+            }
+
+            expectedDryRunDigest = args[i + 1];
+        }
+        else if (args[i].Equals(
+                     "--notification-maintenance-manifest",
+                     StringComparison.OrdinalIgnoreCase))
+        {
+            if (i + 1 >= args.Length || string.IsNullOrWhiteSpace(args[i + 1]))
+            {
+                throw new ArgumentException(
+                    "--notification-maintenance-manifest requires a JSON file path.");
+            }
+
+            if (manifestPath is not null)
+            {
+                throw new ArgumentException(
+                    "--notification-maintenance-manifest may be specified only once.");
+            }
+
+            manifestPath = args[i + 1];
+        }
+    }
+
+    if (!expectedPublishedScrapeId.HasValue)
+    {
+        throw new ArgumentException(
+            "--published-scrape-id is required for notification maintenance.");
+    }
+    if (manifestPath is null)
+    {
+        throw new ArgumentException(
+            "--notification-maintenance-manifest is required for notification maintenance.");
+    }
+
+    var execute = improvementNotificationMaintenanceExecuteRequested;
+    if (execute && string.IsNullOrWhiteSpace(expectedDryRunDigest))
+    {
+        throw new ArgumentException(
+            "--notification-maintenance-execute requires " +
+            "--expected-notification-dry-run-digest.");
+    }
+    var manifest = await ImprovementNotificationMaintenanceManifest.LoadAsync(
+        manifestPath,
+        CancellationToken.None);
+
+    maintenanceLog.LogInformation(
+        "Running notification maintenance safety gate for purpose {Purpose}, " +
+        "published scrape {ScrapeId}; execute={Execute}, manifestSongs={ManifestSongs}, " +
+        "visibleDeliveryCap={VisibleCap}.",
+        ImprovementNotificationSafetyContract.ProLeadMaxScoreRepairPurpose,
+        expectedPublishedScrapeId.Value,
+        execute,
+        manifest.Songs.Count,
+        ImprovementNotificationSafetyContract.ProLeadMaxScoreRepairVisibleDeliveryCap);
+
+    var maintenance = app.Services.GetRequiredService<
+        FSTService.Persistence.ImprovementNotificationMaintenanceService>();
+    object report = execute
+        ? await maintenance.ExecuteProLeadMaxScoreRepairAsync(
+            expectedPublishedScrapeId.Value,
+            expectedDryRunDigest!,
+            manifest,
+            CancellationToken.None)
+        : await maintenance.DryRunProLeadMaxScoreRepairAsync(
+            expectedPublishedScrapeId.Value,
+            manifest,
+            CancellationToken.None);
+
+    Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(report));
+    return;
 }
 
 // One-shot published-scrape improvement notification recovery.
