@@ -509,9 +509,11 @@ Failed-candidate `/api/songs` recovery is publication-owned rather than a live
 candidate bypass. When the process cache is empty, failed-candidate isolation
 may build a no-store response from `publication_song_catalog` for the current
 published scrape only when automatic path generation is disabled. The bound
-catalog's publication ID and song count must match the current pointers. Other
-publication-bound routes remain under their existing stable-cache/published
-resolver or HTTP `503` behavior.
+catalog's publication ID, row count, and content hash must match the current
+binding. A schema-v2 provider-exact ready binding is preferred; the current
+legacy-reconstructed building binding is accepted only for this fallback.
+Other publication-bound routes remain under their existing
+stable-cache/published resolver or HTTP `503` behavior.
 
 The publication-critical registered-user refresh contains only recurring
 all-time/current-season `PostScrape` work. Registration backfill and history

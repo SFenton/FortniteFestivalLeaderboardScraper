@@ -449,8 +449,9 @@ public sealed class SongsCacheService
                 "No current published song catalog is available.");
         }
 
-        var catalog = metaDb.GetPublicationSongCatalogForScrape(
-            publishedScrapeId)
+        var catalog = (metaDb as MetaDatabase)?
+            .GetCurrentPublicationSongCatalogFallback(
+                currentPublicationId)
             ?? throw new InvalidOperationException(
                 $"Published scrape {publishedScrapeId} has no bound song catalog.");
         if (catalog.PublicationId != currentPublicationId)

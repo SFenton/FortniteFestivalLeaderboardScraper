@@ -824,6 +824,71 @@ public sealed class MetaDatabase : IMetaDatabase
             reader.GetDateTime(7));
     }
 
+    public PublicationSongCatalogInfo? GetCurrentPublicationSongCatalogFallback(
+        long publicationId)
+    {
+        using var conn = _ds.OpenConnection();
+        EnsureScrapePublicationStateTable(conn);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT
+                catalog.publication_id,
+                generation.scrape_id,
+                catalog.catalog_version,
+                catalog.schema_version,
+                catalog.catalog_json::text,
+                catalog.content_hash,
+                catalog.song_count,
+                catalog.source_captured_at
+            FROM publication_generations generation
+            JOIN publication_song_catalog catalog
+              ON catalog.publication_id = generation.publication_id
+            JOIN publication_surface_bindings binding
+              ON binding.publication_id = generation.publication_id
+             AND binding.surface_name = 'song_catalog'
+            WHERE generation.publication_id = @publicationId
+              AND generation.status = 'current'
+              AND binding.row_count = catalog.song_count
+              AND binding.content_hash = catalog.content_hash
+              AND (
+                    (
+                        catalog.is_exact
+                        AND catalog.source_kind = 'provider_exact'
+                        AND catalog.schema_version = @schemaVersion
+                        AND binding.binding_kind =
+                            'generation_catalog_snapshot'
+                        AND binding.status = 'ready'
+                    )
+                    OR
+                    (
+                        NOT catalog.is_exact
+                        AND catalog.source_kind =
+                            'legacy_publication_reconstructed'
+                        AND binding.binding_kind =
+                            'legacy_reconstructed_catalog'
+                        AND binding.status = 'building'
+                    )
+                  )
+            """;
+        cmd.Parameters.AddWithValue("publicationId", publicationId);
+        cmd.Parameters.AddWithValue(
+            "schemaVersion",
+            SongCatalogSnapshotBuilder.SchemaVersion);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return null;
+
+        return new PublicationSongCatalogInfo(
+            reader.GetInt64(0),
+            reader.GetInt64(1),
+            reader.GetInt64(2),
+            reader.GetInt32(3),
+            reader.GetString(4),
+            reader.GetString(5),
+            reader.GetInt32(6),
+            reader.GetDateTime(7));
+    }
+
     public IReadOnlyList<PublicationSurfaceBinding> GetPublicationSurfaceBindings(
         long publicationId)
     {
