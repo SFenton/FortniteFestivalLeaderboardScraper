@@ -311,7 +311,7 @@ describe('useSyncStatus', () => {
     expect(result.current.historyProgress).toBe(0.3);
   });
 
-  it('shows pending history as queued without stale backfill entries', async () => {
+  it('does not surface pending history as active score sync', async () => {
     mockGetStatus.mockResolvedValue({
       accountId: 'acc1',
       isTracked: true,
@@ -342,8 +342,8 @@ describe('useSyncStatus', () => {
     );
     await flush();
 
-    expect(result.current.isSyncing).toBe(true);
-    expect(result.current.phase).toBe('queued');
+    expect(result.current.isSyncing).toBe(false);
+    expect(result.current.phase).toBe('complete');
     expect(result.current.entriesFound).toBe(0);
     expect(result.current.itemsCompleted).toBe(0);
     expect(result.current.totalItems).toBe(0);

@@ -663,7 +663,7 @@ public sealed class NotificationServiceTests
     }
 
     [Fact]
-    public async Task HandleConnectionAsync_SubscribeSync_ReportsPendingHistoryAsQueued()
+    public async Task HandleConnectionAsync_SubscribeSync_DoesNotSurfacePendingHistory()
     {
         var svc = CreateService();
         var metaDb = Substitute.For<IMetaDatabase>();
@@ -727,8 +727,8 @@ public sealed class NotificationServiceTests
                 SegmentContains(
                     segment,
                     "\"type\":\"sync_progress\"",
-                    "\"phase\":\"queued\"",
-                    "\"entriesFound\":0")),
+                    "\"phase\":\"complete\"",
+                    "\"entriesFound\":72")),
             WebSocketMessageType.Text,
             true,
             Arg.Any<CancellationToken>());

@@ -110,7 +110,6 @@ function deriveSyncStateFromStatus(res: SyncStatusResponse, prev: SyncState): Sy
     ? Math.min(bfDisplay.completed / bfDisplay.total, 1) : 0;
 
   const hrStatus = hr?.status ?? null;
-  const hrQueued = hrStatus === BackfillStatus.Pending;
   const hrActive = hrStatus === BackfillStatus.InProgress;
   const hrProgress = hr && hr.totalSongsToProcess > 0
     ? Math.min(hr.songsProcessed / hr.totalSongsToProcess, 1) : 0;
@@ -122,12 +121,11 @@ function deriveSyncStateFromStatus(res: SyncStatusResponse, prev: SyncState): Sy
 
   const psActive = ps?.status === BackfillStatus.Pending || ps?.status === BackfillStatus.InProgress;
   const pendingPublication = res.pendingRankUpdate ?? bf?.rankingsPending ?? false;
-  const isSyncing = bfDeferred || bfActive || hrQueued || hrActive || rvActive || psActive || pendingPublication;
+  const isSyncing = bfDeferred || bfActive || hrActive || rvActive || psActive || pendingPublication;
 
   let phase: SyncPhase;
   if (bfDeferred) phase = SyncPhase.Queued;
   else if (bfActive) phase = SyncPhase.Backfill;
-  else if (hrQueued) phase = SyncPhase.Queued;
   else if (hrActive) phase = SyncPhase.History;
   else if (rvActive) phase = SyncPhase.Rivals;
   else if (psActive) phase = SyncPhase.PostScrape;
@@ -148,33 +146,29 @@ function deriveSyncStateFromStatus(res: SyncStatusResponse, prev: SyncState): Sy
       ? (ps?.entriesFound ?? prev.entriesFound)
       : bfDeferred || bfActive
         ? (bf?.entriesFound ?? 0)
-        : hrQueued || hrActive
+        : hrActive
           ? (hr?.historyEntriesFound ?? 0)
           : prev.entriesFound,
     itemsCompleted: bfActive
       ? bfDisplay.completed
-      : hrQueued
-        ? 0
-        : hrActive
-          ? (hr?.songsProcessed ?? 0)
-          : rvActive
-            ? (rv?.combosComputed ?? 0)
-            : psActive
-              ? (ps?.itemsCompleted ?? 0)
-              : prev.itemsCompleted,
+      : hrActive
+        ? (hr?.songsProcessed ?? 0)
+        : rvActive
+          ? (rv?.combosComputed ?? 0)
+          : psActive
+            ? (ps?.itemsCompleted ?? 0)
+            : prev.itemsCompleted,
     totalItems: bfDeferred
       ? bfDisplay.total
       : bfActive
         ? bfDisplay.total
-        : hrQueued
-          ? 0
-          : hrActive
-            ? (hr?.totalSongsToProcess ?? 0)
-            : rvActive
-              ? (rv?.totalCombosToCompute ?? 0)
-              : psActive
-                ? (ps?.totalItems ?? 0)
-                : prev.totalItems,
+        : hrActive
+          ? (hr?.totalSongsToProcess ?? 0)
+          : rvActive
+            ? (rv?.totalCombosToCompute ?? 0)
+            : psActive
+              ? (ps?.totalItems ?? 0)
+              : prev.totalItems,
     currentSongName: ps?.currentSongName ?? bf?.currentSongName ?? hr?.currentSongName ?? null,
     seasonsQueried: hr?.seasonsQueried ?? prev.seasonsQueried,
     rivalsFound: rv?.rivalsFound ?? prev.rivalsFound,

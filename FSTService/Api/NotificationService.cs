@@ -563,8 +563,6 @@ public sealed class NotificationService
         }
 
         var history = _metaDb.GetHistoryReconStatus(accountId);
-        if (history?.Status is "pending")
-            return BuildSyncProgressPayload(accountId, "queued", history.SongsProcessed, history.TotalSongsToProcess, history.HistoryEntriesFound, seasonsQueried: history.SeasonsQueried);
         if (history?.Status is "in_progress")
             return BuildSyncProgressPayload(accountId, "history", history.SongsProcessed, history.TotalSongsToProcess, history.HistoryEntriesFound, seasonsQueried: history.SeasonsQueried);
         if (history?.Status is "error")
