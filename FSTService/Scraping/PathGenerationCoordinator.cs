@@ -22,6 +22,7 @@ public sealed partial class PathGenerationCoordinator
     private readonly IOptions<ScraperOptions> _options;
     private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<PathGenerationCoordinator> _log;
+    private readonly IPathRepairMaintenanceLeaseProvider _maintenanceLeaseProvider;
     private readonly SemaphoreSlim _choptConcurrency;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _songLocks =
         new(StringComparer.OrdinalIgnoreCase);
@@ -32,7 +33,8 @@ public sealed partial class PathGenerationCoordinator
         SongsCacheService songsCache,
         IOptions<ScraperOptions> options,
         ScrapeProgressTracker progress,
-        ILogger<PathGenerationCoordinator> log)
+        ILogger<PathGenerationCoordinator> log,
+        IPathRepairMaintenanceLeaseProvider? maintenanceLeaseProvider = null)
     {
         _http = http;
         _store = store;
@@ -40,6 +42,8 @@ public sealed partial class PathGenerationCoordinator
         _options = options;
         _progress = progress;
         _log = log;
+        _maintenanceLeaseProvider = maintenanceLeaseProvider
+            ?? UncontendedPathRepairMaintenanceLeaseProvider.Instance;
         _choptConcurrency = new SemaphoreSlim(
             Math.Max(1, options.Value.PathGenerationParallelism));
     }
@@ -65,20 +69,31 @@ public sealed partial class PathGenerationCoordinator
         var ownsProgress = _progress.BeginPathGeneration(requests.Count);
         try
         {
-            byte[] key;
-            string choptPath;
-            PathGenerationRuntimeIdentity runtime;
+            await using var maintenanceLease =
+                await _maintenanceLeaseProvider.TryAcquireAsync(
+                    "path-generation",
+                    holdPublicationLock: false,
+                    ct);
+            if (maintenanceLease is null)
+            {
+                await RecordBatchFailureAsync(
+                    requests,
+                    null,
+                    "maintenance_lock",
+                    "Another path-repair, path-generation, or ranking maintenance operation holds the shared lease.",
+                    ownsProgress);
+                return new PathGenerationBatchResult(
+                    requests.Count,
+                    0,
+                    0,
+                    requests.Count,
+                    0);
+            }
+
+            PathGenerationExecutionContext execution;
             try
             {
-                key = GetMidiKey(_options.Value) ??
-                    throw new PathGenerationException(
-                        "configuration",
-                        "MIDI encryption key is not configured or is invalid.");
-                choptPath = GetChoptPath(_options.Value) ??
-                    throw new PathGenerationException(
-                        "configuration",
-                        $"CHOpt binary was not found at '{_options.Value.CHOptPath}'.");
-                runtime = await DetectRuntimeIdentityAsync(choptPath, ct);
+                execution = await CreateExecutionContextAsync(ct);
             }
             catch (OperationCanceledException)
             {
@@ -130,7 +145,7 @@ public sealed partial class PathGenerationCoordinator
             {
                 await RecordBatchFailureAsync(
                     requests,
-                    runtime,
+                    execution.Runtime,
                     "state_read",
                     ex.Message,
                     ownsProgress);
@@ -148,10 +163,9 @@ public sealed partial class PathGenerationCoordinator
                 return ProcessSongAsync(
                     request,
                     state,
-                    key,
-                    choptPath,
-                    runtime,
+                    execution,
                     force,
+                    promote: true,
                     ownsProgress,
                     ct);
             });
@@ -159,10 +173,14 @@ public sealed partial class PathGenerationCoordinator
 
             var result = new PathGenerationBatchResult(
                 requests.Count,
-                outcomes.Count(outcome => outcome == SongOutcome.Promoted),
-                outcomes.Count(outcome => outcome == SongOutcome.Skipped),
-                outcomes.Count(outcome => outcome == SongOutcome.Failed),
-                outcomes.Count(outcome => outcome == SongOutcome.Conflicted));
+                outcomes.Count(outcome =>
+                    outcome.Outcome == PathGenerationAttemptOutcome.Promoted),
+                outcomes.Count(outcome =>
+                    outcome.Outcome == PathGenerationAttemptOutcome.Skipped),
+                outcomes.Count(outcome =>
+                    outcome.Outcome == PathGenerationAttemptOutcome.Failed),
+                outcomes.Count(outcome =>
+                    outcome.Outcome == PathGenerationAttemptOutcome.Conflicted));
             _log.LogInformation(
                 "Path generation finished. Requested={Requested}, Promoted={Promoted}, Skipped={Skipped}, Failed={Failed}, Conflicted={Conflicted}.",
                 result.Requested,
@@ -177,6 +195,80 @@ public sealed partial class PathGenerationCoordinator
             if (ownsProgress)
                 _progress.EndPathGeneration();
         }
+    }
+
+    internal async Task<IReadOnlyList<PathGenerationAttemptResult>>
+        StagePathsSerialAsync(
+            IReadOnlyList<(SongPathRequest Request, PathGenerationState State)> songs,
+            CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(songs);
+        if (songs.Count == 0)
+            return [];
+
+        PathGenerationExecutionContext execution;
+        try
+        {
+            execution = await CreateExecutionContextAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            await RecordBatchFailureAsync(
+                songs.Select(static song => song.Request).ToArray(),
+                null,
+                "cancelled",
+                "Path generation was cancelled before repair staging began.",
+                ownsProgress: false);
+            throw;
+        }
+        catch (PathGenerationException ex)
+        {
+            await RecordBatchFailureAsync(
+                songs.Select(static song => song.Request).ToArray(),
+                null,
+                ex.Stage,
+                ex.Message,
+                ownsProgress: false);
+            return songs
+                .Select(_ => new PathGenerationAttemptResult(
+                    PathGenerationAttemptOutcome.Failed,
+                    FailureStage: ex.Stage,
+                    Detail: ex.Message))
+                .ToArray();
+        }
+        catch (Exception ex)
+        {
+            await RecordBatchFailureAsync(
+                songs.Select(static song => song.Request).ToArray(),
+                null,
+                "runtime_identity",
+                ex.Message,
+                ownsProgress: false);
+            return songs
+                .Select(_ => new PathGenerationAttemptResult(
+                    PathGenerationAttemptOutcome.Failed,
+                    FailureStage: "runtime_identity",
+                    Detail: ex.Message))
+                .ToArray();
+        }
+
+        var results = new List<PathGenerationAttemptResult>(songs.Count);
+        foreach (var song in songs)
+        {
+            var result = await ProcessSongAsync(
+                song.Request,
+                song.State,
+                execution,
+                force: true,
+                promote: false,
+                ownsProgress: false,
+                ct);
+            results.Add(result);
+            if (result.Outcome != PathGenerationAttemptOutcome.Staged)
+                break;
+        }
+
+        return results;
     }
 
     public Task<PathGenerationBatchResult> GenerateAutomaticPathsAsync(
@@ -201,13 +293,12 @@ public sealed partial class PathGenerationCoordinator
         return GeneratePathsAsync(candidates, force: false, ct);
     }
 
-    private async Task<SongOutcome> ProcessSongAsync(
+    private async Task<PathGenerationAttemptResult> ProcessSongAsync(
         SongPathRequest request,
         PathGenerationState? initialState,
-        byte[] key,
-        string choptPath,
-        PathGenerationRuntimeIdentity runtime,
+        PathGenerationExecutionContext execution,
         bool force,
+        bool promote,
         bool ownsProgress,
         CancellationToken ct)
     {
@@ -233,7 +324,7 @@ public sealed partial class PathGenerationCoordinator
                     attemptId,
                     request,
                     null,
-                    runtime,
+                    execution.Runtime,
                     "cancelled",
                     "Path generation was cancelled while waiting for the per-song lock."));
             if (ownsProgress)
@@ -253,6 +344,17 @@ public sealed partial class PathGenerationCoordinator
                 _progress.PathGenProcessing(request.Title);
 
             var dataDirectory = Path.GetFullPath(_options.Value.DataDirectory);
+            if (state?.CatalogLastModified is { } catalogLastModified &&
+                !string.Equals(
+                    catalogLastModified,
+                    request.LastModified,
+                    StringComparison.Ordinal))
+            {
+                throw new PathGenerationException(
+                    "state_validation",
+                    "The exact catalog last-modified identity changed before path generation.");
+            }
+
             if (expected.Length == 0)
             {
                 throw new PathGenerationException(
@@ -283,14 +385,15 @@ public sealed partial class PathGenerationCoordinator
                 CanSkipAfterDownload(
                     request,
                     state,
-                    runtime,
+                    execution.Runtime,
                     expected,
                     datHash,
                     dataDirectory))
             {
                 if (ownsProgress)
                     _progress.PathGenSongSkipped();
-                return SongOutcome.Skipped;
+                return new PathGenerationAttemptResult(
+                    PathGenerationAttemptOutcome.Skipped);
             }
 
             stagingDirectory = Path.Combine(
@@ -303,7 +406,7 @@ public sealed partial class PathGenerationCoordinator
             try
             {
                 variants = MidiTrackRenamer.ProduceVariants(
-                    MidiCryptor.Decrypt(datBytes, key));
+                    MidiCryptor.Decrypt(datBytes, execution.MidiKey));
             }
             catch (Exception ex)
             {
@@ -352,7 +455,7 @@ public sealed partial class PathGenerationCoordinator
                     try
                     {
                         totalScore = await RunChoptAsync(
-                            choptPath,
+                            execution.ChoptPath,
                             midiPath,
                             definition,
                             difficulty,
@@ -382,10 +485,10 @@ public sealed partial class PathGenerationCoordinator
             }
 
             var binaryHashAfterGeneration = await ComputeSha256Async(
-                choptPath,
+                execution.ChoptPath,
                 ct);
             if (!binaryHashAfterGeneration.Equals(
-                    runtime.BinarySha256,
+                    execution.Runtime.BinarySha256,
                     StringComparison.Ordinal))
             {
                 throw new PathGenerationException(
@@ -393,15 +496,19 @@ public sealed partial class PathGenerationCoordinator
                     "The CHOpt binary changed while path artifacts were being generated.");
             }
 
-            var generatedAtUtc = DateTime.UtcNow;
+            // Keep generation.json and PostgreSQL timestamptz identity byte-for-byte comparable.
+            var nowUtc = DateTime.UtcNow;
+            var generatedAtUtc = new DateTime(
+                nowUtc.Ticks - nowUtc.Ticks % 10,
+                DateTimeKind.Utc);
             var manifest = new PathArtifactManifest(
                 attemptId,
                 request.SongId,
                 datHash,
                 request.LastModified,
-                runtime.Version,
-                runtime.BinarySha256,
-                runtime.Profile,
+                execution.Runtime.Version,
+                execution.Runtime.BinarySha256,
+                execution.Runtime.Profile,
                 expected,
                 expertScores,
                 generatedAtUtc);
@@ -431,13 +538,7 @@ public sealed partial class PathGenerationCoordinator
                     innerException: ex);
             }
 
-            PathGenerationPromotionOutcome promotionOutcome;
-            try
-            {
-                using var cacheMutation =
-                    _songsCache.BeginContentMutation();
-                promotionOutcome = await _store.TryPromoteGenerationAsync(
-                    new PathGenerationPromotion(
+            var promotion = new PathGenerationPromotion(
                         attemptId,
                         request.SongId,
                         state?.Revision ?? 0,
@@ -445,9 +546,25 @@ public sealed partial class PathGenerationCoordinator
                         datHash,
                         request.LastModified,
                         generatedAtUtc,
-                        runtime,
+                execution.Runtime,
                         expected,
-                        maxScores),
+                maxScores);
+            if (!promote)
+            {
+                if (ownsProgress)
+                    _progress.PathGenSongCompleted();
+                return new PathGenerationAttemptResult(
+                    PathGenerationAttemptOutcome.Staged,
+                    promotion);
+            }
+
+            PathGenerationPromotionOutcome promotionOutcome;
+            try
+            {
+                using var cacheMutation =
+                    _songsCache.BeginContentMutation();
+                promotionOutcome = await _store.TryPromoteGenerationAsync(
+                    promotion,
                     ct);
             }
             catch (OperationCanceledException)
@@ -472,19 +589,25 @@ public sealed partial class PathGenerationCoordinator
                         attemptId,
                         request,
                         datHash,
-                        runtime,
+                        execution.Runtime,
                         "concurrency",
                         detail));
                 if (ownsProgress)
                     _progress.PathGenSongFailed();
-                return promotionOutcome == PathGenerationPromotionOutcome.Conflict
-                    ? SongOutcome.Conflicted
-                    : SongOutcome.Failed;
+                return new PathGenerationAttemptResult(
+                    promotionOutcome == PathGenerationPromotionOutcome.Conflict
+                        ? PathGenerationAttemptOutcome.Conflicted
+                        : PathGenerationAttemptOutcome.Failed,
+                    promotion,
+                    "concurrency",
+                    detail);
             }
 
             if (ownsProgress)
                 _progress.PathGenSongCompleted();
-            return SongOutcome.Promoted;
+            return new PathGenerationAttemptResult(
+                PathGenerationAttemptOutcome.Promoted,
+                promotion);
         }
         catch (OperationCanceledException)
         {
@@ -493,7 +616,7 @@ public sealed partial class PathGenerationCoordinator
                     attemptId,
                     request,
                     datHash,
-                    runtime,
+                    execution.Runtime,
                     "cancelled",
                     "Path generation was cancelled."));
             if (ownsProgress)
@@ -507,7 +630,7 @@ public sealed partial class PathGenerationCoordinator
                     attemptId,
                     request,
                     datHash,
-                    runtime,
+                    execution.Runtime,
                     ex.Stage,
                     ex.Message,
                     ex.Instrument,
@@ -521,7 +644,10 @@ public sealed partial class PathGenerationCoordinator
                 ex.Difficulty);
             if (ownsProgress)
                 _progress.PathGenSongFailed();
-            return SongOutcome.Failed;
+            return new PathGenerationAttemptResult(
+                PathGenerationAttemptOutcome.Failed,
+                FailureStage: ex.Stage,
+                Detail: ex.Message);
         }
         catch (Exception ex)
         {
@@ -530,7 +656,7 @@ public sealed partial class PathGenerationCoordinator
                     attemptId,
                     request,
                     datHash,
-                    runtime,
+                    execution.Runtime,
                     "unexpected",
                     ex.Message));
             _log.LogError(
@@ -539,7 +665,10 @@ public sealed partial class PathGenerationCoordinator
                 request.SongId);
             if (ownsProgress)
                 _progress.PathGenSongFailed();
-            return SongOutcome.Failed;
+            return new PathGenerationAttemptResult(
+                PathGenerationAttemptOutcome.Failed,
+                FailureStage: "unexpected",
+                Detail: ex.Message);
         }
         finally
         {
@@ -644,6 +773,21 @@ public sealed partial class PathGenerationCoordinator
 
         await File.WriteAllTextAsync(jsonOutput, result.StandardOutput, ct);
         return totalScore;
+    }
+
+    private async Task<PathGenerationExecutionContext> CreateExecutionContextAsync(
+        CancellationToken ct)
+    {
+        var key = GetMidiKey(_options.Value) ??
+            throw new PathGenerationException(
+                "configuration",
+                "MIDI encryption key is not configured or is invalid.");
+        var choptPath = GetChoptPath(_options.Value) ??
+            throw new PathGenerationException(
+                "configuration",
+                $"CHOpt binary was not found at '{_options.Value.CHOptPath}'.");
+        var runtime = await DetectRuntimeIdentityAsync(choptPath, ct);
+        return new PathGenerationExecutionContext(key, choptPath, runtime);
     }
 
     internal async Task<PathGenerationRuntimeIdentity> DetectRuntimeIdentityAsync(
@@ -976,15 +1120,12 @@ public sealed partial class PathGenerationCoordinator
         int ExitCode,
         string StandardOutput,
         string StandardError);
-
-    private enum SongOutcome
-    {
-        Promoted,
-        Skipped,
-        Failed,
-        Conflicted,
-    }
 }
+
+internal sealed record PathGenerationExecutionContext(
+    byte[] MidiKey,
+    string ChoptPath,
+    PathGenerationRuntimeIdentity Runtime);
 
 internal sealed class PathGenerationException : Exception
 {

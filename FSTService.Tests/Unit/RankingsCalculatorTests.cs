@@ -69,8 +69,13 @@ public sealed class RankingsCalculatorTests : IDisposable
         int apiRank = 0) =>
         new()
         {
-            AccountId = accountId, Score = score, Rank = rank,
-            Accuracy = accuracy, IsFullCombo = fc, Stars = stars, Season = season,
+            AccountId = accountId,
+            Score = score,
+            Rank = rank,
+            Accuracy = accuracy,
+            IsFullCombo = fc,
+            Stars = stars,
+            Season = season,
             ApiRank = apiRank,
         };
 
@@ -467,6 +472,32 @@ public sealed class RankingsCalculatorTests : IDisposable
         // Verify history snapshotted
         var history = guitarDb.GetRankHistory("p1", 1);
         Assert.Single(history);
+    }
+
+    [Fact]
+    public async Task ComputeAllForPathRepair_rebuilds_pro_lead_and_aggregate_rankings_only()
+    {
+        var progress = new ScrapeProgressTracker();
+        progress.SetPhase(
+            ScrapeProgressTracker.ScrapePhase.ComputingRankings);
+        var attemptedBandTypes = new List<string>();
+        var metaDatabase = CreateBandFailingMetaDatabase(
+            _metaFixture.Db,
+            BandInstrumentMapping.AllBandTypes,
+            attemptedBandTypes);
+        var sut = CreateSut(
+            metaDb: metaDatabase,
+            progress: progress);
+
+        await sut.ComputeAllForPathRepairAsync(
+            CreateFestivalServiceWithSongs(1),
+            CancellationToken.None);
+
+        var current = progress.GetProgressResponse().Current;
+        Assert.NotNull(current);
+        Assert.Equal(4, current.WorkItems?.Total);
+        Assert.Equal(4, current.WorkItems?.Completed);
+        Assert.Empty(attemptedBandTypes);
     }
 
     [Fact]

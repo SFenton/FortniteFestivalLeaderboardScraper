@@ -95,4 +95,27 @@ describe('publication bootstrap', () => {
       undefined,
     );
   });
+
+  it('can force a cache-boundary event without changing publication ID', async () => {
+    setPublicationForTests(42);
+    const changes: number[] = [];
+    window.addEventListener(PUBLICATION_CHANGED_EVENT, event => {
+      changes.push(
+        (event as CustomEvent<{ publicationId: number }>).detail.publicationId,
+      );
+    }, { once: true });
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      jsonResponse({
+        publicationId: 42,
+        previousPublicationId: 41,
+        publishedScrapeId: 1274,
+        publishedAt: '2026-08-02T00:00:00Z',
+        pinningEnabled: false,
+      }),
+    );
+
+    await ensurePublication(true, true);
+
+    expect(changes).toEqual([42]);
+  });
 });

@@ -454,6 +454,57 @@ described above, with normal lock/long-query checks before the initializer.
 Deploy first with automatic generation disabled, prove legacy reads and the
 single-song admin guard, then enable automatic new/changed atomic-song work.
 
+The exact-four Pro Lead repair is an explicit one-shot extension of this path,
+not another generator implementation. All repair, automatic, admin, and worker
+path work shares PostgreSQL advisory lease
+`5067481511116519000`, below both the fixed publication lock and the unbounded
+per-publication cache-build key range; a repair promotion or ranking rebuild
+also holds the publication advisory lock so scrape allocation/publication
+cannot overlap. Lease acquisition uses `pg_try_advisory_lock` and fails closed
+rather than waiting behind another owner.
+
+`--path-repair-stage-exact-four` requires automatic generation disabled and an
+explicit new `.json` output below `DataDirectory`. Existing paths, symbolic
+links, and path escapes are rejected. The command loads exactly the four
+compile-time-approved IDs in ordinal order, captures their current revision,
+exact catalog `last_modified`, all-six-maxima-null identity, and
+pending/pointer state, then invokes the coordinator serially for Pro Lead only.
+The normal decrypt/CHOpt/runtime and all-difficulty validation path moves each
+successful generation from `.path-work` into immutable same-filesystem
+storage. The selective generation pointer serves Pro Lead while other
+instruments retain legacy artifact fallback. Stage-only never calls the path
+CAS and never changes maxima, hashes, timestamps, pointers, revision, or
+pending state. It re-reads all four source identities before atomically
+creating the strict notification maintenance manifest; any CHOpt or identity
+failure leaves no manifest and appends the normal visible path error evidence.
+
+`--path-repair-promote-exact-four` binds that strict manifest to an explicitly
+expected current published scrape. It requires no working publication and
+preflights all four current database rows, published exact catalog timestamps,
+strict `generation.json` identities, non-symbolic-link PNG/JSON files, runtime
+identity, every expected instrument/difficulty, and reconstructed expert
+maxima before the first write. A new rollback snapshot below `DataDirectory`
+captures all six maxima, revision, pointer, DAT/catalog identities, generation
+timestamp/runtime/profile, expected instruments, and pending state before
+promotion. It then establishes the purpose-owned public-read freeze before the
+first row-locked CAS, which is called exactly once per song in ordinal order.
+This is deliberately serial rather than falsely all-four atomic: a later
+failure stops immediately, keeps public reads failed closed, and reports the
+exact promoted, failed, and not-attempted subset while preserving the rollback
+snapshot.
+
+`--path-repair-rebuild-rankings` validates the same manifest in its
+post-promotion state, requires the same idle current publication and existing
+purpose-owned freeze, and recomputes only Pro Lead plus the dependent
+composite, solo-family, and combo rankings from that publication's immutable
+catalog. It does not rebuild unrelated solo instruments or bands, allocate or
+publish a scrape, run notification detection, write scrape phase timings, or
+append rank-history snapshots. Failure or cancellation retains the freeze.
+Only a fully validated success releases it; the API then discards pre-freeze
+process-cache entries and broadcasts a same-publication refresh so connected
+web clients clear React Query and songs caches before reading the repaired
+state.
+
 The publication-critical registered-user refresh contains only recurring
 all-time/current-season `PostScrape` work. Registration backfill and history
 reconstruction remain on the resumable registration/deferred workers and keep
@@ -793,7 +844,7 @@ The Pro Lead max-score repair uses a separate purpose-specific notification
 gate. Its strict manifest contains exactly four ordinal-sorted unique song IDs,
 their expected current path revisions/catalog timestamps/old Pro Lead maxima,
 positive proposed maxima, staged generation IDs and DAT hashes, and complete
-runtime identity when available. The read-only dry run requires the expected
+runtime identity. The read-only dry run requires the expected
 published scrape to be completed, unfrozen, notification-complete, and backed
 by completed visible routine player and band song/rank runs. Current song and
 `song_stats` identities plus the published exact catalog timestamps must match

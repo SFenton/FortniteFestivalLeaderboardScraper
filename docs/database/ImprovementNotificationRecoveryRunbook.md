@@ -43,9 +43,43 @@ This is separate from routine recovery. It is only for purpose
 or delivery cap. The code and database both fix visible delivery at exactly
 zero.
 
-Before any controlled repair, stage all four immutable path generations without
-promoting them. Create a strict JSON manifest with `manifestVersion: 1` and
-exactly four unique song rows in ordinal `songId` order. Every row binds:
+Before any controlled repair, keep
+`Scraper__EnableAutomaticPathGeneration=false`. The one-shot stage command
+uses the four IDs compiled into
+`ImprovementNotificationMaintenanceManifest.RequiredSongIds`; there is no
+operator-provided song list:
+
+```bash
+docker compose run --rm --no-deps --entrypoint dotnet fstservice \
+  FSTService.dll \
+  --path-repair-stage-exact-four \
+  --path-repair-manifest-output maintenance/path-repair/manifest.json
+```
+
+The output is resolved below configured `DataDirectory`; a relative path is
+relative to that directory. Parent directories are created only below that
+same 4 TB FST drive. The final `.json` file must not exist, and no output path
+component may be a symbolic link. Path escape is rejected. The command also
+requires explicit path generation enabled and automatic generation disabled.
+
+Stage acquires the purpose-specific path-repair advisory lease and processes
+the exact IDs serially. It reuses `PathGenerationCoordinator` decrypt, CHOpt,
+runtime identity, and artifact validation. Each row must still have all six
+maxima null and a charted Pro Lead part. Stage overrides the generation scope
+to Pro Lead only, and easy, medium, hard, and expert PNG/JSON output must all
+validate before its immutable generation is moved from
+`DataDirectory/.path-work` to
+`DataDirectory/paths/.../generations/...`. After promotion, non-Pro-Lead
+requests continue to use legacy artifacts. Stage does not call the database
+CAS and cannot change song maxima, DAT hash, generation timestamp, pointer,
+revision, or pending flag. A failed song appends normal
+`path_generation_errors`, stops later songs, and leaves no maintenance
+manifest. Successful earlier immutable directories remain unreachable staged
+evidence.
+
+On success, the command writes a strict JSON manifest with
+`manifestVersion: 1` and exactly four unique song rows in ordinal `songId`
+order. Every row binds:
 
 - the current `path_generation_revision`, catalog `last_modified`, and current
   `max_pro_lead_score`;
@@ -84,7 +118,7 @@ docker compose run --rm --no-deps --entrypoint dotnet fstservice \
   FSTService.dll \
   --notification-maintenance-pro-lead-max-score-repair \
   --published-scrape-id <id> \
-  --notification-maintenance-manifest <repair-manifest.json>
+  --notification-maintenance-manifest <absolute-manifestPath-from-stage-report>
 ```
 
 Save both JSON results. The SHA-256 `dryRunDigest` values and canonical sorted
@@ -126,6 +160,71 @@ Missing rank state, another-instrument movement without ordinary-score
 evidence, ambiguous Pro Lead attribution, and other unclassified
 aggregate/rank changes block execute.
 
+After two dry runs produce the same `dryRunDigest`, wait for an idle
+publication boundary. Promotion and ranking rebuild both fail closed unless
+the supplied scrape is still current, `working_publication_id` is null, public
+reads are initially unfrozen or already carry this repair's owned freeze,
+automatic path generation remains disabled, and the exact publication catalog
+still matches the manifest.
+
+Promote the staged generations with a new rollback output path:
+
+```bash
+docker compose run --rm --no-deps --entrypoint dotnet fstservice \
+  FSTService.dll \
+  --path-repair-promote-exact-four \
+  --published-scrape-id <id> \
+  --path-repair-manifest maintenance/path-repair/manifest.json \
+  --path-repair-rollback-output maintenance/path-repair/rollback-before-promotion.json
+```
+
+The promotion command holds both the path-repair and publication advisory
+locks. Before the first mutation it preflights all four database identities,
+the exact published catalog timestamps, every immutable generation manifest
+and file, runtime identity, expected instruments/difficulties, and reconstructed
+expert maxima. It then writes the rollback snapshot, including all six old
+maxima, revision, pointer, DAT/catalog identities, timestamp/runtime/profile,
+expected instruments, and pending state. Only then does it establish the
+public-read freeze with reason `path-repair-ranking-rebuild`. It verifies
+ownership of that freeze before calling the existing CAS exactly once per song
+in ordinal order. A successful promotion report must show
+`publicReadsFrozen: true`.
+
+This is not an all-four database transaction. Preserve the JSON result. If it
+reports `partialPromotion: true`, stop: the result names promoted, failed, and
+not-attempted songs, the rollback snapshot is authoritative, and public reads
+remain frozen. Do not run ranking rebuild or notification execute from a
+partial state.
+
+After all four promotions succeed, rebuild rankings from the same current
+published scrape/catalog:
+
+```bash
+docker compose run --rm --no-deps --entrypoint dotnet fstservice \
+  FSTService.dll \
+  --path-repair-rebuild-rankings \
+  --published-scrape-id <id> \
+  --path-repair-manifest maintenance/path-repair/manifest.json
+```
+
+The command revalidates all four post-promotion identities before work, holds
+the same maintenance/publication locks, and requires the
+`path-repair-ranking-rebuild` public-read freeze left by promotion. It uses the
+immutable catalog bound to the supplied publication to recompute Pro Lead plus
+dependent composite, solo-family, and combo rankings. It does not rebuild
+unrelated solo instruments or bands, allocate a scrape, advance publication
+pointers, run improvement notification detection, record scrape phase timings,
+or append rank-history snapshots.
+
+Failure or cancellation deliberately keeps public reads frozen because ranking
+tables may be partially updated. Only post-rebuild manifest/catalog validation
+allows the command to unfreeze. The API invalidates pre-freeze process caches
+at that safety revision and broadcasts a same-publication refresh so connected
+web clients clear their query and songs caches. A successful report must show
+both `publicReadsFrozenDuringRebuild: true` and
+`publicReadsRestored: true`; any failure requires investigation or rollback
+before manual unfreeze.
+
 Execute is deliberately a separate, fully bound command:
 
 ```bash
@@ -134,7 +233,7 @@ docker compose run --rm --no-deps --entrypoint dotnet fstservice \
   --notification-maintenance-pro-lead-max-score-repair \
   --notification-maintenance-execute \
   --published-scrape-id <id> \
-  --notification-maintenance-manifest <repair-manifest.json> \
+  --notification-maintenance-manifest <absolute-manifestPath-from-stage-report> \
   --expected-notification-dry-run-digest <sha256>
 ```
 
@@ -158,11 +257,17 @@ touch player-song/band state, and does not broadcast
 
 The required sequence is:
 
-1. stage immutable path artifacts and the exact manifest;
+1. stage immutable path artifacts and the exact manifest with automatic
+   generation disabled;
 2. obtain two identical projected dry-run digests before any live mutation;
-3. promote those generations and rebuild rankings separately;
-4. run execute with the same manifest/digest before ordinary detection; and
-5. only then allow the normal notification lane to resume.
+3. promote the exact staged generations serially and retain the rollback
+   snapshot/result;
+4. run the manifest-bound selective ranking rebuild and verify freeze
+   restoration plus cache/client refresh;
+5. run notification execute with the same manifest/digest so actual
+   `account_rankings` must equal the projection; and
+6. only then allow ordinary notification detection and the normal lane to
+   resume.
 
 The command above is an evidence gate, not authorization to regenerate paths,
 recompute rankings, deploy, notify users, or run the four-song repair. The
@@ -172,10 +277,27 @@ retention cannot erase its provenance.
 
 ### Rollback
 
-Before any quarantine row exists, rollback is simply to omit the one-shot
-maintenance command; the additive columns/tables may remain unused. After a
-maintenance execute, do not roll back to an image that lacks
-`delivery_state='visible'` public filters. Roll back only to a
+Before promotion, omit later commands; staged immutable generations are
+unreachable and can be retained for audit. After any promotion, use the
+command-emitted rollback snapshot, not memory or the maintenance manifest, as
+the source for a separately reviewed transaction restoring the exact affected
+`songs` columns. Restore all six maxima, revision, pointer, DAT/catalog
+identities, generated timestamp/runtime/profile, expected instruments, and
+pending state for every row listed in the snapshot. Do not silently decrement
+only the revision or restore only Pro Lead.
+
+After restoring a partial or complete promotion, rebuild rankings again while
+public reads are maintenance-frozen and verify the four restored
+`song_stats`/`account_rankings` identities before resuming detection. The
+forward `--path-repair-rebuild-rankings` command intentionally rejects this
+pre-repair state; rollback therefore remains a separately reviewed maintenance
+transaction plus full ranking recompute. The rollback snapshot is evidence;
+there is intentionally no automatic rollback CLI that could overwrite a
+concurrently changed song.
+
+Before any quarantine row exists, notification rollback is simply to omit
+notification execute. After maintenance execute, do not roll back to an image
+that lacks `delivery_state='visible'` public filters. Roll back only to a
 contract-bearing image, leave quarantine evidence intact, and restore the
 pre-repair Pro Lead ranking/state snapshot if the associated data repair is
 reverted. Dropping columns/tables is neither required nor safe during normal

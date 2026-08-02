@@ -189,6 +189,37 @@ public class PublicReadGateTests
     }
 
     [Fact]
+    public void ResponseCache_DiscardsPreFreezeEntryAfterUnfreeze()
+    {
+        var freeze = PublicReadFreezeState.NotFrozen;
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(_ => freeze);
+        metaDb.GetFailedCandidateReadIsolationState().Returns(
+            PublicReadFreezeState.NotFrozen);
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        using var cache = new ResponseCacheService(
+            TimeSpan.FromMinutes(5),
+            gate);
+
+        cache.Set(
+            "player:account:::",
+            Encoding.UTF8.GetBytes("""{"source":"pre-freeze"}"""));
+        freeze = new PublicReadFreezeState(
+            true,
+            DateTime.UtcNow,
+            1274,
+            "path-repair-ranking-rebuild");
+        gate.Invalidate();
+        Assert.NotNull(cache.Get("player:account:::"));
+
+        freeze = PublicReadFreezeState.NotFrozen;
+        gate.Invalidate();
+        Assert.Null(cache.Get("player:account:::"));
+    }
+
+    [Fact]
     public void ResponseCache_RejectsEntriesFromAnotherPublication()
     {
         long? publicationId = 1;

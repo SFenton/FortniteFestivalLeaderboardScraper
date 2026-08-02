@@ -34,6 +34,7 @@ public sealed class SongsCacheService
     private string? _etag;
     private DateTime _cachedAt;
     private long? _publicationId;
+    private long _safetyRevision;
     private long _contentRevision;
     private int _contentMutationDepth;
     private static readonly TimeSpan DefaultCacheTtl = TimeSpan.FromMinutes(5);
@@ -100,6 +101,8 @@ public sealed class SongsCacheService
                 return null;
             if (ClearForPublicationMismatch())
                 return null;
+            if (ClearAfterCompletedSafetyTransition(safety))
+                return null;
 
             if (_cachedJson is not null &&
                 (safety.IsFrozen ||
@@ -121,6 +124,8 @@ public sealed class SongsCacheService
             if (ClearForFailedCandidateIsolation(safety))
                 return null;
             if (ClearForPublicationMismatch())
+                return null;
+            if (ClearAfterCompletedSafetyTransition(safety))
                 return null;
 
             return _cachedJson is null ? null : (_cachedJson, _etag!);
@@ -146,6 +151,7 @@ public sealed class SongsCacheService
             _etag = etag;
             _cachedAt = DateTime.UtcNow;
             _publicationId = _publicationIdProvider?.Invoke();
+            _safetyRevision = safety.Revision;
         }
         return etag;
     }
@@ -161,6 +167,7 @@ public sealed class SongsCacheService
             _cachedJson = null;
             _etag = null;
             _publicationId = null;
+            _safetyRevision = 0;
         }
     }
 
@@ -210,6 +217,7 @@ public sealed class SongsCacheService
             _etag = etag;
             _cachedAt = DateTime.UtcNow;
             _publicationId = publicationId;
+            _safetyRevision = safety.Revision;
             return SongsCacheWriteResult.Stored;
         }
     }
@@ -223,6 +231,7 @@ public sealed class SongsCacheService
             _cachedJson = null;
             _etag = null;
             _publicationId = null;
+            _safetyRevision = 0;
         }
 
         return new ContentMutationLease(this);
@@ -240,6 +249,7 @@ public sealed class SongsCacheService
             _cachedJson = null;
             _etag = null;
             _publicationId = null;
+            _safetyRevision = 0;
         }
     }
 
@@ -253,6 +263,7 @@ public sealed class SongsCacheService
         _cachedJson = null;
         _etag = null;
         _publicationId = null;
+        _safetyRevision = 0;
         return true;
     }
 
@@ -268,7 +279,26 @@ public sealed class SongsCacheService
         _cachedJson = null;
         _etag = null;
         _publicationId = null;
+        _safetyRevision = 0;
         _contentRevision++;
+        return true;
+    }
+
+    private bool ClearAfterCompletedSafetyTransition(
+        PublicReadCacheSafetySnapshot safety)
+    {
+        if (_cachedJson is null ||
+            safety.IsFrozen ||
+            _safetyRevision == safety.Revision)
+        {
+            return false;
+        }
+
+        _contentRevision++;
+        _cachedJson = null;
+        _etag = null;
+        _publicationId = null;
+        _safetyRevision = 0;
         return true;
     }
 

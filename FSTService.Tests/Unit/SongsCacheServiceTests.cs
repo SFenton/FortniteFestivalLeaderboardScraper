@@ -182,6 +182,26 @@ public class SongsCacheServiceTests
     }
 
     [Fact]
+    public void Completed_safety_transition_discards_pre_freeze_entry()
+    {
+        var safety = new PublicReadCacheSafetySnapshot(
+            IsFrozen: false,
+            FailedCandidateIsolationActive: false,
+            Revision: 1);
+        var cache = new SongsCacheService(
+            () => safety,
+            TimeSpan.FromMinutes(5));
+        cache.Set(System.Text.Encoding.UTF8.GetBytes("pre-freeze"));
+
+        safety = safety with { IsFrozen = true, Revision = 2 };
+        Assert.NotNull(cache.Get());
+
+        safety = safety with { IsFrozen = false, Revision = 3 };
+        Assert.Null(cache.Get());
+        Assert.Null(cache.GetStale());
+    }
+
+    [Fact]
     public void Active_failed_candidate_isolation_blocks_cache_install()
     {
         var safety = new PublicReadCacheSafetySnapshot(

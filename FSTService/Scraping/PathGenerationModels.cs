@@ -125,7 +125,13 @@ public sealed record PathGenerationState(
     string? GenerationProfile,
     string? ArtifactGenerationId,
     IReadOnlyList<string> ExpectedInstruments,
-    SongMaxScores MaxScores);
+    SongMaxScores MaxScores,
+    string? CatalogLastModified = null,
+    bool PathGenerationPending = false);
+
+public sealed record PathRepairSongSnapshot(
+    Song Song,
+    PathGenerationState State);
 
 public sealed record PathGenerationPromotion(
     string AttemptId,
@@ -169,3 +175,18 @@ public sealed record PathGenerationBatchResult(
 {
     public bool Changed => Promoted > 0;
 }
+
+internal enum PathGenerationAttemptOutcome
+{
+    Staged,
+    Promoted,
+    Skipped,
+    Failed,
+    Conflicted,
+}
+
+internal sealed record PathGenerationAttemptResult(
+    PathGenerationAttemptOutcome Outcome,
+    PathGenerationPromotion? StagedPromotion = null,
+    string? FailureStage = null,
+    string? Detail = null);

@@ -1,6 +1,8 @@
 using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using FSTService.Persistence;
 using Microsoft.Extensions.Options;
 
 namespace FSTService.Scraping;
@@ -10,9 +12,17 @@ public sealed record ResolvedPathArtifact(
     string? GenerationId,
     bool IsLegacy);
 
+internal sealed record ValidatedPathGeneration(
+    string GenerationDirectory,
+    PathArtifactManifest Manifest,
+    SongMaxScores MaxScores);
+
 public sealed class PathArtifactResolver
 {
     internal const string ManifestFileName = "generation.json";
+    private const long MaximumManifestBytes = 256 * 1024;
+    private const long MaximumArtifactJsonBytes = 64L * 1024 * 1024;
+    private const long MaximumArtifactPngBytes = 256L * 1024 * 1024;
 
     private readonly IPathDataStore _store;
     private readonly IOptions<ScraperOptions> _options;
@@ -32,8 +42,8 @@ public sealed class PathArtifactResolver
         string extension,
         string? requestedGenerationId = null)
     {
-        var currentGenerationId =
-            _store.GetPathGenerationState(songId)?.ArtifactGenerationId;
+        var state = _store.GetPathGenerationState(songId);
+        var currentGenerationId = state?.ArtifactGenerationId;
         if (requestedGenerationId is not null &&
             !string.Equals(
                 requestedGenerationId,
@@ -43,7 +53,13 @@ public sealed class PathArtifactResolver
             return null;
         }
 
-        var generationId = currentGenerationId;
+        var generationId =
+            currentGenerationId is not null &&
+            state!.ExpectedInstruments.Contains(
+                instrument,
+                StringComparer.Ordinal)
+                ? currentGenerationId
+                : null;
         return Resolve(
             _options.Value.DataDirectory,
             songId,
@@ -124,27 +140,16 @@ public sealed class PathArtifactResolver
 
         try
         {
-            var generationDirectory = GetGenerationDirectory(
+            var validated = ValidateImmutableGeneration(
                 dataDirectory,
                 state.SongId,
                 state.ArtifactGenerationId);
-            var manifestPath = Path.Combine(generationDirectory, ManifestFileName);
-            if (!File.Exists(manifestPath))
-                return false;
-
-            var manifest = JsonSerializer.Deserialize<PathArtifactManifest>(
-                File.ReadAllText(manifestPath),
-                PathArtifactManifest.JsonOptions);
-            if (manifest is null ||
-                manifest.GenerationId != state.ArtifactGenerationId ||
-                manifest.SongId != state.SongId ||
-                manifest.DatFileHash != state.DatFileHash ||
+            var manifest = validated.Manifest;
+            if (manifest.DatFileHash != state.DatFileHash ||
                 manifest.SongLastModified != state.SongLastModified ||
                 manifest.ChoptVersion != state.ChoptVersion ||
                 manifest.ChoptBinarySha256 != state.ChoptBinarySha256 ||
-                manifest.GenerationProfile != state.GenerationProfile ||
-                manifest.ExpectedInstruments is null ||
-                manifest.ExpertMaxScores is null)
+                manifest.GenerationProfile != state.GenerationProfile)
             {
                 return false;
             }
@@ -162,33 +167,9 @@ public sealed class PathArtifactResolver
             {
                 var expectedMax = state.MaxScores.GetByInstrument(instrument);
                 if (expectedMax is not > 0 ||
-                    !manifest.ExpertMaxScores.TryGetValue(instrument, out var manifestMax) ||
-                    manifestMax != expectedMax)
+                    validated.MaxScores.GetByInstrument(instrument) != expectedMax)
                 {
                     return false;
-                }
-
-                foreach (var difficulty in PathGenerationInstruments.Difficulties)
-                {
-                    var pngPath = Path.Combine(
-                        generationDirectory,
-                        instrument,
-                        $"{difficulty}.png");
-                    var jsonPath = Path.Combine(
-                        generationDirectory,
-                        instrument,
-                        $"{difficulty}.json");
-                    if (!PathArtifactValidator.IsValidPng(pngPath) ||
-                        !PathArtifactValidator.TryReadJson(
-                            jsonPath,
-                            requirePositiveScore: difficulty == "expert",
-                            out var score))
-                    {
-                        return false;
-                    }
-
-                    if (difficulty == "expert" && score != expectedMax)
-                        return false;
                 }
             }
 
@@ -212,7 +193,162 @@ public sealed class PathArtifactResolver
         }
     }
 
-    private static bool IsWithin(string root, string candidate)
+    internal static ValidatedPathGeneration ValidateImmutableGeneration(
+        string dataDirectory,
+        string songId,
+        string generationId)
+    {
+        var dataRoot = Path.GetFullPath(dataDirectory);
+        var generationDirectory = GetGenerationDirectory(
+            dataRoot,
+            songId,
+            generationId);
+        EnsureNoReparsePoints(dataRoot, generationDirectory);
+
+        var directory = new DirectoryInfo(generationDirectory);
+        if (!directory.Exists ||
+            (directory.Attributes & FileAttributes.ReparsePoint) != 0)
+        {
+            throw new InvalidOperationException(
+                $"Immutable path generation '{generationId}' does not identify a regular directory.");
+        }
+
+        var manifestPath = Path.Combine(generationDirectory, ManifestFileName);
+        var manifestFile = GetRegularFile(manifestPath, "generation manifest");
+        if (manifestFile.Length <= 0 ||
+            manifestFile.Length > MaximumManifestBytes)
+        {
+            throw new InvalidOperationException(
+                $"Immutable path generation '{generationId}' manifest size is invalid.");
+        }
+
+        PathArtifactManifest manifest;
+        try
+        {
+            using var stream = new FileStream(
+                manifestPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 16 * 1024,
+                FileOptions.SequentialScan);
+            manifest = JsonSerializer.Deserialize<PathArtifactManifest>(
+                    stream,
+                    PathArtifactManifest.JsonOptions)
+                ?? throw new InvalidOperationException(
+                    $"Immutable path generation '{generationId}' manifest cannot be JSON null.");
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidOperationException(
+                $"Immutable path generation '{generationId}' manifest is not strict JSON.",
+                ex);
+        }
+
+        if (!string.Equals(manifest.GenerationId, generationId, StringComparison.Ordinal) ||
+            !string.Equals(manifest.SongId, songId, StringComparison.Ordinal) ||
+            !IsSha256(manifest.DatFileHash) ||
+            string.IsNullOrWhiteSpace(manifest.ChoptVersion) ||
+            !IsSha256(manifest.ChoptBinarySha256) ||
+            string.IsNullOrWhiteSpace(manifest.GenerationProfile) ||
+            manifest.GeneratedAtUtc == default ||
+            manifest.ExpectedInstruments is null ||
+            manifest.ExpertMaxScores is null)
+        {
+            throw new InvalidOperationException(
+                $"Immutable path generation '{generationId}' manifest identity is invalid.");
+        }
+
+        var expected = PathGenerationInstruments.NormalizeExpected(
+            manifest.ExpectedInstruments);
+        if (expected.Length == 0 ||
+            !manifest.ExpectedInstruments.SequenceEqual(
+                expected,
+                StringComparer.Ordinal) ||
+            manifest.ExpertMaxScores.Count != expected.Length ||
+            manifest.ExpertMaxScores.Keys.Any(key =>
+                !expected.Contains(key, StringComparer.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                $"Immutable path generation '{generationId}' expected instrument set is invalid.");
+        }
+
+        var scores = new SongMaxScores
+        {
+            GeneratedAt = manifest.GeneratedAtUtc.ToString("o"),
+            CHOptVersion = manifest.ChoptVersion,
+            CHOptBinarySha256 = manifest.ChoptBinarySha256,
+            GenerationProfile = manifest.GenerationProfile,
+            ArtifactGenerationId = manifest.GenerationId,
+            ExpectedInstruments = expected,
+        };
+        foreach (var instrument in expected)
+        {
+            if (!manifest.ExpertMaxScores.TryGetValue(
+                    instrument,
+                    out var expertMaximum) ||
+                expertMaximum <= 0)
+            {
+                throw new InvalidOperationException(
+                    $"Immutable path generation '{generationId}' has no positive expert maximum for {instrument}.");
+            }
+
+            var instrumentDirectory = Path.Combine(
+                generationDirectory,
+                instrument);
+            EnsureNoReparsePoints(dataRoot, instrumentDirectory);
+            var instrumentInfo = new DirectoryInfo(instrumentDirectory);
+            if (!instrumentInfo.Exists ||
+                (instrumentInfo.Attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Immutable path generation '{generationId}' is missing instrument directory {instrument}.");
+            }
+
+            foreach (var difficulty in PathGenerationInstruments.Difficulties)
+            {
+                var pngPath = Path.Combine(
+                    instrumentDirectory,
+                    $"{difficulty}.png");
+                var jsonPath = Path.Combine(
+                    instrumentDirectory,
+                    $"{difficulty}.json");
+                var pngFile = GetRegularFile(
+                    pngPath,
+                    $"{instrument}/{difficulty} PNG");
+                var jsonFile = GetRegularFile(
+                    jsonPath,
+                    $"{instrument}/{difficulty} JSON");
+                if (pngFile.Length <= 0 ||
+                    pngFile.Length > MaximumArtifactPngBytes ||
+                    jsonFile.Length <= 0 ||
+                    jsonFile.Length > MaximumArtifactJsonBytes)
+                {
+                    throw new InvalidOperationException(
+                        $"Immutable path generation '{generationId}' artifact size is invalid for {instrument}/{difficulty}.");
+                }
+                if (!PathArtifactValidator.IsValidPng(pngPath) ||
+                    !PathArtifactValidator.TryReadJson(
+                        jsonPath,
+                        requirePositiveScore: difficulty == "expert",
+                        out var score) ||
+                    (difficulty == "expert" && score != expertMaximum))
+                {
+                    throw new InvalidOperationException(
+                        $"Immutable path generation '{generationId}' failed artifact validation for {instrument}/{difficulty}.");
+                }
+            }
+
+            scores.SetByInstrument(instrument, expertMaximum);
+        }
+
+        return new ValidatedPathGeneration(
+            generationDirectory,
+            manifest,
+            scores);
+    }
+
+    internal static bool IsWithin(string root, string candidate)
     {
         var comparison = OperatingSystem.IsWindows()
             ? StringComparison.OrdinalIgnoreCase
@@ -222,6 +358,56 @@ public sealed class PathArtifactResolver
         return candidate.Equals(normalizedRoot, comparison) ||
                candidate.StartsWith(rootPrefix, comparison);
     }
+
+    private static FileInfo GetRegularFile(string path, string description)
+    {
+        var file = new FileInfo(path);
+        if (!file.Exists ||
+            (file.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+        {
+            throw new InvalidOperationException(
+                $"Immutable path {description} must be a regular non-symbolic-link file.");
+        }
+
+        return file;
+    }
+
+    private static void EnsureNoReparsePoints(string root, string candidate)
+    {
+        var normalizedRoot = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(root));
+        var current = Path.GetFullPath(candidate);
+        if (!IsWithin(normalizedRoot, current))
+        {
+            throw new InvalidOperationException(
+                "Immutable path generation escapes the configured data directory.");
+        }
+
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        while (!current.Equals(normalizedRoot, comparison))
+        {
+            if (File.Exists(current) || Directory.Exists(current))
+            {
+                var attributes = File.GetAttributes(current);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Immutable path generation contains symbolic link '{current}'.");
+                }
+            }
+
+            current = Path.GetDirectoryName(current)
+                ?? throw new InvalidOperationException(
+                    "Immutable path generation has no configured data-directory ancestor.");
+        }
+    }
+
+    private static bool IsSha256(string? value)
+        => value is { Length: 64 } &&
+           value.All(static character =>
+               character is >= '0' and <= '9' or >= 'a' and <= 'f');
 
     private static bool IsSafePathSegment(string value)
         => !string.IsNullOrWhiteSpace(value) &&
@@ -246,6 +432,7 @@ internal sealed record PathArtifactManifest(
     internal static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     };
 }
 

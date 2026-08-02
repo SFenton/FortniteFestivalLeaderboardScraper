@@ -76,6 +76,8 @@ var improvementNotificationRecoveryRequested = args.Any(
     arg => arg.Equals("--recover-improvement-notifications", StringComparison.OrdinalIgnoreCase));
 var scoreHistoryDedupMaintenanceCommand =
     ScoreHistoryDedupMaintenanceCommand.Parse(args);
+var pathRepairMaintenanceCommand =
+    PathRepairMaintenanceCommand.Parse(args);
 var initializeSchemaOnlyRequested = args.Any(
     arg => arg.Equals(
         "--initialize-schema-only",
@@ -111,6 +113,32 @@ if (improvementNotificationRecoveryRequested && improvementNotificationMaintenan
     throw new ArgumentException(
         "Notification recovery and notification maintenance cannot run in the same process.");
 }
+if (pathRepairMaintenanceCommand is not null &&
+    (improvementNotificationRecoveryRequested ||
+     improvementNotificationMaintenanceRequested ||
+     initializeSchemaOnlyRequested ||
+     scoreHistoryDedupMaintenanceCommand is not null))
+{
+    throw new ArgumentException(
+        "Path-repair maintenance cannot run with another one-shot schema, score-history, or notification command.");
+}
+if (pathRepairMaintenanceCommand is not null &&
+    args.Any(argument => argument.Equals(
+            "--precompute",
+            StringComparison.OrdinalIgnoreCase) ||
+        argument.Equals("--once", StringComparison.OrdinalIgnoreCase) ||
+        argument.Equals("--setup", StringComparison.OrdinalIgnoreCase) ||
+        argument.Equals("--resolve-only", StringComparison.OrdinalIgnoreCase) ||
+        argument.Equals("--backfill-only", StringComparison.OrdinalIgnoreCase) ||
+        argument.Equals(
+            "--registration-sync-worker",
+            StringComparison.OrdinalIgnoreCase) ||
+        argument.StartsWith("--solo-", StringComparison.OrdinalIgnoreCase) ||
+        argument.StartsWith("--band-", StringComparison.OrdinalIgnoreCase)))
+{
+    throw new ArgumentException(
+        "Path-repair maintenance cannot run with scrape, phase-only, setup, backfill, or precompute modes.");
+}
 if (scoreHistoryDedupMaintenanceCommand is not null
     && (improvementNotificationRecoveryRequested
         || improvementNotificationMaintenanceRequested
@@ -123,6 +151,7 @@ if (scoreHistoryDedupMaintenanceCommand is not null
 
 var apiOnlyRequested = improvementNotificationRecoveryRequested
     || improvementNotificationMaintenanceRequested
+    || pathRepairMaintenanceCommand is not null
     || scoreHistoryDedupMaintenanceCommand is not null
     || initializeSchemaOnlyRequested
     || args.Any(arg => arg.Equals("--api-only", StringComparison.OrdinalIgnoreCase))
@@ -380,6 +409,13 @@ builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationServ
 builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationRecoveryService>();
 builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationMaintenanceService>();
 builder.Services.AddSingleton<FSTService.Persistence.ScoreHistoryDedupMaintenanceService>();
+builder.Services.AddSingleton<
+    FSTService.Persistence.IPathRepairMaintenanceLeaseProvider,
+    FSTService.Persistence.PostgresPathRepairMaintenanceLeaseProvider>();
+builder.Services.AddSingleton<
+    FSTService.Persistence.IPathRepairRankingExecutor,
+    FSTService.Persistence.PathRepairRankingExecutor>();
+builder.Services.AddSingleton<FSTService.Persistence.PathRepairMaintenanceService>();
 
 // ─── Shared services ────────────────────────────────────────
 
@@ -581,7 +617,8 @@ builder.Services.AddSingleton<PathGenerationCoordinator>(sp =>
         sp.GetRequiredService<SongsCacheService>(),
         sp.GetRequiredService<IOptions<ScraperOptions>>(),
         sp.GetRequiredService<ScrapeProgressTracker>(),
-        sp.GetRequiredService<ILogger<PathGenerationCoordinator>>()));
+        sp.GetRequiredService<ILogger<PathGenerationCoordinator>>(),
+        sp.GetRequiredService<IPathRepairMaintenanceLeaseProvider>()));
 builder.Services.AddSingleton<PathArtifactResolver>();
 
 // Core FestivalService — song catalog sync. Shared with API for /api/songs.
@@ -739,6 +776,67 @@ if (scoreHistoryDedupMaintenanceCommand is not null)
     Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(report));
     if (report is ScoreHistoryDedupDryRunReport { CanExecute: false })
         Environment.ExitCode = 2;
+    return;
+}
+
+// Explicit one-shot exact-four staged path repair workflow.
+if (pathRepairMaintenanceCommand is not null)
+{
+    var maintenance = app.Services.GetRequiredService<
+        FSTService.Persistence.PathRepairMaintenanceService>();
+    try
+    {
+        object report = pathRepairMaintenanceCommand.Action switch
+        {
+            PathRepairMaintenanceAction.StageExactFour =>
+                await maintenance.StageExactFourAsync(
+                    pathRepairMaintenanceCommand.ManifestOutputPath!,
+                    CancellationToken.None),
+            PathRepairMaintenanceAction.PromoteExactFour =>
+                await maintenance.PromoteExactFourAsync(
+                    pathRepairMaintenanceCommand.ManifestPath!,
+                    pathRepairMaintenanceCommand.RollbackOutputPath!,
+                    pathRepairMaintenanceCommand.ExpectedPublishedScrapeId!.Value,
+                    CancellationToken.None),
+            PathRepairMaintenanceAction.RebuildRankings =>
+                await maintenance.RebuildRankingsAsync(
+                    pathRepairMaintenanceCommand.ManifestPath!,
+                    pathRepairMaintenanceCommand.ExpectedPublishedScrapeId!.Value,
+                    CancellationToken.None),
+            _ => throw new ArgumentOutOfRangeException(),
+        };
+
+        Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(
+            report,
+            PathRepairJson.Options));
+        if (report is PathRepairStageReport { Succeeded: false }
+            or PathRepairPromotionReport { Succeeded: false }
+            or PathRepairRankingRebuildReport { Succeeded: false })
+        {
+            Environment.ExitCode = 2;
+        }
+    }
+    catch (Exception ex)
+    {
+        var command = pathRepairMaintenanceCommand.Action switch
+        {
+            PathRepairMaintenanceAction.StageExactFour =>
+                PathRepairMaintenanceCommand.StageFlag,
+            PathRepairMaintenanceAction.PromoteExactFour =>
+                PathRepairMaintenanceCommand.PromoteFlag,
+            PathRepairMaintenanceAction.RebuildRankings =>
+                PathRepairMaintenanceCommand.RebuildRankingsFlag,
+            _ => "path-repair",
+        };
+        Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(
+            new PathRepairCommandFailureReport(
+                command,
+                Succeeded: false,
+                ex.GetType().Name,
+                ex.Message),
+            PathRepairJson.Options));
+        Environment.ExitCode = 2;
+    }
     return;
 }
 

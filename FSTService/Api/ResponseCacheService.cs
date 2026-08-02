@@ -54,11 +54,21 @@ public sealed class ResponseCacheService : IDisposable
     /// </summary>
     public (byte[] Json, string ETag)? Get(string key)
     {
-        if (IsFailedCandidateIsolationActive())
+        var safety = _publicReadGate?.GetCacheSafetySnapshot();
+        if (IsFailedCandidateIsolationActive(safety))
             return null;
 
         if (_cache.TryGetValue(key, out var entry))
         {
+            var frozen = _frozen || safety?.IsFrozen == true;
+            if (!frozen &&
+                safety is { } currentSafety &&
+                entry.SafetyRevision != currentSafety.Revision)
+            {
+                _cache.TryRemove(key, out _);
+                return null;
+            }
+
             var currentPublicationId = _publicationIdProvider?.Invoke();
             if (_publicationIdProvider is not null
                 && entry.PublicationId != currentPublicationId)
@@ -67,7 +77,7 @@ public sealed class ResponseCacheService : IDisposable
                 return null;
             }
 
-            if (IsFrozen || DateTime.UtcNow - entry.CachedAt < _ttl)
+            if (frozen || DateTime.UtcNow - entry.CachedAt < _ttl)
                 return (entry.Json, entry.ETag);
         }
         return null;
@@ -79,16 +89,18 @@ public sealed class ResponseCacheService : IDisposable
     public string Set(string key, byte[] json)
     {
         var etag = ComputeETag(json);
-        if (IsFailedCandidateIsolationActive())
+        var safety = _publicReadGate?.GetCacheSafetySnapshot();
+        if (IsFailedCandidateIsolationActive(safety))
             return etag;
-        if (IsFrozen)
+        if (_frozen || safety?.IsFrozen == true)
             return etag;
 
         _cache[key] = new CacheEntry(
             json,
             etag,
             DateTime.UtcNow,
-            _publicationIdProvider?.Invoke());
+            _publicationIdProvider?.Invoke(),
+            safety?.Revision);
         return etag;
     }
 
@@ -147,10 +159,15 @@ public sealed class ResponseCacheService : IDisposable
         _evictionTimer.Dispose();
     }
 
-    private bool IsFailedCandidateIsolationActive()
+    private bool IsFailedCandidateIsolationActive(
+        PublicReadCacheSafetySnapshot? safety = null)
     {
-        if (_publicReadGate?.FailedCandidateIsolationActive != true)
+        if (safety?.FailedCandidateIsolationActive != true &&
+            (safety.HasValue ||
+             _publicReadGate?.FailedCandidateIsolationActive != true))
+    {
             return false;
+        }
 
         // Candidate and published responses share these legacy process caches.
         // Clear and bypass them while strict isolation is active so an in-flight
@@ -163,5 +180,6 @@ public sealed class ResponseCacheService : IDisposable
         byte[] Json,
         string ETag,
         DateTime CachedAt,
-        long? PublicationId);
+        long? PublicationId,
+        long? SafetyRevision);
 }

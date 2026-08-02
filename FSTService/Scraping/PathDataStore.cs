@@ -33,7 +33,8 @@ public sealed class PathDataStore : IPathDataStore
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
-            {PathGenerationStateSelect}
+            SELECT {PathGenerationStateColumns}
+            FROM songs
             WHERE dat_file_hash IS NOT NULL
                OR path_artifact_generation_id IS NOT NULL
                OR path_generation_revision <> 0
@@ -52,12 +53,65 @@ public sealed class PathDataStore : IPathDataStore
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
-            {PathGenerationStateSelect}
+            SELECT {PathGenerationStateColumns}
+            FROM songs
             WHERE song_id = @songId
             """;
         cmd.Parameters.AddWithValue("songId", songId);
         using var r = cmd.ExecuteReader();
         return r.Read() ? ReadPathGenerationState(r) : null;
+    }
+
+    public IReadOnlyList<PathRepairSongSnapshot> GetPathRepairSongSnapshots(
+        IReadOnlyCollection<string> songIds)
+    {
+        ArgumentNullException.ThrowIfNull(songIds);
+        var requested = songIds
+            .Where(static songId => !string.IsNullOrWhiteSpace(songId))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static songId => songId, StringComparer.Ordinal)
+            .ToArray();
+        if (requested.Length == 0)
+            return [];
+
+        var result = new List<PathRepairSongSnapshot>(requested.Length);
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT {PathGenerationStateColumns},
+                   provider_json::text
+            FROM songs
+            WHERE song_id = ANY(@songIds)
+            ORDER BY song_id
+            """;
+        cmd.Parameters.Add(
+            "songIds",
+            NpgsqlDbType.Array | NpgsqlDbType.Text).Value = requested;
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            if (reader.IsDBNull(18))
+            {
+                throw new InvalidOperationException(
+                    $"Repair song '{reader.GetString(0)}' has no exact provider JSON.");
+            }
+
+            var song = SongCatalogSnapshotBuilder.DeserializeProviderSong(
+                reader.GetString(18));
+            var state = ReadPathGenerationState(reader);
+            if (!string.Equals(
+                    song.track?.su,
+                    state.SongId,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Repair song '{state.SongId}' provider identity does not match its database row.");
+            }
+
+            result.Add(new PathRepairSongSnapshot(song, state));
+        }
+
+        return result;
     }
 
     public HashSet<string> GetPendingPathGenerationSongIds()
@@ -343,7 +397,9 @@ public sealed class PathDataStore : IPathDataStore
             r.IsDBNull(7) ? null : r.GetString(7),
             r.IsDBNull(8) ? null : r.GetString(8),
             r.GetFieldValue<string[]>(9),
-            scores);
+            scores,
+            r.IsDBNull(16) ? null : r.GetString(16),
+            r.GetBoolean(17));
     }
 
     private void InvalidateMaxScoresCache()
@@ -382,8 +438,8 @@ public sealed class PathDataStore : IPathDataStore
     private static string? NormalizeLastModified(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value;
 
-    private const string PathGenerationStateSelect = """
-        SELECT song_id,
+    private const string PathGenerationStateColumns = """
+        song_id,
                path_generation_revision,
                dat_file_hash,
                song_last_modified,
@@ -398,7 +454,8 @@ public sealed class PathDataStore : IPathDataStore
                max_drums_score,
                max_vocals_score,
                max_pro_lead_score,
-               max_pro_bass_score
-        FROM songs
+        max_pro_bass_score,
+        NULLIF(last_modified, ''),
+        path_generation_pending
         """;
 }

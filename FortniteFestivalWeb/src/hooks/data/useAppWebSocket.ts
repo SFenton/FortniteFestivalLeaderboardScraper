@@ -338,7 +338,7 @@ class SharedWebSocket {
       return this.publicationRefreshPromise;
     }
 
-    this.publicationRefreshPromise = ensurePublication(true)
+    this.publicationRefreshPromise = ensurePublication(true, true)
       .then(() => {
         this.publicationRefreshRequired = false;
         this.publicationRefreshCompletedForReconnect = true;

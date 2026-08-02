@@ -1384,23 +1384,48 @@ deployment/repair remain separate**
 - Image and JSON readers follow the same generation pointer and use its ID as a
   cache-busting request value; only null-pointer legacy rows use the old layout.
 - Notification delivery and the four-song maintenance repair remain disabled
-  and separate. The notification quarantine gate is now implemented in the
-  worktree for exact purpose
-  `maintenance_pro_lead_max_score_repair_v1`, but is not committed, deployed,
-  or executed. Its visible-delivery cap is a non-configurable zero; public
-  reads/source cursors/expiry/supersession accept only visible routine rows,
-  while maintenance evidence uses non-expiring audit/quarantine tables.
+  and separate. The committed notification quarantine contract for exact
+  purpose `maintenance_pro_lead_max_score_repair_v1` retains a
+  non-configurable visible-delivery cap of zero; public reads/source
+  cursors/expiry/supersession accept only visible routine rows, while
+  maintenance evidence uses non-expiring audit/quarantine tables.
+- The repository worktree now adds the previously missing executable repair
+  path, but it is not committed, deployed, or executed. A shared
+  `pg_try_advisory_lock` lease excludes exact repair, automatic, admin, worker,
+  and ranking maintenance work. Promotion/ranking also hold the publication
+  lock so no scrape can be allocated or published concurrently.
+- `--path-repair-stage-exact-four` requires automatic generation disabled,
+  accepts no song list, processes the four compile-time IDs serially through
+  `PathGenerationCoordinator`, requires the observed all-six-maxima-null state,
+  and stages only Pro Lead. Non-Pro-Lead requests continue to resolve legacy
+  artifacts after promotion. The command writes a new strict manifest only
+  after all immutable generations validate and all source identities recheck
+  unchanged. It cannot promote or change maxima, hashes, timestamps,
+  revisions, pointers, or pending state.
 - The repair gate requires two identical read-only canonical SHA-256 dry runs
   bound to the same completed, unfrozen published scrape and exact four-song
   staged manifest. The manifest binds sorted song IDs, current
   revision/catalog/max-score identities, proposed positive maxima, immutable
-  generation IDs/DAT hashes, and runtime identity when present. Dry run
+  generation IDs/DAT hashes, and mandatory runtime identity. Dry run
   projects Pro Lead rankings from current entries/stats/history with the normal
   1.05 fallback and Bayesian formula rather than reading post-repair live
   rankings. Its digest binds scrape ID, manifest, total-charted identity, and
   projected candidates.
-- Safe operation is stage/manifest, double projected dry run, separate
-  promotion/ranking rebuild, then execute before ordinary detection. Execute
+- `--path-repair-promote-exact-four` preflights all four rows and artifact sets
+  before mutation, emits a complete rollback snapshot first, then invokes one
+  existing CAS per song in ordinal order. Before the first CAS it establishes
+  the purpose-owned public-read freeze and leaves that freeze active for the
+  ranking command. A later failure is reported as a visible partial state,
+  with reads still failed closed, rather than an atomic-all-four claim.
+- `--path-repair-rebuild-rankings` requires the same current idle publication,
+  verifies post-promotion identities and the existing maintenance freeze, and
+  recomputes Pro Lead plus dependent composite/family/combo rankings from the
+  bound catalog without band rankings, scrape allocation/publication,
+  notification detection, phase timings, or rank-history snapshots. Failure or
+  cancellation retains the freeze; only a validated success unfreezes, clears
+  live-process caches, and broadcasts a same-publication client refresh.
+- Safe operation is stage/manifest, double projected dry run, serial promotion,
+  selective ranking rebuild, then execute before ordinary detection. Execute
   requires exact promoted identities and byte-exact actual-versus-projected
   candidate equality before quarantine/baseline writes. Independently proven
   player/band score observations remain ordinary external work. Missing state,
@@ -1408,11 +1433,11 @@ deployment/repair remain separate**
   other non-denominator candidates block. Passing execute cannot broadcast or
   expose an event, and its immutable non-null published scrape provenance is
   not erased by `scrape_log` retention.
-- Production validation still requires clean-boundary schema initialization,
-  legacy/default-visible read smoke tests, final independent review, and the
-  two matching live dry-run reports. This code does not authorize deployment,
-  path regeneration, ranking recomputation, notification delivery, or the
-  four-song repair.
+- Production validation still requires a clean idle publication boundary,
+  final independent review, the two matching live dry-run reports, preserved
+  rollback output, and post-command identity checks. This repository-only work
+  does not authorize deployment, path regeneration, ranking recomputation,
+  notification delivery, or the four-song repair.
 
 **Scrape 1274 data-lane gate**
 
@@ -1427,7 +1452,9 @@ deployment/repair remain separate**
   cache/public parity, completed routine notifications, and zero automatic
   path promotions/errors.
 - The four-song repair remains blocked after publication until the exact
-  staged manifest produces two identical projected notification digests.
+  staged manifest produces two identical projected notification digests; only
+  then may serial promotion, the manifest-bound ranking rebuild, and
+  actual-versus-projected quarantine execute proceed in that order.
 - The nullable `score_history` dedup package is also explicit and independent
   of worker startup. Schema initialization adds only immutable audit tables;
   neither `fstworker` nor `StartupInitializer` can merge rows or replace the

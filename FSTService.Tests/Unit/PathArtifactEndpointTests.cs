@@ -126,6 +126,40 @@ public sealed class PathArtifactEndpointTests : IDisposable
     }
 
     [Fact]
+    public void Instrument_selective_generation_preserves_other_legacy_artifacts()
+    {
+        const string songId = "pro-lead-repair";
+        const string generationId = "generation-pro-lead";
+        var state = CreateState(songId, generationId) with
+        {
+            ExpectedInstruments = ["Solo_PeripheralGuitar"],
+        };
+        var resolver = new PathArtifactResolver(
+            new ResolverStore(state),
+            Options.Create(new ScraperOptions { DataDirectory = _dataDirectory }));
+        var legacyDirectory = Path.Combine(
+            _dataDirectory,
+            "paths",
+            songId,
+            "Solo_Guitar");
+        Directory.CreateDirectory(legacyDirectory);
+        File.WriteAllBytes(Path.Combine(legacyDirectory, "expert.png"), [1]);
+
+        var image = Assert.IsType<PhysicalFileHttpResult>(
+            ApiEndpoints.GetPathArtifactResult(
+                songId,
+                "Solo_Guitar",
+                "expert",
+                "png",
+                generationId,
+                resolver));
+
+        Assert.Equal(
+            Path.Combine(legacyDirectory, "expert.png"),
+            image.FileName);
+    }
+
+    [Fact]
     public void Explicit_generation_rejects_a_pointer_mismatch()
     {
         const string songId = "pinned-generation";
@@ -186,6 +220,10 @@ public sealed class PathArtifactEndpointTests : IDisposable
 
         public PathGenerationState? GetPathGenerationState(string songId)
             => songId == state.SongId ? state : null;
+
+        public IReadOnlyList<PathRepairSongSnapshot> GetPathRepairSongSnapshots(
+            IReadOnlyCollection<string> songIds)
+            => [];
 
         public HashSet<string> GetPendingPathGenerationSongIds()
             => [];

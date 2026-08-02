@@ -22,6 +22,7 @@ export function isPublicationPinningEnabled(): boolean {
 
 export async function ensurePublication(
   force = false,
+  notifyEvenIfSame = false,
 ): Promise<PublicationResponse> {
   if (import.meta.env.MODE === 'e2e') {
     currentPublication ??= {
@@ -55,7 +56,7 @@ export async function ensurePublication(
       ?? readStoredPublicationId();
     currentPublication = publication;
     writeStoredPublicationId(publication.publicationId);
-    if (previousId !== publication.publicationId) {
+    if (notifyEvenIfSame || previousId !== publication.publicationId) {
       dispatchPublicationChanged(publication);
     }
     return publication;

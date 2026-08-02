@@ -33,6 +33,7 @@ public sealed class PublicationChangeMonitorService : BackgroundService
     {
         await _startup.WaitForReadyAsync(stoppingToken);
         long? previousPublicationId = null;
+        PublicReadFreezeState? previousFreeze = null;
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -40,6 +41,29 @@ public sealed class PublicationChangeMonitorService : BackgroundService
             {
                 var currentPublicationId =
                     _metaDb.GetPublicationPointerState().CurrentPublicationId;
+                var currentFreeze = _metaDb.GetPublicReadFreezeState();
+                if (previousFreeze is null)
+                {
+                    previousFreeze = currentFreeze;
+                }
+                else if (previousFreeze.IsFrozen &&
+                         string.Equals(
+                             previousFreeze.Reason,
+                             PathRepairMaintenanceService.RankingFreezeReason,
+                             StringComparison.Ordinal) &&
+                         !currentFreeze.IsFrozen &&
+                         currentPublicationId.HasValue)
+                {
+                    _log.LogInformation(
+                        "Path-repair maintenance freeze completed for publication {PublicationId}; invalidating API caches and refreshing connected clients.",
+                        currentPublicationId);
+                    _scrapeLifecycle.InvalidateInProcessCaches();
+                    _songsCache.Invalidate();
+                    await _notifications.NotifyPublicationChangedAsync(
+                        currentPublicationId.Value);
+                }
+                previousFreeze = currentFreeze;
+
                 if (!previousPublicationId.HasValue)
                 {
                     if (currentPublicationId.HasValue)
