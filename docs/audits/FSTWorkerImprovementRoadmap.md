@@ -1341,29 +1341,52 @@ Record:
 Read stdout/stderr concurrently, kill the process tree on cancellation, and use
 the configured FST data directory for scratch.
 
-**Implementation status (2026-08-01): accepted in code; deployment/repair not
-part of this wave**
+**Implementation status (2026-08-01): commit-gate follow-up implemented;
+deployment/repair remain separate**
 
 - One singleton `PathGenerationCoordinator` owns catalog-refresh, admin, and
   worker/startup callers, including progress and songs-cache invalidation.
 - Per-song in-process serialization plus a PostgreSQL row lock/CAS prevents
   admin/background or multi-process races from overwriting a newer generation.
+  The CAS includes both the path revision and exact provider modification
+  timestamp, so stale CHOpt output cannot clear a newer catalog queue entry.
 - Scratch is unique and same-filesystem under
   `DataDirectory/.path-work/<attempt-id>`; CHOpt never writes the live layout.
 - Every expected raw-chart instrument and all four difficulties must pass
-  strict PNG/JSON validation before an immutable generation is moved and its
-  pointer, maxima, DAT identity, timestamps, and runtime identity are promoted
-  atomically.
+  strict validation before an immutable generation is moved. PNG chunks,
+  bounds, CRCs, bounded dimensions, zlib data, scanline filters,
+  IHDR/IDAT/IEND structure, and end-of-file must be coherent;
+  JSON must satisfy the complete path-data contract consumed by the web app.
+  Only then are pointer, maxima, DAT identity, timestamps, and runtime identity
+  promoted atomically.
 - Runtime identity includes bounded `--version`, binary SHA-256, and the
   generation profile. Any identity change invalidates the skip.
+- Automatic generation is separate from explicit generation. It handles only
+  new songs and changed songs with authoritative provider modification
+  timestamps that are already on atomic generations; legacy rows are never
+  migrated at startup. Exact catalog persistence transactionally sets
+  `path_generation_pending` for new rows and changed atomic rows; successful
+  CAS promotion clears it. Changed rows require a non-empty incoming provider
+  timestamp. Missing MIDI, failed/cancelled generation, and
+  service restart therefore remain retryable without treating all missing
+  path state as new. The protected admin route requires one exact song ID.
+- A database trigger rejects mixed-version legacy path writes after an atomic
+  revision exists. `/api/songs` cache installation is fenced by content,
+  public-read safety, and publication revisions; a freeze/isolation transition
+  cannot leak newly built candidate bytes, and a blocked cold miss terminates
+  as no-store HTTP `503` rather than busy-looping. The max-score cache has its
+  own promotion revision fence. A content-mutation epoch starts before the
+  PostgreSQL promotion and ends after it returns, so no cache build can span
+  commit. An open text modal resets when its generation ID changes.
 - Cancellation drains stdout/stderr concurrently, kills the complete process
   tree, removes staging, preserves the prior pointer, and appends a bounded
   error row.
 - Image and JSON readers follow the same generation pointer and use its ID as a
   cache-busting request value; only null-pointer legacy rows use the old layout.
 - Notification delivery and the four-song maintenance repair remain disabled
-  and separate. Production validation still uses the owning `full-scrape-ab`
-  gate; this code acceptance does not authorize live repair or deployment.
+  and separate. Production validation still requires clean-boundary schema
+  initialization, legacy-read smoke tests, final independent review, and the
+  notification quarantine gate; this code does not authorize live repair.
 
 ## Phase WORKER-4: Reduce post-process and ranking time
 

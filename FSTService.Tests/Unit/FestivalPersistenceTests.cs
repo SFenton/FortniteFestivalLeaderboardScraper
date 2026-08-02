@@ -268,6 +268,90 @@ public sealed class FestivalPersistenceTests : IDisposable
         Assert.Equal(
             ReadLiveCatalogHash(),
             result.PersistenceToken.ContentHash);
+        using var conn = _dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT path_generation_pending
+            FROM songs
+            WHERE song_id = 'fixture-song'
+            """;
+        Assert.True((bool)cmd.ExecuteScalar()!);
+    }
+
+    [Fact]
+    public async Task Catalog_sync_requeues_changed_atomic_paths_but_not_legacy_rows()
+    {
+        var persistence = new FestivalPersistence(_dataSource);
+        var atomic = CreateSong("atomic-path", "Atomic");
+        var legacy = CreateSong("legacy-path", "Legacy");
+        await persistence.SaveSongsVersionedAsync([atomic, legacy]);
+
+        await using (var conn = await _dataSource.OpenConnectionAsync())
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                UPDATE songs
+                SET path_generation_pending = FALSE,
+                    path_artifact_generation_id =
+                        CASE song_id
+                            WHEN 'atomic-path' THEN 'generation-1'
+                            ELSE NULL
+                        END
+                WHERE song_id IN ('atomic-path', 'legacy-path')
+                """;
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        atomic.lastModified = atomic.lastModified.AddMinutes(1);
+        legacy.lastModified = legacy.lastModified.AddMinutes(1);
+        await persistence.SaveSongsVersionedAsync([atomic, legacy]);
+
+        await using var verify = await _dataSource.OpenConnectionAsync();
+        await using var query = verify.CreateCommand();
+        query.CommandText = """
+            SELECT song_id, path_generation_pending
+            FROM songs
+            WHERE song_id IN ('atomic-path', 'legacy-path')
+            ORDER BY song_id
+            """;
+        await using var reader = await query.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal("atomic-path", reader.GetString(0));
+        Assert.True(reader.GetBoolean(1));
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal("legacy-path", reader.GetString(0));
+        Assert.False(reader.GetBoolean(1));
+    }
+
+    [Fact]
+    public async Task Catalog_sync_does_not_queue_atomic_row_when_timestamp_is_missing()
+    {
+        var persistence = new FestivalPersistence(_dataSource);
+        var atomic = CreateSong("atomic-no-timestamp", "Atomic");
+        await persistence.SaveSongsVersionedAsync([atomic]);
+        await using (var conn = await _dataSource.OpenConnectionAsync())
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                UPDATE songs
+                SET path_generation_pending = FALSE,
+                    path_artifact_generation_id = 'generation-1'
+                WHERE song_id = 'atomic-no-timestamp'
+                """;
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        atomic.lastModified = DateTime.MinValue;
+        await persistence.SaveSongsVersionedAsync([atomic]);
+
+        await using var verify = await _dataSource.OpenConnectionAsync();
+        await using var query = verify.CreateCommand();
+        query.CommandText = """
+            SELECT path_generation_pending
+            FROM songs
+            WHERE song_id = 'atomic-no-timestamp'
+            """;
+        Assert.False((bool)(await query.ExecuteScalarAsync())!);
     }
 
     [Fact]

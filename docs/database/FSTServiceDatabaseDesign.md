@@ -339,16 +339,35 @@ marker exists on a legacy row).
 and worker/startup path generation. It derives the expected instrument set from
 raw chart-property presence (`gr`, `ba`, `ds`, `vl`, `pg`, `pb`); a present
 property with difficulty `0` is charted, while an absent property is never
-invoked.
+invoked. `Scraper:EnablePathGeneration` permits explicit bounded generation,
+while `Scraper:EnableAutomaticPathGeneration` controls background generation.
+Automatic work includes only new songs and changed songs with an authoritative
+non-null provider modification timestamp that already own an atomic generation.
+New-song eligibility is the durable `songs.path_generation_pending` flag set
+in the same PostgreSQL transaction as exact catalog persistence, not missing
+path metadata, so startup cannot reinterpret an incomplete legacy database as
+a full-catalog migration. Existing legacy rows default false. New rows are
+pending; changed rows become pending only when they already own an atomic
+generation and the incoming provider modification timestamp is non-empty.
+Promotion clears the flag in the same CAS update, so missing MIDI,
+cancellation, configuration failure, CHOpt failure, CAS conflict, and service
+restart remain retryable. Rows with legacy path metadata are never
+migrated implicitly. The admin
+endpoint requires one exact `songId`; full-catalog
+legacy regeneration is deliberately unavailable through that route.
 
 CHOpt writes only beneath the configured
 `DataDirectory/.path-work/<attempt-id>/` staging directory. A candidate is
 complete only when every expected instrument has successful easy, medium,
-hard, and expert invocations, each PNG has a PNG signature and nonzero payload,
-each JSON document parses, and every expert JSON has a positive `totalScore`.
-The coordinator detects the bounded runtime `CHOpt --version` value and binary
-SHA-256 before generation. `Scraper:PathGenerationProfile` versions the
-argument and artifact contract.
+hard, and expert invocations. PNG validation checks chunk bounds, chunk CRCs,
+bounded non-interlaced IHDR dimensions/format, non-empty consecutive IDAT,
+zlib decompression, exact scanline sizes/filter bytes, terminal IEND, and exact
+end-of-file.
+JSON validation requires the complete web path-data root contract, typed
+notes/activations, and a positive expert `totalScore`. The coordinator detects
+the bounded runtime `CHOpt --version` value and binary SHA-256 before
+generation. `Scraper:PathGenerationProfile` versions the argument and artifact
+contract.
 
 Validated artifacts move on the same filesystem to the immutable layout:
 
@@ -367,11 +386,28 @@ the following together:
 | `path_artifact_generation_id` | Reachable immutable artifact generation |
 | `path_expected_instruments` | Canonical raw-property-derived expected set |
 | `path_generation_revision` | Per-song CAS revision |
+| `path_generation_pending` | Durable automatic new/changed-song queue; cleared only by successful promotion |
 | six `max_*_score` fields | Positive expert maxima for the expected set; unsupported instruments remain null |
 | `dat_file_hash`, `song_last_modified` | Exact candidate inputs |
 | `paths_generated_at` | Successful promotion time |
 | `chopt_version`, `chopt_binary_sha256` | Actual runtime identity |
 | `path_generation_profile` | CHOpt argument/artifact contract identity |
+
+Promotion compares both `path_generation_revision` and the exact normalized
+provider `songs.last_modified` value captured by the request. A catalog update
+that commits before the row lock therefore rejects the older CHOpt result and
+leaves `path_generation_pending=true`; an update waiting behind promotion
+requeues the changed atomic row afterward. A stale result cannot clear newer
+catalog work.
+
+The schema also installs
+`trg_reject_incoherent_legacy_path_write`. Once a row owns an atomic revision
+or generation pointer, an old/mixed-version writer cannot change any path
+maxima or identity field without advancing the revision. This converts an
+otherwise silent mixed-generation overwrite into a visible SQLSTATE `55000`
+failure. Rollback therefore disables path generation first; if a generation
+was promoted, restore the affected song row from its pre-deploy snapshot
+before deploying a binary that only understands the legacy artifact layout.
 
 `path_generation_errors` is append-only and deliberately has no secondary
 index. It records bounded detail plus attempt, song, known DAT/runtime
@@ -384,14 +420,29 @@ and safe for a later separately approved retention pass.
 Path image, path JSON, and `/api/songs` metadata resolve the same database
 generation pointer. The web client supplies `pathArtifactGenerationId` to both
 artifact requests, so URL caching is generation-specific and a pointer change
-is rejected instead of mixing image and JSON generations. Rows with a null
-pointer retain the legacy
+is rejected instead of mixing image and JSON generations. The songs cache uses
+an invalidation plus public-read safety token: a response build that began
+before path promotion, freeze/unfreeze, failed-candidate isolation, or
+publication change cannot install or serve its stale generation metadata.
+The coordinator opens the songs-cache content-mutation epoch before entering
+the database promotion transaction and closes it only after the transaction
+returns, eliminating the commit-to-invalidation race.
+`PathDataStore` applies the same revision fence to its five-minute max-score
+cache, so a pre-promotion PostgreSQL read cannot reinstall old maxima or a stale
+generation ID after promotion.
+Blocked installs return through the stable-cache/fail-closed gate instead of
+serving candidate bytes; a cold miss during any freeze returns bounded
+no-store HTTP `503` rather than rebuilding in a loop. An open text
+path modal also treats a generation ID change as a new target and returns to
+its loading phase. Rows with a null pointer retain the legacy
 `paths/<song-id>/<instrument>/<difficulty>.*` read layout; rows with a non-null
 pointer never fall back to legacy or stale files. Promotion does not alter
 scrape IDs, publication pointers, public-read freeze state, rankings, history,
 or notification delivery. The additive columns and error table are
 idempotent; deployment still follows the explicit schema-initializer hold
 described above, with normal lock/long-query checks before the initializer.
+Deploy first with automatic generation disabled, prove legacy reads and the
+single-song admin guard, then enable automatic new/changed atomic-song work.
 
 The publication-critical registered-user refresh contains only recurring
 all-time/current-season `PostScrape` work. Registration backfill and history

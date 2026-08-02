@@ -76,7 +76,8 @@ public static class DatabaseInitializer
             path_generation_profile TEXT,
             path_artifact_generation_id TEXT,
             path_expected_instruments TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
-            path_generation_revision BIGINT NOT NULL DEFAULT 0
+            path_generation_revision BIGINT NOT NULL DEFAULT 0,
+            path_generation_pending BOOLEAN NOT NULL DEFAULT FALSE
         );
 
         ALTER TABLE songs
@@ -91,6 +92,80 @@ public static class DatabaseInitializer
             ADD COLUMN IF NOT EXISTS path_expected_instruments TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
         ALTER TABLE songs
             ADD COLUMN IF NOT EXISTS path_generation_revision BIGINT NOT NULL DEFAULT 0;
+        ALTER TABLE songs
+            ADD COLUMN IF NOT EXISTS path_generation_pending BOOLEAN NOT NULL DEFAULT FALSE;
+
+        CREATE OR REPLACE FUNCTION reject_incoherent_legacy_path_write()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            IF (OLD.path_generation_revision > 0
+                OR OLD.path_artifact_generation_id IS NOT NULL)
+               AND NEW.path_generation_revision = OLD.path_generation_revision
+               AND ROW(
+                    NEW.max_lead_score,
+                    NEW.max_bass_score,
+                    NEW.max_drums_score,
+                    NEW.max_vocals_score,
+                    NEW.max_pro_lead_score,
+                    NEW.max_pro_bass_score,
+                    NEW.dat_file_hash,
+                    NEW.song_last_modified,
+                    NEW.paths_generated_at,
+                    NEW.chopt_version,
+                    NEW.chopt_binary_sha256,
+                    NEW.path_generation_profile,
+                    NEW.path_artifact_generation_id,
+                    NEW.path_expected_instruments)
+                   IS DISTINCT FROM
+                   ROW(
+                    OLD.max_lead_score,
+                    OLD.max_bass_score,
+                    OLD.max_drums_score,
+                    OLD.max_vocals_score,
+                    OLD.max_pro_lead_score,
+                    OLD.max_pro_bass_score,
+                    OLD.dat_file_hash,
+                    OLD.song_last_modified,
+                    OLD.paths_generated_at,
+                    OLD.chopt_version,
+                    OLD.chopt_binary_sha256,
+                    OLD.path_generation_profile,
+                    OLD.path_artifact_generation_id,
+                    OLD.path_expected_instruments)
+            THEN
+                RAISE EXCEPTION
+                    'Legacy path metadata write rejected for song %; atomic generation revision must advance.',
+                    OLD.song_id
+                    USING ERRCODE = '55000';
+            END IF;
+
+            RETURN NEW;
+        END
+        $$;
+
+        DROP TRIGGER IF EXISTS trg_reject_incoherent_legacy_path_write ON songs;
+        CREATE TRIGGER trg_reject_incoherent_legacy_path_write
+        BEFORE UPDATE OF
+            max_lead_score,
+            max_bass_score,
+            max_drums_score,
+            max_vocals_score,
+            max_pro_lead_score,
+            max_pro_bass_score,
+            dat_file_hash,
+            song_last_modified,
+            paths_generated_at,
+            chopt_version,
+            chopt_binary_sha256,
+            path_generation_profile,
+            path_artifact_generation_id,
+            path_expected_instruments,
+            path_generation_revision
+        ON songs
+        FOR EACH ROW
+        EXECUTE FUNCTION reject_incoherent_legacy_path_write();
 
         CREATE TABLE IF NOT EXISTS path_generation_errors (
             id                      BIGSERIAL PRIMARY KEY,

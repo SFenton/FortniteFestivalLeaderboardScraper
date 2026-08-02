@@ -9,6 +9,7 @@ public interface IPathDataStore
 {
     Dictionary<string, PathGenerationState> GetPathGenerationStates();
     PathGenerationState? GetPathGenerationState(string songId);
+    HashSet<string> GetPendingPathGenerationSongIds();
     Dictionary<string, SongMaxScores> GetAllMaxScores();
     Task<PathGenerationPromotionOutcome> TryPromoteGenerationAsync(
         PathGenerationPromotion promotion,

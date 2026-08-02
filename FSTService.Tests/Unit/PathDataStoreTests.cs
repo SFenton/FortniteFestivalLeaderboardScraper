@@ -28,6 +28,24 @@ public sealed class PathDataStoreTests : IDisposable
         cmd.ExecuteNonQuery();
     }
 
+    private void SetCatalogLastModified(
+        string songId,
+        string? lastModified)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE songs
+            SET last_modified = @lastModified
+            WHERE song_id = @songId
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue(
+            "lastModified",
+            (object?)lastModified ?? DBNull.Value);
+        cmd.ExecuteNonQuery();
+    }
+
     [Fact]
     public void GetPathGenerationState_returns_only_songs_with_hashes()
     {
@@ -48,6 +66,26 @@ public sealed class PathDataStoreTests : IDisposable
     {
         var scores = _store.GetAllMaxScores();
         Assert.Empty(scores);
+    }
+
+    [Fact]
+    public void Pending_path_generation_ids_are_durable()
+    {
+        EnsureSongRow("pending");
+        using (var conn = _ds.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                UPDATE songs
+                SET path_generation_pending = TRUE
+                WHERE song_id = 'pending'
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        var pending = _store.GetPendingPathGenerationSongIds();
+        Assert.Single(pending);
+        Assert.Contains("pending", pending);
     }
 
     [Fact]
@@ -139,6 +177,19 @@ public sealed class PathDataStoreTests : IDisposable
     public async Task TryPromoteGenerationAsync_updates_all_fields_atomically_and_rejects_stale_revision()
     {
         EnsureSongRow("atomic");
+        SetCatalogLastModified(
+            "atomic",
+            "2026-08-01T00:00:00.0000000Z");
+        using (var conn = _ds.OpenConnection())
+        using (var pending = conn.CreateCommand())
+        {
+            pending.CommandText = """
+                UPDATE songs
+                SET path_generation_pending = TRUE
+                WHERE song_id = 'atomic'
+                """;
+            pending.ExecuteNonQuery();
+        }
         var runtime = new PathGenerationRuntimeIdentity(
             "2.3.4",
             new string('a', 64),
@@ -178,6 +229,144 @@ public sealed class PathDataStoreTests : IDisposable
         Assert.Equal(runtime.Profile, state.GenerationProfile);
         Assert.Equal(["Solo_Guitar"], state.ExpectedInstruments);
         Assert.Equal(123456, state.MaxScores.MaxLeadScore);
+        Assert.DoesNotContain(
+            "atomic",
+            _store.GetPendingPathGenerationSongIds());
+    }
+
+    [Fact]
+    public async Task Atomic_generation_rejects_legacy_writer_that_does_not_advance_revision()
+    {
+        EnsureSongRow("writer-fence");
+        SetCatalogLastModified(
+            "writer-fence",
+            "2026-08-01T00:00:00.0000000Z");
+        var runtime = new PathGenerationRuntimeIdentity(
+            "2.3.4",
+            new string('a', 64),
+            "profile-v2");
+        var promotion = new PathGenerationPromotion(
+            "attempt-1",
+            "writer-fence",
+            0,
+            "generation-1",
+            "dat-hash",
+            "2026-08-01T00:00:00.0000000Z",
+            DateTime.UtcNow,
+            runtime,
+            ["Solo_Guitar"],
+            new SongMaxScores { MaxLeadScore = 123456 });
+        Assert.Equal(
+            PathGenerationPromotionOutcome.Promoted,
+            await _store.TryPromoteGenerationAsync(
+                promotion,
+                CancellationToken.None));
+
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE songs
+            SET max_lead_score = 654321,
+                dat_file_hash = 'legacy-overwrite',
+                paths_generated_at = now(),
+                chopt_version = '1.15.1'
+            WHERE song_id = 'writer-fence'
+            """;
+        var error = Assert.Throws<Npgsql.PostgresException>(
+            () => cmd.ExecuteNonQuery());
+        Assert.Equal("55000", error.SqlState);
+
+        var state = _store.GetPathGenerationState("writer-fence");
+        Assert.NotNull(state);
+        Assert.Equal(1, state!.Revision);
+        Assert.Equal("generation-1", state.ArtifactGenerationId);
+        Assert.Equal("dat-hash", state.DatFileHash);
+        Assert.Equal(123456, state.MaxScores.MaxLeadScore);
+    }
+
+    [Fact]
+    public async Task Promotion_rejects_stale_catalog_identity_and_preserves_pending_work()
+    {
+        EnsureSongRow("catalog-race");
+        SetCatalogLastModified(
+            "catalog-race",
+            "2026-08-01T00:00:00.0000000Z");
+        using (var conn = _ds.OpenConnection())
+        using (var pending = conn.CreateCommand())
+        {
+            pending.CommandText = """
+                UPDATE songs
+                SET path_generation_pending = TRUE
+                WHERE song_id = 'catalog-race'
+                """;
+            pending.ExecuteNonQuery();
+        }
+        var promotion = new PathGenerationPromotion(
+            "attempt-stale",
+            "catalog-race",
+            0,
+            "generation-stale",
+            "dat-hash",
+            "2026-08-01T00:00:00.0000000Z",
+            DateTime.UtcNow,
+            new PathGenerationRuntimeIdentity(
+                "2.3.4",
+                new string('a', 64),
+                "profile-v2"),
+            ["Solo_Guitar"],
+            new SongMaxScores { MaxLeadScore = 123456 });
+
+        SetCatalogLastModified(
+            "catalog-race",
+            "2026-08-02T00:00:00.0000000Z");
+        var outcome = await _store.TryPromoteGenerationAsync(
+            promotion,
+            CancellationToken.None);
+
+        Assert.Equal(PathGenerationPromotionOutcome.Conflict, outcome);
+        var state = _store.GetPathGenerationState("catalog-race");
+        Assert.NotNull(state);
+        Assert.Equal(0, state!.Revision);
+        Assert.Null(state.ArtifactGenerationId);
+        Assert.Contains(
+            "catalog-race",
+            _store.GetPendingPathGenerationSongIds());
+    }
+
+    [Fact]
+    public void Stale_max_score_query_cannot_reinstall_after_invalidation()
+    {
+        var flags =
+            System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.NonPublic;
+        var revisionField = typeof(PathDataStore).GetField(
+            "_maxScoresCacheRevision",
+            flags)!;
+        var invalidate = typeof(PathDataStore).GetMethod(
+            "InvalidateMaxScoresCache",
+            flags)!;
+        var install = typeof(PathDataStore).GetMethod(
+            "TryInstallMaxScoresCache",
+            flags)!;
+        var revision = (long)revisionField.GetValue(_store)!;
+        invalidate.Invoke(_store, null);
+
+        var installed = (bool)install.Invoke(
+            _store,
+            [
+                new Dictionary<string, SongMaxScores>
+                {
+                    ["stale"] = new SongMaxScores
+                    {
+                        MaxLeadScore = 1,
+                        ArtifactGenerationId = "stale-generation",
+                    },
+                },
+                revision,
+            ])!;
+
+        Assert.False(installed);
+        Assert.Empty(_store.GetAllMaxScores());
     }
 
     [Fact]

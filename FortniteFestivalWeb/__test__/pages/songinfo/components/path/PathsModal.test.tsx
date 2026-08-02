@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import PathsModal from '../../../../../src/pages/songinfo/components/path/PathsModal';
+import PathsModal, {
+  isCurrentPathTextRevision,
+} from '../../../../../src/pages/songinfo/components/path/PathsModal';
 
 /* ── Mocks ── */
 
@@ -575,4 +577,10 @@ describe('PathsModal', () => {
       expect(lastImg!.src).toContain('/expert');
     });
   });
+
+  it('rejects callbacks from a previous text generation revision', () => {
+    expect(isCurrentPathTextRevision(2, 1)).toBe(false);
+    expect(isCurrentPathTextRevision(2, 2)).toBe(true);
+  });
+
 });

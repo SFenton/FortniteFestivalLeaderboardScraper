@@ -187,6 +187,9 @@ public sealed class PathArtifactEndpointTests : IDisposable
         public PathGenerationState? GetPathGenerationState(string songId)
             => songId == state.SongId ? state : null;
 
+        public HashSet<string> GetPendingPathGenerationSongIds()
+            => [];
+
         public Dictionary<string, SongMaxScores> GetAllMaxScores()
             => new(StringComparer.Ordinal) { [state.SongId] = state.MaxScores };
 

@@ -58,12 +58,15 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
         {
             await _startup.WaitForReadyAsync(stoppingToken);
             _log.LogInformation(
-                "SongCatalogRefreshWorker starting. Interval={Interval}, PathGeneration={PathGenerationEnabled}",
+                "SongCatalogRefreshWorker starting. Interval={Interval}, PathGeneration={PathGenerationEnabled}, AutomaticPathGeneration={AutomaticPathGenerationEnabled}",
                 _options.Value.SongSyncInterval,
-                _options.Value.EnablePathGeneration);
+                _options.Value.EnablePathGeneration,
+                _options.Value.EnableAutomaticPathGeneration);
 
             PrimeSongsCache();
-            _ = Task.Run(() => TryGeneratePathsAsync(force: false, stoppingToken), CancellationToken.None);
+            _ = Task.Run(
+                () => TryGeneratePathsAsync(stoppingToken),
+                CancellationToken.None);
 
             while (!stoppingToken.IsCancellationRequested)
             {
@@ -86,7 +89,7 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
         try
         {
             var before = _festivalService.Songs.Count;
-            await _festivalService.SyncSongsAsync();
+            await _festivalService.SyncSongsWithResultAsync();
             var after = _festivalService.Songs.Count;
             var added = Math.Max(0, after - before);
 
@@ -105,7 +108,7 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
                 _log.LogDebug("Song catalog refresh: {Total} songs in catalog (no changes).", after);
             }
 
-            await TryGeneratePathsAsync(force: false, ct);
+            await TryGeneratePathsAsync(ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -113,10 +116,11 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
         }
     }
 
-    private async Task<bool> TryGeneratePathsAsync(bool force, CancellationToken ct)
+    private async Task<bool> TryGeneratePathsAsync(CancellationToken ct)
     {
         var opts = _options.Value;
-        if (!opts.EnablePathGeneration)
+        if (!opts.EnablePathGeneration ||
+            !opts.EnableAutomaticPathGeneration)
             return false;
 
         try
@@ -127,9 +131,8 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
             if (songs.Count == 0)
                 return false;
 
-            var result = await _pathGeneration.GeneratePathsAsync(
+            var result = await _pathGeneration.GenerateAutomaticPathsAsync(
                 songs,
-                force,
                 ct);
             return result.Changed;
         }

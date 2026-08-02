@@ -17,6 +17,7 @@ public sealed class PathDataStore : IPathDataStore
     // ── In-memory cache for max scores (rarely changes) ──
     private Dictionary<string, SongMaxScores>? _maxScoresCache;
     private DateTime _maxScoresCacheTime;
+    private long _maxScoresCacheRevision;
     private readonly object _maxScoresCacheLock = new();
     private static readonly TimeSpan MaxScoresCacheTtl = TimeSpan.FromMinutes(5);
 
@@ -59,58 +60,81 @@ public sealed class PathDataStore : IPathDataStore
         return r.Read() ? ReadPathGenerationState(r) : null;
     }
 
-    public Dictionary<string, SongMaxScores> GetAllMaxScores()
+    public HashSet<string> GetPendingPathGenerationSongIds()
     {
-        lock (_maxScoresCacheLock)
-        {
-            if (_maxScoresCache is not null && DateTime.UtcNow - _maxScoresCacheTime < MaxScoresCacheTtl)
-                return _maxScoresCache;
-        }
-
-        var result = new Dictionary<string, SongMaxScores>(StringComparer.OrdinalIgnoreCase);
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT song_id,
-                   max_lead_score, max_bass_score, max_drums_score,
-                   max_vocals_score, max_pro_lead_score, max_pro_bass_score,
-                   paths_generated_at, chopt_version, chopt_binary_sha256,
-                   path_generation_profile, path_artifact_generation_id,
-                   COALESCE(path_expected_instruments, ARRAY[]::TEXT[])
+            SELECT song_id
             FROM songs
-            WHERE max_lead_score IS NOT NULL
-               OR max_bass_score IS NOT NULL
-               OR max_drums_score IS NOT NULL
-               OR max_vocals_score IS NOT NULL
-               OR max_pro_lead_score IS NOT NULL
-               OR max_pro_bass_score IS NOT NULL
+            WHERE path_generation_pending
+            ORDER BY song_id
             """;
-        using var r = cmd.ExecuteReader();
-        while (r.Read())
-        {
-            result[r.GetString(0)] = new SongMaxScores
-            {
-                MaxLeadScore = r.IsDBNull(1) ? null : r.GetInt32(1),
-                MaxBassScore = r.IsDBNull(2) ? null : r.GetInt32(2),
-                MaxDrumsScore = r.IsDBNull(3) ? null : r.GetInt32(3),
-                MaxVocalsScore = r.IsDBNull(4) ? null : r.GetInt32(4),
-                MaxProLeadScore = r.IsDBNull(5) ? null : r.GetInt32(5),
-                MaxProBassScore = r.IsDBNull(6) ? null : r.GetInt32(6),
-                GeneratedAt = r.IsDBNull(7) ? null : r.GetDateTime(7).ToString("o"),
-                CHOptVersion = r.IsDBNull(8) ? null : r.GetString(8),
-                CHOptBinarySha256 = r.IsDBNull(9) ? null : r.GetString(9),
-                GenerationProfile = r.IsDBNull(10) ? null : r.GetString(10),
-                ArtifactGenerationId = r.IsDBNull(11) ? null : r.GetString(11),
-                ExpectedInstruments = r.GetFieldValue<string[]>(12),
-            };
-        }
-
-        lock (_maxScoresCacheLock)
-        {
-            _maxScoresCache = result;
-            _maxScoresCacheTime = DateTime.UtcNow;
-        }
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            result.Add(reader.GetString(0));
         return result;
+    }
+
+    public Dictionary<string, SongMaxScores> GetAllMaxScores()
+    {
+        while (true)
+        {
+            long revision;
+            lock (_maxScoresCacheLock)
+            {
+                if (_maxScoresCache is not null &&
+                    DateTime.UtcNow - _maxScoresCacheTime < MaxScoresCacheTtl)
+                {
+                    return _maxScoresCache;
+                }
+
+                revision = _maxScoresCacheRevision;
+            }
+
+            var result = new Dictionary<string, SongMaxScores>(
+                StringComparer.OrdinalIgnoreCase);
+            using var conn = _ds.OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT song_id,
+                       max_lead_score, max_bass_score, max_drums_score,
+                       max_vocals_score, max_pro_lead_score, max_pro_bass_score,
+                       paths_generated_at, chopt_version, chopt_binary_sha256,
+                       path_generation_profile, path_artifact_generation_id,
+                       COALESCE(path_expected_instruments, ARRAY[]::TEXT[])
+                FROM songs
+                WHERE max_lead_score IS NOT NULL
+                   OR max_bass_score IS NOT NULL
+                   OR max_drums_score IS NOT NULL
+                   OR max_vocals_score IS NOT NULL
+                   OR max_pro_lead_score IS NOT NULL
+                   OR max_pro_bass_score IS NOT NULL
+                """;
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                result[r.GetString(0)] = new SongMaxScores
+                {
+                    MaxLeadScore = r.IsDBNull(1) ? null : r.GetInt32(1),
+                    MaxBassScore = r.IsDBNull(2) ? null : r.GetInt32(2),
+                    MaxDrumsScore = r.IsDBNull(3) ? null : r.GetInt32(3),
+                    MaxVocalsScore = r.IsDBNull(4) ? null : r.GetInt32(4),
+                    MaxProLeadScore = r.IsDBNull(5) ? null : r.GetInt32(5),
+                    MaxProBassScore = r.IsDBNull(6) ? null : r.GetInt32(6),
+                    GeneratedAt = r.IsDBNull(7) ? null : r.GetDateTime(7).ToString("o"),
+                    CHOptVersion = r.IsDBNull(8) ? null : r.GetString(8),
+                    CHOptBinarySha256 = r.IsDBNull(9) ? null : r.GetString(9),
+                    GenerationProfile = r.IsDBNull(10) ? null : r.GetString(10),
+                    ArtifactGenerationId = r.IsDBNull(11) ? null : r.GetString(11),
+                    ExpectedInstruments = r.GetFieldValue<string[]>(12),
+                };
+            }
+
+            if (TryInstallMaxScoresCache(result, revision))
+                return result;
+        }
     }
 
     // Test seeding only. Runtime promotions go through the CAS transaction below.
@@ -161,10 +185,7 @@ public sealed class PathDataStore : IPathDataStore
         if (affected == 0)
             _log?.LogWarning("UpdateMaxScores: 0 rows affected for song {SongId}. Song may not exist in PG songs table.", songId);
 
-        lock (_maxScoresCacheLock)
-        {
-            _maxScoresCache = null; // invalidate cache
-        }
+        InvalidateMaxScoresCache();
     }
 
     public async Task<PathGenerationPromotionOutcome> TryPromoteGenerationAsync(
@@ -175,27 +196,35 @@ public sealed class PathDataStore : IPathDataStore
         await using var tx = await conn.BeginTransactionAsync(ct);
 
         long currentRevision;
+        string? currentCatalogLastModified;
         await using (var lockCmd = conn.CreateCommand())
         {
             lockCmd.Transaction = tx;
             lockCmd.CommandText = """
-                SELECT path_generation_revision
+                SELECT path_generation_revision,
+                       NULLIF(last_modified, '')
                 FROM songs
                 WHERE song_id = @songId
                 FOR UPDATE
                 """;
             lockCmd.Parameters.AddWithValue("songId", promotion.SongId);
-            var value = await lockCmd.ExecuteScalarAsync(ct);
-            if (value is null)
+            await using var reader = await lockCmd.ExecuteReaderAsync(ct);
+            if (!await reader.ReadAsync(ct))
             {
                 await tx.RollbackAsync(ct);
                 return PathGenerationPromotionOutcome.SongMissing;
             }
 
-            currentRevision = Convert.ToInt64(value);
+            currentRevision = reader.GetInt64(0);
+            currentCatalogLastModified =
+                reader.IsDBNull(1) ? null : reader.GetString(1);
         }
 
-        if (currentRevision != promotion.ExpectedRevision)
+        if (currentRevision != promotion.ExpectedRevision ||
+            !string.Equals(
+                NormalizeLastModified(currentCatalogLastModified),
+                NormalizeLastModified(promotion.SongLastModified),
+                StringComparison.Ordinal))
         {
             await tx.RollbackAsync(ct);
             return PathGenerationPromotionOutcome.Conflict;
@@ -220,7 +249,8 @@ public sealed class PathDataStore : IPathDataStore
                     path_generation_profile = @profile,
                     path_artifact_generation_id = @generationId,
                     path_expected_instruments = @expectedInstruments,
-                    path_generation_revision = path_generation_revision + 1
+                    path_generation_revision = path_generation_revision + 1,
+                    path_generation_pending = FALSE
                 WHERE song_id = @songId
                 """;
             update.Parameters.AddWithValue("songId", promotion.SongId);
@@ -319,7 +349,25 @@ public sealed class PathDataStore : IPathDataStore
     private void InvalidateMaxScoresCache()
     {
         lock (_maxScoresCacheLock)
+        {
+            _maxScoresCacheRevision++;
             _maxScoresCache = null;
+        }
+    }
+
+    private bool TryInstallMaxScoresCache(
+        Dictionary<string, SongMaxScores> result,
+        long expectedRevision)
+    {
+        lock (_maxScoresCacheLock)
+        {
+            if (_maxScoresCacheRevision != expectedRevision)
+                return false;
+
+            _maxScoresCache = result;
+            _maxScoresCacheTime = DateTime.UtcNow;
+            return true;
+        }
     }
 
     private static string BoundDetail(string detail)
@@ -330,6 +378,9 @@ public sealed class PathDataStore : IPathDataStore
             ? sanitized
             : sanitized[..maxLength];
     }
+
+    private static string? NormalizeLastModified(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value;
 
     private const string PathGenerationStateSelect = """
         SELECT song_id,

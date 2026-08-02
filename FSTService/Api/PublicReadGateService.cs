@@ -2,6 +2,11 @@ using FSTService.Persistence;
 
 namespace FSTService.Api;
 
+public readonly record struct PublicReadCacheSafetySnapshot(
+    bool IsFrozen,
+    bool FailedCandidateIsolationActive,
+    long Revision);
+
 public sealed class PublicReadGateService
 {
     private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(2);
@@ -12,6 +17,7 @@ public sealed class PublicReadGateService
     private bool _cachedRequiresCachedReads;
     private bool _cachedFailedCandidateIsolation;
     private DateTime _cachedAtUtc = DateTime.MinValue;
+    private long _stateRevision;
 
     public PublicReadGateService(IMetaDatabase metaDb, ILogger<PublicReadGateService> log)
     {
@@ -43,6 +49,18 @@ public sealed class PublicReadGateService
         }
     }
 
+    public PublicReadCacheSafetySnapshot GetCacheSafetySnapshot()
+    {
+        var state = GetState();
+        lock (_lock)
+        {
+            return new PublicReadCacheSafetySnapshot(
+                state.IsFrozen,
+                _cachedFailedCandidateIsolation,
+                _stateRevision);
+        }
+    }
+
     public PublicReadFreezeState GetState()
     {
         var now = DateTime.UtcNow;
@@ -57,6 +75,10 @@ public sealed class PublicReadGateService
 
             try
             {
+                var previousState = _cachedState;
+                var previousRequiresCachedReads = _cachedRequiresCachedReads;
+                var previousFailedCandidateIsolation =
+                    _cachedFailedCandidateIsolation;
                 var freezeState = _metaDb.GetPublicReadFreezeState();
                 var failedCandidateIsolation =
                     _metaDb.GetFailedCandidateReadIsolationState()
@@ -65,6 +87,13 @@ public sealed class PublicReadGateService
                     failedCandidateIsolation.IsFrozen;
                 _cachedRequiresCachedReads = failedCandidateIsolation.IsFrozen;
                 _cachedState = freezeState.IsFrozen ? freezeState : failedCandidateIsolation;
+                if (previousState != _cachedState ||
+                    previousRequiresCachedReads != _cachedRequiresCachedReads ||
+                    previousFailedCandidateIsolation
+                        != _cachedFailedCandidateIsolation)
+                {
+                    _stateRevision++;
+                }
             }
             catch (Exception ex)
             {
@@ -76,6 +105,7 @@ public sealed class PublicReadGateService
                     "read-safety-state-unavailable");
                 _cachedRequiresCachedReads = true;
                 _cachedFailedCandidateIsolation = false;
+                _stateRevision++;
             }
 
             _cachedAtUtc = now;
@@ -88,6 +118,7 @@ public sealed class PublicReadGateService
         lock (_lock)
         {
             _cachedAtUtc = DateTime.MinValue;
+            _stateRevision++;
         }
     }
 }

@@ -241,6 +241,13 @@ public static partial class ApiEndpoints
         {
             if (!scraperOptions.Value.EnablePathGeneration)
                 return Results.BadRequest(new { error = "Path generation is disabled." });
+            if (string.IsNullOrWhiteSpace(songId))
+            {
+                return Results.BadRequest(new
+                {
+                    error = "songId is required. Full-catalog legacy migration is not available through this endpoint."
+                });
+            }
 
             if (festivalService.Songs.Count == 0)
             {
@@ -251,7 +258,7 @@ public static partial class ApiEndpoints
 
             var allSongs = festivalService.Songs
                 .Where(s => s.track?.su is not null && !string.IsNullOrEmpty(s.track.mu))
-                .Where(s => songId is null || s.track.su == songId)
+                .Where(s => s.track.su == songId)
                 .ToList();
             if (allSongs.Count == 0)
                 return Results.NotFound(new { error = "No matching songs found." });
@@ -279,9 +286,7 @@ public static partial class ApiEndpoints
 
             return Results.Accepted(value: new
             {
-                message = songId is not null
-                    ? $"Path regeneration started for song {songId}."
-                    : $"Path regeneration started for {allSongs.Count} song(s).",
+                message = $"Path regeneration started for song {songId}.",
                 force = force ?? false,
             });
         })

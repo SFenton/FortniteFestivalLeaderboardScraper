@@ -6,6 +6,19 @@ using FSTService.Scraping;
 
 namespace FSTService.Api;
 
+internal readonly record struct SongsCacheBuildToken(
+    long ContentRevision,
+    PublicReadCacheSafetySnapshot Safety,
+    long? PublicationId,
+    bool ContentMutationInProgress);
+
+internal enum SongsCacheWriteResult
+{
+    Stored,
+    Stale,
+    Blocked,
+}
+
 /// <summary>
 /// Caches the serialized /api/songs JSON response and its ETag.
 /// Primed eagerly after scrape passes, path generation, and catalog sync.
@@ -14,29 +27,37 @@ namespace FSTService.Api;
 public sealed class SongsCacheService
 {
     private readonly object _lock = new();
-    private readonly Func<bool> _isFrozen;
-    private readonly Func<bool> _isFailedCandidateIsolation;
+    private readonly Func<PublicReadCacheSafetySnapshot> _safetyProvider;
     private readonly Func<long?>? _publicationIdProvider;
     private readonly TimeSpan _cacheTtl;
     private byte[]? _cachedJson;
     private string? _etag;
     private DateTime _cachedAt;
     private long? _publicationId;
+    private long _contentRevision;
+    private int _contentMutationDepth;
     private static readonly TimeSpan DefaultCacheTtl = TimeSpan.FromMinutes(5);
 
     public SongsCacheService(
         PublicReadGateService? publicReadGate = null,
         Func<long?>? publicationIdProvider = null)
         : this(
-            () => publicReadGate?.IsFrozen ?? false,
+            publicReadGate is null
+                ? static () => default
+                : publicReadGate.GetCacheSafetySnapshot,
             DefaultCacheTtl,
-            () => publicReadGate?.FailedCandidateIsolationActive ?? false,
             publicationIdProvider)
     {
     }
 
     public SongsCacheService(Func<bool> isFrozen, TimeSpan cacheTtl)
-        : this(isFrozen, cacheTtl, static () => false, null)
+        : this(
+            () => new PublicReadCacheSafetySnapshot(
+                isFrozen(),
+                false,
+                0),
+            cacheTtl,
+            null)
     {
     }
 
@@ -45,12 +66,24 @@ public sealed class SongsCacheService
         TimeSpan cacheTtl,
         Func<bool> isFailedCandidateIsolation,
         Func<long?>? publicationIdProvider = null)
+        : this(
+            () => new PublicReadCacheSafetySnapshot(
+                isFrozen(),
+                isFailedCandidateIsolation(),
+                0),
+            cacheTtl,
+            publicationIdProvider)
     {
-        _isFrozen = isFrozen ?? throw new ArgumentNullException(nameof(isFrozen));
-        _isFailedCandidateIsolation =
-            isFailedCandidateIsolation
-            ?? throw new ArgumentNullException(
-                nameof(isFailedCandidateIsolation));
+    }
+
+    internal SongsCacheService(
+        Func<PublicReadCacheSafetySnapshot> safetyProvider,
+        TimeSpan cacheTtl,
+        Func<long?>? publicationIdProvider = null)
+    {
+        _safetyProvider =
+            safetyProvider
+            ?? throw new ArgumentNullException(nameof(safetyProvider));
         _publicationIdProvider = publicationIdProvider;
         _cacheTtl = cacheTtl;
     }
@@ -60,14 +93,17 @@ public sealed class SongsCacheService
     /// </summary>
     public (byte[] Json, string ETag)? Get()
     {
+        var safety = _safetyProvider();
         lock (_lock)
         {
-            if (ClearForFailedCandidateIsolation())
+            if (ClearForFailedCandidateIsolation(safety))
                 return null;
             if (ClearForPublicationMismatch())
                 return null;
 
-            if (_cachedJson is not null && (_isFrozen() || DateTime.UtcNow - _cachedAt < _cacheTtl))
+            if (_cachedJson is not null &&
+                (safety.IsFrozen ||
+                 DateTime.UtcNow - _cachedAt < _cacheTtl))
                 return (_cachedJson, _etag!);
             return null;
         }
@@ -79,9 +115,10 @@ public sealed class SongsCacheService
     /// </summary>
     public (byte[] Json, string ETag)? GetStale()
     {
+        var safety = _safetyProvider();
         lock (_lock)
         {
-            if (ClearForFailedCandidateIsolation())
+            if (ClearForFailedCandidateIsolation(safety))
                 return null;
             if (ClearForPublicationMismatch())
                 return null;
@@ -96,13 +133,15 @@ public sealed class SongsCacheService
     public string Set(byte[] json)
     {
         var etag = ResponseCacheService.ComputeETag(json);
+        var safety = _safetyProvider();
         lock (_lock)
         {
-            if (ClearForFailedCandidateIsolation())
+            if (ClearForFailedCandidateIsolation(safety))
                 return etag;
-            if (_isFrozen())
+            if (safety.IsFrozen)
                 return etag;
 
+            _contentRevision++;
             _cachedJson = json;
             _etag = etag;
             _cachedAt = DateTime.UtcNow;
@@ -118,17 +157,99 @@ public sealed class SongsCacheService
     {
         lock (_lock)
         {
+            _contentRevision++;
             _cachedJson = null;
             _etag = null;
             _publicationId = null;
         }
     }
 
-    private bool ClearForFailedCandidateIsolation()
+    internal SongsCacheBuildToken CaptureBuildToken()
     {
-        if (!_isFailedCandidateIsolation())
+        var safety = _safetyProvider();
+        var publicationId = _publicationIdProvider?.Invoke();
+        lock (_lock)
+        {
+            return new SongsCacheBuildToken(
+                _contentRevision,
+                safety,
+                publicationId,
+                _contentMutationDepth > 0);
+        }
+    }
+
+    internal SongsCacheWriteResult TrySetIfBuildTokenUnchanged(
+        byte[] json,
+        SongsCacheBuildToken token,
+        out string etag)
+    {
+        etag = ResponseCacheService.ComputeETag(json);
+        var safety = _safetyProvider();
+        var publicationId = _publicationIdProvider?.Invoke();
+        lock (_lock)
+        {
+            if (_contentRevision != token.ContentRevision ||
+                safety.Revision != token.Safety.Revision ||
+                publicationId != token.PublicationId)
+            {
+                return SongsCacheWriteResult.Stale;
+            }
+
+            if (safety.IsFrozen ||
+                safety.FailedCandidateIsolationActive ||
+                token.Safety.IsFrozen ||
+                token.Safety.FailedCandidateIsolationActive ||
+                token.ContentMutationInProgress ||
+                _contentMutationDepth > 0)
+            {
+                return SongsCacheWriteResult.Blocked;
+            }
+
+            _contentRevision++;
+            _cachedJson = json;
+            _etag = etag;
+            _cachedAt = DateTime.UtcNow;
+            _publicationId = publicationId;
+            return SongsCacheWriteResult.Stored;
+        }
+    }
+
+    internal IDisposable BeginContentMutation()
+    {
+        lock (_lock)
+        {
+            _contentMutationDepth++;
+            _contentRevision++;
+            _cachedJson = null;
+            _etag = null;
+            _publicationId = null;
+        }
+
+        return new ContentMutationLease(this);
+    }
+
+    private void EndContentMutation()
+    {
+        lock (_lock)
+        {
+            if (_contentMutationDepth <= 0)
+                return;
+
+            _contentMutationDepth--;
+            _contentRevision++;
+            _cachedJson = null;
+            _etag = null;
+            _publicationId = null;
+        }
+    }
+
+    private bool ClearForFailedCandidateIsolation(
+        PublicReadCacheSafetySnapshot safety)
+    {
+        if (!safety.FailedCandidateIsolationActive)
             return false;
 
+        _contentRevision++;
         _cachedJson = null;
         _etag = null;
         _publicationId = null;
@@ -147,6 +268,7 @@ public sealed class SongsCacheService
         _cachedJson = null;
         _etag = null;
         _publicationId = null;
+        _contentRevision++;
         return true;
     }
 
@@ -162,8 +284,26 @@ public sealed class SongsCacheService
         ScrapeTimePrecomputer precomputer,
         JsonSerializerOptions jsonOpts)
     {
-        var jsonBytes = BuildSongsJson(service, pathStore, metaDb, persistence, precomputer, jsonOpts);
-        Set(jsonBytes);
+        while (true)
+        {
+            var token = CaptureBuildToken();
+            var jsonBytes = BuildSongsJson(
+                service,
+                pathStore,
+                metaDb,
+                persistence,
+                precomputer,
+                jsonOpts);
+            var result = TrySetIfBuildTokenUnchanged(
+                jsonBytes,
+                token,
+                out _);
+            if (result is SongsCacheWriteResult.Stored
+                or SongsCacheWriteResult.Blocked)
+            {
+                return;
+            }
+        }
     }
 
     /// <summary>
@@ -273,4 +413,20 @@ public sealed class SongsCacheService
         => url is not null && url.StartsWith(ApiEndpoints.AlbumArtPrefix, StringComparison.Ordinal)
             ? url[ApiEndpoints.AlbumArtPrefix.Length..]
             : url;
+
+    private sealed class ContentMutationLease : IDisposable
+    {
+        private SongsCacheService? _owner;
+
+        public ContentMutationLease(SongsCacheService owner)
+        {
+            _owner = owner;
+        }
+
+        public void Dispose()
+        {
+            Interlocked.Exchange(ref _owner, null)?
+                .EndContentMutation();
+        }
+    }
 }

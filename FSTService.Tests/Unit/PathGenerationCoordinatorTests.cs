@@ -15,6 +15,8 @@ namespace FSTService.Tests.Unit;
 
 public sealed class PathGenerationCoordinatorTests : IDisposable
 {
+    private const string ValidPngBase64 =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
     private readonly string _dataDirectory;
     private readonly byte[] _midiKey = new byte[32];
     private readonly byte[] _encryptedDat;
@@ -62,6 +64,47 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
 
         Assert.NotNull(request);
         Assert.Equal(["Solo_Guitar"], request!.ExpectedInstruments);
+    }
+
+    [Fact]
+    public async Task Automatic_generation_processes_only_durable_pending_rows()
+    {
+        var chopt = CreateChoptScript();
+        var store = new FakePathDataStore();
+        store.EnsureSong("pending");
+        store.Seed(new PathGenerationState(
+            "legacy",
+            0,
+            "legacy-hash",
+            UtcDate(1).ToString("o"),
+            DateTime.UtcNow,
+            "1.15.1",
+            null,
+            null,
+            null,
+            ["Solo_Guitar"],
+            new SongMaxScores { MaxLeadScore = 77_777 }));
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            new StaticDatHandler(_encryptedDat));
+
+        var result = await coordinator.GenerateAutomaticPathsAsync(
+            [
+                CreateSong("pending", new In { gr = 0 }, UtcDate(2)),
+                CreateSong("legacy", new In { gr = 0 }, UtcDate(2)),
+            ],
+            CancellationToken.None);
+
+        Assert.Equal(1, result.Requested);
+        Assert.Equal(1, result.Promoted);
+        Assert.NotNull(
+            store.GetPathGenerationState("pending")!
+                .ArtifactGenerationId);
+        Assert.Null(
+            store.GetPathGenerationState("legacy")!
+                .ArtifactGenerationId);
+        Assert.Empty(store.GetPendingPathGenerationSongIds());
     }
 
     [Fact]
@@ -145,6 +188,8 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
     [InlineData("missing-png")]
     [InlineData("empty-png")]
     [InlineData("bad-png")]
+    [InlineData("signature-only-png")]
+    [InlineData("missing-notes")]
     [InlineData("zero-expert")]
     public async Task Invalid_artifacts_fail_without_promotion(string mode)
     {
@@ -677,9 +722,11 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
                     $"{difficulty}.png"));
                 File.WriteAllText(
                     Path.Combine(instrumentDirectory, $"{difficulty}.json"),
-                    difficulty == "expert"
-                        ? """{"totalScore":111111}"""
-                        : """{"totalScore":100}""");
+                    BuildValidPathJson(
+                        difficulty == "expert"
+                            ? 111_111
+                            : 100,
+                        difficulty));
             }
         }
 
@@ -762,18 +809,20 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
               missing-png) ;;
               empty-png) : > "$out" ;;
               bad-png) printf 'not-a-png' > "$out" ;;
-              *) printf '\211PNG\r\n\032\nFAKE' > "$out" ;;
+              signature-only-png) printf '\211PNG\r\n\032\n' > "$out" ;;
+              *) printf '%s' '{{ValidPngBase64}}' | base64 -d > "$out" ;;
             esac
             case "{{behavior.Mode}}" in
               malformed-json) printf '{' ;;
+              missing-notes) printf '%s' '{{BuildValidPathJson(123_456, "expert").Replace(",\"notes\":[]", "", StringComparison.Ordinal)}}' ;;
               zero-expert)
                 if [ "$difficulty" = "expert" ]; then
-                  printf '{"totalScore":0}'
+                  printf '%s' '{{BuildValidPathJson(0, "expert")}}'
                 else
-                  printf '{"totalScore":100}'
+                  printf '%s' '{{BuildValidPathJson(100, "easy")}}'
                 fi
                 ;;
-              *) printf '{"totalScore":123456}' ;;
+              *) printf '%s' '{{BuildValidPathJson(123_456, "expert")}}' ;;
             esac
             """;
         File.WriteAllText(path, script);
@@ -811,11 +860,13 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
             if "{{mode}}"=="missing-png" goto json
             if "{{mode}}"=="empty-png" type nul > "%out%" & goto json
             if "{{mode}}"=="bad-png" echo bad> "%out%" & goto json
-            powershell -NoProfile -Command "[IO.File]::WriteAllBytes('%out%', [byte[]](137,80,78,71,13,10,26,10,70,65,75,69))"
+            if "{{mode}}"=="signature-only-png" powershell -NoProfile -Command "[IO.File]::WriteAllBytes('%out%', [byte[]](137,80,78,71,13,10,26,10))" & goto json
+            powershell -NoProfile -Command "[IO.File]::WriteAllBytes('%out%', [Convert]::FromBase64String('{{ValidPngBase64}}'))"
             :json
             if "{{mode}}"=="malformed-json" echo {
-            if "{{mode}}"=="zero-expert" echo {"totalScore":0}
-            if not "{{mode}}"=="malformed-json" if not "{{mode}}"=="zero-expert" echo {"totalScore":123456}
+            if "{{mode}}"=="missing-notes" echo {{BuildValidPathJson(123_456, "expert").Replace(",\"notes\":[]", "", StringComparison.Ordinal)}}
+            if "{{mode}}"=="zero-expert" echo {{BuildValidPathJson(0, "expert")}}
+            if not "{{mode}}"=="malformed-json" if not "{{mode}}"=="missing-notes" if not "{{mode}}"=="zero-expert" echo {{BuildValidPathJson(123_456, "expert")}}
             """;
         File.WriteAllText(path, script);
         return path;
@@ -866,7 +917,12 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
     private static void WriteValidPng(string path)
         => File.WriteAllBytes(
             path,
-            [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x46, 0x41, 0x4b, 0x45]);
+            Convert.FromBase64String(ValidPngBase64));
+
+    private static string BuildValidPathJson(
+        int totalScore,
+        string difficulty)
+        => $$"""{"songName":"Song","artist":"Artist","charter":"Charter","difficulty":"{{difficulty}}","totalScore":{{totalScore}},"pathSummary":"","activations":[],"notes":[],"spPhrases":[],"measures":[],"bpms":[],"timeSignatures":[]}""";
 
     private void AssertNoStagingAttempts()
     {
@@ -954,6 +1010,8 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
     {
         private readonly ConcurrentDictionary<string, PathGenerationState> _states =
             new(StringComparer.Ordinal);
+        private readonly HashSet<string> _pending =
+            new(StringComparer.Ordinal);
         private readonly object _promotionLock = new();
         private readonly TaskCompletionSource _promotionBarrier =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -964,7 +1022,8 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
         public int PromotionBarrierCount { get; set; }
 
         public void EnsureSong(string songId)
-            => Seed(new PathGenerationState(
+        {
+            Seed(new PathGenerationState(
                 songId,
                 0,
                 null,
@@ -976,6 +1035,8 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
                 null,
                 [],
                 new SongMaxScores()));
+            _pending.Add(songId);
+        }
 
         public void Seed(PathGenerationState state)
             => _states[state.SongId] = state;
@@ -988,6 +1049,9 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
 
         public PathGenerationState? GetPathGenerationState(string songId)
             => _states.TryGetValue(songId, out var state) ? state : null;
+
+        public HashSet<string> GetPendingPathGenerationSongIds()
+            => new(_pending, StringComparer.Ordinal);
 
         public Dictionary<string, SongMaxScores> GetAllMaxScores()
             => _states
@@ -1042,6 +1106,7 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
                     promotion.ArtifactGenerationId,
                     promotion.ExpectedInstruments.ToArray(),
                     scores);
+                _pending.Remove(promotion.SongId);
                 return PathGenerationPromotionOutcome.Promoted;
             }
         }

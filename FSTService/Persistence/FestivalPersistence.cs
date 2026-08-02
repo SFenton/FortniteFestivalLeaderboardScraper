@@ -149,10 +149,10 @@ public sealed class FestivalPersistence :
                                    pro_lead_diff, pro_bass_diff, release_year, tempo,
                                    plastic_guitar_diff, plastic_bass_diff,
                                    plastic_drums_diff, pro_vocals_diff,
-                                   provider_json)
+                                   provider_json, path_generation_pending)
                 VALUES (@id, @title, @artist, @active, @modified, @image,
                         @lead, @bass, @vocals, @drums, @plead, @pbass, @ry, @tempo,
-                        @plGtr, @plBass, @plDrums, @proVocals, @providerJson)
+                        @plGtr, @plBass, @plDrums, @proVocals, @providerJson, TRUE)
                 ON CONFLICT (song_id) DO UPDATE SET
                     title = EXCLUDED.title, artist = EXCLUDED.artist,
                     active_date = EXCLUDED.active_date, last_modified = EXCLUDED.last_modified,
@@ -163,7 +163,15 @@ public sealed class FestivalPersistence :
                     release_year = EXCLUDED.release_year, tempo = EXCLUDED.tempo,
                     plastic_guitar_diff = EXCLUDED.plastic_guitar_diff, plastic_bass_diff = EXCLUDED.plastic_bass_diff,
                     plastic_drums_diff = EXCLUDED.plastic_drums_diff, pro_vocals_diff = EXCLUDED.pro_vocals_diff,
-                    provider_json = EXCLUDED.provider_json
+                    provider_json = EXCLUDED.provider_json,
+                    path_generation_pending =
+                        songs.path_generation_pending
+                        OR (
+                            songs.path_artifact_generation_id IS NOT NULL
+                            AND NULLIF(EXCLUDED.last_modified, '') IS NOT NULL
+                            AND NULLIF(songs.last_modified, '') IS DISTINCT FROM
+                                NULLIF(EXCLUDED.last_modified, '')
+                        )
                 """;
 
             var rawProVocals = s.track?.@in?.bd;

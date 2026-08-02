@@ -461,6 +461,13 @@ const FADE_MS = 300;
 const MIN_SPINNER_MS = 400;
 const MIN_TEXT_SPINNER_MS = 500;
 
+export function isCurrentPathTextRevision(
+  activeRevision: number,
+  candidateRevision: number,
+): boolean {
+  return activeRevision === candidateRevision;
+}
+
 function PathImage({ songId, generationId, instrument, difficulty, displayMode, isMobile, columnOrder }: { songId: string; generationId?: string; instrument: InstrumentKey; difficulty: Difficulty; displayMode: ChoptDisplay; isMobile: boolean; columnOrder?: ColumnKey[] }) {
   const { t } = useTranslation();
   const generationQuery = generationId
@@ -483,7 +490,52 @@ function PathImage({ songId, generationId, instrument, difficulty, displayMode, 
   const [dataError, setDataError] = useState(false);
   const textDataRef = useRef<PathDataResponse | null>(null);
   const textSpinnerStart = useRef(0);
+  const textTargetRevision = useRef(0);
   const prevDisplayMode = useRef(displayMode);
+  const textReadyData = useRef<{ data: PathDataResponse | null; isError: boolean } | null>(null);
+  const textTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+
+  const scheduleTextTransition = useCallback((revision: number) => {
+    if (!isCurrentPathTextRevision(
+      textTargetRevision.current,
+      revision,
+    )) return;
+    const ready = textReadyData.current;
+    if (!ready || phaseRef.current !== 'textSpinner') return;
+    const elapsed = Date.now() - textSpinnerStart.current;
+    const remaining = Math.max(0, MIN_TEXT_SPINNER_MS - elapsed);
+    clearTimeout(textTimerRef.current);
+    textTimerRef.current = setTimeout(() => {
+      if (!isCurrentPathTextRevision(textTargetRevision.current, revision)
+        || phaseRef.current !== 'textSpinner') return;
+      setPhase('fadeOutTextSpinner');
+      textTimerRef.current = setTimeout(() => {
+        if (!isCurrentPathTextRevision(textTargetRevision.current, revision)
+          || phaseRef.current !== 'fadeOutTextSpinner') return;
+        if (ready.isError) {
+          setDataError(true);
+        } else if (ready.data) {
+          setPathData(ready.data);
+        }
+        setPhase('textStagger');
+      }, FADE_MS);
+    }, remaining);
+  }, []);
+
+  const resolveTextSpinner = useCallback((
+    data: PathDataResponse | null,
+    isError: boolean,
+    revision: number,
+  ) => {
+    if (!isCurrentPathTextRevision(
+      textTargetRevision.current,
+      revision,
+    )) return;
+    textReadyData.current = { data, isError };
+    scheduleTextTransition(revision);
+  }, [scheduleTextTransition]);
 
   // ── Display mode switch ──
   useEffect(() => {
@@ -507,8 +559,13 @@ function PathImage({ songId, generationId, instrument, difficulty, displayMode, 
   // ── Text mode fetch ──
   useEffect(() => {
     if (displayMode !== 'text') return;
+    const revision = ++textTargetRevision.current;
+    clearTimeout(textTimerRef.current);
     setDataError(false);
     setPathData(null);
+    setPhase('textSpinner');
+    textSpinnerStart.current = Date.now();
+    textReadyData.current = null;
     textDataRef.current = null;
     const controller = new AbortController();
     fetchWithPublication(
@@ -522,61 +579,15 @@ function PathImage({ songId, generationId, instrument, difficulty, displayMode, 
       .then(data => {
         if (controller.signal.aborted) return;
         textDataRef.current = data;
-        resolveTextSpinner(data, false);
+        resolveTextSpinner(data, false, revision);
       })
       .catch(() => {
         if (controller.signal.aborted) return;
-        resolveTextSpinner(null, true);
+        resolveTextSpinner(null, true, revision);
       });
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayMode, songId, generationId, instrument, difficulty, generationQuery]);
-
-  // ── Text mode: instrument/difficulty change while already in text mode ──
-  const prevTextParams = useRef({ songId, instrument, difficulty });
-  useEffect(() => {
-    if (displayMode !== 'text') {
-      prevTextParams.current = { songId, instrument, difficulty };
-      return;
-    }
-    const prev = prevTextParams.current;
-    prevTextParams.current = { songId, instrument, difficulty };
-    // Only reset to spinner if params changed while already in text mode (not on initial switch)
-    if (prev.songId !== songId || prev.instrument !== instrument || prev.difficulty !== difficulty) {
-      setPhase('textSpinner');
-    }
-  }, [displayMode, songId, instrument, difficulty]);
-
-  const textReadyData = useRef<{ data: PathDataResponse | null; isError: boolean } | null>(null);
-  const textTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const phaseRef = useRef(phase);
-  phaseRef.current = phase;
-
-  const scheduleTextTransition = useCallback(() => {
-    const ready = textReadyData.current;
-    if (!ready || phaseRef.current !== 'textSpinner') return;
-    const elapsed = Date.now() - textSpinnerStart.current;
-    const remaining = Math.max(0, MIN_TEXT_SPINNER_MS - elapsed);
-    clearTimeout(textTimerRef.current);
-    textTimerRef.current = setTimeout(() => {
-      if (phaseRef.current !== 'textSpinner') return;
-      setPhase('fadeOutTextSpinner');
-      textTimerRef.current = setTimeout(() => {
-        if (phaseRef.current !== 'fadeOutTextSpinner') return;
-        if (ready.isError) {
-          setDataError(true);
-        } else if (ready.data) {
-          setPathData(ready.data);
-        }
-        setPhase('textStagger');
-      }, FADE_MS);
-    }, remaining);
-  }, []);
-
-  const resolveTextSpinner = useCallback((data: PathDataResponse | null, isError: boolean) => {
-    textReadyData.current = { data, isError };
-    scheduleTextTransition();
-  }, [scheduleTextTransition]);
 
   // ── Phase transitions ──
   useEffect(() => {
@@ -600,7 +611,7 @@ function PathImage({ songId, generationId, instrument, difficulty, displayMode, 
       const cached = textDataRef.current;
       if (cached) {
         textReadyData.current = { data: cached, isError: false };
-        scheduleTextTransition();
+        scheduleTextTransition(textTargetRevision.current);
       }
     }
 

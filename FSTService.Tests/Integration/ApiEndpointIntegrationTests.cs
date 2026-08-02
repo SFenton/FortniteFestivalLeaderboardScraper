@@ -6558,12 +6558,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     public async Task Admin_RegeneratePaths_WithAuth_ReturnsExpected()
     {
         var response = await _authedClient.PostAsync("/api/admin/regenerate-paths", null);
-        // Depending on state: 404 (no songs with MIDI), 202 (accepted), 400 (disabled)
-        Assert.True(
-            response.StatusCode is HttpStatusCode.NotFound
-                or HttpStatusCode.Accepted
-                or HttpStatusCode.BadRequest,
-            $"Expected 400, 404, or 202 but got {(int)response.StatusCode}");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Fact]

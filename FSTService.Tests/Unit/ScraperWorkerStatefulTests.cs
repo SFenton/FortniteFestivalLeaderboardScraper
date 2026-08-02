@@ -959,13 +959,13 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         {
             fakeChopt = Path.Combine(_tempDir, "fake_chopt.bat");
             File.WriteAllText(fakeChopt,
-                "@echo off\nif \"%~1\"==\"--version\" echo CHOpt 1.10.3& exit /b 0\nset \"out=\"\n:p\nif \"%~1\"==\"\" goto d\nif \"%~1\"==\"-o\" set \"out=%~2\"\nshift\ngoto p\n:d\nif defined out powershell -NoProfile -Command \"[IO.File]::WriteAllBytes('%out%', [byte[]](137,80,78,71,13,10,26,10,70,65,75,69))\"\necho {\"totalScore\":99999}\n");
+                "@echo off\nif \"%~1\"==\"--version\" echo CHOpt 1.10.3& exit /b 0\nset \"out=\"\n:p\nif \"%~1\"==\"\" goto d\nif \"%~1\"==\"-o\" set \"out=%~2\"\nshift\ngoto p\n:d\nif defined out powershell -NoProfile -Command \"[IO.File]::WriteAllBytes('%out%', [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='))\"\necho {\"songName\":\"Song\",\"artist\":\"Artist\",\"charter\":\"Charter\",\"difficulty\":\"expert\",\"totalScore\":99999,\"pathSummary\":\"\",\"activations\":[],\"notes\":[],\"spPhrases\":[],\"measures\":[],\"bpms\":[],\"timeSignatures\":[]}\n");
         }
         else
         {
             fakeChopt = Path.Combine(_tempDir, "fake_chopt.sh");
             File.WriteAllText(fakeChopt,
-                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'CHOpt 1.10.3'; exit 0; fi\no=\"\"\nwhile [ \"$#\" -gt 0 ]; do case \"$1\" in -o) o=\"$2\"; shift ;; esac; shift; done\n[ -n \"$o\" ] && printf '\\211PNG\\r\\n\\032\\nFAKE' > \"$o\"\necho '{\"totalScore\":99999}'\n");
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'CHOpt 1.10.3'; exit 0; fi\no=\"\"\nwhile [ \"$#\" -gt 0 ]; do case \"$1\" in -o) o=\"$2\"; shift ;; esac; shift; done\n[ -n \"$o\" ] && printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' | base64 -d > \"$o\"\necho '{\"songName\":\"Song\",\"artist\":\"Artist\",\"charter\":\"Charter\",\"difficulty\":\"expert\",\"totalScore\":99999,\"pathSummary\":\"\",\"activations\":[],\"notes\":[],\"spPhrases\":[],\"measures\":[],\"bpms\":[],\"timeSignatures\":[]}'\n");
             File.SetUnixFileMode(fakeChopt,
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
@@ -1039,7 +1039,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             seedCmd.ExecuteNonQuery();
         }
 
-        await worker.TryGeneratePathsAsync(service, force: false, CancellationToken.None);
+        await worker.TryGeneratePathsAsync(service, force: true, CancellationToken.None);
 
         // Verify path generation ran by checking the worker's PathDataStore via reflection
         var state = store.GetPathGenerationStates();

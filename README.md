@@ -100,6 +100,22 @@ Current and previous generations are retained; older cache generations and
 failed candidate staging are removed independently of scrape-log retention.
 The legacy cache remains as a rollback compatibility mirror.
 
+CHOpt path generation has separate explicit and automatic controls:
+
+- `Scraper__EnablePathGeneration=true` permits the protected single-song admin
+  endpoint and coordinator.
+- `Scraper__EnableAutomaticPathGeneration=true` permits background generation
+  only for rows placed in the durable PostgreSQL pending queue by exact catalog
+  persistence: new songs and changed songs that already use atomic
+  generations.
+
+Legacy path rows are never migrated automatically. The protected
+`POST /api/admin/regenerate-paths?songId=<id>` route requires one exact song
+ID; it cannot launch an unbounded full-catalog migration. Atomic promotions
+use immutable generation directories and a PostgreSQL revision fence. Before
+rolling back to a pre-atomic binary, disable both path-generation switches and
+restore any promoted song rows from the recorded pre-deploy snapshot.
+
 Song catalog sync now also persists a deterministic provider-only live
 snapshot, including unknown Epic extension fields, plus exact per-song
 `provider_json` for restart recovery. Catalog sync returns an explicit capture

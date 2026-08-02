@@ -150,7 +150,12 @@ public class DatabaseInitializerTests : IDisposable
         cmd.CommandText = """
             SELECT
                 to_regclass('public.path_generation_errors') IS NOT NULL,
-                COUNT(*) = 5
+                COUNT(*) = 6,
+                EXISTS (
+                    SELECT 1
+                    FROM pg_trigger
+                    WHERE tgname = 'trg_reject_incoherent_legacy_path_write'
+                      AND NOT tgisinternal)
             FROM information_schema.columns
             WHERE table_schema = 'public'
               AND table_name = 'songs'
@@ -159,13 +164,15 @@ public class DatabaseInitializerTests : IDisposable
                   'path_generation_profile',
                   'path_artifact_generation_id',
                   'path_expected_instruments',
-                  'path_generation_revision'
+                  'path_generation_revision',
+                  'path_generation_pending'
               ])
             """;
         using var reader = cmd.ExecuteReader();
         Assert.True(reader.Read());
         Assert.True(reader.GetBoolean(0));
         Assert.True(reader.GetBoolean(1));
+        Assert.True(reader.GetBoolean(2));
     }
 
     [Fact]

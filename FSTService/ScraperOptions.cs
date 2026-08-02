@@ -355,9 +355,16 @@ public sealed class ScraperOptions
     public int PathGenerationParallelism { get; set; } = 4;
 
     /// <summary>
-    /// Enable or disable automatic path generation when new songs are detected.
+    /// Enable or disable path generation, including explicit admin requests.
     /// </summary>
     public bool EnablePathGeneration { get; set; } = true;
+
+    /// <summary>
+    /// Generate paths automatically only for newly discovered songs and for
+    /// changed songs that already use atomic artifact generations. Legacy rows
+    /// are never migrated implicitly.
+    /// </summary>
+    public bool EnableAutomaticPathGeneration { get; set; } = true;
 
     /// <summary>
     /// Versioned identity for the CHOpt arguments and artifact contract.

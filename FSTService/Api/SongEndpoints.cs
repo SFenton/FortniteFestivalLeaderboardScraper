@@ -45,8 +45,35 @@ public static partial class ApiEndpoints
             string etag;
             try
             {
-                jsonBytes = SongsCacheService.BuildSongsJson(service, pathStore, metaDb, persistence, precomputer, jsonOpts);
-                etag = songsCache.Set(jsonBytes);
+                while (true)
+                {
+                    var token = songsCache.CaptureBuildToken();
+                    jsonBytes = SongsCacheService.BuildSongsJson(
+                        service,
+                        pathStore,
+                        metaDb,
+                        persistence,
+                        precomputer,
+                        jsonOpts);
+                    var writeResult = songsCache.TrySetIfBuildTokenUnchanged(
+                        jsonBytes,
+                        token,
+                        out etag);
+                    if (writeResult == SongsCacheWriteResult.Stored)
+                    {
+                        break;
+                    }
+                    if (writeResult == SongsCacheWriteResult.Blocked)
+                    {
+                        httpContext.Response.Headers.CacheControl = "no-store";
+                        httpContext.Response.Headers["Retry-After"] = "30";
+                        return Results.Problem(
+                            title: "Published songs unavailable",
+                            detail: "A stable songs response is not available while public reads are transitioning. Retry shortly.",
+                            statusCode:
+                                StatusCodes.Status503ServiceUnavailable);
+                    }
+                }
             }
             catch (Exception ex)
             {

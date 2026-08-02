@@ -179,6 +179,28 @@ public sealed partial class PathGenerationCoordinator
         }
     }
 
+    public Task<PathGenerationBatchResult> GenerateAutomaticPathsAsync(
+        IReadOnlyCollection<Song> songs,
+        CancellationToken ct)
+    {
+        var options = _options.Value;
+        if (!options.EnablePathGeneration ||
+            !options.EnableAutomaticPathGeneration)
+        {
+            return Task.FromResult(
+                new PathGenerationBatchResult(0, 0, 0, 0, 0));
+        }
+
+        var pendingSongIds =
+            _store.GetPendingPathGenerationSongIds();
+        var candidates = songs
+            .Where(song =>
+                SongPathRequest.FromSong(song) is { } request &&
+                pendingSongIds.Contains(request.SongId))
+            .ToArray();
+        return GeneratePathsAsync(candidates, force: false, ct);
+    }
+
     private async Task<SongOutcome> ProcessSongAsync(
         SongPathRequest request,
         PathGenerationState? initialState,
@@ -412,6 +434,8 @@ public sealed partial class PathGenerationCoordinator
             PathGenerationPromotionOutcome promotionOutcome;
             try
             {
+                using var cacheMutation =
+                    _songsCache.BeginContentMutation();
                 promotionOutcome = await _store.TryPromoteGenerationAsync(
                     new PathGenerationPromotion(
                         attemptId,
@@ -458,7 +482,6 @@ public sealed partial class PathGenerationCoordinator
                     : SongOutcome.Failed;
             }
 
-            _songsCache.Invalidate();
             if (ownsProgress)
                 _progress.PathGenSongCompleted();
             return SongOutcome.Promoted;
@@ -599,7 +622,7 @@ public sealed partial class PathGenerationCoordinator
         {
             throw new PathGenerationException(
                 "artifact_validation",
-                "CHOpt did not produce a non-empty PNG with a valid signature.",
+                "CHOpt did not produce a structurally valid PNG.",
                 instrument.Instrument,
                 difficulty);
         }
@@ -613,8 +636,8 @@ public sealed partial class PathGenerationCoordinator
             throw new PathGenerationException(
                 "artifact_validation",
                 requirePositiveScore
-                    ? "CHOpt JSON was malformed or had a non-positive expert totalScore."
-                    : "CHOpt JSON was malformed.",
+                    ? "CHOpt JSON did not match the path-data contract or had a non-positive expert totalScore."
+                    : "CHOpt JSON did not match the path-data contract.",
                 instrument.Instrument,
                 difficulty);
         }

@@ -78,7 +78,7 @@ describe('PathPreviewDemo', () => {
     expect(screen.getByTitle('Lead')).toBeTruthy();
     expect(screen.getByTitle('Bass')).toBeTruthy();
     expect(screen.getByTitle('Drums')).toBeTruthy();
-    expect(screen.getByTitle('Vocals')).toBeTruthy();
+    expect(screen.getByTitle('Tap Vocals')).toBeTruthy();
   });
 
   it('renders difficulty buttons', async () => {

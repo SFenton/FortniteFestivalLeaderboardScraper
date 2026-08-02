@@ -1279,7 +1279,8 @@ public sealed class ScraperWorker : BackgroundService
     internal async Task TryGeneratePathsAsync(FestivalService service, bool force, CancellationToken ct)
     {
         var opts = _options.Value;
-        if (!opts.EnablePathGeneration)
+        if (!opts.EnablePathGeneration ||
+            !opts.EnableAutomaticPathGeneration)
             return;
 
         try
@@ -1287,7 +1288,10 @@ public sealed class ScraperWorker : BackgroundService
             var songs = service.Songs.Where(s => s.track?.su is not null && !string.IsNullOrEmpty(s.track.mu)).ToList();
             if (songs.Count == 0) return;
 
-            await _pathGeneration.GeneratePathsAsync(songs, force, ct);
+            if (force)
+                await _pathGeneration.GeneratePathsAsync(songs, force: true, ct);
+            else
+                await _pathGeneration.GenerateAutomaticPathsAsync(songs, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
