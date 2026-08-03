@@ -7,6 +7,7 @@ let currentPublication: PublicationResponse | null = null;
 let publicationRequest: Promise<PublicationResponse> | null = null;
 let pinRequests = true;
 let publicationBootstrapEnabled = false;
+let revalidateHttpCache = false;
 
 export function activatePublicationBootstrap(): void {
   publicationBootstrapEnabled = true;
@@ -57,6 +58,7 @@ export async function ensurePublication(
     currentPublication = publication;
     writeStoredPublicationId(publication.publicationId);
     if (notifyEvenIfSame || previousId !== publication.publicationId) {
+      if (previousId != null) revalidateHttpCache = true;
       dispatchPublicationChanged(publication);
     }
     return publication;
@@ -76,9 +78,12 @@ export async function fetchWithPublication(
   }
 
   const publication = await ensurePublication();
+  const requestInit = revalidateHttpCache && init?.cache == null
+    ? { ...init, cache: 'no-cache' as const }
+    : init;
   let response = await fetch(
     appendPublicationId(path, publication.publicationId),
-    init,
+    requestInit,
   );
   if (response.status !== 409) return response;
 
@@ -87,11 +92,15 @@ export async function fetchWithPublication(
   } | null;
   if (body?.status !== 'publication_changed') return response;
 
+  revalidateHttpCache = true;
   currentPublication = null;
   const refreshed = await ensurePublication(true);
+  const retryInit = revalidateHttpCache && init?.cache == null
+    ? { ...init, cache: 'no-cache' as const }
+    : init;
   response = await fetch(
     appendPublicationId(path, refreshed.publicationId),
-    init,
+    retryInit,
   );
   return response;
 }
@@ -109,6 +118,7 @@ export function resetPublicationForTests(): void {
   publicationRequest = null;
   pinRequests = true;
   publicationBootstrapEnabled = false;
+  revalidateHttpCache = false;
 }
 
 export function setPublicationForTests(
@@ -125,6 +135,7 @@ export function setPublicationForTests(
   publicationRequest = null;
   pinRequests = pinPublicationRequests;
   publicationBootstrapEnabled = true;
+  revalidateHttpCache = false;
 }
 
 function appendPublicationId(path: string, publicationId: number): string {

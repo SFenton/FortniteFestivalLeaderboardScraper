@@ -92,7 +92,7 @@ describe('publication bootstrap', () => {
     expect(global.fetch).toHaveBeenNthCalledWith(
       3,
       '/api/songs?publicationId=43',
-      undefined,
+      { cache: 'no-cache' },
     );
   });
 
@@ -104,18 +104,25 @@ describe('publication bootstrap', () => {
         (event as CustomEvent<{ publicationId: number }>).detail.publicationId,
       );
     }, { once: true });
-    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-      jsonResponse({
-        publicationId: 42,
-        previousPublicationId: 41,
-        publishedScrapeId: 1274,
-        publishedAt: '2026-08-02T00:00:00Z',
-        pinningEnabled: false,
-      }),
-    );
+    (global.fetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(
+        jsonResponse({
+          publicationId: 42,
+          previousPublicationId: 41,
+          publishedScrapeId: 1274,
+          publishedAt: '2026-08-02T00:00:00Z',
+          pinningEnabled: false,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
 
     await ensurePublication(true, true);
+    await fetchWithPublication('/api/rankings/Solo_PeripheralGuitar');
 
     expect(changes).toEqual([42]);
+    expect(global.fetch).toHaveBeenLastCalledWith(
+      '/api/rankings/Solo_PeripheralGuitar',
+      { cache: 'no-cache' },
+    );
   });
 });
