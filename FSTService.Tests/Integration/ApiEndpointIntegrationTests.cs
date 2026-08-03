@@ -1294,6 +1294,94 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(2, score.GetProperty("validRank").GetInt32());
     }
 
+    [Fact]
+    public async Task StoredProjectionRankFlag_preserves_leaderboard_and_member_api_bytes_for_exact_ties()
+    {
+        const string songId = "storedRankApiParitySong";
+        const string instrument = "Solo_Guitar";
+        const string selectedAccountId = "stored-rank-b";
+        InstrumentDatabase db;
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var pathStore = scope.ServiceProvider.GetRequiredService<PathDataStore>();
+            var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+            db = Assert.IsType<InstrumentDatabase>(persistence.GetOrCreateInstrumentDb(instrument));
+
+            EnsureSongRow(pathStore, songId);
+            pathStore.UpdateMaxScores(songId, new SongMaxScores
+            {
+                MaxLeadScore = 100_000,
+            }, "storedRankApiParityHash");
+
+            InsertCurrentLeaderboardEntry(dataSource, songId, instrument, "stored-rank-invalid", 100_001, rank: 1, apiRank: 1);
+            InsertCurrentLeaderboardEntry(dataSource, songId, instrument, selectedAccountId, 100_000, rank: 3, apiRank: 3);
+            InsertCurrentLeaderboardEntry(dataSource, songId, instrument, "stored-rank-a", 100_000, rank: 2, apiRank: 2);
+            InsertCurrentLeaderboardEntry(dataSource, songId, instrument, "stored-rank-low", 99_999, rank: 4, apiRank: 4);
+
+            using var conn = dataSource.OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO solo_current_projection_scope
+                (song_id, instrument, projection_generation, row_count, source_snapshot_id, status, updated_at)
+                VALUES (@songId, @instrument, 1, 4, NULL, 'ready', now())
+                ON CONFLICT (song_id, instrument) DO UPDATE SET
+                    projection_generation = EXCLUDED.projection_generation,
+                    row_count = EXCLUDED.row_count,
+                    source_snapshot_id = EXCLUDED.source_snapshot_id,
+                    status = EXCLUDED.status,
+                    updated_at = EXCLUDED.updated_at
+                """;
+            cmd.Parameters.AddWithValue("songId", songId);
+            cmd.Parameters.AddWithValue("instrument", instrument);
+            cmd.ExecuteNonQuery();
+        }
+
+        async Task<byte[]> ReadOkBytesAsync(string path)
+        {
+            using var response = await _client.GetAsync(path);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            return await response.Content.ReadAsByteArrayAsync();
+        }
+
+        byte[] baselineLeaderboard;
+        byte[] baselineMembers;
+        byte[] candidateLeaderboard;
+        byte[] candidateMembers;
+        try
+        {
+            db.UseStoredProjectionRanksForFilteredReads = false;
+            baselineLeaderboard = await ReadOkBytesAsync(
+                $"/api/leaderboard/{songId}/{instrument}?top=3&offset=0&leeway=0");
+            baselineMembers = await ReadOkBytesAsync(
+                $"/api/leaderboard/{songId}/members/scores?accountIds={selectedAccountId}&instruments={instrument}&leeway=0");
+
+            db.UseStoredProjectionRanksForFilteredReads = true;
+            candidateLeaderboard = await ReadOkBytesAsync(
+                $"/api/leaderboard/{songId}/{instrument}?top=3&offset=0&leeway=0");
+            candidateMembers = await ReadOkBytesAsync(
+                $"/api/leaderboard/{songId}/members/scores?accountIds={selectedAccountId}&instruments={instrument}&leeway=0");
+        }
+        finally
+        {
+            db.UseStoredProjectionRanksForFilteredReads = false;
+        }
+
+        Assert.Equal(baselineLeaderboard, candidateLeaderboard);
+        Assert.Equal(baselineMembers, candidateMembers);
+
+        using var leaderboardJson = JsonDocument.Parse(candidateLeaderboard);
+        var entries = leaderboardJson.RootElement.GetProperty("entries");
+        Assert.Equal("stored-rank-a", entries[0].GetProperty("accountId").GetString());
+        Assert.Equal(selectedAccountId, entries[1].GetProperty("accountId").GetString());
+        Assert.Equal(2, entries[1].GetProperty("localRank").GetInt32());
+
+        using var membersJson = JsonDocument.Parse(candidateMembers);
+        var memberScore = membersJson.RootElement.GetProperty("scores")[0];
+        Assert.Equal(2, memberScore.GetProperty("validRank").GetInt32());
+    }
+
     // ─── Player profile ─────────────────────────────────────────
 
     [Fact]

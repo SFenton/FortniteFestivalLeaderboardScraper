@@ -358,6 +358,14 @@ marker exists on a legacy row).
 | `Features__EnforcePublicationCriticalPhases` | `fstworker` | `false` | Rejects a candidate after any explicitly publication-critical post-scrape phase failure | Set `false`; phase outcomes remain visible while legacy swallow behavior is restored |
 | `Features__EnablePublicationReadContext` | `fstservice` | `false` | Enables publication bootstrap, pinned HTTP/WebSocket requests, shared read leases, and `409 publication_changed` enforcement after every public surface is generation-addressable | Keep `false` until all required surface bindings are ready; additive ledger/pointer rows remain |
 
+Every solo rank producer and equivalent filtered-read baseline uses the same
+total order: `score DESC`, `COALESCE(end_time, first_seen_at::TEXT) ASC`,
+then `account_id ASC`. The stored-rank switch remains default-off until
+PostgreSQL parity covers exact score/timestamp peers, threshold `-1`/exact/`+1`
+boundaries, rank/page boundaries, current and reused published sources,
+source-mismatch fallback, explicit empty scopes, and player, member, and
+leaderboard API reads.
+
 Tracked Compose templates load non-secret role defaults from
 `deploy/config/fstservice-role.env` and
 `deploy/config/fstworker-role.env`. The API role reads published solo sources

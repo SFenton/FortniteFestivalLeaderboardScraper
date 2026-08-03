@@ -112,6 +112,83 @@ public sealed class SoloCurrentProjectionBuilderTests : IDisposable
         Assert.Equal(0, changed.WouldDeleteRows);
     }
 
+    [Fact]
+    public async Task RebuildScopeAsync_orders_exact_score_and_timestamp_ties_by_account_id()
+    {
+        var builder = new SoloCurrentProjectionBuilder(
+            _fixture.DataSource,
+            Substitute.For<ILogger<SoloCurrentProjectionBuilder>>());
+        await builder.EnsureSchemaAsync();
+        SeedLiveLeaderboard("song_exact_tie",
+            ("acct-z", 1000),
+            ("acct-a", 1000),
+            ("acct-m", 1000));
+
+        await builder.RebuildScopeAsync(new SoloCurrentProjectionScopeKey("song_exact_tie", _fixture.Db.Instrument));
+
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT account_id, rank, end_time
+            FROM current_leaderboard_entries
+            WHERE song_id = @songId
+              AND instrument = @instrument
+            ORDER BY rank
+            """;
+        cmd.Parameters.AddWithValue("songId", "song_exact_tie");
+        cmd.Parameters.AddWithValue("instrument", _fixture.Db.Instrument);
+        using var reader = cmd.ExecuteReader();
+        var rows = new List<(string AccountId, int Rank, string EndTime)>();
+        while (reader.Read())
+            rows.Add((reader.GetString(0), reader.GetInt32(1), reader.GetString(2)));
+
+        Assert.Equal(["acct-a", "acct-m", "acct-z"], rows.Select(static row => row.AccountId));
+        Assert.Equal([1, 2, 3], rows.Select(static row => row.Rank));
+        Assert.All(rows, static row => Assert.Equal("2025-01-15T12:00:00Z", row.EndTime));
+    }
+
+    [Fact]
+    public void Stored_rank_offset_precedence_matches_the_total_rank_order()
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            WITH rows(account_id, score, end_time, first_seen_at) AS (
+                VALUES
+                    ('acct-high'::TEXT, 1100, '2025-01-15T12:00:00Z'::TEXT, '2025-01-15T12:00:00Z'::TIMESTAMPTZ),
+                    ('acct-early', 1000, '2025-01-15T11:59:59Z', '2025-01-15T12:00:00Z'::TIMESTAMPTZ),
+                    ('acct-z', 1000, '2025-01-15T12:00:00Z', '2025-01-15T12:00:00Z'::TIMESTAMPTZ),
+                    ('acct-a', 1000, '2025-01-15T12:00:00Z', '2025-01-15T12:00:00Z'::TIMESTAMPTZ),
+                    ('acct-m', 1000, '2025-01-15T12:00:00Z', '2025-01-15T12:00:00Z'::TIMESTAMPTZ),
+                    ('acct-late', 1000, '2025-01-15T12:00:01Z', '2025-01-15T12:00:00Z'::TIMESTAMPTZ),
+                    ('acct-low', 900, '2025-01-15T12:00:00Z', '2025-01-15T12:00:00Z'::TIMESTAMPTZ)
+            ),
+            ranked AS (
+                SELECT rows.*,
+                       ROW_NUMBER() OVER (ORDER BY {SoloLeaderboardOrderingSql.OrderBy()}) AS expected_rank
+                FROM rows
+            )
+            SELECT target.account_id,
+                   target.expected_rank,
+                   1 + COUNT(*) FILTER (
+                       WHERE {SoloLeaderboardOrderingSql.Precedes("candidate", "target")}
+                   ) AS classified_rank
+            FROM ranked target
+            CROSS JOIN rows candidate
+            GROUP BY target.account_id, target.expected_rank
+            ORDER BY target.expected_rank
+            """;
+        using var reader = cmd.ExecuteReader();
+        var rows = new List<(string AccountId, long ExpectedRank, long ClassifiedRank)>();
+        while (reader.Read())
+            rows.Add((reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2)));
+
+        Assert.Equal(rows.Select(static row => row.ExpectedRank), rows.Select(static row => row.ClassifiedRank));
+        Assert.Equal(
+            ["acct-high", "acct-early", "acct-a", "acct-m", "acct-z", "acct-late", "acct-low"],
+            rows.Select(static row => row.AccountId));
+    }
+
     private void InsertSnapshotState(string songId, long activeSnapshotId)
     {
         using var conn = _fixture.DataSource.OpenConnection();
@@ -143,6 +220,7 @@ public sealed class SoloCurrentProjectionBuilderTests : IDisposable
             Stars = 5,
             Season = 1,
             Source = "test",
+            EndTime = "2025-01-15T12:00:00Z",
         }).ToList());
         _fixture.Db.RecomputeRanksForSongs([songId]);
     }

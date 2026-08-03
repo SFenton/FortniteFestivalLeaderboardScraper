@@ -975,7 +975,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     {
         using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand();
         var limit = top.HasValue ? $"LIMIT {top.Value} OFFSET {offset}" : "";
-        cmd.CommandText = $"SELECT account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time, ROW_NUMBER() OVER (ORDER BY score DESC, COALESCE(end_time, first_seen_at::TEXT) ASC) AS rank, 0, api_rank, source FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument ORDER BY score DESC, COALESCE(end_time, first_seen_at::TEXT) ASC {limit}";
+        cmd.CommandText = $"SELECT account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time, ROW_NUMBER() OVER (ORDER BY {SoloLeaderboardOrderingSql.OrderBy()}) AS rank, 0, api_rank, source FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument ORDER BY {SoloLeaderboardOrderingSql.OrderBy()} {limit}";
         cmd.Parameters.AddWithValue("songId", songId); cmd.Parameters.AddWithValue("instrument", Instrument);
         var list = new List<LeaderboardEntryDto>(); using var r = cmd.ExecuteReader();
         while (r.Read()) list.Add(ReadEntryDto(r));
@@ -1012,7 +1012,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand();
         var scoreFilter = maxScore.HasValue ? $"AND score <= {maxScore.Value}" : "";
         var limit = top.HasValue ? $"LIMIT {top.Value} OFFSET {offset}" : "";
-        cmd.CommandText = $"SELECT account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time, ROW_NUMBER() OVER (ORDER BY score DESC, COALESCE(end_time, first_seen_at::TEXT) ASC) AS rank, COUNT(*) OVER () AS total_count, api_rank, source FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument {scoreFilter} ORDER BY score DESC, COALESCE(end_time, first_seen_at::TEXT) ASC {limit}";
+        cmd.CommandText = $"SELECT account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time, ROW_NUMBER() OVER (ORDER BY {SoloLeaderboardOrderingSql.OrderBy()}) AS rank, COUNT(*) OVER () AS total_count, api_rank, source FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument {scoreFilter} ORDER BY {SoloLeaderboardOrderingSql.OrderBy()} {limit}";
         cmd.Parameters.AddWithValue("songId", songId); cmd.Parameters.AddWithValue("instrument", Instrument);
         var list = new List<LeaderboardEntryDto>(); int total = 0;
         using var r = cmd.ExecuteReader();
@@ -1032,7 +1032,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public List<(string AccountId, int Rank, int Score)> GetNeighborhood(string songId, int centerRank, int rankRadius, string excludeAccountId)
     {
         using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT account_id, rank, score FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument AND rank BETWEEN @lo AND @hi AND account_id != @exclude";
+        cmd.CommandText = "SELECT account_id, rank, score FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument AND rank BETWEEN @lo AND @hi AND account_id != @exclude ORDER BY rank ASC, account_id ASC";
         cmd.CommandTimeout = 0;
         cmd.Parameters.AddWithValue("songId", songId); cmd.Parameters.AddWithValue("instrument", Instrument);
         cmd.Parameters.AddWithValue("lo", Math.Max(1, centerRank - rankRadius)); cmd.Parameters.AddWithValue("hi", centerRank + rankRadius); cmd.Parameters.AddWithValue("exclude", excludeAccountId);
@@ -1094,7 +1094,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
               AND projection.instrument = @instrument
               AND projection.rank BETWEEN @lo AND @hi
               AND projection.account_id != @exclude
-            ORDER BY rank
+            ORDER BY rank, account_id ASC
             """;
         cmd.Parameters.AddWithValue("songId", songId);
         cmd.Parameters.AddWithValue("instrument", Instrument);
@@ -1118,7 +1118,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT account_id FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument AND rank BETWEEN @lo AND @hi ORDER BY rank ASC";
+        cmd.CommandText = "SELECT account_id FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument AND rank BETWEEN @lo AND @hi ORDER BY rank ASC, account_id ASC";
         cmd.Parameters.AddWithValue("songId", songId);
         cmd.Parameters.AddWithValue("instrument", Instrument);
         cmd.Parameters.AddWithValue("lo", Math.Max(1, minRank));
@@ -1297,7 +1297,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     {
         using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand();
         var songFilter = songId is not null ? "AND song_id = @songId" : "";
-        cmd.CommandText = $"WITH player_songs AS (SELECT song_id FROM leaderboard_entries WHERE account_id = @accountId AND instrument = @instrument {songFilter}), ranked AS (SELECT le.account_id, le.song_id, ROW_NUMBER() OVER (PARTITION BY le.song_id ORDER BY le.score DESC, COALESCE(le.end_time, le.first_seen_at::TEXT) ASC) AS rank FROM leaderboard_entries le WHERE le.instrument = @instrument AND le.song_id IN (SELECT song_id FROM player_songs)) SELECT song_id, rank FROM ranked WHERE account_id = @accountId";
+        cmd.CommandText = $"WITH player_songs AS (SELECT song_id FROM leaderboard_entries WHERE account_id = @accountId AND instrument = @instrument {songFilter}), ranked AS (SELECT le.account_id, le.song_id, ROW_NUMBER() OVER (PARTITION BY le.song_id ORDER BY {SoloLeaderboardOrderingSql.OrderBy("le")}) AS rank FROM leaderboard_entries le WHERE le.instrument = @instrument AND le.song_id IN (SELECT song_id FROM player_songs)) SELECT song_id, rank FROM ranked WHERE account_id = @accountId";
         cmd.Parameters.AddWithValue("accountId", accountId); cmd.Parameters.AddWithValue("instrument", Instrument);
         if (songId is not null) cmd.Parameters.AddWithValue("songId", songId);
         var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -1353,7 +1353,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             ),
             ranked AS (
                 SELECT account_id, song_id,
-                       ROW_NUMBER() OVER (PARTITION BY song_id ORDER BY score DESC, COALESCE(end_time, first_seen_at::TEXT) ASC) AS rank
+                       ROW_NUMBER() OVER (PARTITION BY song_id ORDER BY {SoloLeaderboardOrderingSql.OrderBy()}) AS rank
                 FROM current_rows
                 WHERE song_id IN (SELECT song_id FROM player_songs)
             )
@@ -1381,7 +1381,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "INSERT INTO _max_thresholds VALUES (@sid, @ms)"; var ps = c.Parameters.Add("sid", NpgsqlTypes.NpgsqlDbType.Text); var pm = c.Parameters.Add("ms", NpgsqlTypes.NpgsqlDbType.Integer); c.Prepare(); foreach (var (s, m) in maxScores) { ps.Value = s; pm.Value = m; c.ExecuteNonQuery(); } }
         using var cmd = conn.CreateCommand(); cmd.Transaction = tx;
         var songFilter = songId is not null ? "AND song_id = @songId" : "";
-        cmd.CommandText = $"WITH player_songs AS (SELECT song_id FROM leaderboard_entries WHERE account_id = @accountId AND instrument = @instrument {songFilter}), ranked AS (SELECT le.account_id, le.song_id, ROW_NUMBER() OVER (PARTITION BY le.song_id ORDER BY le.score DESC, COALESCE(le.end_time, le.first_seen_at::TEXT) ASC) AS rank FROM leaderboard_entries le LEFT JOIN _max_thresholds mt ON mt.song_id = le.song_id WHERE le.instrument = @instrument AND le.song_id IN (SELECT song_id FROM player_songs) AND le.score <= COALESCE(mt.max_score, le.score + 1)) SELECT song_id, rank FROM ranked WHERE account_id = @accountId";
+        cmd.CommandText = $"WITH player_songs AS (SELECT song_id FROM leaderboard_entries WHERE account_id = @accountId AND instrument = @instrument {songFilter}), ranked AS (SELECT le.account_id, le.song_id, ROW_NUMBER() OVER (PARTITION BY le.song_id ORDER BY {SoloLeaderboardOrderingSql.OrderBy("le")}) AS rank FROM leaderboard_entries le LEFT JOIN _max_thresholds mt ON mt.song_id = le.song_id WHERE le.instrument = @instrument AND le.song_id IN (SELECT song_id FROM player_songs) AND le.score <= COALESCE(mt.max_score, le.score + 1)) SELECT song_id, rank FROM ranked WHERE account_id = @accountId";
         cmd.Parameters.AddWithValue("accountId", accountId); cmd.Parameters.AddWithValue("instrument", Instrument);
         if (songId is not null) cmd.Parameters.AddWithValue("songId", songId);
         var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -1433,7 +1433,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             ),
             ranked AS (
                 SELECT current_rows.account_id, current_rows.song_id,
-                       ROW_NUMBER() OVER (PARTITION BY current_rows.song_id ORDER BY current_rows.score DESC, COALESCE(current_rows.end_time, current_rows.first_seen_at::TEXT) ASC) AS rank
+                       ROW_NUMBER() OVER (PARTITION BY current_rows.song_id ORDER BY {SoloLeaderboardOrderingSql.OrderBy("current_rows")}) AS rank
                 FROM current_rows
                 LEFT JOIN _max_thresholds_current_state mt ON mt.song_id = current_rows.song_id
                 WHERE current_rows.song_id IN (SELECT song_id FROM player_songs)
@@ -1492,8 +1492,13 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 WITH {BuildProjectionSourceCtes(filterSong: false)},
                 player_rows AS (
                     SELECT projection.song_id,
+                           projection.account_id,
                            projection.rank,
                            projection.score,
+                           projection.end_time,
+                           projection.first_seen_at,
+                           projection.projection_generation,
+                           mt.max_score AS threshold_max_score,
                            COALESCE(mt.max_score, projection.score + 1) AS max_score
                     FROM {SoloCurrentProjectionTable} projection
                     JOIN {SoloCurrentProjectionScopeTable} scope
@@ -1511,22 +1516,16 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                       {songFilter}
                 ),
                 invalid_counts AS (
-                    SELECT projection.song_id, COUNT(*)::BIGINT AS removed_above
-                    FROM {SoloCurrentProjectionTable} projection
-                    JOIN {SoloCurrentProjectionScopeTable} scope
-                      ON scope.song_id = projection.song_id
-                     AND scope.instrument = projection.instrument
-                     AND scope.projection_generation = projection.projection_generation
-                     AND scope.status = 'ready'
-                     AND scope.row_count > 0
-                    JOIN selected_sources source
-                      ON source.song_id = scope.song_id
-                     AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
-                    JOIN _max_thresholds_projected_current_state mt ON mt.song_id = projection.song_id
-                    WHERE projection.instrument = @instrument
-                      AND projection.song_id IN (SELECT song_id FROM player_rows)
-                      AND projection.score > mt.max_score
-                    GROUP BY projection.song_id
+                    SELECT player.song_id, COUNT(*)::BIGINT AS removed_above
+                    FROM player_rows player
+                    JOIN {SoloCurrentProjectionTable} candidate
+                      ON candidate.song_id = player.song_id
+                     AND candidate.instrument = @instrument
+                     AND candidate.projection_generation = player.projection_generation
+                    WHERE player.threshold_max_score IS NOT NULL
+                      AND candidate.score > player.threshold_max_score
+                      AND {SoloLeaderboardOrderingSql.Precedes("candidate", "player")}
+                    GROUP BY player.song_id
                 )
                 SELECT player.song_id,
                        player.rank - COALESCE(invalid.removed_above, 0) AS rank
@@ -1556,8 +1555,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                     SELECT projection.account_id, projection.song_id,
                            ROW_NUMBER() OVER (
                                PARTITION BY projection.song_id
-                               ORDER BY projection.score DESC,
-                                        COALESCE(projection.end_time, projection.first_seen_at::TEXT) ASC) AS rank
+                               ORDER BY {SoloLeaderboardOrderingSql.OrderBy("projection")}) AS rank
                     FROM {SoloCurrentProjectionTable} projection
                     JOIN {SoloCurrentProjectionScopeTable} scope
                       ON scope.song_id = projection.song_id
@@ -1830,7 +1828,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         using var cmd = conn.CreateCommand();
         cmd.CommandText =
             "UPDATE leaderboard_entries le SET rank = sub.rn FROM " +
-            "(SELECT account_id, ROW_NUMBER() OVER (ORDER BY score DESC, COALESCE(end_time, first_seen_at::TEXT) ASC) AS rn " +
+            "(SELECT account_id, ROW_NUMBER() OVER (ORDER BY " + SoloLeaderboardOrderingSql.OrderBy() + ") AS rn " +
             "FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument AND source = 'scrape') sub " +
             "WHERE le.song_id = @songId AND le.account_id = sub.account_id " +
             "AND le.instrument = @instrument AND le.source = 'scrape' " +
@@ -1851,7 +1849,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         cmd.CommandTimeout = 0;
         cmd.CommandText =
             "UPDATE leaderboard_entries le SET rank = sub.rn FROM " +
-            "(SELECT account_id, song_id, ROW_NUMBER() OVER (PARTITION BY song_id ORDER BY score DESC, COALESCE(end_time, first_seen_at::TEXT) ASC) AS rn " +
+            "(SELECT account_id, song_id, ROW_NUMBER() OVER (PARTITION BY song_id ORDER BY " + SoloLeaderboardOrderingSql.OrderBy() + ") AS rn " +
             "FROM leaderboard_entries WHERE instrument = @instrument AND source = 'scrape') sub " +
             "WHERE le.song_id = sub.song_id AND le.account_id = sub.account_id " +
             "AND le.instrument = @instrument AND le.source = 'scrape' " +
@@ -1876,7 +1874,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         cmd.CommandTimeout = 0;
         cmd.CommandText =
             "UPDATE leaderboard_entries le SET rank = sub.rn FROM " +
-            "(SELECT account_id, song_id, ROW_NUMBER() OVER (PARTITION BY song_id ORDER BY score DESC, COALESCE(end_time, first_seen_at::TEXT) ASC) AS rn " +
+            "(SELECT account_id, song_id, ROW_NUMBER() OVER (PARTITION BY song_id ORDER BY " + SoloLeaderboardOrderingSql.OrderBy() + ") AS rn " +
             "FROM leaderboard_entries WHERE instrument = @instrument AND source = 'scrape' AND song_id = ANY(@songIds)) sub " +
             "WHERE le.song_id = sub.song_id AND le.account_id = sub.account_id " +
             "AND le.instrument = @instrument AND le.source = 'scrape' " +
@@ -2954,7 +2952,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                      AND scope.projection_generation = projection.projection_generation
                     CROSS JOIN invalid_count invalid
                     WHERE projection.score <= @maxScore
-                    ORDER BY projection.rank
+                    ORDER BY projection.rank, projection.account_id ASC
                     {limitClause}
                     """
                 : $"""
@@ -2963,8 +2961,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                         SELECT projection.account_id, projection.score, projection.accuracy, projection.is_full_combo,
                                projection.stars, projection.season, projection.difficulty, projection.percentile, projection.end_time,
                                ROW_NUMBER() OVER (
-                                   ORDER BY projection.score DESC,
-                                            COALESCE(projection.end_time, projection.first_seen_at::TEXT) ASC) AS rank,
+                                   ORDER BY {SoloLeaderboardOrderingSql.OrderBy("projection")}) AS rank,
                                COUNT(*) OVER ()::INT AS total_count,
                                projection.api_rank,
                                projection.source
@@ -2985,7 +2982,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                     SELECT account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time,
                            rank, total_count, api_rank, source
                     FROM ranked_rows
-                    ORDER BY rank
+                    ORDER BY rank, account_id ASC
                     {limitClause}
                     """;
             cmd.Parameters.AddWithValue("maxScore", maxScore.Value);
@@ -3011,7 +3008,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                  AND scope.source_snapshot_id IS NOT DISTINCT FROM selected.source_snapshot_id
                 WHERE projection.song_id = @songId
                   AND projection.instrument = @instrument
-                ORDER BY projection.rank
+                ORDER BY projection.rank, projection.account_id ASC
                 {limitClause}
                 """;
             cmd.Parameters.AddWithValue("totalCount", totalCount);
@@ -3178,7 +3175,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             ),
             ranked_rows AS (
                 SELECT account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time,
-                       ROW_NUMBER() OVER (ORDER BY score DESC, COALESCE(end_time, first_seen_at::TEXT) ASC) AS rank
+                       ROW_NUMBER() OVER (ORDER BY {SoloLeaderboardOrderingSql.OrderBy()}) AS rank
                        {totalComputation},
                        api_rank,
                        source
@@ -3190,7 +3187,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                    api_rank,
                    source
             FROM ranked_rows
-            ORDER BY rank
+            ORDER BY rank, account_id ASC
             {limitClause}
             """;
     }
@@ -3205,7 +3202,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             FROM current_state
             WHERE rank BETWEEN @lo AND @hi
               AND account_id != @exclude
-            ORDER BY rank
+            ORDER BY rank, account_id ASC
             """;
 
     private string BuildCurrentStateSongIdsForAccountSql()
@@ -3394,7 +3391,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             ),
             ranked_rows AS (
                 SELECT song_id, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time,
-                       ROW_NUMBER() OVER (PARTITION BY song_id ORDER BY score DESC, COALESCE(end_time, first_seen_at::TEXT) ASC) AS rank,
+                       ROW_NUMBER() OVER (PARTITION BY song_id ORDER BY {SoloLeaderboardOrderingSql.OrderBy()}) AS rank,
                        api_rank
                 FROM resolved_rows
             )

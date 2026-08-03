@@ -460,6 +460,151 @@ public sealed class InstrumentDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void Filtered_projection_flag_paths_match_exact_ties_threshold_edges_and_rank_100_pages()
+    {
+        const string songId = "song_filtered_projection_exact_ties";
+        const int belowThreshold = 99_999;
+        const int threshold = 100_000;
+        const int aboveThreshold = 100_001;
+
+        InsertProjectionScope(songId, sourceSnapshotId: null, rowCount: 104);
+        var rows = new List<(string AccountId, int Score, int Rank)>
+        {
+            ("invalid-b", aboveThreshold, 2),
+            ("invalid-a", aboveThreshold, 1),
+        };
+        rows.AddRange(Enumerable.Range(0, 101)
+            .Reverse()
+            .Select(index => ($"acct-{index:D3}", threshold, index + 3)));
+        rows.Add(("acct-low", belowThreshold, 104));
+        InsertProjectionEntries(songId, rows);
+
+        void AssertLeaderboardParity(int maxScore, int? top = null, int offset = 0)
+        {
+            Db.UseStoredProjectionRanksForFilteredReads = false;
+            var baseline = Db.GetCurrentStateLeaderboardWithCount(songId, top, offset, maxScore);
+            Db.UseStoredProjectionRanksForFilteredReads = true;
+            var candidate = Db.GetCurrentStateLeaderboardWithCount(songId, top, offset, maxScore);
+
+            Assert.Equal(baseline.TotalCount, candidate.TotalCount);
+            Assert.Equal(
+                baseline.Entries.Select(static entry => (entry.AccountId, entry.Score, entry.Rank, entry.ApiRank, entry.EndTime)),
+                candidate.Entries.Select(static entry => (entry.AccountId, entry.Score, entry.Rank, entry.ApiRank, entry.EndTime)));
+        }
+
+        void AssertPlayerParity(string accountId, int maxScore, int? expectedRank)
+        {
+            var thresholds = new Dictionary<string, int> { [songId] = maxScore };
+            Db.UseStoredProjectionRanksForFilteredReads = false;
+            var baseline = Db.GetCurrentStatePlayerRankingsFiltered(accountId, thresholds, songId);
+            Db.UseStoredProjectionRanksForFilteredReads = true;
+            var candidate = Db.GetCurrentStatePlayerRankingsFiltered(accountId, thresholds, songId);
+
+            Assert.Equal(
+                baseline.OrderBy(static pair => pair.Key, StringComparer.Ordinal),
+                candidate.OrderBy(static pair => pair.Key, StringComparer.Ordinal));
+            if (expectedRank.HasValue)
+                Assert.Equal(expectedRank.Value, candidate[songId]);
+            else
+                Assert.False(candidate.ContainsKey(songId));
+        }
+
+        AssertLeaderboardParity(belowThreshold);
+        AssertLeaderboardParity(threshold);
+        AssertLeaderboardParity(aboveThreshold);
+        AssertLeaderboardParity(threshold, top: 100, offset: 0);
+        AssertLeaderboardParity(threshold, top: 2, offset: 100);
+
+        Db.UseStoredProjectionRanksForFilteredReads = true;
+        var firstPage = Db.GetCurrentStateLeaderboardWithCount(songId, top: 100, offset: 0, maxScore: threshold);
+        var secondPage = Db.GetCurrentStateLeaderboardWithCount(songId, top: 2, offset: 100, maxScore: threshold);
+        Assert.Equal(102, firstPage.TotalCount);
+        Assert.Equal(("acct-099", 100), (firstPage.Entries[^1].AccountId, firstPage.Entries[^1].Rank));
+        Assert.Equal(
+            [("acct-100", 101), ("acct-low", 102)],
+            secondPage.Entries.Select(static entry => (entry.AccountId, entry.Rank)));
+
+        AssertPlayerParity("acct-low", belowThreshold, expectedRank: 1);
+        AssertPlayerParity("acct-099", belowThreshold, expectedRank: null);
+        AssertPlayerParity("acct-099", threshold, expectedRank: 100);
+        AssertPlayerParity("acct-099", aboveThreshold, expectedRank: 102);
+    }
+
+    [Fact]
+    public void Published_projection_readiness_handles_current_reused_mismatched_and_empty_sources()
+    {
+        foreach (var scrapeId in new long[] { 40, 50 })
+            InsertScrape(scrapeId);
+
+        InsertSnapshot(50, "song_published_current", "acct-current", 100_000);
+        InsertSnapshot(40, "song_published_reused", "acct-reused", 200_000);
+        InsertSnapshot(40, "song_published_mismatch", "acct-mismatch", 300_000);
+
+        SetPublishedScrape(50);
+        InsertPublishedSource(50, "song_published_current", "snapshot", 50, 50, 1);
+        InsertPublishedSource(50, "song_published_reused", "snapshot", 40, 40, 1);
+        InsertPublishedSource(50, "song_published_mismatch", "snapshot", 40, 40, 1);
+        InsertPublishedSource(50, "song_published_empty", "empty", null, 50, 0);
+
+        InsertProjectionScope("song_published_current", sourceSnapshotId: 50);
+        InsertProjectionEntry("song_published_current", "acct-current", 150_000, "current-projection");
+        InsertProjectionScope("song_published_reused", sourceSnapshotId: 40);
+        InsertProjectionEntry("song_published_reused", "acct-reused", 250_000, "reused-projection");
+        InsertProjectionScope("song_published_mismatch", sourceSnapshotId: 41);
+        InsertProjectionEntry("song_published_mismatch", "acct-mismatch", 999_000, "stale-projection");
+        InsertProjectionScope("song_published_empty", sourceSnapshotId: 50, rowCount: 0);
+
+        Db.UsePublishedScopeSources = true;
+
+        Assert.Equal(150_000, Assert.Single(Db.GetCurrentStateLeaderboard("song_published_current")).Score);
+        Assert.Equal(250_000, Assert.Single(Db.GetCurrentStateLeaderboard("song_published_reused")).Score);
+        Assert.Equal(300_000, Assert.Single(Db.GetCurrentStateLeaderboard("song_published_mismatch")).Score);
+        Assert.Empty(Db.GetCurrentStateLeaderboard("song_published_empty"));
+
+        foreach (var (songId, maxScore) in new[]
+                 {
+                     ("song_published_current", 200_000),
+                     ("song_published_reused", 300_000),
+                     ("song_published_mismatch", 400_000),
+                     ("song_published_empty", 500_000),
+                 })
+        {
+            Db.UseStoredProjectionRanksForFilteredReads = false;
+            var baseline = Db.GetCurrentStateLeaderboardWithCount(songId, maxScore: maxScore);
+            Db.UseStoredProjectionRanksForFilteredReads = true;
+            var candidate = Db.GetCurrentStateLeaderboardWithCount(songId, maxScore: maxScore);
+
+            Assert.Equal(baseline.TotalCount, candidate.TotalCount);
+            Assert.Equal(
+                baseline.Entries.Select(static entry => (entry.AccountId, entry.Score, entry.Rank)),
+                candidate.Entries.Select(static entry => (entry.AccountId, entry.Score, entry.Rank)));
+        }
+
+        foreach (var useStoredRanks in new[] { false, true })
+        {
+            Db.UseStoredProjectionRanksForFilteredReads = useStoredRanks;
+            Assert.Equal(
+                1,
+                Db.GetCurrentStatePlayerRankingsFiltered(
+                    "acct-current",
+                    new Dictionary<string, int> { ["song_published_current"] = 200_000 },
+                    "song_published_current")["song_published_current"]);
+            Assert.Equal(
+                1,
+                Db.GetCurrentStatePlayerRankingsFiltered(
+                    "acct-reused",
+                    new Dictionary<string, int> { ["song_published_reused"] = 300_000 },
+                    "song_published_reused")["song_published_reused"]);
+            Assert.Equal(
+                1,
+                Db.GetCurrentStatePlayerRankingsFiltered(
+                    "acct-mismatch",
+                    new Dictionary<string, int> { ["song_published_mismatch"] = 400_000 },
+                    "song_published_mismatch")["song_published_mismatch"]);
+        }
+    }
+
+    [Fact]
     public void GetCurrentStateLeaderboard_falls_back_to_live_rows_without_snapshot_state()
     {
         Db.UpsertEntries("song_1",
@@ -1950,6 +2095,41 @@ public sealed class InstrumentDatabaseTests : IDisposable
         cmd.Parameters.AddWithValue("rank", rank);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         cmd.ExecuteNonQuery();
+    }
+
+    private void InsertProjectionEntries(
+        string songId,
+        IReadOnlyCollection<(string AccountId, int Score, int Rank)> rows)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            INSERT INTO current_leaderboard_entries
+            (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, percentile, rank,
+             api_rank, source, difficulty, end_time, first_seen_at, last_updated_at, projection_generation, computed_at)
+            VALUES
+            (@songId, @instrument, @accountId, @score, 95, false, 5, 3, 99.0, @rank,
+             @rank, 'projection', 3, '2025-01-15T12:00:00Z', @now, @now, 1, @now)
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", Db.Instrument);
+        var accountId = cmd.Parameters.Add("accountId", NpgsqlTypes.NpgsqlDbType.Text);
+        var score = cmd.Parameters.Add("score", NpgsqlTypes.NpgsqlDbType.Integer);
+        var rank = cmd.Parameters.Add("rank", NpgsqlTypes.NpgsqlDbType.Integer);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.Prepare();
+
+        foreach (var row in rows)
+        {
+            accountId.Value = row.AccountId;
+            score.Value = row.Score;
+            rank.Value = row.Rank;
+            cmd.ExecuteNonQuery();
+        }
+
+        tx.Commit();
     }
 
     private void SetPublicationState(int publishedScrapeId, bool publicReadsFrozen)

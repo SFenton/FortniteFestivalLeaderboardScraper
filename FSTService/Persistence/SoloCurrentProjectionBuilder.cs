@@ -6,6 +6,35 @@ using Npgsql;
 
 namespace FSTService.Persistence;
 
+internal static class SoloLeaderboardOrderingSql
+{
+    internal static string OrderBy(string? alias = null)
+    {
+        var prefix = string.IsNullOrEmpty(alias) ? string.Empty : $"{alias}.";
+        return $"{prefix}score DESC, COALESCE({prefix}end_time, {prefix}first_seen_at::TEXT) ASC, {prefix}account_id ASC";
+    }
+
+    internal static string Precedes(string candidateAlias, string targetAlias)
+    {
+        var candidateOrderTime = $"COALESCE({candidateAlias}.end_time, {candidateAlias}.first_seen_at::TEXT)";
+        var targetOrderTime = $"COALESCE({targetAlias}.end_time, {targetAlias}.first_seen_at::TEXT)";
+        return $"""
+            (
+                {candidateAlias}.score > {targetAlias}.score
+                OR (
+                    {candidateAlias}.score = {targetAlias}.score
+                    AND {candidateOrderTime} < {targetOrderTime}
+                )
+                OR (
+                    {candidateAlias}.score = {targetAlias}.score
+                    AND {candidateOrderTime} IS NOT DISTINCT FROM {targetOrderTime}
+                    AND {candidateAlias}.account_id < {targetAlias}.account_id
+                )
+            )
+            """;
+    }
+}
+
 public sealed class SoloCurrentProjectionBuilder
 {
     public const string ProjectionTable = "current_leaderboard_entries";
@@ -678,7 +707,7 @@ public sealed class SoloCurrentProjectionBuilder
             ON solo_current_projection_scope (status, updated_at DESC);
         """;
 
-    private const string RebuildScopeSql = """
+    private static readonly string RebuildScopeSql = $"""
         WITH active_snapshot AS (
             SELECT active_snapshot_id
             FROM leaderboard_snapshot_state
@@ -742,7 +771,7 @@ public sealed class SoloCurrentProjectionBuilder
         ), ranked_rows AS (
             SELECT account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile,
                    end_time,
-                   (ROW_NUMBER() OVER (ORDER BY score DESC, COALESCE(end_time, first_seen_at::TEXT) ASC))::INTEGER AS rank,
+                   (ROW_NUMBER() OVER (ORDER BY {SoloLeaderboardOrderingSql.OrderBy()}))::INTEGER AS rank,
                    api_rank, source, first_seen_at, last_updated_at
             FROM resolved_rows
         ), existing_rows AS (
