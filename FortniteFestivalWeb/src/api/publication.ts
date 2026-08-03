@@ -2,12 +2,27 @@ import type { PublicationResponse } from '@festival/core/api';
 
 export const PUBLICATION_CHANGED_EVENT = 'fst:publication-changed';
 const PUBLICATION_STORAGE_KEY = 'fst_publication_id';
+const HTTP_CONFLICT = 409;
+const HTTP_NOT_MODIFIED = 304;
+
+type ResourceRevalidationState = {
+  completion: Promise<void>;
+  epoch: number;
+  pending: boolean;
+  resolve: () => void;
+};
+
+type ResourceRevalidationTicket = {
+  resourceKey: string;
+  state: ResourceRevalidationState;
+};
 
 let currentPublication: PublicationResponse | null = null;
 let publicationRequest: Promise<PublicationResponse> | null = null;
 let pinRequests = true;
 let publicationBootstrapEnabled = false;
-let revalidateHttpCache = false;
+let httpCacheRevalidationEpoch = 0;
+const resourceRevalidations = new Map<string, ResourceRevalidationState>();
 
 export function activatePublicationBootstrap(): void {
   publicationBootstrapEnabled = true;
@@ -57,7 +72,7 @@ export async function ensurePublication(
       ?? readStoredPublicationId();
     currentPublication = publication;
     writeStoredPublicationId(publication.publicationId);
-    if (previousId != null) revalidateHttpCache = true;
+    if (previousId != null) advanceHttpCacheRevalidationEpoch();
     if (notifyEvenIfSame || previousId !== publication.publicationId) {
       dispatchPublicationChanged(publication);
     }
@@ -78,30 +93,16 @@ export async function fetchWithPublication(
   }
 
   const publication = await ensurePublication();
-  const requestInit = revalidateHttpCache && init?.cache == null
-    ? { ...init, cache: 'no-cache' as const }
-    : init;
-  let response = await fetch(
-    appendPublicationId(path, publication.publicationId),
-    requestInit,
-  );
-  if (response.status !== 409) return response;
+  let response = await fetchPublishedResource(path, publication, init);
+  if (response.status !== HTTP_CONFLICT) return response;
 
   const body = await response.clone().json().catch(() => null) as {
     status?: string;
   } | null;
   if (body?.status !== 'publication_changed') return response;
 
-  revalidateHttpCache = true;
-  currentPublication = null;
   const refreshed = await ensurePublication(true);
-  const retryInit = revalidateHttpCache && init?.cache == null
-    ? { ...init, cache: 'no-cache' as const }
-    : init;
-  response = await fetch(
-    appendPublicationId(path, refreshed.publicationId),
-    retryInit,
-  );
+  response = await fetchPublishedResource(path, refreshed, init);
   return response;
 }
 
@@ -118,7 +119,7 @@ export function resetPublicationForTests(): void {
   publicationRequest = null;
   pinRequests = true;
   publicationBootstrapEnabled = false;
-  revalidateHttpCache = false;
+  resetHttpCacheRevalidation();
 }
 
 export function setPublicationForTests(
@@ -135,7 +136,137 @@ export function setPublicationForTests(
   publicationRequest = null;
   pinRequests = pinPublicationRequests;
   publicationBootstrapEnabled = true;
-  revalidateHttpCache = false;
+  resetHttpCacheRevalidation();
+}
+
+async function fetchPublishedResource(
+  path: string,
+  publication: PublicationResponse,
+  init?: RequestInit,
+): Promise<Response> {
+  const resourceKey = getResourceKey(path, init);
+  let decision = await acquireResourceRevalidation(resourceKey, init);
+  while (decision.epoch !== httpCacheRevalidationEpoch) {
+    decision = await acquireResourceRevalidation(resourceKey, init);
+  }
+
+  const requestInit = decision.ticket == null
+    ? init
+    : { ...init, cache: 'no-cache' as const };
+  const activePublication = currentPublication ?? publication;
+
+  try {
+    const response = await fetch(
+      appendPublicationId(path, activePublication.publicationId),
+      requestInit,
+    );
+    const epochChanged = (
+      init?.cache == null
+      && decision.epoch !== httpCacheRevalidationEpoch
+    );
+    completeResourceRevalidation(
+      decision.ticket,
+      !epochChanged
+        && (response.ok || response.status === HTTP_NOT_MODIFIED),
+    );
+    if (epochChanged) {
+      return fetchPublishedResource(
+        path,
+        currentPublication ?? publication,
+        init,
+      );
+    }
+    return response;
+  } catch (error) {
+    completeResourceRevalidation(decision.ticket, false);
+    if (
+      init?.cache == null
+      && decision.epoch !== httpCacheRevalidationEpoch
+    ) {
+      return fetchPublishedResource(
+        path,
+        currentPublication ?? publication,
+        init,
+      );
+    }
+    throw error;
+  }
+}
+
+function advanceHttpCacheRevalidationEpoch(): void {
+  releasePendingResourceRevalidations();
+  httpCacheRevalidationEpoch += 1;
+  resourceRevalidations.clear();
+}
+
+function resetHttpCacheRevalidation(): void {
+  releasePendingResourceRevalidations();
+  httpCacheRevalidationEpoch = 0;
+  resourceRevalidations.clear();
+}
+
+async function acquireResourceRevalidation(
+  resourceKey: string,
+  init?: RequestInit,
+): Promise<{
+  epoch: number;
+  ticket: ResourceRevalidationTicket | null;
+}> {
+  if (init?.cache != null) {
+    return { epoch: httpCacheRevalidationEpoch, ticket: null };
+  }
+
+  while (httpCacheRevalidationEpoch > 0) {
+    const epoch = httpCacheRevalidationEpoch;
+    const existing = resourceRevalidations.get(resourceKey);
+    if (!existing || existing.epoch !== epoch) {
+      let resolve!: () => void;
+      const state: ResourceRevalidationState = {
+        completion: new Promise<void>(complete => {
+          resolve = complete;
+        }),
+        epoch,
+        pending: true,
+        resolve: () => resolve(),
+      };
+      resourceRevalidations.set(resourceKey, state);
+      return {
+        epoch,
+        ticket: { resourceKey, state },
+      };
+    }
+    if (!existing.pending) return { epoch, ticket: null };
+    await existing.completion;
+  }
+
+  return { epoch: httpCacheRevalidationEpoch, ticket: null };
+}
+
+function completeResourceRevalidation(
+  ticket: ResourceRevalidationTicket | null,
+  succeeded: boolean,
+): void {
+  if (!ticket) return;
+
+  const { resourceKey, state } = ticket;
+  if (resourceRevalidations.get(resourceKey) === state) {
+    if (succeeded && state.epoch === httpCacheRevalidationEpoch) {
+      state.pending = false;
+    } else {
+      resourceRevalidations.delete(resourceKey);
+    }
+  }
+  state.resolve();
+}
+
+function releasePendingResourceRevalidations(): void {
+  for (const state of resourceRevalidations.values()) {
+    if (state.pending) state.resolve();
+  }
+}
+
+function getResourceKey(path: string, init?: RequestInit): string {
+  return `${(init?.method ?? 'GET').toUpperCase()} ${path}`;
 }
 
 function appendPublicationId(path: string, publicationId: number): string {

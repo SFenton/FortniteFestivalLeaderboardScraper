@@ -66,6 +66,7 @@ import {
 import {
   ensurePublication,
   fetchWithPublication,
+  getCurrentPublicationId,
 } from './publication';
 
 const BASE = '';
@@ -76,6 +77,8 @@ const SELECTED_BAND_ID_HEADER = 'X-FST-Selected-Band-Id';
 const SELECTED_BAND_TYPE_HEADER = 'X-FST-Selected-Band-Type';
 const SELECTED_BAND_TEAM_KEY_HEADER = 'X-FST-Selected-Band-Team-Key';
 const EXPORT_TIME_ZONE_HEADER = 'X-FST-Time-Zone';
+const PUBLICATION_ID_HEADER = 'X-FST-Publication-Id';
+const HTTP_NOT_MODIFIED = 304;
 
 export type ApiRequestOptions = {
   signal?: AbortSignal;
@@ -196,6 +199,18 @@ function normalizeDisplayName<T extends { displayName: string }>(data: T): T {
   return data;
 }
 
+function getResponsePublicationId(response: Response): number | null {
+  const raw = response.headers.get(PUBLICATION_ID_HEADER);
+  if (raw != null) {
+    const publicationId = Number(raw);
+    if (Number.isSafeInteger(publicationId) && publicationId > 0) {
+      return publicationId;
+    }
+    return null;
+  }
+  return getCurrentPublicationId();
+}
+
 export const api = {
   getPublication: (): Promise<PublicationResponse> => ensurePublication(),
 
@@ -212,16 +227,25 @@ export const api = {
     const init: RequestInit = { headers: withSelectedProfileHeaders(headers), cache: 'no-cache' };
     if (options?.signal) init.signal = options.signal;
     let res = await fetchWithPublication(`${BASE}/api/songs`, init);
+    let responsePublicationId = getResponsePublicationId(res);
 
     // 304 Not Modified — server confirms our cached data is still current
-    if (res.status === 304 && cached) return cached.data;
-    if (res.status === 304) {
+    if (
+      res.status === HTTP_NOT_MODIFIED
+      && cached
+      && cached.publicationId === responsePublicationId
+      && responsePublicationId === getCurrentPublicationId()
+    ) {
+      return cached.data;
+    }
+    if (res.status === HTTP_NOT_MODIFIED) {
       const retryInit: RequestInit = {
         headers: withSelectedProfileHeaders(),
         cache: 'no-store',
       };
       if (options?.signal) retryInit.signal = options.signal;
       res = await fetchWithPublication(`${BASE}/api/songs`, retryInit);
+      responsePublicationId = getResponsePublicationId(res);
     }
 
     if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
@@ -229,7 +253,12 @@ export const api = {
     const data = expandWireSongsResponse(await res.json());
     if (!isSongsResponse(data)) throw new Error('Invalid songs response');
     expandAlbumArt(data.songs);
-    writeSongsCache(data, res.headers.get('etag'));
+    if (
+      responsePublicationId != null
+      && responsePublicationId === getCurrentPublicationId()
+    ) {
+      writeSongsCache(data, res.headers.get('etag'), responsePublicationId);
+    }
     return data;
   },
 

@@ -1,24 +1,21 @@
 import type { ServerSong, SongsResponse } from '@festival/core/api';
+import { getCurrentPublicationId } from './publication';
 
 export const SONGS_CACHE_KEY = 'fst_songs_cache';
-export const SONGS_CACHE_VERSION = 3;
+export const SONGS_CACHE_VERSION = 4;
 export const PUBLIC_CATALOG_CACHE_SCOPE = 'public';
 
 export type SongsCacheEntry = {
   data: SongsResponse;
   etag: string | null;
+  publicationId: number;
   scope: typeof PUBLIC_CATALOG_CACHE_SCOPE;
   version: typeof SONGS_CACHE_VERSION;
 };
 
-type LegacySongsCache = {
-  data: SongsResponse;
-  etag: string | null;
-  v: 2;
-};
-
 let memoizedRaw: string | null | undefined;
 let memoizedEntry: SongsCacheEntry | null = null;
+let memoizedPublicationId: number | null | undefined;
 
 function getStorage(): Storage | null {
   return typeof localStorage === 'undefined' ? null : localStorage;
@@ -104,33 +101,34 @@ export function isSongsResponse(value: unknown): value is SongsResponse {
   return value.currentSeason === undefined || isFiniteNumber(value.currentSeason);
 }
 
-function normalizeCache(value: unknown): SongsCacheEntry | null {
+function normalizeCache(
+  value: unknown,
+  publicationId: number,
+): SongsCacheEntry | null {
   if (!isRecord(value) || !isSongsResponse(value.data)) return null;
   if (value.etag !== null && typeof value.etag !== 'string') return null;
-
+  if (value.version !== SONGS_CACHE_VERSION) return null;
+  if (value.scope !== PUBLIC_CATALOG_CACHE_SCOPE) return null;
   if (
-    value.version === SONGS_CACHE_VERSION
-    && value.scope === PUBLIC_CATALOG_CACHE_SCOPE
+    typeof value.publicationId !== 'number'
+    || !Number.isSafeInteger(value.publicationId)
+    || value.publicationId <= 0
   ) {
-    return value as SongsCacheEntry;
+    return null;
   }
-
-  if (value.v === 2) {
-    const legacy = value as LegacySongsCache;
-    return {
-      data: legacy.data,
-      etag: legacy.etag,
-      scope: PUBLIC_CATALOG_CACHE_SCOPE,
-      version: SONGS_CACHE_VERSION,
-    };
-  }
-
-  return null;
+  return value.publicationId === publicationId
+    ? value as SongsCacheEntry
+    : null;
 }
 
-function setMemo(raw: string | null, entry: SongsCacheEntry | null): void {
+function setMemo(
+  raw: string | null,
+  entry: SongsCacheEntry | null,
+  publicationId?: number | null,
+): void {
   memoizedRaw = raw;
   memoizedEntry = entry;
+  memoizedPublicationId = publicationId;
 }
 
 function removeStoredCache(storage: Storage): void {
@@ -142,19 +140,27 @@ function removeStoredCache(storage: Storage): void {
   setMemo(null, null);
 }
 
-export function readSongsCache(): SongsCacheEntry | null {
+export function readSongsCache(
+  publicationId = getCurrentPublicationId(),
+): SongsCacheEntry | null {
+  if (publicationId == null) return null;
   const storage = getStorage();
   if (!storage) return null;
 
   try {
     const raw = storage.getItem(SONGS_CACHE_KEY);
-    if (raw === memoizedRaw) return memoizedEntry;
+    if (
+      raw === memoizedRaw
+      && publicationId === memoizedPublicationId
+    ) {
+      return memoizedEntry;
+    }
     if (!raw) {
-      setMemo(null, null);
+      setMemo(null, null, publicationId);
       return null;
     }
 
-    const entry = normalizeCache(JSON.parse(raw));
+    const entry = normalizeCache(JSON.parse(raw), publicationId);
     if (!entry) {
       removeStoredCache(storage);
       return null;
@@ -162,7 +168,7 @@ export function readSongsCache(): SongsCacheEntry | null {
 
     const serialized = JSON.stringify(entry);
     if (serialized !== raw) storage.setItem(SONGS_CACHE_KEY, serialized);
-    setMemo(serialized, entry);
+    setMemo(serialized, entry, publicationId);
     return entry;
   } catch {
     removeStoredCache(storage);
@@ -170,20 +176,33 @@ export function readSongsCache(): SongsCacheEntry | null {
   }
 }
 
-export function writeSongsCache(data: SongsResponse, etag: string | null): void {
+export function writeSongsCache(
+  data: SongsResponse,
+  etag: string | null,
+  publicationId = getCurrentPublicationId(),
+): void {
   const storage = getStorage();
-  if (!storage || !isSongsResponse(data)) return;
+  if (
+    !storage
+    || !isSongsResponse(data)
+    || publicationId == null
+    || !Number.isSafeInteger(publicationId)
+    || publicationId <= 0
+  ) {
+    return;
+  }
 
   const entry: SongsCacheEntry = {
     data,
     etag,
+    publicationId,
     scope: PUBLIC_CATALOG_CACHE_SCOPE,
     version: SONGS_CACHE_VERSION,
   };
   try {
     const raw = JSON.stringify(entry);
     storage.setItem(SONGS_CACHE_KEY, raw);
-    setMemo(raw, entry);
+    setMemo(raw, entry, publicationId);
   } catch {
     // Quota failures leave the current in-memory query result untouched.
   }

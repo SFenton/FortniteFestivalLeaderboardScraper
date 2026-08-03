@@ -9,6 +9,7 @@ import {
   SONGS_CACHE_KEY,
   SONGS_CACHE_VERSION,
 } from '../../src/api/songsCache';
+import { setPublicationForTests } from '../../src/api/publication';
 
 vi.mock('../../src/api/client', () => ({
   api: {
@@ -29,6 +30,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
   clearSongsCache();
+  setPublicationForTests(42, false);
   testQc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
 });
 
@@ -66,6 +68,7 @@ describe('FestivalContext', () => {
     localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({
       version: SONGS_CACHE_VERSION,
       scope: PUBLIC_CATALOG_CACHE_SCOPE,
+      publicationId: 42,
       data: cached,
       etag: '"cached"',
     }));
@@ -90,6 +93,7 @@ describe('FestivalContext', () => {
     localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({
       version: SONGS_CACHE_VERSION,
       scope: PUBLIC_CATALOG_CACHE_SCOPE,
+      publicationId: 42,
       data: response,
       etag: '"same"',
     }));

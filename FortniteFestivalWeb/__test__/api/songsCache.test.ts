@@ -33,6 +33,7 @@ describe('Songs cache ownership', () => {
     localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({
       version: SONGS_CACHE_VERSION,
       scope: PUBLIC_CATALOG_CACHE_SCOPE,
+      publicationId: 42,
       data: cachedSongs,
       etag: '"songs-etag"',
     }));
@@ -52,25 +53,36 @@ describe('Songs cache ownership', () => {
     expect(parse).toHaveBeenCalledTimes(1);
   });
 
-  it('migrates a validated version-2 public cache without losing data', () => {
+  it('invalidates publication-less data during the version-4 cache migration', () => {
     localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({
-      v: 2,
+      version: 3,
+      scope: PUBLIC_CATALOG_CACHE_SCOPE,
       data: cachedSongs,
       etag: '"legacy-etag"',
     }));
 
-    expect(readSongsCache()?.data).toEqual(cachedSongs);
-    expect(JSON.parse(localStorage.getItem(SONGS_CACHE_KEY)!)).toMatchObject({
+    expect(readSongsCache()).toBeNull();
+    expect(localStorage.getItem(SONGS_CACHE_KEY)).toBeNull();
+  });
+
+  it('removes data cached for a different publication', () => {
+    localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({
       version: SONGS_CACHE_VERSION,
       scope: PUBLIC_CATALOG_CACHE_SCOPE,
-      etag: '"legacy-etag"',
-    });
+      publicationId: 41,
+      data: cachedSongs,
+      etag: '"old-publication-etag"',
+    }));
+
+    expect(readSongsCache()).toBeNull();
+    expect(localStorage.getItem(SONGS_CACHE_KEY)).toBeNull();
   });
 
   it('accepts legacy null values in partial max-score records', () => {
     localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({
       version: SONGS_CACHE_VERSION,
       scope: PUBLIC_CATALOG_CACHE_SCOPE,
+      publicationId: 42,
       data: {
         count: 1,
         currentSeason: 7,
@@ -95,17 +107,31 @@ describe('Songs cache ownership', () => {
 
   it.each([
     ['invalid JSON', '{not-json'],
-    ['unsupported version', JSON.stringify({ version: 99, scope: 'public', data: cachedSongs, etag: null })],
-    ['wrong scope', JSON.stringify({ version: SONGS_CACHE_VERSION, scope: 'profile-a', data: cachedSongs, etag: null })],
+    ['unsupported version', JSON.stringify({
+      version: 99,
+      scope: 'public',
+      publicationId: 42,
+      data: cachedSongs,
+      etag: null,
+    })],
+    ['wrong scope', JSON.stringify({
+      version: SONGS_CACHE_VERSION,
+      scope: 'profile-a',
+      publicationId: 42,
+      data: cachedSongs,
+      etag: null,
+    })],
     ['invalid song shape', JSON.stringify({
       version: SONGS_CACHE_VERSION,
       scope: PUBLIC_CATALOG_CACHE_SCOPE,
+      publicationId: 42,
       data: { count: 1, songs: [{ songId: 'missing-fields' }] },
       etag: null,
     })],
     ['invalid optional song metadata', JSON.stringify({
       version: SONGS_CACHE_VERSION,
       scope: PUBLIC_CATALOG_CACHE_SCOPE,
+      publicationId: 42,
       data: {
         count: 1,
         songs: [{

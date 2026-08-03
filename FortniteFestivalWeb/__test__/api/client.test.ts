@@ -33,6 +33,21 @@ function mockFetchError(status: number, statusText: string) {
   });
 }
 
+function jsonResponse(
+  data: unknown,
+  status = 200,
+  headers?: HeadersInit,
+): Response {
+  const responseHeaders = new Headers(headers);
+  if (!responseHeaders.has('Content-Type')) {
+    responseHeaders.set('Content-Type', 'application/json');
+  }
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: responseHeaders,
+  });
+}
+
 describe('api/client', () => {
   describe('getFeatures', () => {
     it('fetches feature flags from /api/features', async () => {
@@ -103,7 +118,13 @@ describe('api/client', () => {
     it('sends If-None-Match when cached ETag exists', async () => {
       // Seed localStorage with a cached response + etag
       const cached = { songs: [{ songId: 's1', title: 'Old', artist: 'Artist' }], count: 1, currentSeason: 5 };
-      localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({ data: cached, etag: '"abc123"', v: 2 }));
+      localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({
+        version: SONGS_CACHE_VERSION,
+        scope: PUBLIC_CATALOG_CACHE_SCOPE,
+        publicationId: 42,
+        data: cached,
+        etag: '"abc123"',
+      }));
 
       (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
         ok: false,
@@ -112,7 +133,10 @@ describe('api/client', () => {
       });
 
       const result = await api.getSongs();
-        expect(global.fetch).toHaveBeenCalledWith('/api/songs', { headers: { 'If-None-Match': '"abc123"' }, cache: 'no-cache' });
+      expect(global.fetch).toHaveBeenCalledWith('/api/songs', {
+        headers: { 'If-None-Match': '"abc123"' },
+        cache: 'no-cache',
+      });
       expect(result).toEqual(cached);
     });
 
@@ -156,12 +180,19 @@ describe('api/client', () => {
       expect(stored.etag).toBe('"newetag"');
       expect(stored.version).toBe(SONGS_CACHE_VERSION);
       expect(stored.scope).toBe(PUBLIC_CATALOG_CACHE_SCOPE);
+      expect(stored.publicationId).toBe(42);
       expect(stored.data.songs[0].songId).toBe('s2');
     });
 
     it('preserves ETag and no-cache semantics when a caller supplies a signal', async () => {
       const cached = { songs: [{ songId: 's1', title: 'Old', artist: 'Artist' }], count: 1, currentSeason: 5 };
-      localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({ data: cached, etag: '"abc123"', v: 2 }));
+      localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({
+        version: SONGS_CACHE_VERSION,
+        scope: PUBLIC_CATALOG_CACHE_SCOPE,
+        publicationId: 42,
+        data: cached,
+        etag: '"abc123"',
+      }));
       const controller = new AbortController();
       mockFetchOk({ songs: [], count: 0, currentSeason: 5 });
 
@@ -183,6 +214,7 @@ describe('api/client', () => {
       localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({
         version: SONGS_CACHE_VERSION,
         scope: PUBLIC_CATALOG_CACHE_SCOPE,
+        publicationId: 42,
         data: cached,
         etag: '"shared-etag"',
       }));
@@ -231,6 +263,98 @@ describe('api/client', () => {
           'X-FST-Selected-Band-Type': 'Band_Duets',
           'X-FST-Selected-Band-Team-Key': 'player-1:player-2',
         },
+      });
+    });
+
+    it('does not reuse an ETag or body from a different publication', async () => {
+      const stale = {
+        songs: [{ songId: 'old', title: 'Old', artist: 'Artist' }],
+        count: 1,
+        currentSeason: 5,
+      };
+      const fresh = {
+        songs: [{ songId: 'new', title: 'New', artist: 'Artist' }],
+        count: 1,
+        currentSeason: 6,
+      };
+      localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({
+        version: SONGS_CACHE_VERSION,
+        scope: PUBLIC_CATALOG_CACHE_SCOPE,
+        publicationId: 41,
+        data: stale,
+        etag: '"stale-etag"',
+      }));
+      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+        jsonResponse(fresh, 200, {
+          etag: '"fresh-etag"',
+          'X-FST-Publication-Id': '42',
+        }),
+      );
+
+      await expect(api.getSongs()).resolves.toEqual(fresh);
+      expect(global.fetch).toHaveBeenCalledWith('/api/songs', {
+        headers: {},
+        cache: 'no-cache',
+      });
+      expect(JSON.parse(localStorage.getItem(SONGS_CACHE_KEY)!)).toMatchObject({
+        publicationId: 42,
+        etag: '"fresh-etag"',
+        data: fresh,
+      });
+    });
+
+    it('falls back to a full body when publication changes before a 304', async () => {
+      const stale = {
+        songs: [{ songId: 'old', title: 'Old', artist: 'Artist' }],
+        count: 1,
+        currentSeason: 5,
+      };
+      const fresh = {
+        songs: [{ songId: 'new', title: 'New', artist: 'Artist' }],
+        count: 1,
+        currentSeason: 6,
+      };
+      localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({
+        version: SONGS_CACHE_VERSION,
+        scope: PUBLIC_CATALOG_CACHE_SCOPE,
+        publicationId: 42,
+        data: stale,
+        etag: '"stale-etag"',
+      }));
+      (global.fetch as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(jsonResponse({
+          status: 'publication_changed',
+          currentPublicationId: 43,
+        }, 409))
+        .mockResolvedValueOnce(jsonResponse({
+          publicationId: 43,
+          previousPublicationId: 42,
+          publishedScrapeId: 1277,
+          publishedAt: '2026-08-03T02:00:00Z',
+          pinningEnabled: false,
+        }))
+        .mockResolvedValueOnce(new Response(null, {
+          status: 304,
+          headers: { 'X-FST-Publication-Id': '43' },
+        }))
+        .mockResolvedValueOnce(jsonResponse(fresh, 200, {
+          etag: '"fresh-etag"',
+          'X-FST-Publication-Id': '43',
+        }));
+
+      await expect(api.getSongs()).resolves.toEqual(fresh);
+      expect(global.fetch).toHaveBeenNthCalledWith(3, '/api/songs', {
+        headers: { 'If-None-Match': '"stale-etag"' },
+        cache: 'no-cache',
+      });
+      expect(global.fetch).toHaveBeenNthCalledWith(4, '/api/songs', {
+        headers: {},
+        cache: 'no-store',
+      });
+      expect(JSON.parse(localStorage.getItem(SONGS_CACHE_KEY)!)).toMatchObject({
+        publicationId: 43,
+        etag: '"fresh-etag"',
+        data: fresh,
       });
     });
   });
