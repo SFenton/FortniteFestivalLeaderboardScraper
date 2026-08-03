@@ -1473,10 +1473,13 @@ deployment/repair remain separate**
   rows, zero path errors, and unchanged HTTP `200` public/legacy path reads.
 - The next full-scrape data profile is
   `catalog-path-notification-source-cut` on
-  `fstservice:post-restart-40157c5b`. The image retains the atomic
+  `fstservice:path-repair-d3ac8129`. The image retains the atomic
   catalog/path/notification candidate and adds corrected watchdog-visible
   refresh heartbeats plus terminal-empty handling for Epic
-  invalid/uninstantiated leaderboards.
+  invalid/uninstantiated leaderboards. It also canonicalizes equivalent
+  provider/database timestamp text before the guarded exact-four path repair,
+  preserving fail-closed identity checks without rejecting harmless
+  fractional-precision differences.
 - Acceptance requires a schema-v2 `provider_exact` live catalog, a ready
   `generation_catalog_snapshot` binding for the new publication, generation
   cache/public parity, completed routine notifications, and zero automatic
