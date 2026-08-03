@@ -211,6 +211,13 @@ LOGICAL-RETIRE then truncated the two logical parents and all 18 leaves on
 2026-07-28, reclaiming `123,173,593,088` database bytes while retaining empty
 schemas, 20 primary keys, and the metrics table.
 
+The repository now removes the retired logical writer/config/rollback surface
+and stops creating the logical current, version, and metrics schemas during
+startup. Tracked role and runtime configuration no longer expose the retired
+flag. No live objects are dropped by this code change: the empty current/
+version families and 108-row metrics table await cleanup-image full-scrape
+parity before a separate physical-schema cleanup.
+
 The 2026-07-25 SOLO-DYNAMIC-AB inventory measured the active solo current
 projection at `39,601,283` rows / `46,633,459,712` bytes:
 `17,821,523,968` heap and `28,806,701,056` indexes. The accepted replacement
@@ -339,7 +346,6 @@ marker exists on a legacy row).
 | `Features__RequireSuccessfulScrapeWriters` | `fstworker` | `false` | Rejects a candidate when any disk-spool or bounded-online writer reports failed pages/rows | Set `false`; durable failure rows and replay artifacts remain |
 | `Features__EnforcePublicationCriticalPhases` | `fstworker` | `false` | Rejects a candidate after any explicitly publication-critical post-scrape phase failure | Set `false`; phase outcomes remain visible while legacy swallow behavior is restored |
 | `Features__EnablePublicationReadContext` | `fstservice` | `false` | Enables publication bootstrap, pinned HTTP/WebSocket requests, shared read leases, and `409 publication_changed` enforcement after every public surface is generation-addressable | Keep `false` until all required surface bindings are ready; additive ledger/pointer rows remain |
-| `Features__WriteLogicalLeaderboardVersions` | all roles | `false` and startup-rejected when true | Retired shadow writer; no service/API reader exists | Future enablement requires a versioned migration, rebuild/restore validation, and a new live-scrape promotion |
 
 Tracked Compose templates load non-secret role defaults from
 `deploy/config/fstservice-role.env` and
@@ -688,9 +694,9 @@ All instrument-partitioned families use these nine keys:
 | `leaderboard_published_scope_source` | Durable published source selection | Worker candidate build and publication transaction | Service and export resolver when `Features:UsePublishedScopeSources=true`; supports physical snapshot and explicit empty sources |
 | `leaderboard_population`, `song_stats` | Durable derived metadata | Worker/post-process | Ranking totals/statistics; generation must match source |
 | `leaderboard_entries_overlay` | Durable corrective overlay | Controlled writes | Merged with selected base source; precedence is explicit |
-| `leaderboard_current_entries` | Empty retired logical current schema | Disabled worker dual-write | Never authoritative; rows truncated 2026-07-28, primary-key family retained, dormant rank/change secondary trees retired; rebuild semantic current from the published physical map only after an explicit future migration/promotion |
-| `leaderboard_entry_versions` | Empty retired logical chronology schema | Disabled worker dual-write | Non-authoritative scrape `1223`-`1237` chronology intentionally discarded 2026-07-28; primary-key family retained and dormant open/from-scrape secondary trees retired |
-| `leaderboard_logical_write_metrics` | Audit/artifact | Worker | Per-scrape changed/new/unchanged evidence |
+| `leaderboard_current_entries` | Empty retired logical current schema | None; writer and startup creation removed | Never authoritative; rows truncated 2026-07-28, primary-key family retained, dormant rank/change secondary trees retired; rebuild semantic current from the published physical map only after an explicit future migration/promotion |
+| `leaderboard_entry_versions` | Empty retired logical chronology schema | None; writer and startup creation removed | Non-authoritative scrape `1223`-`1237` chronology intentionally discarded 2026-07-28; primary-key family retained and dormant open/from-scrape secondary trees retired |
+| `leaderboard_logical_write_metrics` | Retained audit artifact | None; metrics writer and startup creation removed | Historical 108-row evidence remains until cleanup-image full-scrape parity permits physical cleanup |
 | `current_leaderboard_entries`, `solo_current_projection_scope`, `solo_current_projection_state` | Derived published/current projection | `SoloCurrentProjectionBuilder` | Preferred bounded current reads when scope state is ready |
 | `valid_score_overrides` | Durable operator/source metadata | Controlled writes | Threshold exception source; retain provenance |
 
@@ -1011,8 +1017,10 @@ the original exact manifest or the fully empty retired state.
    sequence to Trios and then Quad.
 10. The retired logical shadow intentionally has no
     `ix_lce_scope_rank`, `ix_lce_last_changed`, `ix_lev_open_versions`, or
-    `ix_lev_from_scrape` tree. The writer is startup-rejected and there is no
-    runtime reader. All primary-key constraints remain; exact child-concurrent,
+    `ix_lev_from_scrape` tree. Its writer, rollback path, runtime/config flag,
+    and startup schema creation are removed, and there is no runtime reader.
+    Existing physical primary-key constraints remain until cleanup-image
+    full-scrape parity clears their separate drop; exact child-concurrent,
     metadata-parent, attach rollback SQL must run before any future migration
     restores ownership.
 
@@ -1446,6 +1454,10 @@ rebuild statements are in `docs/database/OrphanReclaimRunbook.md`.
 
 ### Retired logical leaderboard shadow
 
+- Repository code no longer exposes or validates a logical writer flag, calls
+  logical write/rollback paths, or creates the logical current, version, or
+  metrics schemas. Tracked appsettings, Compose, and role defaults no longer
+  include the retired key.
 - Executed truncate:
   `TRUNCATE TABLE public.leaderboard_current_entries,
   public.leaderboard_entry_versions;` without `CASCADE`. Truncating either
@@ -1474,6 +1486,10 @@ rebuild statements are in `docs/database/OrphanReclaimRunbook.md`.
   guard passes with more than 103.9 GB of margin.
 - Execution evidence and exact rebuild SQL:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/logical-retire-executed-20260728T092804Z`.
+- No live DDL is part of the code retirement. The empty current/version
+  objects, retained primary-key families, and 108-row metrics table await a
+  cleanup image and successful full-scrape publication/public-fingerprint
+  parity before exact physical removal.
 
 ## Operational verification
 
@@ -1539,7 +1555,8 @@ scope-total, and relation-size deltas for an A/B decision.
   score-history uniqueness remain explicit owner decisions.
 - **PG-4 / WORKER-4:** semantic-change writes, unchanged physical source reuse,
   diff projections/rankings, and one atomic band publication. The retired
-  logical shadow is not a PG-4 reader or default writer.
+  logical shadow has no PG-4 reader, writer, config surface, or startup schema
+  owner.
 - **PG-5:** latest-state history design, explicit retention, and same-drive
   Parquet/DuckDB artifact pilots.
 - **PG-6 / SERVICE-4:** versioned migrations, one migration owner, autovacuum,

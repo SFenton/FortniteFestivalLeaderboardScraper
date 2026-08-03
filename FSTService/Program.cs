@@ -174,7 +174,6 @@ builder.Services.Configure<ScraperOptions>(
 builder.Services.AddOptions<FeatureOptions>()
     .Bind(builder.Configuration.GetSection(FeatureOptions.Section))
     .ValidateOnStart();
-builder.Services.AddSingleton<IValidateOptions<FeatureOptions>, FeatureOptionsValidator>();
 builder.Services.Configure<ClientTelemetryOptions>(
     builder.Configuration.GetSection(ClientTelemetryOptions.Section));
 builder.Services.Configure<ImprovementNotificationOptions>(

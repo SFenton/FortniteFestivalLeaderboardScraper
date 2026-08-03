@@ -864,7 +864,7 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
-    public async Task EnsureSchemaAsync_does_not_recreate_retired_logical_shadow_secondary_indexes()
+    public async Task EnsureSchemaAsync_does_not_create_retired_logical_shadow_schema()
     {
         await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
 
@@ -872,6 +872,10 @@ public class DatabaseInitializerTests : IDisposable
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             SELECT
+                to_regclass('public.leaderboard_current_entries') IS NULL,
+                to_regclass('public.leaderboard_entry_versions') IS NULL,
+                to_regclass('public.leaderboard_logical_write_metrics') IS NULL,
+                to_regclass('public.ix_llwm_scrape') IS NULL,
                 to_regclass('public.ix_lce_scope_rank') IS NULL,
                 to_regclass('public.ix_lce_last_changed') IS NULL,
                 to_regclass('public.ix_lev_open_versions') IS NULL,

@@ -122,29 +122,25 @@ public class ScraperOptionsAndModelsTests
         Assert.False(opts.RequireSuccessfulScrapeWriters);
         Assert.False(opts.EnforcePublicationCriticalPhases);
         Assert.False(opts.EnablePublicationReadContext);
-        Assert.False(opts.WriteLogicalLeaderboardVersions);
+    }
+
+    [Fact]
+    public void FeatureOptions_DoesNotExposeRetiredLogicalLeaderboardShadowConfiguration()
+    {
+        Assert.Null(typeof(FeatureOptions).GetProperty("WriteLogicalLeaderboardVersions"));
         Assert.Null(typeof(FeatureOptions).GetProperty("UseLogicalLeaderboardVersions"));
+        Assert.Null(typeof(FeatureOptions).Assembly.GetType("FSTService.FeatureOptionsValidator"));
     }
 
-    [Fact]
-    public void FeatureOptionsValidator_RejectsRetiredLogicalLeaderboardWriter()
+    [Theory]
+    [InlineData("appsettings.json")]
+    [InlineData("appsettings.Development.json")]
+    public void Appsettings_DoNotExposeRetiredLogicalLeaderboardShadowConfiguration(string fileName)
     {
-        var result = new FeatureOptionsValidator().Validate(
-            null,
-            new FeatureOptions { WriteLogicalLeaderboardVersions = true });
+        var contents = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, fileName));
 
-        Assert.True(result.Failed);
-        Assert.Contains(
-            FeatureOptionsValidator.RetiredLogicalLeaderboardShadowMessage,
-            result.Failures);
-    }
-
-    [Fact]
-    public void FeatureOptionsValidator_AcceptsRetiredLogicalLeaderboardWriterDisabled()
-    {
-        var result = new FeatureOptionsValidator().Validate(null, new FeatureOptions());
-
-        Assert.True(result.Succeeded);
+        Assert.DoesNotContain("WriteLogicalLeaderboardVersions", contents, StringComparison.Ordinal);
+        Assert.DoesNotContain("UseLogicalLeaderboardVersions", contents, StringComparison.Ordinal);
     }
 
     [Fact]

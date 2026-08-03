@@ -118,7 +118,6 @@ public static class LeaderboardSpoolWriterFactory
                 scrapeId,
                 activeInstrument,
                 scopeManifests);
-            persistence.WriteLogicalLeaderboardVersionsFromStaging(conn, tx, scrapeId, activeInstrument);
 
             if (scrapeId > 0)
             {

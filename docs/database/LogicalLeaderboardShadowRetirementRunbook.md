@@ -26,6 +26,16 @@ truncated only `public.leaderboard_current_entries` and
 partitions are empty; all 20 primary-key constraints and indexes remain valid.
 `public.leaderboard_logical_write_metrics` remains intact at 108 rows.
 
+Repository retirement is now complete at the code/config/schema-creation
+layer. `FeatureOptions` no longer exposes the retired writer, startup no
+longer registers its validator, spool/orchestration no longer call logical
+write or rollback paths, and `DatabaseInitializer` no longer creates the
+logical current, version, or metrics families. Tracked appsettings, Compose,
+and worker-role configuration no longer carry the retired key. This change
+does not drop or alter live objects: the empty current/version families and
+the 108-row metrics table await cleanup-image full-scrape parity before a
+separate physical-schema cleanup.
+
 The production transaction reclaimed `123,173,593,088` database bytes. Stable
 filesystem free space increased from `41,158,270,976` to approximately
 `164,328,067,072` bytes, a measured gain of `123,169,796,096` bytes after
@@ -127,18 +137,20 @@ The following parent trees are intentionally absent:
 - `ix_lev_open_versions`
 - `ix_lev_from_scrape`
 
-They owned 36 physical child indexes and zero constraints. Current production
-has no logical-shadow reader, and `FeatureOptionsValidator` rejects enabling
-the only writer. A transactional drop/rollback proof preserved exact bounded
-current/version fingerprints; the production drop retained all 20 primary-key
-constraints and `13/13` public route/export/history/ranking fingerprints.
+They owned 36 physical child indexes and zero constraints. Production has no
+logical-shadow reader or active writer; the cleanup-image repository state
+also removes the dormant writer/config surface. A transactional drop/rollback
+proof preserved exact bounded current/version fingerprints; the production
+drop retained all 20 primary-key constraints and `13/13` public
+route/export/history/ranking fingerprints.
 
 Exact concurrent child rebuild, parent creation, and attach SQL is retained at:
 
 `post-scrape-1265-capacity-recovery-20260727T0011Z/rollback/recreate-logical-shadow-secondary-indexes.sql`
 
 Run that package before any future versioned migration re-enables a logical
-writer or reader. `DatabaseInitializer` no longer recreates these indexes.
+writer or reader. `DatabaseInitializer` no longer creates the retired parent,
+leaf, metrics, or secondary-index schemas.
 
 ## Executed preconditions
 
@@ -224,15 +236,27 @@ commit:
   fingerprints, and deterministic current/version samples. Do not create a
   full same-drive duplicate.
 
-## Fail-closed configuration
+## Code retirement and physical cleanup gate
 
-`WriteLogicalLeaderboardVersions` defaults false in code and tracked
-configuration. `FeatureOptionsValidator` rejects true at startup. No
-`UseLogicalLeaderboardVersions` read flag exists. Future writer or reader
-enablement requires a code/config change, versioned migration, rebuild/restore
-validation, tests, and a new full live-scrape promotion.
+The logical writer flag, startup validator, persistence writer/metrics/
+rollback implementation, spool/orchestrator call sites, schema-creation SQL,
+and tracked role/runtime keys are removed. No logical reader flag exists.
+Future writer or reader enablement requires new versioned code and migration
+work, rebuild/restore validation, tests, and a new full live-scrape promotion.
+
+The repository change intentionally performs no live DDL. Existing production
+objects remain as the empty current/version parents and 18 leaves, their
+retained primary-key families, and the 108-row metrics table. They await a
+cleanup image followed by a successful full scrape with publication and
+public-fingerprint parity before an exact, separately recorded physical drop.
 
 ## Next storage phase
+
+The only remaining logical-shadow phase is cleanup-image full-scrape parity
+and, after that gate clears, exact physical removal of the retired current,
+version, and metrics objects. Until then, preserve the rebuild/rollback SQL,
+scope fingerprints, published source maps, current projection, manifests, and
+execution evidence.
 
 Keep `player_score_observations` separate from this completed phase. The next
 lowest-risk storage phase is to independently verify that both observation

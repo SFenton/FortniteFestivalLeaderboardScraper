@@ -120,8 +120,6 @@ services:
       - Features__WriteLegacyLiveLeaderboardSupplementalRows=${WRITE_LEGACY_LIVE_LEADERBOARD_SUPPLEMENTAL_ROWS:-true}
       - Features__WriteSoloScoreObservations=${WRITE_SOLO_SCORE_OBSERVATIONS:-false}
       - Features__WriteBandMemberScoreObservations=${WRITE_BAND_MEMBER_SCORE_OBSERVATIONS:-false}
-      # Retired shadow writer; future enablement requires a migration/promotion code change.
-      - Features__WriteLogicalLeaderboardVersions=false
       - Features__UseStoredSoloProjectionRanksForFilteredReads=${USE_STORED_SOLO_PROJECTION_RANKS_FOR_FILTERED_READS:-false}
       - Features__Shop=${FEATURE_SHOP:-false}
       - Features__Rivals=${FEATURE_RIVALS:-false}
