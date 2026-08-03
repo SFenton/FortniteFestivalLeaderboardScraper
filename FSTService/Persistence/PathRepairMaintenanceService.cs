@@ -437,20 +437,27 @@ public sealed class PathRepairMaintenanceService
             "path-repair-align-rankings",
             holdPublicationLock: true,
             ct);
+        var initialFreeze = _metaDatabase.GetPublicReadFreezeState();
         var published = ValidatePublishedRepairContext(
             expectedPublishedScrapeId,
-            requireUnfrozen: true);
+            requireUnfrozen: !initialFreeze.IsFrozen,
+            requiredFreezeReason: initialFreeze.IsFrozen
+                ? RankingAlignmentFreezeReason
+                : null);
 
-        var freezeSet = false;
+        var freezeSet = initialFreeze.IsFrozen;
         var rebuildValidated = false;
         var readsRestored = false;
         string? detail = null;
         try
         {
-            _metaDatabase.SetPublicReadFreeze(
-                true,
-                expectedPublishedScrapeId,
-                RankingAlignmentFreezeReason);
+            if (!initialFreeze.IsFrozen)
+            {
+                _metaDatabase.SetPublicReadFreeze(
+                    true,
+                    expectedPublishedScrapeId,
+                    RankingAlignmentFreezeReason);
+            }
             var frozen = _metaDatabase.GetPublicReadFreezeState();
             freezeSet =
                 frozen.IsFrozen &&

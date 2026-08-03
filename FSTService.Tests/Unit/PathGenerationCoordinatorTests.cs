@@ -1318,6 +1318,28 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
     }
 
     [Fact]
+    public async Task Repair_ranking_alignment_resumes_its_owned_freeze()
+    {
+        var setup = await StageRepairForPromotionAsync(
+            statefulFreeze: true);
+        setup.MetaDatabase.SetPublicReadFreeze(
+            true,
+            setup.PublishedScrapeId,
+            PathRepairMaintenanceService.RankingAlignmentFreezeReason);
+
+        var report = await setup.Service.AlignRankingsAsync(
+            setup.PublishedScrapeId);
+
+        Assert.True(report.Succeeded);
+        Assert.True(report.PublicReadsRestored);
+        Assert.False(
+            setup.MetaDatabase.GetPublicReadFreezeState().IsFrozen);
+        await setup.RankingExecutor.Received(1).RebuildAsync(
+            Arg.Any<IReadOnlyList<Song>>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Repair_ranking_rebuild_uses_published_catalog_freeze_without_scrape_or_publish()
     {
         var setup = await StageRepairForPromotionAsync(
