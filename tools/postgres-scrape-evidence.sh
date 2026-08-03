@@ -335,12 +335,18 @@ else
         > "$OUT_DIR/published-scope-sources.csv"
 fi
 
-psql_csv "
-    SELECT *
-    FROM leaderboard_logical_write_metrics
-    WHERE scrape_id = $SCRAPE_ID
-    ORDER BY instrument
-" "$OUT_DIR/logical-write-metrics.csv"
+if [[ "$(psql_scalar "SELECT to_regclass('public.leaderboard_logical_write_metrics') IS NOT NULL;")" == "t" ]]; then
+    psql_csv "
+        SELECT *
+        FROM leaderboard_logical_write_metrics
+        WHERE scrape_id = $SCRAPE_ID
+        ORDER BY instrument
+    " "$OUT_DIR/logical-write-metrics.csv"
+else
+    printf '%s\n' \
+        'scrape_id,instrument,flush_count,observed_rows,new_rows,changed_rows,unchanged_rows,current_upserts,versions_closed,versions_opened,first_observed_at,last_observed_at' \
+        > "$OUT_DIR/logical-write-metrics.csv"
+fi
 
 psql_csv "
     SELECT

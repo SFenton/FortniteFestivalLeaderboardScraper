@@ -249,6 +249,10 @@ objects remain as the empty current/version parents and 18 leaves, their
 retained primary-key families, and the 108-row metrics table. They await a
 cleanup image followed by a successful full scrape with publication and
 public-fingerprint parity before an exact, separately recorded physical drop.
+Repository scrape-evidence and bounded-restore tooling checks `to_regclass`
+before reading these retired objects. A clean or post-drop database emits an
+empty logical-metrics CSV and records skipped restore datasets instead of
+failing the evidence workflow.
 
 ## Next storage phase
 

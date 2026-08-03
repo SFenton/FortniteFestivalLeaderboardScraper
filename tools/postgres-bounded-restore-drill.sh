@@ -235,6 +235,21 @@ add_dataset() {
     DATASET_QUERIES+=("$3")
 }
 
+SKIPPED_DATASETS_FILE="$OUT_DIR/skipped-datasets.tsv"
+printf 'dataset\ttable\treason\n' > "$SKIPPED_DATASETS_FILE"
+
+add_dataset_if_table_exists() {
+    local name="$1"
+    local table="$2"
+    local query="$3"
+    if [[ "$(source_scalar "SELECT to_regclass('public.$table') IS NOT NULL;")" == "t" ]]; then
+        add_dataset "$name" "$table" "$query"
+    else
+        printf '%s\t%s\tretired_schema_absent\n' "$name" "$table" \
+            >> "$SKIPPED_DATASETS_FILE"
+    fi
+}
+
 add_dataset "data-version" "data_version" \
     "SELECT * FROM data_version ORDER BY 1"
 add_dataset "scrape-log" "scrape_log" \
@@ -251,7 +266,7 @@ add_dataset "instrument-scrape-state" "instrument_scrape_state" \
     "SELECT * FROM instrument_scrape_state ORDER BY instrument"
 add_dataset "scope-fingerprints" "leaderboard_scope_fingerprints" \
     "SELECT * FROM leaderboard_scope_fingerprints ORDER BY instrument, song_id, scope_kind"
-add_dataset "logical-write-metrics" "leaderboard_logical_write_metrics" \
+add_dataset_if_table_exists "logical-write-metrics" "leaderboard_logical_write_metrics" \
     "SELECT * FROM leaderboard_logical_write_metrics WHERE scrape_id = $SCRAPE_ID ORDER BY instrument"
 add_dataset "phase-timings" "scrape_phase_timings" \
     "SELECT * FROM scrape_phase_timings WHERE scrape_id = $SCRAPE_ID ORDER BY id"
@@ -288,12 +303,12 @@ add_dataset "solo-overlay" "leaderboard_entries_overlay" \
      WHERE song_id = $(sql_quote "$solo_song")
        AND instrument = $(sql_quote "$solo_instrument")
      ORDER BY account_id, source_priority"
-add_dataset "solo-logical-current" "leaderboard_current_entries" \
+add_dataset_if_table_exists "solo-logical-current" "leaderboard_current_entries" \
     "SELECT * FROM leaderboard_current_entries
      WHERE song_id = $(sql_quote "$solo_song")
        AND instrument = $(sql_quote "$solo_instrument")
      ORDER BY account_id"
-add_dataset "solo-logical-versions" "leaderboard_entry_versions" \
+add_dataset_if_table_exists "solo-logical-versions" "leaderboard_entry_versions" \
     "SELECT * FROM leaderboard_entry_versions
      WHERE song_id = $(sql_quote "$solo_song")
        AND instrument = $(sql_quote "$solo_instrument")
