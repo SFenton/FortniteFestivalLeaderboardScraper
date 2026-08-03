@@ -57,8 +57,8 @@ export async function ensurePublication(
       ?? readStoredPublicationId();
     currentPublication = publication;
     writeStoredPublicationId(publication.publicationId);
+    if (previousId != null) revalidateHttpCache = true;
     if (notifyEvenIfSame || previousId !== publication.publicationId) {
-      if (previousId != null) revalidateHttpCache = true;
       dispatchPublicationChanged(publication);
     }
     return publication;
