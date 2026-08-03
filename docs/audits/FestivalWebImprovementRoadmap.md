@@ -15,7 +15,7 @@
   prior 30-minute browser cache entry after the server has refreshed
   publication-bound caches.
 - Focused publication tests and the production web build pass.
-- Production image: `festivalweb:publication-revalidate-7779d351`.
+- Production image: `festivalweb:publication-revalidate-b8eefb52`.
 
 ## Publication-maintenance retry update - 2026-08-01
 
