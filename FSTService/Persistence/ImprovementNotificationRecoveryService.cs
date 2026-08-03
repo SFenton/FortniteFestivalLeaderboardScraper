@@ -29,7 +29,8 @@ public sealed class ImprovementNotificationRecoveryService
         IReadOnlyCollection<SoloCurrentProjectionScopeKey>? projectionScopes,
         bool force,
         string source,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool reopenCompletedForMaintenance = false)
     {
         var options = _options.Value;
         var status = _notifications.GetPublicationStatus();
@@ -76,6 +77,26 @@ public sealed class ImprovementNotificationRecoveryService
         }
         if (status.MarkerStatus == "completed")
         {
+            if (reopenCompletedForMaintenance)
+            {
+                if (!execute || !baselineOnly || !force)
+                {
+                    throw new InvalidOperationException(
+                        "Reopening a completed notification marker requires execute, baseline-only, and force.");
+                }
+
+                _notifications.ReopenCompletedPublicationForMaintenance(
+                    publishedScrapeId);
+                status = _notifications.GetPublicationStatus();
+                if (status.MarkerStatus != "pending")
+                {
+                    throw new InvalidOperationException(
+                        $"Improvement notification marker for published scrape {publishedScrapeId} " +
+                        "did not reopen to pending.");
+                }
+            }
+            else
+            {
             var completedForRequiredLanes = status.IsCompleteForPublishedScrape(
                 options.IncludePlayers,
                 options.IncludeBands,
@@ -92,6 +113,7 @@ public sealed class ImprovementNotificationRecoveryService
                 $"Improvement notification marker for published scrape {publishedScrapeId} " +
                 "is terminal (completed) but does not satisfy the currently required lanes; " +
                 "an explicit operator transition is required.");
+            }
         }
 
         if (!options.Enabled)

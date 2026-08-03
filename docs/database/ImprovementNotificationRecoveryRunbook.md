@@ -36,6 +36,25 @@ The run audit records the exact baseline-row counts.
 non-baseline `mode='execute'` run for every configured player/band and
 song/ranking lane can mark the published scrape complete.
 
+After a publication-bound maintenance rebuild changes ranking state under an
+owned public-read freeze, a completed marker may be explicitly reopened only
+for a forced zero-event baseline:
+
+```bash
+docker compose run --rm --no-deps --entrypoint dotnet fstservice \
+  FSTService.dll --recover-improvement-notifications \
+  --published-scrape-id <id> \
+  --notification-baseline-only \
+  --notification-force \
+  --notification-reopen-completed \
+  --notification-skip-projection-refresh
+```
+
+This transition is rejected unless execute, baseline-only, and force are all
+present. It updates state without inserting events and leaves the marker
+pending; immediately follow it with a normal non-baseline recovery and require
+zero newly inserted events before continuing maintenance.
+
 ## Pro Lead max-score repair notification gate
 
 This is separate from routine recovery. It is only for purpose

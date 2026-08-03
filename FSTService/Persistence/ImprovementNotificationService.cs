@@ -282,6 +282,33 @@ public sealed class ImprovementNotificationService
         }
     }
 
+    public void ReopenCompletedPublicationForMaintenance(long scrapeId)
+    {
+        using var conn = _dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE scrape_publication_state
+            SET improvement_notifications_status = 'pending',
+                improvement_notifications_started_at = NULL,
+                improvement_notifications_completed_at = NULL,
+                improvement_notifications_error = NULL,
+                updated_at = now()
+            WHERE id = TRUE
+              AND published_scrape_id = @scrapeId
+              AND improvement_notifications_scrape_id = @scrapeId
+              AND improvement_notifications_projection_ready
+              AND improvement_notifications_projection_scrape_id = @scrapeId
+              AND improvement_notifications_status = 'completed';
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+        if (cmd.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException(
+                $"Completed improvement notification marker for published scrape {scrapeId} " +
+                "cannot be reopened for maintenance.");
+        }
+    }
+
     public void MarkPublicationRunning(long scrapeId)
     {
         using var conn = _dataSource.OpenConnection();

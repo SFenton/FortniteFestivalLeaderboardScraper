@@ -1020,13 +1020,25 @@ if (improvementNotificationRecoveryRequested)
     var refreshProjection = !args.Any(
         arg => arg.Equals("--notification-skip-projection-refresh", StringComparison.OrdinalIgnoreCase));
     var force = args.Any(arg => arg.Equals("--notification-force", StringComparison.OrdinalIgnoreCase));
+    var reopenCompletedForMaintenance = args.Any(arg =>
+        arg.Equals(
+            "--notification-reopen-completed",
+            StringComparison.OrdinalIgnoreCase));
+    if (reopenCompletedForMaintenance
+        && (!execute || !baselineOnly || !force))
+    {
+        throw new ArgumentException(
+            "--notification-reopen-completed requires execute mode, " +
+            "--notification-baseline-only, and --notification-force.");
+    }
 
     recoveryLog.LogInformation(
-        "Recovering improvement notifications for published scrape {ExpectedScrapeId}; execute={Execute}, baselineOnly={BaselineOnly}, refreshProjection={RefreshProjection}.",
+        "Recovering improvement notifications for published scrape {ExpectedScrapeId}; execute={Execute}, baselineOnly={BaselineOnly}, refreshProjection={RefreshProjection}, reopenCompleted={ReopenCompleted}.",
         expectedPublishedScrapeId,
         execute,
         baselineOnly,
-        refreshProjection);
+        refreshProjection,
+        reopenCompletedForMaintenance);
 
     var recovery = app.Services.GetRequiredService<FSTService.Persistence.ImprovementNotificationRecoveryService>();
     var report = await recovery.RunPublishedScrapeAsync(
@@ -1036,8 +1048,11 @@ if (improvementNotificationRecoveryRequested)
         refreshProjection,
         projectionScopes: null,
         force,
-        source: "operator-recovery",
-        CancellationToken.None);
+        source: reopenCompletedForMaintenance
+            ? "operator-maintenance-rebaseline"
+            : "operator-recovery",
+        CancellationToken.None,
+        reopenCompletedForMaintenance);
 
     Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(report));
     return;
