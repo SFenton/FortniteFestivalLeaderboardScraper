@@ -369,7 +369,22 @@ Live scrape 770 validation on `2026-05-10`:
 
 ## Read Path vNext
 
-`GetBandRankHistoryStatus(...)` should read `band_team_rank_history_snapshot_v2` first. It should not need `max(snapshot_date)` over a massive points table.
+`GetBandRankHistoryStatus(...)` resolves the same effective read source as
+`GetBandRankHistory(...)`. When a per-band compact-v3 switch is enabled and
+its readiness row is `ready`, status reads
+`band_rank_history_compact_v3_state.max_snapshot_date`; it does not assume the
+retired v2 points source still exists or scan the compact points table. When
+compact v3 is not ready, status follows `ApiReadSource` and uses v2 snapshot
+metadata or the configured legacy fallback.
+
+Freshness is deliberately date-aligned. History snapshots are stored as UTC
+`DATE` values, so an enabled writer reports `current` only when
+`historyComputedThrough` equals the UTC calendar date of
+`currentRankingsComputedAt`; an older or otherwise mismatched date reports
+`stale`. Queued, running, paused, and failed background jobs retain their
+existing status precedence. `Mode=Disabled` reports `disabled` regardless of
+old job rows while preserving both timestamps and explaining how far the
+read-only history source extends.
 
 `GetBandRankHistory(...)` should read `band_team_rank_history_points_v2` by:
 

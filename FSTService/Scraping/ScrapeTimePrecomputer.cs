@@ -155,7 +155,8 @@ public sealed class ScrapeTimePrecomputer
 
         // ── Set up disk staging (shared across phases 2-7) ──────
         await using var staging = new DiskStagingWriter(
-            _loggerFactory.CreateLogger<DiskStagingWriter>());
+            _loggerFactory.CreateLogger<DiskStagingWriter>(),
+            Path.Combine(_scraperOptions.DataDirectory, "precompute-staging"));
         _staging = staging;
 
         // ── Phase 1: Leeway metadata (must complete before player phases) ──

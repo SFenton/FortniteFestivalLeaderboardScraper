@@ -1441,6 +1441,25 @@ public sealed class ResilientHttpExecutorTests
         Assert.False(executor.IsProbeRunning);
     }
 
+    [Fact]
+    public async Task Probe_AlreadyCancelledExecutorLifetime_ResolvesWaiters()
+    {
+        var handler = new MockHttpMessageHandler();
+        using var lifetimeCts = new CancellationTokenSource();
+        lifetimeCts.Cancel();
+        var executor = CreateExecutorWithProbeTimeout(
+            handler, TimeSpan.FromSeconds(30), lifetimeCts.Token);
+
+        handler.EnqueueHtml403();
+
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "cancelled-lifetime"));
+
+        await executor.WaitForCdnClearAsync(CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(executor.IsProbeRunning);
+    }
+
     // ─── Gate lifecycle (Fix 2) ─────────────────────────────────
     // The probe gate is now an integer primitive that ResetCdnState can force-
     // release without waiting. Tests verify a wedged/abandoned probe cannot

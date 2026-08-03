@@ -482,6 +482,11 @@ tools/fst-worker-compose-guard.sh \
   --check
 ```
 
+Run-once data profiles also require
+`--expected-worker-image <resolved-image>`. The guard compares the resolved
+Compose image to that operator-supplied value instead of embedding historical
+deployment tags in repository tooling.
+
 The guard resolves only the canonical PIA overlay, verifies 30 canonical
 services and the configured effective count, enforces aligned metadata and a
 named fail-closed throughput profile, then proves live DNS, control, HTTP

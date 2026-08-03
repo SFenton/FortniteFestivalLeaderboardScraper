@@ -208,6 +208,9 @@ public class ScoreBackfillerTests : IDisposable
     public async Task BackfillAccountAsync_Cancelled_SavesProgressAndThrows()
     {
         var (backfiller, handler) = CreateBackfiller();
+        using var limiter = new AdaptiveConcurrencyLimiter(
+            1, minDop: 1, maxDop: 1, Substitute.For<ILogger>());
+        using var pool = new SharedDopPool(limiter, lowPrioritySlots: 1);
 
         var songs = new List<Song>
         {
@@ -215,14 +218,25 @@ public class ScoreBackfillerTests : IDisposable
         };
         var service = CreateServiceWithSongs(songs);
 
-        // Queue responses: first lookup throws OperationCanceledException
-        handler.EnqueueException(new OperationCanceledException("cancelled"));
+        handler.EnqueueJsonOk("""{"page":0,"totalPages":0,"entries":[]}""");
+        handler.EnqueueHang();
 
         _metaDb.Db.EnqueueBackfill("acct1", 6);
         _metaDb.Db.StartBackfill("acct1");
 
-        await Assert.ThrowsAsync<OperationCanceledException>(() =>
-            backfiller.BackfillAccountAsync("acct1", service, "token", "caller", _pool));
+        using var cts = new CancellationTokenSource();
+        var backfillTask = backfiller.BackfillAccountAsync(
+            "acct1", service, "token", "caller", pool, ct: cts.Token);
+
+        await handler.WaitForRequestCountAsync(2, TimeSpan.FromSeconds(5));
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => backfillTask);
+
+        Assert.Single(_metaDb.Db.GetCheckedBackfillPairs("acct1"));
+        var status = Assert.IsType<BackfillStatusInfo>(_metaDb.Db.GetBackfillStatus("acct1"));
+        Assert.Equal("in_progress", status.Status);
+        Assert.Null(status.ErrorMessage);
     }
 
     // ─── Backfill API error → caught internally, continues ──

@@ -360,6 +360,23 @@ image.
 - `fstworker` remains held/offline with restart `no`.
 - No scrape ran during the Quad validation/cutover.
 
+### API history-status interpretation
+
+- Each enabled compact-v3 flag is effective only while its per-band readiness
+  row is `ready`. The history endpoint and its status metadata use the same
+  source decision.
+- For a ready compact source, `historyComputedThrough` comes from
+  `band_rank_history_compact_v3_state.max_snapshot_date`; the status probe
+  does not depend on dropped v2 point leaves.
+- `BandRankHistory:Mode=Disabled` means no continuous history writes are
+  expected. The API therefore reports `historyStatus=disabled`, retains the
+  current-ranking, history-through, and latest-job timestamps, and explains
+  the readable historical cutoff.
+- If writes are enabled, `current` requires the history date to equal the UTC
+  calendar date of `currentRankingsComputedAt`. An older or otherwise
+  mismatched date is `stale`; queued/running/paused background jobs remain
+  `catching_up`, and failed jobs remain `failed`.
+
 ## Next phase
 
 Begin the approved atomic-publication proof harness and gating probes. Do not

@@ -68,6 +68,8 @@ services:
         condition: service_healthy
     volumes: &fstservice_volumes
       - ${FST_DATA_DIR:-./fst-data}:/app/data
+    env_file:
+      - ./deploy/config/fstservice-role.env
     # API frontend only: serves requests plus lightweight song/path refresh.
     # Scrape, ranking, and band-history mutation workers belong to fstworker.
     command: ["--no-scraper-worker"]
@@ -95,15 +97,14 @@ services:
       - Scraper__RegisteredBandProcessingMaxLookupsPerPass=${REGISTERED_BAND_PROCESSING_MAX_LOOKUPS_PER_PASS:-80}
       - Scraper__DegreeOfParallelism=${SCRAPER_DOP:-64}
       - Scraper__DisableScraperWorker=${SCRAPER_DISABLE_SCRAPER_WORKER:-false}
-      - Scraper__SkipStartupSchemaInitialization=${SKIP_STARTUP_SCHEMA_INITIALIZATION:-false}
       - Scraper__RankHistorySnapshotMaxDegreeOfParallelism=${RANK_HISTORY_SNAPSHOT_MAX_DOP:-1}
       - Scraper__WebRegistrationRetentionDays=${WEB_REGISTRATION_RETENTION_DAYS:-7}
-      - BandRankHistory__Mode=${BAND_RANK_HISTORY_MODE:-Background}
+      - BandRankHistory__Mode=${BAND_RANK_HISTORY_MODE:-Disabled}
       - BandRankHistory__WriteMode=${BAND_RANK_HISTORY_WRITE_MODE:-V2Only}
       - BandRankHistory__ApiReadSource=${BAND_RANK_HISTORY_API_READ_SOURCE:-V2NarrowOnly}
-      - BandRankHistory__CompactV3DuetsReadEnabled=${BAND_RANK_HISTORY_COMPACT_V3_DUETS_READ_ENABLED:-false}
-      - BandRankHistory__CompactV3TriosReadEnabled=${BAND_RANK_HISTORY_COMPACT_V3_TRIOS_READ_ENABLED:-false}
-      - BandRankHistory__CompactV3QuadReadEnabled=${BAND_RANK_HISTORY_COMPACT_V3_QUAD_READ_ENABLED:-false}
+      - BandRankHistory__CompactV3DuetsReadEnabled=${BAND_RANK_HISTORY_COMPACT_V3_DUETS_READ_ENABLED:-true}
+      - BandRankHistory__CompactV3TriosReadEnabled=${BAND_RANK_HISTORY_COMPACT_V3_TRIOS_READ_ENABLED:-true}
+      - BandRankHistory__CompactV3QuadReadEnabled=${BAND_RANK_HISTORY_COMPACT_V3_QUAD_READ_ENABLED:-true}
       - BandRankHistory__UseWideHistoryCompatibilityWrite=${BAND_RANK_HISTORY_USE_WIDE_HISTORY_COMPATIBILITY_WRITE:-false}
       - BandRankHistory__ChunkSize=${BAND_RANK_HISTORY_CHUNK_SIZE:-250000}
       - BandRankHistory__RangeChunkingEnabled=${BAND_RANK_HISTORY_RANGE_CHUNKING_ENABLED:-true}
@@ -192,6 +193,8 @@ services:
     volumes:
       - ${FST_DATA_DIR:-./fst-data}:/app/data
       - /var/run/docker.sock:/var/run/docker.sock
+    env_file:
+      - ./deploy/config/fstworker-role.env
     group_add:
       - "${DOCKER_GID:-999}"
     environment: *fstservice_environment

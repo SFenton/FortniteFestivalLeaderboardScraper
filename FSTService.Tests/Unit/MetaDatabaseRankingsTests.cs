@@ -1298,6 +1298,38 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
+    public void GetBandRankHistoryStatus_CompactV3UsesReadyStateWhenV2MetadataIsGone()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions
+        {
+            WriteMode = BandRankHistoryWriteMode.V2Only,
+        });
+        SeedCompactV3Duets();
+
+        using (var conn = _fixture.DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                DELETE FROM band_team_rank_history_points_v2 WHERE band_type = 'Band_Duets';
+                DELETE FROM band_team_rank_history_snapshot_v2 WHERE band_type = 'Band_Duets';
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        using var compactDb = CreateMetaDatabase(
+            BandRankHistoryApiReadSource.V2NarrowOnly,
+            compactV3DuetsReadEnabled: true);
+
+        var status = compactDb.GetBandRankHistoryStatus("Band_Duets");
+
+        Assert.Equal("current", status.HistoryStatus);
+        Assert.Equal(DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd"), status.HistoryComputedThrough);
+    }
+
+    [Fact]
     public void GetBandRankHistory_CompactV3TriosReadsReadyProjectionWhenV2RowsAreGone()
     {
         var persistence = new BandLeaderboardPersistence(
@@ -1521,6 +1553,158 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
 
         Assert.Equal("current", status.HistoryStatus);
         Assert.Equal(DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd"), status.HistoryComputedThrough);
+    }
+
+    [Fact]
+    public void GetBandRankHistoryStatus_DisabledModeReportsDisabledAndRetainsStaleTimestamps()
+    {
+        SeedBandRankingsSource();
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions
+        {
+            WriteMode = BandRankHistoryWriteMode.V2Only,
+        });
+        SeedCompactV3Duets();
+
+        var currentComputedAt = new DateTime(2026, 8, 3, 9, 0, 51, DateTimeKind.Utc);
+        var historyDate = new DateOnly(2026, 7, 5);
+        using (var conn = _fixture.DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = $"""
+                UPDATE {BandRankingStorageNames.QuoteIdentifier(BandRankingStorageNames.GetCurrentStatsTable("Band_Duets"))}
+                SET computed_at = @currentComputedAt
+                WHERE band_type = 'Band_Duets';
+
+                UPDATE band_team_rank_history_points_v3_duets
+                SET snapshot_date = @historyDate;
+
+                UPDATE band_rank_history_compact_v3_state
+                SET max_snapshot_date = @historyDate
+                WHERE band_type = 'Band_Duets';
+
+                DELETE FROM band_team_rank_history_points_v2 WHERE band_type = 'Band_Duets';
+                DELETE FROM band_team_rank_history_snapshot_v2 WHERE band_type = 'Band_Duets';
+                """;
+            cmd.Parameters.AddWithValue("currentComputedAt", currentComputedAt);
+            cmd.Parameters.AddWithValue("historyDate", historyDate);
+            cmd.ExecuteNonQuery();
+        }
+
+        var job = Db.EnqueueBandRankHistoryJob(
+            9001,
+            "Band_Duets",
+            historyDate,
+            BandRankHistoryMode.Background.ToString(),
+            coalesceSameDay: false);
+        Db.CompleteBandRankHistoryJob(job.JobId, new BandRankHistorySnapshotResult());
+
+        using var disabledDb = CreateMetaDatabase(
+            BandRankHistoryApiReadSource.V2NarrowOnly,
+            compactV3DuetsReadEnabled: true,
+            mode: BandRankHistoryMode.Disabled);
+
+        var status = disabledDb.GetBandRankHistoryStatus("Band_Duets");
+
+        Assert.Equal("disabled", status.HistoryStatus);
+        Assert.StartsWith("2026-08-03T09:00:51", status.CurrentRankingsComputedAt);
+        Assert.Equal("2026-07-05", status.HistoryComputedThrough);
+        Assert.NotNull(status.HistoryJobUpdatedAt);
+        Assert.Contains("writes are disabled", status.HistoryMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("2026-07-05", status.HistoryMessage, StringComparison.Ordinal);
+        Assert.Contains("2026-08-03", status.HistoryMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GetBandRankHistoryStatus_EnabledModeReportsStaleWhenHistoryPredatesCurrentRankingDate()
+    {
+        SeedBandRankingsSource();
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistory("Band_Duets");
+
+        SetBandHistoryFreshnessDates(
+            "Band_Duets",
+            new DateTime(2026, 8, 3, 9, 0, 51, DateTimeKind.Utc),
+            new DateOnly(2026, 7, 5));
+
+        using var enabledDb = CreateMetaDatabase(
+            BandRankHistoryApiReadSource.Wide,
+            mode: BandRankHistoryMode.Inline);
+
+        var status = enabledDb.GetBandRankHistoryStatus("Band_Duets");
+
+        Assert.Equal("stale", status.HistoryStatus);
+        Assert.Equal("2026-07-05", status.HistoryComputedThrough);
+        Assert.Contains("current rankings are dated 2026-08-03 UTC", status.HistoryMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GetBandRankHistoryStatus_EnabledModeReportsCurrentOnlyWhenDatesAlign()
+    {
+        SeedBandRankingsSource();
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistory("Band_Duets");
+
+        var alignedDate = new DateOnly(2026, 8, 3);
+        SetBandHistoryFreshnessDates(
+            "Band_Duets",
+            new DateTime(2026, 8, 3, 23, 59, 59, DateTimeKind.Utc),
+            alignedDate);
+
+        using var enabledDb = CreateMetaDatabase(
+            BandRankHistoryApiReadSource.Wide,
+            mode: BandRankHistoryMode.Inline);
+
+        var status = enabledDb.GetBandRankHistoryStatus("Band_Duets");
+
+        Assert.Equal("current", status.HistoryStatus);
+        Assert.Equal("2026-08-03", status.HistoryComputedThrough);
+        Assert.Null(status.HistoryMessage);
+    }
+
+    [Theory]
+    [InlineData("queued", "catching_up", "queued for background catch-up")]
+    [InlineData("running", "catching_up", "catching up")]
+    [InlineData("paused", "catching_up", "paused while current scrape work has priority")]
+    [InlineData("failed", "failed", "test history failure")]
+    public void GetBandRankHistoryStatus_PreservesBackgroundJobStatus(
+        string jobState,
+        string expectedStatus,
+        string expectedMessage)
+    {
+        SeedBandRankingsSource();
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistory("Band_Duets");
+
+        var job = Db.EnqueueBandRankHistoryJob(
+            9002,
+            "Band_Duets",
+            DateOnly.FromDateTime(DateTime.UtcNow),
+            BandRankHistoryMode.Background.ToString(),
+            coalesceSameDay: false);
+
+        if (jobState != "queued")
+            Assert.True(Db.TryStartBandRankHistoryJob(job.JobId));
+
+        switch (jobState)
+        {
+            case "paused":
+                Db.PauseBandRankHistoryJob(job.JobId, "test pause");
+                break;
+            case "failed":
+                Db.FailBandRankHistoryJob(job.JobId, "test history failure");
+                break;
+        }
+
+        using var backgroundDb = CreateMetaDatabase(
+            BandRankHistoryApiReadSource.Wide,
+            mode: BandRankHistoryMode.Background);
+
+        var status = backgroundDb.GetBandRankHistoryStatus("Band_Duets");
+
+        Assert.Equal(expectedStatus, status.HistoryStatus);
+        Assert.NotNull(status.HistoryJobUpdatedAt);
+        Assert.Contains(expectedMessage, status.HistoryMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -2642,7 +2826,8 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         cmd.CommandText = """
             CREATE TABLE band_rank_history_compact_v3_state (
                 band_type TEXT PRIMARY KEY,
-                status TEXT NOT NULL
+                status TEXT NOT NULL,
+                max_snapshot_date DATE
             );
             CREATE TABLE band_rank_history_team_v3_duets (
                 team_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -2727,8 +2912,9 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
              AND points.combo_id <> ''
             WHERE points.band_type = 'Band_Duets';
 
-            INSERT INTO band_rank_history_compact_v3_state (band_type, status)
-            VALUES ('Band_Duets', 'ready');
+            INSERT INTO band_rank_history_compact_v3_state (band_type, status, max_snapshot_date)
+            SELECT 'Band_Duets', 'ready', max(snapshot_date)
+            FROM band_team_rank_history_points_v3_duets;
             """;
         cmd.ExecuteNonQuery();
     }
@@ -2740,7 +2926,8 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         cmd.CommandText = """
             CREATE TABLE band_rank_history_compact_v3_state (
                 band_type TEXT PRIMARY KEY,
-                status TEXT NOT NULL
+                status TEXT NOT NULL,
+                max_snapshot_date DATE
             );
             CREATE TABLE band_rank_history_team_v3_trios (
                 team_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -2825,8 +3012,9 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
              AND points.combo_id <> ''
             WHERE points.band_type = 'Band_Trios';
 
-            INSERT INTO band_rank_history_compact_v3_state (band_type, status)
-            VALUES ('Band_Trios', 'ready');
+            INSERT INTO band_rank_history_compact_v3_state (band_type, status, max_snapshot_date)
+            SELECT 'Band_Trios', 'ready', max(snapshot_date)
+            FROM band_team_rank_history_points_v3_trios;
             """;
         cmd.ExecuteNonQuery();
     }
@@ -2838,7 +3026,8 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         cmd.CommandText = """
             CREATE TABLE band_rank_history_compact_v3_state (
                 band_type TEXT PRIMARY KEY,
-                status TEXT NOT NULL
+                status TEXT NOT NULL,
+                max_snapshot_date DATE
             );
             CREATE TABLE band_rank_history_team_v3_quad (
                 team_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -2923,8 +3112,9 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
              AND points.combo_id <> ''
             WHERE points.band_type = 'Band_Quad';
 
-            INSERT INTO band_rank_history_compact_v3_state (band_type, status)
-            VALUES ('Band_Quad', 'ready');
+            INSERT INTO band_rank_history_compact_v3_state (band_type, status, max_snapshot_date)
+            SELECT 'Band_Quad', 'ready', max(snapshot_date)
+            FROM band_team_rank_history_points_v3_quad;
             """;
         cmd.ExecuteNonQuery();
     }
@@ -2933,11 +3123,13 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         BandRankHistoryApiReadSource apiReadSource,
         bool compactV3DuetsReadEnabled = false,
         bool compactV3TriosReadEnabled = false,
-        bool compactV3QuadReadEnabled = false) => new(
+        bool compactV3QuadReadEnabled = false,
+        BandRankHistoryMode mode = BandRankHistoryMode.Inline) => new(
         _fixture.DataSource,
         Substitute.For<Microsoft.Extensions.Logging.ILogger<MetaDatabase>>(),
         new BandRankHistoryOptions
         {
+            Mode = mode,
             ApiReadSource = apiReadSource,
             CompactV3DuetsReadEnabled = compactV3DuetsReadEnabled,
             CompactV3TriosReadEnabled = compactV3TriosReadEnabled,
@@ -3371,6 +3563,29 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
             WHERE band_type = @bandType;";
         cmd.Parameters.AddWithValue("bandType", bandType);
         cmd.Parameters.AddWithValue("snapshotDate", snapshotDate);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void SetBandHistoryFreshnessDates(string bandType, DateTime currentComputedAt, DateOnly historyDate)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            UPDATE {BandRankingStorageNames.QuoteIdentifier(BandRankingStorageNames.GetCurrentStatsTable(bandType))}
+            SET computed_at = @currentComputedAt
+            WHERE band_type = @bandType;
+
+            UPDATE band_team_rank_history
+            SET snapshot_date = @historyDate
+            WHERE band_type = @bandType;
+
+            UPDATE band_team_ranking_stats_history
+            SET snapshot_date = @historyDate
+            WHERE band_type = @bandType;
+            """;
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("currentComputedAt", currentComputedAt);
+        cmd.Parameters.AddWithValue("historyDate", historyDate);
         cmd.ExecuteNonQuery();
     }
 

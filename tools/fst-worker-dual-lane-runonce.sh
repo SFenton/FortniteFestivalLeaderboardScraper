@@ -3,6 +3,7 @@ set -euo pipefail
 
 COMPOSE_DIR="${COMPOSE_DIR:-/home/sfenton/Docker/FestivalServiceTracker}"
 NETWORK_PROFILE=""
+EXPECTED_WORKER_IMAGE="${EXPECTED_WORKER_IMAGE:-}"
 ACTION="check"
 CONFIG_ONLY=false
 
@@ -16,6 +17,8 @@ notification DB-only data lane, then optionally starts exactly one worker pass.
 Options:
   --network-profile P   candidate-800-32-4, candidate-1600-64-8,
                         or candidate-2880-128-16
+  --expected-worker-image I
+                        Exact fstworker image required by the data lane
   --check               Validate only (default)
   --recreate            Validate and recreate the run-once worker
   --config-only         Skip live proxy probes (check only)
@@ -27,6 +30,7 @@ EOF
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --network-profile) NETWORK_PROFILE="$2"; shift 2 ;;
+        --expected-worker-image) EXPECTED_WORKER_IMAGE="$2"; shift 2 ;;
         --check) ACTION="check"; shift ;;
         --recreate) ACTION="recreate"; shift ;;
         --config-only) CONFIG_ONLY=true; shift ;;
@@ -38,6 +42,11 @@ done
 
 if [[ -z "$NETWORK_PROFILE" ]]; then
     printf 'ERROR: --network-profile is required\n' >&2
+    usage >&2
+    exit 64
+fi
+if [[ -z "$EXPECTED_WORKER_IMAGE" ]]; then
+    printf 'ERROR: --expected-worker-image is required\n' >&2
     usage >&2
     exit 64
 fi
@@ -81,6 +90,7 @@ guard_args=(
     --compose-dir "$COMPOSE_DIR"
     --throughput-profile "$NETWORK_PROFILE"
     --data-profile catalog-path-notification-source-cut
+    --expected-worker-image "$EXPECTED_WORKER_IMAGE"
     "$guard_action"
 )
 if $CONFIG_ONLY; then

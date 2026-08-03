@@ -909,9 +909,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     [Fact]
     public async Task ApiSongs_Difficulty_ExposesAllInstrumentFields()
     {
-        var response = await _client.GetAsync("/api/songs");
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var json = await GetIsolatedSongsResponseAsync();
         var songs = json.GetProperty("songs");
         JsonElement? testSong = null;
         for (var i = 0; i < songs.GetArrayLength(); i++)
@@ -945,9 +943,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     [Fact]
     public async Task ApiSongs_Difficulty_OmitsMicModePropertyWhenSongHasNoChart()
     {
-        var response = await _client.GetAsync("/api/songs");
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var json = await GetIsolatedSongsResponseAsync();
         var songs = json.GetProperty("songs");
         JsonElement? testSong = null;
         for (var i = 0; i < songs.GetArrayLength(); i++)
@@ -967,9 +963,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     [Fact]
     public async Task ApiSongs_ExposesDurationSeconds()
     {
-        var response = await _client.GetAsync("/api/songs");
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var json = await GetIsolatedSongsResponseAsync();
         var songs = json.GetProperty("songs");
         JsonElement? testSong = null;
         for (var i = 0; i < songs.GetArrayLength(); i++)
@@ -983,6 +977,15 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.NotNull(testSong);
         Assert.True(testSong!.Value.TryGetProperty("durationSeconds", out var dur));
         Assert.Equal(235, dur.GetInt32());
+    }
+
+    private async Task<JsonElement> GetIsolatedSongsResponseAsync()
+    {
+        using var factory = _factory.WithWebHostBuilder(_ => { });
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync("/api/songs");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return await response.Content.ReadFromJsonAsync<JsonElement>();
     }
 
     // ─── Path Images ────────────────────────────────────────────
@@ -2491,7 +2494,9 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<CyclicalSongMachine>();
-                services.AddSingleton<CyclicalSongMachine>(new ImmediateCyclicalSongMachine());
+                services.AddSingleton<CyclicalSongMachine>(serviceProvider =>
+                    new ImmediateCyclicalSongMachine(
+                        serviceProvider.GetRequiredService<BatchResultProcessor>()));
             });
         });
         using var client = factory.CreateClient();
@@ -6489,12 +6494,13 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
         db.UpsertEntries("lb_cache_song", [ new LeaderboardEntry { AccountId = "lbc_p1", Score = 80000, Accuracy = 95, Stars = 6 } ]);
 
-        var r1 = await _client.GetAsync("/api/leaderboard/lb_cache_song?top=5");
+        const string requestUri = "/api/leaderboard/lb_cache_song/all?top=5";
+        var r1 = await _client.GetAsync(requestUri);
         Assert.Equal(HttpStatusCode.OK, r1.StatusCode);
         var etag = r1.Headers.ETag?.Tag;
         Assert.NotNull(etag);
 
-        var req = new HttpRequestMessage(HttpMethod.Get, "/api/leaderboard/lb_cache_song?top=5");
+        var req = new HttpRequestMessage(HttpMethod.Get, requestUri);
         req.Headers.TryAddWithoutValidation("If-None-Match", etag);
         var r2 = await _client.SendAsync(req);
         Assert.Equal(HttpStatusCode.NotModified, r2.StatusCode);
@@ -6620,6 +6626,13 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
     private sealed class ImmediateCyclicalSongMachine : CyclicalSongMachine
     {
+        private readonly BatchResultProcessor _resultProcessor;
+
+        public ImmediateCyclicalSongMachine(BatchResultProcessor resultProcessor)
+        {
+            _resultProcessor = resultProcessor;
+        }
+
         public override async Task<SongProcessingMachine.MachineResult> AttachAsync(
             IReadOnlyList<UserWorkItem> users,
             IReadOnlyList<string> songIds,
@@ -6631,6 +6644,12 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             EpicTrafficKind epicTrafficKind = EpicTrafficKind.Background,
             AttachmentOptions? attachmentOptions = null)
         {
+            foreach (var user in users)
+            foreach (var songId in songIds)
+            foreach (var instrument in GlobalLeaderboardScraper.AllInstruments)
+                _resultProcessor.MarkBackfillChecked(
+                    user.AccountId, songId, instrument, entryFound: true);
+
             var completedScopes = songIds
                 .SelectMany(static songId => GlobalLeaderboardScraper.AllInstruments.Select(
                     instrument => new SoloCurrentProjectionScopeKey(songId, instrument)))
@@ -6667,6 +6686,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                     ["Scraper:DataDirectory"] = _tempDir,
                     ["Scraper:DeviceAuthPath"] = Path.Combine(_tempDir, "device-auth.json"),
                     ["Scraper:ApiOnly"] = "true",
+                    ["Scraper:EnableAutomaticPathGeneration"] = "true",
                     ["ConnectionStrings:PostgreSQL"] = SharedPostgresContainer.ConnectionString,
                     ["Api:ApiKey"] = TestApiKey,
                     ["Api:AllowedOrigins:0"] = "*",

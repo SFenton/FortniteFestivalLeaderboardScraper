@@ -364,7 +364,7 @@ public sealed class ScraperOptions
     /// changed songs that already use atomic artifact generations. Legacy rows
     /// are never migrated implicitly.
     /// </summary>
-    public bool EnableAutomaticPathGeneration { get; set; } = true;
+    public bool EnableAutomaticPathGeneration { get; set; }
 
     /// <summary>
     /// Versioned identity for the CHOpt arguments and artifact contract.

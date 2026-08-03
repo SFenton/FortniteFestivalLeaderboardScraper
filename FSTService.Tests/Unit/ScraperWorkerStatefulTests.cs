@@ -1015,6 +1015,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             DataDirectory = _tempDir,
             DeviceAuthPath = Path.Combine(_tempDir, "device.json"),
             EnablePathGeneration = true,
+            EnableAutomaticPathGeneration = true,
             MidiEncryptionKey = keyHex,
             CHOptPath = fakeChopt,
             PathGenerationParallelism = 2,

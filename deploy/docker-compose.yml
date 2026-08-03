@@ -128,6 +128,8 @@ services:
         condition: service_healthy
     volumes: &fstservice_volumes
       - ${FST_DATA_DIR:-./fst-data}:/app/data
+    env_file:
+      - ./config/fstservice-role.env
     command: ["--no-scraper-worker"]
     # API frontend only: serves requests plus lightweight song/path refresh.
     # Scrape, ranking, and band-history mutation workers belong to fstworker.
@@ -155,7 +157,6 @@ services:
       # ── Global scraper concurrency cap. Keep lower than appsettings default on shared API/DB hosts. ──
       - Scraper__DegreeOfParallelism=${SCRAPER_DOP:-64}
       - Scraper__DisableScraperWorker=${SCRAPER_DISABLE_SCRAPER_WORKER:-false}
-      - Scraper__SkipStartupSchemaInitialization=${SKIP_STARTUP_SCHEMA_INITIALIZATION:-false}
       # ── Hard cap on API requests per second, 0 = unlimited (default: 0) ──
       - Scraper__MaxRequestsPerSecond=${MAX_REQUESTS_PER_SECOND:-0}
       # ── Rank-history snapshots are WAL-heavy; keep this low unless worker has a dedicated DB. ──
@@ -199,12 +200,12 @@ services:
       - ImprovementNotifications__RefreshAllSoloScopesWhenNoImpactedScopes=${IMPROVEMENT_NOTIFICATIONS_REFRESH_ALL_SOLO_SCOPES_WHEN_NO_IMPACTED_SCOPES:-false}
       - ImprovementNotifications__FailScrapeOnError=${IMPROVEMENT_NOTIFICATIONS_FAIL_SCRAPE_ON_ERROR:-false}
       # Queue band history as resumable background work instead of blocking ranking publish.
-      - BandRankHistory__Mode=${BAND_RANK_HISTORY_MODE:-Background}
+      - BandRankHistory__Mode=${BAND_RANK_HISTORY_MODE:-Disabled}
       - BandRankHistory__WriteMode=${BAND_RANK_HISTORY_WRITE_MODE:-V2Only}
       - BandRankHistory__ApiReadSource=${BAND_RANK_HISTORY_API_READ_SOURCE:-V2NarrowOnly}
-      - BandRankHistory__CompactV3DuetsReadEnabled=${BAND_RANK_HISTORY_COMPACT_V3_DUETS_READ_ENABLED:-false}
-      - BandRankHistory__CompactV3TriosReadEnabled=${BAND_RANK_HISTORY_COMPACT_V3_TRIOS_READ_ENABLED:-false}
-      - BandRankHistory__CompactV3QuadReadEnabled=${BAND_RANK_HISTORY_COMPACT_V3_QUAD_READ_ENABLED:-false}
+      - BandRankHistory__CompactV3DuetsReadEnabled=${BAND_RANK_HISTORY_COMPACT_V3_DUETS_READ_ENABLED:-true}
+      - BandRankHistory__CompactV3TriosReadEnabled=${BAND_RANK_HISTORY_COMPACT_V3_TRIOS_READ_ENABLED:-true}
+      - BandRankHistory__CompactV3QuadReadEnabled=${BAND_RANK_HISTORY_COMPACT_V3_QUAD_READ_ENABLED:-true}
       - BandRankHistory__UseWideHistoryCompatibilityWrite=${BAND_RANK_HISTORY_USE_WIDE_HISTORY_COMPATIBILITY_WRITE:-false}
       - BandRankHistory__ChunkSize=${BAND_RANK_HISTORY_CHUNK_SIZE:-250000}
       - BandRankHistory__RangeChunkingEnabled=${BAND_RANK_HISTORY_RANGE_CHUNKING_ENABLED:-true}
@@ -274,6 +275,8 @@ services:
     volumes:
       - ${FST_DATA_DIR:-./fst-data}:/app/data
       - /var/run/docker.sock:/var/run/docker.sock
+    env_file:
+      - ./config/fstworker-role.env
     # Docker control is worker-only. Set DOCKER_GID to the host docker group ID.
     group_add:
       - "${DOCKER_GID:-999}"

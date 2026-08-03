@@ -9,6 +9,7 @@ RUNTIME_PROBES=true
 ACTION="check"
 THROUGHPUT_PROFILE="baseline-up-to-800-32-4"
 DATA_PROFILE="none"
+EXPECTED_WORKER_IMAGE="${EXPECTED_WORKER_IMAGE:-}"
 
 usage() {
     cat <<'EOF'
@@ -37,6 +38,9 @@ Options:
                              registered-refresh-repair
                              catalog-path-notification-source-cut
                            Every run-once config requires a data profile.
+  --expected-worker-image I
+                           Require the resolved fstworker image to match I.
+                           Required whenever --data-profile is not none.
   --compose-dir DIR        Production compose directory
   -h, --help               Show help
 EOF
@@ -51,6 +55,7 @@ while [[ $# -gt 0 ]]; do
         --config-only) RUNTIME_PROBES=false; shift ;;
         --throughput-profile) THROUGHPUT_PROFILE="$2"; shift 2 ;;
         --data-profile) DATA_PROFILE="$2"; shift 2 ;;
+        --expected-worker-image) EXPECTED_WORKER_IMAGE="$2"; shift 2 ;;
         --compose-dir) COMPOSE_DIR="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) printf 'ERROR: unknown option: %s\n' "$1" >&2; usage >&2; exit 64 ;;
@@ -106,6 +111,11 @@ esac
 
 if [[ "$ACTION" =~ ^(check-runonce|recreate-runonce)$ && "$DATA_PROFILE" == "none" ]]; then
     printf 'ERROR: run-once validation requires --data-profile\n' >&2
+    exit 64
+fi
+
+if [[ "$DATA_PROFILE" != "none" && -z "$EXPECTED_WORKER_IMAGE" ]]; then
+    printf 'ERROR: --expected-worker-image is required with --data-profile\n' >&2
     exit 64
 fi
 
@@ -201,6 +211,7 @@ profile_max_per_endpoint_concurrency = int(sys.argv[4])
 profile_exact = sys.argv[5].casefold() == "true"
 require_run_once = sys.argv[6].casefold() == "true"
 data_profile = sys.argv[7]
+expected_worker_image = sys.argv[8]
 
 config = json.load(sys.stdin)
 services = config.get("services") or {}
@@ -315,11 +326,15 @@ if data_profile == "notification-db-only":
         if nonnegative_integer(name) != 80:
             raise SystemExit(
                 f"ERROR: data profile notification-db-only requires {name}=80")
-if data_profile == "publication-cache-generation":
-    if worker.get("image") != "fstservice:atomic-pub-cache-09f56637":
+if data_profile != "none":
+    actual_worker_image = str(worker.get("image") or "").strip()
+    if actual_worker_image != expected_worker_image:
+        display_actual = actual_worker_image if actual_worker_image else "<empty>"
         raise SystemExit(
-            "ERROR: data profile publication-cache-generation requires "
-            "fstservice:atomic-pub-cache-09f56637")
+            f"ERROR: data profile {data_profile} requires worker image "
+            f"{expected_worker_image}, found {display_actual}")
+
+if data_profile == "publication-cache-generation":
     exact_value("Scraper__EnabledPhases", "All")
     for name in (
         "Features__EnforcePublicationCriticalPhases",
@@ -338,10 +353,6 @@ if data_profile == "publication-cache-generation":
             raise SystemExit(
                 f"ERROR: data profile publication-cache-generation requires {name}=false")
 if data_profile == "registered-refresh-repair":
-    if worker.get("image") != "fstservice:registered-refresh-fd5bb561":
-        raise SystemExit(
-            "ERROR: data profile registered-refresh-repair requires "
-            "fstservice:registered-refresh-fd5bb561")
     exact_value("Scraper__EnabledPhases", "All")
     exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
     for name in (
@@ -361,10 +372,6 @@ if data_profile == "registered-refresh-repair":
             raise SystemExit(
                 f"ERROR: data profile registered-refresh-repair requires {name}=false")
 if data_profile == "catalog-path-notification-source-cut":
-    if worker.get("image") != "fstservice:songs-partial-max-609ffa94":
-        raise SystemExit(
-            "ERROR: data profile catalog-path-notification-source-cut requires "
-            "fstservice:songs-partial-max-609ffa94")
     exact_value("Scraper__EnabledPhases", "All")
     exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
     exact_value("Scraper__EnableAutomaticPathGeneration", "false")
@@ -483,6 +490,7 @@ for container in containers:
         "$PROFILE_MAX_PER_ENDPOINT_RPS" \
         "$PROFILE_MAX_PER_ENDPOINT_CONCURRENCY" "$PROFILE_EXACT" \
         "$REQUIRE_RUN_ONCE" "$DATA_PROFILE" \
+        "$EXPECTED_WORKER_IMAGE" \
         <<< "$compose_json"
 )"
 

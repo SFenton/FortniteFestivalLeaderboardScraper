@@ -22,6 +22,21 @@ public sealed class MockHttpMessageHandler : HttpMessageHandler
         }
     }
 
+    public async Task WaitForRequestCountAsync(int expectedCount, TimeSpan timeout)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(expectedCount, 1);
+
+        var deadline = DateTime.UtcNow + timeout;
+        while (Requests.Count < expectedCount)
+        {
+            if (DateTime.UtcNow >= deadline)
+                throw new TimeoutException(
+                    $"Timed out waiting for {expectedCount} request(s); observed {Requests.Count}.");
+
+            await Task.Delay(10);
+        }
+    }
+
     /// <summary>Enqueue a response to return for the next request.</summary>
     public void EnqueueResponse(HttpResponseMessage response)
     {

@@ -15,15 +15,29 @@ namespace FSTService.Scraping;
 public sealed class DiskStagingWriter : IAsyncDisposable
 {
     private readonly Channel<(string Key, byte[] Json, string ETag)> _channel;
+    private readonly string _stagingDirectory;
     private readonly string _stagingPath;
+    private readonly bool _deleteStagingDirectoryWhenEmpty;
     private readonly Task _drainTask;
     private readonly ILogger<DiskStagingWriter> _log;
     private long _recordCount;
 
-    public DiskStagingWriter(ILogger<DiskStagingWriter> log, int channelCapacity = 500)
+    public DiskStagingWriter(
+        ILogger<DiskStagingWriter> log,
+        string stagingDirectory,
+        int channelCapacity = 500)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(stagingDirectory);
+        if (channelCapacity <= 0)
+            throw new ArgumentOutOfRangeException(nameof(channelCapacity));
+
         _log = log;
-        _stagingPath = Path.Combine(Path.GetTempPath(), $"fst_precomp_{Guid.NewGuid():N}.bin");
+        _stagingDirectory = Path.GetFullPath(stagingDirectory);
+        _deleteStagingDirectoryWhenEmpty = !Directory.Exists(_stagingDirectory);
+        Directory.CreateDirectory(_stagingDirectory);
+        _stagingPath = Path.Combine(
+            _stagingDirectory,
+            $"fst_precomp_{Guid.NewGuid():N}.bin");
         _channel = Channel.CreateBounded<(string Key, byte[] Json, string ETag)>(
             new BoundedChannelOptions(channelCapacity)
             {
@@ -35,6 +49,8 @@ public sealed class DiskStagingWriter : IAsyncDisposable
 
     /// <summary>Number of records staged so far.</summary>
     public long RecordCount => Interlocked.Read(ref _recordCount);
+
+    internal string StagingPath => _stagingPath;
 
     /// <summary>
     /// Write a cache entry to the staging channel.
@@ -97,6 +113,7 @@ public sealed class DiskStagingWriter : IAsyncDisposable
         try { await _drainTask.ConfigureAwait(false); }
         catch (ChannelClosedException) { }
         TryDeleteStagingFile();
+        TryDeleteStagingDirectory();
     }
 
     // ── Private ─────────────────────────────────────────────────
@@ -172,5 +189,28 @@ public sealed class DiskStagingWriter : IAsyncDisposable
     {
         try { if (File.Exists(_stagingPath)) File.Delete(_stagingPath); }
         catch (Exception ex) { _log.LogWarning(ex, "Failed to delete staging file {Path}", _stagingPath); }
+    }
+
+    private void TryDeleteStagingDirectory()
+    {
+        if (!_deleteStagingDirectoryWhenEmpty)
+            return;
+
+        try
+        {
+            if (Directory.Exists(_stagingDirectory))
+                Directory.Delete(_stagingDirectory);
+        }
+        catch (IOException)
+        {
+            // Another staging writer may still own the shared directory.
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(
+                ex,
+                "Failed to delete empty staging directory {Path}",
+                _stagingDirectory);
+        }
     }
 }

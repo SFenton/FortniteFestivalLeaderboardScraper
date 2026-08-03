@@ -9582,6 +9582,7 @@ public sealed class MetaDatabase : IMetaDatabase
         var readSource = _bandRankHistoryOptions.ApiReadSource;
         var historyJobsExists = TableExists(conn, null, "band_rank_history_jobs");
 
+        DateTime? currentComputedAtUtc = null;
         string? currentComputedAt = null;
         try
         {
@@ -9600,7 +9601,15 @@ public sealed class MetaDatabase : IMetaDatabase
                 current.Parameters.AddWithValue("comboId", normalizedComboId);
                 var result = current.ExecuteScalar();
                 if (result is DateTime dt)
-                    currentComputedAt = dt.ToString("o");
+                {
+                    currentComputedAtUtc = NormalizeUtc(dt);
+                    currentComputedAt = currentComputedAtUtc.Value.ToString("o");
+                }
+                else if (result is DateTimeOffset dto)
+                {
+                    currentComputedAtUtc = dto.UtcDateTime;
+                    currentComputedAt = currentComputedAtUtc.Value.ToString("o");
+                }
             }
         }
         catch
@@ -9608,16 +9617,28 @@ public sealed class MetaDatabase : IMetaDatabase
             // Current ranking tables are created lazily by the ranking publisher.
         }
 
-        string? historyThrough = null;
-        if (readSource is BandRankHistoryApiReadSource.V2NarrowOnly or BandRankHistoryApiReadSource.V2NarrowWithLegacyFallback)
+        DateOnly? historyThroughDate;
+        if (TryResolveReadyBandRankHistoryCompactV3Source(conn, bandType, out _))
         {
-            historyThrough = GetBandRankHistoryThroughFromV2(conn, bandType, rankingScope, normalizedComboId);
+            historyThroughDate = GetBandRankHistoryThroughFromCompactV3(conn, bandType);
+        }
+        else
+        {
+            historyThroughDate = null;
+            if (readSource is BandRankHistoryApiReadSource.V2NarrowOnly or BandRankHistoryApiReadSource.V2NarrowWithLegacyFallback)
+            {
+                historyThroughDate = GetBandRankHistoryThroughFromV2(conn, bandType, rankingScope, normalizedComboId);
+            }
+
+            if (historyThroughDate is null && readSource != BandRankHistoryApiReadSource.V2NarrowOnly)
+            {
+                historyThroughDate = GetBandRankHistoryThroughFromLegacy(conn, bandType, rankingScope, normalizedComboId, readSource);
+            }
         }
 
-        if (historyThrough is null && readSource != BandRankHistoryApiReadSource.V2NarrowOnly)
-        {
-            historyThrough = GetBandRankHistoryThroughFromLegacy(conn, bandType, rankingScope, normalizedComboId, readSource);
-        }
+        var historyThrough = historyThroughDate?.ToString("yyyy-MM-dd");
+        var freshnessStatus = GetBandRankHistoryFreshnessStatus(currentComputedAtUtc, historyThroughDate);
+        var freshnessMessage = GetBandRankHistoryFreshnessMessage(currentComputedAtUtc, historyThroughDate);
 
         BandRankHistoryJobInfo? job = null;
         if (historyJobsExists)
@@ -9638,14 +9659,26 @@ public sealed class MetaDatabase : IMetaDatabase
                 job = ReadBandRankHistoryJob(reader);
         }
 
+        if (_bandRankHistoryOptions.Mode == BandRankHistoryMode.Disabled)
+        {
+            return new BandRankHistoryStatusDto
+            {
+                HistoryStatus = "disabled",
+                CurrentRankingsComputedAt = currentComputedAt,
+                HistoryComputedThrough = historyThrough,
+                HistoryJobUpdatedAt = job?.UpdatedAt,
+                HistoryMessage = GetBandRankHistoryDisabledMessage(currentComputedAtUtc, historyThroughDate),
+            };
+        }
+
         if (job is null)
         {
             return new BandRankHistoryStatusDto
             {
-                HistoryStatus = historyThrough is null ? "stale" : "current",
+                HistoryStatus = freshnessStatus,
                 CurrentRankingsComputedAt = currentComputedAt,
                 HistoryComputedThrough = historyThrough,
-                HistoryMessage = historyThrough is null ? "No band rank history has been written yet." : null,
+                HistoryMessage = freshnessMessage,
             };
         }
 
@@ -9654,8 +9687,8 @@ public sealed class MetaDatabase : IMetaDatabase
             "queued" or "running" or "paused" => "catching_up",
             "failed" => "failed",
             "disabled" => "disabled",
-            "superseded" => historyThrough is null ? "stale" : "current",
-            _ => historyThrough is null ? "stale" : "current",
+            "superseded" => freshnessStatus,
+            _ => freshnessStatus,
         };
 
         return new BandRankHistoryStatusDto
@@ -9670,13 +9703,26 @@ public sealed class MetaDatabase : IMetaDatabase
                 "running" => $"Band rank history is catching up ({job.ChunksCompleted}/{job.ChunksTotal} chunks).",
                 "paused" => "Band rank history is paused while current scrape work has priority.",
                 "failed" => job.LastError ?? "Band rank history catch-up failed.",
-                "disabled" => "Band rank history writes are disabled.",
-                _ => null,
+                "disabled" => GetBandRankHistoryDisabledMessage(currentComputedAtUtc, historyThroughDate),
+                _ => freshnessMessage,
             },
         };
     }
 
-    private static string? GetBandRankHistoryThroughFromV2(NpgsqlConnection conn, string bandType, string rankingScope, string normalizedComboId)
+    private static DateOnly? GetBandRankHistoryThroughFromCompactV3(NpgsqlConnection conn, string bandType)
+    {
+        using var hist = conn.CreateCommand();
+        hist.CommandText = $"""
+            SELECT max_snapshot_date
+            FROM {BandRankHistoryCompactV3StateTable}
+            WHERE band_type = @bandType
+              AND status = 'ready'
+            """;
+        hist.Parameters.AddWithValue("bandType", bandType);
+        return ReadSnapshotDate(hist.ExecuteScalar());
+    }
+
+    private static DateOnly? GetBandRankHistoryThroughFromV2(NpgsqlConnection conn, string bandType, string rankingScope, string normalizedComboId)
     {
         if (!TableExists(conn, null, "band_team_rank_history_snapshot_v2"))
             return null;
@@ -9692,10 +9738,10 @@ public sealed class MetaDatabase : IMetaDatabase
         hist.Parameters.AddWithValue("bandType", bandType);
         hist.Parameters.AddWithValue("scope", rankingScope);
         hist.Parameters.AddWithValue("comboId", normalizedComboId);
-        return FormatSnapshotDate(hist.ExecuteScalar());
+        return ReadSnapshotDate(hist.ExecuteScalar());
     }
 
-    private static string? GetBandRankHistoryThroughFromLegacy(
+    private static DateOnly? GetBandRankHistoryThroughFromLegacy(
         NpgsqlConnection conn,
         string bandType,
         string rankingScope,
@@ -9719,7 +9765,7 @@ public sealed class MetaDatabase : IMetaDatabase
         return null;
     }
 
-    private static string? ReadBandRankHistoryMaxSnapshotDate(
+    private static DateOnly? ReadBandRankHistoryMaxSnapshotDate(
         NpgsqlConnection conn,
         string tableName,
         string bandType,
@@ -9736,15 +9782,65 @@ public sealed class MetaDatabase : IMetaDatabase
         hist.Parameters.AddWithValue("bandType", bandType);
         hist.Parameters.AddWithValue("scope", rankingScope);
         hist.Parameters.AddWithValue("comboId", normalizedComboId);
-        return FormatSnapshotDate(hist.ExecuteScalar());
+        return ReadSnapshotDate(hist.ExecuteScalar());
     }
 
-    private static string? FormatSnapshotDate(object? result) => result switch
+    private static DateOnly? ReadSnapshotDate(object? result) => result switch
     {
-        DateOnly date => date.ToString("yyyy-MM-dd"),
-        DateTime dt => dt.ToString("yyyy-MM-dd"),
+        DateOnly date => date,
+        DateTime dt => DateOnly.FromDateTime(dt),
         _ => null,
     };
+
+    private static string GetBandRankHistoryFreshnessStatus(DateTime? currentComputedAtUtc, DateOnly? historyThrough)
+    {
+        // History snapshots use UTC calendar dates, so freshness aligns to the current ranking's UTC date.
+        if (currentComputedAtUtc is null || historyThrough is null)
+            return "stale";
+
+        return historyThrough.Value == DateOnly.FromDateTime(currentComputedAtUtc.Value)
+            ? "current"
+            : "stale";
+    }
+
+    private static string? GetBandRankHistoryFreshnessMessage(DateTime? currentComputedAtUtc, DateOnly? historyThrough)
+    {
+        if (historyThrough is null)
+            return "No band rank history is available from the configured API read source.";
+
+        if (currentComputedAtUtc is null)
+            return $"Band rank history is through {historyThrough:yyyy-MM-dd}, but the current ranking timestamp is unavailable.";
+
+        var currentRankingDate = DateOnly.FromDateTime(currentComputedAtUtc.Value);
+        if (historyThrough.Value < currentRankingDate)
+        {
+            return $"Band rank history is through {historyThrough:yyyy-MM-dd}; current rankings are dated {currentRankingDate:yyyy-MM-dd} UTC.";
+        }
+
+        if (historyThrough.Value > currentRankingDate)
+        {
+            return $"Band rank history is through {historyThrough:yyyy-MM-dd}, which does not align with the current ranking date {currentRankingDate:yyyy-MM-dd} UTC.";
+        }
+
+        return null;
+    }
+
+    private static string GetBandRankHistoryDisabledMessage(DateTime? currentComputedAtUtc, DateOnly? historyThrough)
+    {
+        var message = "Band rank history writes are disabled.";
+        if (historyThrough is not null)
+            message += $" Readable history is through {historyThrough:yyyy-MM-dd}.";
+        else
+            message += " No readable history is available from the configured API read source.";
+
+        if (currentComputedAtUtc is not null)
+        {
+            var currentRankingDate = DateOnly.FromDateTime(currentComputedAtUtc.Value);
+            message += $" Current rankings are dated {currentRankingDate:yyyy-MM-dd} UTC.";
+        }
+
+        return message;
+    }
 
     public (List<BandTeamRankingDto> Entries, int TotalTeams) GetBandTeamRankings(string bandType, string? comboId = null, string rankBy = "adjusted", int page = 1, int pageSize = 50, bool usePublishedSnapshot = false)
     {
@@ -9884,63 +9980,13 @@ public sealed class MetaDatabase : IMetaDatabase
 
         using var conn = _ds.OpenConnection();
 
-        if (_bandRankHistoryOptions.CompactV3DuetsReadEnabled
-            && string.Equals(bandType, "Band_Duets", StringComparison.Ordinal)
-            && IsBandRankHistoryCompactV3Ready(
-                conn,
-                bandType,
-                BandRankHistoryCompactV3DuetsTable,
-                BandRankHistoryCompactV3DuetsTeamTable,
-                BandRankHistoryCompactV3DuetsComboTable,
-                ref _bandRankHistoryCompactV3DuetsReady))
+        if (TryResolveReadyBandRankHistoryCompactV3Source(conn, bandType, out var compactV3Source))
         {
             return GetBandRankHistoryFromCompactV3(
                 conn,
-                BandRankHistoryCompactV3DuetsTable,
-                BandRankHistoryCompactV3DuetsTeamTable,
-                BandRankHistoryCompactV3DuetsComboTable,
-                teamKey,
-                rankingScope,
-                normalizedComboId,
-                cutoff);
-        }
-
-        if (_bandRankHistoryOptions.CompactV3TriosReadEnabled
-            && string.Equals(bandType, "Band_Trios", StringComparison.Ordinal)
-            && IsBandRankHistoryCompactV3Ready(
-                conn,
-                bandType,
-                BandRankHistoryCompactV3TriosTable,
-                BandRankHistoryCompactV3TriosTeamTable,
-                BandRankHistoryCompactV3TriosComboTable,
-                ref _bandRankHistoryCompactV3TriosReady))
-        {
-            return GetBandRankHistoryFromCompactV3(
-                conn,
-                BandRankHistoryCompactV3TriosTable,
-                BandRankHistoryCompactV3TriosTeamTable,
-                BandRankHistoryCompactV3TriosComboTable,
-                teamKey,
-                rankingScope,
-                normalizedComboId,
-                cutoff);
-        }
-
-        if (_bandRankHistoryOptions.CompactV3QuadReadEnabled
-            && string.Equals(bandType, "Band_Quad", StringComparison.Ordinal)
-            && IsBandRankHistoryCompactV3Ready(
-                conn,
-                bandType,
-                BandRankHistoryCompactV3QuadTable,
-                BandRankHistoryCompactV3QuadTeamTable,
-                BandRankHistoryCompactV3QuadComboTable,
-                ref _bandRankHistoryCompactV3QuadReady))
-        {
-            return GetBandRankHistoryFromCompactV3(
-                conn,
-                BandRankHistoryCompactV3QuadTable,
-                BandRankHistoryCompactV3QuadTeamTable,
-                BandRankHistoryCompactV3QuadComboTable,
+                compactV3Source.PointsTable,
+                compactV3Source.TeamTable,
+                compactV3Source.ComboTable,
                 teamKey,
                 rankingScope,
                 normalizedComboId,
@@ -10099,6 +10145,71 @@ public sealed class MetaDatabase : IMetaDatabase
             rankingScope,
             normalizedComboId,
             cutoff);
+
+    private sealed record BandRankHistoryCompactV3Source(
+        string PointsTable,
+        string TeamTable,
+        string ComboTable);
+
+    private bool TryResolveReadyBandRankHistoryCompactV3Source(
+        NpgsqlConnection conn,
+        string bandType,
+        out BandRankHistoryCompactV3Source source)
+    {
+        if (_bandRankHistoryOptions.CompactV3DuetsReadEnabled
+            && string.Equals(bandType, "Band_Duets", StringComparison.Ordinal)
+            && IsBandRankHistoryCompactV3Ready(
+                conn,
+                bandType,
+                BandRankHistoryCompactV3DuetsTable,
+                BandRankHistoryCompactV3DuetsTeamTable,
+                BandRankHistoryCompactV3DuetsComboTable,
+                ref _bandRankHistoryCompactV3DuetsReady))
+        {
+            source = new BandRankHistoryCompactV3Source(
+                BandRankHistoryCompactV3DuetsTable,
+                BandRankHistoryCompactV3DuetsTeamTable,
+                BandRankHistoryCompactV3DuetsComboTable);
+            return true;
+        }
+
+        if (_bandRankHistoryOptions.CompactV3TriosReadEnabled
+            && string.Equals(bandType, "Band_Trios", StringComparison.Ordinal)
+            && IsBandRankHistoryCompactV3Ready(
+                conn,
+                bandType,
+                BandRankHistoryCompactV3TriosTable,
+                BandRankHistoryCompactV3TriosTeamTable,
+                BandRankHistoryCompactV3TriosComboTable,
+                ref _bandRankHistoryCompactV3TriosReady))
+        {
+            source = new BandRankHistoryCompactV3Source(
+                BandRankHistoryCompactV3TriosTable,
+                BandRankHistoryCompactV3TriosTeamTable,
+                BandRankHistoryCompactV3TriosComboTable);
+            return true;
+        }
+
+        if (_bandRankHistoryOptions.CompactV3QuadReadEnabled
+            && string.Equals(bandType, "Band_Quad", StringComparison.Ordinal)
+            && IsBandRankHistoryCompactV3Ready(
+                conn,
+                bandType,
+                BandRankHistoryCompactV3QuadTable,
+                BandRankHistoryCompactV3QuadTeamTable,
+                BandRankHistoryCompactV3QuadComboTable,
+                ref _bandRankHistoryCompactV3QuadReady))
+        {
+            source = new BandRankHistoryCompactV3Source(
+                BandRankHistoryCompactV3QuadTable,
+                BandRankHistoryCompactV3QuadTeamTable,
+                BandRankHistoryCompactV3QuadComboTable);
+            return true;
+        }
+
+        source = null!;
+        return false;
+    }
 
     private static bool IsBandRankHistoryCompactV3Ready(
         NpgsqlConnection conn,

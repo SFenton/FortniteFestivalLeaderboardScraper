@@ -301,20 +301,23 @@ public class PostScrapeRefresherTests : IDisposable
     public async Task RefreshAllAsync_CancellationDuringRefresh_ThrowsOperationCanceled()
     {
         var (refresher, handler) = CreateRefresher();
+        using var limiter = new AdaptiveConcurrencyLimiter(
+            1, minDop: 1, maxDop: 1, Substitute.For<ILogger>());
 
         var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "acctCancel" };
         var seen = new HashSet<(string, string, string)>();
         // Leave all instruments unseen — gives 6 work items
 
-        // First request succeeds, second throws OperationCanceledException
-        // (simulating cancellation during async processing)
         handler.EnqueueJsonOk("""{"page":0,"totalPages":0,"entries":[]}""");
-        handler.EnqueueException(new OperationCanceledException("Cancelled"));
-        for (int i = 0; i < 4; i++)
-            handler.EnqueueJsonOk("""{"page":0,"totalPages":0,"entries":[]}""");
+        handler.EnqueueHang();
 
-        await Assert.ThrowsAsync<OperationCanceledException>(() =>
-            refresher.RefreshAllAsync(
-                registered, seen, ["songA"], "token", "caller", _limiter));
+        using var cts = new CancellationTokenSource();
+        var refreshTask = refresher.RefreshAllAsync(
+            registered, seen, ["songA"], "token", "caller", limiter, ct: cts.Token);
+
+        await handler.WaitForRequestCountAsync(2, TimeSpan.FromSeconds(5));
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => refreshTask);
     }
 }

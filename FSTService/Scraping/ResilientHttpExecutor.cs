@@ -926,6 +926,8 @@ public sealed class ResilientHttpExecutor
         _probeCts = probeCts;
         var probeToken = probeCts.Token;
 
+        // Always start the delegate so its catch/finally can resolve waiters and
+        // release the gate even when the executor lifetime is already cancelled.
         _probeTask = Task.Run(async () =>
         {
             var delays = CdnRetryDelaysOverride ?? DefaultCdnRetryDelays;
@@ -1043,7 +1045,7 @@ public sealed class ResilientHttpExecutor
                 Interlocked.Exchange(ref _probeRunning, 0);
                 probeCts.Dispose();
             }
-        }, probeToken);
+        });
     }
 
     private async Task<HttpResponseMessage?> TrySendCdnBlockedRequestWithFallbackAsync(

@@ -272,6 +272,18 @@ The `388,779,032,576`-byte source was replaced by
 `87,994,753,024` compact bytes, a `300,784,279,552`-byte net database
 reduction.
 
+Band-history API status follows the active read path rather than the retired
+writer schema. A ready, enabled compact-v3 source obtains
+`historyComputedThrough` from
+`band_rank_history_compact_v3_state.max_snapshot_date`; otherwise the
+configured v2/legacy source supplies the date. Because snapshots use UTC
+calendar dates, enabled history is `current` only when that date equals the
+UTC date of the current ranking `computed_at`; older or mismatched history is
+`stale`. Background `queued`/`running`/`paused` work remains `catching_up`,
+and `failed` remains `failed`. When `BandRankHistory:Mode=Disabled`, the API
+reports `disabled` while retaining the current-ranking timestamp,
+history-through date, latest job timestamp, and a read-only-history message.
+
 ## Data ownership and restore class
 
 | Class | Meaning | Restore rule |
@@ -328,6 +340,14 @@ marker exists on a legacy row).
 | `Features__EnforcePublicationCriticalPhases` | `fstworker` | `false` | Rejects a candidate after any explicitly publication-critical post-scrape phase failure | Set `false`; phase outcomes remain visible while legacy swallow behavior is restored |
 | `Features__EnablePublicationReadContext` | `fstservice` | `false` | Enables publication bootstrap, pinned HTTP/WebSocket requests, shared read leases, and `409 publication_changed` enforcement after every public surface is generation-addressable | Keep `false` until all required surface bindings are ready; additive ledger/pointer rows remain |
 | `Features__WriteLogicalLeaderboardVersions` | all roles | `false` and startup-rejected when true | Retired shadow writer; no service/API reader exists | Future enablement requires a versioned migration, rebuild/restore validation, and a new live-scrape promotion |
+
+Tracked Compose templates load non-secret role defaults from
+`deploy/config/fstservice-role.env` and
+`deploy/config/fstworker-role.env`. The API role reads published solo sources
+but never writes them. The worker writes and validates candidate source maps
+but never resolves post-process reads through the prior publication. Automatic
+path generation and snapshot reuse stay false in both roles. Worker schema
+initialization is skipped only after the API role has initialized the schema.
 
 ### Song, account, registration, and authentication metadata
 
@@ -1313,12 +1333,22 @@ behind the explicit maintenance execute digest gate.
   pressure and uses an advisory lock.
 - Metadata TTL cleanup is bounded by batch count, row count, and command
   timeout. Snapshot rewrite remains disabled by default.
+- Production must resolve
+  `DatabaseMaintenance__SnapshotRetentionRewriteEnabled` from one authoritative
+  Compose environment source. Do not duplicate a contradictory value in a
+  service `env_file`: Compose `environment` entries take precedence. Keep the
+  resolved value `false` until an explicit dual-lane live-scrape parity window,
+  capacity guard, exact partition plan, and rollback package promote a rewrite.
 - Composite rank-history retention batches are intentionally unordered. The
   BRIN handles cutoff-range rejection, the primary key handles account/date
   existence probes, and `LIMIT` bounds each delete without a global sort.
 - `tools/postgres-capacity-guard.sh` is required before broad scrape,
   post-process, optional build, or maintenance work. It records free space,
   DB/WAL size, scratch, publication state, locks, and active maintenance.
+- Scrape-time API precompute staging writes below
+  `Scraper:DataDirectory/precompute-staging`. Production resolves that path
+  under `/app/data` on the 4 TB FST drive; it must never fall back to container
+  `/tmp` or the Docker overlay filesystem.
 - Use its `reclaim` action only for a proven space-releasing operation with
   zero transient/scratch bytes. It still requires one full-scrape emergency
   buffer by default and no active vacuum/index/rewrite/ungranted-lock
