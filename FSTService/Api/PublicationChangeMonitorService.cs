@@ -47,14 +47,13 @@ public sealed class PublicationChangeMonitorService : BackgroundService
                     previousFreeze = currentFreeze;
                 }
                 else if (previousFreeze.IsFrozen &&
-                         PathRepairMaintenanceService
-                             .IsRankingMaintenanceFreezeReason(
-                                 previousFreeze.Reason) &&
+                         previousFreeze
+                             .RequiresSamePublicationRefreshOnRelease &&
                          !currentFreeze.IsFrozen &&
                          currentPublicationId.HasValue)
                 {
                     _log.LogInformation(
-                        "Path-repair maintenance freeze completed for publication {PublicationId}; invalidating API caches and refreshing connected clients.",
+                        "Same-publication maintenance freeze completed for publication {PublicationId}; invalidating API caches and refreshing connected clients.",
                         currentPublicationId);
                     _scrapeLifecycle.InvalidateInProcessCaches();
                     _songsCache.Invalidate();

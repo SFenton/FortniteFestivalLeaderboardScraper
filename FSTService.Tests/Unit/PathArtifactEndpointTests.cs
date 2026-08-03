@@ -221,10 +221,6 @@ public sealed class PathArtifactEndpointTests : IDisposable
         public PathGenerationState? GetPathGenerationState(string songId)
             => songId == state.SongId ? state : null;
 
-        public IReadOnlyList<PathRepairSongSnapshot> GetPathRepairSongSnapshots(
-            IReadOnlyCollection<string> songIds)
-            => [];
-
         public HashSet<string> GetPendingPathGenerationSongIds()
             => [];
 

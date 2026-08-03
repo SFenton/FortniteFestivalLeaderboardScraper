@@ -150,31 +150,17 @@ public sealed class RankingsCalculator
         => ComputeAllCoreAsync(
             festivalService,
             ct,
-            scrapeId,
-            includeRankHistory: true);
-
-    internal Task ComputeAllForPathRepairAsync(
-        FestivalService festivalService,
-        CancellationToken ct = default)
-        => ComputeAllCoreAsync(
-            festivalService,
-            ct,
-            scrapeId: 0,
-            includeRankHistory: false);
+            scrapeId);
 
     private async Task ComputeAllCoreAsync(
         FestivalService festivalService,
         CancellationToken ct,
-        long scrapeId,
-        bool includeRankHistory)
+        long scrapeId)
     {
-        _activeScrapeId = includeRankHistory ? scrapeId : 0;
+        _activeScrapeId = scrapeId;
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var allMaxScores = _pathStore.GetAllMaxScores();
         var instruments = GlobalLeaderboardScraper.AllInstruments;
-        IReadOnlyList<string> instrumentsToRebuild = includeRankHistory
-            ? instruments
-            : ["Solo_PeripheralGuitar"];
         var bandTypes = BandInstrumentMapping.AllBandTypes;
         var allPopulation = _metaDb.GetAllLeaderboardPopulation();
         var totalChartedByInstrument = instruments.ToDictionary(
@@ -183,15 +169,13 @@ public sealed class RankingsCalculator
             StringComparer.OrdinalIgnoreCase);
 
         // ── Phase 1+2: SongStats + AccountRankings per instrument (parallel) ──
-        // Normal runs rebuild every instrument, history snapshots, and bands.
-        // Path repair rebuilds only Pro Lead plus the dependent aggregate rankings.
         _progress.BeginPhaseProgress(
-            instrumentsToRebuild.Count +
+            instruments.Count +
             1 +
             1 +
-            (includeRankHistory ? instruments.Count + 1 : 0) +
+            instruments.Count + 1 +
             1 +
-            (includeRankHistory ? bandTypes.Count : 0));
+            bandTypes.Count);
         _progress.SetSubOperation("per_instrument_rankings");
         _workerStatus?.BeginOperation("rankings.per_instrument", "Computing solo instrument rankings", phase: "ComputingRankings", subOperation: "per_instrument_rankings");
 
@@ -199,7 +183,7 @@ public sealed class RankingsCalculator
         // Each instrument's ranking pipeline boosts work_mem to 256MB per-session
         // (temp table + indexes + 5 ROW_NUMBER window functions). 6 concurrent
         // pipelines × ~1GB peak would exceed the container memory limit.
-        await Parallel.ForEachAsync(instrumentsToRebuild,
+        await Parallel.ForEachAsync(instruments,
             new ParallelOptions { MaxDegreeOfParallelism = 2, CancellationToken = ct },
             (instrument, innerCt) =>
         {
@@ -418,12 +402,7 @@ public sealed class RankingsCalculator
         LogPhase("all_combo_rankings", instrument: null, comboSw.Elapsed);
 
         // ── Phase 5+6: History snapshots and band team rankings ──
-        if (!includeRankHistory)
-        {
-            _log.LogInformation(
-                "Path-repair ranking rebuild skipped rank history and band rankings.");
-        }
-        else if (_bandTeamRankingOptions.OverlapRankHistorySnapshotsWithBandRankings)
+        if (_bandTeamRankingOptions.OverlapRankHistorySnapshotsWithBandRankings)
         {
             await RunRankHistorySnapshotsAndBandRankingsOverlappedAsync(
                 instruments,

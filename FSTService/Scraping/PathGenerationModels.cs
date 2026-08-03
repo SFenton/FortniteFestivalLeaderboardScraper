@@ -129,10 +129,6 @@ public sealed record PathGenerationState(
     string? CatalogLastModified = null,
     bool PathGenerationPending = false);
 
-public sealed record PathRepairSongSnapshot(
-    Song Song,
-    PathGenerationState State);
-
 public sealed record PathGenerationPromotion(
     string AttemptId,
     string SongId,
@@ -178,15 +174,12 @@ public sealed record PathGenerationBatchResult(
 
 internal enum PathGenerationAttemptOutcome
 {
-    Staged,
     Promoted,
     Skipped,
     Failed,
     Conflicted,
 }
-
 internal sealed record PathGenerationAttemptResult(
     PathGenerationAttemptOutcome Outcome,
-    PathGenerationPromotion? StagedPromotion = null,
     string? FailureStage = null,
     string? Detail = null);

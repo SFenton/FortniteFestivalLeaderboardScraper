@@ -15,6 +15,21 @@ namespace FSTService.Tests.Unit;
 
 public class PublicReadGateTests
 {
+    [Theory]
+    [InlineData("path-repair-ranking-rebuild")]
+    [InlineData("path-repair-ranking-alignment")]
+    public void HistoricalSamePublicationMaintenanceFreezeRequiresRefresh(
+        string reason)
+    {
+        var freeze = new PublicReadFreezeState(
+            true,
+            DateTime.UtcNow,
+            1276,
+            reason);
+
+        Assert.True(freeze.RequiresSamePublicationRefreshOnRelease);
+    }
+
     [Fact]
     public void MetaDatabase_PublicReadFreeze_RoundTripsAndPublishClears()
     {
@@ -210,7 +225,7 @@ public class PublicReadGateTests
             true,
             DateTime.UtcNow,
             1274,
-            "path-repair-ranking-rebuild");
+            "maintenance");
         gate.Invalidate();
         Assert.NotNull(cache.Get("player:account:::"));
 

@@ -76,72 +76,12 @@ var improvementNotificationRecoveryRequested = args.Any(
     arg => arg.Equals("--recover-improvement-notifications", StringComparison.OrdinalIgnoreCase));
 var scoreHistoryDedupMaintenanceCommand =
     ScoreHistoryDedupMaintenanceCommand.Parse(args);
-var pathRepairMaintenanceCommand =
-    PathRepairMaintenanceCommand.Parse(args);
 var initializeSchemaOnlyRequested = args.Any(
     arg => arg.Equals(
         "--initialize-schema-only",
         StringComparison.OrdinalIgnoreCase));
-var improvementNotificationMaintenanceRequested = args.Any(
-    arg => arg.Equals(
-        "--notification-maintenance-pro-lead-max-score-repair",
-        StringComparison.OrdinalIgnoreCase));
-var improvementNotificationMaintenanceExecuteRequested = args.Any(
-    arg => arg.Equals(
-        "--notification-maintenance-execute",
-        StringComparison.OrdinalIgnoreCase));
-var improvementNotificationMaintenanceManifestRequested = args.Any(
-    arg => arg.Equals(
-        "--notification-maintenance-manifest",
-        StringComparison.OrdinalIgnoreCase));
-if (improvementNotificationMaintenanceExecuteRequested
-    && !improvementNotificationMaintenanceRequested)
-{
-    throw new ArgumentException(
-        "--notification-maintenance-execute requires " +
-        "--notification-maintenance-pro-lead-max-score-repair.");
-}
-if (improvementNotificationMaintenanceManifestRequested
-    && !improvementNotificationMaintenanceRequested)
-{
-    throw new ArgumentException(
-        "--notification-maintenance-manifest requires " +
-        "--notification-maintenance-pro-lead-max-score-repair.");
-}
-if (improvementNotificationRecoveryRequested && improvementNotificationMaintenanceRequested)
-{
-    throw new ArgumentException(
-        "Notification recovery and notification maintenance cannot run in the same process.");
-}
-if (pathRepairMaintenanceCommand is not null &&
-    (improvementNotificationRecoveryRequested ||
-     improvementNotificationMaintenanceRequested ||
-     initializeSchemaOnlyRequested ||
-     scoreHistoryDedupMaintenanceCommand is not null))
-{
-    throw new ArgumentException(
-        "Path-repair maintenance cannot run with another one-shot schema, score-history, or notification command.");
-}
-if (pathRepairMaintenanceCommand is not null &&
-    args.Any(argument => argument.Equals(
-            "--precompute",
-            StringComparison.OrdinalIgnoreCase) ||
-        argument.Equals("--once", StringComparison.OrdinalIgnoreCase) ||
-        argument.Equals("--setup", StringComparison.OrdinalIgnoreCase) ||
-        argument.Equals("--resolve-only", StringComparison.OrdinalIgnoreCase) ||
-        argument.Equals("--backfill-only", StringComparison.OrdinalIgnoreCase) ||
-        argument.Equals(
-            "--registration-sync-worker",
-            StringComparison.OrdinalIgnoreCase) ||
-        argument.StartsWith("--solo-", StringComparison.OrdinalIgnoreCase) ||
-        argument.StartsWith("--band-", StringComparison.OrdinalIgnoreCase)))
-{
-    throw new ArgumentException(
-        "Path-repair maintenance cannot run with scrape, phase-only, setup, backfill, or precompute modes.");
-}
 if (scoreHistoryDedupMaintenanceCommand is not null
     && (improvementNotificationRecoveryRequested
-        || improvementNotificationMaintenanceRequested
         || initializeSchemaOnlyRequested))
 {
     throw new ArgumentException(
@@ -150,8 +90,6 @@ if (scoreHistoryDedupMaintenanceCommand is not null
 }
 
 var apiOnlyRequested = improvementNotificationRecoveryRequested
-    || improvementNotificationMaintenanceRequested
-    || pathRepairMaintenanceCommand is not null
     || scoreHistoryDedupMaintenanceCommand is not null
     || initializeSchemaOnlyRequested
     || args.Any(arg => arg.Equals("--api-only", StringComparison.OrdinalIgnoreCase))
@@ -405,15 +343,7 @@ builder.Services.AddSingleton<FSTService.Persistence.Maintenance.IDatabaseRetent
 builder.Services.AddSingleton<FSTService.Persistence.Maintenance.DeferredRetentionMaintenanceRunner>();
 builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationService>();
 builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationRecoveryService>();
-builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationMaintenanceService>();
 builder.Services.AddSingleton<FSTService.Persistence.ScoreHistoryDedupMaintenanceService>();
-builder.Services.AddSingleton<
-    FSTService.Persistence.IPathRepairMaintenanceLeaseProvider,
-    FSTService.Persistence.PostgresPathRepairMaintenanceLeaseProvider>();
-builder.Services.AddSingleton<
-    FSTService.Persistence.IPathRepairRankingExecutor,
-    FSTService.Persistence.PathRepairRankingExecutor>();
-builder.Services.AddSingleton<FSTService.Persistence.PathRepairMaintenanceService>();
 
 // ─── Shared services ────────────────────────────────────────
 
@@ -615,8 +545,7 @@ builder.Services.AddSingleton<PathGenerationCoordinator>(sp =>
         sp.GetRequiredService<SongsCacheService>(),
         sp.GetRequiredService<IOptions<ScraperOptions>>(),
         sp.GetRequiredService<ScrapeProgressTracker>(),
-        sp.GetRequiredService<ILogger<PathGenerationCoordinator>>(),
-        sp.GetRequiredService<IPathRepairMaintenanceLeaseProvider>()));
+        sp.GetRequiredService<ILogger<PathGenerationCoordinator>>()));
 builder.Services.AddSingleton<PathArtifactResolver>();
 
 // Core FestivalService — song catalog sync. Shared with API for /api/songs.
@@ -777,73 +706,6 @@ if (scoreHistoryDedupMaintenanceCommand is not null)
     return;
 }
 
-// Explicit one-shot exact-four staged path repair workflow.
-if (pathRepairMaintenanceCommand is not null)
-{
-    var maintenance = app.Services.GetRequiredService<
-        FSTService.Persistence.PathRepairMaintenanceService>();
-    try
-    {
-        object report = pathRepairMaintenanceCommand.Action switch
-        {
-            PathRepairMaintenanceAction.StageExactFour =>
-                await maintenance.StageExactFourAsync(
-                    pathRepairMaintenanceCommand.ManifestOutputPath!,
-                    CancellationToken.None),
-            PathRepairMaintenanceAction.AlignRankings =>
-                await maintenance.AlignRankingsAsync(
-                    pathRepairMaintenanceCommand.ExpectedPublishedScrapeId!.Value,
-                    CancellationToken.None),
-            PathRepairMaintenanceAction.PromoteExactFour =>
-                await maintenance.PromoteExactFourAsync(
-                    pathRepairMaintenanceCommand.ManifestPath!,
-                    pathRepairMaintenanceCommand.RollbackOutputPath!,
-                    pathRepairMaintenanceCommand.ExpectedPublishedScrapeId!.Value,
-                    CancellationToken.None),
-            PathRepairMaintenanceAction.RebuildRankings =>
-                await maintenance.RebuildRankingsAsync(
-                    pathRepairMaintenanceCommand.ManifestPath!,
-                    pathRepairMaintenanceCommand.ExpectedPublishedScrapeId!.Value,
-                    CancellationToken.None),
-            _ => throw new ArgumentOutOfRangeException(),
-        };
-
-        Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(
-            report,
-            PathRepairJson.Options));
-        if (report is PathRepairStageReport { Succeeded: false }
-            or PathRepairPromotionReport { Succeeded: false }
-            or PathRepairRankingRebuildReport { Succeeded: false })
-        {
-            Environment.ExitCode = 2;
-        }
-    }
-    catch (Exception ex)
-    {
-        var command = pathRepairMaintenanceCommand.Action switch
-        {
-            PathRepairMaintenanceAction.StageExactFour =>
-                PathRepairMaintenanceCommand.StageFlag,
-            PathRepairMaintenanceAction.AlignRankings =>
-                PathRepairMaintenanceCommand.AlignRankingsFlag,
-            PathRepairMaintenanceAction.PromoteExactFour =>
-                PathRepairMaintenanceCommand.PromoteFlag,
-            PathRepairMaintenanceAction.RebuildRankings =>
-                PathRepairMaintenanceCommand.RebuildRankingsFlag,
-            _ => "path-repair",
-        };
-        Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(
-            new PathRepairCommandFailureReport(
-                command,
-                Succeeded: false,
-                ex.GetType().Name,
-                ex.Message),
-            PathRepairJson.Options));
-        Environment.ExitCode = 2;
-    }
-    return;
-}
-
 // One-shot precompute: --precompute
 {
     var scraperOpts2 = app.Services.GetRequiredService<IOptions<ScraperOptions>>().Value;
@@ -888,110 +750,6 @@ if (pathRepairMaintenanceCommand is not null)
     }
 }
 
-// One-shot notification safety gate for the controlled Pro Lead max-score repair.
-if (improvementNotificationMaintenanceRequested)
-{
-    var maintenanceLog = app.Services.GetRequiredService<ILoggerFactory>()
-        .CreateLogger("ImprovementNotificationMaintenance");
-
-    long? expectedPublishedScrapeId = null;
-    string? expectedDryRunDigest = null;
-    string? manifestPath = null;
-    for (var i = 0; i < args.Length; i++)
-    {
-        if (args[i].Equals("--published-scrape-id", StringComparison.OrdinalIgnoreCase))
-        {
-            if (i + 1 >= args.Length
-                || !long.TryParse(args[i + 1], out var parsedScrapeId)
-                || parsedScrapeId <= 0)
-            {
-                throw new ArgumentException(
-                    "--published-scrape-id requires a positive integer.");
-            }
-
-            expectedPublishedScrapeId = parsedScrapeId;
-        }
-        else if (args[i].Equals(
-                     "--expected-notification-dry-run-digest",
-                     StringComparison.OrdinalIgnoreCase))
-        {
-            if (i + 1 >= args.Length || string.IsNullOrWhiteSpace(args[i + 1]))
-            {
-                throw new ArgumentException(
-                    "--expected-notification-dry-run-digest requires a SHA-256 digest.");
-            }
-
-            expectedDryRunDigest = args[i + 1];
-        }
-        else if (args[i].Equals(
-                     "--notification-maintenance-manifest",
-                     StringComparison.OrdinalIgnoreCase))
-        {
-            if (i + 1 >= args.Length || string.IsNullOrWhiteSpace(args[i + 1]))
-            {
-                throw new ArgumentException(
-                    "--notification-maintenance-manifest requires a JSON file path.");
-            }
-
-            if (manifestPath is not null)
-            {
-                throw new ArgumentException(
-                    "--notification-maintenance-manifest may be specified only once.");
-            }
-
-            manifestPath = args[i + 1];
-        }
-    }
-
-    if (!expectedPublishedScrapeId.HasValue)
-    {
-        throw new ArgumentException(
-            "--published-scrape-id is required for notification maintenance.");
-    }
-    if (manifestPath is null)
-    {
-        throw new ArgumentException(
-            "--notification-maintenance-manifest is required for notification maintenance.");
-    }
-
-    var execute = improvementNotificationMaintenanceExecuteRequested;
-    if (execute && string.IsNullOrWhiteSpace(expectedDryRunDigest))
-    {
-        throw new ArgumentException(
-            "--notification-maintenance-execute requires " +
-            "--expected-notification-dry-run-digest.");
-    }
-    var manifest = await ImprovementNotificationMaintenanceManifest.LoadAsync(
-        manifestPath,
-        CancellationToken.None);
-
-    maintenanceLog.LogInformation(
-        "Running notification maintenance safety gate for purpose {Purpose}, " +
-        "published scrape {ScrapeId}; execute={Execute}, manifestSongs={ManifestSongs}, " +
-        "visibleDeliveryCap={VisibleCap}.",
-        ImprovementNotificationSafetyContract.ProLeadMaxScoreRepairPurpose,
-        expectedPublishedScrapeId.Value,
-        execute,
-        manifest.Songs.Count,
-        ImprovementNotificationSafetyContract.ProLeadMaxScoreRepairVisibleDeliveryCap);
-
-    var maintenance = app.Services.GetRequiredService<
-        FSTService.Persistence.ImprovementNotificationMaintenanceService>();
-    object report = execute
-        ? await maintenance.ExecuteProLeadMaxScoreRepairAsync(
-            expectedPublishedScrapeId.Value,
-            expectedDryRunDigest!,
-            manifest,
-            CancellationToken.None)
-        : await maintenance.DryRunProLeadMaxScoreRepairAsync(
-            expectedPublishedScrapeId.Value,
-            manifest,
-            CancellationToken.None);
-
-    Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(report));
-    return;
-}
-
 // One-shot published-scrape improvement notification recovery.
 if (improvementNotificationRecoveryRequested)
 {
@@ -1018,25 +776,13 @@ if (improvementNotificationRecoveryRequested)
     var refreshProjection = !args.Any(
         arg => arg.Equals("--notification-skip-projection-refresh", StringComparison.OrdinalIgnoreCase));
     var force = args.Any(arg => arg.Equals("--notification-force", StringComparison.OrdinalIgnoreCase));
-    var reopenCompletedForMaintenance = args.Any(arg =>
-        arg.Equals(
-            "--notification-reopen-completed",
-            StringComparison.OrdinalIgnoreCase));
-    if (reopenCompletedForMaintenance
-        && (!execute || !baselineOnly || !force))
-    {
-        throw new ArgumentException(
-            "--notification-reopen-completed requires execute mode, " +
-            "--notification-baseline-only, and --notification-force.");
-    }
 
     recoveryLog.LogInformation(
-        "Recovering improvement notifications for published scrape {ExpectedScrapeId}; execute={Execute}, baselineOnly={BaselineOnly}, refreshProjection={RefreshProjection}, reopenCompleted={ReopenCompleted}.",
+        "Recovering improvement notifications for published scrape {ExpectedScrapeId}; execute={Execute}, baselineOnly={BaselineOnly}, refreshProjection={RefreshProjection}.",
         expectedPublishedScrapeId,
         execute,
         baselineOnly,
-        refreshProjection,
-        reopenCompletedForMaintenance);
+        refreshProjection);
 
     var recovery = app.Services.GetRequiredService<FSTService.Persistence.ImprovementNotificationRecoveryService>();
     var report = await recovery.RunPublishedScrapeAsync(
@@ -1046,11 +792,8 @@ if (improvementNotificationRecoveryRequested)
         refreshProjection,
         projectionScopes: null,
         force,
-        source: reopenCompletedForMaintenance
-            ? "operator-maintenance-rebaseline"
-            : "operator-recovery",
-        CancellationToken.None,
-        reopenCompletedForMaintenance);
+        source: "operator-recovery",
+        CancellationToken.None);
 
     Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(report));
     return;

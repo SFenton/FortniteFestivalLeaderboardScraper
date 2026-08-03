@@ -55,18 +55,3 @@ public sealed class ImprovementNotificationOptions
     /// <summary>How often the API service checks and logs notification staleness.</summary>
     public TimeSpan StalenessCheckInterval { get; set; } = TimeSpan.FromMinutes(15);
 }
-
-public static class ImprovementNotificationSafetyContract
-{
-    public const string RoutineScoreObservationPurpose = "routine_score_observation_v1";
-    public const string RoutineScoreObservationCause = "score_observation";
-    public const string RoutineItemShopPurpose = "routine_item_shop_observation_v1";
-    public const string RoutineItemShopCause = "item_shop_observation";
-    public const string ProLeadMaxScoreRepairPurpose = "maintenance_pro_lead_max_score_repair_v1";
-    public const string MaxScoreRecomputeCause = "max_score_recompute";
-    public const string VisibleDeliveryState = "visible";
-    public const string QuarantinedDeliveryState = "quarantined";
-
-    // This is intentionally a compile-time contract, not configuration.
-    public const int ProLeadMaxScoreRepairVisibleDeliveryCap = 0;
-}

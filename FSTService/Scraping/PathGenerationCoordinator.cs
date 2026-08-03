@@ -22,7 +22,6 @@ public sealed partial class PathGenerationCoordinator
     private readonly IOptions<ScraperOptions> _options;
     private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<PathGenerationCoordinator> _log;
-    private readonly IPathRepairMaintenanceLeaseProvider _maintenanceLeaseProvider;
     private readonly SemaphoreSlim _choptConcurrency;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _songLocks =
         new(StringComparer.OrdinalIgnoreCase);
@@ -33,8 +32,7 @@ public sealed partial class PathGenerationCoordinator
         SongsCacheService songsCache,
         IOptions<ScraperOptions> options,
         ScrapeProgressTracker progress,
-        ILogger<PathGenerationCoordinator> log,
-        IPathRepairMaintenanceLeaseProvider? maintenanceLeaseProvider = null)
+        ILogger<PathGenerationCoordinator> log)
     {
         _http = http;
         _store = store;
@@ -42,8 +40,6 @@ public sealed partial class PathGenerationCoordinator
         _options = options;
         _progress = progress;
         _log = log;
-        _maintenanceLeaseProvider = maintenanceLeaseProvider
-            ?? UncontendedPathRepairMaintenanceLeaseProvider.Instance;
         _choptConcurrency = new SemaphoreSlim(
             Math.Max(1, options.Value.PathGenerationParallelism));
     }
@@ -69,27 +65,6 @@ public sealed partial class PathGenerationCoordinator
         var ownsProgress = _progress.BeginPathGeneration(requests.Count);
         try
         {
-            await using var maintenanceLease =
-                await _maintenanceLeaseProvider.TryAcquireAsync(
-                    "path-generation",
-                    holdPublicationLock: false,
-                    ct);
-            if (maintenanceLease is null)
-            {
-                await RecordBatchFailureAsync(
-                    requests,
-                    null,
-                    "maintenance_lock",
-                    "Another path-repair, path-generation, or ranking maintenance operation holds the shared lease.",
-                    ownsProgress);
-                return new PathGenerationBatchResult(
-                    requests.Count,
-                    0,
-                    0,
-                    requests.Count,
-                    0);
-            }
-
             PathGenerationExecutionContext execution;
             try
             {
@@ -165,7 +140,6 @@ public sealed partial class PathGenerationCoordinator
                     state,
                     execution,
                     force,
-                    promote: true,
                     ownsProgress,
                     ct);
             });
@@ -197,80 +171,6 @@ public sealed partial class PathGenerationCoordinator
         }
     }
 
-    internal async Task<IReadOnlyList<PathGenerationAttemptResult>>
-        StagePathsSerialAsync(
-            IReadOnlyList<(SongPathRequest Request, PathGenerationState State)> songs,
-            CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(songs);
-        if (songs.Count == 0)
-            return [];
-
-        PathGenerationExecutionContext execution;
-        try
-        {
-            execution = await CreateExecutionContextAsync(ct);
-        }
-        catch (OperationCanceledException)
-        {
-            await RecordBatchFailureAsync(
-                songs.Select(static song => song.Request).ToArray(),
-                null,
-                "cancelled",
-                "Path generation was cancelled before repair staging began.",
-                ownsProgress: false);
-            throw;
-        }
-        catch (PathGenerationException ex)
-        {
-            await RecordBatchFailureAsync(
-                songs.Select(static song => song.Request).ToArray(),
-                null,
-                ex.Stage,
-                ex.Message,
-                ownsProgress: false);
-            return songs
-                .Select(_ => new PathGenerationAttemptResult(
-                    PathGenerationAttemptOutcome.Failed,
-                    FailureStage: ex.Stage,
-                    Detail: ex.Message))
-                .ToArray();
-        }
-        catch (Exception ex)
-        {
-            await RecordBatchFailureAsync(
-                songs.Select(static song => song.Request).ToArray(),
-                null,
-                "runtime_identity",
-                ex.Message,
-                ownsProgress: false);
-            return songs
-                .Select(_ => new PathGenerationAttemptResult(
-                    PathGenerationAttemptOutcome.Failed,
-                    FailureStage: "runtime_identity",
-                    Detail: ex.Message))
-                .ToArray();
-        }
-
-        var results = new List<PathGenerationAttemptResult>(songs.Count);
-        foreach (var song in songs)
-        {
-            var result = await ProcessSongAsync(
-                song.Request,
-                song.State,
-                execution,
-                force: true,
-                promote: false,
-                ownsProgress: false,
-                ct);
-            results.Add(result);
-            if (result.Outcome != PathGenerationAttemptOutcome.Staged)
-                break;
-        }
-
-        return results;
-    }
-
     public Task<PathGenerationBatchResult> GenerateAutomaticPathsAsync(
         IReadOnlyCollection<Song> songs,
         CancellationToken ct)
@@ -298,7 +198,6 @@ public sealed partial class PathGenerationCoordinator
         PathGenerationState? initialState,
         PathGenerationExecutionContext execution,
         bool force,
-        bool promote,
         bool ownsProgress,
         CancellationToken ct)
     {
@@ -538,24 +437,16 @@ public sealed partial class PathGenerationCoordinator
             }
 
             var promotion = new PathGenerationPromotion(
-                        attemptId,
-                        request.SongId,
-                        state?.Revision ?? 0,
-                        attemptId,
-                        datHash,
-                        request.LastModified,
-                        generatedAtUtc,
+                attemptId,
+                request.SongId,
+                state?.Revision ?? 0,
+                attemptId,
+                datHash,
+                request.LastModified,
+                generatedAtUtc,
                 execution.Runtime,
-                        expected,
+                expected,
                 maxScores);
-            if (!promote)
-            {
-                if (ownsProgress)
-                    _progress.PathGenSongCompleted();
-                return new PathGenerationAttemptResult(
-                    PathGenerationAttemptOutcome.Staged,
-                    promotion);
-            }
 
             PathGenerationPromotionOutcome promotionOutcome;
             try
@@ -597,16 +488,14 @@ public sealed partial class PathGenerationCoordinator
                     promotionOutcome == PathGenerationPromotionOutcome.Conflict
                         ? PathGenerationAttemptOutcome.Conflicted
                         : PathGenerationAttemptOutcome.Failed,
-                    promotion,
-                    "concurrency",
-                    detail);
+                    FailureStage: "concurrency",
+                    Detail: detail);
             }
 
             if (ownsProgress)
                 _progress.PathGenSongCompleted();
             return new PathGenerationAttemptResult(
-                PathGenerationAttemptOutcome.Promoted,
-                promotion);
+                PathGenerationAttemptOutcome.Promoted);
         }
         catch (OperationCanceledException)
         {

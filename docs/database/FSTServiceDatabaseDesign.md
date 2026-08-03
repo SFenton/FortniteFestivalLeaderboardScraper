@@ -482,8 +482,10 @@ serving candidate bytes; a cold miss during any freeze returns bounded
 no-store HTTP `503` rather than rebuilding in a loop. An open text
 path modal also treats a generation ID change as a new target and returns to
 its loading phase. Rows with a null pointer retain the legacy
-`paths/<song-id>/<instrument>/<difficulty>.*` read layout; rows with a non-null
-pointer never fall back to legacy or stale files. Promotion does not alter
+`paths/<song-id>/<instrument>/<difficulty>.*` read layout. For a non-null
+pointer, instruments claimed by the immutable generation never fall back to
+legacy or stale files; instruments outside that generation's expected set may
+continue to use their legacy artifacts. Promotion does not alter
 scrape IDs, publication pointers, public-read freeze state, rankings, history,
 or notification delivery. The additive columns and error table are
 idempotent; deployment still follows the explicit schema-initializer hold
@@ -491,67 +493,29 @@ described above, with normal lock/long-query checks before the initializer.
 Deploy first with automatic generation disabled, prove legacy reads and the
 single-song admin guard, then enable automatic new/changed atomic-song work.
 
-The exact-four Pro Lead repair is an explicit one-shot extension of this path,
-not another generator implementation. All repair, automatic, admin, and worker
-path work shares PostgreSQL advisory lease
-`5067481511116519000`, below both the fixed publication lock and the unbounded
-per-publication cache-build key range; a repair promotion or ranking rebuild
-also holds the publication advisory lock so scrape allocation/publication
-cannot overlap. Lease acquisition uses `pg_try_advisory_lock` and fails closed
-rather than waiting behind another owner.
+The one-time exact-four Pro Lead repair has completed and its executable
+extension is retired. Publication `1276` is current; four immutable generations
+were promoted, the dependent rankings were rebuilt, and the sole notification
+maintenance run recorded `26` quarantined candidates with `0` visible
+deliveries. The compiled song allowlist, repair manifest/runtime services,
+shared repair lease, selective ranking adapter, command parsing, and DI
+registrations no longer exist.
 
-`--path-repair-stage-exact-four` requires automatic generation disabled and an
-explicit new `.json` output below `DataDirectory`. Existing paths, symbolic
-links, and path escapes are rejected. The command loads exactly the four
-compile-time-approved IDs in ordinal order, captures their current revision,
-exact catalog `last_modified`, all-six-maxima-null identity, and
-pending/pointer state, then invokes the coordinator serially for Pro Lead only.
-Provider and database catalog timestamps are canonicalized to the same UTC
-instant before identity comparison, so harmless ISO-8601 fractional precision
-differences do not block repair while malformed or different timestamps remain
-fail-closed.
-The normal decrypt/CHOpt/runtime and all-difficulty validation path moves each
-successful generation from `.path-work` into immutable same-filesystem
-storage. The selective generation pointer serves Pro Lead while other
-instruments retain legacy artifact fallback. Stage-only never calls the path
-CAS and never changes maxima, hashes, timestamps, pointers, revision, or
-pending state. It re-reads all four source identities before atomically
-creating the strict notification maintenance manifest; any CHOpt or identity
-failure leaves no manifest and appends the normal visible path error evidence.
+Recurring path generation continues through the worker and the protected
+single-song admin endpoint. It retains provider timestamp normalization,
+full decrypt/CHOpt/runtime/artifact validation, immutable generation moves,
+per-song in-process serialization, row-locked revision/catalog comparison, and
+the database CAS. The four promoted partial generations remain valid: their
+generation pointers serve the generated Pro Lead artifacts while instruments
+not owned by those generations continue to resolve their legacy artifacts.
 
-`--path-repair-promote-exact-four` binds that strict manifest to an explicitly
-expected current published scrape. It requires no working publication and
-preflights all four current database rows, published exact catalog timestamps,
-strict `generation.json` identities, non-symbolic-link PNG/JSON files, runtime
-identity, every expected instrument/difficulty, and reconstructed expert
-maxima before the first write. A new rollback snapshot below `DataDirectory`
-captures all six maxima, revision, pointer, DAT/catalog identities, generation
-timestamp/runtime/profile, expected instruments, and pending state before
-promotion. It then establishes the purpose-owned public-read freeze before the
-first row-locked CAS, which is called exactly once per song in ordinal order.
-This is deliberately serial rather than falsely all-four atomic: a later
-failure stops immediately, keeps public reads failed closed, and reports the
-exact promoted, failed, and not-attempted subset while preserving the rollback
-snapshot.
-
-`--path-repair-rebuild-rankings` validates the same manifest in its
-post-promotion state, requires the same idle current publication and existing
-purpose-owned freeze, and recomputes only Pro Lead plus the dependent
-composite, solo-family, and combo rankings from that publication's immutable
-catalog. It does not rebuild unrelated solo instruments or bands, allocate or
-publish a scrape, run notification detection, write scrape phase timings, or
-append rank-history snapshots. Failure or cancellation retains the freeze.
-Only a fully validated success releases it; the API then discards pre-freeze
-process-cache entries and broadcasts a same-publication refresh so connected
-web clients clear React Query and songs caches before reading the repaired
-state.
-
-Before notification dry-run, `--path-repair-align-rankings` performs the same
-published-catalog-bound selective rebuild in pre-repair state. It exists to
-remove legacy denormalized provider-property drift from
-`total_charted_songs`; it acquires the path/publication locks, owns a distinct
-maintenance freeze, appends no history, changes no path pointer, and restores
-reads only after the current provider-exact publication remains valid.
+The historical rollback snapshot and command reports remain evidence rather
+than executable input. A future reversal requires a separately reviewed
+public-read-frozen transaction restoring all captured path fields, followed by
+a supported full ranking recompute and identity validation. The API retains
+same-publication cache/client refresh compatibility for the historical ranking
+maintenance freeze reasons, so an interrupted old-image freeze can still be
+released without serving pre-freeze process or song-cache state.
 
 Failed-candidate `/api/songs` recovery is publication-owned rather than a live
 candidate bypass. When the process cache is empty, failed-candidate isolation
@@ -890,7 +854,7 @@ partial result.
 | `player_improvement_state`, `player_rank_improvement_state`, `band_improvement_state`, `band_rank_improvement_state`, `band_improvement_subjects` | Durable detection state | Improvement detector | Idempotency/delta state. Subjects registered after the prior completed detection run are baselined once before events are emitted, preventing back-catalog first-play/first-score spam while preserving later improvements. |
 | `player_improvement_events`, `band_improvement_events`, `improvement_detection_runs` | Durable event/audit | Improvement detector/service | Bounded retention with replay identity. `notification_purpose`, `notification_cause`, and `delivery_state` default existing/routine rows to visible. Public reads, source cursors, expiry, and supersession operate only on `delivery_state='visible'`. Detection runs record `published_scrape_id` and selective new-subject baseline counts so publication completion and catch-up are auditable. |
 | `service_notifications` | Durable notification outbox/read model | `ImprovementNotificationService` | Existing and item-shop rows default to visible routine metadata. Public reads and expiry cleanup require `delivery_state='visible'`; future process split must preserve replay. |
-| `improvement_notification_maintenance_runs`, `improvement_notification_maintenance_candidates` | Non-public maintenance audit/quarantine | `ImprovementNotificationMaintenanceService` | Purpose `maintenance_pro_lead_max_score_repair_v1` has a compile-time and database-enforced visible delivery cap of exactly zero. The run stores the exact manifest, total-charted count, and canonical projected classification. Its `published_scrape_id` is a non-null immutable integer with no retention-coupled `scrape_log` FK. Only maintenance-attributed candidates enter quarantine; those rows have no expiry column and never participate in public reads, routine supersession, source cursors, or WebSocket invalidation. |
+| `improvement_notification_maintenance_runs`, `improvement_notification_maintenance_candidates` | Immutable historical audit/quarantine compatibility | No executable writer; schema retained by `ImprovementNotificationSchema` | The completed purpose `maintenance_pro_lead_max_score_repair_v1` run stores its exact manifest, total-charted count, canonical classification, and `26` quarantined candidates with `0` visible deliveries. `published_scrape_id` is a non-null immutable integer with no retention-coupled `scrape_log` FK. Rows have no expiry column and never participate in public reads, routine supersession, source cursors, or WebSocket invalidation. |
 | `api_response_cache`, `api_response_cache_staging` | Cache | Precompute/publication path | Staging swaps atomically after long band snapshot work; keep its exclusive lock at transaction end; safe to clear and regenerate from published source |
 
 Notification recovery and registered-phase budget operations are documented in
@@ -902,43 +866,17 @@ changing public response contracts. Recovery reads
 fails closed when the plan is absent or not ready; it never substitutes an
 all-current-scope rebuild implicitly.
 
-The Pro Lead max-score repair uses a separate purpose-specific notification
-gate. Its strict manifest contains exactly four ordinal-sorted unique song IDs,
-their expected current path revisions/catalog timestamps/old Pro Lead maxima,
-positive proposed maxima, staged generation IDs and DAT hashes, and complete
-runtime identity. The read-only dry run requires the expected
-published scrape to be completed, unfrozen, notification-complete, and backed
-by completed visible routine player and band song/rank runs. Current song and
-`song_stats` identities plus the published exact catalog timestamps must match
-the manifest, and current Pro Lead ranking total-charted values must agree with
-that published charted-song catalog.
+The one-time Pro Lead notification maintenance writer is retired after the
+publication `1276` execution persisted `26` quarantined candidates and no
+visible event. The hardcoded manifest and dry-run/execute services are absent,
+and routine recovery cannot reopen a completed marker for rebaselining.
 
-Proposed ranks are not read from live `account_rankings`. The gate projects the
-full Pro Lead population from `current_leaderboard_entries`, `song_stats`, and
-`score_history` using the normal 1.05 current-score cutoff, best-valid-history
-fallback, Bayesian maximum-score-percent adjustment (`m=50`, `C=0.5`), and
-rank tie breakers. The canonical SHA-256 binds the published scrape ID,
-normalized manifest, total-charted count, and sorted projected candidates,
-while excluding timestamps, run IDs, UUIDs, and generated GUIDs. Only
-`Solo_PeripheralGuitar` `max_score_percent_rank` movement is classified as
-denominator-derived maintenance. Direct player/band score observations remain
-ordinary work outside quarantine/baselining. Missing state, another instrument
-without ordinary-score evidence, ambiguous attribution, or any other
-unclassified aggregate/rank movement blocks execute.
-
-After separately promoting exactly those staged generations and rebuilding
-rankings, execute requires the same published scrape, manifest, and digest.
-Every path row must have advanced exactly one revision and match the proposed
-maximum, generation ID, DAT hash, catalog identity, and supplied runtime
-identity; `song_stats` must expose the proposed maximum. Execute recomputes the
-projection and requires the actual `account_rankings` candidate set to match it
-exactly before any audit/quarantine/baseline write. A passing execute stores
-only the quarantine/audit evidence and selectively advances
-`player_rank_improvement_state.max_score_percent_rank` for the allowed Pro
-Lead subjects, preventing a later routine pass from reinterpreting the same
-maintenance movement. It does not refresh projections, touch player-song or
-band state, create visible events, expire/supersede visible events, or request
-notification-feed WebSocket invalidation.
+The safety boundary remains durable. Existing and fresh schemas retain the two
+immutable maintenance audit tables and their purpose/cause/quarantine/zero
+visible-delivery constraints. Public event reads, source cursors, expiry, and
+supersession continue to require `delivery_state='visible'`, so the retained
+historical rows cannot enter a feed or alter routine event lifecycle. This code
+retirement performs no live DDL and does not delete or rewrite audit rows.
 
 The nullable `score_history` repair is a separate explicit one-shot safety
 gate. `--score-history-dedup-maintenance` defaults to a canonical
@@ -1330,10 +1268,11 @@ probe; missing legacy columns are repaired in a separate short transaction
 with a five-second lock timeout, so schema DDL locks are not retained through
 cache and band-ranking publication work.
 
-The notification-maintenance schema is also additive. Constant defaults make
-pre-existing notification rows visible without a data backfill or table
-rewrite. `DatabaseInitializer` creates only the two notification prerequisites,
-then runs and commits the complete notification schema in its own command and
+The notification schema is additive. Constant defaults make pre-existing
+notification rows visible without a data backfill or table rewrite.
+`DatabaseInitializer` retains the two immutable historical maintenance audit
+tables for compatibility even though their executable writer is retired, then
+runs and commits the complete notification schema in its own command and
 transaction before the unbounded main/publication schema batch. That
 transaction uses local two-second lock and fifteen-second statement timeouts,
 so notification ALTER locks cannot survive into publication reconciliation.

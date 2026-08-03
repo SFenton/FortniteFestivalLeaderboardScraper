@@ -62,58 +62,6 @@ public sealed class PathDataStore : IPathDataStore
         return r.Read() ? ReadPathGenerationState(r) : null;
     }
 
-    public IReadOnlyList<PathRepairSongSnapshot> GetPathRepairSongSnapshots(
-        IReadOnlyCollection<string> songIds)
-    {
-        ArgumentNullException.ThrowIfNull(songIds);
-        var requested = songIds
-            .Where(static songId => !string.IsNullOrWhiteSpace(songId))
-            .Distinct(StringComparer.Ordinal)
-            .OrderBy(static songId => songId, StringComparer.Ordinal)
-            .ToArray();
-        if (requested.Length == 0)
-            return [];
-
-        var result = new List<PathRepairSongSnapshot>(requested.Length);
-        using var conn = _ds.OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"""
-            SELECT {PathGenerationStateColumns},
-                   provider_json::text
-            FROM songs
-            WHERE song_id = ANY(@songIds)
-            ORDER BY song_id
-            """;
-        cmd.Parameters.Add(
-            "songIds",
-            NpgsqlDbType.Array | NpgsqlDbType.Text).Value = requested;
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-        {
-            if (reader.IsDBNull(18))
-            {
-                throw new InvalidOperationException(
-                    $"Repair song '{reader.GetString(0)}' has no exact provider JSON.");
-            }
-
-            var song = SongCatalogSnapshotBuilder.DeserializeProviderSong(
-                reader.GetString(18));
-            var state = ReadPathGenerationState(reader);
-            if (!string.Equals(
-                    song.track?.su,
-                    state.SongId,
-                    StringComparison.Ordinal))
-            {
-                throw new InvalidOperationException(
-                    $"Repair song '{state.SongId}' provider identity does not match its database row.");
-            }
-
-            result.Add(new PathRepairSongSnapshot(song, state));
-        }
-
-        return result;
-    }
-
     public HashSet<string> GetPendingPathGenerationSongIds()
     {
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

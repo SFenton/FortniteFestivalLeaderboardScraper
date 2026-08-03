@@ -557,6 +557,46 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
     }
 
     [Fact]
+    public void RoutinePrecomputeKeepsQuarantinedEvidenceHiddenAndUnchanged()
+    {
+        InsertCurrentEntry(score: 100000, rank: 100);
+        BaselineCurrentState();
+        var quarantinedEventId = InsertQuarantinedPlayerEvent(
+            DateTime.UtcNow.AddDays(30));
+        var originalExpiry = ReadPlayerEventExpiry(quarantinedEventId);
+
+        Assert.Empty(
+            _sut.GetPlayerNotifications(
+                AccountId,
+                includeExpired: true).Items);
+
+        UpdateCurrentEntry(score: 101000, rank: 90);
+        var report = DetectPlayerSongEvents();
+
+        Assert.Equal(1, report.PlayerSongEventsInserted);
+        var visible = Assert.Single(
+            _sut.GetPlayerNotifications(
+                AccountId,
+                includeExpired: true).Items);
+        Assert.Equal("player_score_pb", visible.EventKind);
+        Assert.Equal(originalExpiry, ReadPlayerEventExpiry(quarantinedEventId));
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT notification_purpose, notification_cause, delivery_state
+            FROM player_improvement_events
+            WHERE event_id = @eventId;
+            """;
+        cmd.Parameters.AddWithValue("eventId", visible.EventId);
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal("routine_score_observation_v1", reader.GetString(0));
+        Assert.Equal("score_observation", reader.GetString(1));
+        Assert.Equal("visible", reader.GetString(2));
+    }
+
+    [Fact]
     public void Precompute_CoalescesPlayerAggregateRankImprovements_FromSameInstrumentRun()
     {
         InsertAccountRanking(weightedRank: 100, adjustedSkillRank: 200, totalScoreRank: 300, fcRateRank: 400);
@@ -1179,6 +1219,43 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
         cmd.Parameters.AddWithValue("stars", stars);
         cmd.Parameters.AddWithValue("isFullCombo", isFullCombo);
         cmd.ExecuteNonQuery();
+    }
+
+    private long InsertQuarantinedPlayerEvent(DateTime expiresAtUtc)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO player_improvement_events (
+                account_id, event_kind, song_id, instrument, metric,
+                payload, detected_at, expires_at, source,
+                notification_purpose, notification_cause, delivery_state)
+            VALUES (
+                @accountId, 'player_weighted_rank_improved', @songId,
+                @instrument, 'weighted_rank',
+                '{}'::jsonb, now(), @expiresAt, 'test',
+                'maintenance_pro_lead_max_score_repair_v1',
+                'max_score_recompute', 'quarantined')
+            RETURNING event_id;
+            """;
+        cmd.Parameters.AddWithValue("accountId", AccountId);
+        cmd.Parameters.AddWithValue("songId", SongId);
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        cmd.Parameters.AddWithValue("expiresAt", expiresAtUtc);
+        return Convert.ToInt64(cmd.ExecuteScalar());
+    }
+
+    private DateTime ReadPlayerEventExpiry(long eventId)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT expires_at
+            FROM player_improvement_events
+            WHERE event_id = @eventId;
+            """;
+        cmd.Parameters.AddWithValue("eventId", eventId);
+        return Convert.ToDateTime(cmd.ExecuteScalar());
     }
 
     private void InsertCurrentBandEntry(
