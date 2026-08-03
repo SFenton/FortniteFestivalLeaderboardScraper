@@ -345,10 +345,9 @@ public sealed partial class PathGenerationCoordinator
 
             var dataDirectory = Path.GetFullPath(_options.Value.DataDirectory);
             if (state?.CatalogLastModified is { } catalogLastModified &&
-                !string.Equals(
+                !ProviderTimestampIdentity.Equivalent(
                     catalogLastModified,
-                    request.LastModified,
-                    StringComparison.Ordinal))
+                    request.LastModified))
             {
                 throw new PathGenerationException(
                     "state_validation",

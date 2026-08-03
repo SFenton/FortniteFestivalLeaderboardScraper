@@ -78,15 +78,18 @@ public sealed class PathRepairMaintenanceService
                     !TryGetExactProviderLastModified(
                         snapshot.Song,
                         out var providerLastModified) ||
-                    !string.Equals(
+                    !ProviderTimestampIdentity.Equivalent(
                         providerLastModified,
-                        state.CatalogLastModified,
-                        StringComparison.Ordinal))
+                        state.CatalogLastModified))
                 {
                     throw new InvalidOperationException(
                         $"Repair staging database identity is incomplete for {state.SongId}.");
                 }
 
+                var catalogLastModified =
+                    ProviderTimestampIdentity.NormalizeRequired(
+                        state.CatalogLastModified!,
+                        nameof(state.CatalogLastModified));
                 var request = SongPathRequest.FromSong(snapshot.Song)
                     ?? throw new InvalidOperationException(
                         $"Repair song {state.SongId} has no usable encrypted chart identity.");
@@ -99,16 +102,22 @@ public sealed class PathRepairMaintenanceService
                 }
                 request = request with
                 {
-                    LastModified = state.CatalogLastModified,
+                    LastModified = catalogLastModified,
                     ExpectedInstruments = ["Solo_PeripheralGuitar"],
                 };
 
-                return (Request: request, State: state);
+                return (
+                    Request: request,
+                    State: state,
+                    CatalogLastModified: catalogLastModified);
             })
             .ToArray();
 
         var attempts = await _pathGeneration.StagePathsSerialAsync(
-            requests,
+            requests
+                .Select(static request =>
+                    (request.Request, request.State))
+                .ToArray(),
             ct);
         var reports = new List<PathRepairStageSongReport>(
             ImprovementNotificationMaintenanceManifest.RequiredSongCount);
@@ -116,14 +125,14 @@ public sealed class PathRepairMaintenanceService
             ImprovementNotificationMaintenanceManifest.RequiredSongCount);
         for (var index = 0; index < requests.Length; index++)
         {
-            var (request, state) = requests[index];
+            var (request, state, catalogLastModified) = requests[index];
             if (index >= attempts.Count)
             {
                 reports.Add(new PathRepairStageSongReport(
                     request.SongId,
                     "not_attempted",
                     state.Revision,
-                    state.CatalogLastModified!,
+                    catalogLastModified,
                     state.MaxScores.MaxProLeadScore,
                     null,
                     null,
@@ -142,7 +151,7 @@ public sealed class PathRepairMaintenanceService
                     request.SongId,
                     "failed",
                     state.Revision,
-                    state.CatalogLastModified!,
+                    catalogLastModified,
                     state.MaxScores.MaxProLeadScore,
                     null,
                     staged?.ArtifactGenerationId,
@@ -172,7 +181,7 @@ public sealed class PathRepairMaintenanceService
                 request.SongId,
                 "staged",
                 state.Revision,
-                state.CatalogLastModified!,
+                catalogLastModified,
                 state.MaxScores.MaxProLeadScore,
                 proposed,
                 staged.ArtifactGenerationId,
@@ -203,6 +212,10 @@ public sealed class PathRepairMaintenanceService
             static snapshot => snapshot.State.SongId,
             static snapshot => snapshot.State,
             StringComparer.Ordinal);
+        var catalogLastModifiedBySong = requests.ToDictionary(
+            static request => request.State.SongId,
+            static request => request.CatalogLastModified,
+            StringComparer.Ordinal);
         var manifest = new ImprovementNotificationMaintenanceManifest(
             ImprovementNotificationMaintenanceManifest.CurrentManifestVersion,
             ImprovementNotificationMaintenanceManifest.RequiredSongIds
@@ -213,7 +226,7 @@ public sealed class PathRepairMaintenanceService
                     return new ImprovementNotificationMaintenanceSong(
                         songId,
                         state.Revision,
-                        state.CatalogLastModified!,
+                        catalogLastModifiedBySong[songId],
                         state.MaxScores.MaxProLeadScore,
                         staged.MaxScores.MaxProLeadScore!.Value,
                         staged.ArtifactGenerationId,
@@ -587,14 +600,12 @@ public sealed class PathRepairMaintenanceService
             if (!published.CatalogLastModifiedBySong.TryGetValue(
                     expected.SongId,
                     out var publishedLastModified) ||
-                !string.Equals(
+                !ProviderTimestampIdentity.Equivalent(
                     publishedLastModified,
-                    expected.ExpectedCatalogLastModified,
-                    StringComparison.Ordinal) ||
-                !string.Equals(
+                    expected.ExpectedCatalogLastModified) ||
+                !ProviderTimestampIdentity.Equivalent(
                     state.CatalogLastModified,
-                    expected.ExpectedCatalogLastModified,
-                    StringComparison.Ordinal))
+                    expected.ExpectedCatalogLastModified))
             {
                 throw new InvalidOperationException(
                     $"Path-repair catalog identity mismatch for {expected.SongId}; no promotion or ranking rebuild occurred.");
@@ -666,10 +677,9 @@ public sealed class PathRepairMaintenanceService
                         state.DatFileHash,
                         expected.StagedDatFileHash,
                         StringComparison.Ordinal) ||
-                    !string.Equals(
+                    !ProviderTimestampIdentity.Equivalent(
                         state.SongLastModified,
-                        expected.ExpectedCatalogLastModified,
-                        StringComparison.Ordinal) ||
+                        expected.ExpectedCatalogLastModified) ||
                     state.GeneratedAtUtc != validated.Manifest.GeneratedAtUtc ||
                     !string.Equals(
                         state.ChoptVersion,
@@ -898,10 +908,9 @@ public sealed class PathRepairMaintenanceService
                 manifest.DatFileHash,
                 expected.StagedDatFileHash,
                 StringComparison.Ordinal) ||
-            !string.Equals(
+            !ProviderTimestampIdentity.Equivalent(
                 manifest.SongLastModified,
-                expected.ExpectedCatalogLastModified,
-                StringComparison.Ordinal) ||
+                expected.ExpectedCatalogLastModified) ||
             !string.Equals(
                 manifest.ChoptVersion,
                 expected.StagedChoptVersion,

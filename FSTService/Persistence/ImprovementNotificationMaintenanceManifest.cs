@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -212,16 +211,10 @@ public sealed record ImprovementNotificationMaintenanceSong(
             nameof(ExpectedCatalogLastModified),
             128);
 
-        if (!DateTimeOffset.TryParse(
+        var normalizedCatalogLastModified =
+            ProviderTimestampIdentity.NormalizeRequired(
                 ExpectedCatalogLastModified,
-                CultureInfo.InvariantCulture,
-                DateTimeStyles.RoundtripKind,
-                out _))
-        {
-            throw new ArgumentException(
-                "Expected catalog last-modified values must be ISO-8601 timestamps.",
                 nameof(ExpectedCatalogLastModified));
-        }
 
         if (ExpectedCurrentPathRevision < 0
             || ExpectedCurrentPathRevision == long.MaxValue)
@@ -273,6 +266,7 @@ public sealed record ImprovementNotificationMaintenanceSong(
 
         return this with
         {
+            ExpectedCatalogLastModified = normalizedCatalogLastModified,
             StagedDatFileHash = normalizedDatHash,
             StagedChoptBinarySha256 = NormalizeSha256(
                 StagedChoptBinarySha256!,

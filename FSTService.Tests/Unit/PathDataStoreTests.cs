@@ -235,6 +235,39 @@ public sealed class PathDataStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Promotion_accepts_equivalent_catalog_timestamp_precision()
+    {
+        EnsureSongRow("timestamp-precision");
+        SetCatalogLastModified(
+            "timestamp-precision",
+            "2026-08-01T00:00:00.7170000Z");
+        var promotion = new PathGenerationPromotion(
+            "attempt-precision",
+            "timestamp-precision",
+            0,
+            "generation-precision",
+            "dat-hash",
+            "2026-08-01T00:00:00.717Z",
+            DateTime.UtcNow,
+            new PathGenerationRuntimeIdentity(
+                "2.3.4",
+                new string('a', 64),
+                "profile-v2"),
+            ["Solo_Guitar"],
+            new SongMaxScores { MaxLeadScore = 123456 });
+
+        var outcome = await _store.TryPromoteGenerationAsync(
+            promotion,
+            CancellationToken.None);
+
+        Assert.Equal(PathGenerationPromotionOutcome.Promoted, outcome);
+        Assert.Equal(
+            "generation-precision",
+            _store.GetPathGenerationState("timestamp-precision")!
+                .ArtifactGenerationId);
+    }
+
+    [Fact]
     public async Task Atomic_generation_rejects_legacy_writer_that_does_not_advance_revision()
     {
         EnsureSongRow("writer-fence");

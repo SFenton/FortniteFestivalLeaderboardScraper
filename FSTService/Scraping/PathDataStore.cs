@@ -275,10 +275,9 @@ public sealed class PathDataStore : IPathDataStore
         }
 
         if (currentRevision != promotion.ExpectedRevision ||
-            !string.Equals(
-                NormalizeLastModified(currentCatalogLastModified),
-                NormalizeLastModified(promotion.SongLastModified),
-                StringComparison.Ordinal))
+            !ProviderTimestampIdentity.Equivalent(
+                currentCatalogLastModified,
+                promotion.SongLastModified))
         {
             await tx.RollbackAsync(ct);
             return PathGenerationPromotionOutcome.Conflict;
@@ -434,9 +433,6 @@ public sealed class PathDataStore : IPathDataStore
             ? sanitized
             : sanitized[..maxLength];
     }
-
-    private static string? NormalizeLastModified(string? value)
-        => string.IsNullOrWhiteSpace(value) ? null : value;
 
     private const string PathGenerationStateColumns = """
         song_id,

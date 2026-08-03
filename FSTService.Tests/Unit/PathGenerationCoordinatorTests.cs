@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -735,6 +736,76 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
                 before[songId].PathGenerationPending,
                 after[songId].PathGenerationPending);
         }
+    }
+
+    [Fact]
+    public async Task Exact_four_stage_accepts_equivalent_catalog_timestamp_precision()
+    {
+        var chopt = CreateChoptScript();
+        var store = new FakePathDataStore();
+        var songs = SeedExactRepairSongs(store, new In { pg = 0 });
+        foreach (var (song, index) in songs.Select(
+                     static (song, index) => (song, index)))
+        {
+            var songId = song.track!.su!;
+            var originalCanonical = song.lastModified.ToString(
+                "O",
+                CultureInfo.InvariantCulture);
+            var precise = new DateTime(
+                2026,
+                8,
+                index + 1,
+                0,
+                0,
+                0,
+                717,
+                DateTimeKind.Utc);
+            var canonical = precise.ToString(
+                "O",
+                CultureInfo.InvariantCulture);
+            var shortened = precise.ToString(
+                "yyyy-MM-dd'T'HH:mm:ss.fff'Z'",
+                CultureInfo.InvariantCulture);
+            var providerJson = song.providerJson!.Value
+                .GetRawText()
+                .Replace(
+                    originalCanonical,
+                    shortened,
+                    StringComparison.Ordinal);
+            var state = store.GetPathGenerationState(songId)! with
+            {
+                CatalogLastModified = canonical,
+            };
+            store.SeedRepairSong(
+                SongCatalogSnapshotBuilder.DeserializeProviderSong(
+                    providerJson),
+                state);
+        }
+
+        var options = CreateOptions(
+            chopt,
+            automaticPathGeneration: false);
+        var service = CreateRepairService(
+            CreateCoordinator(
+                chopt,
+                store,
+                configuredOptions: options),
+            store,
+            options);
+        var outputPath = Path.Combine(
+            _dataDirectory,
+            "timestamp-precision-manifest.json");
+
+        var report = await service.StageExactFourAsync(outputPath);
+
+        Assert.True(report.Succeeded);
+        using var manifest = JsonDocument.Parse(
+            await File.ReadAllTextAsync(outputPath));
+        Assert.All(
+            manifest.RootElement.GetProperty("songs").EnumerateArray(),
+            song => Assert.EndsWith(
+                ".7170000Z",
+                song.GetProperty("expectedCatalogLastModified").GetString()));
     }
 
     [Fact]

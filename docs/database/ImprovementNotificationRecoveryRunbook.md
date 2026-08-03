@@ -87,6 +87,11 @@ order. Every row binds:
 - a unique staged artifact generation ID and 64-character DAT SHA-256; and
 - mandatory CHOpt version, binary SHA-256, and generation profile.
 
+Catalog timestamp identity is compared as a parsed UTC instant and persisted in
+canonical round-trip form. Equivalent provider/database text such as `.717Z`
+and `.7170000Z` is accepted, while missing, unparsable, or different instants
+still fail closed.
+
 Each of the four `songs` elements uses these exact camel-case properties:
 
 ```json

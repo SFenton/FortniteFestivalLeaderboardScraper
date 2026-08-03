@@ -615,19 +615,18 @@ public sealed class ImprovementNotificationMaintenanceService
                     : expected.ProposedProLeadMaxScore;
 
                 if (actualRevision != expectedRevision
-                    || !string.Equals(
+                    || !ProviderTimestampIdentity.Equivalent(
                         actualCatalogLastModified,
-                        expected.ExpectedCatalogLastModified,
-                        StringComparison.Ordinal)
+                        expected.ExpectedCatalogLastModified)
                     || actualSongMaximum != expectedMaximum
                     || actualStatsMaximum != expectedMaximum
                     || reader.IsDBNull(13)
                     || reader.GetInt32(13) < 0
                     || reader.GetInt32(13) == 99
                     || reader.IsDBNull(14)
-                    || !reader.GetString(14).Equals(
-                        expected.ExpectedCatalogLastModified,
-                        StringComparison.Ordinal))
+                    || !ProviderTimestampIdentity.Equivalent(
+                        reader.GetString(14),
+                        expected.ExpectedCatalogLastModified))
                 {
                     throw new InvalidOperationException(
                         $"Notification maintenance database identity mismatch " +
@@ -660,10 +659,9 @@ public sealed class ImprovementNotificationMaintenanceService
                             actualDatHash,
                             expected.StagedDatFileHash,
                             StringComparison.Ordinal)
-                        || !string.Equals(
+                        || !ProviderTimestampIdentity.Equivalent(
                             actualSongLastModified,
-                            expected.ExpectedCatalogLastModified,
-                            StringComparison.Ordinal)
+                            expected.ExpectedCatalogLastModified)
                         || pending
                         || !expectedInstruments.Contains(
                             ProLeadInstrument,

@@ -469,6 +469,10 @@ links, and path escapes are rejected. The command loads exactly the four
 compile-time-approved IDs in ordinal order, captures their current revision,
 exact catalog `last_modified`, all-six-maxima-null identity, and
 pending/pointer state, then invokes the coordinator serially for Pro Lead only.
+Provider and database catalog timestamps are canonicalized to the same UTC
+instant before identity comparison, so harmless ISO-8601 fractional precision
+differences do not block repair while malformed or different timestamps remain
+fail-closed.
 The normal decrypt/CHOpt/runtime and all-difficulty validation path moves each
 successful generation from `.path-work` into immutable same-filesystem
 storage. The selective generation pointer serves Pro Lead while other
