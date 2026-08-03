@@ -1473,7 +1473,7 @@ deployment/repair remain separate**
   rows, zero path errors, and unchanged HTTP `200` public/legacy path reads.
 - The next full-scrape data profile is
   `catalog-path-notification-source-cut` on
-  `fstservice:path-repair-resume-1b49894e`. The image retains the atomic
+  `fstservice:path-repair-rebaseline-f73f065e`. The image retains the atomic
   catalog/path/notification candidate and adds corrected watchdog-visible
   refresh heartbeats plus terminal-empty handling for Epic
   invalid/uninstantiated leaderboards. It also canonicalizes equivalent
@@ -1482,7 +1482,8 @@ deployment/repair remain separate**
   fractional-precision differences, and aligns ranking chart totals to exact
   provider property presence before repair projection. Owned alignment freezes
   are resumable after process/resource failure without exposing partially
-  rebuilt rankings.
+  rebuilt rankings, and completed routine notification state can be explicitly
+  reopened only for a forced zero-event maintenance baseline.
 - Acceptance requires a schema-v2 `provider_exact` live catalog, a ready
   `generation_catalog_snapshot` binding for the new publication, generation
   cache/public parity, completed routine notifications, and zero automatic
