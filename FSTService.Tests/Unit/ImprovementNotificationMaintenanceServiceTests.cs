@@ -6,6 +6,7 @@ using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 
 namespace FSTService.Tests.Unit;
@@ -626,6 +627,43 @@ public sealed class ImprovementNotificationMaintenanceServiceTests : IDisposable
                 report.DryRunDigest,
                 manifest));
         Assert.Equal(0, CountRows("improvement_notification_maintenance_runs"));
+    }
+
+    [Fact]
+    public async Task RegisteredScopeIgnoresHistoricalUnregisteredRankState()
+    {
+        var manifest = CreateRepairManifest();
+        SeedRepairProjection(manifest);
+        _fixture.Db.RegisterUser("maintenance-device", AccountId);
+        _fixture.Db.RegisterUser("maintenance-other-device", OtherAccountId);
+        InsertAccountRanking(
+            BlockedAccountId,
+            "Solo_Bass",
+            maxScorePercentRank: 300);
+        var scrapeId = CreatePublishedScrape();
+        PrepareReadyNotificationInputs(scrapeId);
+        UpdateAccountRanking(
+            BlockedAccountId,
+            "Solo_Bass",
+            maxScorePercentRank: 290);
+        var registeredMaintenance =
+            new ImprovementNotificationMaintenanceService(
+                _fixture.DataSource,
+                NullLogger<ImprovementNotificationMaintenanceService>.Instance,
+                Options.Create(new ImprovementNotificationOptions
+                {
+                    Scope = "registered",
+                }));
+
+        var report =
+            await registeredMaintenance.DryRunProLeadMaxScoreRepairAsync(
+                scrapeId,
+                manifest);
+
+        Assert.Equal(0, report.RejectedCandidateCount);
+        Assert.DoesNotContain(
+            report.Candidates,
+            candidate => candidate.SubjectKey == BlockedAccountId);
     }
 
     [Fact]

@@ -2,6 +2,7 @@ using System.Data;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using NpgsqlTypes;
 
@@ -15,13 +16,21 @@ public sealed class ImprovementNotificationMaintenanceService
 
     private readonly NpgsqlDataSource _dataSource;
     private readonly ILogger<ImprovementNotificationMaintenanceService> _log;
+    private readonly bool _registeredOnly;
 
     public ImprovementNotificationMaintenanceService(
         NpgsqlDataSource dataSource,
-        ILogger<ImprovementNotificationMaintenanceService> log)
+        ILogger<ImprovementNotificationMaintenanceService> log,
+        IOptions<ImprovementNotificationOptions>? options = null)
     {
         _dataSource = dataSource;
         _log = log;
+        _registeredOnly =
+            options is not null &&
+            !string.Equals(
+                options.Value.Scope,
+                "all",
+                StringComparison.OrdinalIgnoreCase);
     }
 
     public async Task<ImprovementNotificationMaintenanceDryRunReport>
@@ -253,7 +262,7 @@ public sealed class ImprovementNotificationMaintenanceService
         await rankingLock.ExecuteNonQueryAsync(ct);
     }
 
-    private static async Task<ImprovementNotificationMaintenanceDryRunReport>
+    private async Task<ImprovementNotificationMaintenanceDryRunReport>
         BuildDryRunReportAsync(
             NpgsqlConnection conn,
             NpgsqlTransaction tx,
@@ -362,7 +371,7 @@ public sealed class ImprovementNotificationMaintenanceService
             Candidates: candidates);
     }
 
-    private static async Task<IReadOnlyList<
+    private async Task<IReadOnlyList<
         ImprovementNotificationMaintenanceCandidate>> LoadCandidatesAsync(
             NpgsqlConnection conn,
             NpgsqlTransaction tx,
@@ -380,6 +389,7 @@ public sealed class ImprovementNotificationMaintenanceService
                 manifest,
                 totalChartedSongs,
                 rawCandidates,
+                _registeredOnly,
                 ct);
         }
 
@@ -389,25 +399,29 @@ public sealed class ImprovementNotificationMaintenanceService
             PlayerRankCandidatesSql,
             rawCandidates,
             ct,
+            _registeredOnly,
             includeProLeadRankCandidates: !useProjectedProLeadRankings);
         await AddCandidatesAsync(
             conn,
             tx,
             PlayerSongCandidatesSql,
             rawCandidates,
-            ct);
+            ct,
+            _registeredOnly);
         await AddCandidatesAsync(
             conn,
             tx,
             BandSongCandidatesSql,
             rawCandidates,
-            ct);
+            ct,
+            _registeredOnly);
         await AddCandidatesAsync(
             conn,
             tx,
             BandRankCandidatesSql,
             rawCandidates,
-            ct);
+            ct,
+            _registeredOnly);
 
         return ClassifyCandidates(rawCandidates);
     }
@@ -806,6 +820,7 @@ public sealed class ImprovementNotificationMaintenanceService
         ImprovementNotificationMaintenanceManifest manifest,
         int totalChartedSongs,
         List<RawMaintenanceCandidate> candidates,
+        bool registeredOnly,
         CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
@@ -827,6 +842,9 @@ public sealed class ImprovementNotificationMaintenanceService
         cmd.Parameters.AddWithValue("threshold", 1.05d);
         cmd.Parameters.AddWithValue("m", 50);
         cmd.Parameters.AddWithValue("C", 0.5d);
+        cmd.Parameters.AddWithValue(
+            "registeredOnly",
+            registeredOnly);
         await ReadCandidatesAsync(cmd, candidates, ct);
     }
 
@@ -836,12 +854,16 @@ public sealed class ImprovementNotificationMaintenanceService
         string sql,
         List<RawMaintenanceCandidate> candidates,
         CancellationToken ct,
+        bool registeredOnly,
         bool? includeProLeadRankCandidates = null)
     {
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandTimeout = CommandTimeoutSeconds;
         cmd.CommandText = sql;
+        cmd.Parameters.AddWithValue(
+            "registeredOnly",
+            registeredOnly);
         if (includeProLeadRankCandidates.HasValue)
         {
             cmd.Parameters.AddWithValue(
@@ -1684,6 +1706,13 @@ public sealed class ImprovementNotificationMaintenanceService
         ), subjects AS (
             SELECT account_id
             FROM player_rank_improvement_state
+            WHERE NOT @registeredOnly
+               OR EXISTS (
+                   SELECT 1
+                   FROM registered_users registered
+                   WHERE registered.account_id =
+                       player_rank_improvement_state.account_id
+               )
             UNION
             SELECT account_id
             FROM registered_users
@@ -1826,6 +1855,13 @@ public sealed class ImprovementNotificationMaintenanceService
         WITH subjects AS (
             SELECT account_id
             FROM player_rank_improvement_state
+            WHERE NOT @registeredOnly
+               OR EXISTS (
+                   SELECT 1
+                   FROM registered_users registered
+                   WHERE registered.account_id =
+                       player_rank_improvement_state.account_id
+               )
             UNION
             SELECT account_id
             FROM registered_users
@@ -1969,6 +2005,13 @@ public sealed class ImprovementNotificationMaintenanceService
         WITH subjects AS (
             SELECT account_id
             FROM player_improvement_state
+            WHERE NOT @registeredOnly
+               OR EXISTS (
+                   SELECT 1
+                   FROM registered_users registered
+                   WHERE registered.account_id =
+                       player_improvement_state.account_id
+               )
             UNION
             SELECT account_id
             FROM registered_users
@@ -2122,6 +2165,13 @@ public sealed class ImprovementNotificationMaintenanceService
              AND state.song_id = current.song_id
              AND state.ranking_scope = current.ranking_scope
              AND state.scope_combo_id = COALESCE(current.scope_combo_id, '')
+            WHERE NOT @registeredOnly
+               OR EXISTS (
+                   SELECT 1
+                   FROM registered_bands registered
+                   WHERE registered.band_type = current.band_type
+                     AND registered.team_key = current.team_key
+               )
         )
         SELECT 'band'::TEXT AS subject_type,
                current.band_type || ':' || current.team_key AS subject_key,
@@ -2270,6 +2320,13 @@ public sealed class ImprovementNotificationMaintenanceService
               ON state.band_subject_id = subject.band_subject_id
              AND state.ranking_scope = current.ranking_scope
              AND state.combo_id = COALESCE(current.combo_id, '')
+            WHERE NOT @registeredOnly
+               OR EXISTS (
+                   SELECT 1
+                   FROM registered_bands registered
+                   WHERE registered.band_type = current.band_type
+                     AND registered.team_key = current.team_key
+               )
         )
         SELECT 'band'::TEXT AS subject_type,
                current.band_type || ':' || current.team_key AS subject_key,

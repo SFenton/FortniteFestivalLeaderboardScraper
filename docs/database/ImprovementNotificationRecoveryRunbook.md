@@ -184,6 +184,12 @@ maintenance audit rows, or improvement state. It fails closed unless:
 - every maintenance-attributed candidate is only a Pro Lead
   (`Solo_PeripheralGuitar`) `max_score_percent_rank` movement.
 
+Candidate discovery follows the configured notification scope. In the
+production `registered` scope, historical state for unregistered players and
+bands is excluded because those subjects are not eligible for visible
+notification delivery; newly registered subjects remain covered by the normal
+selective baseline path.
+
 The projection does not read live `account_rankings` for proposed ranks. It
 recomputes the complete Pro Lead population read-only from
 `current_leaderboard_entries`, `song_stats`, and `score_history`, substituting
