@@ -121,6 +121,23 @@ startup schema ensure; this command does not install or repair schema:
 ```bash
 docker compose run --rm --no-deps --entrypoint dotnet fstservice \
   FSTService.dll \
+  --path-repair-align-rankings \
+  --published-scrape-id <id>
+```
+
+Run the alignment once after the provider-exact catalog publication and before
+the notification dry runs. It holds the publication/path maintenance locks,
+freezes public reads, recomputes Pro Lead plus dependent aggregate rankings
+from the immutable published catalog without appending history, validates that
+the publication identity is unchanged, and only then restores reads. This
+removes legacy denormalized chart-presence drift before the dry-run compares
+`total_charted_songs` with the exact provider catalog. Unfreeze invalidates
+process/song caches and broadcasts the same-publication client refresh used by
+the post-promotion rebuild.
+
+```bash
+docker compose run --rm --no-deps --entrypoint dotnet fstservice \
+  FSTService.dll \
   --notification-maintenance-pro-lead-max-score-repair \
   --published-scrape-id <id> \
   --notification-maintenance-manifest <absolute-manifestPath-from-stage-report>
@@ -264,14 +281,15 @@ The required sequence is:
 
 1. stage immutable path artifacts and the exact manifest with automatic
    generation disabled;
-2. obtain two identical projected dry-run digests before any live mutation;
-3. promote the exact staged generations serially and retain the rollback
+2. align current Pro Lead rankings to the provider-exact published catalog;
+3. obtain two identical projected dry-run digests before any live mutation;
+4. promote the exact staged generations serially and retain the rollback
    snapshot/result;
-4. run the manifest-bound selective ranking rebuild and verify freeze
+5. run the manifest-bound selective ranking rebuild and verify freeze
    restoration plus cache/client refresh;
-5. run notification execute with the same manifest/digest so actual
+6. run notification execute with the same manifest/digest so actual
    `account_rankings` must equal the projection; and
-6. only then allow ordinary notification detection and the normal lane to
+7. only then allow ordinary notification detection and the normal lane to
    resume.
 
 The command above is an evidence gate, not authorization to regenerate paths,

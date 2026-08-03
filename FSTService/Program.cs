@@ -792,6 +792,10 @@ if (pathRepairMaintenanceCommand is not null)
                 await maintenance.StageExactFourAsync(
                     pathRepairMaintenanceCommand.ManifestOutputPath!,
                     CancellationToken.None),
+            PathRepairMaintenanceAction.AlignRankings =>
+                await maintenance.AlignRankingsAsync(
+                    pathRepairMaintenanceCommand.ExpectedPublishedScrapeId!.Value,
+                    CancellationToken.None),
             PathRepairMaintenanceAction.PromoteExactFour =>
                 await maintenance.PromoteExactFourAsync(
                     pathRepairMaintenanceCommand.ManifestPath!,
@@ -822,6 +826,8 @@ if (pathRepairMaintenanceCommand is not null)
         {
             PathRepairMaintenanceAction.StageExactFour =>
                 PathRepairMaintenanceCommand.StageFlag,
+            PathRepairMaintenanceAction.AlignRankings =>
+                PathRepairMaintenanceCommand.AlignRankingsFlag,
             PathRepairMaintenanceAction.PromoteExactFour =>
                 PathRepairMaintenanceCommand.PromoteFlag,
             PathRepairMaintenanceAction.RebuildRankings =>

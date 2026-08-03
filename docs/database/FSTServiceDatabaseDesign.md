@@ -509,6 +509,13 @@ process-cache entries and broadcasts a same-publication refresh so connected
 web clients clear React Query and songs caches before reading the repaired
 state.
 
+Before notification dry-run, `--path-repair-align-rankings` performs the same
+published-catalog-bound selective rebuild in pre-repair state. It exists to
+remove legacy denormalized provider-property drift from
+`total_charted_songs`; it acquires the path/publication locks, owns a distinct
+maintenance freeze, appends no history, changes no path pointer, and restores
+reads only after the current provider-exact publication remains valid.
+
 Failed-candidate `/api/songs` recovery is publication-owned rather than a live
 candidate bypass. When the process cache is empty, failed-candidate isolation
 may build a no-store response from `publication_song_catalog` for the current

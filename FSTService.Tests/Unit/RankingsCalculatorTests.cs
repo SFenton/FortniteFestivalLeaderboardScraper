@@ -112,7 +112,17 @@ public sealed class RankingsCalculatorTests : IDisposable
                     su = $"song_{i}",
                     tt = $"Song {i}",
                     an = "Artist",
-                    @in = new In { gr = 3, ba = 3, ds = 3, vl = 3, pg = 3, pb = 3 },
+                    @in = new In
+                    {
+                        gr = 3,
+                        ba = 3,
+                        ds = 3,
+                        vl = 3,
+                        pg = 3,
+                        pb = 3,
+                        pd = 3,
+                        bd = 3,
+                    },
                 },
             };
         }
@@ -190,6 +200,24 @@ public sealed class RankingsCalculatorTests : IDisposable
     {
         var svc = CreateFestivalServiceWithSongs(5);
         Assert.Equal(0, RankingsCalculator.CountChartedSongs(svc, "Unknown_Instrument"));
+    }
+
+    [Fact]
+    public void CountChartedSongs_requires_provider_property_presence()
+    {
+        var svc = CreateFestivalServiceWithSongs(1);
+        svc.Songs[0].track.@in = new In { gr = 3 };
+
+        Assert.Equal(
+            1,
+            RankingsCalculator.CountChartedSongs(
+                svc,
+                "Solo_Guitar"));
+        Assert.Equal(
+            0,
+            RankingsCalculator.CountChartedSongs(
+                svc,
+                "Solo_PeripheralGuitar"));
     }
 
     [Fact]

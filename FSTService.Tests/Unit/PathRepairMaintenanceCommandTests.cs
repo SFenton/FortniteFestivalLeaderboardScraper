@@ -42,6 +42,24 @@ public sealed class PathRepairMaintenanceCommandTests
     }
 
     [Fact]
+    public void Parse_ranking_alignment_command()
+    {
+        var command = PathRepairMaintenanceCommand.Parse(
+        [
+            PathRepairMaintenanceCommand.AlignRankingsFlag,
+            PathRepairMaintenanceCommand.PublishedScrapeIdFlag,
+            "1276",
+        ]);
+
+        Assert.NotNull(command);
+        Assert.Equal(
+            PathRepairMaintenanceAction.AlignRankings,
+            command!.Action);
+        Assert.Equal(1276, command.ExpectedPublishedScrapeId);
+        Assert.Null(command.ManifestPath);
+    }
+
+    [Fact]
     public void Parse_promotion_binds_manifest_rollback_and_published_scrape()
     {
         var command = PathRepairMaintenanceCommand.Parse(

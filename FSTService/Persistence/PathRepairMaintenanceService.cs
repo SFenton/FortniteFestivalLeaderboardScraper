@@ -10,6 +10,11 @@ public sealed class PathRepairMaintenanceService
 {
     internal const string RankingFreezeReason =
         "path-repair-ranking-rebuild";
+    internal const string RankingAlignmentFreezeReason =
+        "path-repair-ranking-alignment";
+
+    internal static bool IsRankingMaintenanceFreezeReason(string? reason)
+        => reason is RankingFreezeReason or RankingAlignmentFreezeReason;
 
     private readonly PathGenerationCoordinator _pathGeneration;
     private readonly IPathDataStore _pathStore;
@@ -419,6 +424,98 @@ public sealed class PathRepairMaintenanceService
             PublicReadsFrozen: true,
             promotedCount,
             songReports);
+    }
+
+    public async Task<PathRepairRankingRebuildReport> AlignRankingsAsync(
+        long expectedPublishedScrapeId,
+        CancellationToken ct = default)
+    {
+        ValidatePublishedScrapeId(expectedPublishedScrapeId);
+        RequireAutomaticPathGenerationDisabled();
+
+        await using var lease = await RequireLeaseAsync(
+            "path-repair-align-rankings",
+            holdPublicationLock: true,
+            ct);
+        var published = ValidatePublishedRepairContext(
+            expectedPublishedScrapeId,
+            requireUnfrozen: true);
+
+        var freezeSet = false;
+        var rebuildValidated = false;
+        var readsRestored = false;
+        string? detail = null;
+        try
+        {
+            _metaDatabase.SetPublicReadFreeze(
+                true,
+                expectedPublishedScrapeId,
+                RankingAlignmentFreezeReason);
+            var frozen = _metaDatabase.GetPublicReadFreezeState();
+            freezeSet =
+                frozen.IsFrozen &&
+                frozen.ScrapeId == expectedPublishedScrapeId &&
+                string.Equals(
+                    frozen.Reason,
+                    RankingAlignmentFreezeReason,
+                    StringComparison.Ordinal);
+            if (!freezeSet)
+            {
+                throw new InvalidOperationException(
+                    "Path-repair ranking alignment could not establish its public-read maintenance freeze.");
+            }
+
+            await _rankingExecutor.RebuildAsync(
+                published.CatalogSongs,
+                ct);
+
+            ValidatePublishedRepairContext(
+                expectedPublishedScrapeId,
+                requireUnfrozen: false,
+                requiredFreezeReason: RankingAlignmentFreezeReason);
+            rebuildValidated = true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            detail = BoundDetail(ex.Message);
+        }
+        finally
+        {
+            if (freezeSet && rebuildValidated)
+            {
+                var freeze = _metaDatabase.GetPublicReadFreezeState();
+                if (freeze.IsFrozen &&
+                    freeze.ScrapeId == expectedPublishedScrapeId &&
+                    string.Equals(
+                        freeze.Reason,
+                        RankingAlignmentFreezeReason,
+                        StringComparison.Ordinal))
+                {
+                    _metaDatabase.SetPublicReadFreeze(false);
+                }
+
+                readsRestored =
+                    !_metaDatabase.GetPublicReadFreezeState().IsFrozen;
+            }
+        }
+
+        var succeeded = detail is null && freezeSet && readsRestored;
+        if (!readsRestored && detail is null)
+        {
+            detail =
+                "Path-repair ranking alignment completed but its public-read freeze was not safely restored.";
+        }
+
+        return new PathRepairRankingRebuildReport(
+            PathRepairMaintenanceCommand.AlignRankingsFlag,
+            succeeded,
+            expectedPublishedScrapeId,
+            published.Catalog.PublicationId,
+            published.Catalog.ContentHash,
+            published.Catalog.SongCount,
+            freezeSet,
+            readsRestored,
+            detail);
     }
 
     public async Task<PathRepairRankingRebuildReport> RebuildRankingsAsync(

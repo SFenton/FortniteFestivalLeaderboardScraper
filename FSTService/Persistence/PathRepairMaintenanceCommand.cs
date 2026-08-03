@@ -3,6 +3,7 @@ namespace FSTService.Persistence;
 public enum PathRepairMaintenanceAction
 {
     StageExactFour,
+    AlignRankings,
     PromoteExactFour,
     RebuildRankings,
 }
@@ -15,6 +16,7 @@ public sealed record PathRepairMaintenanceCommand(
     long? ExpectedPublishedScrapeId)
 {
     public const string StageFlag = "--path-repair-stage-exact-four";
+    public const string AlignRankingsFlag = "--path-repair-align-rankings";
     public const string PromoteFlag = "--path-repair-promote-exact-four";
     public const string RebuildRankingsFlag = "--path-repair-rebuild-rankings";
     public const string ManifestFlag = "--path-repair-manifest";
@@ -28,6 +30,7 @@ public sealed record PathRepairMaintenanceCommand(
         ArgumentNullException.ThrowIfNull(args);
 
         var stageCount = Count(args, StageFlag);
+        var alignCount = Count(args, AlignRankingsFlag);
         var promoteCount = Count(args, PromoteFlag);
         var rebuildCount = Count(args, RebuildRankingsFlag);
         var manifestCount = Count(args, ManifestFlag);
@@ -35,6 +38,7 @@ public sealed record PathRepairMaintenanceCommand(
         var rollbackOutputCount = Count(args, RollbackOutputFlag);
         var pathRepairArgumentCount =
             stageCount +
+            alignCount +
             promoteCount +
             rebuildCount +
             manifestCount +
@@ -43,13 +47,14 @@ public sealed record PathRepairMaintenanceCommand(
         if (pathRepairArgumentCount == 0)
             return null;
 
-        if (stageCount + promoteCount + rebuildCount != 1)
+        if (stageCount + alignCount + promoteCount + rebuildCount != 1)
         {
             throw new ArgumentException(
-                $"Specify exactly one of {StageFlag}, {PromoteFlag}, or {RebuildRankingsFlag}.");
+                $"Specify exactly one of {StageFlag}, {AlignRankingsFlag}, {PromoteFlag}, or {RebuildRankingsFlag}.");
         }
 
         ValidateSingle(stageCount, StageFlag);
+        ValidateSingle(alignCount, AlignRankingsFlag);
         ValidateSingle(promoteCount, PromoteFlag);
         ValidateSingle(rebuildCount, RebuildRankingsFlag);
         ValidateSingle(manifestCount, ManifestFlag);
@@ -86,14 +91,26 @@ public sealed record PathRepairMaintenanceCommand(
                 null);
         }
 
-        Require(manifestPath, ManifestFlag);
         if (!publishedScrapeId.HasValue)
         {
             throw new ArgumentException(
-                $"{PublishedScrapeIdFlag} is required for path-repair promotion and ranking rebuild.");
+                $"{PublishedScrapeIdFlag} is required for path-repair ranking alignment, promotion, and ranking rebuild.");
         }
         Reject(manifestOutputPath, ManifestOutputFlag, "this path-repair command");
 
+        if (alignCount == 1)
+        {
+            Reject(manifestPath, ManifestFlag, AlignRankingsFlag);
+            Reject(rollbackOutputPath, RollbackOutputFlag, AlignRankingsFlag);
+            return new PathRepairMaintenanceCommand(
+                PathRepairMaintenanceAction.AlignRankings,
+                null,
+                null,
+                null,
+                publishedScrapeId);
+        }
+
+        Require(manifestPath, ManifestFlag);
         if (promoteCount == 1)
         {
             Require(rollbackOutputPath, RollbackOutputFlag);

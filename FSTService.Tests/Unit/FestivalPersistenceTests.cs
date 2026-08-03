@@ -124,6 +124,36 @@ public sealed class FestivalPersistenceTests : IDisposable
     }
 
     [Fact]
+    public async Task SaveSongsAsync_persists_absent_provider_difficulties_as_null()
+    {
+        var song = CreateSong("presence", "Presence");
+        song.track.@in = new In { gr = 3 };
+        var persistence = new FestivalPersistence(_dataSource);
+
+        await persistence.SaveSongsAsync([song]);
+
+        await using var conn = await _dataSource.OpenConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT lead_diff, drums_diff, pro_lead_diff,
+                   plastic_guitar_diff
+            FROM songs
+            WHERE song_id = 'presence'
+            """;
+        await using var reader = await cmd.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(3, reader.GetInt32(0));
+        Assert.True(reader.IsDBNull(1));
+        Assert.True(reader.IsDBNull(2));
+        Assert.True(reader.IsDBNull(3));
+
+        var loaded = Assert.Single(await persistence.LoadSongsAsync());
+        Assert.True(loaded.track.@in.HasProviderProperty("gr"));
+        Assert.False(loaded.track.@in.HasProviderProperty("ds"));
+        Assert.False(loaded.track.@in.HasProviderProperty("pg"));
+    }
+
+    [Fact]
     public async Task Provider_fixture_roundtrips_across_restart_without_field_loss()
     {
         var providerJson = LoadProviderFixtureSongJson();

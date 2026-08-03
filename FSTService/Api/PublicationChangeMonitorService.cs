@@ -47,10 +47,9 @@ public sealed class PublicationChangeMonitorService : BackgroundService
                     previousFreeze = currentFreeze;
                 }
                 else if (previousFreeze.IsFrozen &&
-                         string.Equals(
-                             previousFreeze.Reason,
-                             PathRepairMaintenanceService.RankingFreezeReason,
-                             StringComparison.Ordinal) &&
+                         PathRepairMaintenanceService
+                             .IsRankingMaintenanceFreezeReason(
+                                 previousFreeze.Reason) &&
                          !currentFreeze.IsFrozen &&
                          currentPublicationId.HasValue)
                 {

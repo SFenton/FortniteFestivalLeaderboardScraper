@@ -1085,26 +1085,17 @@ public sealed class RankingsCalculator
     /// </summary>
     internal static int CountChartedSongs(FestivalService festivalService, string instrument)
     {
-        int count = 0;
-        foreach (var song in festivalService.Songs)
+        if (!GlobalLeaderboardScraper.AllInstruments.Contains(
+                instrument,
+                StringComparer.OrdinalIgnoreCase))
         {
-            if (song.track?.@in is null) continue;
-            var diff = instrument switch
-            {
-                "Solo_Guitar" => song.track.@in.gr,
-                "Solo_Bass" => song.track.@in.ba,
-                "Solo_Vocals" => song.track.@in.vl,
-                "Solo_Drums" => song.track.@in.ds,
-                "Solo_PeripheralGuitar" => song.track.@in.pg,
-                "Solo_PeripheralBass" => song.track.@in.pb,
-                "Solo_PeripheralVocals" => song.track.@in.bd,
-                "Solo_PeripheralCymbals" => song.track.@in.pd,
-                "Solo_PeripheralDrums" => song.track.@in.pd,
-                _ => -1,
-            };
-            if (Track.HasChartedDifficulty(diff)) count++;
+            return 0;
         }
-        return count;
+
+        return festivalService.Songs.Count(song =>
+            GlobalLeaderboardScraper.TrackSupportsInstrument(
+                song.track,
+                instrument));
     }
 
     private static double? GetInstrumentSkill(Dictionary<string, AccountMetrics> data, string instrument)

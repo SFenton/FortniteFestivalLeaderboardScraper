@@ -34,6 +34,19 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
         _encryptedDat = EncryptMidi(BuildMinimalMidi(), _midiKey);
     }
 
+    [Theory]
+    [InlineData(
+        PathRepairMaintenanceService.RankingFreezeReason)]
+    [InlineData(
+        PathRepairMaintenanceService.RankingAlignmentFreezeReason)]
+    public void Ranking_maintenance_freezes_require_client_refresh(
+        string reason)
+    {
+        Assert.True(
+            PathRepairMaintenanceService
+                .IsRankingMaintenanceFreezeReason(reason));
+    }
+
     public void Dispose()
     {
         try
@@ -1263,6 +1276,45 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
         Assert.Equal(
             10,
             setup.Store.GetPathGenerationState(ids[2])!.Revision);
+    }
+
+    [Fact]
+    public async Task Repair_ranking_alignment_uses_published_catalog_and_restores_reads()
+    {
+        var setup = await StageRepairForPromotionAsync(
+            statefulFreeze: true);
+        var freezeObserved = false;
+        setup.RankingExecutor
+            .RebuildAsync(
+                Arg.Any<IReadOnlyList<Song>>(),
+                Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var freeze = setup.MetaDatabase
+                    .GetPublicReadFreezeState();
+                freezeObserved =
+                    freeze.IsFrozen &&
+                    freeze.ScrapeId == setup.PublishedScrapeId &&
+                    freeze.Reason ==
+                        PathRepairMaintenanceService
+                            .RankingAlignmentFreezeReason;
+                return Task.CompletedTask;
+            });
+
+        var report = await setup.Service.AlignRankingsAsync(
+            setup.PublishedScrapeId);
+
+        Assert.True(report.Succeeded);
+        Assert.True(report.PublicReadsFrozenDuringRebuild);
+        Assert.True(report.PublicReadsRestored);
+        Assert.True(freezeObserved);
+        Assert.False(
+            setup.MetaDatabase.GetPublicReadFreezeState().IsFrozen);
+        Assert.Empty(setup.Store.Promotions);
+        await setup.RankingExecutor.Received(1).RebuildAsync(
+            Arg.Is<IReadOnlyList<Song>>(songs =>
+                songs.Count == setup.CatalogSongs.Count),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]

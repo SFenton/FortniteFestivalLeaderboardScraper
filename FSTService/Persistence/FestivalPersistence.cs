@@ -174,8 +174,7 @@ public sealed class FestivalPersistence :
                         )
                 """;
 
-            var rawProVocals = s.track?.@in?.bd;
-            var proVocals = Track.HasChartedDifficulty(rawProVocals) ? rawProVocals!.Value : 99;
+            var intensity = s.track?.@in;
 
             cmd.Parameters.AddWithValue("id", s.track?.su ?? string.Empty);
             cmd.Parameters.AddWithValue("title", s.track?.tt ?? string.Empty);
@@ -183,18 +182,18 @@ public sealed class FestivalPersistence :
             cmd.Parameters.AddWithValue("active", s._activeDate == DateTime.MinValue ? "" : s._activeDate.ToString("o"));
             cmd.Parameters.AddWithValue("modified", s.lastModified == DateTime.MinValue ? "" : s.lastModified.ToString("o"));
             cmd.Parameters.AddWithValue("image", s.imagePath ?? string.Empty);
-            cmd.Parameters.AddWithValue("lead", s.track?.@in?.gr ?? 0);
-            cmd.Parameters.AddWithValue("bass", s.track?.@in?.ba ?? 0);
-            cmd.Parameters.AddWithValue("vocals", s.track?.@in?.vl ?? 0);
-            cmd.Parameters.AddWithValue("drums", s.track?.@in?.ds ?? 0);
-            cmd.Parameters.AddWithValue("plead", s.track?.@in?.pg ?? 0);
-            cmd.Parameters.AddWithValue("pbass", s.track?.@in?.pb ?? 0);
+            AddProviderDifficulty(cmd, "lead", intensity, "gr", intensity?.gr);
+            AddProviderDifficulty(cmd, "bass", intensity, "ba", intensity?.ba);
+            AddProviderDifficulty(cmd, "vocals", intensity, "vl", intensity?.vl);
+            AddProviderDifficulty(cmd, "drums", intensity, "ds", intensity?.ds);
+            AddProviderDifficulty(cmd, "plead", intensity, "pg", intensity?.pg);
+            AddProviderDifficulty(cmd, "pbass", intensity, "pb", intensity?.pb);
             cmd.Parameters.AddWithValue("ry", s.track?.ry ?? 0);
             cmd.Parameters.AddWithValue("tempo", s.track?.mt ?? 0);
-            cmd.Parameters.AddWithValue("plGtr", s.track?.@in?.pg ?? 0);
-            cmd.Parameters.AddWithValue("plBass", s.track?.@in?.pb ?? 0);
-            cmd.Parameters.AddWithValue("plDrums", s.track?.@in?.pd ?? 0);
-            cmd.Parameters.AddWithValue("proVocals", proVocals);
+            AddProviderDifficulty(cmd, "plGtr", intensity, "pg", intensity?.pg);
+            AddProviderDifficulty(cmd, "plBass", intensity, "pb", intensity?.pb);
+            AddProviderDifficulty(cmd, "plDrums", intensity, "pd", intensity?.pd);
+            AddProviderDifficulty(cmd, "proVocals", intensity, "bd", intensity?.bd);
             cmd.Parameters.Add(
                 "providerJson",
                 NpgsqlDbType.Jsonb).Value =
@@ -364,6 +363,21 @@ public sealed class FestivalPersistence :
     {
         // No-op: scores are managed by GlobalLeaderboardPersistence via leaderboard_entries
         return Task.CompletedTask;
+    }
+
+    private static void AddProviderDifficulty(
+        NpgsqlCommand command,
+        string parameterName,
+        In? intensity,
+        string providerProperty,
+        int? value)
+    {
+        command.Parameters.Add(
+            parameterName,
+            NpgsqlDbType.Integer).Value =
+            intensity?.HasProviderProperty(providerProperty) == true
+                ? (object?)value ?? DBNull.Value
+                : DBNull.Value;
     }
 
     private static DateTime ParseDate(NpgsqlDataReader r, int ord)
