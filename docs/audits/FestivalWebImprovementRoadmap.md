@@ -5,6 +5,18 @@
 **Mode:** Read-only best-practices, performance, correctness, and consolidation audit  
 **Implementation status:** No web application changes were made during this audit.
 
+## Same-publication repair cache revalidation - 2026-08-03
+
+**Decision:** Accepted and deployed.
+
+- Publication-change refetches now use browser HTTP `no-cache` revalidation
+  after either a generation change or a same-publication maintenance refresh.
+- This prevents a repaired ranking response from remaining hidden behind its
+  prior 30-minute browser cache entry after the server has refreshed
+  publication-bound caches.
+- Focused publication tests and the production web build pass.
+- Production image: `festivalweb:publication-revalidate-7779d351`.
+
 ## Publication-maintenance retry update - 2026-08-01
 
 **Decision:** Accepted and deployed.
