@@ -38,8 +38,6 @@ public sealed class DatabaseMaintenanceDryRunReporter
 
     private static readonly string[] WatchIndexNames =
     [
-        "ix_bstr_team_best",
-        "ix_bstr_team_worst",
         "leaderboard_staging_pkey",
         "ix_le_song_rank",
         "ix_le_account",
@@ -1105,8 +1103,6 @@ public sealed class DatabaseMaintenanceDryRunReporter
 
     private static string DescribeRecreationSource(string name, string tableName, string indexDef)
     {
-        if (name is "ix_bstr_team_best" or "ix_bstr_team_worst")
-            return "DatabaseInitializer creates this band ranking index";
         if (name == "leaderboard_staging_pkey")
             return "leaderboard_staging primary key exists while legacy table remains";
         if (name == "ix_be_combo")

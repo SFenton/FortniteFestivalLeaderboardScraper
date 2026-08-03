@@ -1951,86 +1951,11 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         Assert.Equal(current.TotalRankedTeams, snapshot.TotalRankedTeams);
     }
     [Fact]
-    public void GetBandSongPerformances_ReturnsAnyComboSongPercentiles()
-    {
-        SeedBandRankingsSource();
-
-        var performances = Db.GetBandSongPerformances("Band_Duets", "p1:p2");
-
-        Assert.Equal(["song_0", "song_1"], performances.Select(p => p.SongId).ToArray());
-        var song0 = performances.Single(p => p.SongId == "song_0");
-        var song1 = performances.Single(p => p.SongId == "song_1");
-        Assert.Equal(1, song0.Rank);
-        Assert.Equal(2, song0.TotalEntries);
-        Assert.Equal(50.0, song0.Percentile, 3);
-        Assert.Equal(1100, song0.Score);
-        Assert.Equal(1, song0.Season);
-        Assert.Equal(2, song1.Rank);
-        Assert.Equal(3, song1.TotalEntries);
-        Assert.Equal(66.667, song1.Percentile, 3);
-    }
-
-    [Fact]
-    public void GetBandSongPerformances_ReadsDerivedProjectionWhenAvailable()
-    {
-        SeedBandRankingsSource();
-        Db.RebuildBandSongTeamRankings("Band_Duets");
-        DeleteBandEntries("Band_Duets");
-
-        var performances = Db.GetBandSongPerformances("Band_Duets", "p1:p2");
-
-        Assert.Equal(["song_0", "song_1"], performances.Select(p => p.SongId).ToArray());
-        var song0 = performances.Single(p => p.SongId == "song_0");
-        Assert.Equal("Solo_Guitar+Solo_Guitar", song0.ComboId);
-        Assert.Equal(1, song0.Rank);
-        Assert.Equal(2, song0.TotalEntries);
-        Assert.Equal(50.0, song0.Percentile, 3);
-        Assert.Equal(1100, song0.Score);
-        Assert.Equal(1, song0.Season);
-    }
-
-    [Fact]
-    public void GetBandSongPerformances_IgnoresStaleCurrentProjectionAfterCurrentRankingsAdvance()
-    {
-        SeedBandRankingsSource();
-        Db.RebuildBandSongTeamRankings("Band_Duets");
-        MakeCurrentBandSongRankingRowsStale("Band_Duets", "p1:p2", bogusScore: 999_999);
-        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
-
-        var performances = Db.GetBandSongPerformances("Band_Duets", "p1:p2");
-
-        Assert.Equal(["song_0", "song_1"], performances.Select(p => p.SongId).ToArray());
-        Assert.DoesNotContain(performances, performance => performance.Score == 999_999);
-        Assert.Contains(performances, performance => performance.SongId == "song_0" && performance.Score == 1100);
-        Assert.Contains(performances, performance => performance.SongId == "song_1" && performance.Score == 1200);
-    }
-
-    [Fact]
-    public void GetBandSongPerformances_ReadsDerivedDuplicateInstrumentComboProjection()
-    {
-        SeedDuplicateTriosBandRankingsSource();
-        Db.RebuildBandSongTeamRankings("Band_Trios");
-        DeleteBandEntries("Band_Trios");
-
-        var performance = Assert.Single(Db.GetBandSongPerformances(
-            "Band_Trios",
-            "d1:d2:d3",
-            "Solo_Bass+Solo_Drums+Solo_Drums"));
-
-        Assert.Equal("dup_trio_song", performance.SongId);
-        Assert.Equal("Solo_Bass+Solo_Drums+Solo_Drums", performance.ComboId);
-        Assert.Equal(1, performance.Rank);
-        Assert.Equal(2, performance.TotalEntries);
-        Assert.Equal(50.0, performance.Percentile, 3);
-        Assert.Equal(3100, performance.Score);
-        Assert.Equal(1, performance.Season);
-    }
-
-    [Fact]
-    public void GetBandSongPerformances_FallsBackToCurrentProjectionWhenDerivedDuplicateComboScopeMissesTeam()
+    public void GetPublishedBandSongPerformances_ReadsPublishedDuplicateComboProjection()
     {
         const string songId = "5ec7617e-f48d-4353-9830-b8a1f22be9bb";
         const string teamKey = "195e93ef108143b2975ee46662d4d0e1:4c2a1300df4c49a9b9d2b352d704bdf0:db9342c9dd874c799b58f177ec899f5e";
+        const string comboId = "Solo_Bass+Solo_Bass+Solo_Drums";
 
         var persistence = new BandLeaderboardPersistence(
             _fixture.DataSource,
@@ -2044,17 +1969,21 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
             ], "1:1:3", 519611),
             MakeBandEntry(["other1", "other2", "other3"], "1:1:3", 600000),
         ]);
-        Db.RebuildBandSongTeamRankings("Band_Trios");
-        RebuildCurrentBandProjectionScope(songId, "Band_Trios", "combo", "Solo_Bass+Solo_Bass+Solo_Drums");
-        DeleteBandSongTeamRankingRows("Band_Trios", "combo", "Solo_Bass+Solo_Bass+Solo_Drums", teamKey);
+        RebuildCurrentBandProjectionScope(songId, "Band_Trios", "combo", comboId);
+        DeleteBandEntries("Band_Trios");
 
-        var performance = Assert.Single(Db.GetBandSongPerformances(
+        var published = Db.GetPublishedBandSongPerformances(
             "Band_Trios",
             teamKey,
-            "Solo_Bass+Solo_Bass+Solo_Drums"));
+            comboId);
+        var performance = Assert.Single(published.Entries);
 
+        Assert.True(published.IsAvailable);
         Assert.Equal(songId, performance.SongId);
-        Assert.Equal("Solo_Bass+Solo_Bass+Solo_Drums", performance.ComboId);
+        Assert.Equal(comboId, performance.ComboId);
+        Assert.Equal(2, performance.Rank);
+        Assert.Equal(2, performance.TotalEntries);
+        Assert.Equal(100.0, performance.Percentile, 3);
         Assert.Equal(519611, performance.Score);
     }
 
@@ -2082,111 +2011,30 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
-    public void RebuildBandSongTeamRankings_PopulatesOverallAndComboProjectionRows()
+    public void GetBandSongPerformanceExtremes_UsesPublishedCurrentProjectionWhenLiveRowsMutate()
     {
         SeedBandRankingsSource();
-
-        var metrics = Db.RebuildBandSongTeamRankings("Band_Duets");
-
-        Assert.Equal(11, metrics.RowCount);
-        Assert.Equal(5, metrics.OverallRows);
-        Assert.Equal(6, metrics.ComboRows);
-        Assert.Equal(5, CountBandSongRankingRows("Band_Duets", "overall"));
-        Assert.Equal(6, CountBandSongRankingRows("Band_Duets", "combo"));
-        Assert.Equal(0, CountLegacyBandSongRankingRows("Band_Duets", "overall"));
-        Assert.Equal(0, CountLegacyBandSongRankingRows("Band_Duets", "combo"));
-    }
-
-    [Fact]
-    public void GetBandSongPerformances_FallsBackToLegacyProjectionWhenCurrentScopeMissing()
-    {
-        SeedBandRankingsSource();
-        Db.RebuildBandSongTeamRankings("Band_Duets");
-        CopyCurrentBandSongRankingRowsToLegacy("Band_Duets");
-        ClearCurrentBandSongRankingRows("Band_Duets");
-        DeleteBandEntries("Band_Duets");
-
-        var performances = Db.GetBandSongPerformances("Band_Duets", "p1:p2");
-
-        Assert.Equal(["song_0", "song_1"], performances.Select(p => p.SongId).ToArray());
-        Assert.Equal(5, CountLegacyBandSongRankingRows("Band_Duets", "overall"));
-        Assert.Equal(0, CountBandSongRankingRows("Band_Duets", "overall"));
-    }
-
-    [Fact]
-    public void RebuildBandSongTeamRankings_DoesNotLeakOldCurrentTables()
-    {
-        SeedBandRankingsSource();
-
-        Db.RebuildBandSongTeamRankings("Band_Duets");
-        Db.RebuildBandSongTeamRankings("Band_Duets");
-        Db.RebuildBandSongTeamRankings("Band_Duets");
-
-        using var conn = _fixture.DataSource.OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
-            SELECT tablename
-            FROM pg_tables
-            WHERE schemaname = 'public'
-              AND tablename LIKE 'band_song_team_rankings_current_band_duets_old_%'
-            ORDER BY tablename;";
-        var orphans = new List<string>();
-        using (var reader = cmd.ExecuteReader())
-        {
-            while (reader.Read())
-                orphans.Add(reader.GetString(0));
-        }
-
-        Assert.Empty(orphans);
-    }
-
-    [Fact]
-    public void GetBandSongPerformanceExtremes_ReadsDerivedProjectionWhenAvailable()
-    {
-        SeedBandRankingsSource();
-        Db.RebuildBandSongTeamRankings("Band_Duets");
-        DeleteBandEntries("Band_Duets");
-
-        var extremes = Db.GetBandSongPerformanceExtremes("Band_Duets", "p1:p2", limit: 1);
-        var (best, worst) = extremes;
-        Assert.True(extremes.IsAvailable);
-        var bestSong = Assert.Single(best);
-        var worstSong = Assert.Single(worst);
-        Assert.Equal("song_0", bestSong.SongId);
-        Assert.Equal(50.0, bestSong.Percentile, 3);
-        Assert.Equal("song_1", worstSong.SongId);
-        Assert.Equal(66.667, worstSong.Percentile, 3);
-
-        var (comboBest, comboWorst) = Db.GetBandSongPerformanceExtremes("Band_Duets", "p1:p2", "Solo_Guitar+Solo_Bass", limit: 1);
-        Assert.Equal("song_1", Assert.Single(comboBest).SongId);
-        Assert.Equal("song_0", Assert.Single(comboWorst).SongId);
-    }
-
-    [Fact]
-    public void GetBandSongPerformanceExtremes_UsesPublishedProjectionWhenDerivedRowsAreStaleAndLiveRowsMutate()
-    {
-        SeedBandRankingsSource();
-        Db.RebuildBandSongTeamRankings("Band_Duets");
         RebuildCurrentBandProjectionScope("song_0", "Band_Duets", "overall", string.Empty);
         RebuildCurrentBandProjectionScope("song_1", "Band_Duets", "overall", string.Empty);
 
         var baseline = Db.GetBandSongPerformanceExtremes("Band_Duets", "p1:p2", limit: 1);
-        var publishedRows = Db.GetBandSongPerformances("Band_Duets", "p1:p2");
+        var baselineRows = Db.GetPublishedBandSongPerformances("Band_Duets", "p1:p2");
 
-        MakeCurrentBandSongRankingRowsStale("Band_Duets", "p1:p2", bogusScore: 999_999);
         UpdateBandEntryScore("song_0", "Band_Duets", "p1:p2", 1);
         UpdateBandEntryScore("song_1", "Band_Duets", "p1:p2", 999_999);
-        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
 
         var actual = Db.GetBandSongPerformanceExtremes("Band_Duets", "p1:p2", limit: 1);
-        var songRows = Db.GetBandSongPerformances("Band_Duets", "p1:p2");
+        var actualRows = Db.GetPublishedBandSongPerformances("Band_Duets", "p1:p2");
 
+        Assert.True(baseline.IsAvailable);
+        Assert.True(baselineRows.IsAvailable);
         Assert.True(actual.IsAvailable);
+        Assert.True(actualRows.IsAvailable);
         Assert.Equal(BandSongFingerprints(baseline.Best), BandSongFingerprints(actual.Best));
         Assert.Equal(BandSongFingerprints(baseline.Worst), BandSongFingerprints(actual.Worst));
-        Assert.Equal(BandSongFingerprints(publishedRows), BandSongFingerprints(songRows));
-        Assert.Equal(BandSongFingerprints([songRows[0]]), BandSongFingerprints(actual.Best));
-        Assert.Equal(BandSongFingerprints([songRows[^1]]), BandSongFingerprints(actual.Worst));
+        Assert.Equal(BandSongFingerprints(baselineRows.Entries), BandSongFingerprints(actualRows.Entries));
+        Assert.Equal(BandSongFingerprints([actualRows.Entries[0]]), BandSongFingerprints(actual.Best));
+        Assert.Equal(BandSongFingerprints([actualRows.Entries[^1]]), BandSongFingerprints(actual.Worst));
         Assert.DoesNotContain(actual.Best.Concat(actual.Worst), performance => performance.Score == 999_999);
     }
 
@@ -3238,74 +3086,6 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         cmd.ExecuteNonQuery();
     }
 
-    private int CountBandSongRankingRows(string bandType, string rankingScope)
-    {
-        using var conn = _fixture.DataSource.OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = $@"
-            SELECT COUNT(*)
-            FROM {BandRankingStorageNames.QuoteIdentifier(BandRankingStorageNames.GetCurrentBandSongRankingTable(bandType))}
-            WHERE band_type = @bandType
-              AND ranking_scope = @rankingScope;";
-        cmd.Parameters.AddWithValue("bandType", bandType);
-        cmd.Parameters.AddWithValue("rankingScope", rankingScope);
-        return Convert.ToInt32(cmd.ExecuteScalar());
-    }
-
-    private int CountLegacyBandSongRankingRows(string bandType, string rankingScope)
-    {
-        using var conn = _fixture.DataSource.OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
-            SELECT COUNT(*)
-            FROM band_song_team_rankings
-            WHERE band_type = @bandType
-              AND ranking_scope = @rankingScope;";
-        cmd.Parameters.AddWithValue("bandType", bandType);
-        cmd.Parameters.AddWithValue("rankingScope", rankingScope);
-        return Convert.ToInt32(cmd.ExecuteScalar());
-    }
-
-    private void CopyCurrentBandSongRankingRowsToLegacy(string bandType)
-    {
-        using var conn = _fixture.DataSource.OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = $@"
-            INSERT INTO band_song_team_rankings (
-                band_type, ranking_scope, scope_combo_id, team_key, song_id,
-                entry_combo_id, rank, total_entries, percentile, score, accuracy,
-                is_full_combo, stars, season, end_time, computed_at)
-            SELECT
-                band_type, ranking_scope, scope_combo_id, team_key, song_id,
-                entry_combo_id, rank, total_entries, percentile, score, accuracy,
-                is_full_combo, stars, season, end_time, computed_at
-            FROM {BandRankingStorageNames.QuoteIdentifier(BandRankingStorageNames.GetCurrentBandSongRankingTable(bandType))}
-            WHERE band_type = @bandType
-            ON CONFLICT (band_type, ranking_scope, scope_combo_id, team_key, song_id) DO UPDATE SET
-                entry_combo_id = EXCLUDED.entry_combo_id,
-                rank = EXCLUDED.rank,
-                total_entries = EXCLUDED.total_entries,
-                percentile = EXCLUDED.percentile,
-                score = EXCLUDED.score,
-                accuracy = EXCLUDED.accuracy,
-                is_full_combo = EXCLUDED.is_full_combo,
-                stars = EXCLUDED.stars,
-                season = EXCLUDED.season,
-                end_time = EXCLUDED.end_time,
-                computed_at = EXCLUDED.computed_at;";
-        cmd.Parameters.AddWithValue("bandType", bandType);
-        cmd.ExecuteNonQuery();
-    }
-
-    private void ClearCurrentBandSongRankingRows(string bandType)
-    {
-        using var conn = _fixture.DataSource.OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"DELETE FROM {BandRankingStorageNames.QuoteIdentifier(BandRankingStorageNames.GetCurrentBandSongRankingTable(bandType))} WHERE band_type = @bandType";
-        cmd.Parameters.AddWithValue("bandType", bandType);
-        cmd.ExecuteNonQuery();
-    }
-
     private void DeleteBandEntries(string bandType)
     {
         using var conn = _fixture.DataSource.OpenConnection();
@@ -3322,47 +3102,6 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         cmd.CommandText = "DELETE FROM band_entries WHERE song_id = @songId AND band_type = @bandType";
         cmd.Parameters.AddWithValue("songId", songId);
         cmd.Parameters.AddWithValue("bandType", bandType);
-        cmd.ExecuteNonQuery();
-    }
-
-    private void DeleteBandSongTeamRankingRows(string bandType, string rankingScope, string scopeComboId, string teamKey)
-    {
-        using var conn = _fixture.DataSource.OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"""
-            DELETE FROM {BandRankingStorageNames.QuoteIdentifier(BandRankingStorageNames.GetCurrentBandSongRankingTable(bandType))}
-            WHERE band_type = @bandType
-              AND ranking_scope = @rankingScope
-              AND scope_combo_id = @scopeComboId
-              AND team_key = @teamKey;
-
-            DELETE FROM band_song_team_rankings
-            WHERE band_type = @bandType
-              AND ranking_scope = @rankingScope
-              AND scope_combo_id = @scopeComboId
-              AND team_key = @teamKey;
-            """;
-        cmd.Parameters.AddWithValue("bandType", bandType);
-        cmd.Parameters.AddWithValue("rankingScope", rankingScope);
-        cmd.Parameters.AddWithValue("scopeComboId", scopeComboId);
-        cmd.Parameters.AddWithValue("teamKey", teamKey);
-        cmd.ExecuteNonQuery();
-    }
-
-    private void MakeCurrentBandSongRankingRowsStale(string bandType, string teamKey, int bogusScore)
-    {
-        using var conn = _fixture.DataSource.OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"""
-            UPDATE {BandRankingStorageNames.QuoteIdentifier(BandRankingStorageNames.GetCurrentBandSongRankingTable(bandType))}
-            SET score = @bogusScore,
-                computed_at = TIMESTAMPTZ '2000-01-01 00:00:00+00'
-            WHERE band_type = @bandType
-              AND team_key = @teamKey;
-            """;
-        cmd.Parameters.AddWithValue("bogusScore", bogusScore);
-        cmd.Parameters.AddWithValue("bandType", bandType);
-        cmd.Parameters.AddWithValue("teamKey", teamKey);
         cmd.ExecuteNonQuery();
     }
 

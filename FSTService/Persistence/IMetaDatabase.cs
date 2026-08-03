@@ -288,12 +288,10 @@ public interface IMetaDatabase : IDisposable
     void PauseBandRankHistoryJob(long jobId, string? reason = null);
     void FailBandRankHistoryJob(long jobId, string error);
     BandRankHistoryStatusDto GetBandRankHistoryStatus(string bandType, string? comboId = null);
-    BandSongTeamRankingRebuildMetrics RebuildBandSongTeamRankings(string bandType, BandTeamRankingRebuildOptions? options = null);
     (List<BandTeamRankingDto> Entries, int TotalTeams) GetBandTeamRankings(string bandType, string? comboId = null, string rankBy = "adjusted", int page = 1, int pageSize = 50, bool usePublishedSnapshot = false);
     BandTeamRankingDto? GetBandTeamRanking(string bandType, string teamKey, string? comboId = null, bool usePublishedSnapshot = false);
     BandTeamRankingDto? GetBandTeamRankingForAccount(string bandType, string accountId, string? comboId = null, string rankBy = "adjusted", bool usePublishedSnapshot = false);
     List<BandRankHistoryDto> GetBandRankHistory(string bandType, string teamKey, string? comboId = null, int days = 30);
-    List<BandSongPerformanceDto> GetBandSongPerformances(string bandType, string teamKey, string? comboId = null);
     BandSongPerformancesResult GetPublishedBandSongPerformances(string bandType, string teamKey, string? comboId = null);
     BandSongPerformanceExtremesResult GetBandSongPerformanceExtremes(string bandType, string teamKey, string? comboId = null, int limit = 5, BandSongPerformanceReadMode readMode = BandSongPerformanceReadMode.Published);
     (List<SongBandLeaderboardEntryDto> Entries, int TotalEntries) GetSongBandLeaderboard(string songId, string bandType, int limit = 25, int offset = 0, string? comboId = null, bool requireCurrentProjection = false);

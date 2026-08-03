@@ -911,6 +911,54 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public async Task EnsureSchemaAsync_excludes_only_retired_band_song_team_ranking_projection_schema()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT
+                to_regclass('public.band_song_team_rankings') IS NULL,
+                to_regclass('public.band_song_team_ranking_state') IS NULL,
+                to_regclass('public.band_song_team_rankings_current_band_duets') IS NULL,
+                to_regclass('public.band_song_team_rankings_current_band_trios') IS NULL,
+                to_regclass('public.band_song_team_rankings_current_band_quad') IS NULL,
+                to_regclass('public.band_song_team_rankings_pkey') IS NULL,
+                to_regclass('public.band_song_team_ranking_state_pkey') IS NULL,
+                to_regclass('public.band_song_team_rankings_current_band_duets_pkey') IS NULL,
+                to_regclass('public.band_song_team_rankings_current_band_trios_pkey') IS NULL,
+                to_regclass('public.band_song_team_rankings_current_band_quad_pkey') IS NULL,
+                to_regclass('public.ix_bstr_team_best') IS NULL,
+                to_regclass('public.ix_bstr_team_worst') IS NULL,
+                to_regclass('public.band_current_projection_generation_seq') IS NOT NULL,
+                to_regclass('public.current_band_leaderboard_entries') IS NOT NULL,
+                to_regclass('public.current_band_leaderboard_entries_duets') IS NOT NULL,
+                to_regclass('public.current_band_leaderboard_entries_trios') IS NOT NULL,
+                to_regclass('public.current_band_leaderboard_entries_quad') IS NOT NULL,
+                to_regclass('public.band_current_projection_scope') IS NOT NULL,
+                to_regclass('public.band_current_projection_state') IS NOT NULL,
+                to_regclass('public.band_team_rankings_current_band_duets') IS NOT NULL,
+                to_regclass('public.band_team_rankings_current_band_trios') IS NOT NULL,
+                to_regclass('public.band_team_rankings_current_band_quad') IS NOT NULL,
+                to_regclass('public.band_team_rankings_published_band_duets') IS NOT NULL,
+                to_regclass('public.band_team_rankings_published_band_trios') IS NOT NULL,
+                to_regclass('public.band_team_rankings_published_band_quad') IS NOT NULL,
+                to_regclass('public.band_team_ranking_stats_current_band_duets') IS NOT NULL,
+                to_regclass('public.band_team_ranking_stats_current_band_trios') IS NOT NULL,
+                to_regclass('public.band_team_ranking_stats_current_band_quad') IS NOT NULL,
+                to_regclass('public.band_team_ranking_stats_published_band_duets') IS NOT NULL,
+                to_regclass('public.band_team_ranking_stats_published_band_trios') IS NOT NULL,
+                to_regclass('public.band_team_ranking_stats_published_band_quad') IS NOT NULL
+            """;
+
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        for (var ordinal = 0; ordinal < reader.FieldCount; ordinal++)
+            Assert.True(reader.GetBoolean(ordinal));
+    }
+
+    [Fact]
     public async Task Retired_composite_history_latest_index_maintenance_sql_is_valid()
     {
         await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);

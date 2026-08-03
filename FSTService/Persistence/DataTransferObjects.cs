@@ -932,15 +932,6 @@ public sealed record BandSongPerformanceExtremesResult(
     }
 }
 
-public sealed record BandSongTeamRankingRebuildMetrics(
-    string BandType,
-    int RowCount,
-    int OverallRows,
-    int ComboRows,
-    double MaterializeMs,
-    double SwapMs,
-    double TotalElapsedMs);
-
 /// <summary>
 /// Summary row for an observed band combo ranking scope.
 /// </summary>

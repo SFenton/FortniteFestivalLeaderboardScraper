@@ -702,14 +702,19 @@ the indexed durable `band_members` membership set before applying the
 published-generation join. This preserves solo and band export contents while
 avoiding an unbounded cold scan of `current_band_leaderboard_entries`.
 
-Band best/worst-song public reads use the optional
-`band_song_team_rankings_current_band_*` projection only while it is fresh.
-When that projection is stale or disabled, extrema are derived from
+Band best/worst-song and `/song-rows` public reads derive from
 `current_band_leaderboard_entries` rows joined to each scope's
-`published_generation`, using the same ordering as the `/song-rows` response.
-The stale projection data was retired on 2026-07-26; its empty tables,
-indexes, TOAST relations, and `band_song_team_ranking_state` audit rows remain
-available for an exact archive restore or a future clean-generation rebuild.
+`published_generation`. The disabled optional band-song ranking writer, its
+legacy read helper, tracked rebuild configuration, maintenance ownership, and
+startup schema/index creation are removed. Fresh schemas therefore exclude
+`band_song_team_rankings`, `band_song_team_ranking_state`,
+`band_song_team_rankings_current_band_duets`,
+`band_song_team_rankings_current_band_trios`, and
+`band_song_team_rankings_current_band_quad` while retaining the live
+`band_current_projection_scope` path. Existing physical copies of those exact
+retired relations, their indexes, and TOAST objects remain empty until a
+cleanup image completes one full scrape with publication and public-fingerprint
+parity; this repository change performs no live DDL.
 `scrape_publication_state.band_projection_generation` is stamped in the same
 transaction as the global published scrape. Both public band-song endpoints
 return `503` while that generation differs from
@@ -831,7 +836,7 @@ boundary.
 | `band_team_rankings_published_band_*` | Derived published ranking projection | Publication transaction | Public ranking source and rollback target |
 | `band_team_ranking_stats_current_band_*`, `band_team_ranking_stats_published_band_*` | Derived stats projection | Ranking rebuild/publication | Must promote with ranking rows |
 | `band_team_ranking_generation` | Publication/audit metadata | Ranking pipeline | Tracks durable generation and source scrape |
-| `band_song_team_rankings`, `band_song_team_rankings_current_band_*`, `band_song_team_ranking_state` | Retired optional song/team ranking projection schema and audit state | Ranking pipeline only when explicitly re-enabled | Data tables are empty; rebuild defaults off; public reads use published current-band rows or fail closed |
+| `band_song_team_rankings`, `band_song_team_ranking_state`, `band_song_team_rankings_current_band_duets`, `band_song_team_rankings_current_band_trios`, `band_song_team_rankings_current_band_quad` | Empty retired optional song/team ranking projection objects; absent from fresh schemas | None; writer, legacy reader, config, maintenance ownership, and startup creation are removed | Existing physical objects await cleanup-image full-scrape parity; public reads use published current-band rows or fail closed |
 | `band_team_rank_history`, `band_team_rank_history_points`, `band_team_rank_history_latest`, `band_team_ranking_stats_history` | Legacy durable history/latest | `MetaDatabase`, history API | Retain until v2/read-source parity and restore prove removal |
 | `band_team_rank_history_points_v2` partitions | Durable public history for Quad | Disabled history writer; API/export for non-promoted band types | Duets and Trios leaves retired; Quad remains `359,383,226` rows / `388,775,297,024` bytes |
 | `band_team_rank_history_points_v3_duets` monthly partitions and dictionaries | Durable compact Duets public history | `MetaDatabase` when the default-off compact flag and ready state are enabled | `215,134,574` rows / `52,134,436,864` bytes; rebuilds v2 through checked-in SQL |

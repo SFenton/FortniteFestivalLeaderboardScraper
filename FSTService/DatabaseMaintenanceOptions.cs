@@ -40,7 +40,6 @@ public sealed class DatabaseMaintenanceOptions
         "band_team_rank_history",
         "band_team_rank_history_points",
         "band_team_ranking_stats_history",
-        "band_song_team_rankings",
         "composite_rank_history",
         "rank_history",
     ];

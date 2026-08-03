@@ -6085,12 +6085,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         using (var cmd = conn.CreateCommand())
         {
             cmd.CommandText = """
-                TRUNCATE TABLE
-                    band_song_team_rankings,
-                    band_song_team_rankings_current_band_duets,
-                    band_song_team_rankings_current_band_trios,
-                    band_song_team_rankings_current_band_quad;
-
                 INSERT INTO band_current_projection_state (id, current_generation, updated_at)
                 VALUES (TRUE, 4242, now())
                 ON CONFLICT (id) DO UPDATE SET

@@ -20,10 +20,6 @@ internal static class BandRankingStorageNames
 
     internal static string GetPublishedStatsTable(string bandType) => $"band_team_ranking_stats_published_{GetBandTypeSlug(bandType)}";
 
-    internal static string GetCurrentBandSongRankingTable(string bandType) => $"band_song_team_rankings_current_{GetBandTypeSlug(bandType)}";
-
-    internal static string GetBandSongRankingBuildTable(string bandType, string buildSuffix) => $"band_song_team_rankings_build_{GetBandTypeSlug(bandType)}_{buildSuffix}".Replace('-', '_');
-
     internal static string GetCreateRankingTableSql(string tableName, bool includePrimaryKey, bool temporary = false, bool ifNotExists = false, bool onCommitDrop = false)
     {
         var createPrefix = temporary ? "CREATE TEMP TABLE" : "CREATE TABLE";
@@ -117,50 +113,6 @@ internal static class BandRankingStorageNames
             ){onCommitClause};";
     }
 
-    internal static string GetCreateBandSongRankingTableSql(string tableName, bool includePrimaryKey, bool temporary = false, bool ifNotExists = false, bool onCommitDrop = false)
-    {
-        var createPrefix = temporary ? "CREATE TEMP TABLE" : "CREATE TABLE";
-        var ifNotExistsClause = ifNotExists ? " IF NOT EXISTS" : string.Empty;
-        var onCommitClause = onCommitDrop ? " ON COMMIT DROP" : string.Empty;
-        var primaryKeyClause = includePrimaryKey
-            ? ",\n                PRIMARY KEY (band_type, ranking_scope, scope_combo_id, team_key, song_id)"
-            : string.Empty;
-
-        return $@"
-            {createPrefix}{ifNotExistsClause} {QuoteIdentifier(tableName)} (
-                band_type       TEXT             NOT NULL,
-                ranking_scope   TEXT             NOT NULL,
-                scope_combo_id  TEXT             NOT NULL DEFAULT '',
-                team_key        TEXT             NOT NULL,
-                song_id         TEXT             NOT NULL,
-                entry_combo_id  TEXT             NOT NULL DEFAULT '',
-                rank            INTEGER          NOT NULL,
-                total_entries   INTEGER          NOT NULL,
-                percentile      DOUBLE PRECISION NOT NULL,
-                score           INTEGER          NOT NULL,
-                accuracy        INTEGER,
-                is_full_combo   BOOLEAN,
-                stars           INTEGER,
-                season          INTEGER,
-                end_time        TEXT,
-                computed_at     TIMESTAMPTZ      NOT NULL DEFAULT now(){primaryKeyClause}
-            ){onCommitClause};";
-    }
-
-    internal static string GetCreateBandSongRankingIndexesSql(string tableName, bool includeUnique, bool ifNotExists = false)
-    {
-        var quotedTable = QuoteIdentifier(tableName);
-        var ifNotExistsClause = ifNotExists ? " IF NOT EXISTS" : string.Empty;
-        var statements = new List<string>();
-
-        if (includeUnique)
-            statements.Add($"CREATE UNIQUE INDEX{ifNotExistsClause} {QuoteIdentifier(tableName + "_pkey")} ON {quotedTable} (band_type, ranking_scope, scope_combo_id, team_key, song_id)");
-
-        statements.Add($"CREATE INDEX{ifNotExistsClause} {QuoteIdentifier(tableName + "_ix_team")} ON {quotedTable} (band_type, ranking_scope, scope_combo_id, team_key, percentile ASC, rank ASC, score DESC, song_id ASC)");
-
-        return string.Join($";{Environment.NewLine}", statements.Select(statement => $"            {statement}")) + ";";
-    }
-
     internal static string GetCurrentSchemaSql()
     {
         var statements = new List<string>();
@@ -171,7 +123,6 @@ internal static class BandRankingStorageNames
             var statsTable = GetCurrentStatsTable(bandType);
             var publishedRankingsTable = GetPublishedRankingTable(bandType);
             var publishedStatsTable = GetPublishedStatsTable(bandType);
-            var songRankingsTable = GetCurrentBandSongRankingTable(bandType);
 
             statements.Add(GetCreateRankingTableSql(rankingsTable, includePrimaryKey: true, ifNotExists: true));
             statements.Add(GetEnsureRankingMetadataColumnsSql(rankingsTable));
@@ -179,7 +130,6 @@ internal static class BandRankingStorageNames
             statements.Add(GetCreateRankingTableSql(publishedRankingsTable, includePrimaryKey: true, ifNotExists: true));
             statements.Add(GetEnsureRankingMetadataColumnsSql(publishedRankingsTable));
             statements.Add(GetCreateStatsTableSql(publishedStatsTable, includePrimaryKey: true, ifNotExists: true));
-            statements.Add(GetCreateBandSongRankingTableSql(songRankingsTable, includePrimaryKey: true, ifNotExists: true));
         }
 
         return string.Join(Environment.NewLine + Environment.NewLine, statements);

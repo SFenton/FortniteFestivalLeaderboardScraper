@@ -432,42 +432,6 @@ public sealed class RankingsCalculatorTests : IDisposable
                 actual.WriteMode == BandTeamRankingWriteMode.ComboBatched));
     }
 
-    [Fact]
-    public void ComputeBandRankings_SkipsBandSongProjectionByDefault()
-    {
-        var meta = Substitute.For<IMetaDatabase>();
-        var sut = CreateSut(
-            metaDb: meta,
-            bandHistoryOptions: new BandRankHistoryOptions { Mode = BandRankHistoryMode.Disabled },
-            bandRankingOptions: new BandTeamRankingRebuildOptions());
-
-        sut.ComputeBandRankings(["Band_Duets"], totalChartedSongs: 1);
-
-        meta.Received(1).RebuildBandTeamRankings(
-            "Band_Duets",
-            1,
-            Arg.Any<int>(),
-            Arg.Any<double>(),
-            Arg.Any<BandTeamRankingRebuildOptions>());
-        meta.DidNotReceive().RebuildBandSongTeamRankings(Arg.Any<string>(), Arg.Any<BandTeamRankingRebuildOptions>());
-    }
-
-    [Fact]
-    public void ComputeBandRankings_RebuildsBandSongProjectionWhenEnabled()
-    {
-        var meta = Substitute.For<IMetaDatabase>();
-        var sut = CreateSut(
-            metaDb: meta,
-            bandHistoryOptions: new BandRankHistoryOptions { Mode = BandRankHistoryMode.Disabled },
-            bandRankingOptions: new BandTeamRankingRebuildOptions { RebuildBandSongTeamRankings = true });
-
-        sut.ComputeBandRankings(["Band_Duets"], totalChartedSongs: 1);
-
-        meta.Received(1).RebuildBandSongTeamRankings(
-            "Band_Duets",
-            Arg.Is<BandTeamRankingRebuildOptions>(actual => actual.RebuildBandSongTeamRankings));
-    }
-
     // ═══════════════════════════════════════════════════════════
     // Full Pipeline (ComputeAllAsync)
     // ═══════════════════════════════════════════════════════════

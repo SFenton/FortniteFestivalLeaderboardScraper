@@ -96,7 +96,6 @@ public class ScraperOptionsAndModelsTests
         Assert.Equal(0, opts.CommandTimeoutSeconds);
         Assert.True(opts.DisableSynchronousCommit);
         Assert.Equal(1, opts.MaxParallelBandTypes);
-        Assert.False(opts.RebuildBandSongTeamRankings);
     }
 
     // ─── FeatureOptions defaults ──────────────────────

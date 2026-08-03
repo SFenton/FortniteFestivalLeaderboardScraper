@@ -2,10 +2,11 @@
 
 ## Current decision
 
-**Tier:** P6 observation data retirement plus repository writer/schema-creation
-retirement and P8 dirty-work reclaim are complete. P6 physical objects await
-cleanup-image full-scrape parity; P9 legacy rows remain blocked on active
-readers, supplemental writers, and their own live parity gate.
+**Tier:** P6 observation data retirement, BAND-SONG-PROJECTION repository
+writer/schema-creation retirement, and P8 dirty-work reclaim are complete.
+P6 and exact band-song physical objects await cleanup-image full-scrape parity;
+P9 legacy rows remain blocked on active readers, supplemental writers, and
+their own live parity gate.
 
 The original 2026-07-26 readiness phase owned storage-planner queue items P6,
 P8, and P9 while Epic device authentication blocked the next live scrape.
@@ -85,6 +86,20 @@ A later, independent owner card did clear and retire the stale optional
   the FST drive;
 - `28,315,533,312` database bytes reclaimed, with schema, indexes, TOAST, and
   the three-row state ledger retained.
+
+Repository follow-through removes the disabled rebuild option and writer,
+legacy optional projection reader, rebuild-only metrics/tests, tracked
+appsettings/Compose keys, maintenance watch ownership, and startup creation of
+the exact retired relations and legacy indexes. Fresh schemas exclude
+`band_song_team_rankings`, `band_song_team_ranking_state`,
+`band_song_team_rankings_current_band_duets`,
+`band_song_team_rankings_current_band_trios`, and
+`band_song_team_rankings_current_band_quad`; the published
+`current_band_leaderboard_entries` plus `band_current_projection_scope`
+fallback and fail-closed generation gates remain. This code change performs no
+live DDL. Existing physical copies, indexes, TOAST objects, and the state
+ledger await one cleanup-image full scrape with publication and exact public
+fingerprint parity before physical removal.
 
 P9 remains governed by its unchanged gate below; P6 and P8 were later
 executed. Evidence:
@@ -284,18 +299,19 @@ The tool:
 6. Run one guarded run-once scrape through post-process, publication,
    unfreeze, route/export/ranking/history parity, and hold before another
    scrape.
-7. P6 observation-writer-off scrape A/B and truncate are complete. Deploy the
-   cleanup image separately and require one complete scrape with publication
-   and public-fingerprint parity before running the observation drop package.
+7. P6 observation-writer-off and BAND-SONG-PROJECTION data retirement are
+   complete. Deploy the cleanup image separately and require one complete
+   scrape with publication and public-fingerprint parity before removing the
+   retained exact observation or band-song physical objects.
 8. Run a separate legacy reader/supplemental-writer migration A/B.
-9. P6 data/code retirement and P8 reclaim are complete. Execute only P6
-   physical cleanup and P9 maintenance after each surface's remaining exact
-   gate, rerunning health, manifests, capacity, and public fingerprints after
-   each action.
+9. P6 and BAND-SONG-PROJECTION data/code retirement and P8 reclaim are
+   complete. Execute only P6 or exact band-song physical cleanup and P9
+   maintenance after each surface's remaining exact gate, rerunning health,
+   manifests, capacity, and public fingerprints after each action.
 
-Logical-shadow and P6 data retirement each cleared independent scrape/public
-parity gates. Their repository cleanup layers are complete, but their retained
-physical objects still require cleanup-image full-scrape parity before exact
-drop SQL may run. P9 remains separately blocked on reader/writer migration and
-its own publication/parity gate. The worker remains held for the next
-parent-owned scrape decision.
+Logical-shadow, P6, and BAND-SONG-PROJECTION data retirement each cleared
+independent scrape/public parity gates. Their repository cleanup layers are
+complete, but retained physical objects still require cleanup-image full-scrape
+parity before exact drop SQL may run. P9 remains separately blocked on
+reader/writer migration and its own publication/parity gate. The worker
+remains held for the next parent-owned scrape decision.
