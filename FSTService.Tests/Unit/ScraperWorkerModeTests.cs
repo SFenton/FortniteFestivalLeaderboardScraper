@@ -610,7 +610,7 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
     }
 
     [Fact]
-    public async Task RunScrapePass_PassTimeout_CaughtGracefully()
+    public async Task RunScrapePass_NonHostCancellation_CaughtGracefully()
     {
         var service = CreateServiceWithSongs(("s1", "Song", "Artist"));
 
@@ -618,7 +618,7 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             .Returns(Task.FromResult<string?>("token"));
         _tokenManager.AccountId.Returns("callerAcct");
 
-        // Simulate pass timeout: scraper throws OperationCanceledException
+        // Simulate cancellation that was not requested by the host.
         _scraper.ScrapeManySongsAsync(
             Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
@@ -631,11 +631,10 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Any<ScrapeAccessTokenProvider?>())
             .ThrowsAsync(new OperationCanceledException());
 
-        var opts = new ScraperOptions { DataDirectory = _tempDir, ScrapePassTimeoutMinutes = 30 };
+        var opts = new ScraperOptions { DataDirectory = _tempDir };
         var worker = CreateWorker(opts);
 
-        // Host token is NOT cancelled — this is a pass timeout, not a shutdown.
-        // Should not throw; the timeout should be caught and logged as a warning.
+        // Should not throw; non-host cancellation is caught and logged as a warning.
         await InvokePrivateAsync(worker, "RunScrapePassAsync", service, opts, CancellationToken.None);
     }
 

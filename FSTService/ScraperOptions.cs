@@ -648,13 +648,6 @@ public sealed class ScraperOptions
     /// </summary>
     public int LeaderboardRivalRadius { get; set; } = 10;
 
-    /// <summary>
-    /// Retained for configuration compatibility.
-    /// Scrape passes no longer apply an internal timeout and instead run until
-    /// completion or external cancellation.
-    /// </summary>
-    public int ScrapePassTimeoutMinutes { get; set; }
-
     // ─── Band Scraping ─────────────────────────────────
 
     /// <summary>

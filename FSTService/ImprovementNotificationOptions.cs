@@ -2,6 +2,7 @@ namespace FSTService;
 
 /// <summary>
 /// Controls scrape-triggered improvement notification detection.
+/// Failure handling is owned by the post-scrape phase policy.
 /// </summary>
 public sealed class ImprovementNotificationOptions
 {
@@ -39,9 +40,6 @@ public sealed class ImprovementNotificationOptions
     /// post-scrape detection runs. Set to 0 to disable the coverage guard.
     /// </summary>
     public double MinimumSoloLeaderboardCoverageRatio { get; set; } = 0.95;
-
-    /// <summary>When true, notification failures fail the post-scrape pass.</summary>
-    public bool FailScrapeOnError { get; set; }
 
     /// <summary>
     /// Alert when a required detection lane has not completed for this many

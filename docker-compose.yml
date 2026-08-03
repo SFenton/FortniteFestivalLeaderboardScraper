@@ -117,10 +117,7 @@ services:
       # ── Feature flags ──
       - Features__WriteLegacyLiveLeaderboardSupplementalRows=${WRITE_LEGACY_LIVE_LEADERBOARD_SUPPLEMENTAL_ROWS:-true}
       - Features__UseStoredSoloProjectionRanksForFilteredReads=${USE_STORED_SOLO_PROJECTION_RANKS_FOR_FILTERED_READS:-false}
-      - Features__Shop=${FEATURE_SHOP:-false}
-      - Features__Rivals=${FEATURE_RIVALS:-false}
       - Features__Leaderboards=${FEATURE_LEADERBOARDS:-false}
-      - Features__FirstRun=${FEATURE_FIRST_RUN:-false}
       - Features__AppManual=${FEATURE_APP_MANUAL:-false}
       - ImprovementNotifications__Enabled=${IMPROVEMENT_NOTIFICATIONS_ENABLED:-true}
       - ImprovementNotifications__Scope=${IMPROVEMENT_NOTIFICATIONS_SCOPE:-registered}
@@ -130,7 +127,6 @@ services:
       - ImprovementNotifications__IncludeRankings=${IMPROVEMENT_NOTIFICATIONS_INCLUDE_RANKINGS:-true}
       - ImprovementNotifications__RefreshSoloProjection=${IMPROVEMENT_NOTIFICATIONS_REFRESH_SOLO_PROJECTION:-true}
       - ImprovementNotifications__RefreshAllSoloScopesWhenNoImpactedScopes=${IMPROVEMENT_NOTIFICATIONS_REFRESH_ALL_SOLO_SCOPES_WHEN_NO_IMPACTED_SCOPES:-false}
-      - ImprovementNotifications__FailScrapeOnError=${IMPROVEMENT_NOTIFICATIONS_FAIL_SCRAPE_ON_ERROR:-false}
       # Override scraper settings via environment variables if needed:
       # - Scraper__ScrapeInterval=04:00:00
       # - Scraper__SongSyncInterval=00:15:00

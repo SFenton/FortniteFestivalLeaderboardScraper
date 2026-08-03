@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FSTService.Auth;
 using FSTService.Persistence;
 
@@ -136,26 +137,41 @@ public class ScraperOptionsAndModelsTests
         Assert.Null(typeof(FeatureOptions).GetProperty("WriteBandMemberScoreObservations"));
     }
 
-    [Theory]
-    [InlineData("appsettings.json")]
-    [InlineData("appsettings.Development.json")]
-    public void Appsettings_DoNotExposeRetiredLogicalLeaderboardShadowConfiguration(string fileName)
+    [Fact]
+    public void OptionTypes_ExposeOnlyActiveConfiguration()
     {
-        var contents = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, fileName));
-
-        Assert.DoesNotContain("WriteLogicalLeaderboardVersions", contents, StringComparison.Ordinal);
-        Assert.DoesNotContain("UseLogicalLeaderboardVersions", contents, StringComparison.Ordinal);
+        Assert.Null(typeof(ScraperOptions).GetProperty("ScrapePassTimeoutMinutes"));
+        Assert.Null(typeof(ImprovementNotificationOptions).GetProperty("FailScrapeOnError"));
+        Assert.All(new[] { "Shop", "Rivals", "FirstRun" },
+            name => Assert.Null(typeof(FeatureOptions).GetProperty(name)));
+        var opts = new ImprovementNotificationOptions();
+        Assert.False(opts.Enabled);
+        Assert.Equal("registered", opts.Scope);
+        Assert.True(opts.IncludePlayers && opts.IncludeBands && opts.IncludeSongEvents
+            && opts.IncludeRankings && opts.RefreshSoloProjection);
+        Assert.False(opts.RefreshAllSoloScopesWhenNoImpactedScopes);
     }
 
     [Theory]
     [InlineData("appsettings.json")]
     [InlineData("appsettings.Development.json")]
-    public void Appsettings_DoNotExposeRetiredScoreObservationWriters(string fileName)
+    public void Appsettings_ExposeOnlyActiveConfiguration(string fileName)
     {
         var contents = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, fileName));
 
-        Assert.DoesNotContain("WriteSoloScoreObservations", contents, StringComparison.Ordinal);
-        Assert.DoesNotContain("WriteBandMemberScoreObservations", contents, StringComparison.Ordinal);
+        var retiredKeys = new[] { "WriteLogicalLeaderboardVersions", "UseLogicalLeaderboardVersions",
+            "WriteSoloScoreObservations", "WriteBandMemberScoreObservations",
+            "ScrapePassTimeoutMinutes", "FailScrapeOnError" };
+        Assert.All(retiredKeys,
+            key => Assert.DoesNotContain(key, contents, StringComparison.Ordinal));
+
+        using var document = JsonDocument.Parse(contents);
+        var notifications = document.RootElement.GetProperty(ImprovementNotificationOptions.Section);
+        var activeKeys = new[] { "Enabled", "Scope", "IncludePlayers", "IncludeBands",
+            "IncludeSongEvents", "IncludeRankings", "RefreshSoloProjection",
+            "RefreshAllSoloScopesWhenNoImpactedScopes" };
+        Assert.All(activeKeys,
+            key => Assert.True(notifications.TryGetProperty(key, out _), $"{key} is missing from {fileName}"));
     }
 
     [Fact]

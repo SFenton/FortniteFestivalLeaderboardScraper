@@ -312,10 +312,6 @@ if data_profile == "notification-db-only":
     exact_value(
         "ImprovementNotifications__RefreshAllSoloScopesWhenNoImpactedScopes",
         "false")
-    if boolean("ImprovementNotifications__FailScrapeOnError"):
-        raise SystemExit(
-            "ERROR: data profile notification-db-only requires "
-            "ImprovementNotifications__FailScrapeOnError=false")
     exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
     exact_value("Scraper__RegisteredPlayerBandDiscoveryTimeout", "00:05:00")
     exact_value("Scraper__RegisteredBandTargetedProcessingTimeout", "00:05:00")
@@ -393,7 +389,6 @@ if data_profile == "catalog-path-notification-source-cut":
     for name in (
         "Features__WriteLogicalLeaderboardVersions",
         "Features__SkipUnchangedPhysicalLeaderboardSnapshots",
-        "ImprovementNotifications__FailScrapeOnError",
     ):
         if boolean(name):
             raise SystemExit(
