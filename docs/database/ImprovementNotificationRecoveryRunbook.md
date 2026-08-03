@@ -172,7 +172,10 @@ and the zero-cap decision.
 
 Dry run opens a repeatable-read, read-only transaction. It does not refresh
 solo or band projections and does not write detection runs, events,
-maintenance audit rows, or improvement state. It fails closed unless:
+maintenance audit rows, or improvement state. The bounded projection command
+timeout is 10 minutes so the registered player
+and band candidate queries can complete on the live dataset without an
+unbounded scan. It fails closed unless:
 
 - the expected scrape is still published, completed, and unfrozen;
 - its notification marker is completed and matches the published scrape;

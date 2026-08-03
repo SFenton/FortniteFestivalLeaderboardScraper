@@ -10,7 +10,7 @@ namespace FSTService.Persistence;
 
 public sealed class ImprovementNotificationMaintenanceService
 {
-    private const int CommandTimeoutSeconds = 120;
+    private const int CommandTimeoutSeconds = 600;
     private const string ProLeadInstrument = "Solo_PeripheralGuitar";
     private const string MaxScorePercentRankMetric = "max_score_percent_rank";
 
