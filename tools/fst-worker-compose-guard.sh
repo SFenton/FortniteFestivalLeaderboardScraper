@@ -361,10 +361,10 @@ if data_profile == "registered-refresh-repair":
             raise SystemExit(
                 f"ERROR: data profile registered-refresh-repair requires {name}=false")
 if data_profile == "catalog-path-notification-source-cut":
-    if worker.get("image") != "fstservice:path-repair-rebaseline-f73f065e":
+    if worker.get("image") != "fstservice:path-repair-scope-f5f6ceb2":
         raise SystemExit(
             "ERROR: data profile catalog-path-notification-source-cut requires "
-            "fstservice:path-repair-rebaseline-f73f065e")
+            "fstservice:path-repair-scope-f5f6ceb2")
     exact_value("Scraper__EnabledPhases", "All")
     exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
     exact_value("Scraper__EnableAutomaticPathGeneration", "false")
