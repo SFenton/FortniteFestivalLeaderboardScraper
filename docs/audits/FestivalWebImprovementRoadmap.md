@@ -15,7 +15,10 @@
   prior 30-minute browser cache entry after the server has refreshed
   publication-bound caches.
 - Focused publication tests and the production web build pass.
-- Production image: `festivalweb:publication-revalidate-b8eefb52`.
+- The Songs client retries a browser-generated `304` without application cache
+  using a full no-store response, and accepts legacy partial max-score records
+  containing null instrument values.
+- Production image: `festivalweb:songs-partial-max-609ffa94`.
 
 ## Publication-maintenance retry update - 2026-08-01
 

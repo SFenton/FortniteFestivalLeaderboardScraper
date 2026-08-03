@@ -1473,7 +1473,7 @@ deployment/repair remain separate**
   rows, zero path errors, and unchanged HTTP `200` public/legacy path reads.
 - The next full-scrape data profile is
   `catalog-path-notification-source-cut` on
-  `fstservice:path-repair-final-bdf99217`. The image retains the atomic
+  `fstservice:songs-partial-max-609ffa94`. The image retains the atomic
   catalog/path/notification candidate and adds corrected watchdog-visible
   refresh heartbeats plus terminal-empty handling for Epic
   invalid/uninstantiated leaderboards. It also canonicalizes equivalent
@@ -1485,7 +1485,8 @@ deployment/repair remain separate**
   rebuilt rankings, and completed routine notification state can be explicitly
   reopened only for a forced zero-event maintenance baseline. Repair candidate
   discovery is bounded to the configured registered notification cohort with a
-  finite 10-minute read-only projection timeout.
+  finite 10-minute read-only projection timeout. Public song payloads omit
+  unsupported null max-score keys for partial atomic generations.
 - Acceptance requires a schema-v2 `provider_exact` live catalog, a ready
   `generation_catalog_snapshot` binding for the new publication, generation
   cache/public parity, completed routine notifications, and zero automatic
