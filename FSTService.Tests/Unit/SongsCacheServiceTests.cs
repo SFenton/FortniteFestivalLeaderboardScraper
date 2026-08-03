@@ -1,10 +1,29 @@
 using FSTService.Api;
 using FortniteFestival.Core;
+using FSTService.Persistence;
 
 namespace FSTService.Tests.Unit;
 
 public class SongsCacheServiceTests
 {
+    [Fact]
+    public void Public_max_scores_omit_missing_instrument_values()
+    {
+        var result = SongsCacheService.BuildPublicMaxScores(
+            new SongMaxScores
+            {
+                MaxProLeadScore = 209_100,
+            });
+
+        Assert.NotNull(result);
+        Assert.Equal(
+            new Dictionary<string, int>
+            {
+                ["Solo_PeripheralGuitar"] = 209_100,
+            },
+            result);
+    }
+
     [Fact]
     public void Get_Empty_ReturnsNull()
     {

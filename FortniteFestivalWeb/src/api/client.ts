@@ -211,10 +211,18 @@ export const api = {
     // Without this, the browser's max-age (30 min) silently returns stale data.
     const init: RequestInit = { headers: withSelectedProfileHeaders(headers), cache: 'no-cache' };
     if (options?.signal) init.signal = options.signal;
-    const res = await fetchWithPublication(`${BASE}/api/songs`, init);
+    let res = await fetchWithPublication(`${BASE}/api/songs`, init);
 
     // 304 Not Modified — server confirms our cached data is still current
     if (res.status === 304 && cached) return cached.data;
+    if (res.status === 304) {
+      const retryInit: RequestInit = {
+        headers: withSelectedProfileHeaders(),
+        cache: 'no-store',
+      };
+      if (options?.signal) retryInit.signal = options.signal;
+      res = await fetchWithPublication(`${BASE}/api/songs`, retryInit);
+    }
 
     if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
 

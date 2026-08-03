@@ -67,6 +67,32 @@ describe('Songs cache ownership', () => {
     });
   });
 
+  it('accepts legacy null values in partial max-score records', () => {
+    localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({
+      version: SONGS_CACHE_VERSION,
+      scope: PUBLIC_CATALOG_CACHE_SCOPE,
+      data: {
+        count: 1,
+        currentSeason: 7,
+        songs: [{
+          songId: 'partial-max',
+          title: 'Partial Max',
+          artist: 'Artist',
+          maxScores: {
+            Solo_Guitar: null,
+            Solo_PeripheralGuitar: 209100,
+          },
+        }],
+      },
+      etag: '"partial-max"',
+    }));
+
+    expect(readSongsCache()?.data.songs[0]?.maxScores).toEqual({
+      Solo_Guitar: null,
+      Solo_PeripheralGuitar: 209100,
+    });
+  });
+
   it.each([
     ['invalid JSON', '{not-json'],
     ['unsupported version', JSON.stringify({ version: 99, scope: 'public', data: cachedSongs, etag: null })],

@@ -410,15 +410,7 @@ public sealed class SongsCacheService
                         proCymbals = (int?)s.track.@in.pd,
                         proVocals  = Track.HasChartedDifficulty(s.track.@in.bd) ? s.track.@in.bd : (int?)null,
                     },
-                    maxScores = ms is null ? null : new Dictionary<string, int?>
-                    {
-                        ["Solo_Guitar"]           = ms.MaxLeadScore,
-                        ["Solo_Bass"]             = ms.MaxBassScore,
-                        ["Solo_Drums"]            = ms.MaxDrumsScore,
-                        ["Solo_Vocals"]           = ms.MaxVocalsScore,
-                        ["Solo_PeripheralGuitar"] = ms.MaxProLeadScore,
-                        ["Solo_PeripheralBass"]   = ms.MaxProBassScore,
-                    },
+                    maxScores = BuildPublicMaxScores(ms),
                     populationTiers = songPopTiers,
                     pathsGeneratedAt = ms?.GeneratedAt,
                     pathArtifactGenerationId = ms?.ArtifactGenerationId,
@@ -432,6 +424,29 @@ public sealed class SongsCacheService
 
         var payload = new { count = songs.Count, currentSeason, songs };
         return JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
+    }
+
+    internal static IReadOnlyDictionary<string, int>? BuildPublicMaxScores(
+        SongMaxScores? maxScores)
+    {
+        if (maxScores is null)
+            return null;
+
+        var result = new Dictionary<string, int>(
+            StringComparer.Ordinal);
+        Add("Solo_Guitar", maxScores.MaxLeadScore);
+        Add("Solo_Bass", maxScores.MaxBassScore);
+        Add("Solo_Drums", maxScores.MaxDrumsScore);
+        Add("Solo_Vocals", maxScores.MaxVocalsScore);
+        Add("Solo_PeripheralGuitar", maxScores.MaxProLeadScore);
+        Add("Solo_PeripheralBass", maxScores.MaxProBassScore);
+        return result.Count == 0 ? null : result;
+
+        void Add(string instrument, int? value)
+        {
+            if (value.HasValue)
+                result[instrument] = value.Value;
+        }
     }
 
     public static byte[] BuildPublishedSongsJson(

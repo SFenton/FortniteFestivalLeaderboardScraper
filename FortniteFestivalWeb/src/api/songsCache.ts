@@ -44,6 +44,11 @@ function isNumberRecord(value: unknown): boolean {
   return isRecord(value) && Object.values(value).every(isFiniteNumber);
 }
 
+function isNullableNumberRecord(value: unknown): boolean {
+  return isRecord(value)
+    && Object.values(value).every(item => item === null || isFiniteNumber(item));
+}
+
 function isPopulationTierData(value: unknown): boolean {
   if (!isRecord(value) || !isFiniteNumber(value.baseCount) || !Array.isArray(value.tiers)) {
     return false;
@@ -85,7 +90,7 @@ function isServerSong(value: unknown): value is ServerSong {
     return false;
   }
   if (value.difficulty !== undefined && !isNumberRecord(value.difficulty)) return false;
-  if (value.maxScores !== undefined && !isNumberRecord(value.maxScores)) return false;
+  if (value.maxScores !== undefined && !isNullableNumberRecord(value.maxScores)) return false;
   return value.populationTiers === undefined
     || value.populationTiers === null
     || isPopulationTierRecord(value.populationTiers);

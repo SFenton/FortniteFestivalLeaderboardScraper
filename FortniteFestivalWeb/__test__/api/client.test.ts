@@ -116,6 +116,32 @@ describe('api/client', () => {
       expect(result).toEqual(cached);
     });
 
+    it('retries without browser cache when 304 has no application cache body', async () => {
+      const data = { songs: [{ songId: 's1', title: 'Test', artist: 'Artist' }], count: 1, currentSeason: 5 };
+      (global.fetch as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 304,
+          headers: new Headers(),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(data),
+          headers: new Headers({ etag: '"fresh"' }),
+        });
+
+      await expect(api.getSongs()).resolves.toEqual(data);
+      expect(global.fetch).toHaveBeenNthCalledWith(1, '/api/songs', {
+        headers: {},
+        cache: 'no-cache',
+      });
+      expect(global.fetch).toHaveBeenNthCalledWith(2, '/api/songs', {
+        headers: {},
+        cache: 'no-store',
+      });
+    });
+
     it('updates cache on 200 with new ETag', async () => {
       const data = { songs: [{ songId: 's2', title: 'New', artist: 'Artist' }], count: 1, currentSeason: 6 };
       (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
