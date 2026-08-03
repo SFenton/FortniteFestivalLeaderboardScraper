@@ -15,6 +15,7 @@ import { createTestQueryClient, TestProviders } from '../../helpers/TestProvider
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../helpers/browserStubs';
 import type { AppliedBandComboFilter } from '../../../src/types/bandFilter';
 import { expectCancellableCall } from '../../helpers/requestAssertions';
+import { loadSongsFilterModal } from '../../../src/components/lazy/secondaryControls';
 
 const SONGS_MOBILE_CENTER_TOP_STYLE = `max(${Layout.desktopNavHeight}px, var(${HEADER_PORTAL_HEIGHT_VAR}, 0px))`;
 const SONGS_MOBILE_CENTER_BOTTOM_STYLE = `max(${safeAreaBottomOffset(Layout.fabBottom + Layout.fabSize)}, var(${SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR}, 0px))`;
@@ -1514,6 +1515,10 @@ describe('SongsPage — callback function coverage (extracted)', () => {
 });
 
 describe('SongsPage — filter callback coverage (explicit desktop)', () => {
+  beforeEach(async () => {
+    await loadSongsFilterModal();
+  });
+
   function setDesktopViewport() {
     Object.defineProperty(window, 'matchMedia', {
       writable: true,
