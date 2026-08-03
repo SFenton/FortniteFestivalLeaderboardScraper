@@ -18,7 +18,6 @@ public sealed class MetaDatabase : IMetaDatabase
     private readonly NpgsqlDataSource _ds;
     private readonly ILogger<MetaDatabase> _log;
     private readonly BandRankHistoryOptions _bandRankHistoryOptions;
-    private readonly FeatureOptions _features;
     private readonly object _bandRankHistoryPollingSchemaLock = new();
     private bool _bandRankHistoryPollingSchemaEnsured;
     private int _bandRankHistoryCompactV3DuetsReady;
@@ -57,21 +56,18 @@ public sealed class MetaDatabase : IMetaDatabase
     public MetaDatabase(
         NpgsqlDataSource dataSource,
         ILogger<MetaDatabase> log,
-        BandRankHistoryOptions? bandRankHistoryOptions = null,
-        FeatureOptions? features = null)
+        BandRankHistoryOptions? bandRankHistoryOptions = null)
     {
         _ds = dataSource;
         _log = log;
         _bandRankHistoryOptions = bandRankHistoryOptions ?? new BandRankHistoryOptions();
-        _features = features ?? new FeatureOptions();
     }
 
     public MetaDatabase(
         NpgsqlDataSource dataSource,
         ILogger<MetaDatabase> log,
-        IOptions<BandRankHistoryOptions> bandRankHistoryOptions,
-        IOptions<FeatureOptions> features)
-        : this(dataSource, log, bandRankHistoryOptions.Value, features.Value)
+        IOptions<BandRankHistoryOptions> bandRankHistoryOptions)
+        : this(dataSource, log, bandRankHistoryOptions.Value)
     {
     }
 
@@ -2418,14 +2414,6 @@ public sealed class MetaDatabase : IMetaDatabase
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         cmd.ExecuteNonQuery();
 
-        if (_features.WriteSoloScoreObservations)
-        {
-            UpsertSoloScoreObservation(
-                conn, tx,
-                songId, instrument, accountId, newScore, accuracy, isFullCombo, stars,
-                percentile, season, parsedScoreAchievedAt, newRank, seasonRank, allTimeRank, difficulty);
-        }
-
         tx.Commit();
     }
 
@@ -2539,8 +2527,6 @@ public sealed class MetaDatabase : IMetaDatabase
                     """;
                 inserted = c.ExecuteNonQuery();
             }
-            if (_features.WriteSoloScoreObservations)
-                UpsertSoloScoreObservationsFromStaging(conn, tx, "_sh_staging");
             tx.Commit();
             return inserted;
         }
@@ -2593,229 +2579,8 @@ public sealed class MetaDatabase : IMetaDatabase
             pNow.Value = now;
             loopInserted += cmd.ExecuteNonQuery();
         }
-        if (_features.WriteSoloScoreObservations)
-        {
-            CreateScoreObservationStaging(conn, tx, changes, now);
-            UpsertSoloScoreObservationsFromStaging(conn, tx, "_pso_solo_staging");
-        }
         tx.Commit();
         return loopInserted;
-    }
-
-    private static void UpsertSoloScoreObservation(
-        NpgsqlConnection conn,
-        NpgsqlTransaction tx,
-        string songId,
-        string instrument,
-        string accountId,
-        int score,
-        int? accuracy,
-        bool? isFullCombo,
-        int? stars,
-        double? percentile,
-        int? season,
-        DateTime? scoreAchievedAt,
-        int soloRank,
-        int? seasonRank,
-        int? allTimeRank,
-        int? difficulty)
-    {
-        using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = """
-            INSERT INTO player_score_observations (
-                account_id, song_id, instrument, score, accuracy, is_full_combo, stars,
-                difficulty, season, score_achieved_at, source_kind, source_id, source_scope,
-                solo_rank, season_rank, all_time_rank, solo_percentile, observed_at)
-            VALUES (
-                @accountId, @songId, @instrument, @score, @accuracy, @isFullCombo, @stars,
-                @difficulty, @season, @scoreAchievedAt, 'solo-history', @sourceId, @sourceScope,
-                @soloRank, @seasonRank, @allTimeRank, @soloPercentile, @observedAt)
-            ON CONFLICT (account_id, song_id, instrument, source_kind, source_id) DO UPDATE SET
-                score = EXCLUDED.score,
-                accuracy = COALESCE(EXCLUDED.accuracy, player_score_observations.accuracy),
-                is_full_combo = COALESCE(EXCLUDED.is_full_combo, player_score_observations.is_full_combo),
-                stars = COALESCE(EXCLUDED.stars, player_score_observations.stars),
-                difficulty = COALESCE(EXCLUDED.difficulty, player_score_observations.difficulty),
-                season = COALESCE(EXCLUDED.season, player_score_observations.season),
-                score_achieved_at = COALESCE(EXCLUDED.score_achieved_at, player_score_observations.score_achieved_at),
-                source_scope = COALESCE(NULLIF(EXCLUDED.source_scope, ''), player_score_observations.source_scope),
-                solo_rank = COALESCE(EXCLUDED.solo_rank, player_score_observations.solo_rank),
-                season_rank = COALESCE(EXCLUDED.season_rank, player_score_observations.season_rank),
-                all_time_rank = COALESCE(EXCLUDED.all_time_rank, player_score_observations.all_time_rank),
-                solo_percentile = COALESCE(EXCLUDED.solo_percentile, player_score_observations.solo_percentile),
-                observed_at = GREATEST(player_score_observations.observed_at, EXCLUDED.observed_at)
-            """;
-        cmd.Parameters.AddWithValue("accountId", accountId);
-        cmd.Parameters.AddWithValue("songId", songId);
-        cmd.Parameters.AddWithValue("instrument", instrument);
-        cmd.Parameters.AddWithValue("score", score);
-        cmd.Parameters.AddWithValue("accuracy", (object?)accuracy ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("isFullCombo", (object?)isFullCombo ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("stars", (object?)stars ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("difficulty", (object?)difficulty ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("season", (object?)season ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("scoreAchievedAt", scoreAchievedAt.HasValue ? scoreAchievedAt.Value : (object)DBNull.Value);
-        cmd.Parameters.AddWithValue("sourceId", BuildSoloObservationSourceId(accountId, songId, instrument, score, scoreAchievedAt, difficulty, season));
-        cmd.Parameters.AddWithValue("sourceScope", season.HasValue ? $"season:{season.Value}" : "alltime");
-        cmd.Parameters.AddWithValue("soloRank", soloRank > 0 ? soloRank : (object)DBNull.Value);
-        cmd.Parameters.AddWithValue("seasonRank", (object?)seasonRank ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("allTimeRank", (object?)allTimeRank ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("soloPercentile", (object?)percentile ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("observedAt", DateTime.UtcNow);
-        cmd.ExecuteNonQuery();
-    }
-
-    private static void CreateScoreObservationStaging(
-        NpgsqlConnection conn,
-        NpgsqlTransaction tx,
-        IReadOnlyList<ScoreChangeRecord> changes,
-        DateTime observedAt)
-    {
-        using (var cmd = conn.CreateCommand())
-        {
-            cmd.Transaction = tx;
-            cmd.CommandText = "DROP TABLE IF EXISTS _pso_solo_staging";
-            cmd.ExecuteNonQuery();
-        }
-
-        using (var cmd = conn.CreateCommand())
-        {
-            cmd.Transaction = tx;
-            cmd.CommandText = """
-                CREATE TEMP TABLE _pso_solo_staging (
-                    song_id TEXT, instrument TEXT, account_id TEXT, new_score INTEGER,
-                    new_rank INTEGER, accuracy INTEGER, is_full_combo BOOLEAN, stars INTEGER,
-                    percentile DOUBLE PRECISION, season INTEGER, score_achieved_at TIMESTAMPTZ,
-                    season_rank INTEGER, all_time_rank INTEGER, difficulty INTEGER, changed_at TIMESTAMPTZ
-                ) ON COMMIT DROP
-                """;
-            cmd.ExecuteNonQuery();
-        }
-
-        using var writer = conn.BeginBinaryImport(
-            "COPY _pso_solo_staging (song_id, instrument, account_id, new_score, new_rank, accuracy, " +
-            "is_full_combo, stars, percentile, season, score_achieved_at, season_rank, all_time_rank, " +
-            "difficulty, changed_at) FROM STDIN (FORMAT BINARY)");
-        foreach (var change in changes)
-        {
-            writer.StartRow();
-            writer.Write(change.SongId, NpgsqlDbType.Text);
-            writer.Write(change.Instrument, NpgsqlDbType.Text);
-            writer.Write(change.AccountId, NpgsqlDbType.Text);
-            writer.Write(change.NewScore, NpgsqlDbType.Integer);
-            writer.Write(change.NewRank, NpgsqlDbType.Integer);
-            WriteNullableInt(writer, change.Accuracy);
-            if (change.IsFullCombo.HasValue) writer.Write(change.IsFullCombo.Value, NpgsqlDbType.Boolean);
-            else writer.WriteNull();
-            WriteNullableInt(writer, change.Stars);
-            if (change.Percentile.HasValue) writer.Write(change.Percentile.Value, NpgsqlDbType.Double);
-            else writer.WriteNull();
-            WriteNullableInt(writer, change.Season);
-            if (change.ScoreAchievedAt is not null) writer.Write(ParseUtc(change.ScoreAchievedAt), NpgsqlDbType.TimestampTz);
-            else writer.WriteNull();
-            WriteNullableInt(writer, change.SeasonRank);
-            WriteNullableInt(writer, change.AllTimeRank);
-            WriteNullableInt(writer, change.Difficulty);
-            writer.Write(observedAt, NpgsqlDbType.TimestampTz);
-        }
-        writer.Complete();
-    }
-
-    private static void UpsertSoloScoreObservationsFromStaging(
-        NpgsqlConnection conn,
-        NpgsqlTransaction tx,
-        string stagingTable)
-    {
-        if (stagingTable is not "_sh_staging" and not "_pso_solo_staging")
-            throw new ArgumentOutOfRangeException(nameof(stagingTable));
-
-        using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = $$"""
-            WITH source_rows AS (
-                SELECT DISTINCT ON (account_id, song_id, instrument, source_id)
-                    account_id,
-                    song_id,
-                    instrument,
-                    new_score,
-                    accuracy,
-                    is_full_combo,
-                    stars,
-                    difficulty,
-                    season,
-                    score_achieved_at,
-                    source_id,
-                    CASE WHEN season IS NOT NULL THEN 'season:' || season::TEXT ELSE 'alltime' END AS source_scope,
-                    NULLIF(new_rank, 0) AS solo_rank,
-                    season_rank,
-                    all_time_rank,
-                    percentile,
-                    changed_at
-                FROM (
-                    SELECT *,
-                        CONCAT_WS(':',
-                            'solo-history', account_id, song_id, instrument, new_score::TEXT,
-                            COALESCE(TO_CHAR(score_achieved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'), 'no-time'),
-                            COALESCE(difficulty::TEXT, 'no-difficulty'),
-                            COALESCE(season::TEXT, 'no-season')) AS source_id
-                    FROM {{stagingTable}}
-                ) staged
-                ORDER BY account_id, song_id, instrument, source_id, changed_at DESC
-            )
-            INSERT INTO player_score_observations (
-                account_id, song_id, instrument, score, accuracy, is_full_combo, stars,
-                difficulty, season, score_achieved_at, source_kind, source_id, source_scope,
-                solo_rank, season_rank, all_time_rank, solo_percentile, observed_at)
-            SELECT
-                account_id,
-                song_id,
-                instrument,
-                new_score,
-                accuracy,
-                is_full_combo,
-                stars,
-                difficulty,
-                season,
-                score_achieved_at,
-                'solo-history',
-                source_id,
-                source_scope,
-                solo_rank,
-                season_rank,
-                all_time_rank,
-                percentile,
-                changed_at
-            FROM source_rows
-            ON CONFLICT (account_id, song_id, instrument, source_kind, source_id) DO UPDATE SET
-                score = EXCLUDED.score,
-                accuracy = COALESCE(EXCLUDED.accuracy, player_score_observations.accuracy),
-                is_full_combo = COALESCE(EXCLUDED.is_full_combo, player_score_observations.is_full_combo),
-                stars = COALESCE(EXCLUDED.stars, player_score_observations.stars),
-                difficulty = COALESCE(EXCLUDED.difficulty, player_score_observations.difficulty),
-                season = COALESCE(EXCLUDED.season, player_score_observations.season),
-                score_achieved_at = COALESCE(EXCLUDED.score_achieved_at, player_score_observations.score_achieved_at),
-                source_scope = COALESCE(NULLIF(EXCLUDED.source_scope, ''), player_score_observations.source_scope),
-                solo_rank = COALESCE(EXCLUDED.solo_rank, player_score_observations.solo_rank),
-                season_rank = COALESCE(EXCLUDED.season_rank, player_score_observations.season_rank),
-                all_time_rank = COALESCE(EXCLUDED.all_time_rank, player_score_observations.all_time_rank),
-                solo_percentile = COALESCE(EXCLUDED.solo_percentile, player_score_observations.solo_percentile),
-                observed_at = GREATEST(player_score_observations.observed_at, EXCLUDED.observed_at)
-            """;
-        cmd.ExecuteNonQuery();
-    }
-
-    private static string BuildSoloObservationSourceId(
-        string accountId,
-        string songId,
-        string instrument,
-        int score,
-        DateTime? scoreAchievedAt,
-        int? difficulty,
-        int? season)
-    {
-        var achievedAt = scoreAchievedAt.HasValue ? scoreAchievedAt.Value.ToString("O") : "no-time";
-        return $"solo-history:{accountId}:{songId}:{instrument}:{score}:{achievedAt}:{difficulty?.ToString() ?? "no-difficulty"}:{season?.ToString() ?? "no-season"}";
     }
 
     public List<ScoreHistoryEntry> GetScoreHistory(string accountId, int limit = 100, string? songId = null, string? instrument = null)
@@ -4689,11 +4454,6 @@ public sealed class MetaDatabase : IMetaDatabase
                 cmd.ExecuteNonQuery();
             }
 
-            if (_features.WriteSoloScoreObservations)
-            {
-                CreateScoreObservationStaging(conn, tx, scoreChanges, now);
-                UpsertSoloScoreObservationsFromStaging(conn, tx, "_pso_solo_staging");
-            }
         }
 
         var distinctProgress = historyProgress

@@ -112,8 +112,6 @@ public class ScraperOptionsAndModelsTests
         Assert.False(opts.AppManual);
         Assert.True(opts.WriteLegacyLiveLeaderboardDuringScrape);
         Assert.True(opts.WriteLegacyLiveLeaderboardSupplementalRows);
-        Assert.False(opts.WriteSoloScoreObservations);
-        Assert.False(opts.WriteBandMemberScoreObservations);
         Assert.False(opts.SkipUnchangedPhysicalLeaderboardSnapshots);
         Assert.False(opts.WritePublishedScopeSources);
         Assert.False(opts.UsePublishedScopeSources);
@@ -132,6 +130,13 @@ public class ScraperOptionsAndModelsTests
         Assert.Null(typeof(FeatureOptions).Assembly.GetType("FSTService.FeatureOptionsValidator"));
     }
 
+    [Fact]
+    public void FeatureOptions_DoesNotExposeRetiredScoreObservationWriters()
+    {
+        Assert.Null(typeof(FeatureOptions).GetProperty("WriteSoloScoreObservations"));
+        Assert.Null(typeof(FeatureOptions).GetProperty("WriteBandMemberScoreObservations"));
+    }
+
     [Theory]
     [InlineData("appsettings.json")]
     [InlineData("appsettings.Development.json")]
@@ -141,6 +146,17 @@ public class ScraperOptionsAndModelsTests
 
         Assert.DoesNotContain("WriteLogicalLeaderboardVersions", contents, StringComparison.Ordinal);
         Assert.DoesNotContain("UseLogicalLeaderboardVersions", contents, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("appsettings.json")]
+    [InlineData("appsettings.Development.json")]
+    public void Appsettings_DoNotExposeRetiredScoreObservationWriters(string fileName)
+    {
+        var contents = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, fileName));
+
+        Assert.DoesNotContain("WriteSoloScoreObservations", contents, StringComparison.Ordinal);
+        Assert.DoesNotContain("WriteBandMemberScoreObservations", contents, StringComparison.Ordinal);
     }
 
     [Fact]

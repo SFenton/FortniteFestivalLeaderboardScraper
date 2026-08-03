@@ -218,6 +218,17 @@ flag. No live objects are dropped by this code change: the empty current/
 version families and 108-row metrics table await cleanup-image full-scrape
 parity before a separate physical-schema cleanup.
 
+The repository also removes both retired `player_score_observations` writers,
+their tracked configuration keys, and startup creation of the table, unique
+source index, union view, primary key, and sequence. Fresh schemas therefore
+contain no observation objects while the durable `score_history` and band
+fact/statistic owners remain unchanged. This code change performs no live DDL:
+the already-empty production table,
+`player_score_observation_union`, indexes, primary key, and sequence await a
+cleanup image and successful full-scrape publication/public-fingerprint
+parity before the checked-in drop SQL may remove them. The exact rehydrate,
+truncate, drop, and execution evidence remain retained.
+
 The 2026-07-25 SOLO-DYNAMIC-AB inventory measured the active solo current
 projection at `39,601,283` rows / `46,633,459,712` bytes:
 `17,821,523,968` heap and `28,806,701,056` indexes. The accepted replacement
@@ -812,7 +823,7 @@ and retained old-table rollback; bounded unlogged samples are evaluation-only.
 |---|---|---|---|
 | `score_history` | Durable user-visible history | `MetaDatabase`, player/ranking services | Preserve score/rank/season/timestamp semantics. The explicit audited PG-3/PG-7 maintenance command promotes `ix_sh_dedup` to five-column `UNIQUE ... NULLS NOT DISTINCT`; no row cleanup runs at startup. |
 | `score_history_dedup_maintenance_runs`, `score_history_dedup_original_rows` | Immutable maintenance audit/restore source | Explicit `ScoreHistoryDedupMaintenanceService` CLI only | Retention-independent. Stores non-null CLI/database/digest/index provenance and every affected original row before merge/delete; triggers reject update, delete, truncate, and post-seal original-row append. |
-| `player_score_observations` | Empty retained rollback schema for the retired non-authoritative observation surface | Solo-history and band-member writers remain independently default-off in deployed code/config; no production reader | OBSERVATION-RETIRE truncated `10,167,937` rows after scrape `1267` parity, reclaiming `12,682,330,112` database bytes while preserving the table, union view, indexes, primary key, and sequence |
+| `player_score_observations` | Empty production rollback schema; absent from fresh schemas after writer/schema-creation retirement | None; solo-history and band-member writers, tracked config, and startup creation are removed, with no production reader | OBSERVATION-RETIRE truncated `10,167,937` rows after scrape `1267` parity, reclaiming `12,682,330,112` database bytes. Existing table/view/index/primary-key/sequence objects await cleanup-image full-scrape parity; exact rehydrate/drop SQL remains retained |
 | `player_stats`, `player_stats_tiers` | Derived projection | Player stats calculator/API | Rebuildable for a published generation |
 | `account_rankings`, `account_ranking_stats` | Derived ranking projection | Rankings pipeline | Rebuildable; generation/source must remain auditable |
 | `rank_history` partitions, `rank_history_snapshot_stats`, `rank_history_tracked_accounts` | Durable user-visible history and snapshot metadata | Ranking/history pipeline and API | Append only on meaningful change after PG-5 redesign |

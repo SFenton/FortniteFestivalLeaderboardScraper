@@ -889,6 +889,28 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public async Task EnsureSchemaAsync_does_not_create_retired_player_score_observation_schema()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT
+                to_regclass('public.player_score_observations') IS NULL,
+                to_regclass('public.player_score_observation_union') IS NULL,
+                to_regclass('public.player_score_observations_id_seq') IS NULL,
+                to_regclass('public.player_score_observations_pkey') IS NULL,
+                to_regclass('public.ux_pso_source') IS NULL
+            """;
+
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        for (var ordinal = 0; ordinal < reader.FieldCount; ordinal++)
+            Assert.True(reader.GetBoolean(ordinal));
+    }
+
+    [Fact]
     public async Task Retired_composite_history_latest_index_maintenance_sql_is_valid()
     {
         await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);

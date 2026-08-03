@@ -22,7 +22,6 @@ public sealed class PostScrapeBandExtractor
     private readonly NpgsqlDataSource _dataSource;
     private readonly IPathDataStore _pathDataStore;
     private readonly ScraperOptions _options;
-    private readonly FeatureOptions _features;
     private readonly ScrapeProgressTracker? _progress;
     private readonly ILogger<PostScrapeBandExtractor> _log;
 
@@ -31,13 +30,11 @@ public sealed class PostScrapeBandExtractor
         IPathDataStore pathDataStore,
         ILogger<PostScrapeBandExtractor> log,
         ScrapeProgressTracker? progress = null,
-        IOptions<ScraperOptions>? options = null,
-        IOptions<FeatureOptions>? features = null)
+        IOptions<ScraperOptions>? options = null)
     {
         _dataSource = dataSource;
         _pathDataStore = pathDataStore;
         _options = options?.Value ?? new ScraperOptions();
-        _features = features?.Value ?? new FeatureOptions();
         _progress = progress;
         _log = log;
     }
@@ -93,8 +90,7 @@ public sealed class PostScrapeBandExtractor
         var allMaxScores = _pathDataStore.GetAllMaxScores();
         var persistence = new BandLeaderboardPersistence(
             _dataSource,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<BandLeaderboardPersistence>.Instance,
-            Options.Create(_features));
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<BandLeaderboardPersistence>.Instance);
         var impactedTeamsByBandType = new ConcurrentDictionary<string, ConcurrentDictionary<string, byte>>(StringComparer.OrdinalIgnoreCase);
         var impactedCurrentProjectionScopes = new ConcurrentDictionary<BandCurrentProjectionScopeKey, byte>();
 

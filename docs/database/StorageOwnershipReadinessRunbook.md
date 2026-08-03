@@ -2,9 +2,10 @@
 
 ## Current decision
 
-**Tier:** P6 observation and P8 dirty-work reclaim executed; P9 legacy rows
-remain blocked on active readers, supplemental writers, and their own live
-parity gate.
+**Tier:** P6 observation data retirement plus repository writer/schema-creation
+retirement and P8 dirty-work reclaim are complete. P6 physical objects await
+cleanup-image full-scrape parity; P9 legacy rows remain blocked on active
+readers, supplemental writers, and their own live parity gate.
 
 The original 2026-07-26 readiness phase owned storage-planner queue items P6,
 P8, and P9 while Epic device authentication blocked the next live scrape.
@@ -33,6 +34,15 @@ space rose by `12,680,921,088` bytes to about `212.04 GB`. Immediate and
 60-second public captures remained `13/13` exact HTTP `200`, while published
 `1267` stayed unfrozen. Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/observation-retirement-20260728T184629Z`.
+
+Repository follow-through removes both observation writer implementations,
+their tracked config keys, and startup creation of the table, unique source
+index, union view, primary key, and sequence. Fresh schemas exclude all
+observation objects while retaining `score_history`, band facts/statistics,
+notification behavior, and the checked-in rehydrate/drop evidence. This code
+change performs no live DDL; existing physical objects remain until a cleanup
+image completes one full scrape with publication and public-fingerprint
+parity.
 
 Live preflight at `2026-07-26T01:35:54Z`:
 
@@ -84,7 +94,7 @@ executed. Evidence:
 
 | Planner | Surface | Bytes | Owner decision | Growth posture | Execution class | Priority |
 |---|---|---:|---|---|---|---|
-| P6 | `player_score_observations` | `24,576` after truncate | Non-authoritative duplicate/audit surface; no production reader | Scrape `1267` proved both writers off; schema/view/indexes retained for rollback | accepted maintenance | complete |
+| P6 | `player_score_observations` | `24,576` after truncate | Non-authoritative duplicate/audit surface; no production reader | Writers, tracked config, and startup schema creation removed; existing physical objects await cleanup-image full-scrape parity | accepted code retirement; parity-gated physical cleanup | code complete, physical cleanup pending |
 | P8 | `scrape_dirty_*` | `65,536` after truncate | Abandoned work/audit state from scrapes `926`-`1146`; no current repo/runtime owner found | ORPHAN-RECLAIM executed; family remains fully empty | accepted maintenance | complete |
 | P9 | `leaderboard_entries_*` | `40,825,225,216` | Legacy mutable rollback/fallback surface with active supplemental writers and a publication-critical worker reader | Main scrape writer is off; supplemental writer switch remains on until reader migration | `full-scrape-ab`, then `parity-gated-maintenance` | 3 |
 
@@ -96,28 +106,31 @@ executed. Evidence:
 |---|---|
 | Pre-action physical shape | `10,167,937` rows; `6,774,161,408` heap bytes; `5,906,309,120` index bytes |
 | Source distribution | `9,938,912` `band-member` rows (`97.75%`); `229,025` `solo-history` rows (`2.25%`) |
-| Solo writer | `MetaDatabase.InsertScoreChange(s)` dual-writes durable `score_history` and observations |
-| Band writer | `BandLeaderboardPersistence` and `BandSpoolWriterFactory` dual-write durable `band_entries`/`band_member_stats` and observations |
-| Reader/view | Only `player_score_observation_union`; repository consumers are tests. No production API/export reader was found |
+| Solo writer | Removed from `MetaDatabase`; durable `score_history` writes are unchanged |
+| Band writer | Removed from `BandLeaderboardPersistence` and `BandSpoolWriterFactory`; durable `band_entries`/`band_member_stats` writes are unchanged |
+| Reader/view | Existing `player_score_observation_union` is the only database dependency. No production API/export/code reader remains |
 | Database dependencies | No trigger, function, materialized view, publication, subscription, replication slot, RLS policy, or role other than `fst` |
-| Runtime stats | Current cumulative table stats recorded `2,591,919` inserts and `9,593,492` updates; production writers are now default-off and the worker is held. The unique-index activity matches conflict/idempotency writes, not a reader |
+| Runtime stats | Pre-retirement cumulative table stats recorded `2,591,919` inserts and `9,593,492` updates. Both writers were off for scrape `1267` and are now removed from the repository; the historical unique-index activity matched conflict/idempotency writes, not a reader |
 | External tools | No production-compose/tool reference found; the original statement window contained writers and explicit ownership probes, not an application reader |
-| Solo overlap | The original `228,985/228,985` owner-card set had a semantic `score_history` match. Refresh overlap proof for the current `229,025` rows in the required writer-off publication window |
+| Solo overlap | The original `228,985/228,985` owner-card set had a semantic `score_history` match; the executed writer-off publication window refreshed the final `229,025`-row manifest before truncate |
 | Band overlap | Writer SQL proves transactional derivation from band staging. A deterministic 1% live sample covered `93,423` rows across all 27 instrument/band-type combinations; `49,899` still matched current fact keys, showing historical rows are not fully reconstructable from mutable current band facts |
 | Export/API gate | Player export reads mapped physical snapshots plus overlays, not observations. Route/export parity must still be repeated on a full candidate scrape |
-| Rollback/rebuild | Re-enable either writer flag; retain exact schema DDL. Solo rows rebuild from `score_history`; band rows rebuild only as a current baseline from `band_entries` + `band_member_stats`, not as restoration of discarded historical observations |
+| Rollback/rebuild | Exact schema/rehydration SQL remains retained. Solo rows rebuild from `score_history`; band rows rebuild only as a current baseline from `band_entries` + `band_member_stats`, not as restoration of discarded historical observations. Reintroducing a writer requires new versioned code/config and migration work |
 | Executed gate | Published scrape `1267` had zero observation touches, two exact public suites, and zero true production reader statements |
-| Decision | Truncate accepted and executed; table/view/index/sequence schema remains. Drop is a separate future code/schema-removal decision |
+| Decision | Truncate and repository writer/config/schema-creation retirement are complete. Existing table/view/index/primary-key/sequence objects await cleanup-image full-scrape parity before separate physical removal |
 
-### Deployed flags
+### Retired flags and durable-owner invariants
+
+Published scrape `1267` proved both writer flags disabled before truncate:
 
 - `Features:WriteSoloScoreObservations=false`
 - `Features:WriteBandMemberScoreObservations=false`
 
-Both flags leave the durable owners unchanged. They are independently
-reversible. Candidate deployment requires count/fingerprint parity for
-`score_history`, band facts, player/history APIs, exports, rankings,
-notifications, publication, and public health.
+The repository now removes both `FeatureOptions` properties and all tracked
+appsettings/Compose keys. Role files expose neither key. The cleanup image must
+still prove exact count/fingerprint parity for `score_history`, band facts,
+player/history APIs, exports, rankings, notifications, publication, and public
+health during one complete scrape before physical cleanup.
 
 ### Executed maintenance and future drop
 
@@ -129,9 +142,10 @@ Exact packages:
 
 The checked-in truncate package was executed without `CASCADE`. It preserved
 the schema, unique write-idempotency index, primary key, sequence, and union
-view for immediate rollback. The drop package remains future-only and requires
-removing schema creation plus both writer paths in a versioned migration. No
-package uses `CASCADE`.
+view for immediate rollback. Code/config/schema-creation removal is now
+complete, but the drop package remains future-only until the cleanup image
+passes full-scrape publication and public-fingerprint parity. No package uses
+`CASCADE`, and this repository change does not execute any package.
 
 ## P8: `scrape_dirty_*`
 
@@ -270,14 +284,18 @@ The tool:
 6. Run one guarded run-once scrape through post-process, publication,
    unfreeze, route/export/ranking/history parity, and hold before another
    scrape.
-7. If snapshot reuse passes, run a separate observation-writer-off scrape A/B.
+7. P6 observation-writer-off scrape A/B and truncate are complete. Deploy the
+   cleanup image separately and require one complete scrape with publication
+   and public-fingerprint parity before running the observation drop package.
 8. Run a separate legacy reader/supplemental-writer migration A/B.
-9. P8 is complete. With their separate exact gates passed, execute P6 and then
-   P9 maintenance one surface at a time, rerunning health, manifests, capacity,
-   and public fingerprints after each action.
+9. P6 data/code retirement and P8 reclaim are complete. Execute only P6
+   physical cleanup and P9 maintenance after each surface's remaining exact
+   gate, rerunning health, manifests, capacity, and public fingerprints after
+   each action.
 
-The logical-shadow truncate remains a separate prerequisite and is not cleared
-by this readiness phase. ORPHAN-RECLAIM restored enough start capacity for
-scrape `1267`, but P6, P9, and logical-shadow data still require their own
-publication/parity gates. The worker remains held for the next parent-owned
-scrape decision.
+Logical-shadow and P6 data retirement each cleared independent scrape/public
+parity gates. Their repository cleanup layers are complete, but their retained
+physical objects still require cleanup-image full-scrape parity before exact
+drop SQL may run. P9 remains separately blocked on reader/writer migration and
+its own publication/parity gate. The worker remains held for the next
+parent-owned scrape decision.

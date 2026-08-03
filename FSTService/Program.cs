@@ -388,8 +388,7 @@ builder.Services.AddSingleton(pgDataSource);
 builder.Services.AddSingleton<IMetaDatabase>(sp =>
     new FSTService.Persistence.MetaDatabase(sp.GetRequiredService<NpgsqlDataSource>(),
         sp.GetRequiredService<ILogger<FSTService.Persistence.MetaDatabase>>(),
-        sp.GetRequiredService<IOptions<BandRankHistoryOptions>>(),
-        sp.GetRequiredService<IOptions<FeatureOptions>>()));
+        sp.GetRequiredService<IOptions<BandRankHistoryOptions>>()));
 builder.Services.AddSingleton(sp => (FSTService.Persistence.MetaDatabase)sp.GetRequiredService<IMetaDatabase>());
 
 builder.Services.AddSingleton<IPathDataStore>(sp =>

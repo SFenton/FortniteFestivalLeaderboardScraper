@@ -180,8 +180,6 @@ services:
       - Scraper__MidiEncryptionKey=${MIDI_ENCRYPTION_KEY:-}
       # ── Feature flags ──
       - Features__WriteLegacyLiveLeaderboardSupplementalRows=${WRITE_LEGACY_LIVE_LEADERBOARD_SUPPLEMENTAL_ROWS:-true}
-      - Features__WriteSoloScoreObservations=${WRITE_SOLO_SCORE_OBSERVATIONS:-false}
-      - Features__WriteBandMemberScoreObservations=${WRITE_BAND_MEMBER_SCORE_OBSERVATIONS:-false}
       - Features__UseStoredSoloProjectionRanksForFilteredReads=${USE_STORED_SOLO_PROJECTION_RANKS_FOR_FILTERED_READS:-false}
       - Features__Rivals=${FEATURE_RIVALS:-false}
       - Features__Leaderboards=${FEATURE_LEADERBOARDS:-false}
