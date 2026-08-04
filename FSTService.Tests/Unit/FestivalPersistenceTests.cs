@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
 using FortniteFestival.Core;
@@ -121,6 +122,193 @@ public sealed class FestivalPersistenceTests : IDisposable
         Assert.Equal(catalogVersion, verifyReader.GetInt64(0));
         Assert.Equal(contentHash, verifyReader.GetString(1));
         Assert.Equal(capturedAt, verifyReader.GetDateTime(2));
+    }
+
+    [Fact]
+    public async Task Contended_unchanged_catalog_returns_existing_token_without_mutation_or_waiter()
+    {
+        var persistence = new FestivalPersistence(_dataSource);
+        var songs = new[]
+        {
+            CreateSong("song-a", "Alpha"),
+            CreateSong("song-b", "Beta"),
+        };
+        var original = await persistence.SaveSongsVersionedAsync(songs);
+        var before = await ReadCatalogMutationStateAsync();
+
+        await using var leaseConn =
+            await _dataSource.OpenConnectionAsync();
+        await using var leaseTx =
+            await leaseConn.BeginTransactionAsync();
+        await AcquireSharedPublicationLockAsync(leaseConn, leaseTx);
+
+        var stopwatch = Stopwatch.StartNew();
+        var actual = await persistence
+            .SaveSongsVersionedAsync(songs)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        stopwatch.Stop();
+
+        Assert.True(
+            stopwatch.Elapsed < TimeSpan.FromSeconds(3),
+            $"Unchanged contended save took {stopwatch.Elapsed}.");
+        Assert.Equal(original.CatalogVersion, actual.CatalogVersion);
+        Assert.Equal(original.SchemaVersion, actual.SchemaVersion);
+        Assert.Equal(original.ContentHash, actual.ContentHash);
+        Assert.Equal(original.SongCount, actual.SongCount);
+        Assert.Equal(before, await ReadCatalogMutationStateAsync());
+        Assert.Equal(
+            0,
+            await CountUngrantedAdvisoryLocksAsync());
+
+        await leaseTx.CommitAsync();
+    }
+
+    [Fact]
+    public async Task Contended_changed_catalog_fails_without_convoy_then_persists_after_release()
+    {
+        var persistence = new FestivalPersistence(_dataSource);
+        var original = await persistence.SaveSongsVersionedAsync(
+        [
+            CreateSong("song-a", "Alpha"),
+        ]);
+        var before = await ReadCatalogMutationStateAsync();
+
+        await using var leaseConn =
+            await _dataSource.OpenConnectionAsync();
+        await using var leaseTx =
+            await leaseConn.BeginTransactionAsync();
+        await AcquireSharedPublicationLockAsync(leaseConn, leaseTx);
+
+        var changedSongs = new[]
+        {
+            CreateSong("song-a", "Alpha changed"),
+        };
+        var stopwatch = Stopwatch.StartNew();
+        var exception =
+            await Assert.ThrowsAsync<SongCatalogPersistenceBusyException>(
+                () => persistence
+                    .SaveSongsVersionedAsync(changedSongs)
+                    .WaitAsync(TimeSpan.FromSeconds(5)));
+        stopwatch.Stop();
+
+        Assert.Contains("busy", exception.Message);
+        Assert.True(
+            stopwatch.Elapsed < TimeSpan.FromSeconds(3),
+            $"Changed contended save took {stopwatch.Elapsed}.");
+        Assert.Equal(before, await ReadCatalogMutationStateAsync());
+        Assert.Equal(
+            0,
+            await CountUngrantedAdvisoryLocksAsync());
+
+        await using (var readerConn =
+                     await _dataSource.OpenConnectionAsync())
+        await using (var readerTx =
+                     await readerConn.BeginTransactionAsync())
+        {
+            await using var readerLock = readerConn.CreateCommand();
+            readerLock.Transaction = readerTx;
+            readerLock.CommandText =
+                "SELECT pg_try_advisory_xact_lock_shared(@lockKey)";
+            readerLock.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+            Assert.True(
+                (bool)(await readerLock.ExecuteScalarAsync())!);
+            await readerTx.CommitAsync();
+        }
+
+        await leaseTx.CommitAsync();
+
+        var persisted = await persistence
+            .SaveSongsVersionedAsync(changedSongs)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(persisted.CatalogVersion > original.CatalogVersion);
+        Assert.NotEqual(original.ContentHash, persisted.ContentHash);
+        Assert.Equal("Alpha changed", Assert.Single(
+            await persistence.LoadSongsAsync()).track.tt);
+    }
+
+    [Fact]
+    public async Task Contended_changed_sync_preserves_previous_in_memory_catalog_and_token()
+    {
+        var persistence = new FestivalPersistence(_dataSource);
+        var originalSong = CreateSong("song-01", "Original");
+        var originalToken = await persistence.SaveSongsVersionedAsync(
+        [
+            originalSong,
+        ]);
+        var service = new FestivalService(
+            persistence,
+            CreateProviderClient(
+                System.Net.HttpStatusCode.OK,
+                CreateProviderPayload(1, "Changed")));
+        SetSongs(
+            service,
+            [originalSong],
+            trustedBaseline: true,
+            trustedToken: originalToken);
+
+        await using var leaseConn =
+            await _dataSource.OpenConnectionAsync();
+        await using var leaseTx =
+            await leaseConn.BeginTransactionAsync();
+        await AcquireSharedPublicationLockAsync(leaseConn, leaseTx);
+
+        await Assert.ThrowsAsync<SongCatalogPersistenceBusyException>(
+            service.SyncSongsWithResultAsync);
+
+        var retainedSong = Assert.Single(service.Songs);
+        Assert.Equal("Original provider title", retainedSong._title);
+        Assert.Equal(originalToken.ContentHash, ReadLiveCatalogHash());
+        var retainedToken = GetTrustedToken(service);
+        Assert.NotNull(retainedToken);
+        Assert.Equal(
+            originalToken.CatalogVersion,
+            retainedToken.CatalogVersion);
+        Assert.Equal(
+            originalToken.ContentHash,
+            retainedToken.ContentHash);
+        await leaseTx.CommitAsync();
+    }
+
+    [Theory]
+    [InlineData("invalid-version")]
+    [InlineData("non-exact")]
+    [InlineData("source")]
+    [InlineData("schema")]
+    [InlineData("count")]
+    [InlineData("hash")]
+    [InlineData("catalog-json")]
+    public async Task Contended_shortcut_rejects_invalid_current_catalog(
+        string defect)
+    {
+        var persistence = new FestivalPersistence(_dataSource);
+        var songs = new[]
+        {
+            CreateSong("song-a", "Alpha"),
+        };
+        var token = await persistence.SaveSongsVersionedAsync(songs);
+
+        await CorruptLiveCatalogAsync(defect, token);
+        var before = await ReadCatalogMutationStateAsync();
+
+        await using var leaseConn =
+            await _dataSource.OpenConnectionAsync();
+        await using var leaseTx =
+            await leaseConn.BeginTransactionAsync();
+        await AcquireSharedPublicationLockAsync(leaseConn, leaseTx);
+
+        await Assert.ThrowsAsync<SongCatalogPersistenceBusyException>(
+            () => persistence
+                .SaveSongsVersionedAsync(songs)
+                .WaitAsync(TimeSpan.FromSeconds(5)));
+
+        Assert.Equal(before, await ReadCatalogMutationStateAsync());
+        Assert.Equal(
+            0,
+            await CountUngrantedAdvisoryLocksAsync());
+        await leaseTx.CommitAsync();
     }
 
     [Fact]
@@ -705,6 +893,142 @@ public sealed class FestivalPersistenceTests : IDisposable
             WHERE id = TRUE
             """;
         Assert.Equal(1, (int)(await verify.ExecuteScalarAsync())!);
+    }
+
+    private sealed record CatalogMutationState(
+        string? CatalogXmin,
+        string? SongXmins,
+        long SongCount);
+
+    private async Task<CatalogMutationState>
+        ReadCatalogMutationStateAsync()
+    {
+        await using var conn = await _dataSource.OpenConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT
+                (
+                    SELECT xmin::text
+                    FROM live_song_catalog
+                    WHERE id = TRUE
+                ),
+                (
+                    SELECT string_agg(
+                        song_id || ':' || xmin::text,
+                        ',' ORDER BY song_id)
+                    FROM songs
+                ),
+                (
+                    SELECT COUNT(*)
+                    FROM songs
+                )
+            """;
+        await using var reader = await cmd.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        return new CatalogMutationState(
+            reader.IsDBNull(0) ? null : reader.GetString(0),
+            reader.IsDBNull(1) ? null : reader.GetString(1),
+            reader.GetInt64(2));
+    }
+
+    private async Task<long> CountUngrantedAdvisoryLocksAsync()
+    {
+        await using var conn = await _dataSource.OpenConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT COUNT(*)
+            FROM pg_locks
+            WHERE locktype = 'advisory'
+              AND database = (
+                  SELECT oid
+                  FROM pg_database
+                  WHERE datname = current_database())
+              AND NOT granted
+            """;
+        return (long)(await cmd.ExecuteScalarAsync())!;
+    }
+
+    private static async Task AcquireSharedPublicationLockAsync(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText =
+            "SELECT pg_advisory_xact_lock_shared(@lockKey)";
+        cmd.Parameters.AddWithValue(
+            "lockKey",
+            PublicationGenerationSchema.AdvisoryLockKey);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    private async Task CorruptLiveCatalogAsync(
+        string defect,
+        SongCatalogPersistenceToken token)
+    {
+        await using var conn = await _dataSource.OpenConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = defect switch
+        {
+            "invalid-version" => """
+                UPDATE live_song_catalog
+                SET catalog_version = 0
+                WHERE id = TRUE
+                """,
+            "non-exact" => """
+                UPDATE live_song_catalog
+                SET is_exact = FALSE
+                WHERE id = TRUE
+                """,
+            "source" => """
+                UPDATE live_song_catalog
+                SET source_kind = @sourceKind
+                WHERE id = TRUE
+                """,
+            "schema" => """
+                UPDATE live_song_catalog
+                SET schema_version = @schemaVersion
+                WHERE id = TRUE
+                """,
+            "count" => """
+                UPDATE live_song_catalog
+                SET catalog_version = catalog_version + 1,
+                    song_count = song_count + 1
+                WHERE id = TRUE
+                """,
+            "hash" => """
+                UPDATE live_song_catalog
+                SET catalog_version = catalog_version + 1,
+                    content_hash = @contentHash
+                WHERE id = TRUE
+                """,
+            "catalog-json" => """
+                UPDATE live_song_catalog
+                SET catalog_version = catalog_version + 1,
+                    catalog_json = @catalogJson
+                WHERE id = TRUE
+                """,
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(defect),
+                defect,
+                "Unknown live catalog defect."),
+        };
+        cmd.Parameters.AddWithValue(
+            "sourceKind",
+            "legacy_columns_reconstructed");
+        cmd.Parameters.AddWithValue(
+            "schemaVersion",
+            SongCatalogSnapshotBuilder.SchemaVersion + 1);
+        cmd.Parameters.AddWithValue(
+            "contentHash",
+            new string(
+                token.ContentHash[0] == '0' ? '1' : '0',
+                64));
+        cmd.Parameters.Add(
+            "catalogJson",
+            NpgsqlTypes.NpgsqlDbType.Jsonb).Value =
+            """{"schemaVersion":2,"songs":[]}""";
+        Assert.Equal(1, await cmd.ExecuteNonQueryAsync());
     }
 
     private static Song CreateSong(string songId, string title) =>

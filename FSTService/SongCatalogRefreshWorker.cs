@@ -1,4 +1,5 @@
 using FortniteFestival.Core;
+using FortniteFestival.Core.Persistence;
 using FortniteFestival.Core.Services;
 using FSTService.Api;
 using FSTService.Persistence;
@@ -84,7 +85,7 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
         }
     }
 
-    private async Task RefreshCatalogAsync(CancellationToken ct)
+    internal async Task RefreshCatalogAsync(CancellationToken ct)
     {
         try
         {
@@ -109,6 +110,12 @@ public sealed class SongCatalogRefreshWorker : BackgroundService
             }
 
             await TryGeneratePathsAsync(ct);
+        }
+        catch (SongCatalogPersistenceBusyException ex)
+        {
+            _log.LogWarning(
+                ex,
+                "Song catalog refresh deferred because publication persistence is busy. Will retry at next interval.");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

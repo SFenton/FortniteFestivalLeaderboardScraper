@@ -293,6 +293,10 @@ namespace FortniteFestival.Core.Services
             {
                 await SyncSongsWithResultAsync().ConfigureAwait(false);
             }
+            catch (SongCatalogPersistenceBusyException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 LogLine("Song sync failed: " + ex.Message);
@@ -414,6 +418,7 @@ namespace FortniteFestival.Core.Services
 
                 Song[] songsToPersist;
                 var safetyMergeApplied = false;
+                var stageExactCatalog = false;
                 string failureReason = null;
                 lock (_sync)
                 {
@@ -451,7 +456,7 @@ namespace FortniteFestival.Core.Services
                             LogLine(
                                 $"SongSync: {failureReason} API may be returning a partial catalog.");
                         }
-                        else
+                        else if (droppedProviderObjectCount > 0)
                         {
                             foreach (var id in stale)
                             {
@@ -462,7 +467,10 @@ namespace FortniteFestival.Core.Services
                         }
                     }
 
-                    if (!safetyMergeApplied)
+                    stageExactCatalog =
+                        droppedProviderObjectCount == 0
+                        && !safetyMergeApplied;
+                    if (!safetyMergeApplied && !stageExactCatalog)
                     {
                         foreach (var s in list)
                         {
@@ -473,12 +481,30 @@ namespace FortniteFestival.Core.Services
                         }
                         _songsDirty = true;
                     }
-                    songsToPersist = _songs.Values.ToArray();
+
+                    if (stageExactCatalog)
+                    {
+                        foreach (var s in list)
+                        {
+                            if (_songs.TryGetValue(
+                                    s.track.su,
+                                    out var existing))
+                            {
+                                s.imagePath = existing.imagePath;
+                                s.isSelected = existing.isSelected;
+                                s.isInLocalData =
+                                    existing.isInLocalData;
+                            }
+                        }
+                        songsToPersist = list.ToArray();
+                    }
+                    else
+                    {
+                        songsToPersist = _songs.Values.ToArray();
+                    }
                 }
 
-                var isExact =
-                    droppedProviderObjectCount == 0
-                    && !safetyMergeApplied;
+                var isExact = stageExactCatalog;
                 if (!isExact)
                 {
                     // A blocked bulk eviction leaves the persisted exact
@@ -516,7 +542,6 @@ namespace FortniteFestival.Core.Services
                         persistenceToken: null);
                 }
 
-                _songCatalogBaselineTrusted = true;
                 SongCatalogPersistenceToken persistenceToken = null;
                 if (_persistence is IVersionedSongCatalogPersistence versioned)
                 {
@@ -531,6 +556,37 @@ namespace FortniteFestival.Core.Services
                         .ConfigureAwait(false);
                 }
 
+                lock (_sync)
+                {
+                    var incomingIds = new HashSet<string>(
+                        list.Select(s => s.track.su));
+                    var stale = _songs.Keys
+                        .Where(k => !incomingIds.Contains(k))
+                        .ToList();
+                    foreach (var id in stale)
+                    {
+                        _songs.TryGetValue(id, out var removedSong);
+                        _songs.Remove(id);
+                        LogLine(
+                            $"SongSync: evicted song '{removedSong?.track?.tt ?? id}' (su={id}) — no longer in spark-tracks API.");
+                    }
+
+                    foreach (var s in list)
+                    {
+                        if (_songs.TryGetValue(
+                                s.track.su,
+                                out var existing))
+                        {
+                            existing.ReplaceProviderDataFrom(s);
+                        }
+                        else
+                        {
+                            _songs[s.track.su] = s;
+                        }
+                    }
+                    _songsDirty = true;
+                }
+                _songCatalogBaselineTrusted = true;
                 _trustedSongCatalogToken = persistenceToken;
                 return new SongCatalogSyncResult(
                     providerRequestSucceeded: true,

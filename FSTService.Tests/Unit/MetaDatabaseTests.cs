@@ -344,16 +344,17 @@ public sealed class MetaDatabaseTests : IDisposable
             acquire.ExecuteNonQuery();
         }
 
-        var saveTask = Task.Run(() =>
-            persistence.SaveSongsVersionedAsync(
+        await Assert.ThrowsAsync<SongCatalogPersistenceBusyException>(
+            () => persistence.SaveSongsVersionedAsync(
             [
                 CreateCatalogSong("song-a", "Blocked writer"),
-            ]));
-        await Task.Delay(100);
-        Assert.False(saveTask.IsCompleted);
+            ]).WaitAsync(TimeSpan.FromSeconds(5)));
 
         lockTx.Commit();
-        var token = await saveTask.WaitAsync(TimeSpan.FromSeconds(5));
+        var token = await persistence.SaveSongsVersionedAsync(
+        [
+            CreateCatalogSong("song-a", "Retried writer"),
+        ]).WaitAsync(TimeSpan.FromSeconds(5));
         var scrapeId = Db.StartScrapeRun(token);
 
         Assert.True(scrapeId > 0);

@@ -30,6 +30,43 @@ This roadmap and the service roadmap are accompanied by:
 Delivery requires rendered HTML/text plus SMTP acceptance, or a recorded SMTP
 blocker and exact outbox artifact paths.
 
+## SCRAPE-1277 PRECOMPUTE — song-catalog publication-lock convoy
+
+- During active scrape `1277` precompute, the worker held the granted session
+  shared publication lease required to keep generation reads stable.
+  `SongCatalogRefreshWorker` then attempted to persist the unchanged 697-song
+  provider catalog through blocking `pg_advisory_xact_lock` and remained an
+  ungranted `ExclusiveLock` waiter for more than five minutes.
+- PostgreSQL advisory-lock fairness queued later compatible public shared
+  leases behind that waiter. A representative frozen leaderboard timed out as
+  HTTP `000` after 30 seconds and seven locks briefly waited. Canceling only
+  the ungranted service backend restored HTTP `200` in `0.076 s`; the service
+  log identified `FestivalPersistence.SaveSongsVersionedAsync`, formerly line
+  139, from `SongCatalogRefreshWorker`.
+- The continuous-safe repository repair replaces that blocking acquisition
+  with immediate exclusive try-lock. Under a shared precompute/read lease, an
+  unchanged save may return only after a shared try-lock and bounded exact
+  singleton proof; it performs no song/catalog DML. A changed, inexact,
+  wrong-source, wrong-schema, wrong-count, wrong-hash, invalid-version, or
+  structurally different catalog fails with retryable
+  `SongCatalogPersistenceBusyException`. Exact provider changes remain staged
+  until persistence succeeds, so a busy pass cannot consume the change before
+  the next interval retries it.
+- The periodic service worker logs that deferral and retries at its next
+  interval. Startup and scrape capture surface the same exception. Once the
+  exclusive try-lock succeeds, the existing full transactional persistence
+  and monotonic catalog-version path remains authoritative.
+- Real PostgreSQL tests hold the shared publication lock, verify exact-token
+  unchanged success with unchanged row `xmin` values, zero ungranted advisory
+  waiters, changed-save fast failure, admission of a new shared reader, and
+  normal changed persistence after release. Focused Release validation passed
+  `29/29`; the `FSTService` Release build passed with zero warnings/errors.
+- This phase did not probe or mutate production, deploy, restart services,
+  commit, or push while scrape `1277` was active. Rollback is a code revert to
+  blocking `pg_advisory_xact_lock`; it needs no data/schema rollback but
+  reintroduces the FIFO convoy and is retained only as an emergency
+  compatibility path.
+
 ## SCRAPE-1268 DUAL-LANE — functional data win; shared promotion held
 
 - Run-once scrape `1268` used the contract-bearing

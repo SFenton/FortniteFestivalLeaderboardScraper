@@ -16,6 +16,8 @@ public sealed class FestivalPersistence :
     ILocalSongStatePersistence,
     ISongCatalogBaselineTrustPersistence
 {
+    private const int PublicationLockProbeCommandTimeoutSeconds = 2;
+
     private readonly NpgsqlDataSource _ds;
 
     public FestivalPersistence(NpgsqlDataSource dataSource)
@@ -128,15 +130,24 @@ public sealed class FestivalPersistence :
         await using var conn = await _ds.OpenConnectionAsync();
         await using var tx = await conn.BeginTransactionAsync();
 
-        await using (var publicationLock = conn.CreateCommand())
+        if (!await TryAcquirePublicationLockAsync(
+                conn,
+                tx,
+                shared: false))
         {
-            publicationLock.Transaction = tx;
-            publicationLock.CommandText =
-                "SELECT pg_advisory_xact_lock(@lockKey)";
-            publicationLock.Parameters.AddWithValue(
-                "lockKey",
-                PublicationGenerationSchema.AdvisoryLockKey);
-            await publicationLock.ExecuteNonQueryAsync();
+            var currentToken =
+                await TryReadMatchingCatalogUnderSharedLockAsync(
+                    conn,
+                    tx,
+                    catalogSnapshot);
+            if (currentToken is null)
+            {
+                throw new SongCatalogPersistenceBusyException(
+                    "Song catalog persistence is busy and the current exact provider catalog could not be proven identical to the incoming snapshot. Retry after the active publication operation completes.");
+            }
+
+            await tx.CommitAsync();
+            return currentToken;
         }
 
         foreach (var s in songList)
@@ -208,12 +219,13 @@ public sealed class FestivalPersistence :
         string? existingHash = null;
         var existingSongCount = -1;
         DateTime? existingCapturedAt = null;
+        string? existingSourceKind = null;
         await using (var current = conn.CreateCommand())
         {
             current.Transaction = tx;
             current.CommandText = """
                 SELECT catalog_version, schema_version, content_hash,
-                       song_count, captured_at, is_exact
+                       song_count, captured_at, source_kind, is_exact
                 FROM live_song_catalog
                 WHERE id = TRUE
                 FOR UPDATE
@@ -227,7 +239,8 @@ public sealed class FestivalPersistence :
                 existingHash = reader.GetString(2);
                 existingSongCount = reader.GetInt32(3);
                 existingCapturedAt = reader.GetDateTime(4);
-                existingIsExact = reader.GetBoolean(5);
+                existingSourceKind = reader.GetString(5);
+                existingIsExact = reader.GetBoolean(6);
             }
         }
 
@@ -236,6 +249,10 @@ public sealed class FestivalPersistence :
             && existingIsExact
             && existingSchemaVersion == SongCatalogSnapshotBuilder.SchemaVersion
             && existingSongCount == catalogSnapshot.SongCount
+            && string.Equals(
+                existingSourceKind,
+                "provider_exact",
+                StringComparison.Ordinal)
             && string.Equals(
                 existingHash,
                 catalogSnapshot.ContentHash,
@@ -420,6 +437,75 @@ public sealed class FestivalPersistence :
                     reader.IsDBNull(1) ? null : reader.GetString(1);
             }
         }
+    }
+
+    private static async Task<bool> TryAcquirePublicationLockAsync(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        bool shared)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandTimeout = PublicationLockProbeCommandTimeoutSeconds;
+        cmd.CommandText = shared
+            ? "SELECT pg_try_advisory_xact_lock_shared(@lockKey)"
+            : "SELECT pg_try_advisory_xact_lock(@lockKey)";
+        cmd.Parameters.AddWithValue(
+            "lockKey",
+            PublicationGenerationSchema.AdvisoryLockKey);
+        return await cmd.ExecuteScalarAsync() is true;
+    }
+
+    private static async Task<SongCatalogPersistenceToken?>
+        TryReadMatchingCatalogUnderSharedLockAsync(
+            NpgsqlConnection conn,
+            NpgsqlTransaction tx,
+            SongCatalogSnapshot catalogSnapshot)
+    {
+        if (!await TryAcquirePublicationLockAsync(
+                conn,
+                tx,
+                shared: true))
+        {
+            return null;
+        }
+
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandTimeout = PublicationLockProbeCommandTimeoutSeconds;
+        cmd.CommandText = """
+            SELECT catalog_version, schema_version, content_hash, song_count
+            FROM live_song_catalog
+            WHERE id = TRUE
+              AND catalog_version > 0
+              AND schema_version = @schemaVersion
+              AND content_hash = @contentHash
+              AND song_count = @songCount
+              AND source_kind = 'provider_exact'
+              AND is_exact
+              AND catalog_json = @catalogJson
+            """;
+        cmd.Parameters.AddWithValue(
+            "schemaVersion",
+            SongCatalogSnapshotBuilder.SchemaVersion);
+        cmd.Parameters.AddWithValue(
+            "contentHash",
+            catalogSnapshot.ContentHash);
+        cmd.Parameters.AddWithValue(
+            "songCount",
+            catalogSnapshot.SongCount);
+        cmd.Parameters.Add(
+            "catalogJson",
+            NpgsqlDbType.Jsonb).Value = catalogSnapshot.CatalogJson;
+        await using var reader = await cmd.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+            return null;
+
+        return new SongCatalogPersistenceToken(
+            reader.GetInt64(0),
+            reader.GetInt32(1),
+            reader.GetString(2),
+            reader.GetInt32(3));
     }
 
     private static async Task<long> NextCatalogVersionAsync(

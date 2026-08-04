@@ -421,7 +421,7 @@ path, and post-action validation are documented.
 | Atomic publication Phase 1 | Code complete / deployment and live A/B pending | Removed direct single-user cache publication; added no-store `202` unpublished-user behavior, full-history-only filtering, durable failed-candidate isolation, monotonic pending state, ranked input/projection cuts, background-writer quiescence and drain, queued deferred rivals, empty-staging rejection, and published-only band-history processing. |
 | Atomic publication Phase 2 foundation | Code complete / default-off cutover | Added durable generation lifecycle, current/previous/working pointers, typed surface bindings, cross-process publication locks, `/api/publication`, pinned HTTP/path/WebSocket client support, API-side socket rotation monitoring, and retention-safe predecessor links. `EnablePublicationReadContext` remains off while source cuts proceed. |
 | Publication cache source cut | Code complete / deployment pending | Added generation-keyed live/staging cache tables, explicit build targeting, deadlock-safe cross-process locks, current+previous retention, exact pinned reads, rollback reconciliation, failed-generation cleanup, and watchdog lifecycle parity. |
-| CATALOG-1 immutable song catalog | Code complete / review blockers repaired / deployment and reader cutover pending | Preserves known and unknown Epic fields through sync/restart, persists only complete non-merged responses, pins resume phases to the allocation-time catalog without provider refresh, replaces untrusted legacy baselines wholesale, rejects failed refreshes and token races before new allocation, and retains exact current/previous/working snapshots. No endpoint reader changed and `EnablePublicationReadContext` remains false. |
+| CATALOG-1 immutable song catalog | Code complete / publication-lock convoy repair validated / deployment and reader cutover pending | Preserves known and unknown Epic fields through sync/restart, persists only complete non-merged responses, pins resume phases to the allocation-time catalog without provider refresh, replaces untrusted legacy baselines wholesale, rejects failed refreshes and token races before new allocation, retains exact current/previous/working snapshots, and never queues a refresh writer behind a shared publication lease. No endpoint reader changed and `EnablePublicationReadContext` remains false. |
 | PUB-CONTRACT + PUB-READINESS | Code complete / continuous-safe / default-off | Contract version `1` maps all 55 publication-bound route definitions to required surfaces. Current-generation readiness now validates binding kind/status/version/source identity, promised count/hash, and supported retained-source evidence. `/api/publication` reports effective readiness, while configured unready pinning fails `503` after stale-ID `409` ordering. No schema, deployment, restart, live probe, source cut, or flag enablement occurred. |
 | Next implementation phase | Create remaining immutable source cuts | Version shop, path, overlay, history, and names; replace every remaining `legacy_live_unversioned` binding with a ready generation-addressable binding before enabling request pinning. |
 
@@ -454,6 +454,50 @@ Required follow-up before any rollout:
 4. Re-run full scrape/publication parity and only then consider enabling the
    flag. This phase does not authorize a production config change.
 
+## CATALOG-LOCK continuous-safe convoy repair (2026-08-03)
+
+Decision: accepted as a repository-only correctness and availability repair.
+Scrape `1277` remained untouched while precompute was active: no production
+probe, database mutation, deployment, service restart, commit, or push was
+performed.
+
+Operator-provided incident evidence:
+
+- the scrape `1277` worker held a granted session `ShareLock` on
+  `PublicationGenerationSchema.AdvisoryLockKey` through its publication read
+  lease;
+- periodic `SongCatalogRefreshWorker` attempted the unchanged 697-song
+  `FestivalPersistence.SaveSongsVersionedAsync` path and waited more than five
+  minutes in `pg_advisory_xact_lock` for an `ExclusiveLock`;
+- PostgreSQL advisory-lock fairness then held compatible public `ShareLock`
+  requests behind that exclusive waiter. A representative frozen leaderboard
+  returned HTTP `000` after 30 seconds and seven locks briefly waited;
+- canceling only the ungranted service backend restored the same probe to HTTP
+  `200` in `0.076 s`. The service log located the waiter at
+  `FestivalPersistence.SaveSongsVersionedAsync`, formerly line 139.
+
+| Gate | Implementation/evidence | Decision |
+|---|---|---|
+| Non-queueing writer | Catalog save uses immediate `pg_try_advisory_xact_lock`; the lock probe has a two-second command timeout and never enters the advisory wait queue | Accepted |
+| Unchanged contention | After exclusive try-lock failure, a shared try-lock plus bounded singleton read must match positive version, schema, hash, count, `provider_exact`, `is_exact`, and exact JSONB content | Accepted |
+| Mutation safety | A matching contended catalog returns the existing token without song/catalog DML or sequence allocation | Accepted |
+| Changed contention | Any mismatch, invalid singleton, or unavailable shared try-lock throws retryable `SongCatalogPersistenceBusyException`; exact provider changes remain staged until persistence succeeds, preserving the prior in-memory catalog/token and retry detection | Accepted |
+| Caller behavior | Periodic refresh logs deferral and retries next interval; scrape capture and startup surface the same narrow exception | Accepted |
+| Acquired writer | The original in-lock row recheck, full song upserts, monotonic version allocation, singleton replacement, and transactional commit remain | Accepted |
+| FIFO proof | Real PostgreSQL coverage holds a shared publication lease, observes zero ungranted advisory waiters, and proves a second shared reader can still acquire after a changed save fails | Accepted |
+| Validation | `29/29` focused Release tests passed, including real PostgreSQL catalog persistence, preserved in-memory retry state, and worker retry coverage; the `FSTService` Release build passed with zero warnings/errors | Accepted |
+
+Operational invariant: no song-catalog refresh may create an ungranted
+exclusive waiter on the publication advisory key. The only contended success
+path is a read-only proof that the exact current provider catalog already
+matches the incoming canonical snapshot.
+
+Rollback is code-only: revert `FestivalPersistence.SaveSongsVersionedAsync`
+to blocking `pg_advisory_xact_lock`. That restores the prior serialization
+behavior without schema or data rollback, but deliberately reintroduces the
+FIFO convoy failure mode and therefore is an emergency compatibility rollback,
+not the preferred operating state.
+
 ## CATALOG-1 immutable song catalog source cut (2026-07-31)
 
 CATALOG-1 is an additive storage foundation, not a public read cutover.
@@ -462,7 +506,7 @@ CATALOG-1 is an additive storage foundation, not a public read cutover.
 |---|---|---|
 | Canonical source | Recursive canonical JSON retains known and unknown provider fields (including observed `ag`, `ci`, `isrc`, `mmo`, `nu`, `sm`, and `tb`) while excluding mutable local UI state | Accepted |
 | Restart fidelity | Exact per-song `provider_json` is loaded before legacy columns; provider fixture save/reload produces the same catalog hash and payload | Accepted |
-| Live capture | `FestivalPersistence.SaveSongsVersionedAsync` commits compatibility columns, provider JSON, and the exact versioned singleton under the publication lock | Accepted |
+| Live capture | `FestivalPersistence.SaveSongsVersionedAsync` takes the publication lock only through immediate try-lock; an exact contended match returns the existing token read-only, while an acquired writer commits compatibility columns, provider JSON, and the exact versioned singleton | Accepted |
 | Provider refresh gate | Sync returns request/parse/safety-merge evidence plus an optional exact token; failed, zero-song, partially parsed, duplicate-ID, or blocked-eviction responses do not write `provider_exact` | Accepted |
 | Initialization/local state | Artwork persistence has a local-only contract and cannot update provider JSON or the exact live catalog after a failed startup refresh | Accepted |
 | In-process concurrency | One semaphore covers fetch, merge, snapshot, and persistence, preventing concurrent shop/service/worker refreshes from mutating an exact capture before token return | Accepted |
@@ -473,7 +517,7 @@ CATALOG-1 is an additive storage foundation, not a public read cutover.
 | Publication cut | The worker explicitly persists the exact catalog it will consume; `ScrapeOrchestrator` verifies the token, and allocation copies only the same exact version/hash into `publication_song_catalog` | Accepted |
 | Immutability | Publication validates but never rewrites the catalog snapshot; subsequent live syncs cannot change an allocated generation | Accepted |
 | Bootstrap | Legacy-column reconstruction is labeled inexact and remains `building`; existing unproven ready bindings are downgraded, and only a fresh provider capture can make a new working binding ready | Accepted |
-| Cross-process race | Catalog writers and allocation share the advisory lock; a changed singleton version/hash is fatal before `scrape_log` or generation allocation | Accepted |
+| Cross-process race | Catalog writers and allocation share the advisory lock; catalog refresh never queues behind a shared lease, and a changed singleton version/hash is retryable-busy before `scrape_log` or generation allocation | Accepted |
 | Rollback compatibility | New columns have legacy-safe defaults; a compatibility trigger accepts old writer SQL but invalidates exactness/version trust whenever legacy content changes | Accepted |
 | Retention | Payloads are retained only for current, previous, and working pointers; failed/older payloads are removed and bindings are marked failed/retired | Accepted |
 | Rollback/read safety | Prior binaries ignore the additive tables; `/api/songs`, `/api/shop`, and path readers remain unchanged; `EnablePublicationReadContext=false` | Default-off |

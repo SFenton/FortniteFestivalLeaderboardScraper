@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
@@ -20,6 +21,15 @@ namespace FortniteFestival.Core.Persistence
             SchemaVersion = schemaVersion;
             ContentHash = contentHash;
             SongCount = songCount;
+        }
+    }
+
+    public sealed class SongCatalogPersistenceBusyException
+        : InvalidOperationException
+    {
+        public SongCatalogPersistenceBusyException(string message)
+            : base(message)
+        {
         }
     }
 
