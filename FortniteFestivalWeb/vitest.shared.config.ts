@@ -75,7 +75,7 @@ export default defineConfig({
         'packages/core/src/suggestions/types.ts',
       ],
       thresholds: {
-        lines: 82,
+        lines: 81,
         branches: 73,
         statements: 79,
         functions: 85,

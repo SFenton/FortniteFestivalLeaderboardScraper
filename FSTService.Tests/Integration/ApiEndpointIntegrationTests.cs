@@ -412,6 +412,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
         var scrapeId = metaDb.StartScrapeRun();
         metaDb.CompleteScrapeRun(scrapeId, songsScraped: 12, totalEntries: 345, totalRequests: 67, totalBytes: 890);
+        metaDb.PublishScrapeRun(scrapeId, promoteCachedResponses: false);
 
         var response = await _client.GetAsync("/api/service-info");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -420,10 +421,12 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var lastCompletedUpdate = json.GetProperty("lastCompletedUpdate");
         var startedAt = DateTimeOffset.Parse(lastCompletedUpdate.GetProperty("startedAt").GetString()!);
         var completedAt = DateTimeOffset.Parse(lastCompletedUpdate.GetProperty("completedAt").GetString()!);
+        var publishedAt = DateTimeOffset.Parse(lastCompletedUpdate.GetProperty("publishedAt").GetString()!);
         var nextScheduledUpdateAt = DateTimeOffset.Parse(json.GetProperty("nextScheduledUpdateAt").GetString()!);
 
         Assert.True(startedAt <= completedAt);
-        Assert.Equal(completedAt.AddHours(4), nextScheduledUpdateAt);
+        Assert.True(completedAt <= publishedAt);
+        Assert.Equal(publishedAt.AddHours(4), nextScheduledUpdateAt);
     }
 
     [Fact]
@@ -2935,6 +2938,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
         var cappedScrapeId = metaDb.StartScrapeRun();
         metaDb.CompleteScrapeRun(cappedScrapeId, songsScraped: 1, totalEntries: 100, totalRequests: 1, totalBytes: 1, epicReportedOver100Pages: false);
+        metaDb.PublishScrapeRun(cappedScrapeId, promoteCachedResponses: false);
 
         var cappedResponse = await _client.GetAsync("/api/leaderboard/entryTotalsVisibilityCapped/all?top=10");
         Assert.Equal(HttpStatusCode.OK, cappedResponse.StatusCode);
@@ -2943,6 +2947,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
         var uncappedScrapeId = metaDb.StartScrapeRun();
         metaDb.CompleteScrapeRun(uncappedScrapeId, songsScraped: 1, totalEntries: 100, totalRequests: 1, totalBytes: 1, epicReportedOver100Pages: true);
+        metaDb.PublishScrapeRun(uncappedScrapeId, promoteCachedResponses: false);
 
         var uncappedResponse = await _client.GetAsync("/api/leaderboard/entryTotalsVisibilityUncapped/all?top=10");
         Assert.Equal(HttpStatusCode.OK, uncappedResponse.StatusCode);
@@ -2957,6 +2962,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
         var cappedScrapeId = metaDb.StartScrapeRun();
         metaDb.CompleteScrapeRun(cappedScrapeId, songsScraped: 1, totalEntries: 100, totalRequests: 1, totalBytes: 1, epicReportedOver100Pages: false);
+        metaDb.PublishScrapeRun(cappedScrapeId, promoteCachedResponses: false);
 
         var cappedResponse = await _client.GetAsync("/api/leaderboard/testSong1/Solo_Guitar?top=10");
         Assert.Equal(HttpStatusCode.OK, cappedResponse.StatusCode);
@@ -2965,6 +2971,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
         var uncappedScrapeId = metaDb.StartScrapeRun();
         metaDb.CompleteScrapeRun(uncappedScrapeId, songsScraped: 1, totalEntries: 100, totalRequests: 1, totalBytes: 1, epicReportedOver100Pages: true);
+        metaDb.PublishScrapeRun(uncappedScrapeId, promoteCachedResponses: false);
 
         var uncappedResponse = await _client.GetAsync("/api/leaderboard/testSong1/Solo_Guitar?top=10");
         Assert.Equal(HttpStatusCode.OK, uncappedResponse.StatusCode);
@@ -2979,6 +2986,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
         var cappedScrapeId = metaDb.StartScrapeRun();
         metaDb.CompleteScrapeRun(cappedScrapeId, songsScraped: 1, totalEntries: 100, totalRequests: 1, totalBytes: 1, epicReportedOver100Pages: false);
+        metaDb.PublishScrapeRun(cappedScrapeId, promoteCachedResponses: false);
 
         var cappedResponse = await _client.GetAsync("/api/leaderboard/testSong1/bands/Band_Duets?top=10");
         Assert.Equal(HttpStatusCode.OK, cappedResponse.StatusCode);
@@ -2987,6 +2995,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
         var uncappedScrapeId = metaDb.StartScrapeRun();
         metaDb.CompleteScrapeRun(uncappedScrapeId, songsScraped: 1, totalEntries: 100, totalRequests: 1, totalBytes: 1, epicReportedOver100Pages: true);
+        metaDb.PublishScrapeRun(uncappedScrapeId, promoteCachedResponses: false);
 
         var uncappedResponse = await _client.GetAsync("/api/leaderboard/testSong1/bands/Band_Duets?top=10");
         Assert.Equal(HttpStatusCode.OK, uncappedResponse.StatusCode);
