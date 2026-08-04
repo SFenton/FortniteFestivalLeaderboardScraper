@@ -116,12 +116,14 @@ requires the worker ledger to be absent, explicitly offline, or stale; a live
 heartbeat blocks maintenance even when the worker is idle. Publication-state
 and canonical-ranking locks, `TRUNCATE`/`COPY`, and commit remain on one
 connection and transaction, with the idle-in-transaction timeout disabled
-locally plus bounded lock/statement timeouts. Every runtime-ledger and
-canonical-ranking read performed on a separate connection has an explicit
-30-second command timeout; a stalled read rolls back the lock transaction
-without replacement. Lock loss therefore cannot be followed by a separately
-committed replacement. Frozen reads, unstable publication pointers, active
-updates, and impossible produced rows also fail closed. Because
+locally. Table-lock acquisition remains five seconds; maintenance state and
+separate runtime/canonical reads remain 30 seconds. Only the transactional
+`TRUNCATE`/binary-`COPY` replacement receives a bounded 180-second statement
+timeout, restored to 30 seconds before commit. A stalled read or timed-out
+replacement rolls back without mutation. Lock loss therefore cannot be
+followed by a separately committed replacement. Frozen reads, unstable
+publication pointers, active updates, and impossible produced rows also fail
+closed. Because
 `solo_family_rankings` is an unversioned live table, execute requires a stopped
 worker plus quiesced service (or separately proven bounded table-lock
 behavior). Scrape `1277` is not republished by this repair; the next full

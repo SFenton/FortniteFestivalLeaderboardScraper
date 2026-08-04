@@ -39,6 +39,17 @@ Scrape `1277` is **not** republished by this command. Published scrape `1276`
 remains authoritative. The next full scrape must independently complete all
 publication gates and prove a successful publication.
 
+Two live dry runs on 2026-08-04 matched exactly. The first execute attempt then
+proved that the former shared 30-second statement timeout was too small for the
+replacement: binary `COPY` timed out at row `1,959,000` of `5,245,924`. The
+same-transaction design rolled back completely. The original `5,245,924` rows
+and one invalid row remained, no locks remained, and four public fingerprints
+matched byte-for-byte after the API restart. Evidence is retained at:
+
+```text
+/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/solo-family-backfill-20260804T075218Z/execute.log
+```
+
 ## Fail-closed contract
 
 Both runtime ranking computation and this backfill refuse replacement when any
@@ -110,11 +121,11 @@ Before execute:
 
 The process starts one PostgreSQL transaction, disables
 `idle_in_transaction_session_timeout` locally for that bounded transaction,
-retains a five-second lock timeout and 30-second statement timeout, and takes
-the global publication advisory key with a non-blocking transaction-scoped try
-lock. It then takes a five-second-bounded `SHARE` lock on canonical
-`account_rankings`, holds a share lock on the publication-state singleton, and
-fails closed unless:
+retains a five-second lock timeout and 30-second maintenance statement timeout,
+and takes the global publication advisory key with a non-blocking
+transaction-scoped try lock. It then takes a five-second-bounded `SHARE` lock
+on canonical `account_rankings`, holds a share lock on the publication-state
+singleton, and fails closed unless:
 
 - no `scrape_log` row is running;
 - the worker ledger is absent, explicitly `offline`, or more than 90 seconds
@@ -141,13 +152,16 @@ throws, rolls back the maintenance transaction, and releases all advisory,
 state, and table locks without replacing rows.
 
 The final existing `ReplaceSoloFamilyRankings` path runs on that same
-connection and transaction: `TRUNCATE`, binary `COPY`, and commit. Table-lock
-acquisition
-has a five-second timeout. If the lock-holding connection or transaction is
-lost, replacement cannot commit on a second connection. The transaction
-exposes neither a partially copied table nor a successful `executed` result
-before commit, but concurrent API reads can wait on the table lock; this is why
-live execute requires service quiescence or separately proven bounded locking.
+connection and transaction. Immediately before `TRUNCATE`/binary `COPY`, only
+the statement timeout is raised to a bounded 180 seconds; after successful
+replacement it is restored to 30 seconds before commit. Table-lock acquisition
+remains bounded at five seconds, and source reads remain bounded at 30 seconds.
+If replacement reaches 180 seconds, or the lock-holding connection or
+transaction is lost, the whole transaction rolls back and replacement cannot
+commit on a second connection. The transaction exposes neither a partially
+copied table nor a successful `executed` result before commit, but concurrent
+API reads can wait on the table lock; this is why live execute requires service
+quiescence or separately proven bounded locking.
 
 ## Validation
 

@@ -7,7 +7,9 @@ namespace FSTService.Scraping;
 
 public sealed class SoloFamilyRankingBackfillService
 {
-    private const int DefaultSeparateReadCommandTimeoutSeconds = 30;
+    internal const int DefaultSeparateReadCommandTimeoutSeconds = 30;
+    internal const int DefaultMaintenanceStatementTimeoutSeconds = 30;
+    internal const int DefaultReplacementStatementTimeoutSeconds = 180;
     private static readonly TimeSpan WorkerHeartbeatStaleAfter =
         TimeSpan.FromSeconds(90);
     private readonly GlobalLeaderboardPersistence _persistence;
@@ -15,6 +17,8 @@ public sealed class SoloFamilyRankingBackfillService
     private readonly NpgsqlDataSource _dataSource;
     private readonly ILogger<SoloFamilyRankingBackfillService> _log;
     private readonly int _separateReadCommandTimeoutSeconds;
+    private readonly int _maintenanceStatementTimeoutSeconds;
+    private readonly int _replacementStatementTimeoutSeconds;
     private readonly Action<NpgsqlConnection, NpgsqlTransaction>?
         _afterMaintenanceLocksAcquired;
 
@@ -30,7 +34,11 @@ public sealed class SoloFamilyRankingBackfillService
             log,
             afterMaintenanceLocksAcquired: null,
             separateReadCommandTimeoutSeconds:
-                DefaultSeparateReadCommandTimeoutSeconds)
+                DefaultSeparateReadCommandTimeoutSeconds,
+            maintenanceStatementTimeoutSeconds:
+                DefaultMaintenanceStatementTimeoutSeconds,
+            replacementStatementTimeoutSeconds:
+                DefaultReplacementStatementTimeoutSeconds)
     {
     }
 
@@ -42,7 +50,11 @@ public sealed class SoloFamilyRankingBackfillService
         Action<NpgsqlConnection, NpgsqlTransaction>?
             afterMaintenanceLocksAcquired,
         int separateReadCommandTimeoutSeconds =
-            DefaultSeparateReadCommandTimeoutSeconds)
+            DefaultSeparateReadCommandTimeoutSeconds,
+        int maintenanceStatementTimeoutSeconds =
+            DefaultMaintenanceStatementTimeoutSeconds,
+        int replacementStatementTimeoutSeconds =
+            DefaultReplacementStatementTimeoutSeconds)
     {
         if (separateReadCommandTimeoutSeconds <= 0)
         {
@@ -51,6 +63,18 @@ public sealed class SoloFamilyRankingBackfillService
                 "Separate maintenance reads require a finite positive " +
                 "command timeout.");
         }
+        if (maintenanceStatementTimeoutSeconds <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(maintenanceStatementTimeoutSeconds),
+                "Maintenance statements require a finite positive timeout.");
+        }
+        if (replacementStatementTimeoutSeconds <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(replacementStatementTimeoutSeconds),
+                "Replacement statements require a finite positive timeout.");
+        }
 
         _persistence = persistence;
         _metaDb = metaDb;
@@ -58,6 +82,10 @@ public sealed class SoloFamilyRankingBackfillService
         _log = log;
         _separateReadCommandTimeoutSeconds =
             separateReadCommandTimeoutSeconds;
+        _maintenanceStatementTimeoutSeconds =
+            maintenanceStatementTimeoutSeconds;
+        _replacementStatementTimeoutSeconds =
+            replacementStatementTimeoutSeconds;
         _afterMaintenanceLocksAcquired =
             afterMaintenanceLocksAcquired;
     }
@@ -69,7 +97,10 @@ public sealed class SoloFamilyRankingBackfillService
         {
             using var stateTransaction = maintenanceConnection.BeginTransaction(
                 IsolationLevel.ReadCommitted);
-            ConfigureStateTransaction(maintenanceConnection, stateTransaction);
+            ConfigureStateTransaction(
+                maintenanceConnection,
+                stateTransaction,
+                _maintenanceStatementTimeoutSeconds);
             AcquireMaintenanceLock(
                 maintenanceConnection,
                 stateTransaction);
@@ -190,10 +221,18 @@ public sealed class SoloFamilyRankingBackfillService
             var shouldExecute = execute && build.InvalidRowCount == 0;
             if (shouldExecute)
             {
+                SetStatementTimeout(
+                    maintenanceConnection,
+                    stateTransaction,
+                    _replacementStatementTimeoutSeconds);
                 _metaDb.ReplaceSoloFamilyRankings(
                     build.Rankings,
                     maintenanceConnection,
                     stateTransaction);
+                SetStatementTimeout(
+                    maintenanceConnection,
+                    stateTransaction,
+                    _maintenanceStatementTimeoutSeconds);
             }
 
             stateTransaction.Commit();
@@ -245,15 +284,41 @@ public sealed class SoloFamilyRankingBackfillService
 
     private static void ConfigureStateTransaction(
         NpgsqlConnection connection,
-        NpgsqlTransaction transaction)
+        NpgsqlTransaction transaction,
+        int statementTimeoutSeconds)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
             SET LOCAL idle_in_transaction_session_timeout = 0;
             SET LOCAL lock_timeout = '5s';
-            SET LOCAL statement_timeout = '30s';
+            SELECT set_config(
+                'statement_timeout',
+                @statementTimeout,
+                TRUE);
             """;
+        command.Parameters.AddWithValue(
+            "statementTimeout",
+            $"{statementTimeoutSeconds}s");
+        command.ExecuteNonQuery();
+    }
+
+    private static void SetStatementTimeout(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        int statementTimeoutSeconds)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT set_config(
+                'statement_timeout',
+                @statementTimeout,
+                TRUE)
+            """;
+        command.Parameters.AddWithValue(
+            "statementTimeout",
+            $"{statementTimeoutSeconds}s");
         command.ExecuteNonQuery();
     }
 

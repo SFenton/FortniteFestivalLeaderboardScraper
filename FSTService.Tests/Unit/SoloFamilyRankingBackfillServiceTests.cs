@@ -365,24 +365,7 @@ public sealed class SoloFamilyRankingBackfillServiceTests : IDisposable
             SoloFamilyRankingScopes.Pad,
             "bounded-runtime-read"));
 
-        using (var probe = _fixture.DataSource.OpenConnection())
-        using (var acquire = probe.CreateCommand())
-        {
-            acquire.CommandText =
-                "SELECT pg_try_advisory_lock(@lockKey)";
-            acquire.Parameters.AddWithValue(
-                "lockKey",
-                PublicationGenerationSchema.AdvisoryLockKey);
-            Assert.True(Convert.ToBoolean(acquire.ExecuteScalar()));
-
-            using var release = probe.CreateCommand();
-            release.CommandText =
-                "SELECT pg_advisory_unlock(@lockKey)";
-            release.Parameters.AddWithValue(
-                "lockKey",
-                PublicationGenerationSchema.AdvisoryLockKey);
-            Assert.True(Convert.ToBoolean(release.ExecuteScalar()));
-        }
+        AssertPublicationAdvisoryLockAvailable();
 
         blockerTransaction.Rollback();
         var retry = _service.Rebuild(execute: false);
@@ -420,6 +403,127 @@ public sealed class SoloFamilyRankingBackfillServiceTests : IDisposable
         blockerTransaction.Rollback();
         Assert.Empty(instrumentDb.GetAllRankingSummariesDetailed(
             commandTimeoutSeconds: 1));
+    }
+
+    [Fact]
+    public void DefaultTimeoutBudgetsRemainSeparated()
+    {
+        Assert.Equal(
+            30,
+            SoloFamilyRankingBackfillService
+                .DefaultSeparateReadCommandTimeoutSeconds);
+        Assert.Equal(
+            30,
+            SoloFamilyRankingBackfillService
+                .DefaultMaintenanceStatementTimeoutSeconds);
+        Assert.Equal(
+            180,
+            SoloFamilyRankingBackfillService
+                .DefaultReplacementStatementTimeoutSeconds);
+    }
+
+    [Fact]
+    public async Task ReplacementUsesHigherBoundedStatementBudget()
+    {
+        await CreateStablePublicationAsync(CreateGuitarOnlySong());
+        SeedAccountRanking(
+            "Solo_Guitar",
+            "higher-replacement-budget",
+            songsPlayed: 1,
+            fullComboCount: 1,
+            totalChartedSongs: 1);
+        SeedSentinelSoloFamilyRanking();
+        InstallSlowSoloFamilyInsertTrigger();
+
+        SoloFamilyRankingBackfillResult? report = null;
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            var service = new SoloFamilyRankingBackfillService(
+                _persistence,
+                _fixture.Db,
+                _fixture.DataSource,
+                NullLogger<SoloFamilyRankingBackfillService>.Instance,
+                afterMaintenanceLocksAcquired: null,
+                separateReadCommandTimeoutSeconds: 30,
+                maintenanceStatementTimeoutSeconds: 1,
+                replacementStatementTimeoutSeconds: 5);
+
+            report = service.Rebuild(execute: true);
+        }
+        finally
+        {
+            stopwatch.Stop();
+            DropSlowSoloFamilyInsertTrigger();
+        }
+
+        Assert.NotNull(report);
+        Assert.True(report.Executed);
+        Assert.True(
+            stopwatch.Elapsed >= TimeSpan.FromSeconds(1.5),
+            $"Slow replacement completed too quickly: {stopwatch.Elapsed}.");
+        Assert.NotNull(_fixture.Db.GetSoloFamilyRanking(
+            SoloFamilyRankingScopes.Pad,
+            "higher-replacement-budget"));
+        Assert.Null(_fixture.Db.GetSoloFamilyRanking(
+            SoloFamilyRankingScopes.Pad,
+            "sentinel"));
+    }
+
+    [Fact]
+    public async Task ReplacementTimeoutRollsBackAndReleasesLocks()
+    {
+        await CreateStablePublicationAsync(CreateGuitarOnlySong());
+        SeedAccountRanking(
+            "Solo_Guitar",
+            "replacement-timeout",
+            songsPlayed: 1,
+            fullComboCount: 1,
+            totalChartedSongs: 1);
+        SeedSentinelSoloFamilyRanking();
+        InstallSlowSoloFamilyInsertTrigger();
+
+        Exception? exception = null;
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            var service = new SoloFamilyRankingBackfillService(
+                _persistence,
+                _fixture.Db,
+                _fixture.DataSource,
+                NullLogger<SoloFamilyRankingBackfillService>.Instance,
+                afterMaintenanceLocksAcquired: null,
+                separateReadCommandTimeoutSeconds: 30,
+                maintenanceStatementTimeoutSeconds: 30,
+                replacementStatementTimeoutSeconds: 1);
+
+            exception = Assert.ThrowsAny<Exception>(
+                () => service.Rebuild(execute: true));
+        }
+        finally
+        {
+            stopwatch.Stop();
+            DropSlowSoloFamilyInsertTrigger();
+        }
+
+        Assert.NotNull(exception);
+        Assert.Contains(
+            "statement timeout",
+            exception.ToString(),
+            StringComparison.OrdinalIgnoreCase);
+        Assert.True(
+            stopwatch.Elapsed < TimeSpan.FromSeconds(5),
+            $"Timed-out replacement took {stopwatch.Elapsed}.");
+        Assert.NotNull(_fixture.Db.GetSoloFamilyRanking(
+            SoloFamilyRankingScopes.Pad,
+            "sentinel"));
+        Assert.Null(_fixture.Db.GetSoloFamilyRanking(
+            SoloFamilyRankingScopes.Pad,
+            "replacement-timeout"));
+        AssertPublicationAdvisoryLockAvailable();
+
+        var retry = _service.Rebuild(execute: false);
+        Assert.False(retry.Executed);
     }
 
     [Fact]
@@ -726,6 +830,67 @@ public sealed class SoloFamilyRankingBackfillServiceTests : IDisposable
                 RawWeightedRating = 0.3,
             },
         ]);
+    }
+
+    private void InstallSlowSoloFamilyInsertTrigger()
+    {
+        using var connection = _fixture.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            CREATE OR REPLACE FUNCTION
+                fst_test_slow_solo_family_insert()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $function$
+            BEGIN
+                PERFORM pg_sleep(2);
+                RETURN NEW;
+            END
+            $function$;
+
+            DROP TRIGGER IF EXISTS
+                fst_test_slow_solo_family_insert
+                ON solo_family_rankings;
+            CREATE TRIGGER fst_test_slow_solo_family_insert
+            BEFORE INSERT ON solo_family_rankings
+            FOR EACH ROW
+            EXECUTE FUNCTION fst_test_slow_solo_family_insert();
+            """;
+        command.ExecuteNonQuery();
+    }
+
+    private void DropSlowSoloFamilyInsertTrigger()
+    {
+        using var connection = _fixture.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            DROP TRIGGER IF EXISTS
+                fst_test_slow_solo_family_insert
+                ON solo_family_rankings;
+            DROP FUNCTION IF EXISTS
+                fst_test_slow_solo_family_insert();
+            """;
+        command.ExecuteNonQuery();
+    }
+
+    private void AssertPublicationAdvisoryLockAvailable()
+    {
+        using var probe = _fixture.DataSource.OpenConnection();
+        using var acquire = probe.CreateCommand();
+        acquire.CommandText =
+            "SELECT pg_try_advisory_lock(@lockKey)";
+        acquire.Parameters.AddWithValue(
+            "lockKey",
+            PublicationGenerationSchema.AdvisoryLockKey);
+        Assert.True(Convert.ToBoolean(acquire.ExecuteScalar()));
+
+        using var release = probe.CreateCommand();
+        release.CommandText =
+            "SELECT pg_advisory_unlock(@lockKey)";
+        release.Parameters.AddWithValue(
+            "lockKey",
+            PublicationGenerationSchema.AdvisoryLockKey);
+        Assert.True(Convert.ToBoolean(release.ExecuteScalar()));
     }
 
     private async Task<ProgramResult> RunProgramAsync(
