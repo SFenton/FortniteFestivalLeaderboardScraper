@@ -1,0 +1,1 @@
+import{r as s}from"./index-CRLErFjx.js";function l(t,e,r,n){const o=s.useMemo(()=>e?n?!n(t,e):JSON.stringify(t)!==JSON.stringify(e):!0,[t,e,n]),[u,i]=s.useState(!1),c=s.useCallback(()=>{o?i(!0):r()},[o,r]),f=s.useCallback(()=>{i(!1),r()},[r]);return{hasChanges:o,confirmOpen:u,setConfirmOpen:i,handleClose:c,confirmDiscard:f}}export{l as u};
