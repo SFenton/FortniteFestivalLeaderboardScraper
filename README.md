@@ -85,11 +85,15 @@ dotnet FSTService.dll \
 The execute transaction immutably audits every original row, merges only the
 approved zero-score/rank-metadata duplicates, and replaces `ix_sh_dedup` with
 PostgreSQL 17 `UNIQUE ... NULLS NOT DISTINCT`. It is fail-closed on unexpected
-history, digest drift, or lock timeout. Schema initialization adds only the
-audit tables. See
+history, digest drift, lock timeout, or an absent/inexact immutable audit
+schema. Execute locks `score_history` before its first snapshot-establishing
+query, then takes the advisory lock. Do not run the unbounded
+`--initialize-schema-only` command solely as maintenance preparation; normal
+release initialization owns schema repair. Rollback also refuses a reused
+audited non-survivor ID before deleting anything. See
 [`docs/database/ScoreHistoryDedupMaintenanceRunbook.md`](docs/database/ScoreHistoryDedupMaintenanceRunbook.md)
-for maintenance-window checks, locks, runtime estimate, validation, and exact
-per-run rollback SQL.
+for the bounded catalog preflight, maintenance-window checks, locks, runtime
+estimate, validation, and exact per-run rollback SQL.
 
 Worker correctness rollout uses three rollback-safe environment switches:
 

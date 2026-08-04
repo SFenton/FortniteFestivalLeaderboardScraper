@@ -21,6 +21,12 @@ public sealed class ScoreHistoryDedupMaintenanceService
     private const string TargetIndexState = "nulls_not_distinct";
     private const string UnexpectedIndexState = "unexpected";
     private const string MissingIndexState = "missing";
+    private const string AuditRunTable =
+        "score_history_dedup_maintenance_runs";
+    private const string AuditOriginalTable =
+        "score_history_dedup_original_rows";
+    private const string AuditRunSequence =
+        "score_history_dedup_maintenance_runs_maintenance_run_id_seq";
 
     private static readonly string[] ExpectedIndexColumns =
     [
@@ -29,6 +35,183 @@ public sealed class ScoreHistoryDedupMaintenanceService
         "instrument",
         "new_score",
         "score_achieved_at",
+    ];
+
+    private static readonly AuditColumnExpectation[] ExpectedAuditColumns =
+    [
+        new(AuditRunTable, 1, "maintenance_run_id", "bigint", true, "sequence"),
+        new(AuditRunTable, 2, "maintenance_purpose", "text", true, null),
+        new(AuditRunTable, 3, "maintenance_contract_version", "integer", true, null),
+        new(AuditRunTable, 4, "execution_source", "text", true, null),
+        new(AuditRunTable, 5, "dry_run_digest", "text", true, null),
+        new(AuditRunTable, 6, "canonical_candidate_data", "text", true, null),
+        new(AuditRunTable, 7, "safety_classification", "text", true, null),
+        new(AuditRunTable, 8, "database_name", "text", true, null),
+        new(AuditRunTable, 9, "database_user", "text", true, null),
+        new(AuditRunTable, 10, "server_version_num", "integer", true, null),
+        new(AuditRunTable, 11, "duplicate_row_count", "bigint", true, null),
+        new(AuditRunTable, 12, "duplicate_group_count", "bigint", true, null),
+        new(AuditRunTable, 13, "excess_row_count", "bigint", true, null),
+        new(AuditRunTable, 14, "affected_account_count", "bigint", true, null),
+        new(AuditRunTable, 15, "affected_song_count", "bigint", true, null),
+        new(AuditRunTable, 16, "original_rows_audited", "bigint", true, null),
+        new(AuditRunTable, 17, "survivor_rows_updated", "bigint", true, null),
+        new(AuditRunTable, 18, "rows_deleted", "bigint", true, null),
+        new(AuditRunTable, 19, "index_replaced", "boolean", true, null),
+        new(AuditRunTable, 20, "index_definition_before", "text", true, null),
+        new(AuditRunTable, 21, "index_definition_after", "text", true, null),
+        new(AuditRunTable, 22, "rollback_sql", "text", true, null),
+        new(
+            AuditRunTable,
+            23,
+            "executed_at",
+            "timestamp with time zone",
+            true,
+            "clock_timestamp()"),
+        new(AuditOriginalTable, 1, "maintenance_run_id", "bigint", true, null),
+        new(AuditOriginalTable, 2, "original_id", "integer", true, null),
+        new(AuditOriginalTable, 3, "song_id", "text", true, null),
+        new(AuditOriginalTable, 4, "instrument", "text", true, null),
+        new(AuditOriginalTable, 5, "account_id", "text", true, null),
+        new(AuditOriginalTable, 6, "old_score", "integer", false, null),
+        new(AuditOriginalTable, 7, "new_score", "integer", true, null),
+        new(AuditOriginalTable, 8, "old_rank", "integer", false, null),
+        new(AuditOriginalTable, 9, "new_rank", "integer", false, null),
+        new(AuditOriginalTable, 10, "accuracy", "integer", false, null),
+        new(AuditOriginalTable, 11, "is_full_combo", "boolean", false, null),
+        new(AuditOriginalTable, 12, "stars", "integer", false, null),
+        new(AuditOriginalTable, 13, "percentile", "real", false, null),
+        new(AuditOriginalTable, 14, "season", "integer", false, null),
+        new(
+            AuditOriginalTable,
+            15,
+            "score_achieved_at",
+            "timestamp with time zone",
+            false,
+            null),
+        new(AuditOriginalTable, 16, "season_rank", "integer", false, null),
+        new(AuditOriginalTable, 17, "all_time_rank", "integer", false, null),
+        new(AuditOriginalTable, 18, "difficulty", "integer", false, null),
+        new(
+            AuditOriginalTable,
+            19,
+            "changed_at",
+            "timestamp with time zone",
+            true,
+            null),
+    ];
+
+    private static readonly AuditConstraintExpectation[]
+        ExpectedAuditConstraints =
+        [
+            new(
+                AuditRunTable,
+                "PRIMARY KEY (maintenance_run_id)"),
+            new(
+                AuditRunTable,
+                "CHECK (maintenance_purpose = " +
+                "'score_history_null_timestamp_dedup_v1'::text)"),
+            new(
+                AuditRunTable,
+                "CHECK (maintenance_contract_version = 1)"),
+            new(
+                AuditRunTable,
+                "CHECK (execution_source = 'explicit_cli'::text)"),
+            new(
+                AuditRunTable,
+                "CHECK (dry_run_digest ~ '^[0-9a-f]{64}$'::text)"),
+            new(
+                AuditRunTable,
+                "CHECK (safety_classification = 'ready'::text)"),
+            new(AuditRunTable, "CHECK (duplicate_row_count >= 0)"),
+            new(AuditRunTable, "CHECK (duplicate_group_count >= 0)"),
+            new(AuditRunTable, "CHECK (excess_row_count >= 0)"),
+            new(AuditRunTable, "CHECK (affected_account_count >= 0)"),
+            new(AuditRunTable, "CHECK (affected_song_count >= 0)"),
+            new(AuditRunTable, "CHECK (original_rows_audited >= 0)"),
+            new(AuditRunTable, "CHECK (survivor_rows_updated >= 0)"),
+            new(AuditRunTable, "CHECK (rows_deleted >= 0)"),
+            new(
+                AuditRunTable,
+                "CHECK (duplicate_row_count = " +
+                "(duplicate_group_count + excess_row_count))"),
+            new(
+                AuditRunTable,
+                "CHECK (original_rows_audited = duplicate_row_count)"),
+            new(
+                AuditRunTable,
+                "CHECK (survivor_rows_updated = duplicate_group_count)"),
+            new(
+                AuditRunTable,
+                "CHECK (rows_deleted = excess_row_count)"),
+            new(
+                AuditOriginalTable,
+                "PRIMARY KEY (maintenance_run_id, original_id)"),
+            new(
+                AuditOriginalTable,
+                "FOREIGN KEY (maintenance_run_id) REFERENCES " +
+                "score_history_dedup_maintenance_runs(maintenance_run_id) " +
+                "ON DELETE RESTRICT"),
+            new(AuditOriginalTable, "CHECK (new_score = 0)"),
+        ];
+
+    private static readonly AuditFunctionExpectation[]
+        ExpectedAuditFunctions =
+        [
+            new(
+                "reject_score_history_dedup_audit_mutation",
+                """
+                BEGIN
+                    RAISE EXCEPTION
+                        'Score-history dedup audit records are immutable.'
+                        USING ERRCODE = '55000';
+                END
+                """),
+            new(
+                "reject_score_history_dedup_original_append",
+                """
+                DECLARE
+                    expected_rows BIGINT;
+                    current_rows BIGINT;
+                BEGIN
+                    SELECT original_rows_audited
+                    INTO expected_rows
+                    FROM score_history_dedup_maintenance_runs
+                    WHERE maintenance_run_id = NEW.maintenance_run_id;
+
+                    SELECT COUNT(*)::BIGINT
+                    INTO current_rows
+                    FROM score_history_dedup_original_rows
+                    WHERE maintenance_run_id = NEW.maintenance_run_id;
+
+                    IF expected_rows IS NULL OR current_rows >= expected_rows THEN
+                        RAISE EXCEPTION
+                            'Score-history dedup original-row audit is sealed.'
+                            USING ERRCODE = '55000';
+                    END IF;
+
+                    RETURN NEW;
+                END
+                """),
+        ];
+
+    private static readonly AuditTriggerExpectation[] ExpectedAuditTriggers =
+    [
+        new(
+            AuditRunTable,
+            "trg_reject_score_history_dedup_run_mutation",
+            "reject_score_history_dedup_audit_mutation",
+            58),
+        new(
+            AuditOriginalTable,
+            "trg_reject_score_history_dedup_original_append",
+            "reject_score_history_dedup_original_append",
+            7),
+        new(
+            AuditOriginalTable,
+            "trg_reject_score_history_dedup_original_mutation",
+            "reject_score_history_dedup_audit_mutation",
+            58),
     ];
 
     private static readonly string[] InvariantFieldNames =
@@ -283,14 +466,26 @@ public sealed class ScoreHistoryDedupMaintenanceService
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandTimeout = commandTimeoutSeconds;
-        cmd.CommandText = """
-            SELECT set_config('lock_timeout', @lockTimeout, true);
-            SELECT set_config('statement_timeout', @statementTimeout, true);
-            """;
+        cmd.CommandText = (lockTimeout, statementTimeout) switch
+        {
+            (DryRunLockTimeout, DryRunStatementTimeout) => """
+                SET LOCAL lock_timeout = '2s';
+                SET LOCAL statement_timeout = '120s';
+                """,
+            (ExecuteLockTimeout, ExecuteStatementTimeout) => """
+                SET LOCAL lock_timeout = '3s';
+                SET LOCAL statement_timeout = '180s';
+                """,
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(lockTimeout),
+                "Unsupported score-history maintenance timeout contract."),
+        };
         if (readOnly)
-            cmd.CommandText = $"SET TRANSACTION READ ONLY;{Environment.NewLine}{cmd.CommandText}";
-        cmd.Parameters.AddWithValue("lockTimeout", lockTimeout);
-        cmd.Parameters.AddWithValue("statementTimeout", statementTimeout);
+        {
+            cmd.CommandText =
+                $"SET TRANSACTION READ ONLY;{Environment.NewLine}" +
+                cmd.CommandText;
+        }
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -299,31 +494,31 @@ public sealed class ScoreHistoryDedupMaintenanceService
         NpgsqlTransaction tx,
         CancellationToken ct)
     {
-        await using (var advisory = conn.CreateCommand())
+        await using (var tableLock = conn.CreateCommand())
         {
-            advisory.Transaction = tx;
-            advisory.CommandTimeout = ExecuteCommandTimeoutSeconds;
-            advisory.CommandText = """
-                SELECT pg_try_advisory_xact_lock(
-                    hashtextextended(@lockKey, 0));
+            tableLock.Transaction = tx;
+            tableLock.CommandTimeout = ExecuteCommandTimeoutSeconds;
+            tableLock.CommandText = """
+                LOCK TABLE public.score_history
+                IN SHARE ROW EXCLUSIVE MODE;
                 """;
-            advisory.Parameters.AddWithValue("lockKey", AdvisoryLockKey);
-            if (await advisory.ExecuteScalarAsync(ct) is not true)
-            {
-                throw new InvalidOperationException(
-                    "Another score-history dedup maintenance transaction " +
-                    "holds the advisory lock; no rows were written.");
-            }
+            await tableLock.ExecuteNonQueryAsync(ct);
         }
 
-        await using var tableLock = conn.CreateCommand();
-        tableLock.Transaction = tx;
-        tableLock.CommandTimeout = ExecuteCommandTimeoutSeconds;
-        tableLock.CommandText = """
-            LOCK TABLE public.score_history
-            IN SHARE ROW EXCLUSIVE MODE;
+        await using var advisory = conn.CreateCommand();
+        advisory.Transaction = tx;
+        advisory.CommandTimeout = ExecuteCommandTimeoutSeconds;
+        advisory.CommandText = """
+            SELECT pg_try_advisory_xact_lock(
+                hashtextextended(@lockKey, 0));
             """;
-        await tableLock.ExecuteNonQueryAsync(ct);
+        advisory.Parameters.AddWithValue("lockKey", AdvisoryLockKey);
+        if (await advisory.ExecuteScalarAsync(ct) is not true)
+        {
+            throw new InvalidOperationException(
+                "Another score-history dedup maintenance transaction " +
+                "holds the advisory lock; no rows were written.");
+        }
     }
 
     private static async Task<ScoreHistoryDedupAnalysis> BuildAnalysisAsync(
@@ -450,29 +645,508 @@ public sealed class ScoreHistoryDedupMaintenanceService
         NpgsqlTransaction tx,
         CancellationToken ct)
     {
+        var failures = new List<string>();
+        await ValidateAuditTablesAndColumnsAsync(
+            conn,
+            tx,
+            failures,
+            ct);
+        await ValidateAuditConstraintsAsync(conn, tx, failures, ct);
+        await ValidateAuditFunctionsAndTriggersAsync(
+            conn,
+            tx,
+            failures,
+            ct);
+        await ValidateAuditIndexAndSequenceAsync(
+            conn,
+            tx,
+            failures,
+            ct);
+
+        if (failures.Count > 0)
+        {
+            var distinctFailures = failures
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(value => value, StringComparer.Ordinal)
+                .ToArray();
+            throw new InvalidOperationException(
+                "Score-history dedup audit schema preflight failed: " +
+                $"{string.Join(", ", distinctFailures)}. Maintenance never " +
+                "creates or repairs audit schema; normal release schema " +
+                "initialization owns it.");
+        }
+    }
+
+    private static async Task ValidateAuditTablesAndColumnsAsync(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        ICollection<string> failures,
+        CancellationToken ct)
+    {
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandTimeout = DryRunCommandTimeoutSeconds;
         cmd.CommandText = """
             SELECT
-                to_regclass(
-                    'public.score_history_dedup_maintenance_runs')
-                    IS NOT NULL,
-                to_regclass(
-                    'public.score_history_dedup_original_rows')
-                    IS NOT NULL;
+                relation.relname,
+                relation.relkind = 'r'
+                    AND relation.relpersistence = 'p'
+                    AND NOT relation.relispartition
+                    AND NOT relation.relrowsecurity
+                    AND NOT relation.relforcerowsecurity
+            FROM pg_class relation
+            JOIN pg_namespace relation_namespace
+              ON relation_namespace.oid = relation.relnamespace
+            WHERE relation_namespace.nspname = 'public'
+              AND relation.relname = ANY(@tableNames)
+            ORDER BY relation.relname;
+
+            SELECT
+                relation.relname,
+                attribute.attnum,
+                attribute.attname,
+                format_type(attribute.atttypid, attribute.atttypmod),
+                attribute.attnotnull,
+                COALESCE(
+                    pg_get_expr(
+                        attribute_default.adbin,
+                        attribute_default.adrelid),
+                    ''),
+                attribute.attidentity = '',
+                attribute.attgenerated = '',
+                attribute.attcollation = type_row.typcollation
+            FROM pg_class relation
+            JOIN pg_namespace relation_namespace
+              ON relation_namespace.oid = relation.relnamespace
+            JOIN pg_attribute attribute
+              ON attribute.attrelid = relation.oid
+             AND attribute.attnum > 0
+             AND NOT attribute.attisdropped
+            JOIN pg_type type_row
+              ON type_row.oid = attribute.atttypid
+            LEFT JOIN pg_attrdef attribute_default
+              ON attribute_default.adrelid = relation.oid
+             AND attribute_default.adnum = attribute.attnum
+            WHERE relation_namespace.nspname = 'public'
+              AND relation.relname = ANY(@tableNames)
+            ORDER BY relation.relname, attribute.attnum;
             """;
+        cmd.Parameters.Add(
+            "tableNames",
+            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            new[] { AuditRunTable, AuditOriginalTable };
+
+        var exactTables = new Dictionary<string, bool>(
+            StringComparer.Ordinal);
+        var actualColumns = new List<AuditColumnState>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            exactTables[reader.GetString(0)] = reader.GetBoolean(1);
+        }
+
+        await reader.NextResultAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            actualColumns.Add(new AuditColumnState(
+                TableName: reader.GetString(0),
+                Ordinal: reader.GetInt16(1),
+                Name: reader.GetString(2),
+                TypeName: reader.GetString(3),
+                NotNull: reader.GetBoolean(4),
+                DefaultExpression: reader.GetString(5),
+                NoIdentity: reader.GetBoolean(6),
+                NoGeneratedExpression: reader.GetBoolean(7),
+                DefaultCollation: reader.GetBoolean(8)));
+        }
+
+        foreach (var tableName in new[] { AuditRunTable, AuditOriginalTable })
+        {
+            if (!exactTables.TryGetValue(tableName, out var exact) || !exact)
+                failures.Add($"table {tableName}");
+        }
+
+        var expectedByKey = ExpectedAuditColumns.ToDictionary(
+            column => (column.TableName, column.Ordinal));
+        var actualByKey = actualColumns.ToDictionary(
+            column => (column.TableName, column.Ordinal));
+        foreach (var (key, expected) in expectedByKey)
+        {
+            if (!actualByKey.TryGetValue(key, out var actual)
+                || actual.Name != expected.Name
+                || actual.TypeName != expected.TypeName
+                || actual.NotNull != expected.NotNull
+                || !actual.NoIdentity
+                || !actual.NoGeneratedExpression
+                || !actual.DefaultCollation
+                || !AuditDefaultMatches(
+                    expected.DefaultExpression,
+                    actual.DefaultExpression))
+            {
+                failures.Add($"column {expected.TableName}.{expected.Name}");
+            }
+        }
+
+        foreach (var actual in actualColumns)
+        {
+            if (!expectedByKey.ContainsKey((actual.TableName, actual.Ordinal)))
+                failures.Add($"unexpected column {actual.TableName}.{actual.Name}");
+        }
+    }
+
+    private static bool AuditDefaultMatches(
+        string? expected,
+        string actual)
+    {
+        var normalized = NormalizeIndexDefinition(actual);
+        if (expected is null)
+            return normalized.Length == 0;
+        if (expected == "sequence")
+        {
+            return normalized is
+                $"nextval('{AuditRunSequence}'::regclass)"
+                or $"nextval('public.{AuditRunSequence}'::regclass)";
+        }
+
+        return normalized.Equals(expected, StringComparison.Ordinal);
+    }
+
+    private static async Task ValidateAuditConstraintsAsync(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        ICollection<string> failures,
+        CancellationToken ct)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandTimeout = DryRunCommandTimeoutSeconds;
+        cmd.CommandText = """
+            SELECT
+                relation.relname,
+                pg_get_constraintdef(constraint_row.oid, TRUE),
+                constraint_row.convalidated
+                    AND NOT constraint_row.condeferrable
+                    AND NOT constraint_row.condeferred
+                    AND (
+                        constraint_row.contype <> 'c'
+                        OR NOT constraint_row.connoinherit)
+            FROM pg_constraint constraint_row
+            JOIN pg_class relation
+              ON relation.oid = constraint_row.conrelid
+            JOIN pg_namespace relation_namespace
+              ON relation_namespace.oid = relation.relnamespace
+            WHERE relation_namespace.nspname = 'public'
+              AND relation.relname = ANY(@tableNames)
+            ORDER BY relation.relname, constraint_row.oid;
+            """;
+        cmd.Parameters.Add(
+            "tableNames",
+            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            new[] { AuditRunTable, AuditOriginalTable };
+
+        var actual = new List<AuditConstraintExpectation>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var constraint = new AuditConstraintExpectation(
+                reader.GetString(0),
+                CanonicalizeCatalogDefinition(reader.GetString(1)));
+            actual.Add(constraint);
+            if (!reader.GetBoolean(2))
+            {
+                failures.Add(
+                    $"constraint flags {constraint.TableName}: " +
+                    constraint.Definition);
+            }
+        }
+
+        var expected = ExpectedAuditConstraints
+            .Select(item => new AuditConstraintExpectation(
+                item.TableName,
+                CanonicalizeCatalogDefinition(item.Definition)))
+            .OrderBy(item => item.TableName, StringComparer.Ordinal)
+            .ThenBy(item => item.Definition, StringComparer.Ordinal)
+            .ToArray();
+        var orderedActual = actual
+            .OrderBy(item => item.TableName, StringComparer.Ordinal)
+            .ThenBy(item => item.Definition, StringComparer.Ordinal)
+            .ToArray();
+        foreach (var missing in expected.Except(orderedActual))
+        {
+            failures.Add(
+                $"missing constraint {missing.TableName}: " +
+                missing.Definition);
+        }
+        foreach (var unexpected in orderedActual.Except(expected))
+        {
+            failures.Add(
+                $"unexpected constraint {unexpected.TableName}: " +
+                unexpected.Definition);
+        }
+    }
+
+    private static async Task ValidateAuditFunctionsAndTriggersAsync(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        ICollection<string> failures,
+        CancellationToken ct)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandTimeout = DryRunCommandTimeoutSeconds;
+        cmd.CommandText = """
+            SELECT
+                procedure_row.proname,
+                pg_get_function_identity_arguments(procedure_row.oid) = ''
+                    AND format_type(
+                        procedure_row.prorettype,
+                        NULL) = 'trigger'
+                    AND language_row.lanname = 'plpgsql'
+                    AND procedure_row.prokind = 'f'
+                    AND procedure_row.pronargs = 0
+                    AND NOT procedure_row.proretset
+                    AND NOT procedure_row.proisstrict
+                    AND procedure_row.provolatile = 'v'
+                    AND procedure_row.proparallel = 'u'
+                    AND NOT procedure_row.prosecdef
+                    AND NOT procedure_row.proleakproof
+                    AND procedure_row.proconfig IS NULL,
+                procedure_row.prosrc
+            FROM pg_proc procedure_row
+            JOIN pg_namespace procedure_namespace
+              ON procedure_namespace.oid = procedure_row.pronamespace
+            JOIN pg_language language_row
+              ON language_row.oid = procedure_row.prolang
+            WHERE procedure_namespace.nspname = 'public'
+              AND procedure_row.proname = ANY(@functionNames)
+            ORDER BY procedure_row.proname, procedure_row.oid;
+
+            SELECT
+                relation.relname,
+                trigger_row.tgname,
+                procedure_row.proname,
+                trigger_row.tgtype::INTEGER,
+                trigger_row.tgenabled = 'O'
+                    AND trigger_row.tgnargs = 0
+                    AND trigger_row.tgqual IS NULL
+                    AND trigger_row.tgattr = ''::int2vector
+                    AND procedure_namespace.nspname = 'public'
+            FROM pg_trigger trigger_row
+            JOIN pg_class relation
+              ON relation.oid = trigger_row.tgrelid
+            JOIN pg_namespace relation_namespace
+              ON relation_namespace.oid = relation.relnamespace
+            JOIN pg_proc procedure_row
+              ON procedure_row.oid = trigger_row.tgfoid
+            JOIN pg_namespace procedure_namespace
+              ON procedure_namespace.oid = procedure_row.pronamespace
+            WHERE relation_namespace.nspname = 'public'
+              AND relation.relname = ANY(@tableNames)
+              AND NOT trigger_row.tgisinternal
+            ORDER BY relation.relname, trigger_row.tgname;
+            """;
+        cmd.Parameters.Add(
+            "functionNames",
+            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            ExpectedAuditFunctions.Select(item => item.Name).ToArray();
+        cmd.Parameters.Add(
+            "tableNames",
+            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            new[] { AuditRunTable, AuditOriginalTable };
+
+        var actualFunctions = new List<AuditFunctionState>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            actualFunctions.Add(new AuditFunctionState(
+                Name: reader.GetString(0),
+                PropertiesExact: reader.GetBoolean(1),
+                Body: reader.GetString(2)));
+        }
+
+        foreach (var expected in ExpectedAuditFunctions)
+        {
+            var matches = actualFunctions
+                .Where(item => item.Name == expected.Name)
+                .ToArray();
+            if (matches.Length != 1
+                || !matches[0].PropertiesExact
+                || !NormalizeIndexDefinition(matches[0].Body).Equals(
+                    NormalizeIndexDefinition(expected.Body),
+                    StringComparison.Ordinal))
+            {
+                failures.Add($"function {expected.Name}");
+            }
+        }
+        if (actualFunctions.Count != ExpectedAuditFunctions.Length)
+            failures.Add("unexpected audit function overload");
+
+        await reader.NextResultAsync(ct);
+        var actualTriggers = new List<AuditTriggerState>();
+        while (await reader.ReadAsync(ct))
+        {
+            actualTriggers.Add(new AuditTriggerState(
+                TableName: reader.GetString(0),
+                Name: reader.GetString(1),
+                FunctionName: reader.GetString(2),
+                Type: reader.GetInt32(3),
+                PropertiesExact: reader.GetBoolean(4)));
+        }
+
+        foreach (var expected in ExpectedAuditTriggers)
+        {
+            var match = actualTriggers.SingleOrDefault(item =>
+                item.TableName == expected.TableName
+                && item.Name == expected.Name);
+            if (match is null
+                || match.FunctionName != expected.FunctionName
+                || match.Type != expected.Type
+                || !match.PropertiesExact)
+            {
+                failures.Add($"trigger {expected.Name}");
+            }
+        }
+        if (actualTriggers.Count != ExpectedAuditTriggers.Length)
+            failures.Add("unexpected audit trigger");
+    }
+
+    private static async Task ValidateAuditIndexAndSequenceAsync(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        ICollection<string> failures,
+        CancellationToken ct)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandTimeout = DryRunCommandTimeoutSeconds;
+        cmd.CommandText = """
+            SELECT
+                NOT index_state.indisunique
+                    AND NOT index_state.indisprimary
+                    AND NOT index_state.indisexclusion
+                    AND index_relation.relkind = 'i'
+                    AND index_relation.relpersistence = 'p'
+                    AND NOT index_relation.relispartition
+                    AND index_state.indisvalid
+                    AND index_state.indisready
+                    AND index_state.indislive
+                    AND NOT index_state.indisreplident
+                    AND index_state.indnkeyatts = 2
+                    AND index_state.indnatts = 2
+                    AND access_method.amname = 'btree'
+                    AND index_state.indpred IS NULL
+                    AND index_state.indexprs IS NULL,
+                ARRAY(
+                    SELECT attribute.attname
+                    FROM unnest(index_state.indkey)
+                        WITH ORDINALITY AS key_column(attnum, ordinality)
+                    JOIN pg_attribute attribute
+                      ON attribute.attrelid = index_state.indrelid
+                     AND attribute.attnum = key_column.attnum
+                    ORDER BY key_column.ordinality
+                ),
+                ARRAY(
+                    SELECT COALESCE(
+                        pg_index_column_has_property(
+                            index_state.indexrelid,
+                            ordinal,
+                            'desc'),
+                        FALSE)
+                    FROM generate_series(
+                        1,
+                        index_state.indnkeyatts) ordinal
+                    ORDER BY ordinal
+                ),
+                ARRAY(
+                    SELECT COALESCE(
+                        pg_index_column_has_property(
+                            index_state.indexrelid,
+                            ordinal,
+                            'nulls_first'),
+                        FALSE)
+                    FROM generate_series(
+                        1,
+                        index_state.indnkeyatts) ordinal
+                    ORDER BY ordinal
+                ),
+                ARRAY(
+                    SELECT operator_class.opcname
+                    FROM unnest(index_state.indclass)
+                        WITH ORDINALITY AS key_class(opclass_oid, ordinality)
+                    JOIN pg_opclass operator_class
+                      ON operator_class.oid = key_class.opclass_oid
+                    ORDER BY key_class.ordinality
+                )
+            FROM pg_class index_relation
+            JOIN pg_namespace index_namespace
+              ON index_namespace.oid = index_relation.relnamespace
+            JOIN pg_index index_state
+              ON index_state.indexrelid = index_relation.oid
+            JOIN pg_class table_relation
+              ON table_relation.oid = index_state.indrelid
+            JOIN pg_namespace table_namespace
+              ON table_namespace.oid = table_relation.relnamespace
+            JOIN pg_am access_method
+              ON access_method.oid = index_relation.relam
+            WHERE index_namespace.nspname = 'public'
+              AND index_relation.relname =
+                  'ix_score_history_dedup_runs_digest'
+              AND table_namespace.nspname = 'public'
+              AND table_relation.relname =
+                  'score_history_dedup_maintenance_runs';
+
+            SELECT
+                pg_get_serial_sequence(
+                    'public.score_history_dedup_maintenance_runs',
+                    'maintenance_run_id') =
+                    'public.score_history_dedup_maintenance_runs_maintenance_run_id_seq'
+                AND sequence_state.seqtypid = 'bigint'::regtype
+                AND sequence_state.seqstart = 1
+                AND sequence_state.seqincrement = 1
+                AND sequence_state.seqmin = 1
+                AND sequence_state.seqmax = 9223372036854775807
+                AND sequence_state.seqcache = 1
+                AND NOT sequence_state.seqcycle
+            FROM pg_class sequence_relation
+            JOIN pg_namespace sequence_namespace
+              ON sequence_namespace.oid = sequence_relation.relnamespace
+            JOIN pg_sequence sequence_state
+              ON sequence_state.seqrelid = sequence_relation.oid
+            WHERE sequence_namespace.nspname = 'public'
+              AND sequence_relation.relname =
+                  'score_history_dedup_maintenance_runs_maintenance_run_id_seq';
+            """;
+
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct)
             || !reader.GetBoolean(0)
-            || !reader.GetBoolean(1))
+            || !reader.GetFieldValue<string[]>(1).SequenceEqual(
+                new[] { "dry_run_digest", "maintenance_run_id" },
+                StringComparer.Ordinal)
+            || !reader.GetFieldValue<bool[]>(2).SequenceEqual(
+                new[] { false, true })
+            || !reader.GetFieldValue<bool[]>(3).SequenceEqual(
+                new[] { false, true })
+            || !reader.GetFieldValue<string[]>(4).SequenceEqual(
+                new[] { "text_ops", "int8_ops" },
+                StringComparer.Ordinal)
+            || await reader.ReadAsync(ct))
         {
-            throw new InvalidOperationException(
-                "Score-history dedup audit schema is missing. Run the " +
-                "explicit --initialize-schema-only command before dry run; " +
-                "maintenance never creates schema automatically.");
+            failures.Add("index ix_score_history_dedup_runs_digest");
+        }
+
+        await reader.NextResultAsync(ct);
+        if (!await reader.ReadAsync(ct)
+            || !reader.GetBoolean(0)
+            || await reader.ReadAsync(ct))
+        {
+            failures.Add($"sequence {AuditRunSequence}");
         }
     }
+
+    private static string CanonicalizeCatalogDefinition(string definition)
+        => NormalizeIndexDefinition(definition)
+            .Replace("public.", string.Empty, StringComparison.Ordinal);
 
     private static async Task<ScoreHistoryCounts> LoadCountsAsync(
         NpgsqlConnection conn,
@@ -1650,6 +2324,31 @@ public sealed class ScoreHistoryDedupMaintenanceService
                     RAISE EXCEPTION
                         'Current survivor rows no longer match the audited merge; rollback refused.';
                 END IF;
+
+                IF EXISTS (
+                    WITH audited_ids AS (
+                        SELECT
+                            original_id,
+                            MIN(original_id) OVER (
+                                PARTITION BY
+                                    account_id,
+                                    song_id,
+                                    instrument,
+                                    new_score,
+                                    score_achieved_at
+                            ) AS survivor_id
+                        FROM public.score_history_dedup_original_rows
+                        WHERE maintenance_run_id = {{maintenanceRunId}}
+                    )
+                    SELECT 1
+                    FROM audited_ids audited
+                    JOIN public.score_history current
+                      ON current.id = audited.original_id
+                    WHERE audited.original_id <> audited.survivor_id
+                ) THEN
+                    RAISE EXCEPTION
+                        'An audited non-survivor score-history ID has been reused; rollback refused.';
+                END IF;
             END
             $rollback$;
 
@@ -1843,6 +2542,51 @@ public sealed class ScoreHistoryDedupMaintenanceService
         else
             writer.WriteNull(propertyName);
     }
+
+    private sealed record AuditColumnExpectation(
+        string TableName,
+        int Ordinal,
+        string Name,
+        string TypeName,
+        bool NotNull,
+        string? DefaultExpression);
+
+    private sealed record AuditColumnState(
+        string TableName,
+        int Ordinal,
+        string Name,
+        string TypeName,
+        bool NotNull,
+        string DefaultExpression,
+        bool NoIdentity,
+        bool NoGeneratedExpression,
+        bool DefaultCollation);
+
+    private sealed record AuditConstraintExpectation(
+        string TableName,
+        string Definition);
+
+    private sealed record AuditFunctionExpectation(
+        string Name,
+        string Body);
+
+    private sealed record AuditFunctionState(
+        string Name,
+        bool PropertiesExact,
+        string Body);
+
+    private sealed record AuditTriggerExpectation(
+        string TableName,
+        string Name,
+        string FunctionName,
+        int Type);
+
+    private sealed record AuditTriggerState(
+        string TableName,
+        string Name,
+        string FunctionName,
+        int Type,
+        bool PropertiesExact);
 
     private sealed record ScoreHistoryCounts(
         long TotalRows,

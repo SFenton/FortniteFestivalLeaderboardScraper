@@ -1785,20 +1785,33 @@ Decision tier: lower immediate storage reclaim, good operational efficiency.
 
 The repository now contains an explicit audited implementation for the known
 nullable `score_history` duplicate set. It is not a startup cleanup and is not
-approved for execution during scrape `1274`. Normal schema initialization adds
-only immutable, retention-independent run/original-row audit tables.
+approved for execution during scrape `1277` post-processing. Normal release
+schema initialization owns the immutable, retention-independent
+run/original-row audit tables; the maintenance workflow must not invoke the
+unbounded `--initialize-schema-only` path as preparation.
 
 The default dry run is repeatable-read/read-only and produces a deterministic
 digest plus counts, affected identities, semantic variance, per-group maxima,
 sizes, index definition, and merge plan. Execute requires that exact digest,
-uses a three-second lock timeout and 180-second statement timeout, blocks on
-any nonzero score or invariant-field variance, audits all originals, and
-atomically promotes `ix_sh_dedup` to `UNIQUE ... NULLS NOT DISTINCT`.
+uses `SET LOCAL` for the three-second lock timeout and 180-second statement
+timeout, and takes the `SHARE ROW EXCLUSIVE` table lock before the first
+snapshot-establishing `SELECT` and transaction advisory lock. A writer commit
+that precedes table-lock acquisition is therefore analyzed in the protected
+state rather than hidden behind a stale repeatable-read snapshot.
+
+Maintenance performs a bounded exact catalog preflight for the audit
+tables/columns/defaults, constraints, immutable function bodies and triggers,
+digest index, and sequence, failing closed without schema mutation. It then
+blocks on any nonzero score or invariant-field variance, audits all originals,
+and atomically promotes `ix_sh_dedup` to
+`UNIQUE ... NULLS NOT DISTINCT`.
 
 Schedule the estimated 15-150 second write-blocking transaction only at a
 clean parity-gated boundary. Preserve the stored rollback SQL, which validates
-unchanged merged survivors, restores every original row/ID, and recreates the
-legacy unique index. The full procedure is
+unchanged merged survivors and absence of every audited non-survivor ID before
+deleting anything, preserves unrelated later writes, restores every original
+row/ID, recreates the legacy unique index, and never rewinds the sequence. The
+full procedure is
 `docs/database/ScoreHistoryDedupMaintenanceRunbook.md`.
 
 ## Required proof package for every reclaim action

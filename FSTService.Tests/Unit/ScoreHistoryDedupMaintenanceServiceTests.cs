@@ -25,6 +25,7 @@ public sealed class ScoreHistoryDedupMaintenanceServiceTests : IDisposable
     [Fact]
     public void CommandParserDefaultsToDryRunAndRequiresBothExecuteGates()
     {
+        var digest = new string('a', 64);
         Assert.Null(ScoreHistoryDedupMaintenanceCommand.Parse([]));
 
         var dryRun = ScoreHistoryDedupMaintenanceCommand.Parse(
@@ -44,19 +45,200 @@ public sealed class ScoreHistoryDedupMaintenanceServiceTests : IDisposable
             [
                 ScoreHistoryDedupMaintenanceCommand.MaintenanceFlag,
                 ScoreHistoryDedupMaintenanceCommand.ExpectedDigestFlag,
-                new string('a', 64),
+                digest,
+            ]));
+        Assert.Throws<ArgumentException>(() =>
+            ScoreHistoryDedupMaintenanceCommand.Parse(
+            [
+                ScoreHistoryDedupMaintenanceCommand.ExecuteFlag,
+                ScoreHistoryDedupMaintenanceCommand.ExpectedDigestFlag,
+                digest,
+            ]));
+        Assert.Throws<ArgumentException>(() =>
+            ScoreHistoryDedupMaintenanceCommand.Parse(
+            [
+                ScoreHistoryDedupMaintenanceCommand.MaintenanceFlag,
+                ScoreHistoryDedupMaintenanceCommand.MaintenanceFlag,
+            ]));
+        Assert.Throws<ArgumentException>(() =>
+            ScoreHistoryDedupMaintenanceCommand.Parse(
+            [
+                ScoreHistoryDedupMaintenanceCommand.MaintenanceFlag,
+                ScoreHistoryDedupMaintenanceCommand.ExecuteFlag,
+                ScoreHistoryDedupMaintenanceCommand.ExecuteFlag,
+                ScoreHistoryDedupMaintenanceCommand.ExpectedDigestFlag,
+                digest,
+            ]));
+        Assert.Throws<ArgumentException>(() =>
+            ScoreHistoryDedupMaintenanceCommand.Parse(
+            [
+                ScoreHistoryDedupMaintenanceCommand.MaintenanceFlag,
+                ScoreHistoryDedupMaintenanceCommand.ExecuteFlag,
+                ScoreHistoryDedupMaintenanceCommand.ExpectedDigestFlag,
+            ]));
+        Assert.Throws<ArgumentException>(() =>
+            ScoreHistoryDedupMaintenanceCommand.Parse(
+            [
+                ScoreHistoryDedupMaintenanceCommand.MaintenanceFlag,
+                ScoreHistoryDedupMaintenanceCommand.ExecuteFlag,
+                ScoreHistoryDedupMaintenanceCommand.ExpectedDigestFlag,
+                "not-a-digest",
+            ]));
+        Assert.Throws<ArgumentException>(() =>
+            ScoreHistoryDedupMaintenanceCommand.Parse(
+            [
+                ScoreHistoryDedupMaintenanceCommand.MaintenanceFlag,
+                ScoreHistoryDedupMaintenanceCommand.ExecuteFlag,
+                ScoreHistoryDedupMaintenanceCommand.ExpectedDigestFlag,
+                digest,
+                ScoreHistoryDedupMaintenanceCommand.ExpectedDigestFlag,
+                digest,
             ]));
 
         var execute = ScoreHistoryDedupMaintenanceCommand.Parse(
         [
-            ScoreHistoryDedupMaintenanceCommand.MaintenanceFlag,
-            ScoreHistoryDedupMaintenanceCommand.ExecuteFlag,
-            ScoreHistoryDedupMaintenanceCommand.ExpectedDigestFlag,
+            ScoreHistoryDedupMaintenanceCommand.MaintenanceFlag.ToUpperInvariant(),
+            ScoreHistoryDedupMaintenanceCommand.ExecuteFlag.ToUpperInvariant(),
+            ScoreHistoryDedupMaintenanceCommand.ExpectedDigestFlag
+                .ToUpperInvariant(),
             new string('A', 64),
         ]);
         Assert.NotNull(execute);
         Assert.True(execute.Execute);
-        Assert.Equal(new string('a', 64), execute.ExpectedDigest);
+        Assert.Equal(digest, execute.ExpectedDigest);
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("missing-run")]
+    [InlineData("inexact")]
+    [InlineData("disabled-trigger")]
+    [InlineData("qualified-trigger")]
+    [InlineData("column-filtered-trigger")]
+    [InlineData("mutated-function")]
+    public async Task AuditSchemaPreflightFailsClosed(string schemaState)
+    {
+        using (var conn = _fixture.DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = schemaState switch
+            {
+                "missing" => """
+                    DROP TABLE public.score_history_dedup_original_rows
+                    CASCADE;
+                    """,
+                "missing-run" => """
+                    DROP TABLE public.score_history_dedup_maintenance_runs
+                    CASCADE;
+                    """,
+                "inexact" => """
+                    ALTER TABLE public.score_history_dedup_maintenance_runs
+                    ADD COLUMN unexpected_column INTEGER;
+                    """,
+                "disabled-trigger" => """
+                    ALTER TABLE public.score_history_dedup_maintenance_runs
+                    DISABLE TRIGGER
+                        trg_reject_score_history_dedup_run_mutation;
+                    """,
+                "qualified-trigger" => """
+                    DROP TRIGGER
+                        trg_reject_score_history_dedup_run_mutation
+                    ON public.score_history_dedup_maintenance_runs;
+                    CREATE TRIGGER
+                        trg_reject_score_history_dedup_run_mutation
+                    BEFORE UPDATE OR DELETE OR TRUNCATE
+                    ON public.score_history_dedup_maintenance_runs
+                    FOR EACH STATEMENT
+                    WHEN (false)
+                    EXECUTE FUNCTION
+                        reject_score_history_dedup_audit_mutation();
+                    """,
+                "column-filtered-trigger" => """
+                    DROP TRIGGER
+                        trg_reject_score_history_dedup_run_mutation
+                    ON public.score_history_dedup_maintenance_runs;
+                    CREATE TRIGGER
+                        trg_reject_score_history_dedup_run_mutation
+                    BEFORE UPDATE OF rollback_sql OR DELETE OR TRUNCATE
+                    ON public.score_history_dedup_maintenance_runs
+                    FOR EACH STATEMENT
+                    EXECUTE FUNCTION
+                        reject_score_history_dedup_audit_mutation();
+                    """,
+                "mutated-function" => """
+                    CREATE OR REPLACE FUNCTION
+                        reject_score_history_dedup_audit_mutation()
+                    RETURNS trigger
+                    LANGUAGE plpgsql
+                    AS $$
+                    BEGIN
+                        RETURN NULL;
+                    END
+                    $$;
+                    """,
+                _ => throw new ArgumentOutOfRangeException(
+                    nameof(schemaState)),
+            };
+            cmd.ExecuteNonQuery();
+        }
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => _maintenance.DryRunAsync());
+
+        Assert.Contains(
+            "audit schema preflight failed",
+            exception.Message,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "normal release schema initialization owns it",
+            exception.Message,
+            StringComparison.Ordinal);
+
+        var executeException =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => _maintenance.ExecuteAsync(new string('a', 64)));
+        Assert.Contains(
+            "audit schema preflight failed",
+            executeException.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("missing", "missing")]
+    [InlineData("malformed", "unexpected")]
+    public async Task MissingOrMalformedDedupIndexBlocksMaintenance(
+        string setup,
+        string expectedState)
+    {
+        SeedValidDuplicateGroups();
+        var before = ReadHistoryRows();
+        using (var conn = _fixture.DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = setup == "missing"
+                ? "DROP INDEX public.ix_sh_dedup;"
+                : """
+                    DROP INDEX public.ix_sh_dedup;
+                    CREATE INDEX ix_sh_dedup
+                    ON public.score_history (account_id);
+                    """;
+            cmd.ExecuteNonQuery();
+        }
+
+        var report = await _maintenance.DryRunAsync();
+
+        Assert.Equal(expectedState, report.Index.State);
+        Assert.False(report.CanExecute);
+        Assert.Equal("blocked_index_invariant", report.SafetyDecision);
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => _maintenance.ExecuteAsync(report.DryRunDigest));
+        Assert.Contains(
+            "blocked_index_invariant",
+            exception.Message,
+            StringComparison.Ordinal);
+        Assert.Equal(before, ReadHistoryRows());
+        Assert.Equal(0, CountRows("score_history_dedup_maintenance_runs"));
+        Assert.Equal(0, CountRows("score_history_dedup_original_rows"));
     }
 
     [Fact]
@@ -194,6 +376,86 @@ public sealed class ScoreHistoryDedupMaintenanceServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CandidateDataChangeRejectsStaleDigestBeforeAnyWrite()
+    {
+        SeedValidDuplicateGroups();
+        var dryRun = await _maintenance.DryRunAsync();
+        InsertHistoryRow(
+            "account-a",
+            "song-a",
+            newScore: 0,
+            newRank: 2,
+            allTimeRank: 11,
+            changedAt: Utc(6));
+        var changedRows = ReadHistoryRows();
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => _maintenance.ExecuteAsync(dryRun.DryRunDigest));
+
+        Assert.Contains(
+            "dry-run digest changed",
+            exception.Message,
+            StringComparison.Ordinal);
+        Assert.Equal(changedRows, ReadHistoryRows());
+        Assert.Equal(0, CountRows("score_history_dedup_maintenance_runs"));
+        Assert.Equal(0, CountRows("score_history_dedup_original_rows"));
+        Assert.False(IndexNullsNotDistinct());
+    }
+
+    [Fact]
+    public async Task ExecuteLocksTableBeforeSnapshotAndSeesCommittedWriter()
+    {
+        SeedValidDuplicateGroups();
+        var dryRun = await _maintenance.DryRunAsync();
+        await using var writerConnection =
+            await _fixture.DataSource.OpenConnectionAsync();
+        await using var writerTransaction =
+            await writerConnection.BeginTransactionAsync();
+        var writerId = await InsertHistoryRowAsync(
+            writerConnection,
+            writerTransaction,
+            "account-a",
+            "song-a",
+            newScore: 0,
+            newRank: 2,
+            allTimeRank: 11,
+            changedAt: Utc(6));
+
+        var executeTask = _maintenance.ExecuteAsync(dryRun.DryRunDigest);
+        try
+        {
+            await WaitForPendingMaintenanceTableLockAsync();
+            Assert.False(executeTask.IsCompleted);
+            await writerTransaction.CommitAsync();
+        }
+        catch
+        {
+            if (writerTransaction.Connection is not null)
+                await writerTransaction.RollbackAsync();
+            try
+            {
+                await executeTask;
+            }
+            catch
+            {
+            }
+            throw;
+        }
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => executeTask);
+
+        Assert.Contains(
+            "dry-run digest changed",
+            exception.Message,
+            StringComparison.Ordinal);
+        Assert.Contains(ReadHistoryRows(), row => row.Id == writerId);
+        Assert.Equal(0, CountRows("score_history_dedup_maintenance_runs"));
+        Assert.Equal(0, CountRows("score_history_dedup_original_rows"));
+        Assert.False(IndexNullsNotDistinct());
+    }
+
+    [Fact]
     public async Task ExecuteMergesExactlyAuditsEveryRowAndRollbackRestores()
     {
         SeedValidDuplicateGroups();
@@ -287,6 +549,182 @@ public sealed class ScoreHistoryDedupMaintenanceServiceTests : IDisposable
         Assert.Equal(5, CountRows("score_history_dedup_original_rows"));
         var restoredDryRun = await _maintenance.DryRunAsync();
         Assert.Equal(dryRun.DryRunDigest, restoredDryRun.DryRunDigest);
+
+        var rerun = await _maintenance.ExecuteAsync(dryRun.DryRunDigest);
+        Assert.False(rerun.AlreadyApplied);
+        Assert.NotEqual(executed.MaintenanceRunId, rerun.MaintenanceRunId);
+        Assert.Equal(2, CountRows("score_history_dedup_maintenance_runs"));
+        Assert.Equal(10, CountRows("score_history_dedup_original_rows"));
+        Assert.True(IndexNullsNotDistinct());
+        var repeatedRerun = await _maintenance.ExecuteAsync(
+            dryRun.DryRunDigest);
+        Assert.True(repeatedRerun.AlreadyApplied);
+        Assert.Equal(rerun.MaintenanceRunId, repeatedRerun.MaintenanceRunId);
+    }
+
+    [Fact]
+    public async Task RollbackRefusesReusedNonSurvivorIdWithoutDeletingIt()
+    {
+        SeedValidDuplicateGroups();
+        var originalRows = ReadHistoryRows();
+        var dryRun = await _maintenance.DryRunAsync();
+        var executed = await _maintenance.ExecuteAsync(
+            dryRun.DryRunDigest);
+        var survivorIds = dryRun.PerGroupMaxima
+            .Select(group => group.SurvivorId)
+            .ToHashSet();
+        var reusedId = originalRows
+            .Select(row => row.Id)
+            .First(id => !survivorIds.Contains(id));
+        InsertHistoryRowWithId(
+            reusedId,
+            "later-account",
+            "later-song",
+            newScore: 900,
+            newRank: 1,
+            allTimeRank: 1,
+            changedAt: Utc(20));
+
+        var exception = ExecuteRollbackExpectFailure(
+            executed.RollbackSql!);
+
+        Assert.Contains(
+            "non-survivor score-history ID has been reused",
+            exception.Message,
+            StringComparison.Ordinal);
+        var reused = Assert.Single(
+            ReadHistoryRows(),
+            row => row.Id == reusedId);
+        Assert.Equal("later-account", reused.AccountId);
+        Assert.True(IndexNullsNotDistinct());
+        Assert.Equal(1, CountRows("score_history_dedup_maintenance_runs"));
+        Assert.Equal(5, CountRows("score_history_dedup_original_rows"));
+    }
+
+    [Fact]
+    public async Task RollbackPreservesUnrelatedLaterWrites()
+    {
+        SeedValidDuplicateGroups();
+        var originalRows = ReadHistoryRows();
+        var dryRun = await _maintenance.DryRunAsync();
+        var executed = await _maintenance.ExecuteAsync(
+            dryRun.DryRunDigest);
+        var laterId = InsertHistoryRow(
+            "later-account",
+            "later-song",
+            newScore: 777,
+            newRank: 4,
+            allTimeRank: 4,
+            changedAt: Utc(20));
+        var laterRow = Assert.Single(
+            ReadHistoryRows(),
+            row => row.Id == laterId);
+
+        ExecuteRollback(executed.RollbackSql!);
+
+        Assert.Equal(
+            originalRows.Append(laterRow).OrderBy(row => row.Id),
+            ReadHistoryRows());
+        Assert.False(IndexNullsNotDistinct());
+    }
+
+    [Fact]
+    public async Task RollbackRefusesChangedSurvivor()
+    {
+        SeedValidDuplicateGroups();
+        var dryRun = await _maintenance.DryRunAsync();
+        var executed = await _maintenance.ExecuteAsync(
+            dryRun.DryRunDigest);
+        var survivorId = dryRun.PerGroupMaxima[0].SurvivorId;
+        using (var conn = _fixture.DataSource.OpenConnection())
+        using (var update = conn.CreateCommand())
+        {
+            update.CommandText = """
+                UPDATE public.score_history
+                SET new_rank = new_rank + 1
+                WHERE id = @survivorId;
+                """;
+            update.Parameters.AddWithValue("survivorId", survivorId);
+            Assert.Equal(1, update.ExecuteNonQuery());
+        }
+        var changedSurvivor = Assert.Single(
+            ReadHistoryRows(),
+            row => row.Id == survivorId);
+
+        var exception = ExecuteRollbackExpectFailure(
+            executed.RollbackSql!);
+
+        Assert.Contains(
+            "survivor rows no longer match",
+            exception.Message,
+            StringComparison.Ordinal);
+        Assert.Equal(
+            changedSurvivor,
+            Assert.Single(
+                ReadHistoryRows(),
+                row => row.Id == survivorId));
+        Assert.True(IndexNullsNotDistinct());
+    }
+
+    [Fact]
+    public async Task RollbackNeverRewindsSequenceAndNextValueIsSafe()
+    {
+        SeedValidDuplicateGroups();
+        var dryRun = await _maintenance.DryRunAsync();
+        var executed = await _maintenance.ExecuteAsync(
+            dryRun.DryRunDigest);
+        SetScoreHistorySequenceNextValue(50_000);
+
+        ExecuteRollback(executed.RollbackSql!);
+
+        var firstId = InsertHistoryRow(
+            "sequence-account-a",
+            "sequence-song-a",
+            newScore: 500,
+            newRank: 1,
+            allTimeRank: 1,
+            changedAt: Utc(21));
+        var secondId = InsertHistoryRow(
+            "sequence-account-b",
+            "sequence-song-b",
+            newScore: 501,
+            newRank: 1,
+            allTimeRank: 1,
+            changedAt: Utc(22));
+        Assert.Equal(50_000, firstId);
+        Assert.Equal(50_001, secondId);
+    }
+
+    [Fact]
+    public async Task ExecuteLeavesNonNullTimestampRowsUntouched()
+    {
+        SeedValidDuplicateGroups();
+        var timestamp = Utc(15);
+        var nonNullId = InsertHistoryRow(
+            "account-a",
+            "song-a",
+            newScore: 0,
+            newRank: 99,
+            allTimeRank: 99,
+            changedAt: Utc(16),
+            scoreAchievedAt: timestamp);
+        var before = Assert.Single(
+            ReadHistoryRows(),
+            row => row.Id == nonNullId);
+        var dryRun = await _maintenance.DryRunAsync();
+
+        var executed = await _maintenance.ExecuteAsync(
+            dryRun.DryRunDigest);
+
+        Assert.NotNull(executed.MaintenanceRunId);
+        Assert.Equal(
+            before,
+            Assert.Single(
+                ReadHistoryRows(),
+                row => row.Id == nonNullId));
+        Assert.DoesNotContain(
+            ReadAuditRows(executed.MaintenanceRunId.Value),
+            row => row.Id == nonNullId);
     }
 
     [Fact]
@@ -446,7 +884,8 @@ public sealed class ScoreHistoryDedupMaintenanceServiceTests : IDisposable
         int? newRank,
         int? allTimeRank,
         DateTime changedAt,
-        int? accuracy = 99)
+        int? accuracy = 99,
+        DateTime? scoreAchievedAt = null)
     {
         using var conn = _fixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -482,7 +921,7 @@ public sealed class ScoreHistoryDedupMaintenanceServiceTests : IDisposable
                 5,
                 99.5,
                 10,
-                NULL,
+                @scoreAchievedAt,
                 50,
                 @allTimeRank,
                 6,
@@ -505,11 +944,209 @@ public sealed class ScoreHistoryDedupMaintenanceServiceTests : IDisposable
             NpgsqlDbType.Integer).Value =
             accuracy.HasValue ? accuracy.Value : DBNull.Value;
         cmd.Parameters.Add(
+            "scoreAchievedAt",
+            NpgsqlDbType.TimestampTz).Value =
+            scoreAchievedAt.HasValue
+                ? scoreAchievedAt.Value
+                : DBNull.Value;
+        cmd.Parameters.Add(
             "allTimeRank",
             NpgsqlDbType.Integer).Value =
             allTimeRank.HasValue ? allTimeRank.Value : DBNull.Value;
         cmd.Parameters.AddWithValue("changedAt", changedAt);
         return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    private static async Task<int> InsertHistoryRowAsync(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        string accountId,
+        string songId,
+        int? newScore,
+        int? newRank,
+        int? allTimeRank,
+        DateTime changedAt)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            INSERT INTO score_history (
+                song_id,
+                instrument,
+                account_id,
+                old_score,
+                new_score,
+                old_rank,
+                new_rank,
+                accuracy,
+                is_full_combo,
+                stars,
+                percentile,
+                season,
+                score_achieved_at,
+                season_rank,
+                all_time_rank,
+                difficulty,
+                changed_at)
+            VALUES (
+                @songId,
+                @instrument,
+                @accountId,
+                0,
+                @newScore,
+                100,
+                @newRank,
+                99,
+                FALSE,
+                5,
+                99.5,
+                10,
+                NULL,
+                50,
+                @allTimeRank,
+                6,
+                @changedAt)
+            RETURNING id;
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.Add(
+            "newScore",
+            NpgsqlDbType.Integer).Value =
+            newScore.HasValue ? newScore.Value : DBNull.Value;
+        cmd.Parameters.Add(
+            "newRank",
+            NpgsqlDbType.Integer).Value =
+            newRank.HasValue ? newRank.Value : DBNull.Value;
+        cmd.Parameters.Add(
+            "allTimeRank",
+            NpgsqlDbType.Integer).Value =
+            allTimeRank.HasValue ? allTimeRank.Value : DBNull.Value;
+        cmd.Parameters.AddWithValue("changedAt", changedAt);
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync());
+    }
+
+    private void InsertHistoryRowWithId(
+        int id,
+        string accountId,
+        string songId,
+        int newScore,
+        int newRank,
+        int allTimeRank,
+        DateTime changedAt)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO score_history (
+                id,
+                song_id,
+                instrument,
+                account_id,
+                old_score,
+                new_score,
+                old_rank,
+                new_rank,
+                accuracy,
+                is_full_combo,
+                stars,
+                percentile,
+                season,
+                score_achieved_at,
+                season_rank,
+                all_time_rank,
+                difficulty,
+                changed_at)
+            VALUES (
+                @id,
+                @songId,
+                @instrument,
+                @accountId,
+                0,
+                @newScore,
+                100,
+                @newRank,
+                99,
+                FALSE,
+                5,
+                99.5,
+                10,
+                NULL,
+                50,
+                @allTimeRank,
+                6,
+                @changedAt);
+            """;
+        cmd.Parameters.AddWithValue("id", id);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("newScore", newScore);
+        cmd.Parameters.AddWithValue("newRank", newRank);
+        cmd.Parameters.AddWithValue("allTimeRank", allTimeRank);
+        cmd.Parameters.AddWithValue("changedAt", changedAt);
+        Assert.Equal(1, cmd.ExecuteNonQuery());
+    }
+
+    private async Task WaitForPendingMaintenanceTableLockAsync()
+    {
+        await using var conn = await _fixture.DataSource.OpenConnectionAsync();
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while (DateTime.UtcNow < deadline)
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_locks lock_state
+                    WHERE lock_state.locktype = 'relation'
+                      AND lock_state.relation =
+                          'public.score_history'::regclass
+                      AND lock_state.mode = 'ShareRowExclusiveLock'
+                      AND NOT lock_state.granted);
+                """;
+            if (await cmd.ExecuteScalarAsync() is true)
+                return;
+            await Task.Delay(TimeSpan.FromMilliseconds(20));
+        }
+
+        throw new TimeoutException(
+            "Execute did not wait on the score_history table lock.");
+    }
+
+    private PostgresException ExecuteRollbackExpectFailure(
+        string rollbackSql)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var rollback = conn.CreateCommand();
+        rollback.CommandTimeout = 185;
+        rollback.CommandText = rollbackSql;
+        return Assert.Throws<PostgresException>(
+            () => rollback.ExecuteNonQuery());
+    }
+
+    private void ExecuteRollback(string rollbackSql)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var rollback = conn.CreateCommand();
+        rollback.CommandTimeout = 185;
+        rollback.CommandText = rollbackSql;
+        rollback.ExecuteNonQuery();
+    }
+
+    private void SetScoreHistorySequenceNextValue(int nextValue)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT setval(
+                'public.score_history_id_seq',
+                @nextValue,
+                FALSE);
+            """;
+        cmd.Parameters.AddWithValue("nextValue", nextValue);
+        Assert.Equal(nextValue, Convert.ToInt32(cmd.ExecuteScalar()));
     }
 
     private IReadOnlyList<HistoryRowSnapshot> ReadHistoryRows()

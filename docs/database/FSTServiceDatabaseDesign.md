@@ -923,24 +923,41 @@ rows, groups/excess, affected account/song IDs, per-group maxima and semantic
 variance, table/index sizes, and exact merge semantics.
 
 Execute additionally requires `--score-history-dedup-execute` and
-`--expected-score-history-dedup-digest`. Under a transaction advisory lock and
-`SHARE ROW EXCLUSIVE` lock on `score_history`, it re-reads and verifies the
-digest before reserving an audit ID. Any duplicate with `new_score != 0`, or
-variation outside `id`, `new_rank`, `all_time_rank`, and `changed_at`, blocks
-before writes. A passing transaction stores every original row, preserves the
-lowest ID, earliest `changed_at`, and minimum positive/non-null ranks, deletes
-only non-survivors, then builds the PostgreSQL 17 `NULLS NOT DISTINCT`
-replacement under a temporary name. Reads remain available during the index
-scan/build; the final old-index drop/new-index rename creates a brief
-`ACCESS EXCLUSIVE` pause immediately before commit. Existing five-column
-`ON CONFLICT` paths therefore become null-safe without query-specific
-predicates.
+`--expected-score-history-dedup-digest`. It uses `SET LOCAL` for the
+three-second lock and 180-second statement timeouts, acquires the
+`SHARE ROW EXCLUSIVE` lock on `score_history` before any snapshot-establishing
+`SELECT`, then takes the transaction advisory lock. Consequently, a writer
+that commits after transaction start but before table-lock acquisition is part
+of the locked repeatable-read snapshot and either changes the digest or is
+included in the analyzed candidate state.
+
+Before candidate reads, the command also verifies the exact release-owned
+audit catalog: tables/columns/defaults, validated constraints, immutable
+function bodies and enabled triggers, digest index shape, and run-ID sequence.
+It fails closed when any object is absent or inexact and never initializes or
+repairs schema. `--initialize-schema-only` remains the normal release owner of
+the entire schema and sequence advancement; it is not a maintenance
+prerequisite.
+
+After the locked re-read verifies the digest, any duplicate with
+`new_score != 0`, or variation outside `id`, `new_rank`, `all_time_rank`, and
+`changed_at`, blocks before writes. A passing transaction stores every
+original row, preserves the lowest ID, earliest `changed_at`, and minimum
+positive/non-null ranks, deletes only non-survivors, then builds the PostgreSQL
+17 `NULLS NOT DISTINCT` replacement under a temporary name. Reads remain
+available during the index scan/build; the final old-index drop/new-index
+rename creates a brief `ACCESS EXCLUSIVE` pause immediately before commit.
+Existing five-column `ON CONFLICT` paths therefore become null-safe without
+query-specific predicates.
 
 The immutable run stores executable rollback SQL. Rollback verifies the target
-index and unchanged merged survivors, drops the nulls-not-distinct index,
-restores exact audited originals, recreates the legacy ordinary unique index,
-and advances the sequence without rewinding it. Full commands and lock/runtime
-planning are in
+index and unchanged merged survivors, proves every audited non-survivor ID is
+still absent, then drops the nulls-not-distinct index, restores exact audited
+originals, recreates the legacy ordinary unique index, and advances the
+sequence without rewinding it. A reused explicit ID fails before any delete;
+unrelated later rows remain untouched. Re-execution after a rollback creates a
+new immutable audit run. Full commands, bounded catalog preflight, and
+lock/runtime planning are in
 `docs/database/ScoreHistoryDedupMaintenanceRunbook.md`.
 
 ### Dirty, shadow, and audit-only surfaces

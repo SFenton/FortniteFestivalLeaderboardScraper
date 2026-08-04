@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using FSTService;
+using FSTService.Persistence;
 using Microsoft.Extensions.Configuration;
 
 namespace FSTService.Tests.Unit;
@@ -36,6 +37,36 @@ public sealed class RetiredMaintenanceCommandGuardTests
         new[] { "--Scraper:DataDirectory", "path-repair-manifest" },
         new[] { "/Scraper:DataDirectory", "path-repair-manifest" },
         new[] { "--test", "--path-repair-manifest" },
+    };
+
+    public static TheoryData<string[]> ActiveScoreHistoryForms => new()
+    {
+        new[]
+        {
+            ScoreHistoryDedupMaintenanceCommand.MaintenanceFlag,
+        },
+        new[]
+        {
+            ScoreHistoryDedupMaintenanceCommand.MaintenanceFlag,
+            "--api-only",
+        },
+        new[]
+        {
+            ScoreHistoryDedupMaintenanceCommand.MaintenanceFlag,
+            ScoreHistoryDedupMaintenanceCommand.ExecuteFlag,
+            ScoreHistoryDedupMaintenanceCommand.ExpectedDigestFlag,
+            new string('a', 64),
+        },
+        new[]
+        {
+            ScoreHistoryDedupMaintenanceCommand.ExpectedDigestFlag
+                .ToUpperInvariant(),
+            new string('A', 64),
+            ScoreHistoryDedupMaintenanceCommand.ExecuteFlag
+                .ToUpperInvariant(),
+            ScoreHistoryDedupMaintenanceCommand.MaintenanceFlag
+                .ToUpperInvariant(),
+        },
     };
 
     [Theory]
@@ -185,6 +216,22 @@ public sealed class RetiredMaintenanceCommandGuardTests
             "--notification-skip-projection-refresh",
             "--api-only",
         ]);
+    }
+
+    [Theory]
+    [MemberData(nameof(ActiveScoreHistoryForms))]
+    public void GuardAllowsActiveScoreHistoryMaintenanceArguments(
+        string[] arguments)
+    {
+        RetiredMaintenanceCommandGuard.ThrowIfPresent(arguments);
+
+        var command = ScoreHistoryDedupMaintenanceCommand.Parse(arguments);
+        Assert.NotNull(command);
+        Assert.Equal(
+            arguments.Any(argument => argument.Equals(
+                ScoreHistoryDedupMaintenanceCommand.ExecuteFlag,
+                StringComparison.OrdinalIgnoreCase)),
+            command.Execute);
     }
 
     [Fact]
@@ -345,6 +392,27 @@ public sealed class RetiredMaintenanceCommandGuardTests
             StringComparison.Ordinal);
         Assert.Contains(
             "--score-history-dedup-maintenance must be specified exactly once",
+            result.Output,
+            StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("--initialize-schema-only")]
+    [InlineData("--recover-improvement-notifications")]
+    public async Task ProgramStartupRejectsConflictingScoreHistoryOneShots(
+        string otherOneShot)
+    {
+        var result = await RunProgramAsync(
+            ScoreHistoryDedupMaintenanceCommand.MaintenanceFlag,
+            otherOneShot);
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains(
+            "cannot run with another one-shot",
+            result.Output,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "Retired maintenance option",
             result.Output,
             StringComparison.Ordinal);
     }
