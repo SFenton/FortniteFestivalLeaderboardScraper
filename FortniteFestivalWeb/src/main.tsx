@@ -10,9 +10,11 @@ import PublicationBoundary from './contexts/PublicationBoundary';
 import ModalAccessibilityFixture from './diagnostics/ModalAccessibilityFixture';
 import { applyScrollFadeTestMode } from './diagnostics/scrollFadeTestMode';
 import { installStaleChunkRecovery } from './utils/staleChunkRecovery';
+import { migrateDirectPathToHashRoute } from './utils/directRouteMigration';
 import './i18n';
 import './index.css';
 
+migrateDirectPathToHashRoute();
 applyScrollFadeTestMode();
 installStaleChunkRecovery();
 

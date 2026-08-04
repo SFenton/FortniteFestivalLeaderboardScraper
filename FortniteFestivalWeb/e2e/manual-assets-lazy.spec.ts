@@ -5,6 +5,14 @@ test.beforeEach(async ({ page }) => {
   await seedState(page);
 });
 
+test('direct Manual URL migrates to the hash route and renders the Manual', async ({ page }) => {
+  await page.goto('/manual', { waitUntil: 'load' });
+  await dismissOverlays(page);
+
+  await expect(page).toHaveURL(/\/#\/manual$/);
+  await expect(page.getByRole('heading', { name: 'Navigation Basics' })).toBeVisible();
+});
+
 test('desktop Manual loads only near responsive images and preserves carousel state while scrolling', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-wide', 'desktop Manual waterfall is covered at its production capture width');
   const manualRequests: string[] = [];
