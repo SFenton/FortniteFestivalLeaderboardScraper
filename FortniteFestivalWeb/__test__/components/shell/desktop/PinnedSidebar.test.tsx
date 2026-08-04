@@ -2,14 +2,6 @@ import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
-const featureFlagsMock = vi.hoisted(() => ({
-  value: { compete: true, leaderboards: true, difficulty: true, playerBands: true, experimentalRanks: true, appManual: true },
-}));
-
-vi.mock('../../../../src/contexts/FeatureFlagsContext', () => ({
-  useFeatureFlags: () => featureFlagsMock.value,
-}));
-
 const mockScrollRef = { current: null as HTMLDivElement | null };
 vi.mock('../../../../src/contexts/ScrollContainerContext', () => ({
   useScrollContainer: () => mockScrollRef,
@@ -63,7 +55,6 @@ function expectPinnedLinkInactive(link: HTMLAnchorElement | null) {
 
 describe('PinnedSidebar', () => {
   beforeEach(() => {
-    featureFlagsMock.value = { compete: true, leaderboards: true, difficulty: true, playerBands: true, experimentalRanks: true, appManual: true };
     vi.clearAllMocks();
   });
 
@@ -178,14 +169,6 @@ describe('PinnedSidebar', () => {
     expect(screen.getByText('App Manual').closest('a')?.getAttribute('href')).toBe('/manual');
     expect(text.indexOf('Select Profile')).toBeLessThan(text.indexOf('App Manual'));
     expect(text.indexOf('App Manual')).toBeLessThan(text.indexOf('Settings'));
-  });
-
-  it('hides Manual link when the App Manual feature is disabled', () => {
-    featureFlagsMock.value = { ...featureFlagsMock.value, appManual: false };
-    renderPinned({ player: null });
-
-    expect(screen.queryByText('App Manual')).toBeNull();
-    expect(screen.getByText('Settings')).toBeTruthy();
   });
 
   it('renders no overlay', () => {

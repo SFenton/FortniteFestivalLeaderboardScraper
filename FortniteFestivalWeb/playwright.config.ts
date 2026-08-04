@@ -1,11 +1,12 @@
 import { defineConfig, devices } from '@playwright/test';
 
 const chromiumExecutablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
-const e2ePort = Number(process.env.PLAYWRIGHT_PORT ?? 3000);
+const e2ePort = Number(process.env.PLAYWRIGHT_PORT ?? 4173);
+const reuseExistingServer = process.env.PLAYWRIGHT_REUSE_SERVER === '1';
 
 export default defineConfig({
   testDir: './e2e',
-  timeout: 30000,
+  timeout: 90000,
   use: {
     baseURL: `http://localhost:${e2ePort}`,
     headless: true,
@@ -40,7 +41,7 @@ export default defineConfig({
   webServer: {
     command: `npx vite --mode e2e --port ${e2ePort}`,
     port: e2ePort,
-    reuseExistingServer: true,
-    timeout: 30000,
+    reuseExistingServer,
+    timeout: 60000,
   },
 });

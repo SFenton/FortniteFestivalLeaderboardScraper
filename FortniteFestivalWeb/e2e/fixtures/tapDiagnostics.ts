@@ -22,7 +22,7 @@ type TapAndExpectOptions = {
 
 export async function gotoWithTapDiagnostics(page: Page, route: string) {
   await page.goto(`/?tapDiagnostics=1#${route}`, { waitUntil: 'load' });
-  await page.waitForFunction(() => Boolean(window.__fstTapDiagnostics), null, { timeout: 10_000 });
+  await page.waitForFunction(() => Boolean(window.__fstTapDiagnostics), null, { timeout: 30_000 });
   await page.evaluate(() => window.__fstTapDiagnostics?.reset());
   await page.waitForTimeout(250);
 }

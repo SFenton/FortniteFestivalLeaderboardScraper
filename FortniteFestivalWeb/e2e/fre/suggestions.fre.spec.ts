@@ -28,7 +28,7 @@ test.describe('Suggestions FRE', () => {
   test('direct URL, no player — redirects to /songs', async ({ page, fre }) => {
     await goto(page, '/suggestions');
 
-    await page.waitForURL(/#\/songs/, { timeout: 5000 });
+    await page.waitForURL(/#\/songs/, { timeout: 15_000 });
     await fre.waitForVisible();
 
     // Songs FRE, not suggestions

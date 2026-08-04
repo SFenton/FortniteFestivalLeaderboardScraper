@@ -32,17 +32,16 @@ test.describe('Settings-Direct FRE', () => {
     await fre.assertSlideCount(3);
   });
 
-  test('set player → /statistics shows all 5 slides', async ({ page, fre, freState }) => {
+  test('set player → /statistics shows all 6 slides', async ({ page, fre, freState }) => {
     await freState.setTrackedPlayer();
     await goto(page, '/statistics');
     await fre.waitForVisible();
 
-    await fre.assertSlideCount(5);
+    await fre.assertSlideCount(6);
   });
 
-  test('enable experimental + set player → /compete shows all 3 slides', async ({ page, fre, freState }) => {
+  test('set player → /compete shows all 3 slides', async ({ page, fre, freState }) => {
     await freState.setTrackedPlayer();
-    await freState.setSettings({ enableExperimentalRanks: true });
     await goto(page, '/compete');
     await fre.waitForVisible();
 

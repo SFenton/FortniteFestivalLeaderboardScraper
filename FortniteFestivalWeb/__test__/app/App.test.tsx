@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
-import { render, waitFor, fireEvent } from '@testing-library/react';
+import { render as renderWithTestingLibrary, waitFor, fireEvent } from '@testing-library/react';
+import type { ReactElement } from 'react';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubIntersectionObserver } from '../helpers/browserStubs';
 
 const mockApi = vi.hoisted(() => {
@@ -19,12 +21,20 @@ const mockApi = vi.hoisted(() => {
   };
 });
 import App from '../../src/App';
+import { queryClient } from '../../src/api/queryClient';
 
 vi.mock('../../src/api/client', () => ({ api: mockApi }));
+
+function render(ui: ReactElement) {
+  return renderWithTestingLibrary(
+    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+  );
+}
 
 beforeAll(() => { stubScrollTo(); stubResizeObserver(); stubElementDimensions(); stubIntersectionObserver(); });
 beforeEach(() => {
   vi.clearAllMocks();
+  queryClient.clear();
   localStorage.clear();
   // Reset mock values
   mockApi.getSongs.mockResolvedValue({ songs: [{ songId: 's1', title: 'Test', artist: 'A', year: 2024 }], count: 1, currentSeason: 5 });

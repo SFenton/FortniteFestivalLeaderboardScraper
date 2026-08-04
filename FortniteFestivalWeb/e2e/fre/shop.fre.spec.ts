@@ -1,10 +1,12 @@
 import { test, expect } from '../fixtures/fre';
 import { goto } from '../fixtures/navigation';
 
+const NARROW_BREAKPOINT = 420;
+
 /*
- * Shop FRE — 4 slides:
+ * Shop FRE — 5 slides:
  *   Always:   shop-overview, shop-views
- *   Gated (shopHighlightEnabled):   shop-highlighting, shop-leaving-tomorrow
+ *   Gated (shopHighlightEnabled):   shop-highlighting, shop-new-items, shop-leaving-tomorrow
  *
  * NOTE: ShopPage hardcodes shopHighlightEnabled: true in its gate context,
  * so all 4 slides always show regardless of the disableShopHighlighting setting.
@@ -17,11 +19,11 @@ test.describe('Shop FRE', () => {
     await freState.resetAppState();
   });
 
-  test('fresh — shows all 4 slides', async ({ page, fre }) => {
+  test('fresh — shows all available slides', async ({ page, fre }) => {
     await goto(page, '/shop');
     await fre.waitForVisible();
 
-    await fre.assertSlideCount(4);
+    await fre.assertSlideCount(expectedSlideCount(page));
   });
 
   test('shop hardcodes shopHighlightEnabled — disableShopHighlighting has no effect', async ({ page, fre, freState }) => {
@@ -29,7 +31,10 @@ test.describe('Shop FRE', () => {
     await goto(page, '/shop');
     await fre.waitForVisible();
 
-    // Still shows all 4 because ShopPage gate is hardcoded
-    await fre.assertSlideCount(4);
+    await fre.assertSlideCount(expectedSlideCount(page));
   });
 });
+
+function expectedSlideCount(page: Parameters<typeof goto>[0]) {
+  return (page.viewportSize()?.width ?? NARROW_BREAKPOINT) < NARROW_BREAKPOINT ? 4 : 5;
+}

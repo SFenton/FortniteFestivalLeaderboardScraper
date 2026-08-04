@@ -108,15 +108,17 @@ export function isExperimentalRankingMetric(metric: RankingMetric): boolean {
   return EXPERIMENTAL_METRICS.includes(metric);
 }
 
-export function getEnabledRankingMetrics(_experimentalRanksEnabled: boolean): RankingMetric[] {
-  return RANKING_METRICS;
+export function getEnabledRankingMetrics(experimentalRanksEnabled: boolean): RankingMetric[] {
+  return experimentalRanksEnabled ? RANKING_METRICS : DEFAULT_METRICS;
 }
 
-export function coerceRankingMetric(metric: string | RankingMetric | null | undefined, _experimentalRanksEnabled: boolean): RankingMetric {
+export function coerceRankingMetric(metric: string | RankingMetric | null | undefined, experimentalRanksEnabled: boolean): RankingMetric {
   if (typeof metric !== 'string' || !RANKING_METRICS.includes(metric as RankingMetric)) {
     return 'totalscore';
   }
-
+  if (!experimentalRanksEnabled && isExperimentalRankingMetric(metric as RankingMetric)) {
+    return 'totalscore';
+  }
   return metric as RankingMetric;
 }
 

@@ -297,8 +297,8 @@ describe('MobileHeader', () => {
 
     const profileButton = screen.getByRole('button', { name: 'Select Player Profile' });
     expect(profileButton.getAttribute('data-profile-type')).toBe('none');
-    expect(profileButton.style.width).toBe('40px');
-    expect(profileButton.style.height).toBe('40px');
+    expect(profileButton.style.width).toBe('44px');
+    expect(profileButton.style.height).toBe('44px');
     expect(profileButton.style.background).toBe('none');
 
     fireEvent.click(profileButton);
@@ -320,8 +320,8 @@ describe('MobileHeader', () => {
     );
 
     const searchButton = screen.getByRole('button', { name: 'Search' });
-    expect(searchButton.style.width).toBe('40px');
-    expect(searchButton.style.height).toBe('40px');
+    expect(searchButton.style.width).toBe('44px');
+    expect(searchButton.style.height).toBe('44px');
   });
 
   it('renders mobile header actions as bright white', () => {

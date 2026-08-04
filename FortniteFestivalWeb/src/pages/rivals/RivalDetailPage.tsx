@@ -65,7 +65,10 @@ export default function RivalDetailPage() {
   // Leaderboard rival source: comes from navigation state set by LeaderboardRivalsTab
   const source = (navState?.source as 'song' | 'leaderboard') ?? 'song';
   const lbInstrument = navState?.instrument as string | undefined;
-  const lbRankBy = coerceRankingMetric(navState?.rankBy as string | undefined, true);
+  const lbRankBy = coerceRankingMetric(
+    navState?.rankBy as string | undefined,
+    settings.enableExperimentalRanks,
+  );
   /* v8 ignore stop */
 
   const cacheKey = source === 'leaderboard'

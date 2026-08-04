@@ -245,13 +245,12 @@ describe('PercentileToggles', () => {
 
 import { SettingsProvider } from '../../../src/contexts/SettingsContext';
 import { FestivalProvider } from '../../../src/contexts/FestivalContext';
-import { FeatureFlagsProvider } from '../../../src/contexts/FeatureFlagsContext';
 import { ShopProvider } from '../../../src/contexts/ShopContext';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 function ModalProviders({ children }: { children: React.ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
-  return <QueryClientProvider client={qc}><SettingsProvider><FeatureFlagsProvider><FestivalProvider><ShopProvider>{children}</ShopProvider></FestivalProvider></FeatureFlagsProvider></SettingsProvider></QueryClientProvider>;
+  return <QueryClientProvider client={qc}><SettingsProvider><FestivalProvider><ShopProvider>{children}</ShopProvider></FestivalProvider></SettingsProvider></QueryClientProvider>;
 }
 
 describe('SeasonToggles', () => {
@@ -375,12 +374,12 @@ describe('SuggestionsFilterModal', () => {
   };
 
   it('renders when visible', () => {
-    render(<SuggestionsFilterModal {...defaults} />);
+    render(<SuggestionsFilterModal {...defaults} />, { wrapper: ModalProviders });
     expect(document.body.innerHTML.length).toBeGreaterThan(50);
   });
 
   it('calls onApply on apply click', () => {
-    render(<SuggestionsFilterModal {...defaults} />);
+    render(<SuggestionsFilterModal {...defaults} />, { wrapper: ModalProviders });
     const buttons = Array.from(document.body.querySelectorAll('button'));
     const applyBtn = buttons.find(b => b.textContent?.includes('Apply'));
     if (applyBtn) {
@@ -391,7 +390,7 @@ describe('SuggestionsFilterModal', () => {
   });
 
   it('does not render when not visible', () => {
-    render(<SuggestionsFilterModal {...defaults} visible={false} />);
+    render(<SuggestionsFilterModal {...defaults} visible={false} />, { wrapper: ModalProviders });
     expect(document.body.innerHTML.length).toBeLessThan(50);
   });
 });

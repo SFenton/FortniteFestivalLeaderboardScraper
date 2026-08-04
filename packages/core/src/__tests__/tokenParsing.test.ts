@@ -1,4 +1,4 @@
-import {parseExchangeCodeToken, parseTokenVerify} from '../auth/tokenParsing';
+import {parseExchangeCodeToken, parseTokenVerify} from '../../../auth/src/tokenParsing';
 
 describe('tokenParsing', () => {
   test('parseExchangeCodeToken returns null for non-json/errorCode/missing fields', () => {

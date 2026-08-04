@@ -1,5 +1,5 @@
-import type {HttpClient, HttpResponse} from '../services/types';
-import {FestivalService} from '../services/festivalService';
+import type {HttpClient, HttpResponse} from '../../../native/src/services/types';
+import {FestivalService} from '../../../native/src/services/festivalService';
 import type {Song} from '../models';
 
 const contentUrl = 'https://fortnitecontent-website-prod07.ol.epicgames.com/content/api/pages/fortnite-game/spark-tracks';

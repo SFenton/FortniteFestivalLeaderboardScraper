@@ -164,9 +164,12 @@ describe('formatters extended coverage', () => {
     expect(instrumentKeyToLabel('guitar')).toBe('Lead');
     expect(instrumentKeyToLabel('bass')).toBe('Bass');
     expect(instrumentKeyToLabel('drums')).toBe('Drums');
-    expect(instrumentKeyToLabel('vocals')).toBe('Vocals');
+    expect(instrumentKeyToLabel('vocals')).toBe('Tap Vocals');
     expect(instrumentKeyToLabel('pro_guitar')).toBe('Pro Lead');
     expect(instrumentKeyToLabel('pro_bass')).toBe('Pro Bass');
+    expect(instrumentKeyToLabel('peripheral_vocals')).toBe('Karaoke');
+    expect(instrumentKeyToLabel('peripheral_cymbals')).toBe('Pro Drums + Cymbals');
+    expect(instrumentKeyToLabel('peripheral_drums')).toBe('Pro Drums');
   });
 
   test('instrumentKeyToLabel returns key for unknown', () => {
@@ -182,6 +185,9 @@ describe('formatters extended coverage', () => {
     expect(instrumentKeyToColorHex('vocals')).toBe('#27ae60');
     expect(instrumentKeyToColorHex('pro_guitar')).toBe('#9b59b6');
     expect(instrumentKeyToColorHex('pro_bass')).toBe('#2980b9');
+    expect(instrumentKeyToColorHex('peripheral_vocals')).toBe('#16a085');
+    expect(instrumentKeyToColorHex('peripheral_cymbals')).toBe('#c0392b');
+    expect(instrumentKeyToColorHex('peripheral_drums')).toBe('#d35400');
   });
 
   test('instrumentKeyToColorHex returns gray for unknown', () => {

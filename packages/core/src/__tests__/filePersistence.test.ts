@@ -1,6 +1,6 @@
-import {InMemoryFileStore} from '../persistence/file/fileStore.types';
-import {JsonSettingsPersistence} from '../persistence/file/jsonSettingsPersistence';
-import {FileJsonFestivalPersistence} from '../persistence/file/fileJsonFestivalPersistence';
+import {InMemoryFileStore} from '../../../native/src/persistence/file/fileStore.types';
+import {JsonSettingsPersistence} from '../../../native/src/persistence/file/jsonSettingsPersistence';
+import {FileJsonFestivalPersistence} from '../../../native/src/persistence/file/fileJsonFestivalPersistence';
 
 
 describe('File-based persistence (portable)', () => {

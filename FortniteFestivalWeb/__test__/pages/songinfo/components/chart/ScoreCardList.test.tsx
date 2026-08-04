@@ -20,11 +20,6 @@ vi.mock('../../../../../src/components/songs/metadata/AccuracyDisplay', () => ({
 vi.mock('../../../../../src/components/songs/metadata/SeasonPill', () => ({
   default: ({ season }: any) => <span data-testid="season">S{season}</span>,
 }));
-vi.mock('../../../../../src/contexts/FeatureFlagsContext', () => ({
-  useFeatureFlags: () => ({ rivals: true, compete: true, leaderboards: true, firstRun: true, difficulty: true }),
-  FeatureFlagsProvider: ({ children }: any) => children,
-}));
-
 import ScoreCardList from '../../../../../src/pages/songinfo/components/chart/ScoreCardList';
 
 function makePoint(overrides: Partial<ChartPoint> = {}): ChartPoint {

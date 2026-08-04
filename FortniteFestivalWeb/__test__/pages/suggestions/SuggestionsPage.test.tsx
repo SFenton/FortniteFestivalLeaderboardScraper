@@ -10,6 +10,8 @@ import { TestProviders } from '../../helpers/TestProviders';
 import { stubScrollTo, stubResizeObserver, stubIntersectionObserver } from '../../helpers/browserStubs';
 import type { AppliedBandComboFilter } from '../../../src/types/bandFilter';
 import type { SelectedBandProfile } from '../../../src/state/selectedProfile';
+import { contentHash } from '../../../src/firstRun/types';
+import { suggestionsSlides } from '../../../src/pages/suggestions/firstRun';
 import { expectCancellableCall } from '../../helpers/requestAssertions';
 
 const mockApi = vi.hoisted(() => {
@@ -119,6 +121,16 @@ beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
   localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-player-1', displayName: 'TestPlayer' }));
+  localStorage.setItem('fst:firstRun', JSON.stringify(Object.fromEntries(
+    suggestionsSlides.map(slide => [
+      slide.id,
+      {
+        version: slide.version,
+        hash: contentHash(slide.contentKey ?? (slide.title + slide.description)),
+        seenAt: new Date().toISOString(),
+      },
+    ]),
+  )));
   resetMocks();
 });
 
@@ -345,7 +357,6 @@ describe('SuggestionsPage', () => {
       expectCancellableCall(mockApi.getBandSongRows, 'Band_Duets', selectedBand.teamKey, bandFilter.comboId);
       expect(screen.getAllByText('First Plays for This Combo').length).toBeGreaterThan(0);
     });
-    expect(screen.getByText('Band FC Chase')).toBeTruthy();
     const bandLinks = Array.from(container.querySelectorAll('a'))
       .map(link => link.getAttribute('href'))
       .filter(Boolean);

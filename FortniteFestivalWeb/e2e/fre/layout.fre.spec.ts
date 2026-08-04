@@ -128,7 +128,7 @@ test.describe('Layout FRE', () => {
     expect(overlayBox!.height).toBeGreaterThanOrEqual(812 - 1);
   });
 
-  test('pagination dots stay in single row (songs page, 8 dots)', async ({ page, fre, freState }) => {
+  test('pagination dots stay in single row (songs page, 9 dots)', async ({ page, fre, freState }) => {
     await freState.setTrackedPlayer();
     await page.setViewportSize({ width: 375, height: 812 });
     await goto(page, '/songs');

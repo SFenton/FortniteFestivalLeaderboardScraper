@@ -15,10 +15,6 @@ vi.mock('@festival/core/suggestions', () => {
   };
 });
 
-vi.mock('../../../src/contexts/FeatureFlagsContext', () => ({
-  useFeatureFlags: () => ({ rivals: true, compete: true, leaderboards: true, firstRun: true, difficulty: true }),
-}));
-
 vi.mock('../../../src/contexts/SettingsContext', () => ({
   useSettings: () => ({ settings: { instruments: {} }, updateSettings: vi.fn() }),
 }));

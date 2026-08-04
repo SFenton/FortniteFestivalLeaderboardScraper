@@ -91,9 +91,12 @@ export default function LeaderboardsOverviewPage() {
   const { registerLeaderboardActions } = useFabSearch();
   const scrollContainerRef = useScrollContainer();
   const [searchParams, setSearchParams] = useSearchParams();
+  const experimentalRanksEnabled = settings.enableExperimentalRanks;
   const rawMetric = searchParams.get('rankBy') ?? loadLeaderboardRankBy();
-  const metric = selectedBand ? coerceBandRankingMetric(rawMetric, true) : coerceRankingMetric(rawMetric, true);
-  const bandMetric = coerceBandRankingMetric(metric, true);
+  const metric = selectedBand
+    ? coerceBandRankingMetric(rawMetric, experimentalRanksEnabled)
+    : coerceRankingMetric(rawMetric, experimentalRanksEnabled);
+  const bandMetric = coerceBandRankingMetric(metric, experimentalRanksEnabled);
 
   const metricModal = useModalState<RankingMetric>(() => 'totalscore');
   const openMetricDraft = metricModal.open;
@@ -106,25 +109,30 @@ export default function LeaderboardsOverviewPage() {
   const resetRush = useCallback(() => staggerRushRef.current?.(), []);
 
   const applyMetric = useCallback(() => {
-    const nextMetric = selectedBand ? coerceBandRankingMetric(metricModal.draft, true) : coerceRankingMetric(metricModal.draft, true);
+    const nextMetric = selectedBand
+      ? coerceBandRankingMetric(metricModal.draft, experimentalRanksEnabled)
+      : coerceRankingMetric(metricModal.draft, experimentalRanksEnabled);
     scrollContainerRef.current?.scrollTo(0, 0);
     resetRush();
     setShouldStagger(true);
     saveLeaderboardRankBy(nextMetric);
     setSearchParams({ rankBy: nextMetric }, { replace: true });
     metricModal.close();
-  }, [metricModal, resetRush, scrollContainerRef, selectedBand, setSearchParams]);
+  }, [experimentalRanksEnabled, metricModal, resetRush, scrollContainerRef, selectedBand, setSearchParams]);
 
   useEffect(() => {
-    if (!selectedBand || rawMetric === metric) return;
+    if (rawMetric === metric) return;
     saveLeaderboardRankBy(metric);
     setSearchParams({ rankBy: metric }, { replace: true });
-  }, [metric, rawMetric, selectedBand, setSearchParams]);
+  }, [metric, rawMetric, setSearchParams]);
 
   useEffect(() => {
-    registerLeaderboardActions({ openMetric: openMetricModal, metricActive: metric !== 'totalscore' });
+    registerLeaderboardActions({
+      openMetric: experimentalRanksEnabled ? openMetricModal : undefined,
+      metricActive: metric !== 'totalscore',
+    });
     return () => registerLeaderboardActions(null);
-  }, [metric, openMetricModal, registerLeaderboardActions]);
+  }, [experimentalRanksEnabled, metric, openMetricModal, registerLeaderboardActions]);
 
   const instruments = useMemo(() => visibleInstruments(settings), [settings]);
 
@@ -254,7 +262,10 @@ export default function LeaderboardsOverviewPage() {
   }, [bandTypes.length, cols, instruments.length, itemsPerCard, loadPhase, player, shouldStagger]);
 
   const s = useLeaderboardsStyles();
-  const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player, experimentalRanksEnabled: true }), [player]);
+  const firstRunGateCtx = useMemo(
+    () => ({ hasPlayer: !!player, experimentalRanksEnabled }),
+    [experimentalRanksEnabled, player],
+  );
   const firstLeaderboardError = leaderboardQueries.find(query => query.error)?.error;
   const chartSlots = player ? 1 : 0;
   const instrumentRows = Math.ceil(instruments.length / cols);
@@ -387,7 +398,7 @@ export default function LeaderboardsOverviewPage() {
         <PageHeader
           title={t('rankings.title')}
           actions={
-            !isMobile && !allErrored ? (
+            !isMobile && !allErrored && experimentalRanksEnabled ? (
               <ActionPill
                 icon={<IoOptions size={Size.iconAction} />}
                 label={t(`rankings.metric.${metric}`)}
@@ -407,8 +418,8 @@ export default function LeaderboardsOverviewPage() {
           onClose={metricModal.close}
           onApply={applyMetric}
           onReset={metricModal.reset}
-          experimentalRanksEnabled={true}
-          metrics={selectedBand ? getEnabledBandRankingMetrics(true) : undefined}
+          experimentalRanksEnabled={experimentalRanksEnabled}
+          metrics={selectedBand ? getEnabledBandRankingMetrics(experimentalRanksEnabled) : undefined}
           subject={selectedBand ? 'bands' : 'players'}
         />
       }

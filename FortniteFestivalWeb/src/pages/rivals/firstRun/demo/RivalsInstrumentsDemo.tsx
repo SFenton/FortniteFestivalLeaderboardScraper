@@ -64,7 +64,10 @@ export default function RivalsInstrumentsDemo() {
   const useSingleCardMode = budget <= doubleSectionHeight;
   const visibleCardCount = useSingleCardMode ? 1 : 2;
   const maxSections = useSingleCardMode ? 1 : countVisibleSections(budget, rowHeightEstimate, visibleCardCount);
-  const visibleInstruments = INSTRUMENTS.slice(0, Math.min(maxSections, INSTRUMENTS.length));
+  const visibleInstruments = useMemo(
+    () => INSTRUMENTS.slice(0, Math.min(maxSections, INSTRUMENTS.length)),
+    [maxSections],
+  );
 
   const [rows, setRows] = useState<InstrumentRow[]>(() =>
     visibleInstruments.map(inst => {

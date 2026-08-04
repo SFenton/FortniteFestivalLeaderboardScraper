@@ -105,7 +105,6 @@ internal static class PublicApiResponseCachePolicy
 
     private static readonly string[] LiveExactPaths =
     [
-        "/api/features",
         "/api/progress",
         "/api/service-info",
         "/api/shop",

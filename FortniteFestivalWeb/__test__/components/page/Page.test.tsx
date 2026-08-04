@@ -6,6 +6,7 @@ import { FADE_DURATION, Layout, MaxWidth } from '@festival/theme';
 import Page, { pageCss } from '../../../src/pages/Page';
 import { ScrollContainerProvider, useScrollContainer, useHeaderPortalRef, useQuickLinksRailPortalRef } from '../../../src/contexts/ScrollContainerContext';
 import { PageQuickLinksProvider, usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
+import { SONGS_FAB_KEYBOARD_INSET_VAR } from '../../../src/constants/keyboardLayoutVars';
 
 function setViewportQueries({ mobile = false, wide = false }: { mobile?: boolean; wide?: boolean } = {}) {
   Object.defineProperty(window, 'matchMedia', {
@@ -111,7 +112,9 @@ describe('Page', () => {
   it('applies marginBottom to scroll container when fabSpacer="fixed"', () => {
     render(<PageWrapper fabSpacer="fixed"><div>Content</div></PageWrapper>);
     const scrollContainer = screen.getByTestId('test-scroll-container');
-    expect(scrollContainer.style.marginBottom).toBe(`${pageCss.fabSpacer.height}px`);
+    expect(scrollContainer.style.marginBottom).toBe(
+      `calc(${Layout.fabPaddingBottom}px + var(${SONGS_FAB_KEYBOARD_INSET_VAR}, 0px))`,
+    );
   });
 
   it('registers page quick links when provided', () => {

@@ -97,6 +97,7 @@ beforeAll(() => {
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   localStorage.clear();
+  localStorage.setItem('fst:appSettings', JSON.stringify({ enableExperimentalRanks: true }));
   vi.clearAllMocks();
   setViewportQueries();
   mockUseIsMobile.mockReturnValue(false);
@@ -586,6 +587,37 @@ describe('BandPage', () => {
     expect(screen.getByText('#4.5')).toBeTruthy();
     expect(screen.getByText('Song Alpha')).toBeTruthy();
     expect(screen.getByText('Song Zeta')).toBeTruthy();
+  });
+
+  it('uses total-score rank cards, history, and navigation when experimental ranks are disabled', async () => {
+    localStorage.setItem('fst:appSettings', JSON.stringify({ enableExperimentalRanks: false }));
+
+    renderBandPage('/bands/band-guid-1');
+    await advancePastSpinner();
+
+    const statisticsSection = screen.getByTestId('band-section-statistics');
+    expect(within(statisticsSection).queryByText('Adjusted Percentile Rank')).toBeNull();
+    expect(within(statisticsSection).queryByText('Weighted Percentile Rank')).toBeNull();
+    expect(within(statisticsSection).queryByText('FC Rate Rank')).toBeNull();
+    expect(within(statisticsSection).getByText('Total Score Rank')).toBeTruthy();
+    expect(screen.getAllByTestId('band-stat-card')).toHaveLength(12);
+
+    const historySection = screen.getByTestId('band-section-rank-history');
+    expect(within(historySection).getAllByText('Total Score').length).toBeGreaterThan(0);
+    expect(within(historySection).getAllByText('#10').length).toBeGreaterThan(0);
+    expect(within(historySection).queryByText('Adjusted Percentile')).toBeNull();
+
+    fireEvent.click(within(statisticsSection).getByText('Total Score Rank'));
+    expect(screen.getByTestId('current-location')).toHaveTextContent('/leaderboards/bands/Band_Duets?rankBy=totalscore&page=1');
+  });
+
+  it('requests total-score ranking semantics for selected-band context when experimental ranks are disabled', async () => {
+    localStorage.setItem('fst:appSettings', JSON.stringify({ enableExperimentalRanks: false }));
+
+    renderBandPage('/statistics', createTestQueryClient(), null, createSelectedBandProfile());
+    await advancePastSpinner();
+
+    expectCancellableCall(mockApi.getBandRanking, 'Band_Duets', 'p1:p2', undefined, 'totalscore');
   });
 
   it('uses instrument empty sections when band best and worst songs are empty', async () => {

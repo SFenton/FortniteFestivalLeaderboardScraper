@@ -148,6 +148,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   stubMatchMedia(false);
   localStorage.clear();
+  localStorage.setItem('fst:appSettings', JSON.stringify({ enableExperimentalRanks: true }));
   mockApi.getSongs.mockResolvedValue({ currentSeason: 9, songs: [] });
   mockApi.getShop.mockResolvedValue({ songs: [] });
   mockApi.getRankings.mockResolvedValue({ entries: [], totalAccounts: 0, instrument: 'Solo_Guitar', rankBy: 'totalscore', page: 1, pageSize: 10 });

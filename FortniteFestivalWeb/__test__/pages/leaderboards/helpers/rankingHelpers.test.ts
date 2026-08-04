@@ -1,8 +1,20 @@
 import { describe, it, expect } from 'vitest';
-import { LEADERBOARD_PAGE_SIZE, computePillMinWidth, computeRankAxisWidth, computeRankWidth, formatBayesianRatingDisplay, formatRankLabel, formatRating, formatRankingValueDisplay, getBayesianRatingForMetric, getLeaderboardPageForRank, getRatingForMetric, getRatingPillTier, getSongsLabel } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
+import { LEADERBOARD_PAGE_SIZE, coerceRankingMetric, computePillMinWidth, computeRankAxisWidth, computeRankWidth, formatBayesianRatingDisplay, formatRankLabel, formatRating, formatRankingValueDisplay, getBayesianRatingForMetric, getEnabledRankingMetrics, getLeaderboardPageForRank, getRatingForMetric, getRatingPillTier, getSongsLabel } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
 import type { AccountRankingEntry } from '@festival/core/api';
 import type { RankingMetric } from '@festival/core/api';
 import { Layout } from '@festival/theme';
+
+describe('ranking metric gates', () => {
+  it('exposes only total score when experimental ranks are disabled', () => {
+    expect(getEnabledRankingMetrics(false)).toEqual(['totalscore']);
+    expect(coerceRankingMetric('adjusted', false)).toBe('totalscore');
+  });
+
+  it('preserves all metrics when experimental ranks are enabled', () => {
+    expect(getEnabledRankingMetrics(true)).toEqual(['totalscore', 'adjusted', 'weighted', 'fcrate', 'maxscore']);
+    expect(coerceRankingMetric('adjusted', true)).toBe('adjusted');
+  });
+});
 
 describe('computeRankWidth', () => {
   it('returns default rankColumnWidth for empty array', () => {

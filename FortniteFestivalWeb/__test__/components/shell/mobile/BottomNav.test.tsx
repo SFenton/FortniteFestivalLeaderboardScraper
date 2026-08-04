@@ -4,10 +4,6 @@ import { MemoryRouter } from 'react-router-dom';
 import { TabKey } from '@festival/core/runtime';
 import { Layout } from '@festival/theme';
 
-vi.mock('../../../../src/contexts/FeatureFlagsContext', () => ({
-  useFeatureFlags: () => ({ rivals: true, compete: true, leaderboards: true, firstRun: true }),
-}));
-
 import BottomNav from '../../../../src/components/shell/mobile/BottomNav';
 
 const SPACIOUS_BOTTOM_NAV_QUERY = '(min-width: 600px)';

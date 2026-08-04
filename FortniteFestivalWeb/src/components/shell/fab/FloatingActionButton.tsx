@@ -839,6 +839,7 @@ export default function FloatingActionButton({
                     {...mainFabPressHandlers}
                     aria-label={ariaLabel ?? t('common.actions')}
                     title={ariaLabel ?? t('common.actions')}
+                    data-direct-action={effectiveDirectAction ? 'true' : 'false'}
                   >
                     {mainFabContent}
                   </button>
@@ -903,6 +904,7 @@ export default function FloatingActionButton({
             /* v8 ignore stop */
             aria-label={ariaLabel ?? t('common.actions')}
             title={ariaLabel ?? t('common.actions')}
+            data-direct-action={effectiveDirectAction ? 'true' : 'false'}
           >
             {mainFabContent}
           </button>

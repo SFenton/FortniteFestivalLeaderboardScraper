@@ -2,10 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { queryKeys } from '../../src/api/queryKeys';
 
 describe('queryKeys', () => {
-  it('features() returns ["features"]', () => {
-    expect(queryKeys.features()).toEqual(['features']);
-  });
-
   it('serviceInfo() returns a profile-independent key', () => {
     expect(queryKeys.serviceInfo()).toEqual(['serviceInfo']);
   });

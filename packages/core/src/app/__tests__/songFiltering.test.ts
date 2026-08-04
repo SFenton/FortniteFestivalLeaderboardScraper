@@ -1,7 +1,7 @@
 import {ScoreTracker} from '@festival/core';
 import type {LeaderboardData, Song} from '@festival/core';
 import {defaultSettings} from '@festival/core';
-import {buildSongDisplayRow, defaultAdvancedMissingFilters, defaultPrimaryInstrumentOrder, filterAndSortSongs, songMatchesAdvancedMissing} from '../songFiltering';
+import {buildSongDisplayRow, defaultAdvancedMissingFilters, defaultPrimaryInstrumentOrder, filterAndSortSongs, songHasSequentialTopFCsScore, songMatchesAdvancedMissing} from '../songFiltering';
 
 describe('app/songs/songFiltering', () => {
   const mkSong = (id: string, title: string, artist: string): Song => ({track: {su: id, tt: title, an: artist, in: {}}});
@@ -63,6 +63,8 @@ describe('app/songs/songFiltering', () => {
   test('filterAndSortSongs applies difficulty filter for selected instrument', () => {
     const easySong = mkSong('easy', 'Easy Song', 'X');
     const expertSong = mkSong('expert', 'Expert Song', 'Y');
+    easySong.track.in = {gr: 0};
+    expertSong.track.in = {gr: 6};
 
     const easyTracker = Object.assign(new ScoreTracker(), {initialized: true, difficulty: 0});
     const expertTracker = Object.assign(new ScoreTracker(), {initialized: true, difficulty: 6});
@@ -340,7 +342,6 @@ describe('app/songs/songFiltering', () => {
   /* ── instrumentHasFC & sequential FCs ── */
 
   test('songHasSequentialTopFCsScore counts leading FCs only', () => {
-    const {songHasSequentialTopFCsScore} = require('../songFiltering');
     const fc = Object.assign(new ScoreTracker(), {initialized: true, isFullCombo: true});
     const nf = Object.assign(new ScoreTracker(), {initialized: true, isFullCombo: false});
     const scoresIndex: Record<string, LeaderboardData> = {
@@ -849,7 +850,7 @@ describe('app/songs/songFiltering', () => {
 
   /* ── fallbackDifficulty with track.in undefined (triggers in ?? {}) ── */
 
-  test('difficulty filter works when song.track.in is undefined', () => {
+  test('difficulty filter treats an unavailable chart as bucket zero', () => {
     const s: Song = {track: {su: 'a', tt: 'A', an: 'X'}} as any; // in is undefined
     const t = Object.assign(new ScoreTracker(), {initialized: true, difficulty: 0});
     const scoresIndex: Record<string, LeaderboardData> = {a: {songId: 'a', guitar: t}};
@@ -857,11 +858,7 @@ describe('app/songs/songFiltering', () => {
       songs: [s], scoresIndex, instrumentFilter: 'guitar',
       advanced: {...defaultAdvancedMissingFilters(), difficultyFilter: {0: false}},
     });
-    // in is undefined → in ?? {} → {} → gr ?? 0 → 0 → clamped → bucket 1, difficulty=0, resolved=0, bucket=0+1=1
-    // Actually: difficultyBucketForSong: raw = 0 (tracker.difficulty=0), resolved = fallbackDifficulty → (undefined ?? {})['gr'] ?? 0 → 0
-    // resolved = 0 → clamped = 0 → bucket = 0 + 1 = 1
-    // difficultyFilter: {0: false} → bucket 1 is NOT excluded
-    expect(out.length).toBe(1);
+    expect(out.length).toBe(0);
   });
 
   /* ── buildSongDisplayRow with song.track.tt undefined and _title undefined ── */

@@ -3,6 +3,7 @@ import type {InstrumentShowSettings} from '../songListConfig';
 
 const allVisible: InstrumentShowSettings = {
   showLead: true, showBass: true, showDrums: true, showVocals: true, showProLead: true, showProBass: true,
+  showPeripheralVocals: true, showPeripheralCymbals: true, showPeripheralDrums: true,
 };
 
 describe('songListConfig', () => {
@@ -41,14 +42,20 @@ describe('songListConfig', () => {
       'bass',
       'pro_guitar',
       'pro_bass',
+      'peripheral_vocals',
+      'peripheral_cymbals',
+      'peripheral_drums',
     ]);
     expect(out.map(i => i.displayName)).toEqual([
       'Drums',
       'Lead',
-      'Vocals',
+      'Tap Vocals',
       'Bass',
       'Pro Lead',
       'Pro Bass',
+      'Karaoke',
+      'Pro Drums + Cymbals',
+      'Pro Drums',
     ]);
   });
 
@@ -61,6 +68,9 @@ describe('songListConfig', () => {
       'bass',
       'pro_guitar',
       'pro_bass',
+      'peripheral_vocals',
+      'peripheral_cymbals',
+      'peripheral_drums',
     ]);
   });
 
@@ -73,6 +83,9 @@ describe('songListConfig', () => {
     expect(showSettingKeyForInstrument('vocals')).toBe('showVocals');
     expect(showSettingKeyForInstrument('pro_guitar')).toBe('showProLead');
     expect(showSettingKeyForInstrument('pro_bass')).toBe('showProBass');
+    expect(showSettingKeyForInstrument('peripheral_vocals')).toBe('showPeripheralVocals');
+    expect(showSettingKeyForInstrument('peripheral_cymbals')).toBe('showPeripheralCymbals');
+    expect(showSettingKeyForInstrument('peripheral_drums')).toBe('showPeripheralDrums');
   });
 
   /* ── isInstrumentVisible ── */
@@ -93,7 +106,10 @@ describe('songListConfig', () => {
   test('hiding an instrument moves it to the end of PIO', () => {
     const defaultOrder = defaultPrimaryInstrumentOrder().map(i => i.key);
     const result = reorderPIOForVisibilityChange(defaultOrder, 'drums', false, allVisible);
-    expect(result).toEqual(['guitar', 'vocals', 'bass', 'pro_guitar', 'pro_bass', 'drums']);
+    expect(result).toEqual([
+      'guitar', 'vocals', 'bass', 'pro_guitar', 'pro_bass',
+      'peripheral_vocals', 'peripheral_cymbals', 'peripheral_drums', 'drums',
+    ]);
   });
 
   test('hiding an instrument from a custom order moves it to the end', () => {
@@ -183,26 +199,26 @@ describe('songListConfig', () => {
 
   test('normalizeMetadataSortPriority returns defaults for empty/undefined', () => {
     const base = normalizeMetadataSortPriority(undefined);
-    expect(base.map(i => i.key)).toEqual(['title', 'artist', 'year', 'score', 'percentage', 'percentile', 'isfc', 'stars', 'seasonachieved', 'intensity']);
+    expect(base.map(i => i.key)).toEqual(['title', 'artist', 'year', 'score', 'percentage', 'percentile', 'isfc', 'stars', 'seasonachieved', 'intensity', 'difficulty']);
     expect(normalizeMetadataSortPriority([])).toEqual(base);
   });
 
   test('normalizeMetadataSortPriority reorders and appends missing', () => {
     const out = normalizeMetadataSortPriority(['stars', 'score']);
-    expect(out.map(i => i.key)).toEqual(['stars', 'score', 'title', 'artist', 'year', 'percentage', 'percentile', 'isfc', 'seasonachieved', 'intensity']);
+    expect(out.map(i => i.key)).toEqual(['stars', 'score', 'title', 'artist', 'year', 'percentage', 'percentile', 'isfc', 'seasonachieved', 'intensity', 'difficulty']);
   });
 
   /* ── normalizeSongRowVisualOrder ── */
 
   test('normalizeSongRowVisualOrder returns defaults for empty/undefined', () => {
     const base = normalizeSongRowVisualOrder(undefined);
-    expect(base.map(i => i.key)).toEqual(['score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'intensity']);
+    expect(base.map(i => i.key)).toEqual(['score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'intensity', 'difficulty']);
     expect(normalizeSongRowVisualOrder([])).toEqual(base);
   });
 
   test('normalizeSongRowVisualOrder reorders and appends missing', () => {
     const out = normalizeSongRowVisualOrder(['stars', 'score']);
-    expect(out.map(i => i.key)).toEqual(['stars', 'score', 'percentage', 'percentile', 'seasonachieved', 'intensity']);
+    expect(out.map(i => i.key)).toEqual(['stars', 'score', 'percentage', 'percentile', 'seasonachieved', 'intensity', 'difficulty']);
   });
 
   test('normalizeMetadataSortPriority ignores unknown keys', () => {
@@ -210,14 +226,14 @@ describe('songListConfig', () => {
     // unknown_key should be silently ignored
     expect(out[0].key).toBe('stars');
     expect(out[1].key).toBe('score');
-    expect(out.length).toBe(10); // all known keys still present
+    expect(out.length).toBe(11); // all known keys still present
   });
 
   test('normalizeSongRowVisualOrder ignores unknown keys', () => {
     const out = normalizeSongRowVisualOrder(['stars', 'bogus' as any, 'score']);
     expect(out[0].key).toBe('stars');
     expect(out[1].key).toBe('score');
-    expect(out.length).toBe(6);
+    expect(out.length).toBe(7);
   });
 
   test('percentileBucket clamps very small positive values to bucket 1', () => {

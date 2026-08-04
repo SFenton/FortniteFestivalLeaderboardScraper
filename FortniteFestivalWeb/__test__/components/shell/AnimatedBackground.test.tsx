@@ -16,7 +16,7 @@ function makeSong(id: string, albumArt?: string): Song {
 
 /** Find layer divs (have backgroundSize: cover from abStyles.layer). */
 function findLayers(el: HTMLElement): HTMLElement[] {
-  const wrapper = el.firstElementChild;
+  const wrapper = el.lastElementChild;
   if (!wrapper) return [];
   return Array.from(wrapper.children).filter(
     (c) => (c as HTMLElement).style.backgroundSize === 'cover',
@@ -25,7 +25,7 @@ function findLayers(el: HTMLElement): HTMLElement[] {
 
 /** Find the dim overlay (has backgroundColor, no backgroundSize). */
 function findDim(el: HTMLElement): HTMLElement | null {
-  const wrapper = el.firstElementChild;
+  const wrapper = el.lastElementChild;
   if (!wrapper) return null;
   return (Array.from(wrapper.children).find(
     (c) => !!(c as HTMLElement).style.backgroundColor && !(c as HTMLElement).style.backgroundSize,
@@ -156,7 +156,7 @@ describe('AnimatedBackground', () => {
   it('fades in the container after images are available', () => {
     const songs = [makeSong('s1')];
     const { container } = render(<AnimatedBackground songs={songs} />);
-    const wrapper = container.firstChild as HTMLElement;
+    const wrapper = container.lastElementChild as HTMLElement;
     // After rAF fires (which we stubbed), opacity should be 1
     expect(wrapper.style.opacity).toBe('1');
   });

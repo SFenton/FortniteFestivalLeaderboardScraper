@@ -446,7 +446,14 @@ export default function PlayerContent({
   const overallSummaryItems = buildOverallSummaryItems(t, overallStats, songs.length, visibleKeys, navigateToSongs, navigateToSongDetail, cardStyle);
   items.push(...overallSummaryItems);
 
-  const familyGlobalStatisticsItems = buildFamilyGlobalStatisticsItems(t, visibleKeys, cardStyle, statsData?.familyRanks, true, navigateToFamilyLeaderboard);
+  const familyGlobalStatisticsItems = buildFamilyGlobalStatisticsItems(
+    t,
+    visibleKeys,
+    cardStyle,
+    statsData?.familyRanks,
+    settings.enableExperimentalRanks,
+    navigateToFamilyLeaderboard,
+  );
   items.push(...familyGlobalStatisticsItems);
 
   // --- Instrument Statistics heading ---
@@ -480,7 +487,22 @@ export default function PlayerContent({
     const totalRanked = hasRankTiers
       ? (statsData!.instrumentRanks as InstrumentRankEntry[])?.find(e => e.ins === comboIdFromInstruments([inst]))?.totalRanked
       : rankingDto?.totalRankedAccounts;
-    const instrumentItems = buildInstrumentStatsItems(t, inst, stats, data.displayName, navigateToSongs, navigateToSongDetail, cardStyle, overThreshold, instrumentRankings.get(inst), true, navigateToLeaderboard, data.accountId, totalRanked, true);
+    const instrumentItems = buildInstrumentStatsItems(
+      t,
+      inst,
+      stats,
+      data.displayName,
+      navigateToSongs,
+      navigateToSongDetail,
+      cardStyle,
+      overThreshold,
+      instrumentRankings.get(inst),
+      settings.enableExperimentalRanks,
+      navigateToLeaderboard,
+      data.accountId,
+      totalRanked,
+      true,
+    );
     if (instrumentItems.length > 0) {
       instrumentSectionFirstKeys.set(inst, instrumentItems[0]!.key);
     }

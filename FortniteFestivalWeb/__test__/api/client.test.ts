@@ -49,18 +49,6 @@ function jsonResponse(
 }
 
 describe('api/client', () => {
-  describe('getFeatures', () => {
-    it('fetches feature flags from /api/features', async () => {
-      const data = { compete: true, leaderboards: true, difficulty: false, playerBands: true, experimentalRanks: false, appManual: true };
-      mockFetchOk(data);
-
-      const result = await api.getFeatures();
-
-      expect(result).toEqual(data);
-      expect(global.fetch).toHaveBeenCalledWith('/api/features', { headers: {} });
-    });
-  });
-
   describe('getServiceInfo', () => {
     it('uses an abortable no-store reachability request without profile headers', async () => {
       localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'tracked-1', displayName: 'Tracked' }));

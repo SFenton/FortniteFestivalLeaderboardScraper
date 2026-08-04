@@ -80,7 +80,7 @@ describe('app/songInfo', () => {
   });
 
   test('buildSongInfoInstrumentRows with FC shows 100%', () => {
-    const song: Song = {track: {su: 'fc', tt: 'FC Song', an: 'Artist'}};
+    const song: Song = {track: {su: 'fc', tt: 'FC Song', an: 'Artist', in: {gr: 0}}};
     const t = Object.assign(new ScoreTracker(), {
       initialized: true,
       maxScore: 50000,
@@ -109,7 +109,7 @@ describe('app/songInfo', () => {
 
   test('buildSongInfoInstrumentRows gameDifficulty values map correctly', () => {
     const mkRow = (gd: number) => {
-      const song: Song = {track: {su: `gd${gd}`, tt: 'S', an: 'A'}};
+      const song: Song = {track: {su: `gd${gd}`, tt: 'S', an: 'A', in: {gr: 2}}};
       const t = Object.assign(new ScoreTracker(), {
         initialized: true, maxScore: 100, percentHit: 500000, numStars: 3,
         gameDifficulty: gd, isFullCombo: false, seasonAchieved: 1,
@@ -128,7 +128,7 @@ describe('app/songInfo', () => {
   });
 
   test('buildSongInfoInstrumentRows with percentile data', () => {
-    const song: Song = {track: {su: 'pct', tt: 'Pct', an: 'A'}};
+    const song: Song = {track: {su: 'pct', tt: 'Pct', an: 'A', in: {gr: 0}}};
     const t = Object.assign(new ScoreTracker(), {
       initialized: true, maxScore: 100, percentHit: 500000, numStars: 3,
       isFullCombo: false, seasonAchieved: 1,
@@ -145,7 +145,7 @@ describe('app/songInfo', () => {
     expect(rows[0].percentileDisplay).not.toBe('N/A');
   });
 
-  test('buildSongInfoInstrumentRows with no track intensities uses 0 fallback', () => {
+  test('buildSongInfoInstrumentRows omits uncharted instruments', () => {
     const song: Song = {track: {su: 'noint', tt: 'No Int', an: 'Y'}};
     const scoresIndex: Record<string, LeaderboardData> = {};
     const rows = buildSongInfoInstrumentRows({
@@ -153,13 +153,11 @@ describe('app/songInfo', () => {
       instrumentOrder: ['guitar', 'bass', 'drums', 'vocals', 'pro_guitar', 'pro_bass'],
       scoresIndex,
     });
-    for (const row of rows) {
-      expect(row.rawDifficulty).toBe(0);
-    }
+    expect(rows).toEqual([]);
   });
 
   test('buildSongInfoInstrumentRows with multiple instruments including uninitialized', () => {
-    const song: Song = {track: {su: 'multi', tt: 'Multi', an: 'A', in: {gr: 3}}};
+    const song: Song = {track: {su: 'multi', tt: 'Multi', an: 'A', in: {gr: 3, ds: 3}}};
     const init = Object.assign(new ScoreTracker(), {
       initialized: true, maxScore: 100, percentHit: 500000, numStars: 3,
       isFullCombo: false, seasonAchieved: 1, rank: 0, rawPercentile: 0, difficulty: 0,

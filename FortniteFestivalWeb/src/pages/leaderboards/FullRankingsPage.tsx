@@ -82,9 +82,12 @@ export default function FullRankingsPage() {
   const isFamily = !isCombo && familyScopeId != null;
   const useSelectedBandSoloFooter = !!selectedBand && !isCombo && !isFamily;
   const instrument = (searchParams.get('instrument') ?? 'Solo_Guitar') as InstrumentKey;
+  const experimentalRanksEnabled = settings.enableExperimentalRanks;
   const rawMetric = searchParams.get('rankBy') ?? loadLeaderboardRankBy();
-  const metric = selectedBand ? coerceBandRankingMetric(rawMetric, true) : coerceRankingMetric(rawMetric, true);
-  const bandMetric = coerceBandRankingMetric(metric, true);
+  const metric = selectedBand
+    ? coerceBandRankingMetric(rawMetric, experimentalRanksEnabled)
+    : coerceRankingMetric(rawMetric, experimentalRanksEnabled);
+  const bandMetric = coerceBandRankingMetric(metric, experimentalRanksEnabled);
   const pageParam = Math.max(1, Number(searchParams.get('page')) || 1);
   const appliedBandComboFilter = useAppliedBandComboFilter();
   const hasSelectedBandComboFilter = isBandFilterForSelectedProfile(appliedBandComboFilter, profile);
@@ -112,7 +115,9 @@ export default function FullRankingsPage() {
   }, [instrument, openInstrumentDraft]);
 
   const applyMetric = useCallback(() => {
-    const nextMetric = selectedBand ? coerceBandRankingMetric(metricModal.draft, true) : coerceRankingMetric(metricModal.draft, true);
+    const nextMetric = selectedBand
+      ? coerceBandRankingMetric(metricModal.draft, experimentalRanksEnabled)
+      : coerceRankingMetric(metricModal.draft, experimentalRanksEnabled);
     metricModal.close();
     saveLeaderboardRankBy(nextMetric);
     scrollContainerRef.current?.scrollTo(0, 0);
@@ -125,7 +130,7 @@ export default function FullRankingsPage() {
         : { instrument, rankBy: nextMetric, page: '1' },
       { replace: true },
     );
-  }, [comboId, familyScopeId, instrument, isCombo, isFamily, metricModal, scrollContainerRef, selectedBand, setSearchParams]);
+  }, [comboId, experimentalRanksEnabled, familyScopeId, instrument, isCombo, isFamily, metricModal, scrollContainerRef, selectedBand, setSearchParams]);
 
   const applyInstrument = useCallback(() => {
     const nextInstrument = instrumentModal.draft;
@@ -136,16 +141,20 @@ export default function FullRankingsPage() {
   }, [instrumentModal, metric, scrollContainerRef, setSearchParams]);
 
   useEffect(() => {
-    registerLeaderboardActions({ openMetric: openMetricModal, openInstrument: isCombo || isFamily ? undefined : openInstrumentModal, metricActive: metric !== 'totalscore' });
+    registerLeaderboardActions({
+      openMetric: experimentalRanksEnabled ? openMetricModal : undefined,
+      openInstrument: isCombo || isFamily ? undefined : openInstrumentModal,
+      metricActive: metric !== 'totalscore',
+    });
     return () => registerLeaderboardActions(null);
-  }, [isCombo, isFamily, metric, openInstrumentModal, openMetricModal, registerLeaderboardActions]);
+  }, [experimentalRanksEnabled, isCombo, isFamily, metric, openInstrumentModal, openMetricModal, registerLeaderboardActions]);
 
   const cacheKey = isCombo ? `combo:${comboId}:${metric}` : isFamily ? `family:${familyScopeId}:${metric}` : `${instrument}:${metric}`;
   const cached = rankingsCache.get(cacheKey);
   const [page, setPage] = useState(cached?.page ?? pageParam);
 
   useEffect(() => {
-    if (!selectedBand || rawMetric === metric) return;
+    if (rawMetric === metric) return;
     saveLeaderboardRankBy(metric);
     scrollContainerRef.current?.scrollTo(0, 0);
     setPage(1);
@@ -157,7 +166,7 @@ export default function FullRankingsPage() {
         : { instrument, rankBy: metric, page: '1' },
       { replace: true },
     );
-  }, [comboId, familyScopeId, instrument, isCombo, isFamily, metric, rawMetric, scrollContainerRef, selectedBand, setSearchParams]);
+  }, [comboId, familyScopeId, instrument, isCombo, isFamily, metric, rawMetric, scrollContainerRef, setSearchParams]);
 
   const { data, isFetching, error } = useQuery<FullRankingsData>({
     queryKey: isCombo
@@ -403,12 +412,14 @@ export default function FullRankingsPage() {
                     active={instrument !== DEFAULT_INSTRUMENT}
                   />
                 )}
-                <ActionPill
-                  icon={<IoOptions size={Size.iconAction} />}
-                  label={t(`rankings.metric.${metric}`)}
-                  onClick={openMetricModal}
-                  active={metric !== 'totalscore'}
-                />
+                {experimentalRanksEnabled && (
+                  <ActionPill
+                    icon={<IoOptions size={Size.iconAction} />}
+                    label={t(`rankings.metric.${metric}`)}
+                    onClick={openMetricModal}
+                    active={metric !== 'totalscore'}
+                  />
+                )}
               </>
             ) : undefined
           }
@@ -432,8 +443,8 @@ export default function FullRankingsPage() {
           onClose={metricModal.close}
           onApply={applyMetric}
           onReset={metricModal.reset}
-          experimentalRanksEnabled={true}
-          metrics={selectedBand ? getEnabledBandRankingMetrics(true) : undefined}
+          experimentalRanksEnabled={experimentalRanksEnabled}
+          metrics={selectedBand ? getEnabledBandRankingMetrics(experimentalRanksEnabled) : undefined}
           subject={selectedBand ? 'bands' : 'players'}
         />
       </>}

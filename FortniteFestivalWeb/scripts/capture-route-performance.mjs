@@ -88,20 +88,6 @@ async function captureRoute({ viewportName, viewport, routeName, route }) {
   const page = await context.newPage();
   const consoleErrors = [];
   const serverErrors = [];
-  await page.route('**/api/features', async (route) => {
-    const response = await route.fetch();
-    const features = await response.json();
-    await route.fulfill({
-      response,
-      json: {
-        ...features,
-        appManual: true,
-        leaderboards: true,
-        playerBands: true,
-        experimentalRanks: true,
-      },
-    });
-  });
   page.on('console', (message) => {
     if (message.type() === 'error') consoleErrors.push(message.text());
   });

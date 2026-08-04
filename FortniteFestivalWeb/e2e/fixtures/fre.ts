@@ -1,9 +1,10 @@
 import { test as base, expect, type Page, type Locator } from '@playwright/test';
+import { E2E_PLAYER, installDeterministicApiMocks } from './apiMocks';
 
 /* ── Constants ── */
 
 const TRANSITION_MS = 500;
-const TEST_PLAYER = { accountId: '195e93ef108143b2975ee46662d4d0e1', displayName: 'SFentonX' };
+const TEST_PLAYER = E2E_PLAYER;
 
 /* ── Carousel page-object ── */
 
@@ -32,7 +33,7 @@ export class FreCarousel {
 
   /** Wait for the carousel entrance animation to finish. */
   async waitForVisible() {
-    await this.card.waitFor({ state: 'visible', timeout: 10_000 });
+    await this.card.waitFor({ state: 'visible', timeout: 45_000 });
     // Allow entrance animation to settle
     await this.page.waitForTimeout(TRANSITION_MS + 100);
   }
@@ -88,17 +89,13 @@ export class FreState {
   constructor(private page: Page) {}
 
   /**
-   * Navigate to the app origin so localStorage is accessible,
-   * then clear all fst:* state. Call this in beforeEach before
-   * setting up any state. After this call, set your desired
-   * state (setSettings, setTrackedPlayer, etc.) then call goto()
-   * to navigate — the app will pick up the pre-set state on mount.
+   * Navigate to a same-origin static resource so localStorage is accessible
+   * without mounting React, then clear all fst:* state. After this call, set
+   * desired state and call goto() so the app reads it on its first mount.
    */
   async resetAppState() {
-    // Navigate to index to establish the correct origin for localStorage
-    await this.page.goto('/', { waitUntil: 'commit' });
+    await this.page.goto('/e2e/fixtures/reset.html', { waitUntil: 'load' });
     await this.clearAllAppState();
-    // We don't wait for full load — just need origin established
   }
 
   /** Clear all FRE seen-state from localStorage. */
@@ -122,7 +119,11 @@ export class FreState {
   /** Set a tracked player in localStorage. */
   async setTrackedPlayer(accountId = TEST_PLAYER.accountId, displayName = TEST_PLAYER.displayName) {
     await this.page.evaluate(
-      ({ id, name }) => localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: id, displayName: name })),
+      ({ id, name }) => {
+        const profile = { accountId: id, displayName: name };
+        localStorage.setItem('fst:trackedPlayer', JSON.stringify(profile));
+        localStorage.setItem('fst:selectedProfile', JSON.stringify({ type: 'player', ...profile }));
+      },
       { id: accountId, name: displayName },
     );
   }
@@ -179,11 +180,16 @@ export class FreState {
 /* ── Extended test fixture ── */
 
 type FreFixtures = {
+  deterministicApi: void;
   fre: FreCarousel;
   freState: FreState;
 };
 
 export const test = base.extend<FreFixtures>({
+  deterministicApi: [async ({ page }, use) => {
+    await installDeterministicApiMocks(page);
+    await use();
+  }, { auto: true }],
   fre: async ({ page }, use) => {
     await use(new FreCarousel(page));
   },

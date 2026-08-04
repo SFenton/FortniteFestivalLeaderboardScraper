@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
-import { render, waitFor, fireEvent } from '@testing-library/react';
+import { render as renderWithTestingLibrary, waitFor, fireEvent } from '@testing-library/react';
+import type { ReactElement } from 'react';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubIntersectionObserver } from '../helpers/browserStubs';
 
 const mockApi = vi.hoisted(() => {
@@ -20,8 +22,15 @@ const mockApi = vi.hoisted(() => {
 });
 import App from '../../src/App';
 import type { SelectedBandProfile } from '../../src/hooks/data/useSelectedProfile';
+import { queryClient } from '../../src/api/queryClient';
 
 vi.mock('../../src/api/client', () => ({ api: mockApi }));
+
+function render(ui: ReactElement) {
+  return renderWithTestingLibrary(
+    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+  );
+}
 
 beforeAll(() => {
   stubScrollTo();
@@ -62,6 +71,7 @@ function resetMocks() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  queryClient.clear();
   localStorage.clear();
   resetMocks();
 });

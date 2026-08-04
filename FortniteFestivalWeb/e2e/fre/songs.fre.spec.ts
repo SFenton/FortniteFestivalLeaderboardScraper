@@ -2,10 +2,10 @@ import { test, expect } from '../fixtures/fre';
 import { goto, gotoFresh } from '../fixtures/navigation';
 
 /*
- * Songs page FRE — 8 possible slides:
+ * Songs page FRE — 9 possible slides:
  *   Always:   songs-song-list, songs-sort, songs-navigation (platform variant)
  *   Gated (hasPlayer):   songs-filter, songs-icons, songs-metadata
- *   Gated (shopHighlightEnabled):   songs-shop-highlight, songs-leaving-tomorrow
+ *   Gated (shopHighlightEnabled):   songs-shop-highlight, songs-new-in-shop, songs-leaving-tomorrow
  */
 
 test.describe('Songs FRE', () => {
@@ -25,12 +25,12 @@ test.describe('Songs FRE', () => {
     expect(titles).toHaveLength(3);
   });
 
-  test('fresh, no player, shop enabled — shows 5 slides', async ({ page, fre }) => {
+  test('fresh, no player, shop enabled — shows 6 slides', async ({ page, fre }) => {
     // Default settings: shop is visible, highlighting not disabled
     await goto(page, '/songs');
     await fre.waitForVisible();
 
-    await fre.assertSlideCount(5);
+    await fre.assertSlideCount(6);
   });
 
   test('fresh, with player, shop disabled — shows 6 slides', async ({ page, fre, freState }) => {
@@ -42,14 +42,14 @@ test.describe('Songs FRE', () => {
     await fre.assertSlideCount(6);
   });
 
-  test('fresh, with player + shop — shows all 8 slides', async ({ page, fre, freState }) => {
+  test('fresh, with player + shop — shows all 9 slides', async ({ page, fre, freState }) => {
     await freState.setTrackedPlayer();
     await goto(page, '/songs');
     await fre.waitForVisible();
 
-    await fre.assertSlideCount(8);
+    await fre.assertSlideCount(9);
     const titles = await fre.collectAllTitles();
-    expect(titles).toHaveLength(8);
+    expect(titles).toHaveLength(9);
     // Every title should be non-empty (translated)
     for (const t of titles) {
       expect(t.length).toBeGreaterThan(0);

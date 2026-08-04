@@ -13,7 +13,6 @@ import { getStatisticsNavigationPath } from '../../../utils/profileNavigation';
 import { markTapDiagnosticsAction } from '../../../diagnostics/tapDiagnostics';
 import { usePressAction } from '../../../hooks/ui/usePressAction';
 import { scheduleCompatibilityClickSuppression } from '../../../hooks/ui/pressCompatibilityClickSuppression';
-import { useFeatureFlags } from '../../../contexts/FeatureFlagsContext';
 
 const SIDEBAR_DURATION = 250;
 const TOUCH_NAV_MOVEMENT_THRESHOLD = 12;
@@ -38,7 +37,6 @@ interface SidebarProps {
 export default function Sidebar({ player, selectedProfile, open, onClose, onDeselect, onSelectPlayer }: SidebarProps) {
   const { t } = useTranslation();
   const { settings } = useSettings();
-  const { appManual } = useFeatureFlags();
   const navigate = useNavigate();
   const sidebarRef = useRef<HTMLDivElement>(null);
   const pendingTouchNavRef = useRef<{ pointerId: number; label: string; to: string; clientX: number; clientY: number } | null>(null);
@@ -193,12 +191,10 @@ export default function Sidebar({ player, selectedProfile, open, onClose, onDese
               {t('common.selectProfile')}
             </PressableButton>
           )}
-          {appManual && (
-            <NavLink to={Routes.manual} {...getNavigationHandlers(t('nav.manual'), Routes.manual)} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
-              <span style={s.sidebarLinkIcon}><IoCompass size={20} /></span>
-              {t('nav.manual')}
-            </NavLink>
-          )}
+          <NavLink to={Routes.manual} {...getNavigationHandlers(t('nav.manual'), Routes.manual)} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
+            <span style={s.sidebarLinkIcon}><IoCompass size={20} /></span>
+            {t('nav.manual')}
+          </NavLink>
           <NavLink to="/settings" {...getNavigationHandlers(t('nav.settings'), '/settings')} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
             <span style={s.sidebarLinkIcon}><IoSettings size={20} /></span>
             {t('nav.settings')}

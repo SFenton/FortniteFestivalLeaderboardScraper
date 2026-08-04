@@ -209,14 +209,6 @@ const TOOLS = [
     },
   },
   {
-    name: "fst_features",
-    description: "Get current feature flag states from the production service.",
-    inputSchema: {
-      type: "object",
-      properties: {},
-    },
-  },
-  {
     name: "fst_status",
     description:
       "Get service status including last scrape run info and database stats.",
@@ -246,7 +238,6 @@ const TOOL_HANDLERS = {
   fst_rivals: ({ accountId }) =>
     fstFetch(`/api/player/${encodeURIComponent(accountId)}/rivals`),
   fst_shop: () => fstFetch("/api/shop"),
-  fst_features: () => fstFetch("/api/features"),
   fst_status: () => fstFetch("/api/status"),
 };
 

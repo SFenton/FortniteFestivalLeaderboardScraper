@@ -3,7 +3,13 @@ import {ScoreTracker} from '../models';
 import {SuggestionGenerator} from '../suggestions/suggestionGenerator';
 
 const mkSong = (id: string, title: string, artist: string, year?: number): Song => ({
-  track: {su: id, tt: title, an: artist, ry: year, in: {}},
+  track: {
+    su: id,
+    tt: title,
+    an: artist,
+    ry: year,
+    in: {gr: 3, ba: 3, ds: 3, vl: 3, pg: 3, pb: 3, bd: 3, pd: 3},
+  },
 });
 
 const mkScores = (songId: string, opts: {pct?: number; fc?: boolean; stars?: number}): LeaderboardData => {
@@ -184,7 +190,8 @@ describe('SuggestionGenerator', () => {
     );
 
     const gen = new SuggestionGenerator({seed: 2, disableSkipping: true, fixedDisplayCount: 2});
-    const out = gen.getNext(500, songs, scoresIndex);
+    gen.setSource(songs, scoresIndex);
+    const out = (gen as any).fcTheseNextDecade.call(gen) as any[];
     const decadeCats = out.filter(c => c.key.startsWith('near_fc_any_decade_'));
     expect(decadeCats.length).toBeGreaterThan(0);
     expect(decadeCats.some(c => c.title.includes("00's"))).toBe(true);
@@ -441,7 +448,7 @@ describe('SuggestionGenerator', () => {
     expect(out[0].songs.length).toBeGreaterThan(0);
   });
 
-  test('instrumentLabel default is exercised via invalid instrument key', () => {
+  test('unplayedInstrument rejects an invalid instrument key', () => {
     const rng = {
       nextInt: (_maxExclusive: number) => 0,
       nextDouble: () => 0,
@@ -452,8 +459,7 @@ describe('SuggestionGenerator', () => {
 
     const fn = (gen as any).unplayedInstrument as (instrument: any) => any[];
     const out = fn.call(gen, 'weird_instrument');
-    expect(out.length).toBe(1);
-    expect(out[0].title).toBe('New on weird_instrument');
+    expect(out).toEqual([]);
   });
 
   test('eachTracker returns empty when referenced song is missing from catalog', () => {
@@ -847,6 +853,9 @@ describe('SuggestionGenerator', () => {
         vocals: mkT(),
         pro_guitar: mkT(),
         pro_bass: mkT(),
+        peripheral_vocals: mkT(),
+        peripheral_cymbals: mkT(),
+        peripheral_drums: mkT(),
       };
     };
 
@@ -1812,14 +1821,19 @@ describe('SuggestionGenerator', () => {
   });
 
   test('samePercentileBucket percentileDisplay appears via getNext pipeline', () => {
-    const songs = Array.from({length: 60}, (_, i) =>
-      mkSong(`s${i}`, `Song ${i}`, `Artist ${i % 30}`, 2001),
-    );
+    const songs = Array.from({length: 60}, (_, i) => {
+      const song = mkSong(`s${i}`, `Song ${i}`, `Artist ${i % 30}`, 2001);
+      song.track.in = {gr: 3, ba: 3, ds: 3};
+      return song;
+    });
     // rawPercentile 0.06 → top 6% → bucket 10 (all same, all > 1)
     const scoresIndex: Record<string, LeaderboardData> = Object.fromEntries(
       songs.map(s => [s.track.su, mkMultiInstrumentScores(s.track.su, 0.06, ['guitar', 'bass', 'drums'])]),
     );
     const gen = new SuggestionGenerator({seed: 42, disableSkipping: true, fixedDisplayCount: 5});
+    gen.setSource(songs, scoresIndex);
+    (gen as any).initialized = true;
+    (gen as any).pipelines = [() => (gen as any).samePercentileBucket.call(gen)];
     const out = gen.getNext(500, songs, scoresIndex);
     const samePct = out.filter(c => c.key.startsWith('same_pct'));
     expect(samePct.length).toBeGreaterThan(0);

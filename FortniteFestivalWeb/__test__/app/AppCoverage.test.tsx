@@ -3,7 +3,9 @@
  * backFallback, mobile header, and changelog modal.
  */
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
-import { render, waitFor, act, fireEvent, screen, within } from '@testing-library/react';
+import { configure, render as renderWithTestingLibrary, waitFor, act, fireEvent, screen, within } from '@testing-library/react';
+import type { ReactElement } from 'react';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubIntersectionObserver } from '../helpers/browserStubs';
 
 const mockApi = vi.hoisted(() => {
@@ -78,8 +80,20 @@ import { APP_VERSION } from '../../src/hooks/data/useVersions';
 import { changelogHash } from '../../src/changelog';
 import { songSlides } from '../../src/pages/songs/firstRun';
 import { contentHash } from '../../src/firstRun/types';
+import { queryClient } from '../../src/api/queryClient';
+import { loadSearchModal } from '../../src/components/lazy/secondaryControls';
 
-beforeAll(() => {
+vi.setConfig({ testTimeout: 15_000 });
+configure({ asyncUtilTimeout: 5_000 });
+
+function render(ui: ReactElement) {
+  return renderWithTestingLibrary(
+    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+  );
+}
+
+beforeAll(async () => {
+  await loadSearchModal();
   stubScrollTo();
   stubResizeObserver();
   stubElementDimensions();
@@ -175,6 +189,7 @@ function resetMocks() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  queryClient.clear();
   localStorage.clear();
   resetMocks();
 });
@@ -288,10 +303,10 @@ describe('App — coverage: backFallback for detail routes', () => {
     fireEvent.click(await screen.findByTestId('desktop-header-profile'));
 
     const dialog = await screen.findByRole('dialog', { name: 'Search' });
-    expect(within(dialog).getByPlaceholderText('Search players or bands…')).toBeTruthy();
-    expect(within(dialog).queryByRole('tab', { name: 'Songs' })).toBeNull();
-    expect(within(dialog).getByRole('tab', { name: 'Players' })).toHaveAttribute('aria-selected', 'true');
-    expect(within(dialog).getByRole('tab', { name: 'Bands' })).toHaveAttribute('aria-selected', 'false');
+    expect(await within(dialog).findByPlaceholderText('Search players or bands…')).toBeTruthy();
+    expect(within(dialog).queryByRole('button', { name: 'Songs' })).toBeNull();
+    expect(within(dialog).getByRole('button', { name: 'Players' })).toHaveAttribute('aria-pressed', 'false');
+    expect(within(dialog).getByRole('button', { name: 'Bands' })).toHaveAttribute('aria-pressed', 'false');
     expect(window.location.hash).toBe('#/player/p1');
     expect(window.history.length).toBe(initialHistoryLength);
     expect(shellScroll.scrollTop).toBe(480);

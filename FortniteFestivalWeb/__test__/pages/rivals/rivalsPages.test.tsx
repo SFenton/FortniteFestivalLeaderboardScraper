@@ -316,11 +316,20 @@ describe('RivalsPage', () => {
   });
 
   it('keeps experimental leaderboard rankBy values available', async () => {
+    localStorage.setItem('fst:appSettings', JSON.stringify({ enableExperimentalRanks: true }));
     renderPage('/rivals?tab=leaderboard&rankBy=adjusted', <RivalsPage />, '/rivals');
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
     expectCancellableCall(mockApi.getLeaderboardRivals, 'Solo_Guitar', 'test-1', 'adjusted');
+  });
+
+  it('coerces experimental leaderboard rankBy values when the setting is disabled', async () => {
+    renderPage('/rivals?tab=leaderboard&rankBy=adjusted', <RivalsPage />, '/rivals');
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expectCancellableCall(mockApi.getLeaderboardRivals, 'Solo_Guitar', 'test-1', 'totalscore');
   });
 
   it('renders the page', async () => {
@@ -576,7 +585,8 @@ describe('RivalsPage quick links', () => {
     expect(screen.queryByRole('button', { name: 'Leaderboard Rivals' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
 
-    await act(async () => { fireEvent.click(await screen.findByTestId('test-open-page-quick-links')); });
+    const openQuickLinks = await screen.findByTestId('test-open-page-quick-links', undefined, { timeout: 5000 });
+    fireEvent.click(openQuickLinks);
 
     const list = await screen.findByTestId('rivals-quick-links-modal-list');
     expect(within(list).getByTestId('rivals-quick-link-common')).toBeTruthy();
@@ -609,7 +619,8 @@ describe('RivalsPage quick links', () => {
     expect(screen.queryByRole('button', { name: 'Song Rivals' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
 
-    await act(async () => { fireEvent.click(await screen.findByTestId('test-open-page-quick-links')); });
+    const openQuickLinks = await screen.findByTestId('test-open-page-quick-links', undefined, { timeout: 5000 });
+    fireEvent.click(openQuickLinks);
 
     const list = await screen.findByTestId('rivals-quick-links-modal-list');
     expect(within(list).getByTestId('rivals-quick-link-solo-guitar')).toBeTruthy();

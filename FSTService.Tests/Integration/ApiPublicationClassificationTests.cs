@@ -286,7 +286,6 @@ public sealed class ApiPublicationClassificationTests
 
     private static readonly RouteExpectation[] OperationalRoutes =
     [
-        new(HttpMethods.Get, "/api/features"),
         new(HttpMethods.Get, "/api/progress"),
         new(HttpMethods.Get, "/api/publication"),
         new(HttpMethods.Get, "/api/service-info"),

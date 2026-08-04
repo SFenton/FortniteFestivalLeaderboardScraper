@@ -10,7 +10,7 @@ WORKDIR /src/FortniteFestivalWeb
 RUN corepack enable && echo 'nodeLinker: node-modules' > .yarnrc.yml && yarn install
 COPY FortniteFestivalWeb/ .
 # Overwrite .yarnrc.yml again after COPY brings in project files
-RUN echo 'nodeLinker: node-modules' > .yarnrc.yml && yarn vite build --outDir /webapp-dist
+RUN echo 'nodeLinker: node-modules' > .yarnrc.yml && FST_WEB_OUT_DIR=/webapp-dist yarn build
 
 # ── Stage 2: Serve with Nginx ─────────────────────────────────
 FROM nginx:stable-alpine AS runtime

@@ -4,7 +4,6 @@
  * to enable targeted invalidation and avoid stale-key bugs.
  */
 export const queryKeys = {
-  features: () => ['features'] as const,
   serviceInfo: () => ['serviceInfo'] as const,
   // Songs and Shop are backed by profile-invariant service caches and ETags.
   songs: () => ['songs', 'public'] as const,

@@ -18,6 +18,7 @@ import GoldStars from '../../components/songs/metadata/GoldStars';
 import { useAppliedBandComboFilter } from '../../contexts/BandFilterActionContext';
 import { useBandPageSelect } from '../../contexts/FabSearchContext';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
+import { useSettings } from '../../contexts/SettingsContext';
 import { useBandRankHistory } from '../../hooks/chart/useBandRankHistory';
 import { useNavLinkPress } from '../../hooks/navigation/useNavLinkPress';
 import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
@@ -84,6 +85,8 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { profile, selectBand } = useSelectedProfile();
+  const { settings } = useSettings();
+  const bandRankingMetric: BandRankingMetric = settings.enableExperimentalRanks ? 'adjusted' : 'totalscore';
   const { registerBandPageSelect } = useBandPageSelect();
   const appliedBandComboFilter = useAppliedBandComboFilter();
 
@@ -112,15 +115,15 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
   });
 
   const rankingQuery = useQuery({
-    queryKey: queryKeys.bandRanking(lookupBandType ?? '', lookupTeamKey ?? ''),
-    queryFn: ({ signal }) => getBandRanking(lookupBandType!, lookupTeamKey!, undefined, { signal }),
+    queryKey: queryKeys.bandRanking(lookupBandType ?? '', lookupTeamKey ?? '', undefined, bandRankingMetric),
+    queryFn: ({ signal }) => getBandRanking(lookupBandType!, lookupTeamKey!, undefined, bandRankingMetric, { signal }),
     enabled: hasTeamContext,
     staleTime: 5 * 60_000,
   });
 
   const scopedRankingQuery = useQuery({
-    queryKey: queryKeys.bandRanking(lookupBandType ?? '', lookupTeamKey ?? '', contextualComboId),
-    queryFn: ({ signal }) => getBandRanking(lookupBandType!, lookupTeamKey!, contextualComboId, { signal }),
+    queryKey: queryKeys.bandRanking(lookupBandType ?? '', lookupTeamKey ?? '', contextualComboId, bandRankingMetric),
+    queryFn: ({ signal }) => getBandRanking(lookupBandType!, lookupTeamKey!, contextualComboId, bandRankingMetric, { signal }),
     enabled: hasTeamContext && !!contextualComboId,
     staleTime: 5 * 60_000,
     retry: false,
@@ -173,8 +176,8 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
     : undefined;
 
   const detailScopedRankingQuery = useQuery({
-    queryKey: queryKeys.bandRanking(basePayload?.band.bandType ?? '', basePayload?.band.teamKey ?? '', activeComboId),
-    queryFn: ({ signal }) => getBandRanking(basePayload!.band.bandType, basePayload!.band.teamKey, activeComboId, { signal }),
+    queryKey: queryKeys.bandRanking(basePayload?.band.bandType ?? '', basePayload?.band.teamKey ?? '', activeComboId, bandRankingMetric),
+    queryFn: ({ signal }) => getBandRanking(basePayload!.band.bandType, basePayload!.band.teamKey, activeComboId, bandRankingMetric, { signal }),
     enabled: !!basePayload?.band && !hasTeamContext && !!activeComboId,
     staleTime: 5 * 60_000,
     retry: false,
@@ -218,7 +221,7 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
 
   const pageKey = effectiveBandId ?? `${lookupAccountId ?? 'missing'}:${lookupBandType ?? 'missing'}:${lookupTeamKey ?? 'missing'}`;
   const scopedPageKey = `${pageKey}:${activeComboId ?? 'all'}`;
-  const bandRankHistory = useBandRankHistory(payload?.band.bandType, payload?.band.teamKey, 'adjusted', 30, activeComboId);
+  const bandRankHistory = useBandRankHistory(payload?.band.bandType, payload?.band.teamKey, bandRankingMetric, 30, activeComboId);
   const bandSongsQuery = useBandSongs(payload?.band.bandType, payload?.band.teamKey, 5, activeComboId);
   const secondaryLoading = !!payload && (bandRankHistory.loading || bandSongsQuery.isLoading || scopedRankingQuery.isLoading || detailScopedRankingQuery.isLoading);
   const hasCachedData = !!payload && bandRankHistory.hasData && bandSongsQuery.data != null;
@@ -333,9 +336,12 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
   }, [handleBandProfileClick, registerBandPageSelect, selectBandProfileVisible]);
 
   const navigateToBandLeaderboard = useCallback((metric: BandRankingMetric, rank: number) => {
-    if (!payload || rank <= 0) return;
-    navigate(Routes.bandRankings(payload.band.bandType, metric, getLeaderboardPageForRank(rank)));
-  }, [navigate, payload]);
+    if (!payload) return;
+    const effectiveMetric = settings.enableExperimentalRanks ? metric : 'totalscore';
+    const effectiveRank = effectiveMetric === metric ? rank : (payload.ranking?.totalScoreRank ?? 0);
+    if (effectiveRank <= 0) return;
+    navigate(Routes.bandRankings(payload.band.bandType, effectiveMetric, getLeaderboardPageForRank(effectiveRank)));
+  }, [navigate, payload, settings.enableExperimentalRanks]);
 
   const navigateToSongDetail = useCallback((songId: string) => {
     navigate(Routes.songDetail(songId), { state: { backTo: location.pathname } });
@@ -497,13 +503,14 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
             ranking={payload.ranking ?? null}
             bestSongId={bandSongsQuery.data?.best?.[0]?.songId}
             canNavigateToBandSongs={canNavigateToBandSongs}
+            experimentalRanksEnabled={settings.enableExperimentalRanks}
             onNavigateToBandSongs={navigateToBandSongs}
             onNavigateToBandLeaderboard={navigateToBandLeaderboard}
             onNavigateToSongDetail={navigateToSongDetail}
             style={stagger(2)}
             onAnimationEnd={clearAnim}
           />
-          <BandRankHistorySection band={payload.band} ranking={payload.ranking ?? null} comboId={activeComboId} sectionRef={registerRankHistorySectionRef} style={stagger(3)} onAnimationEnd={clearAnim} />
+          <BandRankHistorySection band={payload.band} ranking={payload.ranking ?? null} metric={bandRankingMetric} comboId={activeComboId} sectionRef={registerRankHistorySectionRef} style={stagger(3)} onAnimationEnd={clearAnim} />
           <BandSongsSection bandType={payload.band.bandType} teamKey={payload.band.teamKey} displayName={title} comboId={activeComboId} sectionRef={registerSongsSectionRef} style={stagger(4)} onAnimationEnd={clearAnim} />
         </div>
       )}
@@ -623,6 +630,7 @@ function BandStatisticsSection({
   ranking,
   bestSongId,
   canNavigateToBandSongs,
+  experimentalRanksEnabled,
   onNavigateToBandSongs,
   onNavigateToBandLeaderboard,
   onNavigateToSongDetail,
@@ -633,6 +641,7 @@ function BandStatisticsSection({
   ranking: BandRankingDto | null;
   bestSongId?: string;
   canNavigateToBandSongs: boolean;
+  experimentalRanksEnabled: boolean;
   onNavigateToBandSongs: (settingsUpdater: (settings: SongSettings) => SongSettings) => void;
   onNavigateToBandLeaderboard: (metric: BandRankingMetric, rank: number) => void;
   onNavigateToSongDetail: (songId: string) => void;
@@ -656,9 +665,13 @@ function BandStatisticsSection({
         <div style={styles.emptyCard}><span style={styles.emptyText}>{t('band.noRanking')}</span></div>
       ) : (
         <div style={styles.statsGrid}>
-          <StatCard label={t('band.adjustedRank')} value={formatRank(ranking.adjustedSkillRank)} onClick={rankClick(ranking.adjustedSkillRank, 'adjusted', onNavigateToBandLeaderboard)} />
-          <StatCard label={t('band.weightedRank')} value={formatRank(ranking.weightedRank)} onClick={rankClick(ranking.weightedRank, 'weighted', onNavigateToBandLeaderboard)} />
-          <StatCard label={t('band.fcRateRank')} value={formatRank(ranking.fcRateRank)} onClick={rankClick(ranking.fcRateRank, 'fcrate', onNavigateToBandLeaderboard)} />
+          {experimentalRanksEnabled && (
+            <>
+              <StatCard label={t('band.adjustedRank')} value={formatRank(ranking.adjustedSkillRank)} onClick={rankClick(ranking.adjustedSkillRank, 'adjusted', onNavigateToBandLeaderboard)} />
+              <StatCard label={t('band.weightedRank')} value={formatRank(ranking.weightedRank)} onClick={rankClick(ranking.weightedRank, 'weighted', onNavigateToBandLeaderboard)} />
+              <StatCard label={t('band.fcRateRank')} value={formatRank(ranking.fcRateRank)} onClick={rankClick(ranking.fcRateRank, 'fcrate', onNavigateToBandLeaderboard)} />
+            </>
+          )}
           <StatCard label={t('band.totalScoreRank')} value={formatRank(ranking.totalScoreRank)} onClick={rankClick(ranking.totalScoreRank, 'totalscore', onNavigateToBandLeaderboard)} />
           <StatCard label={t('band.songsPlayed')} value={`${ranking.songsPlayed.toLocaleString()} / ${ranking.totalChartedSongs.toLocaleString()}`} onClick={songsPlayedClick} />
           <StatCard label={t('band.fullCombos')} value={`${ranking.fullComboCount.toLocaleString()} / ${ranking.totalChartedSongs.toLocaleString()}`} onClick={fullCombosClick} />
@@ -674,11 +687,11 @@ function BandStatisticsSection({
   );
 }
 
-function BandRankHistorySection({ band, ranking, comboId, sectionRef, style, onAnimationEnd }: { band: PlayerBandEntry; ranking: BandRankingDto | null; comboId?: string; sectionRef?: (element: HTMLElement | null) => void; style?: CSSProperties; onAnimationEnd: (e: AnimationEvent<HTMLElement>) => void }) {
+function BandRankHistorySection({ band, ranking, metric, comboId, sectionRef, style, onAnimationEnd }: { band: PlayerBandEntry; ranking: BandRankingDto | null; metric: BandRankingMetric; comboId?: string; sectionRef?: (element: HTMLElement | null) => void; style?: CSSProperties; onAnimationEnd: (e: AnimationEvent<HTMLElement>) => void }) {
   const styles = useStyles();
   return (
     <section ref={sectionRef} data-testid="band-section-rank-history" style={{ ...styles.section, ...style }} onAnimationEnd={onAnimationEnd}>
-      <BandRankHistoryChart bandType={band.bandType} teamKey={band.teamKey} comboId={comboId} totalRankedTeams={ranking?.totalRankedTeams} />
+      <BandRankHistoryChart bandType={band.bandType} teamKey={band.teamKey} metric={metric} comboId={comboId} totalRankedTeams={ranking?.totalRankedTeams} />
     </section>
   );
 }
@@ -692,10 +705,14 @@ function StatCard({ label, value, onClick }: { label: string; value: ReactNode; 
   );
 }
 
-function getBandRanking(bandType: BandType, teamKey: string, comboId?: string, options?: ApiRequestOptions): Promise<BandRankingDto> {
-  return comboId
-    ? api.getBandRanking(bandType, teamKey, comboId, undefined, options)
-    : api.getBandRanking(bandType, teamKey, undefined, undefined, options);
+function getBandRanking(bandType: BandType, teamKey: string, comboId: string | undefined, metric: BandRankingMetric, options?: ApiRequestOptions): Promise<BandRankingDto> {
+  return api.getBandRanking(
+    bandType,
+    teamKey,
+    comboId,
+    metric === 'adjusted' ? undefined : metric,
+    options,
+  );
 }
 
 function rankClick(rank: number, metric: BandRankingMetric, onNavigate: (metric: BandRankingMetric, rank: number) => void): (() => void) | undefined {

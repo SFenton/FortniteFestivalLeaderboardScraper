@@ -55,7 +55,7 @@ export default function LeaderboardRivalsTab({
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { settings } = useSettings();
-  const activeInstruments = visibleInstruments(settings);
+  const activeInstruments = useMemo(() => visibleInstruments(settings), [settings]);
   const queries = useQueries({
     queries: activeInstruments.map(instrument => ({
       queryKey: queryKeys.leaderboardRivals(accountId, instrument, rankBy),

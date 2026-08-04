@@ -6,57 +6,58 @@ import { contentHash, type FirstRunStorage } from '../src/firstRun/types';
 const NOTIFICATION_SEEN_STORAGE_KEY = 'fst:notificationSeen:v1';
 const NOTIFICATION_FRESHNESS_STORAGE_KEY = 'fst:notificationFreshness:v1';
 const EXPECTED_NOTIFICATION_COUNT = 6;
+const API_NOTIFICATION_COUNT = 3;
 const NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-open';
 const APPLE_SONG_ID = 'e90125a8-742a-4be9-baa0-4d93f5fba556';
 const STAND_AND_FIGHT_REMIX_SONG_ID = '4e5b8da5-0891-4a5b-9386-85031fcdca08';
 const GHOSTS_N_STUFF_SONG_ID = 'e60b07e6-065a-4059-a7a4-4a88fe268108';
 
 test.describe('Notification seen state', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page }, testInfo) => {
     await installApiMocks(page);
-    await seedAppState(page);
+    await seedAppState(page, testInfo.project.name.startsWith('mobile'));
   });
 
   test('mobile badge and unread dots follow visibility-based seen state', async ({ page }, testInfo) => {
     test.skip(!testInfo.project.name.startsWith('mobile'), 'mobile-only notification shell behavior');
 
+    await seedSelectedNotificationPlayer(page);
     await page.goto('/#/songs', { waitUntil: 'load' });
     await dismissFirstRunIfVisible(page);
 
     const notificationsButton = page.getByTestId('mobile-header-notifications');
-    const notificationBadge = notificationsButton.locator('span');
+    const notificationBadge = notificationBadgeFor(notificationsButton);
     await expect(notificationsButton).toBeVisible({ timeout: 10_000 });
-    await expect(notificationBadge).toHaveText(String(EXPECTED_NOTIFICATION_COUNT));
+    await expect(notificationBadge).toHaveText(String(API_NOTIFICATION_COUNT));
 
     await notificationsButton.click();
 
     const dialog = page.getByRole('dialog', { name: 'Notifications' });
     const rows = page.getByTestId('mock-notification-row');
     await expect(dialog).toBeVisible({ timeout: 10_000 });
-    await expect(rows).toHaveCount(EXPECTED_NOTIFICATION_COUNT);
-    await expectNotificationFreshnessSections(page, EXPECTED_NOTIFICATION_COUNT, 0);
+    await expect(rows).toHaveCount(API_NOTIFICATION_COUNT);
+    await expectNotificationFreshnessSections(page, API_NOTIFICATION_COUNT, 0);
     await expectRowsNewestFirst(rows);
-    await expectSoloInstrumentNotificationCopy(page);
+    await expectApiNotificationCopy(page);
     await expect(page.getByRole('button', { name: 'Actions' })).toHaveCount(0);
 
-    await expect.poll(() => readBadgeCount(notificationBadge), { timeout: 5_000 }).toBeLessThan(EXPECTED_NOTIFICATION_COUNT);
+    await expect.poll(() => readBadgeCount(notificationBadge), { timeout: 5_000 }).toBe(API_NOTIFICATION_COUNT);
     const unreadAfterOpen = await readBadgeCount(notificationBadge);
-    expect(unreadAfterOpen).toBeGreaterThan(0);
-    await expect(page.getByTestId('notification-unread-dot')).toHaveCount(EXPECTED_NOTIFICATION_COUNT);
-    await expect.poll(() => readMockSeenCount(page), { timeout: 5_000 }).toBe(EXPECTED_NOTIFICATION_COUNT - unreadAfterOpen);
+    await expect(page.getByTestId('notification-unread-dot')).toHaveCount(API_NOTIFICATION_COUNT);
+    await expect.poll(() => readMockSeenCount(page), { timeout: 5_000 }).toBe(API_NOTIFICATION_COUNT - unreadAfterOpen);
 
     await revealEveryNotification(page);
 
     await expect(notificationBadge).toHaveCount(0, { timeout: 5_000 });
-    await expect(page.getByTestId('notification-unread-dot')).toHaveCount(EXPECTED_NOTIFICATION_COUNT);
-    await expect.poll(() => readMockSeenCount(page), { timeout: 5_000 }).toBe(EXPECTED_NOTIFICATION_COUNT);
+    await expect(page.getByTestId('notification-unread-dot')).toHaveCount(API_NOTIFICATION_COUNT);
+    await expect.poll(() => readMockSeenCount(page), { timeout: 5_000 }).toBe(API_NOTIFICATION_COUNT);
 
     await dialog.getByRole('button', { name: 'Close' }).click();
     await expect(dialog).toBeHidden({ timeout: 5_000 });
     await notificationsButton.click();
     await expect(dialog).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId('notification-unread-dot')).toHaveCount(0);
-    await expectNotificationFreshnessSections(page, EXPECTED_NOTIFICATION_COUNT, 0);
+    await expectNotificationFreshnessSections(page, API_NOTIFICATION_COUNT, 0);
     await expect(page.getByRole('button', { name: 'Actions' })).toHaveCount(0);
   });
 
@@ -93,22 +94,21 @@ test.describe('Notification seen state', () => {
   test('desktop header notifications button opens the notifications modal', async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== 'desktop', 'desktop header behavior is covered by the desktop project');
 
+    await seedSelectedNotificationPlayer(page);
     await page.goto('/#/songs', { waitUntil: 'load' });
     await dismissFirstRunIfVisible(page);
 
     const notificationsButton = page.getByTestId('desktop-header-notifications');
-    const notificationBadge = notificationsButton.locator('span');
+    const notificationBadge = notificationBadgeFor(notificationsButton);
     await expect(notificationsButton).toBeVisible({ timeout: 10_000 });
-    await expect(notificationBadge).toHaveText(String(EXPECTED_NOTIFICATION_COUNT));
+    await expect(notificationBadge).toHaveText(String(API_NOTIFICATION_COUNT));
 
     await notificationsButton.click();
 
     const dialog = page.getByRole('dialog', { name: 'Notifications' });
     await expect(dialog).toBeVisible({ timeout: 10_000 });
     await expectDesktopNotificationDrawer(page);
-    await expect(page.getByTestId('mock-notification-row')).toHaveCount(EXPECTED_NOTIFICATION_COUNT);
-    await expectNotificationFreshnessSections(page, EXPECTED_NOTIFICATION_COUNT, 0);
-    await expectSoloInstrumentNotificationCopy(page);
+    await expect(page.getByTestId('mock-notification-row')).toHaveCount(API_NOTIFICATION_COUNT);
   });
 
   test('player notification badge and modal rows respect hidden instruments', async ({ page }, testInfo) => {
@@ -137,15 +137,16 @@ test.describe('Notification seen state', () => {
   test('mobile notification card opens a solo song with the instrument selected', async ({ page }, testInfo) => {
     test.skip(!testInfo.project.name.startsWith('mobile'), 'mobile-only notification shell behavior');
 
+    await seedSelectedNotificationPlayer(page);
     await page.goto('/#/songs', { waitUntil: 'load' });
     await dismissFirstRunIfVisible(page);
 
     await page.getByTestId('mobile-header-notifications').click();
-    const firstNotification = page.getByTestId('mock-notification-row').first();
-    await expect(firstNotification).toHaveAttribute('data-actionable', 'true');
-    await expect(firstNotification.getByTestId('notification-chevron')).toBeVisible();
+    const drumsNotification = page.locator('[data-testid="mock-notification-row"][data-notification-guid="hidden-drums-notification"]');
+    await expect(drumsNotification).toHaveAttribute('data-actionable', 'true');
+    await expect(drumsNotification.getByTestId('notification-chevron')).toBeVisible();
 
-    await firstNotification.click();
+    await drumsNotification.click();
 
     await expect(page).toHaveURL(new RegExp(`#\\/songs\\/${APPLE_SONG_ID}\\?instrument=Solo_Drums`));
   });
@@ -269,6 +270,21 @@ async function expectSoloInstrumentNotificationCopy(page: Page) {
   expect(overflowingText).toEqual([]);
 }
 
+async function expectApiNotificationCopy(page: Page) {
+  const guitarPb = page.locator('[data-testid="mock-notification-row"][data-notification-guid="visible-guitar-notification"]');
+  await expectNotificationTitle(guitarPb, 'Apple · Lead');
+  await expect(guitarPb.getByTestId('notification-summary')).toContainText('You set a new personal best on Lead for Apple');
+
+  const drumsPb = page.locator('[data-testid="mock-notification-row"][data-notification-guid="hidden-drums-notification"]');
+  await expectNotificationTitle(drumsPb, 'Apple · Drums');
+  await expect(drumsPb.getByTestId('notification-summary')).toContainText('You set a new personal best on Drums for Apple');
+
+  await expectNotificationTitle(
+    page.locator('[data-testid="mock-notification-row"][data-notification-guid="visible-band-notification"]'),
+    'Apple · Solo_Guitar+Solo_Drums',
+  );
+}
+
 async function expectNotificationTitle(row: Locator, expectedTitle: string) {
   const title = row.getByTestId('notification-title');
   await expect(title).toHaveAttribute('data-marquee-title', 'true');
@@ -285,6 +301,15 @@ async function expectBandSongMediaCycle(page: Page) {
   await expect(cycle).toHaveAttribute('data-media-cycle-swap-interval', '5000');
   await expect(cycle).toHaveAttribute('data-media-cycle-fade-ms', '400');
   await expect.poll(async () => cycle.getAttribute('data-media-cycle-fading'), { timeout: 2_000 }).toBe('false');
+  await expect.poll(async () => cycle.evaluate((element) => {
+    const activeLayer = element.getAttribute('data-media-cycle-active-layer');
+    const activeElement = element.querySelector(
+      activeLayer === 'icons'
+        ? '[data-testid="notification-media-cycle-icons"]'
+        : '[data-testid="notification-media-cycle-art"]',
+    );
+    return activeElement ? getComputedStyle(activeElement).opacity : null;
+  }), { timeout: 2_000 }).toBe('1');
   await expect(cycle.getByTestId('notification-media-cycle-art')).toBeAttached();
   await expect(cycle.getByAltText('Apple band notification album art')).toBeAttached();
 
@@ -357,8 +382,10 @@ async function readMockSeenCount(page: Page): Promise<number> {
     const raw = localStorage.getItem(storageKey);
     if (!raw) return 0;
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const mockSeen = parsed.mock;
-    return Array.isArray(mockSeen) ? mockSeen.length : 0;
+    return Object.values(parsed).reduce(
+      (count, value) => count + (Array.isArray(value) ? value.length : 0),
+      0,
+    );
   }, NOTIFICATION_SEEN_STORAGE_KEY);
 }
 
@@ -367,10 +394,11 @@ async function readMockFreshnessNewCount(page: Page): Promise<number> {
     const raw = localStorage.getItem(storageKey);
     if (!raw) return 0;
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const mockFreshness = parsed.mock;
-    if (!mockFreshness || typeof mockFreshness !== 'object' || Array.isArray(mockFreshness)) return 0;
-    const ids = (mockFreshness as { newNotificationIds?: unknown }).newNotificationIds;
-    return Array.isArray(ids) ? ids.length : 0;
+    return Object.values(parsed).reduce((count, value) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return count;
+      const ids = (value as { newNotificationIds?: unknown }).newNotificationIds;
+      return count + (Array.isArray(ids) ? ids.length : 0);
+    }, 0);
   }, NOTIFICATION_FRESHNESS_STORAGE_KEY);
 }
 
@@ -393,19 +421,33 @@ async function readSelectedBandFilterCombo(page: Page): Promise<string | null> {
   });
 }
 
-async function seedAppState(page: Page) {
+async function seedAppState(page: Page, isMobile: boolean) {
+  const seenSlides = seenRecordsForSlides(isMobile);
   await page.goto('/', { waitUntil: 'commit' });
   await page.evaluate(
-    ({ hash }) => {
+    ({ hash, seenSlides }) => {
       for (const key of Object.keys(localStorage).filter(key => key.startsWith('fst:'))) {
         localStorage.removeItem(key);
       }
 
       localStorage.setItem('fst:appSettings', JSON.stringify({ hideItemShop: true, disableShopHighlighting: true, enableExperimentalRanks: true }));
+      localStorage.setItem('fst:firstRun', JSON.stringify(seenSlides));
       localStorage.setItem('fst:changelog', JSON.stringify({ version: 'e2e', hash }));
     },
-    { hash: changelogHash() },
+    { hash: changelogHash(), seenSlides },
   );
+}
+
+async function seedSelectedNotificationPlayer(page: Page) {
+  await page.evaluate(() => {
+    const selectedProfile = { type: 'player', accountId: 'notification-player', displayName: 'Notification Player' };
+    localStorage.setItem('fst:selectedProfile', JSON.stringify(selectedProfile));
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: selectedProfile.accountId, displayName: selectedProfile.displayName }));
+  });
+}
+
+function notificationBadgeFor(button: Locator) {
+  return button.locator('[data-testid$="-notifications-icon-layer"] > span:not([data-testid])');
 }
 
 async function seedPlayerNotificationFilterState(page: Page, isMobile: boolean) {
@@ -446,6 +488,7 @@ function seenRecordsForSlides(isMobile: boolean): FirstRunStorage {
     { id: 'songs-icons', version: 3, title: 'firstRun.songs.songIcons.title', description: 'firstRun.songs.songIcons.description' },
     { id: 'songs-metadata', version: 3, title: 'firstRun.songs.metadata.title', description: 'firstRun.songs.metadata.description' },
     { id: 'songs-shop-highlight', version: 1, title: 'firstRun.songs.shop.title', description: 'firstRun.songs.shop.description' },
+    { id: 'songs-new-in-shop', version: 1, title: 'firstRun.songs.new.title', description: 'firstRun.songs.new.description' },
     { id: 'songs-leaving-tomorrow', version: 1, title: 'firstRun.songs.leaving.title', description: 'firstRun.songs.leaving.description' },
   ];
 

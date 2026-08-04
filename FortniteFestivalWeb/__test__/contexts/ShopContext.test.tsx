@@ -53,11 +53,6 @@ vi.mock('../../src/contexts/FestivalContext', () => ({
   useFestival: () => ({ state: { songs: mockSongs } }),
 }));
 
-// Mock FeatureFlagsContext
-vi.mock('../../src/contexts/FeatureFlagsContext', () => ({
-  useFeatureFlags: () => ({ rivals: true, compete: true, leaderboards: true }),
-}));
-
 const mockGetShop = vi.hoisted(() => vi.fn());
 
 vi.mock('../../src/api/client', () => ({

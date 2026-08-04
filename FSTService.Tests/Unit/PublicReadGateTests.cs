@@ -644,7 +644,6 @@ public class PublicReadGateTests
     [InlineData("/api/paths/song/Solo_Guitar/Expert", false)]
     [InlineData("/api/status", false)]
     [InlineData("/api/progress", false)]
-    [InlineData("/api/features", false)]
     [InlineData("/api/account/search", false)]
     [InlineData("/api/admin/dbstats/pressure", false)]
     [InlineData("/api/player/account/rivals/diagnostics", false)]

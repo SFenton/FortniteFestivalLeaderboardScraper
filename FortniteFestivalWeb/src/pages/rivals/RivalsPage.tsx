@@ -67,19 +67,26 @@ export default function RivalsPage() {
   const accountId = player?.accountId;
   const fabSearch = useFabSearch();
 
+  const experimentalRanksEnabled = settings.enableExperimentalRanks;
   const activeTab = (searchParams.get('tab') === 'leaderboard' ? 'leaderboard' : 'song') as 'song' | 'leaderboard';
-  const rankBy = coerceRankingMetric(searchParams.get('rankBy'), true);
+  const rankBy = coerceRankingMetric(searchParams.get('rankBy'), experimentalRanksEnabled);
   const setTab = useCallback((tab: 'song' | 'leaderboard') => {
     const params: Record<string, string> = {};
     if (tab === 'leaderboard') { params.tab = 'leaderboard'; if (rankBy !== 'totalscore') params.rankBy = rankBy; }
     setSearchParams(params, { replace: true });
   }, [setSearchParams, rankBy]);
   const setRankBy = useCallback((metric: RankingMetric) => {
-    const nextMetric = coerceRankingMetric(metric, true);
+    const nextMetric = coerceRankingMetric(metric, experimentalRanksEnabled);
     const params: Record<string, string> = { tab: 'leaderboard' };
     if (nextMetric !== 'totalscore') params.rankBy = nextMetric;
     setSearchParams(params, { replace: true });
-  }, [setSearchParams]);
+  }, [experimentalRanksEnabled, setSearchParams]);
+  useEffect(() => {
+    if (activeTab !== 'leaderboard' || searchParams.get('rankBy') === rankBy) return;
+    const params: Record<string, string> = { tab: 'leaderboard' };
+    if (rankBy !== 'totalscore') params.rankBy = rankBy;
+    setSearchParams(params, { replace: true });
+  }, [activeTab, rankBy, searchParams, setSearchParams]);
 
   const metricModal = useModalState<RankingMetric>(() => 'totalscore');
   const [findRivalSearchVisible, setFindRivalSearchVisible] = useState(false);
@@ -157,6 +164,17 @@ export default function RivalsPage() {
   const hasCachedData = initialRivalsScopeRef.current === rivalsScopeKey && mountedWithDataRef.current;
   const [leaderboardQuickLinkItems, setLeaderboardQuickLinkItems] = useState<LeaderboardRivalQuickLink[]>([]);
   const [leaderboardRailRevealDelayMs, setLeaderboardRailRevealDelayMs] = useState(0);
+  const handleLeaderboardQuickLinksChange = useCallback((items: LeaderboardRivalQuickLink[]) => {
+    setLeaderboardQuickLinkItems(current => (
+      current.length === items.length
+      && current.every((item, index) => (
+        item.id === items[index]?.id
+        && item.landmarkLabel === items[index]?.landmarkLabel
+      ))
+        ? current
+        : items
+    ));
+  }, []);
 
   // Register toggle action for FAB and sync active tab
   const toggleTabRef = useRef(toggleTab);
@@ -429,7 +447,7 @@ export default function RivalsPage() {
                 {findRivalAction}
                 {toggleTabAction}
                 {compactQuickLinksAction}
-                {activeTab === 'leaderboard' && (
+                {activeTab === 'leaderboard' && experimentalRanksEnabled && (
                   <ActionPill
                     icon={<IoOptions size={Size.iconAction} />}
                     label={t(`rankings.metric.${rankBy}`)}
@@ -453,7 +471,7 @@ export default function RivalsPage() {
             onClose={metricModal.close}
             onApply={applyMetric}
             onReset={metricModal.reset}
-            experimentalRanksEnabled={true}
+            experimentalRanksEnabled={experimentalRanksEnabled}
           />
           <SearchModal
             visible={findRivalSearchVisible}
@@ -600,7 +618,7 @@ export default function RivalsPage() {
                   shouldStagger={shouldStagger}
                   rankBy={rankBy}
                   registerSectionRef={registerSectionRef}
-                  onQuickLinksChange={setLeaderboardQuickLinkItems}
+                  onQuickLinksChange={handleLeaderboardQuickLinksChange}
                   onDesktopRailRevealDelayChange={setLeaderboardRailRevealDelayMs}
                 />
               )}

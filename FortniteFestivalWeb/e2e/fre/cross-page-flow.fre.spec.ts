@@ -20,7 +20,7 @@ test.describe('Cross-Page FRE Flow', () => {
     await fre.assertSlideCount(3);
     await fre.dismiss();
 
-    // 2. Leaderboards — no player → 1 slide (overview)
+    // 2. Leaderboards — no player → overview only
     await goto(page, '/leaderboards');
     await fre.waitForVisible();
     await fre.assertSlideCount(1);
@@ -31,7 +31,7 @@ test.describe('Cross-Page FRE Flow', () => {
     if (songId) {
       await goto(page, `/songs/${songId}`);
       await fre.waitForVisible();
-      await fre.assertSlideCount(4);
+      await fre.assertSlideCount(5);
       await fre.dismiss();
     }
 
@@ -44,10 +44,10 @@ test.describe('Cross-Page FRE Flow', () => {
     await fre.assertSlideCount(3);
     await fre.dismiss();
 
-    // 6. Statistics — all 5 slides (no gates)
+    // 6. Statistics — all 6 slides (no gates)
     await goto(page, '/statistics');
     await fre.waitForVisible();
-    await fre.assertSlideCount(5);
+    await fre.assertSlideCount(6);
     await fre.dismiss();
 
     // 7. Leaderboards — should show 1 NEW player-gated slide (your-rank)
@@ -65,7 +65,7 @@ test.describe('Cross-Page FRE Flow', () => {
 
     // No shop slides
     const count = await fre.slideCount();
-    // 3 (no player) or 5+ if some other state
+    // 3 (no player) or 6+ if some other state
     await fre.dismiss();
 
     // Enable highlighting
@@ -75,7 +75,7 @@ test.describe('Cross-Page FRE Flow', () => {
 
     // Shop slides now appear as new unseen slides
     const newCount = await fre.slideCount();
-    expect(newCount).toBe(2); // songs-shop-highlight + songs-leaving-tomorrow
+    expect(newCount).toBe(3); // songs-shop-highlight + songs-new-in-shop + songs-leaving-tomorrow
   });
 
   test('settings toggle: experimental ranks → leaderboards shows new slide', async ({ page, fre, freState }) => {
@@ -83,16 +83,12 @@ test.describe('Cross-Page FRE Flow', () => {
     await goto(page, '/leaderboards');
     await fre.waitForVisible();
 
-    // 2 slides (overview + your-rank, no experimental)
     await fre.assertSlideCount(2);
     await fre.dismiss();
 
-    // Enable experimental ranks
     await freState.setSettings({ enableExperimentalRanks: true });
     await gotoFresh(page, '/leaderboards');
     await fre.waitForVisible();
-
-    // 1 new slide (experimental-metrics)
     await fre.assertSlideCount(1);
   });
 

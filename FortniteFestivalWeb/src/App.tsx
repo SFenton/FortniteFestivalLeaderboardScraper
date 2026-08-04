@@ -173,7 +173,6 @@ import { invalidateLeaderboardData } from './api/queryPolicy';
 import { Routes as AppRoutes, RoutePatterns } from './routes';
 import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext';
 import { ScrollContainerProvider, useShellRefs, useScrollContainer, HEADER_PORTAL_HEIGHT_VAR } from './contexts/ScrollContainerContext';
-import { FeatureFlagsProvider, useFeatureFlagsState } from './contexts/FeatureFlagsContext';
 import { useTapDiagnostics } from './diagnostics/useTapDiagnostics';
 import anim from './styles/animations.module.css';
 
@@ -186,9 +185,6 @@ const PROFILE_SEARCH_TARGETS: readonly SearchTarget[] = ['players', 'bands'];
 const PLAYER_BANDS_ACTIVE_FILTER_GROUPS = new Set(['duos', 'trios', 'quads']);
 
 function ManualRouteElement() {
-  const { flags, resolved } = useFeatureFlagsState();
-  if (!resolved) return <SuspenseFallback />;
-  if (!flags.appManual) return <Navigate to={AppRoutes.songs} replace />;
   return <ErrorBoundary fallback={<RouteErrorFallback />}><ManualPage /></ErrorBoundary>;
 }
 
@@ -213,7 +209,6 @@ export { getProfileClickDestination, getStatisticsNavigationPath } from './utils
 
 export default function App() {
   return (
-    <FeatureFlagsProvider>
     <SettingsProvider>
       <FestivalProvider>
         <ShopProvider>
@@ -235,7 +230,6 @@ export default function App() {
         </ShopProvider>
       </FestivalProvider>
     </SettingsProvider>
-    </FeatureFlagsProvider>
   );
 }
 
@@ -436,8 +430,11 @@ function AppShell() {
     return new Set(visibleInstruments(settings));
   }, [notificationRequestProfile?.type, settings]);
   const surfaceNotifications = useMemo(
-    () => filterSurfaceNotifications(notificationFeed.notifications, notificationInstrumentFilter),
-    [notificationFeed.notifications, notificationInstrumentFilter],
+    () => filterSurfaceNotifications(notificationFeed.notifications, {
+      visibleInstruments: notificationInstrumentFilter,
+      enableExperimentalRanks: settings.enableExperimentalRanks,
+    }),
+    [notificationFeed.notifications, notificationInstrumentFilter, settings.enableExperimentalRanks],
   );
   const surfaceNotificationIds = useMemo(
     () => new Set(surfaceNotifications.map(notification => notification.notificationGuid)),

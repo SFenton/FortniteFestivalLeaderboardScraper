@@ -2,14 +2,6 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vite
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
-const featureFlagsMock = vi.hoisted(() => ({
-  value: { compete: true, leaderboards: true, difficulty: true, playerBands: true, experimentalRanks: true, appManual: true },
-}));
-
-vi.mock('../../../../src/contexts/FeatureFlagsContext', () => ({
-  useFeatureFlags: () => featureFlagsMock.value,
-}));
-
 import Sidebar from '../../../../src/components/shell/desktop/Sidebar';
 import { SettingsProvider } from '../../../../src/contexts/SettingsContext';
 
@@ -27,7 +19,6 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
-  featureFlagsMock.value = { compete: true, leaderboards: true, difficulty: true, playerBands: true, experimentalRanks: true, appManual: true };
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => { cb(0); return 0; });
   vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {});
 });
@@ -339,13 +330,6 @@ describe('Sidebar', () => {
     expect(text.indexOf('App Manual')).toBeLessThan(text.indexOf('Settings'));
   });
 
-  it('hides Manual link when the App Manual feature is disabled', () => {
-    featureFlagsMock.value = { ...featureFlagsMock.value, appManual: false };
-    renderSidebar({ player: null });
-
-    expect(screen.queryByText('App Manual')).toBeNull();
-    expect(screen.getByText('Settings')).toBeTruthy();
-  });
 });
 
 describe('Sidebar — route-specific active styling', () => {

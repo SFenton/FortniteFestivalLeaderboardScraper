@@ -242,7 +242,7 @@ describe('InfiniteScrollDemo', () => {
   it('renders multiple category cards', () => {
     wrap(<InfiniteScrollDemo />);
     // 6 category templates — CategoryCard resolves titles via resolveCategoryI18n
-    expect(screen.getByText('Stale Vocals Songs (1+ Seasons)')).toBeTruthy();
+    expect(screen.getByText('Stale Tap Vocals Songs (1+ Seasons)')).toBeTruthy();
     expect(screen.getByText('FC These Next!')).toBeTruthy();
     expect(screen.getByText('New on Drums')).toBeTruthy();
     expect(screen.getByText('Variety Pack')).toBeTruthy();

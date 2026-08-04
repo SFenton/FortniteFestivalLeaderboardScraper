@@ -1,4 +1,4 @@
-import {loadOrDefault, parseJson, savePretty} from '../io/jsonSerializer';
+import {loadOrDefault, parseJson, savePretty} from '../../../native/src/io/jsonSerializer';
 
 describe('jsonSerializer', () => {
   test('loadOrDefault returns default on null/invalid', () => {

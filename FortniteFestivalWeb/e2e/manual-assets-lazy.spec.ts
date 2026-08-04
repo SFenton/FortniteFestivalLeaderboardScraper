@@ -62,7 +62,18 @@ test('desktop Manual loads only near responsive images and preserves carousel st
   await expect(page.getByTestId('manual-carousel-settings-overview')).toHaveAttribute('data-mounted', 'true');
   await expect.poll(() => manualRequests.some(url => url.includes('settings-overview-mobile-'))).toBe(true);
   await waitForRequestSettle(page);
-  expect(new Set(manualRequests).size).toBeLessThanOrEqual(5);
+  const uniqueRequestPaths = [...new Set(manualRequests)].map(url => new URL(url).pathname);
+  const allowedNearbyRequests = [
+    'navigation-overview-mobile-',
+    'navigation-sidebar-mobile-',
+    'navigation-overview-compact-',
+    'shop-settings-mobile-',
+    'settings-overview-mobile-',
+    'settings-instruments-mobile-',
+  ];
+  // The 400px observer margin intentionally preloads the carousel immediately
+  // before or after the selected landmark once the quick-link scroll settles.
+  expect(uniqueRequestPaths.filter(path => !allowedNearbyRequests.some(fragment => path.includes(fragment)))).toEqual([]);
   expect(manualRequests.some(url => url.includes('/optimized/songs-'))).toBe(false);
   expect(manualRequests.some(url => url.includes('/optimized/profiles-'))).toBe(false);
 
@@ -175,16 +186,6 @@ async function installApiMocks(page: Page) {
     const url = new URL(route.request().url());
     const path = url.pathname;
     if (!path.startsWith('/api/')) return route.continue();
-    if (path === '/api/features') {
-      return json(route, {
-        compete: true,
-        leaderboards: true,
-        difficulty: true,
-        playerBands: true,
-        experimentalRanks: true,
-        appManual: true,
-      });
-    }
     if (path === '/api/service-info') {
       return json(route, {
         publishedScrapeId: 1236,

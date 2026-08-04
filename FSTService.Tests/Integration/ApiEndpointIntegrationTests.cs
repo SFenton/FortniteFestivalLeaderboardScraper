@@ -4,6 +4,7 @@ using System.Reflection;
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Persistence;
 using FortniteFestival.Core.Services;
@@ -74,7 +75,48 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
-    public async Task PublicationBootstrap_PinsPublicationBoundRequests()
+    public async Task EmbeddedManualRoute_ReturnsCurrentSpaWithoutRetiredFeatureBootstrap()
+    {
+        var response = await _client.GetAsync("/manual");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var html = await response.Content.ReadAsStringAsync();
+        Assert.Contains("<div id=\"root\"></div>", html, StringComparison.Ordinal);
+
+        var scriptMatch = Regex.Match(
+            html,
+            "<script[^>]+src=\"(?<src>/assets/[^\"]+\\.js)\"",
+            RegexOptions.CultureInvariant);
+        Assert.True(scriptMatch.Success, "Embedded index.html did not reference a JavaScript entry asset.");
+
+        var scriptResponse = await _client.GetAsync(scriptMatch.Groups["src"].Value);
+        Assert.Equal(HttpStatusCode.OK, scriptResponse.StatusCode);
+        var script = await scriptResponse.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("/api/features", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("FeatureFlagsContext", script, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("/icons/fst-icon-maskable-512.png", "/icons/fst-icon-512.png")]
+    [InlineData("/manual/screenshots/song-detail-cards-mobile.png", "/manual/screenshots/song-detail-overview-mobile.png")]
+    [InlineData("/manual/screenshots/song-detail-cards-compact.png", "/manual/screenshots/song-detail-overview-compact.png")]
+    [InlineData("/manual/screenshots/song-detail-cards-wide.png", "/manual/screenshots/song-detail-overview-wide.png")]
+    public async Task EmbeddedLegacyAssetAliases_ReturnCanonicalContent(
+        string legacyPath,
+        string canonicalPath)
+    {
+        var legacyResponse = await _client.GetAsync(legacyPath);
+        var canonicalResponse = await _client.GetAsync(canonicalPath);
+
+        Assert.Equal(HttpStatusCode.OK, legacyResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, canonicalResponse.StatusCode);
+        Assert.Equal(
+            await canonicalResponse.Content.ReadAsByteArrayAsync(),
+            await legacyResponse.Content.ReadAsByteArrayAsync());
+    }
+
+    [Fact]
+    public async Task PublicationBootstrap_ReportsUnreadyAndBlocksPinnedRequests()
     {
         using var factory = _factory.WithWebHostBuilder(builder =>
         {
@@ -101,15 +143,63 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var publication = await publicationResponse.Content.ReadFromJsonAsync<JsonElement>();
         var publicationId = publication.GetProperty("publicationId").GetInt64();
         Assert.Equal(pointers.CurrentPublicationId, publicationId);
-        Assert.True(publication.GetProperty("pinningEnabled").GetBoolean());
+        Assert.Equal(
+            PublicationRouteSurfaceContractCatalog.ContractVersion,
+            publication.GetProperty("contractVersion").GetInt32());
+        Assert.False(publication.GetProperty("readyForPinning").GetBoolean());
+        Assert.False(publication.GetProperty("pinningEnabled").GetBoolean());
+        var unreadySurfaces = publication.GetProperty("unreadySurfaces")
+            .EnumerateArray()
+            .ToArray();
+        Assert.Equal(
+            unreadySurfaces
+                .Select(surface => surface.GetProperty("surface").GetString())
+                .Order(StringComparer.Ordinal),
+            unreadySurfaces
+                .Select(surface => surface.GetProperty("surface").GetString()));
+        Assert.Contains(
+            unreadySurfaces,
+            surface => surface.GetProperty("surface").GetString() ==
+                       PublicationSurfaceNames.ItemShop);
+        Assert.Contains(
+            unreadySurfaces,
+            surface => surface.GetProperty("surface").GetString() ==
+                       PublicationSurfaceNames.PathArtifacts);
+        foreach (var legacySurfaceName in new[]
+                 {
+                     PublicationSurfaceNames.ItemShop,
+                     PublicationSurfaceNames.PathArtifacts,
+                 })
+        {
+            var legacySurface = Assert.Single(
+                unreadySurfaces,
+                surface => surface.GetProperty("surface").GetString() ==
+                           legacySurfaceName);
+            var reasons = legacySurface.GetProperty("reasons")
+                .EnumerateArray()
+                .Select(static reason => reason.GetString())
+                .ToArray();
+            Assert.Contains("status_building", reasons);
+            Assert.Contains(
+                "binding_kind_not_allowed:legacy_live_unversioned",
+                reasons);
+        }
 
         var pinnedResponse = await client.GetAsync(
             $"/api/songs?publicationId={publicationId}");
-        Assert.Equal(HttpStatusCode.OK, pinnedResponse.StatusCode);
         Assert.Equal(
-            publicationId.ToString(),
-            pinnedResponse.Headers.GetValues(
-                PublicationReadContextMiddleware.PublicationHeader).Single());
+            HttpStatusCode.ServiceUnavailable,
+            pinnedResponse.StatusCode);
+        var unavailable =
+            await pinnedResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(
+            "Published data unavailable",
+            unavailable.GetProperty("title").GetString());
+
+        var implicitPinnedResponse = await client.GetAsync("/api/songs");
+        Assert.Equal(
+            HttpStatusCode.ServiceUnavailable,
+            implicitPinnedResponse.StatusCode);
 
         var changedResponse = await client.GetAsync(
             $"/api/songs?publicationId={publicationId + 1}");
@@ -123,41 +213,25 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(HttpStatusCode.OK, operationalResponse.StatusCode);
     }
 
-    // ─── Features ───────────────────────────────────────────────
-
     [Fact]
-    public async Task ApiFeatures_ReturnsFeatureFlags()
+    public async Task PublicationReadContextDisabled_PreservesCurrentRequestBehavior()
     {
-        var response = await _client.GetAsync("/api/features");
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.True(json.GetProperty("compete").GetBoolean());
-        Assert.False(json.GetProperty("leaderboards").GetBoolean());
-        Assert.False(json.GetProperty("difficulty").GetBoolean());
-        Assert.False(json.GetProperty("playerBands").GetBoolean());
-        Assert.False(json.GetProperty("experimentalRanks").GetBoolean());
-        Assert.False(json.GetProperty("appManual").GetBoolean());
-        Assert.False(json.TryGetProperty("rivals", out _));
-        Assert.False(json.TryGetProperty("firstRun", out _));
-    }
-
-    [Fact]
-    public async Task ApiFeatures_ReturnsAppManualWhenEnabled()
-    {
-        using var factory = _factory.WithWebHostBuilder(builder =>
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var pointers = metaDb.GetPublicationPointerState();
+        if (!pointers.CurrentPublicationId.HasValue)
         {
-            builder.ConfigureServices(services =>
-            {
-                services.PostConfigure<FeatureOptions>(options => options.AppManual = true);
-            });
-        });
-        using var client = factory.CreateClient();
+            var scrapeId = metaDb.StartScrapeRun();
+            metaDb.CompleteScrapeRun(scrapeId, 1, 1, 1, 1);
+            metaDb.PublishScrapeRun(
+                scrapeId,
+                promoteCachedResponses: false);
+            pointers = metaDb.GetPublicationPointerState();
+        }
 
-        var response = await client.GetAsync("/api/features");
+        var response = await _client.GetAsync(
+            $"/api/songs?publicationId={pointers.CurrentPublicationId + 1}");
+
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-
-        Assert.True(json.GetProperty("appManual").GetBoolean());
     }
 
     // ─── Client telemetry ───────────────────────────────────────
@@ -3272,159 +3346,137 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
-    public async Task ApiPlayerStats_ReturnsBands_WhenFeatureEnabled()
+    public async Task ApiPlayerStats_ReturnsBands()
     {
-        var featureOptions = _factory.Services.GetRequiredService<IOptions<FeatureOptions>>().Value;
-        var originalPlayerBands = featureOptions.PlayerBands;
-        featureOptions.PlayerBands = true;
+        using var scope = _factory.Services.CreateScope();
+        var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+        var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+        var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
 
-        try
+        metaDb.InsertAccountIds(["bandsAcct1", "bandsMate1", "bandsMate2"]);
+        metaDb.InsertAccountNames([
+            ("bandsAcct1", (string?)"Bands Player"),
+            ("bandsMate1", (string?)"Bands Mate One"),
+            ("bandsMate2", (string?)"Bands Mate Two"),
+        ]);
+
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        db.UpsertEntries("bands_song_seed", [
+            new LeaderboardEntry { AccountId = "bandsAcct1", Score = 95_000, Rank = 1, Accuracy = 99, Stars = 6, Season = 5 },
+            new LeaderboardEntry { AccountId = "bandsOther", Score = 90_000, Rank = 2, Accuracy = 98, Stars = 6, Season = 5 },
+        ]);
+
+        metaDb.UpsertPlayerStatsTiers("bandsAcct1", "Solo_Guitar", JsonSerializer.Serialize(new[]
         {
-            using var scope = _factory.Services.CreateScope();
-            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
-            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
-            var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+            new PlayerStatsTier { SongsPlayed = 1, TotalScore = 95_000, CompletionPercent = 100, BestRank = 1 }
+        }));
 
-            metaDb.InsertAccountIds(["bandsAcct1", "bandsMate1", "bandsMate2"]);
-            metaDb.InsertAccountNames([
-                ("bandsAcct1", (string?)"Bands Player"),
-                ("bandsMate1", (string?)"Bands Mate One"),
-                ("bandsMate2", (string?)"Bands Mate Two"),
-            ]);
+        SeedBandRows(dataSource, "bands_song_1", "Band_Duets", "bandsAcct1:bandsMate1", (0, "bandsAcct1", 0), (1, "bandsMate1", 1));
+        SeedBandRows(dataSource, "bands_song_2", "Band_Duets", "bandsAcct1:bandsMate1", (0, "bandsAcct1", 2), (1, "bandsMate1", 1));
+        SeedBandRows(dataSource, "bands_song_3", "Band_Trios", "bandsAcct1:bandsMate1:bandsMate2", (0, "bandsAcct1", 0), (1, "bandsMate1", 1), (2, "bandsMate2", 3));
 
-            var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
-            db.UpsertEntries("bands_song_seed", [
-                new LeaderboardEntry { AccountId = "bandsAcct1", Score = 95_000, Rank = 1, Accuracy = 99, Stars = 6, Season = 5 },
-                new LeaderboardEntry { AccountId = "bandsOther", Score = 90_000, Rank = 2, Accuracy = 98, Stars = 6, Season = 5 },
-            ]);
+        var response = await _client.GetAsync("/api/player/bandsAcct1/stats");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-            metaDb.UpsertPlayerStatsTiers("bandsAcct1", "Solo_Guitar", JsonSerializer.Serialize(new[]
-            {
-                new PlayerStatsTier { SongsPlayed = 1, TotalScore = 95_000, CompletionPercent = 100, BestRank = 1 }
-            }));
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var bands = json.GetProperty("bands");
+        var allEntries = bands.GetProperty("all").GetProperty("entries");
 
-            SeedBandRows(dataSource, "bands_song_1", "Band_Duets", "bandsAcct1:bandsMate1", (0, "bandsAcct1", 0), (1, "bandsMate1", 1));
-            SeedBandRows(dataSource, "bands_song_2", "Band_Duets", "bandsAcct1:bandsMate1", (0, "bandsAcct1", 2), (1, "bandsMate1", 1));
-            SeedBandRows(dataSource, "bands_song_3", "Band_Trios", "bandsAcct1:bandsMate1:bandsMate2", (0, "bandsAcct1", 0), (1, "bandsMate1", 1), (2, "bandsMate2", 3));
+        Assert.Equal(2, bands.GetProperty("all").GetProperty("totalCount").GetInt32());
+        Assert.Equal(1, bands.GetProperty("duos").GetProperty("totalCount").GetInt32());
+        Assert.Equal(1, bands.GetProperty("trios").GetProperty("totalCount").GetInt32());
+        Assert.Equal(0, bands.GetProperty("quads").GetProperty("totalCount").GetInt32());
 
-            var response = await _client.GetAsync("/api/player/bandsAcct1/stats");
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("bandsAcct1:bandsMate1", allEntries[0].GetProperty("teamKey").GetString());
+        Assert.Equal(2, allEntries[0].GetProperty("appearanceCount").GetInt32());
+        Assert.Equal("bandsAcct1:bandsMate1:bandsMate2", allEntries[1].GetProperty("teamKey").GetString());
+        Assert.Equal(1, allEntries[1].GetProperty("appearanceCount").GetInt32());
 
-            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-            var bands = json.GetProperty("bands");
-            var allEntries = bands.GetProperty("all").GetProperty("entries");
+        var duoEntry = bands.GetProperty("duos").GetProperty("entries")[0];
+        var trioEntry = bands.GetProperty("trios").GetProperty("entries")[0];
+        var duoBandId = duoEntry.GetProperty("bandId").GetString();
 
-            Assert.Equal(2, bands.GetProperty("all").GetProperty("totalCount").GetInt32());
-            Assert.Equal(1, bands.GetProperty("duos").GetProperty("totalCount").GetInt32());
-            Assert.Equal(1, bands.GetProperty("trios").GetProperty("totalCount").GetInt32());
-            Assert.Equal(0, bands.GetProperty("quads").GetProperty("totalCount").GetInt32());
+        Assert.True(Guid.TryParse(duoBandId, out _));
+        Assert.Equal(duoBandId, allEntries[0].GetProperty("bandId").GetString());
+        Assert.Equal(2, duoEntry.GetProperty("appearanceCount").GetInt32());
+        Assert.True(Guid.TryParse(trioEntry.GetProperty("bandId").GetString(), out _));
+        Assert.Equal(1, trioEntry.GetProperty("appearanceCount").GetInt32());
 
-            Assert.Equal("bandsAcct1:bandsMate1", allEntries[0].GetProperty("teamKey").GetString());
-            Assert.Equal(2, allEntries[0].GetProperty("appearanceCount").GetInt32());
-            Assert.Equal("bandsAcct1:bandsMate1:bandsMate2", allEntries[1].GetProperty("teamKey").GetString());
-            Assert.Equal(1, allEntries[1].GetProperty("appearanceCount").GetInt32());
+        var playerMember = duoEntry.GetProperty("members")
+            .EnumerateArray()
+            .Single(member => string.Equals(member.GetProperty("accountId").GetString(), "bandsAcct1", StringComparison.Ordinal));
+        var instruments = playerMember.GetProperty("instruments")
+            .EnumerateArray()
+            .Select(value => value.GetString())
+            .ToArray();
 
-            var duoEntry = bands.GetProperty("duos").GetProperty("entries")[0];
-            var trioEntry = bands.GetProperty("trios").GetProperty("entries")[0];
-            var duoBandId = duoEntry.GetProperty("bandId").GetString();
-
-            Assert.True(Guid.TryParse(duoBandId, out _));
-            Assert.Equal(duoBandId, allEntries[0].GetProperty("bandId").GetString());
-            Assert.Equal(2, duoEntry.GetProperty("appearanceCount").GetInt32());
-            Assert.True(Guid.TryParse(trioEntry.GetProperty("bandId").GetString(), out _));
-            Assert.Equal(1, trioEntry.GetProperty("appearanceCount").GetInt32());
-
-            var playerMember = duoEntry.GetProperty("members")
-                .EnumerateArray()
-                .Single(member => string.Equals(member.GetProperty("accountId").GetString(), "bandsAcct1", StringComparison.Ordinal));
-            var instruments = playerMember.GetProperty("instruments")
-                .EnumerateArray()
-                .Select(value => value.GetString())
-                .ToArray();
-
-            Assert.Contains("Solo_Guitar", instruments);
-                Assert.Contains("Solo_Vocals", instruments);
-        }
-        finally
-        {
-            featureOptions.PlayerBands = originalPlayerBands;
-        }
+        Assert.Contains("Solo_Guitar", instruments);
+        Assert.Contains("Solo_Vocals", instruments);
     }
 
     [Fact]
     public async Task ApiPlayerStats_ReturnsSixBandPreviewEntries_WhenMoreBandsExist()
     {
-        var featureOptions = _factory.Services.GetRequiredService<IOptions<FeatureOptions>>().Value;
-        var originalPlayerBands = featureOptions.PlayerBands;
-        featureOptions.PlayerBands = true;
+        using var scope = _factory.Services.CreateScope();
+        var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+        var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+        var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
 
-        try
+        metaDb.InsertAccountIds([
+            "bandsPreviewAcct",
+            "bandsPreviewMate1",
+            "bandsPreviewMate2",
+            "bandsPreviewMate3",
+            "bandsPreviewMate4",
+            "bandsPreviewMate5",
+            "bandsPreviewMate6",
+            "bandsPreviewMate7",
+        ]);
+        metaDb.InsertAccountNames([
+            ("bandsPreviewAcct", (string?)"Bands Preview Player"),
+            ("bandsPreviewMate1", (string?)"Bands Preview Mate 1"),
+            ("bandsPreviewMate2", (string?)"Bands Preview Mate 2"),
+            ("bandsPreviewMate3", (string?)"Bands Preview Mate 3"),
+            ("bandsPreviewMate4", (string?)"Bands Preview Mate 4"),
+            ("bandsPreviewMate5", (string?)"Bands Preview Mate 5"),
+            ("bandsPreviewMate6", (string?)"Bands Preview Mate 6"),
+            ("bandsPreviewMate7", (string?)"Bands Preview Mate 7"),
+        ]);
+
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        db.UpsertEntries("bands_preview_seed", [
+            new LeaderboardEntry { AccountId = "bandsPreviewAcct", Score = 95_000, Rank = 1, Accuracy = 99, Stars = 6, Season = 5 },
+            new LeaderboardEntry { AccountId = "bandsPreviewOther", Score = 90_000, Rank = 2, Accuracy = 98, Stars = 6, Season = 5 },
+        ]);
+
+        metaDb.UpsertPlayerStatsTiers("bandsPreviewAcct", "Solo_Guitar", JsonSerializer.Serialize(new[]
         {
-            using var scope = _factory.Services.CreateScope();
-            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
-            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
-            var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+            new PlayerStatsTier { SongsPlayed = 1, TotalScore = 95_000, CompletionPercent = 100, BestRank = 1 }
+        }));
 
-            metaDb.InsertAccountIds([
-                "bandsPreviewAcct",
-                "bandsPreviewMate1",
-                "bandsPreviewMate2",
-                "bandsPreviewMate3",
-                "bandsPreviewMate4",
-                "bandsPreviewMate5",
-                "bandsPreviewMate6",
-                "bandsPreviewMate7",
-            ]);
-            metaDb.InsertAccountNames([
-                ("bandsPreviewAcct", (string?)"Bands Preview Player"),
-                ("bandsPreviewMate1", (string?)"Bands Preview Mate 1"),
-                ("bandsPreviewMate2", (string?)"Bands Preview Mate 2"),
-                ("bandsPreviewMate3", (string?)"Bands Preview Mate 3"),
-                ("bandsPreviewMate4", (string?)"Bands Preview Mate 4"),
-                ("bandsPreviewMate5", (string?)"Bands Preview Mate 5"),
-                ("bandsPreviewMate6", (string?)"Bands Preview Mate 6"),
-                ("bandsPreviewMate7", (string?)"Bands Preview Mate 7"),
-            ]);
-
-            var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
-            db.UpsertEntries("bands_preview_seed", [
-                new LeaderboardEntry { AccountId = "bandsPreviewAcct", Score = 95_000, Rank = 1, Accuracy = 99, Stars = 6, Season = 5 },
-                new LeaderboardEntry { AccountId = "bandsPreviewOther", Score = 90_000, Rank = 2, Accuracy = 98, Stars = 6, Season = 5 },
-            ]);
-
-            metaDb.UpsertPlayerStatsTiers("bandsPreviewAcct", "Solo_Guitar", JsonSerializer.Serialize(new[]
-            {
-                new PlayerStatsTier { SongsPlayed = 1, TotalScore = 95_000, CompletionPercent = 100, BestRank = 1 }
-            }));
-
-            for (var index = 1; index <= 7; index++)
-            {
-                SeedBandRows(
-                    dataSource,
-                    $"bands_preview_song_{index}",
-                    "Band_Duets",
-                    $"bandsPreviewAcct:bandsPreviewMate{index}",
-                    (0, "bandsPreviewAcct", index % 4),
-                    (1, $"bandsPreviewMate{index}", (index + 1) % 4));
-            }
-
-            var response = await _client.GetAsync("/api/player/bandsPreviewAcct/stats");
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-
-            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-            var bands = json.GetProperty("bands");
-            var allEntries = bands.GetProperty("all").GetProperty("entries");
-            var duoEntries = bands.GetProperty("duos").GetProperty("entries");
-
-            Assert.Equal(7, bands.GetProperty("all").GetProperty("totalCount").GetInt32());
-            Assert.Equal(7, bands.GetProperty("duos").GetProperty("totalCount").GetInt32());
-            Assert.Equal(6, allEntries.GetArrayLength());
-            Assert.Equal(6, duoEntries.GetArrayLength());
-        }
-        finally
+        for (var index = 1; index <= 7; index++)
         {
-            featureOptions.PlayerBands = originalPlayerBands;
+            SeedBandRows(
+                dataSource,
+                $"bands_preview_song_{index}",
+                "Band_Duets",
+                $"bandsPreviewAcct:bandsPreviewMate{index}",
+                (0, "bandsPreviewAcct", index % 4),
+                (1, $"bandsPreviewMate{index}", (index + 1) % 4));
         }
+
+        var response = await _client.GetAsync("/api/player/bandsPreviewAcct/stats");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var bands = json.GetProperty("bands");
+        var allEntries = bands.GetProperty("all").GetProperty("entries");
+        var duoEntries = bands.GetProperty("duos").GetProperty("entries");
+
+        Assert.Equal(7, bands.GetProperty("all").GetProperty("totalCount").GetInt32());
+        Assert.Equal(7, bands.GetProperty("duos").GetProperty("totalCount").GetInt32());
+        Assert.Equal(6, allEntries.GetArrayLength());
+        Assert.Equal(6, duoEntries.GetArrayLength());
     }
 
     [Fact]
@@ -3473,56 +3525,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var entry = json.GetProperty("bands").GetProperty("duos").GetProperty("entries")[0];
         Assert.True(Guid.TryParse(entry.GetProperty("bandId").GetString(), out _));
         Assert.Equal(1, entry.GetProperty("appearanceCount").GetInt32());
-    }
-
-    [Fact]
-    public async Task ApiPlayerStats_ReturnsBands_WhenFeatureDisabled()
-    {
-        var featureOptions = _factory.Services.GetRequiredService<IOptions<FeatureOptions>>().Value;
-        var originalPlayerBands = featureOptions.PlayerBands;
-        featureOptions.PlayerBands = false;
-
-        try
-        {
-            using var scope = _factory.Services.CreateScope();
-            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
-            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
-            var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
-
-            metaDb.InsertAccountIds(["bandsDisabledAcct1", "bandsDisabledMate1"]);
-            metaDb.InsertAccountNames([
-                ("bandsDisabledAcct1", (string?)"Bands Disabled Player"),
-                ("bandsDisabledMate1", (string?)"Bands Disabled Mate"),
-            ]);
-
-            var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
-            db.UpsertEntries("bands_disabled_song_seed", [
-                new LeaderboardEntry { AccountId = "bandsDisabledAcct1", Score = 95_000, Rank = 1, Accuracy = 99, Stars = 6, Season = 5 },
-                new LeaderboardEntry { AccountId = "bandsDisabledOther", Score = 90_000, Rank = 2, Accuracy = 98, Stars = 6, Season = 5 },
-            ]);
-
-            metaDb.UpsertPlayerStatsTiers("bandsDisabledAcct1", "Solo_Guitar", JsonSerializer.Serialize(new[]
-            {
-                new PlayerStatsTier { SongsPlayed = 1, TotalScore = 95_000, CompletionPercent = 100, BestRank = 1 }
-            }));
-
-            SeedBandRows(dataSource, "bands_disabled_song_1", "Band_Duets", "bandsDisabledAcct1:bandsDisabledMate1", (0, "bandsDisabledAcct1", 0), (1, "bandsDisabledMate1", 1));
-
-            var response = await _client.GetAsync("/api/player/bandsDisabledAcct1/stats");
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-
-            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-            var bands = json.GetProperty("bands");
-
-            Assert.Equal(1, bands.GetProperty("all").GetProperty("totalCount").GetInt32());
-            Assert.Equal(1, bands.GetProperty("duos").GetProperty("totalCount").GetInt32());
-            Assert.Equal(0, bands.GetProperty("trios").GetProperty("totalCount").GetInt32());
-            Assert.Equal(0, bands.GetProperty("quads").GetProperty("totalCount").GetInt32());
-        }
-        finally
-        {
-            featureOptions.PlayerBands = originalPlayerBands;
-        }
     }
 
     [Fact]

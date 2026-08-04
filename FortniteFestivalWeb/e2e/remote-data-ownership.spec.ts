@@ -91,16 +91,6 @@ async function installApi(page: Page, counts: RequestCounts, options: ApiInstall
     const delayMs = options.delayMs?.(path) ?? 0;
     if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs));
 
-    if (url.pathname === '/api/features') {
-      return json(route, {
-        compete: true,
-        leaderboards: true,
-        difficulty: false,
-        playerBands: false,
-        experimentalRanks: true,
-        appManual: false,
-      });
-    }
     if (url.pathname === '/api/service-info') {
       return json(route, {
         lastCompletedUpdate: null,
@@ -444,6 +434,7 @@ test('rapid route and profile changes cancel obsolete GET requests', async ({ pa
       showPeripheralVocals: false,
       showPeripheralCymbals: false,
       showPeripheralDrums: false,
+      enableExperimentalRanks: true,
     }));
     localStorage.setItem('fst:selectedProfile', JSON.stringify({ type: 'player', ...profile }));
     localStorage.setItem('fst:trackedPlayer', JSON.stringify(profile));
@@ -533,7 +524,7 @@ test('rapid route and profile changes cancel obsolete GET requests', async ({ pa
     writeFileSync(metricsPath, `${JSON.stringify(metrics, null, 2)}\n`);
   }
 
-  expect(page.getByText(`Above ${PROFILE_A.accountId}`)).not.toBeVisible();
+  await expect(page.getByText(`Above ${PROFILE_A.accountId}`)).not.toBeVisible({ timeout: 15_000 });
   expect(counts.get(latestRankingsPath)).toBe(1);
   expect(counts.get(`/api/player/${PROFILE_B.accountId}/rivals/Solo_Guitar`)).toBe(1);
   expect(consoleErrors).toEqual([]);

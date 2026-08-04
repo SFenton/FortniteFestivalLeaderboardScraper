@@ -6,7 +6,6 @@ import type { ReactNode } from 'react';
 import type { SongBandLeaderboardResponse } from '@festival/core/api';
 import SongBandLeaderboardPage from '../../../../src/pages/leaderboard/band/SongBandLeaderboardPage';
 import { BandFilterActionProvider } from '../../../../src/contexts/BandFilterActionContext';
-import { FeatureFlagsProvider } from '../../../../src/contexts/FeatureFlagsContext';
 import type { AppliedBandComboFilter } from '../../../../src/types/bandFilter';
 import { LEGACY_TRACKED_PLAYER_STORAGE_KEY, SELECTED_PROFILE_STORAGE_KEY } from '../../../../src/state/selectedProfile';
 import { expectCancellableCall } from '../../../helpers/requestAssertions';
@@ -150,7 +149,6 @@ function renderPage(bandFilter?: AppliedBandComboFilter | null, route = '/songs/
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <FeatureFlagsProvider>
       <BandFilterActionProvider value={{
         visible: false,
         label: 'Filter Band Type',
@@ -164,7 +162,6 @@ function renderPage(bandFilter?: AppliedBandComboFilter | null, route = '/songs/
         </Routes>
       </MemoryRouter>
       </BandFilterActionProvider>
-      </FeatureFlagsProvider>
     </QueryClientProvider>,
   );
 }

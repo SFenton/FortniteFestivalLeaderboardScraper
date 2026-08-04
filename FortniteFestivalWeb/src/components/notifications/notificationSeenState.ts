@@ -282,25 +282,24 @@ export function useNotificationSeenState(
   const currentIds = useMemo(() => normalizeNotificationIds(currentNotificationIds), [currentNotificationIds]);
   const currentIdsSignature = currentIds.join('\n');
   const currentIdsRef = useRef(currentIds);
+  currentIdsRef.current = currentIds;
   const [seenNotificationIds, setSeenNotificationIds] = useState(() => (
     isCurrentFeedLoaded ? pruneSeenNotificationIds(feedKey, currentIds) : readSeenNotificationIds(feedKey)
   ));
 
   useEffect(() => {
-    currentIdsRef.current = currentIds;
-  }, [currentIds, currentIdsSignature]);
-
-  useEffect(() => {
-    setSeenNotificationIds(isCurrentFeedLoaded ? pruneSeenNotificationIds(feedKey, currentIds) : readSeenNotificationIds(feedKey));
-  }, [currentIds, currentIdsSignature, feedKey, isCurrentFeedLoaded]);
+    setSeenNotificationIds(isCurrentFeedLoaded
+      ? pruneSeenNotificationIds(feedKey, currentIdsRef.current)
+      : readSeenNotificationIds(feedKey));
+  }, [currentIdsSignature, feedKey, isCurrentFeedLoaded]);
 
   const markNotificationsSeen = useCallback((notificationIds: Iterable<string>) => {
     setSeenNotificationIds(addSeenNotificationIds(feedKey, notificationIds, currentIdsRef.current));
   }, [feedKey]);
 
   const unreadNotificationIds = useMemo(
-    () => deriveUnreadNotificationIds(currentIds, seenNotificationIds),
-    [currentIds, currentIdsSignature, seenNotificationIds],
+    () => deriveUnreadNotificationIds(currentIdsRef.current, seenNotificationIds),
+    [currentIdsSignature, seenNotificationIds],
   );
 
   return useMemo(() => ({

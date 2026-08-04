@@ -423,7 +423,6 @@ public static partial class ApiEndpoints
             GlobalLeaderboardPersistence persistence,
             IPathDataStore pathStore,
             ScrapeTimePrecomputer precomputer,
-            IOptions<FeatureOptions> featureOptions,
             ImprovementNotificationService improvementNotifications,
             [FromKeyedServices("PlayerCache")] ResponseCacheService playerCache) =>
         {

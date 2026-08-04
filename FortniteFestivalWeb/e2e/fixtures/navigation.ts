@@ -7,19 +7,17 @@ import type { Page } from '@playwright/test';
  */
 export async function goto(page: Page, route: string) {
   await page.goto(`/#${route}`, { waitUntil: 'load' });
-  // Allow React to mount + any initial data fetches
-  await page.waitForTimeout(2000);
 }
 
 /**
- * Change the hash route and reload to force React to re-read
- * localStorage. Use this mid-test after mutating localStorage
- * when you need the app to pick up the new state.
+ * Replace the hash without dispatching a route change, then reload once so
+ * React reads mutated localStorage before the destination route mounts.
  */
 export async function gotoFresh(page: Page, route: string) {
-  await page.goto(`/#${route}`, { waitUntil: 'load' });
+  await page.evaluate(nextRoute => {
+    window.history.replaceState(null, '', `/#${nextRoute}`);
+  }, route);
   await page.reload({ waitUntil: 'load' });
-  await page.waitForTimeout(2000);
 }
 
 /**
@@ -29,13 +27,14 @@ export async function gotoFresh(page: Page, route: string) {
  */
 export async function getFirstSongId(page: Page): Promise<string | null> {
   try {
-    const response = await page.request.get('/api/songs');
-    if (!response.ok()) return null;
-    const data = await response.json();
-    // Songs may be an array or object with an array field
-    const songs = Array.isArray(data) ? data : (data.songs ?? data.items ?? []);
-    if (songs.length === 0) return null;
-    return songs[0].trackId ?? songs[0].id ?? songs[0].songId ?? null;
+    return await page.evaluate(async () => {
+      const response = await fetch('/api/songs');
+      if (!response.ok) return null;
+      const data = await response.json();
+      const songs = Array.isArray(data) ? data : (data.songs ?? data.items ?? []);
+      if (songs.length === 0) return null;
+      return songs[0].trackId ?? songs[0].id ?? songs[0].songId ?? null;
+    });
   } catch {
     return null;
   }

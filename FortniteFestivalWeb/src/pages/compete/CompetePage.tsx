@@ -212,8 +212,8 @@ export default function CompetePage() {
     },
   ], [t]);
   const firstRunGateCtx = useMemo(
-    () => ({ hasPlayer: !!player, experimentalRanksEnabled: true }),
-    [player],
+    () => ({ hasPlayer: !!player, experimentalRanksEnabled: settings.enableExperimentalRanks }),
+    [player, settings.enableExperimentalRanks],
   );
 
   const navigateToLeaderboards = (scope: RankingScope) => {

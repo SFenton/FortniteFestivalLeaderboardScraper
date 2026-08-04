@@ -83,6 +83,10 @@ describe('request cancellation coverage', () => {
     visitClient(clientFile);
 
     for (const method of getMethods) {
+      if (method.name === 'getPublication') {
+        expect(method.source).toContain('ensurePublication()');
+        continue;
+      }
       expect(method.source, method.name).toMatch(/ApiRequestOptions|AbortSignal/);
     }
     expect(clientSource).not.toContain('shopEtagCache');

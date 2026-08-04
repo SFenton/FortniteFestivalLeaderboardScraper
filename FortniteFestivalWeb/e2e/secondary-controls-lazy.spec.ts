@@ -235,16 +235,6 @@ async function installApiMocks(page: Page) {
     const url = new URL(route.request().url());
     const path = url.pathname;
     if (!path.startsWith('/api/')) return route.continue();
-    if (path === '/api/features') {
-      return json(route, {
-        compete: true,
-        leaderboards: true,
-        difficulty: true,
-        playerBands: true,
-        experimentalRanks: true,
-        appManual: true,
-      });
-    }
     if (path === '/api/service-info') {
       return json(route, {
         publishedScrapeId: 1236,

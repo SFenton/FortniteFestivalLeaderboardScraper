@@ -38,7 +38,7 @@ describe('app/statistics', () => {
 
   test('buildInstrumentStats with no boards returns zero stats', () => {
     const stats = buildInstrumentStats({boards: [], totalSongsInLibrary: 0});
-    expect(stats).toHaveLength(6); // one per instrument
+    expect(stats).toHaveLength(9); // one per instrument
     for (const s of stats) {
       expect(s.songsPlayed).toBe(0);
       expect(s.fcCount).toBe(0);
@@ -263,7 +263,7 @@ describe('app/statistics', () => {
     expect(raw!.songs[0].songId).toBe('b');
   });
 
-  test('buildInstrumentStats covers all six instruments', () => {
+  test('buildInstrumentStats covers all instruments', () => {
     const mk = (key: string): LeaderboardData => {
       const t = Object.assign(new ScoreTracker(), {
         initialized: true, percentHit: 800000, numStars: 4, maxScore: 500,
@@ -273,8 +273,9 @@ describe('app/statistics', () => {
     };
     const boards: LeaderboardData[] = [
       mk('guitar'), mk('drums'), mk('vocals'), mk('bass'), mk('pro_guitar'), mk('pro_bass'),
+      mk('peripheral_vocals'), mk('peripheral_cymbals'), mk('peripheral_drums'),
     ];
-    const stats = buildInstrumentStats({boards, totalSongsInLibrary: 6});
+    const stats = buildInstrumentStats({boards, totalSongsInLibrary: 9});
     for (const s of stats) {
       expect(s.songsPlayed).toBe(1);
     }

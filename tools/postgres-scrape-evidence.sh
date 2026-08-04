@@ -533,7 +533,6 @@ capture_route() {
 }
 
 capture_route "service-info" "/api/service-info"
-capture_route "features" "/api/features"
 capture_route "songs" "/api/songs"
 
 if [[ -n "$solo_sample" ]]; then

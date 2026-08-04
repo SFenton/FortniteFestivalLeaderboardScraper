@@ -130,6 +130,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   stubMatchMedia(false);
   localStorage.clear();
+  localStorage.setItem('fst:appSettings', JSON.stringify({ enableExperimentalRanks: true }));
   localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-player', displayName: 'Test Player' }));
 
   mockApi.getComboRankings.mockResolvedValue({
@@ -192,6 +193,21 @@ afterEach(() => {
 const { default: FullRankingsPage } = await import('../../../src/pages/leaderboards/FullRankingsPage');
 
 describe('FullRankingsPage', () => {
+  it('coerces experimental metric deep links when the setting is disabled', async () => {
+    localStorage.setItem('fst:appSettings', JSON.stringify({ enableExperimentalRanks: false }));
+    render(
+      <TestProviders route="/leaderboards/all?instrument=Solo_Guitar&rankBy=adjusted" accountId="test-player">
+        <Routes>
+          <Route path="/leaderboards/all" element={<FullRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await waitFor(() => {
+      expectCancellableCall(mockApi.getRankings, 'Solo_Guitar', 'totalscore', 1, 25);
+    });
+  });
+
   it('keeps experimental metric deep links available', async () => {
     render(
       <TestProviders route="/leaderboards/all?instrument=Solo_Guitar&rankBy=adjusted" accountId="test-player">

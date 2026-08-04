@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAccountSearch } from '../../../src/hooks/data/useAccountSearch';
+import { expectCancellableCall } from '../../helpers/requestAssertions';
 
 // Mock the API module
 vi.mock('../../../src/api/client', () => ({
@@ -52,7 +53,7 @@ describe('useAccountSearch', () => {
     // Only the last debounce fires
     await act(async () => { vi.advanceTimersByTime(300); });
     expect(mockSearch).toHaveBeenCalledTimes(1);
-    expect(mockSearch).toHaveBeenCalledWith('test', 10);
+    expectCancellableCall(mockSearch, 'test', 10);
   });
 
   it('calls onSelect when selectResult is called', () => {
@@ -233,7 +234,7 @@ describe('useAccountSearch — additional branch coverage', () => {
     await act(async () => { vi.advanceTimersByTime(10); });
     await act(async () => { await vi.runAllTimersAsync(); });
 
-    expect(mockSearch).toHaveBeenCalledWith('test', 5);
+    expectCancellableCall(mockSearch, 'test', 5);
   });
 
   it('ArrowUp decrements from non-zero index without wrapping', async () => {

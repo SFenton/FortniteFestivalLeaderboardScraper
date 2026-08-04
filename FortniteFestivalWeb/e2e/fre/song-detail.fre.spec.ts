@@ -2,8 +2,9 @@ import { test, expect } from '../fixtures/fre';
 import { goto, gotoFresh, getFirstSongId } from '../fixtures/navigation';
 
 /*
- * Song Detail FRE — 7 possible slides:
- *   Always:   songinfo-top-scores, songinfo-paths (variant), songinfo-shop-button (variant), songinfo-leaving-tomorrow (variant)
+ * Song Detail FRE — 8 possible slides:
+ *   Always:   songinfo-top-scores, songinfo-paths (variant), songinfo-shop-button (variant),
+ *             songinfo-new-in-shop (variant), songinfo-leaving-tomorrow (variant)
  *   Gated (hasPlayer):   songinfo-chart, songinfo-bar-select, songinfo-view-all
  */
 
@@ -18,28 +19,28 @@ test.describe('Song Detail FRE', () => {
     songId = id ?? 'fallback-song-id';
   });
 
-  test('fresh, no player — shows 4 ungated slides', async ({ page, fre }) => {
+  test('fresh, no player — shows 5 ungated slides', async ({ page, fre }) => {
     await goto(page, `/songs/${songId}`);
     await fre.waitForVisible();
 
-    await fre.assertSlideCount(4);
+    await fre.assertSlideCount(5);
   });
 
-  test('fresh, with player — shows all 7 slides', async ({ page, fre, freState }) => {
+  test('fresh, with player — shows all 8 slides', async ({ page, fre, freState }) => {
     await freState.setTrackedPlayer();
     await goto(page, `/songs/${songId}`);
     await fre.waitForVisible();
 
-    await fre.assertSlideCount(7);
+    await fre.assertSlideCount(8);
     const titles = await fre.collectAllTitles();
-    expect(titles).toHaveLength(7);
+    expect(titles).toHaveLength(8);
   });
 
   test('progressive: no player → select player → revisit shows new slides', async ({ page, fre, freState }) => {
     await goto(page, `/songs/${songId}`);
     await fre.waitForVisible();
 
-    await fre.assertSlideCount(4);
+    await fre.assertSlideCount(5);
     await fre.dismiss();
 
     // Set player and revisit
@@ -57,6 +58,6 @@ test.describe('Song Detail FRE', () => {
 
     // Should show ungated slides
     const count = await fre.slideCount();
-    expect(count).toBeGreaterThanOrEqual(4);
+    expect(count).toBeGreaterThanOrEqual(5);
   });
 });

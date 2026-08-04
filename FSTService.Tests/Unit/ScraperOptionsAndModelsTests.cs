@@ -106,10 +106,6 @@ public class ScraperOptionsAndModelsTests
     {
         var opts = new FeatureOptions();
 
-        Assert.False(opts.Leaderboards);
-        Assert.True(opts.Compete);
-        Assert.False(opts.ExperimentalRanks);
-        Assert.False(opts.AppManual);
         Assert.True(opts.WriteLegacyLiveLeaderboardDuringScrape);
         Assert.True(opts.WriteLegacyLiveLeaderboardSupplementalRows);
         Assert.False(opts.SkipUnchangedPhysicalLeaderboardSnapshots);
@@ -142,7 +138,11 @@ public class ScraperOptionsAndModelsTests
     {
         Assert.Null(typeof(ScraperOptions).GetProperty("ScrapePassTimeoutMinutes"));
         Assert.Null(typeof(ImprovementNotificationOptions).GetProperty("FailScrapeOnError"));
-        Assert.All(new[] { "Shop", "Rivals", "FirstRun" },
+        Assert.All(new[]
+            {
+                "Shop", "Rivals", "FirstRun", "Leaderboards", "Difficulty",
+                "PlayerBands", "ExperimentalRanks", "AppManual", "Compete"
+            },
             name => Assert.Null(typeof(FeatureOptions).GetProperty(name)));
         var opts = new ImprovementNotificationOptions();
         Assert.False(opts.Enabled);
@@ -166,6 +166,9 @@ public class ScraperOptionsAndModelsTests
             key => Assert.DoesNotContain(key, contents, StringComparison.Ordinal));
 
         using var document = JsonDocument.Parse(contents);
+        var features = document.RootElement.GetProperty(FeatureOptions.Section);
+        Assert.All(new[] { "Leaderboards", "Difficulty", "PlayerBands", "ExperimentalRanks", "AppManual", "Compete" },
+            key => Assert.False(features.TryGetProperty(key, out _), $"{key} is still present in {fileName}"));
         var notifications = document.RootElement.GetProperty(ImprovementNotificationOptions.Section);
         var activeKeys = new[] { "Enabled", "Scope", "IncludePlayers", "IncludeBands",
             "IncludeSongEvents", "IncludeRankings", "RefreshSoloProjection",
@@ -178,23 +181,6 @@ public class ScraperOptionsAndModelsTests
     public void FeatureOptions_Section_Constant()
     {
         Assert.Equal("Features", FeatureOptions.Section);
-    }
-
-    [Fact]
-    public void FeatureOptions_Compete_IsAlwaysEnabled()
-    {
-        var opts = new FeatureOptions();
-        Assert.True(opts.Compete);
-    }
-
-    [Fact]
-    public void FeatureOptions_ExperimentalRanks_IsIndependent_FromLeaderboards()
-    {
-        var opts = new FeatureOptions { ExperimentalRanks = true };
-
-        Assert.True(opts.ExperimentalRanks);
-        Assert.False(opts.Leaderboards);
-        Assert.True(opts.Compete);
     }
 
     // ─── StoredCredentials ──────────────────────────────

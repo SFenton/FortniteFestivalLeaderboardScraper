@@ -38,10 +38,10 @@ export default function AllRivalsPage() {
   const [searchParams] = useSearchParams();
   const category = searchParams.get('category') ?? 'common';
   const mode = searchParams.get('mode');
-  const rankBy = coerceRankingMetric(searchParams.get('rankBy'), true);
+  const { settings } = useSettings();
+  const rankBy = coerceRankingMetric(searchParams.get('rankBy'), settings.enableExperimentalRanks);
   const isLeaderboard = mode === 'leaderboard';
   const navigate = useNavigate();
-  const { settings } = useSettings();
   const isMobile = useIsMobile();
   const { player } = useTrackedPlayer();
   const accountId = player?.accountId;

@@ -1,78 +1,47 @@
-import { test, expect } from '@playwright/test';
-
-const SONGS_FRE_SLIDE_IDS = [
-  'songs-song-list',
-  'songs-sort',
-  'songs-navigation',
-  'songs-filter',
-  'songs-icons',
-  'songs-metadata',
-  'songs-shop-highlight',
-  'songs-leaving-tomorrow',
-] as const;
+import { test, expect } from './fixtures/fre';
+import type { Page } from '@playwright/test';
+import { changelogHash } from '../src/changelog';
 
 // Scroll tests are designed for desktop viewports only
-test.beforeEach(async ({ page }, testInfo) => {
+test.beforeEach(async ({ page, freState }, testInfo) => {
   if (testInfo.project.name !== 'desktop') {
     test.skip();
   }
-  // Mark Songs FRE slides as seen so the carousel doesn't interfere with scroll tests.
-  await page.goto('/');
-  await page.evaluate((slideIds) => {
-    const seenAt = new Date().toISOString();
-    const state = Object.fromEntries(slideIds.map(id => [id, { version: 999, hash: 'scroll-test', seenAt }]));
-    localStorage.setItem('fst:firstRun', JSON.stringify(state));
-  }, SONGS_FRE_SLIDE_IDS);
+  await freState.resetAppState();
+  await page.evaluate(hash => {
+    localStorage.setItem('fst:changelog', JSON.stringify({ version: 'e2e', hash }));
+  }, changelogHash());
+  await page.route(/^https?:\/\/[^/]+\/api\/songs(?:\?.*)?$/, route => route.fulfill({
+    headers: { 'X-FST-Publication-Id': '1' },
+    json: songsResponse(),
+  }));
 });
 
-async function dismissOverlays(page: any) {
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const xBtn = page.locator('button svg, [role="button"] svg').first();
-    if (await xBtn.count() > 0) {
-      const box = await xBtn.boundingBox();
-      if (box) {
-        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-        await page.waitForTimeout(800);
-      }
-    } else break;
-    const hasFixed = await page.evaluate(() => {
-      for (const el of document.querySelectorAll('*')) {
-        const cs = getComputedStyle(el);
-        if (cs.position === 'fixed' && cs.pointerEvents !== 'none' &&
-            (el as HTMLElement).offsetHeight > 400 && cs.zIndex !== 'auto' &&
-            parseInt(cs.zIndex) > 0) return true;
-      }
-      return false;
-    });
-    if (!hasFixed) break;
-  }
+async function dismissFirstRun(page: Page) {
+  const overlay = page.getByTestId('fre-overlay');
+  if (!await overlay.isVisible().catch(() => false)) return;
+  await page.getByTestId('fre-close').click();
+  await expect(overlay).toBeHidden({ timeout: 5_000 });
 }
 
 test('scroll works at 1280px (narrow desktop)', async ({ page }) => {
   await page.goto('/#/songs');
-  await page.waitForTimeout(3000);
-  await dismissOverlays(page);
+  await page.getByText('Scroll Test Song 1', { exact: true }).waitFor({ state: 'visible' });
+  await dismissFirstRun(page);
 
-  const pageRoot = page.locator('[data-testid="page-root"]');
-  const state = await pageRoot.evaluate((el: HTMLElement) => ({
-    scrollHeight: el.scrollHeight,
-    clientHeight: el.clientHeight,
-    canScroll: el.scrollHeight > el.clientHeight,
-    overflowY: getComputedStyle(el).overflowY,
-  }));
-  console.log('page-root state:', JSON.stringify(state));
+  const state = await readShellScrollState(page);
+  console.log('shell scroll state:', JSON.stringify(state));
   expect(state.canScroll).toBe(true);
   expect(state.overflowY).toBe('auto');
 
   // Mouse wheel on the page header area (not over content)
-  const box = await pageRoot.boundingBox();
-  if (box) {
+  if (state.box) {
     // Wheel near the top (over header area)
-    await page.mouse.move(box.x + box.width / 2, box.y + 30);
+    await page.mouse.move(state.box.x + state.box.width / 2, state.box.y + 30);
     await page.mouse.wheel(0, 500);
     await page.waitForTimeout(300);
   }
-  const afterWheel = await pageRoot.evaluate((el: HTMLElement) => el.scrollTop);
+  const afterWheel = await readShellScrollTop(page);
   console.log(`Mouse wheel over header area: scrollTop=${afterWheel}`);
   expect(afterWheel).toBeGreaterThan(0);
 });
@@ -80,27 +49,69 @@ test('scroll works at 1280px (narrow desktop)', async ({ page }) => {
 test('scroll works at 1920px (wide desktop)', async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 900 });
   await page.goto('/#/songs');
-  await page.waitForTimeout(3000);
-  await dismissOverlays(page);
+  await page.getByText('Scroll Test Song 1', { exact: true }).waitFor({ state: 'visible' });
+  await dismissFirstRun(page);
 
-  const pageRoot = page.locator('[data-testid="page-root"]');
-  const state = await pageRoot.evaluate((el: HTMLElement) => ({
-    scrollHeight: el.scrollHeight,
-    clientHeight: el.clientHeight,
-    canScroll: el.scrollHeight > el.clientHeight,
-    overflowY: getComputedStyle(el).overflowY,
-  }));
-  console.log('Wide page-root state:', JSON.stringify(state));
+  const state = await readShellScrollState(page);
+  console.log('Wide shell scroll state:', JSON.stringify(state));
   expect(state.canScroll).toBe(true);
 
   // Mouse wheel over the sidebar area (left of content)
-  const box = await pageRoot.boundingBox();
-  if (box) {
-    await page.mouse.move(box.x + 50, box.y + box.height / 2);
+  if (state.box) {
+    await page.mouse.move(state.box.x + 50, state.box.y + state.box.height / 2);
     await page.mouse.wheel(0, 500);
     await page.waitForTimeout(300);
   }
-  const afterWheel = await pageRoot.evaluate((el: HTMLElement) => el.scrollTop);
+  const afterWheel = await readShellScrollTop(page);
   console.log(`Wide desktop wheel over sidebar: scrollTop=${afterWheel}`);
   expect(afterWheel).toBeGreaterThan(0);
 });
+
+function songsResponse() {
+  return {
+    count: 80,
+    currentSeason: 1,
+    songs: Array.from({ length: 80 }, (_, index) => ({
+      songId: `scroll-song-${index + 1}`,
+      title: `Scroll Test Song ${index + 1}`,
+      artist: 'Festival QA',
+      year: 2026,
+      durationSeconds: 180,
+      difficulty: { guitar: 3 },
+      maxScores: { Solo_Guitar: 100_000 },
+    })),
+  };
+}
+
+async function readShellScrollState(page: Page) {
+  return page.evaluate(() => {
+    let element = document.getElementById('main-content')?.parentElement ?? null;
+    while (element) {
+      const overflowY = getComputedStyle(element).overflowY;
+      if (overflowY === 'auto' || overflowY === 'scroll') break;
+      element = element.parentElement;
+    }
+    if (!element) throw new Error('Shell scroll container was not found');
+    const style = getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return {
+      scrollHeight: element.scrollHeight,
+      clientHeight: element.clientHeight,
+      canScroll: element.scrollHeight > element.clientHeight,
+      overflowY: style.overflowY,
+      box: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+    };
+  });
+}
+
+async function readShellScrollTop(page: Page) {
+  return page.evaluate(() => {
+    let element = document.getElementById('main-content')?.parentElement ?? null;
+    while (element) {
+      const overflowY = getComputedStyle(element).overflowY;
+      if (overflowY === 'auto' || overflowY === 'scroll') return element.scrollTop;
+      element = element.parentElement;
+    }
+    throw new Error('Shell scroll container was not found');
+  });
+}

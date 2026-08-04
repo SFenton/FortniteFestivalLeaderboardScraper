@@ -16,15 +16,14 @@ vi.mock('../../../../src/hooks/ui/useIsMobile', () => ({
   useIsNarrow: () => false,
 }));
 
-vi.mock('../../../../src/hooks/data/useDemoSongs', () => ({
+vi.mock('../../../../src/hooks/data/useDemoSongs', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../../../src/hooks/data/useDemoSongs')>(),
   useDemoSongs: () => ({
     rows: [{ title: 'Demo', artist: 'Artist', year: 2024, albumArt: '' }],
     fadingIdx: new Set(),
     initialDone: true,
     pool: [],
   }),
-  FADE_MS: 300,
-  shuffle: <T,>(arr: readonly T[]): T[] => [...arr],
 }));
 
 import { statisticsSlides } from '../../../../src/pages/player/firstRun';

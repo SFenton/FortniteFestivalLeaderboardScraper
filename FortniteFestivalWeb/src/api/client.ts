@@ -1,6 +1,5 @@
 import type {
   SongsResponse,
-  FeatureFlagsResponse,
   MemberScoreFilterResponse,
   LeaderboardResponse,
   LeaderboardRankOffsetsResponse,
@@ -213,9 +212,6 @@ function getResponsePublicationId(response: Response): number | null {
 
 export const api = {
   getPublication: (): Promise<PublicationResponse> => ensurePublication(),
-
-  getFeatures: (options?: ApiRequestOptions): Promise<FeatureFlagsResponse> =>
-    get<FeatureFlagsResponse>('/api/features', options),
 
   getSongs: async (options?: ApiRequestOptions): Promise<SongsResponse> => {
     const cached = readSongsCache();

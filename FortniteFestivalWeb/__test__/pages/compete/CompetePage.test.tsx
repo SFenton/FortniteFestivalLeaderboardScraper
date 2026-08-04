@@ -243,6 +243,12 @@ function seedCompeteFirstRun() {
 }
 
 describe('CompetePage', () => {
+  it('keeps generic leaderboard first-run guidance available without experimental ranks', () => {
+    const leaderboardSlide = competeSlides.find(slide => slide.id === 'compete-leaderboards');
+    expect(leaderboardSlide).toBeDefined();
+    expect(leaderboardSlide?.gate).toBeUndefined();
+  });
+
   it('renders combo-first sections and per-instrument sections for multi-select families', async () => {
     localStorage.setItem('fst:appSettings', JSON.stringify({
       showLead: true,

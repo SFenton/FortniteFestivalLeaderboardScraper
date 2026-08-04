@@ -71,7 +71,7 @@ describe('combos', () => {
     });
 
     test('throws for out-of-range mask', () => {
-      expect(() => instrumentsFromComboId('ff')).toThrow('Invalid combo ID');
+      expect(() => instrumentsFromComboId('3ff')).toThrow('Invalid combo ID');
     });
   });
 

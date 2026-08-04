@@ -63,7 +63,7 @@ test.describe('Mobile tap diagnostics', () => {
 
     await dismissFreIfVisible(page, fre, testInfo, 'dismiss player statistics FRE');
 
-    const selectProfile = page.getByTestId('select-profile-pill');
+    const selectProfile = page.getByRole('button', { name: `Select ${TEST_PLAYER.displayName}` });
     await expect(selectProfile).toBeVisible({ timeout: 10_000 });
     await tapAndExpect(
       page,
@@ -75,6 +75,7 @@ test.describe('Mobile tap diagnostics', () => {
     );
 
     await rapidTab(page, testInfo, 'songs');
+    await dismissFreIfVisible(page, fre, testInfo, 'dismiss player-gated songs FRE after first songs tap');
     await rapidTab(page, testInfo, 'songs', '/songs');
     await dismissFreIfVisible(page, fre, testInfo, 'dismiss player-gated songs FRE');
     await rapidTab(page, testInfo, 'statistics', '/statistics');

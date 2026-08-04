@@ -3,7 +3,6 @@ import React from 'react';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { SettingsProvider } from '../../../../../src/contexts/SettingsContext';
-import { FeatureFlagsProvider } from '../../../../../src/contexts/FeatureFlagsContext';
 import { FestivalProvider } from '../../../../../src/contexts/FestivalContext';
 import { FabSearchProvider, usePlayerPageSelect } from '../../../../../src/contexts/FabSearchContext';
 import { PageQuickLinksProvider, usePageQuickLinksController } from '../../../../../src/contexts/PageQuickLinksContext';
@@ -206,7 +205,6 @@ function Providers({ children, accountId, route = '/' }: { children: React.React
   return (
     <QueryClientProvider client={qc}>
     <SettingsProvider>
-      <FeatureFlagsProvider>
       <FestivalProvider>
         <FabSearchProvider>
           <PageQuickLinksProvider>
@@ -222,7 +220,6 @@ function Providers({ children, accountId, route = '/' }: { children: React.React
           </PageQuickLinksProvider>
         </FabSearchProvider>
       </FestivalProvider>
-      </FeatureFlagsProvider>
     </SettingsProvider>
     </QueryClientProvider>
   );

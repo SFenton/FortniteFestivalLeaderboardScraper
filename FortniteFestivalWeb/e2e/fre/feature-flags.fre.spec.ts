@@ -12,12 +12,13 @@ test.describe('Legacy Feature Flag Overrides', () => {
     await freState.resetAppState();
   });
 
-  test('legacy leaderboards override does not hide /leaderboards', async ({ page, freState }) => {
+  test('legacy leaderboards override does not hide /leaderboards', async ({ page, fre, freState }) => {
     await freState.setLegacyFeatureFlagOverrides({ leaderboards: false });
     await goto(page, '/leaderboards');
 
-    await page.waitForURL(/#\/leaderboards/, { timeout: 5000 });
-    await expect(page.getByRole('heading', { name: 'Leaderboards' })).toBeVisible();
+    await page.waitForURL(/#\/leaderboards/, { timeout: 15_000 });
+    await fre.waitForVisible();
+    expect(await fre.slideCount()).toBeGreaterThanOrEqual(1);
   });
 
   test('legacy leaderboards override does not hide /compete', async ({ page, freState }) => {
@@ -25,7 +26,7 @@ test.describe('Legacy Feature Flag Overrides', () => {
     await freState.setLegacyFeatureFlagOverrides({ leaderboards: false });
     await goto(page, '/compete');
 
-    await page.waitForURL(/#\/compete/, { timeout: 5000 });
+    await page.waitForURL(/#\/compete/, { timeout: 15_000 });
     await expect(page.getByRole('heading', { name: 'Compete' })).toBeVisible();
   });
 
@@ -44,7 +45,7 @@ test.describe('Legacy Feature Flag Overrides', () => {
     await fre.dismiss();
 
     await goto(page, '/compete');
-    await page.waitForURL(/#\/compete/, { timeout: 5000 });
+    await page.waitForURL(/#\/compete/, { timeout: 15_000 });
     await fre.waitForVisible();
   });
 });

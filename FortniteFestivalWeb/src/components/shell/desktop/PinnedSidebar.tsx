@@ -8,7 +8,6 @@ import { useSettings } from '../../../contexts/SettingsContext';
 import MarqueeText from '../../common/MarqueeText';
 import PressableButton from '../../common/PressableButton';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
-import { useFeatureFlags } from '../../../contexts/FeatureFlagsContext';
 import { Routes } from '../../../routes';
 import { getStatisticsNavigationPath } from '../../../utils/profileNavigation';
 import {
@@ -28,7 +27,6 @@ interface PinnedSidebarProps {
 export default function PinnedSidebar({ player, selectedProfile, onDeselect, onSelectPlayer }: PinnedSidebarProps) {
   const { t } = useTranslation();
   const { settings } = useSettings();
-  const { appManual } = useFeatureFlags();
   const scrollRef = useScrollContainer();
   const s = useStyles();
   const selectedBand = selectedProfile?.type === 'band' ? selectedProfile : null;
@@ -95,12 +93,10 @@ export default function PinnedSidebar({ player, selectedProfile, onDeselect, onS
             {t('common.selectProfile')}
           </PressableButton>
         )}
-        {appManual && (
-          <NavLink to={Routes.manual} style={({ isActive }) => linkClass(isActive)}>
-            <span style={s.linkIcon}><IoCompass size={20} /></span>
-            {t('nav.manual')}
-          </NavLink>
-        )}
+        <NavLink to={Routes.manual} style={({ isActive }) => linkClass(isActive)}>
+          <span style={s.linkIcon}><IoCompass size={20} /></span>
+          {t('nav.manual')}
+        </NavLink>
         <NavLink to="/settings" style={({ isActive }) => linkClass(isActive)}>
           <span style={s.linkIcon}><IoSettings size={20} /></span>
           {t('nav.settings')}

@@ -8,10 +8,6 @@ import { FirstRunProvider } from '../../../src/contexts/FirstRunContext';
 import { PageQuickLinksProvider, usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
 import { ScrollContainerProvider, useHeaderPortalRef, useQuickLinksRailPortalRef, useScrollContainer } from '../../../src/contexts/ScrollContainerContext';
 
-vi.mock('../../../src/contexts/FeatureFlagsContext', () => ({
-  useFeatureFlags: () => ({ rivals: true, compete: true, leaderboards: true, firstRun: true }),
-}));
-
 const mockIsMobileChromeOverride = vi.hoisted(() => ({ value: null as boolean | null }));
 
 vi.mock('../../../src/hooks/ui/useIsMobile', async (importOriginal) => {

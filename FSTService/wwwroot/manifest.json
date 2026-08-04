@@ -21,7 +21,7 @@
       "purpose": "any"
     },
     {
-      "src": "/icons/fst-icon-maskable-512.png",
+      "src": "/icons/fst-icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

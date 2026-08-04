@@ -18,6 +18,7 @@ const experimentalMetricsSlide: FirstRunSlideDef = {
   version: 1,
   title: 'firstRun.leaderboards.experimentalMetrics.title',
   description: 'firstRun.leaderboards.experimentalMetrics.description',
+  gate: (ctx) => !!ctx.experimentalRanksEnabled,
   render: () => createElement(ExperimentalMetricsDemo),
   contentStaggerCount: 6,
 };

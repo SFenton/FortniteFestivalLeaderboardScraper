@@ -43,16 +43,12 @@ test.describe('Leaderboards FRE', () => {
     await goto(page, '/leaderboards');
     await fre.waitForVisible();
 
-    // 2 slides (overview + your-rank)
     await fre.assertSlideCount(2);
     await fre.dismiss();
 
-    // Enable experimental in settings
     await freState.setSettings({ enableExperimentalRanks: true });
     await gotoFresh(page, '/leaderboards');
     await fre.waitForVisible();
-
-    // Should show 1 new slide (experimental-metrics)
     await fre.assertSlideCount(1);
   });
 

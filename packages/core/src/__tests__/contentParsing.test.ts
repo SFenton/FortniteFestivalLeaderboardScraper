@@ -1,4 +1,4 @@
-import {parseSongCatalog} from '../epic/contentParsing';
+import {parseSongCatalog} from '../../../native/src/epic/contentParsing';
 
 describe('parseSongCatalog', () => {
   test('returns empty on invalid input', () => {

@@ -1,5 +1,5 @@
 import {ScoreTracker} from '../models';
-import {buildV1LeaderboardUrl, parseV1LeaderboardPage, updateTrackerFromV1} from '../epic/leaderboardV1';
+import {buildV1LeaderboardUrl, parseV1LeaderboardPage, updateTrackerFromV1} from '../../../native/src/epic/leaderboardV1';
 
 describe('leaderboardV1', () => {
   test('buildV1LeaderboardUrl matches expected structure', () => {

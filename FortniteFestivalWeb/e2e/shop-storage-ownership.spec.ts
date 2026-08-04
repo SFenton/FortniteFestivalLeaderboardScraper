@@ -50,16 +50,6 @@ async function installApi(page: Page, requests: RequestMetric[]) {
   await page.route('**/api/**', async route => {
     const url = new URL(route.request().url());
     if (!url.pathname.startsWith('/api/')) return route.continue();
-    if (url.pathname === '/api/features') {
-      return json(route, {
-        compete: true,
-        leaderboards: true,
-        difficulty: false,
-        playerBands: false,
-        experimentalRanks: false,
-        appManual: false,
-      });
-    }
     if (url.pathname === '/api/service-info') {
       return json(route, {
         lastCompletedUpdate: null,

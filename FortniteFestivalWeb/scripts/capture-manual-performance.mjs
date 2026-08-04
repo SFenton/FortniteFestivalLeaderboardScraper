@@ -97,11 +97,6 @@ async function capture({ iteration, viewportName, viewport, hasTouch }) {
     if (message.type() === 'error') consoleErrors.push(message.text());
   });
   page.on('pageerror', error => pageErrors.push(error.message));
-  await page.route('**/api/features', async (route) => {
-    const response = await route.fetch();
-    const features = await response.json();
-    await route.fulfill({ response, json: { ...features, appManual: true } });
-  });
 
   if (network === 'slow4g') {
     const session = await context.newCDPSession(page);
