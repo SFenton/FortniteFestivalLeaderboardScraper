@@ -14,6 +14,8 @@ namespace FSTService.Scraping;
 public sealed partial class PathGenerationCoordinator
 {
     private static readonly TimeSpan VersionTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan ErrorRecordingTimeout =
+        TimeSpan.FromSeconds(5);
     private const int ErrorDetailLimit = 2048;
 
     private readonly HttpClient _http;
@@ -22,6 +24,7 @@ public sealed partial class PathGenerationCoordinator
     private readonly IOptions<ScraperOptions> _options;
     private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<PathGenerationCoordinator> _log;
+    private readonly IPathGenerationAdmissionLeaseProvider _admissionLeaseProvider;
     private readonly SemaphoreSlim _choptConcurrency;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _songLocks =
         new(StringComparer.OrdinalIgnoreCase);
@@ -32,7 +35,8 @@ public sealed partial class PathGenerationCoordinator
         SongsCacheService songsCache,
         IOptions<ScraperOptions> options,
         ScrapeProgressTracker progress,
-        ILogger<PathGenerationCoordinator> log)
+        ILogger<PathGenerationCoordinator> log,
+        IPathGenerationAdmissionLeaseProvider admissionLeaseProvider)
     {
         _http = http;
         _store = store;
@@ -40,6 +44,8 @@ public sealed partial class PathGenerationCoordinator
         _options = options;
         _progress = progress;
         _log = log;
+        _admissionLeaseProvider = admissionLeaseProvider
+            ?? throw new ArgumentNullException(nameof(admissionLeaseProvider));
         _choptConcurrency = new SemaphoreSlim(
             Math.Max(1, options.Value.PathGenerationParallelism));
     }
@@ -63,8 +69,58 @@ public sealed partial class PathGenerationCoordinator
             return new PathGenerationBatchResult(0, 0, 0, 0, 0);
 
         var ownsProgress = _progress.BeginPathGeneration(requests.Count);
+        IAsyncDisposable? admissionLease = null;
+
+        async ValueTask ReleaseAdmissionAsync()
+        {
+            var lease = admissionLease;
+            if (lease is null)
+                return;
+
+            admissionLease = null;
+            await lease.DisposeAsync();
+        }
+
         try
         {
+            try
+            {
+                admissionLease =
+                    await _admissionLeaseProvider.AcquireAsync(ct);
+            }
+            catch (OperationCanceledException)
+            {
+                _log.LogInformation(
+                    "Path generation was cancelled while waiting for " +
+                    "distributed admission.");
+                await RecordBatchFailureAsync(
+                    requests,
+                    null,
+                    "cancelled",
+                    "Path generation was cancelled while waiting for " +
+                    "distributed admission.",
+                    ownsProgress);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(
+                    ex,
+                    "Distributed path-generation admission failed.");
+                await RecordBatchFailureAsync(
+                    requests,
+                    null,
+                    "admission",
+                    $"Distributed path-generation admission failed: {ex.Message}",
+                    ownsProgress);
+                return new PathGenerationBatchResult(
+                    requests.Count,
+                    0,
+                    0,
+                    requests.Count,
+                    0);
+            }
+
             PathGenerationExecutionContext execution;
             try
             {
@@ -72,6 +128,7 @@ public sealed partial class PathGenerationCoordinator
             }
             catch (OperationCanceledException)
             {
+                await ReleaseAdmissionAsync();
                 await RecordBatchFailureAsync(
                     requests,
                     null,
@@ -82,6 +139,7 @@ public sealed partial class PathGenerationCoordinator
             }
             catch (PathGenerationException ex)
             {
+                await ReleaseAdmissionAsync();
                 await RecordBatchFailureAsync(
                     requests,
                     null,
@@ -97,6 +155,7 @@ public sealed partial class PathGenerationCoordinator
             }
             catch (Exception ex)
             {
+                await ReleaseAdmissionAsync();
                 await RecordBatchFailureAsync(
                     requests,
                     null,
@@ -118,6 +177,7 @@ public sealed partial class PathGenerationCoordinator
             }
             catch (Exception ex)
             {
+                await ReleaseAdmissionAsync();
                 await RecordBatchFailureAsync(
                     requests,
                     execution.Runtime,
@@ -166,6 +226,7 @@ public sealed partial class PathGenerationCoordinator
         }
         finally
         {
+            await ReleaseAdmissionAsync();
             if (ownsProgress)
                 _progress.EndPathGeneration();
         }
@@ -482,6 +543,10 @@ public sealed partial class PathGenerationCoordinator
                         execution.Runtime,
                         "concurrency",
                         detail));
+                await CleanupRejectedGenerationAsync(
+                    request,
+                    promotion,
+                    generationDirectory);
                 if (ownsProgress)
                     _progress.PathGenSongFailed();
                 return new PathGenerationAttemptResult(
@@ -929,24 +994,142 @@ public sealed partial class PathGenerationCoordinator
         string detail,
         bool ownsProgress)
     {
-        foreach (var request in requests)
+        using var timeout = new CancellationTokenSource(
+            ErrorRecordingTimeout);
+        for (var index = 0; index < requests.Count; index++)
         {
-            await AppendErrorBestEffortAsync(
-                CreateError(
+            var error = CreateError(
                     Guid.NewGuid().ToString("N"),
-                    request,
+                    requests[index],
                     null,
                     runtime,
                     stage,
-                    detail));
+                    detail);
+            try
+            {
+                await _store.AppendPathGenerationErrorAsync(
+                    error,
+                    timeout.Token);
+            }
+            catch (OperationCanceledException) when (
+                timeout.IsCancellationRequested)
+            {
+                var remaining = requests.Count - index;
+                _log.LogWarning(
+                    "Path generation batch error recording exceeded the " +
+                    "{TimeoutSeconds:0}-second budget; skipped {Remaining:N0} " +
+                    "of {Total:N0} durable error rows.",
+                    ErrorRecordingTimeout.TotalSeconds,
+                    remaining,
+                    requests.Count);
+                if (ownsProgress)
+                {
+                    for (var remainingIndex = index;
+                         remainingIndex < requests.Count;
+                         remainingIndex++)
+                    {
+                        _progress.PathGenSongFailed();
+                    }
+                }
+                return;
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(
+                    ex,
+                    "Could not append path generation error for " +
+                    "{SongId}/{AttemptId}.",
+                    error.SongId,
+                    error.AttemptId);
+            }
+
             if (ownsProgress)
                 _progress.PathGenSongFailed();
         }
     }
 
+    private async Task CleanupRejectedGenerationAsync(
+        SongPathRequest request,
+        PathGenerationPromotion promotion,
+        string generationDirectory)
+    {
+        PathGenerationState? current;
+        try
+        {
+            current = _store.GetPathGenerationState(promotion.SongId);
+        }
+        catch (Exception ex)
+        {
+            var detail =
+                "Could not verify whether the rejected immutable generation " +
+                $"is current; retained it: {ex.Message}";
+            _log.LogWarning(
+                ex,
+                "Retaining rejected path generation {GenerationId} for " +
+                "{SongId} because current-state verification failed.",
+                promotion.ArtifactGenerationId,
+                promotion.SongId);
+            await AppendErrorBestEffortAsync(
+                CreateError(
+                    promotion.AttemptId,
+                    request,
+                    promotion.DatFileHash,
+                    promotion.Runtime,
+                    "orphan_cleanup",
+                    detail));
+            return;
+        }
+
+        if (string.Equals(
+                current?.ArtifactGenerationId,
+                promotion.ArtifactGenerationId,
+                StringComparison.Ordinal))
+        {
+            _log.LogInformation(
+                "Retained path generation {GenerationId} for {SongId} because " +
+                "it is the current database generation despite the rejected " +
+                "promotion result.",
+                promotion.ArtifactGenerationId,
+                promotion.SongId);
+            return;
+        }
+
+        try
+        {
+            if (Directory.Exists(generationDirectory))
+                Directory.Delete(generationDirectory, recursive: true);
+            _log.LogInformation(
+                "Removed unreachable rejected path generation {GenerationId} " +
+                "for {SongId}.",
+                promotion.ArtifactGenerationId,
+                promotion.SongId);
+        }
+        catch (Exception ex)
+        {
+            var detail =
+                "Could not remove the unreachable rejected immutable " +
+                $"generation: {ex.Message}";
+            _log.LogWarning(
+                ex,
+                "Could not remove rejected path generation {GenerationId} " +
+                "for {SongId}.",
+                promotion.ArtifactGenerationId,
+                promotion.SongId);
+            await AppendErrorBestEffortAsync(
+                CreateError(
+                    promotion.AttemptId,
+                    request,
+                    promotion.DatFileHash,
+                    promotion.Runtime,
+                    "orphan_cleanup",
+                    detail));
+        }
+    }
+
     private async Task AppendErrorBestEffortAsync(PathGenerationError error)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var timeout = new CancellationTokenSource(
+            ErrorRecordingTimeout);
         try
         {
             await _store.AppendPathGenerationErrorAsync(error, timeout.Token);

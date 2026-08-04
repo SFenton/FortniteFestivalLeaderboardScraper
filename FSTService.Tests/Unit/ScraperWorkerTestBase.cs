@@ -159,7 +159,8 @@ public abstract class ScraperWorkerTestBase : IDisposable
             songsCache,
             options,
             _progress,
-            Substitute.For<ILogger<PathGenerationCoordinator>>());
+            Substitute.For<ILogger<PathGenerationCoordinator>>(),
+            UncontendedPathGenerationAdmissionLeaseProvider.Instance);
 
         var notifications = new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>());
 

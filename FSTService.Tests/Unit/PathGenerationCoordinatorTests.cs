@@ -8,8 +8,10 @@ using FortniteFestival.Core;
 using FSTService.Api;
 using FSTService.Persistence;
 using FSTService.Scraping;
+using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace FSTService.Tests.Unit;
 
@@ -428,6 +430,209 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
     }
 
     [Fact]
+    public async Task Distributed_admission_serializes_cross_coordinator_generation()
+    {
+        using var database = new InMemoryMetaDatabase();
+        var logPath = Path.Combine(_dataDirectory, "distributed-admission.log");
+        var chopt = CreateChoptScript(
+            new ChoptBehavior(InvocationLog: logPath));
+        var store = new FakePathDataStore();
+        store.EnsureSong("distributed");
+        var admission = new PostgresPathGenerationAdmissionLeaseProvider(
+            CreateAdmissionConnectionString(database),
+            NullLogger<PostgresPathGenerationAdmissionLeaseProvider>.Instance);
+        var firstHandler = new StaticDatHandler(_encryptedDat);
+        var secondHandler = new StaticDatHandler(_encryptedDat);
+        var first = CreateCoordinator(
+            chopt,
+            store,
+            firstHandler,
+            admissionLeaseProvider: admission);
+        var second = CreateCoordinator(
+            chopt,
+            store,
+            secondHandler,
+            admissionLeaseProvider: admission);
+        var song = CreateSong(
+            "distributed",
+            new In { gr = 0 },
+            UtcDate(1));
+
+        var results = await Task.WhenAll(
+            first.GeneratePathsAsync([song], false, CancellationToken.None),
+            second.GeneratePathsAsync([song], false, CancellationToken.None));
+
+        Assert.Equal(1, results.Sum(result => result.Promoted));
+        Assert.Equal(1, results.Sum(result => result.Skipped));
+        Assert.Equal(2, firstHandler.RequestCount + secondHandler.RequestCount);
+        Assert.Equal(4, File.ReadAllLines(logPath).Length);
+    }
+
+    [Fact]
+    public async Task Admission_cancellation_is_recorded_before_path_work()
+    {
+        var chopt = CreateChoptScript();
+        var store = new FakePathDataStore();
+        store.EnsureSong("admission-cancel");
+        var handler = new StaticDatHandler(_encryptedDat);
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            handler,
+            admissionLeaseProvider:
+                BlockingPathGenerationAdmissionLeaseProvider.Instance);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            coordinator.GeneratePathsAsync(
+                [CreateSong("admission-cancel", new In { gr = 0 })],
+                false,
+                cancellation.Token));
+
+        Assert.Equal(0, handler.RequestCount);
+        Assert.Contains(
+            store.Errors,
+            error => error.FailureStage == "cancelled"
+                     && error.Detail.Contains(
+                         "distributed admission",
+                         StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Admission_failure_is_recorded_before_path_work()
+    {
+        var chopt = CreateChoptScript();
+        var store = new FakePathDataStore();
+        store.EnsureSong("admission-failure");
+        var handler = new StaticDatHandler(_encryptedDat);
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            handler,
+            admissionLeaseProvider:
+                FailingPathGenerationAdmissionLeaseProvider.Instance);
+
+        var result = await coordinator.GeneratePathsAsync(
+            [CreateSong("admission-failure", new In { gr = 0 })],
+            false,
+            CancellationToken.None);
+
+        Assert.Equal(1, result.Failed);
+        Assert.Equal(0, handler.RequestCount);
+        Assert.Contains(
+            store.Errors,
+            error => error.FailureStage == "admission"
+                     && error.Detail.Contains(
+                         "injected admission failure",
+                         StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Preprocessing_failure_releases_real_admission_before_error_recording()
+    {
+        using var database = new InMemoryMetaDatabase();
+        var chopt = CreateChoptScript();
+        var store = new FakePathDataStore
+        {
+            ThrowOnStateRead = true,
+            BlockErrorWrites = true,
+        };
+        var songs = Enumerable.Range(0, 5)
+            .Select(index =>
+                CreateSong(
+                    $"release-before-errors-{index}",
+                    new In { gr = 0 }))
+            .ToArray();
+        foreach (var song in songs)
+            store.EnsureSong(song.track!.su!);
+
+        var admission = new PostgresPathGenerationAdmissionLeaseProvider(
+            CreateAdmissionConnectionString(database),
+            NullLogger<PostgresPathGenerationAdmissionLeaseProvider>.Instance);
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            admissionLeaseProvider: admission);
+        var generation = coordinator.GeneratePathsAsync(
+            songs,
+            false,
+            CancellationToken.None);
+        await store.ErrorWriteStarted.WaitAsync(TimeSpan.FromSeconds(5));
+
+        IAsyncDisposable? probeLease = null;
+        Exception? probeFailure = null;
+        try
+        {
+            using var admissionTimeout = new CancellationTokenSource(
+                TimeSpan.FromSeconds(2));
+            probeLease = await admission.AcquireAsync(
+                admissionTimeout.Token);
+        }
+        catch (Exception ex)
+        {
+            probeFailure = ex;
+        }
+        finally
+        {
+            if (probeLease is not null)
+                await probeLease.DisposeAsync();
+            store.ReleaseErrorWrites();
+        }
+
+        var result = await generation.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Null(probeFailure);
+        Assert.Equal(songs.Length, result.Failed);
+        Assert.Equal(songs.Length, store.Errors.Count);
+    }
+
+    [Fact]
+    public async Task Batch_failure_error_recording_uses_one_bounded_budget()
+    {
+        const int songCount = 100;
+        var chopt = CreateChoptScript();
+        var store = new FakePathDataStore
+        {
+            ThrowOnStateRead = true,
+            BlockErrorWrites = true,
+        };
+        var songs = Enumerable.Range(0, songCount)
+            .Select(index =>
+                CreateSong(
+                    $"bounded-errors-{index}",
+                    new In { gr = 0 }))
+            .ToArray();
+        foreach (var song in songs)
+            store.EnsureSong(song.track!.su!);
+        var progress = new ScrapeProgressTracker();
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            progress: progress);
+
+        var stopwatch = Stopwatch.StartNew();
+        var result = await coordinator
+            .GeneratePathsAsync(
+                songs,
+                false,
+                CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        stopwatch.Stop();
+
+        Assert.Equal(songCount, result.Failed);
+        Assert.Equal(1, store.ErrorWriteAttempts);
+        Assert.Empty(store.Errors);
+        Assert.True(
+            stopwatch.Elapsed < TimeSpan.FromSeconds(9),
+            $"Batch error recording took {stopwatch.Elapsed}.");
+        var pathProgress = progress.GetProgressResponse().PathGeneration;
+        Assert.NotNull(pathProgress);
+        Assert.False(pathProgress.Running);
+        Assert.Equal(songCount, pathProgress.Failed);
+        Assert.Equal(100d, pathProgress.ProgressPercent);
+    }
+
+    [Fact]
     public async Task Cross_coordinator_race_uses_compare_and_swap()
     {
         var chopt = CreateChoptScript();
@@ -450,6 +655,67 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
         Assert.Equal(1, results.Sum(result => result.Promoted));
         Assert.Equal(1, results.Sum(result => result.Conflicted));
         Assert.Contains(store.Errors, error => error.FailureStage == "concurrency");
+
+        var currentGenerationId = store
+            .GetPathGenerationState("cas")!
+            .ArtifactGenerationId;
+        Assert.False(string.IsNullOrWhiteSpace(currentGenerationId));
+        var winningDirectory = PathArtifactResolver.GetGenerationDirectory(
+            _dataDirectory,
+            "cas",
+            currentGenerationId!);
+        Assert.True(Directory.Exists(winningDirectory));
+
+        var rejectedPromotion = Assert.Single(
+            store.Promotions,
+            promotion => !string.Equals(
+                promotion.ArtifactGenerationId,
+                currentGenerationId,
+                StringComparison.Ordinal));
+        Assert.False(Directory.Exists(
+            PathArtifactResolver.GetGenerationDirectory(
+                _dataDirectory,
+                "cas",
+                rejectedPromotion.ArtifactGenerationId)));
+        Assert.Single(
+            Directory.EnumerateDirectories(
+                Path.GetDirectoryName(winningDirectory)!));
+    }
+
+    [Fact]
+    public async Task Rejected_cas_result_preserves_generation_reported_current()
+    {
+        var chopt = CreateChoptScript();
+        var store = new FakePathDataStore
+        {
+            FailPromotionCall = 1,
+            FailedPromotionOutcome = PathGenerationPromotionOutcome.Conflict,
+        };
+        store.EnsureSong("current-after-conflict");
+        store.OnPromotion = store.ForceCurrentGeneration;
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            new StaticDatHandler(_encryptedDat));
+        var song = CreateSong(
+            "current-after-conflict",
+            new In { gr = 0 });
+
+        var result = await coordinator.GeneratePathsAsync(
+            [song],
+            true,
+            CancellationToken.None);
+
+        Assert.Equal(1, result.Conflicted);
+        var promotion = Assert.Single(store.Promotions);
+        Assert.Equal(
+            promotion.ArtifactGenerationId,
+            store.GetPathGenerationState(song.track!.su!)!.ArtifactGenerationId);
+        Assert.True(Directory.Exists(
+            PathArtifactResolver.GetGenerationDirectory(
+                _dataDirectory,
+                song.track.su!,
+                promotion.ArtifactGenerationId)));
     }
 
     [Theory]
@@ -647,7 +913,9 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
         HttpMessageHandler? handler = null,
         string profile = "chopt-fnf-ew0-s20-json-png-v1",
         SongsCacheService? cache = null,
-        IOptions<ScraperOptions>? configuredOptions = null)
+        IOptions<ScraperOptions>? configuredOptions = null,
+        IPathGenerationAdmissionLeaseProvider? admissionLeaseProvider = null,
+        ScrapeProgressTracker? progress = null)
     {
         var options = configuredOptions ?? CreateOptions(choptPath, profile);
         return new PathGenerationCoordinator(
@@ -655,8 +923,23 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
             store,
             cache ?? new SongsCacheService(),
             options,
-            new ScrapeProgressTracker(),
-            NullLogger<PathGenerationCoordinator>.Instance);
+            progress ?? new ScrapeProgressTracker(),
+            NullLogger<PathGenerationCoordinator>.Instance,
+            admissionLeaseProvider
+                ?? UncontendedPathGenerationAdmissionLeaseProvider.Instance);
+    }
+
+    private static string CreateAdmissionConnectionString(
+        InMemoryMetaDatabase database)
+    {
+        var databaseSettings = new NpgsqlConnectionStringBuilder(
+            database.DataSource.ConnectionString);
+        var connectionString = new NpgsqlConnectionStringBuilder(
+            SharedPostgresContainer.ConnectionString)
+        {
+            Database = databaseSettings.Database,
+        };
+        return connectionString.ConnectionString;
     }
 
     private IOptions<ScraperOptions> CreateOptions(
@@ -997,6 +1280,31 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
 
     private sealed record SeededGeneration(string GenerationDirectory);
 
+    private sealed class BlockingPathGenerationAdmissionLeaseProvider
+        : IPathGenerationAdmissionLeaseProvider
+    {
+        public static BlockingPathGenerationAdmissionLeaseProvider Instance { get; } =
+            new();
+
+        public async Task<IAsyncDisposable> AcquireAsync(CancellationToken ct)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            throw new UnreachableException();
+        }
+    }
+
+    private sealed class FailingPathGenerationAdmissionLeaseProvider
+        : IPathGenerationAdmissionLeaseProvider
+    {
+        public static FailingPathGenerationAdmissionLeaseProvider Instance { get; } =
+            new();
+
+        public Task<IAsyncDisposable> AcquireAsync(CancellationToken ct)
+            => Task.FromException<IAsyncDisposable>(
+                new InvalidOperationException(
+                    "injected admission failure"));
+    }
+
     private sealed class StaticDatHandler(byte[] content) : HttpMessageHandler
     {
         private int _requestCount;
@@ -1026,12 +1334,22 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
         private readonly object _promotionLock = new();
         private readonly TaskCompletionSource _promotionBarrier =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _errorWriteStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _errorWriteRelease =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _promotionArrivals;
+        private int _errorWriteAttempts;
 
         public List<PathGenerationError> Errors { get; } = [];
         public List<PathGenerationPromotion> Promotions { get; } = [];
         public bool ThrowOnPromotion { get; set; }
+        public bool ThrowOnStateRead { get; set; }
+        public bool BlockErrorWrites { get; set; }
         public int PromotionBarrierCount { get; set; }
+        public int ErrorWriteAttempts =>
+            Volatile.Read(ref _errorWriteAttempts);
+        public Task ErrorWriteStarted => _errorWriteStarted.Task;
         public int? FailPromotionCall { get; set; }
         public PathGenerationPromotionOutcome FailedPromotionOutcome { get; set; } =
             PathGenerationPromotionOutcome.Conflict;
@@ -1057,11 +1375,37 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
         public void Seed(PathGenerationState state)
             => _states[state.SongId] = state;
 
+        public void ForceCurrentGeneration(
+            PathGenerationPromotion promotion)
+        {
+            lock (_promotionLock)
+            {
+                if (!_states.TryGetValue(promotion.SongId, out var current))
+                {
+                    throw new InvalidOperationException(
+                        $"Missing test song {promotion.SongId}.");
+                }
+
+                ApplyPromotion(promotion, current);
+            }
+        }
+
+        public void ReleaseErrorWrites()
+            => _errorWriteRelease.TrySetResult();
+
         public Dictionary<string, PathGenerationState> GetPathGenerationStates()
-            => _states.ToDictionary(
+        {
+            if (ThrowOnStateRead)
+            {
+                throw new InvalidOperationException(
+                    "Injected path state read failure.");
+            }
+
+            return _states.ToDictionary(
                 pair => pair.Key,
                 pair => pair.Value,
                 StringComparer.Ordinal);
+        }
 
         public PathGenerationState? GetPathGenerationState(string songId)
             => _states.TryGetValue(songId, out var state) ? state : null;
@@ -1113,39 +1457,52 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
                 if (current.Revision != promotion.ExpectedRevision)
                     return PathGenerationPromotionOutcome.Conflict;
 
-                var scores = promotion.MaxScores;
-                scores.GeneratedAt = promotion.GeneratedAtUtc.ToString("o");
-                scores.CHOptVersion = promotion.Runtime.Version;
-                scores.CHOptBinarySha256 = promotion.Runtime.BinarySha256;
-                scores.GenerationProfile = promotion.Runtime.Profile;
-                scores.ArtifactGenerationId = promotion.ArtifactGenerationId;
-                scores.ExpectedInstruments = promotion.ExpectedInstruments.ToArray();
-                _states[promotion.SongId] = new PathGenerationState(
-                    promotion.SongId,
-                    current.Revision + 1,
-                    promotion.DatFileHash,
-                    promotion.SongLastModified,
-                    promotion.GeneratedAtUtc,
-                    promotion.Runtime.Version,
-                    promotion.Runtime.BinarySha256,
-                    promotion.Runtime.Profile,
-                    promotion.ArtifactGenerationId,
-                    promotion.ExpectedInstruments.ToArray(),
-                    scores,
-                    current.CatalogLastModified,
-                    PathGenerationPending: false);
-                _pending.Remove(promotion.SongId);
+                ApplyPromotion(promotion, current);
                 return PathGenerationPromotionOutcome.Promoted;
             }
         }
 
-        public Task AppendPathGenerationErrorAsync(
+        private void ApplyPromotion(
+            PathGenerationPromotion promotion,
+            PathGenerationState current)
+        {
+            var scores = promotion.MaxScores;
+            scores.GeneratedAt = promotion.GeneratedAtUtc.ToString("o");
+            scores.CHOptVersion = promotion.Runtime.Version;
+            scores.CHOptBinarySha256 = promotion.Runtime.BinarySha256;
+            scores.GenerationProfile = promotion.Runtime.Profile;
+            scores.ArtifactGenerationId = promotion.ArtifactGenerationId;
+            scores.ExpectedInstruments = promotion.ExpectedInstruments.ToArray();
+            _states[promotion.SongId] = new PathGenerationState(
+                promotion.SongId,
+                current.Revision + 1,
+                promotion.DatFileHash,
+                promotion.SongLastModified,
+                promotion.GeneratedAtUtc,
+                promotion.Runtime.Version,
+                promotion.Runtime.BinarySha256,
+                promotion.Runtime.Profile,
+                promotion.ArtifactGenerationId,
+                promotion.ExpectedInstruments.ToArray(),
+                scores,
+                current.CatalogLastModified,
+                PathGenerationPending: false);
+            _pending.Remove(promotion.SongId);
+        }
+
+        public async Task AppendPathGenerationErrorAsync(
             PathGenerationError error,
             CancellationToken ct)
         {
+            Interlocked.Increment(ref _errorWriteAttempts);
+            if (BlockErrorWrites)
+            {
+                _errorWriteStarted.TrySetResult();
+                await _errorWriteRelease.Task.WaitAsync(ct);
+            }
+
             lock (Errors)
                 Errors.Add(error);
-            return Task.CompletedTask;
         }
 
     }

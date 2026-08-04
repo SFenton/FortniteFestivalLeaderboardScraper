@@ -1163,7 +1163,7 @@ deep-scrape thresholds, leeway validation, and ranking metrics.
 **Evidence**
 
 - Transport retries are unbounded.
-- `ScrapePassTimeoutMinutes` is compatibility-only.
+- Scrape passes have no internal global deadline.
 
 **Work**
 
@@ -1421,11 +1421,19 @@ deployment/repair remain separate**
 - The exact-four executable stack is now retired because it has no recurring
   owner. Its command parsing, compiled song allowlist, manifest/file services,
   repair lease, selective ranking adapter, notification maintenance writer,
-  and completed-marker rebaseline control were removed.
+  and completed-marker rebaseline control were removed. Retired tokens remain
+  only in a startup denylist that aborts before hosted-worker selection.
 - The recurring atomic path contract remains: provider timestamp
   normalization, immutable generation validation/moves, database revision and
   catalog CAS, selective legacy resolution for instruments outside a promoted
-  partial generation, and protected single-song admin regeneration.
+  partial generation, and protected single-song admin regeneration. A generic
+  provider-local semaphore admits one non-pooled physical PostgreSQL session
+  per process, leaving the shared pool free while the advisory lease serializes
+  service/worker/admin batches across processes. Physical session close is the
+  fail-safe if explicit unlock is false or fails. Batch pre-processing failures
+  release admission before their bounded five-second diagnostic write pass.
+  Explicit CAS losers remove their unreachable immutable directory only after
+  proving it is not the current database generation.
 - Historical manifests, dry-run/execute reports, promotion report, and rollback
   snapshot remain same-drive evidence. The two maintenance audit tables and
   visible-only notification filters remain schema/runtime compatibility; no

@@ -32,6 +32,8 @@ if (File.Exists(envPath))
     }
 }
 
+RetiredMaintenanceCommandGuard.ThrowIfPresent(args);
+
 var builder = WebApplication.CreateBuilder(args);
 
 // ─── ThreadPool tuning ──────────────────────────────────────
@@ -538,6 +540,11 @@ builder.Services.AddHttpClient("PathGeneration")
         PooledConnectionLifetime = TimeSpan.FromMinutes(5),
         AutomaticDecompression = System.Net.DecompressionMethods.All,
     });
+builder.Services.AddSingleton<IPathGenerationAdmissionLeaseProvider>(sp =>
+    new PostgresPathGenerationAdmissionLeaseProvider(
+        pgConnectionStringBuilder.ConnectionString,
+        sp.GetRequiredService<
+            ILogger<PostgresPathGenerationAdmissionLeaseProvider>>()));
 builder.Services.AddSingleton<PathGenerationCoordinator>(sp =>
     new PathGenerationCoordinator(
         sp.GetRequiredService<IHttpClientFactory>().CreateClient("PathGeneration"),
@@ -545,7 +552,8 @@ builder.Services.AddSingleton<PathGenerationCoordinator>(sp =>
         sp.GetRequiredService<SongsCacheService>(),
         sp.GetRequiredService<IOptions<ScraperOptions>>(),
         sp.GetRequiredService<ScrapeProgressTracker>(),
-        sp.GetRequiredService<ILogger<PathGenerationCoordinator>>()));
+        sp.GetRequiredService<ILogger<PathGenerationCoordinator>>(),
+        sp.GetRequiredService<IPathGenerationAdmissionLeaseProvider>()));
 builder.Services.AddSingleton<PathArtifactResolver>();
 
 // Core FestivalService — song catalog sync. Shared with API for /api/songs.

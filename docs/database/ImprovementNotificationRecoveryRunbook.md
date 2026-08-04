@@ -47,7 +47,10 @@ candidates with `0` visible deliveries.
 The executable repair surface is retired:
 
 - the exact-four staging, ranking-alignment, promotion, selective-ranking, and
-  notification-maintenance command branches are no longer registered;
+  notification-maintenance executable branches are gone; every retired
+  command/argument token is rejected during startup before hosted-worker mode
+  selection across double-dash, single-dash, slash-prefixed, and bare
+  `key=value` forms;
 - the compiled four-song allowlist, strict repair manifest loader, repair file
   store, lease, ranking adapter, reports, and maintenance services were
   removed; and

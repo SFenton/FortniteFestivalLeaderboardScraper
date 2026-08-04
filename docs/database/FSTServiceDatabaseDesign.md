@@ -506,8 +506,11 @@ extension is retired. Publication `1276` is current; four immutable generations
 were promoted, the dependent rankings were rebuilt, and the sole notification
 maintenance run recorded `26` quarantined candidates with `0` visible
 deliveries. The compiled song allowlist, repair manifest/runtime services,
-shared repair lease, selective ranking adapter, command parsing, and DI
-registrations no longer exist.
+repair-specific lease, selective ranking adapter, executable command parser,
+and DI registrations no longer exist. A startup denylist recognizes every
+retired command/argument form and aborts before hosted-worker mode selection,
+including double-dash, single-dash, slash-prefixed, and bare `key=value`
+forms, so stale operator automation cannot fall through to a normal scrape.
 
 Recurring path generation continues through the worker and the protected
 single-song admin endpoint. It retains provider timestamp normalization,
@@ -516,6 +519,25 @@ per-song in-process serialization, row-locked revision/catalog comparison, and
 the database CAS. The four promoted partial generations remain valid: their
 generation pointers serve the generated Pro Lead artifacts while instruments
 not owned by those generations continue to resolve their legacy artifacts.
+
+Every recurring path-generation batch first enters a provider-local semaphore
+before opening a dedicated `Pooling=false` PostgreSQL session, then acquires
+the generic session-scoped advisory lock `5067481511116519000`. Admission
+therefore consumes no shared-pool slot; the local gate limits each
+service/worker process to one dedicated session while the PostgreSQL lock
+serializes across processes. Both are held for the full batch before runtime
+identity detection or CHOpt work. Explicit unlock is checked, but physical
+session close is the fail-safe for cancellation races, broken sessions, or an
+ambiguous unlock result. Cancellation or acquisition failure remains visible
+through normal `path_generation_errors`. Runtime-identity and state-read
+failures release admission before recording batch errors, and the complete
+batch shares one five-second best-effort error-write budget so a large failed
+request cannot retain or replace the global lease with unbounded diagnostic
+work. After an explicit CAS
+conflict or missing-song result, the rejected immutable generation directory
+is deleted only after a fresh database read proves that generation is not the
+current pointer. An ambiguous state read or a pointer to that generation keeps
+the directory, preferring safe retention over deleting a winner.
 
 The historical rollback snapshot and command reports remain evidence rather
 than executable input. A future reversal requires a separately reviewed
