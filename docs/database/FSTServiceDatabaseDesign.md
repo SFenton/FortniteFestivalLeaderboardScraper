@@ -820,7 +820,7 @@ and retained old-table rollback; bounded unlogged samples are evaluation-only.
 
 | Tables | Class | Owner/callers | Retention |
 |---|---|---|---|
-| `score_history` | Durable user-visible history | `MetaDatabase`, player/ranking services | Preserve score/rank/season/timestamp semantics. The explicit audited PG-3/PG-7 maintenance command promotes `ix_sh_dedup` to five-column `UNIQUE ... NULLS NOT DISTINCT`; no row cleanup runs at startup. |
+| `score_history` | Durable user-visible history | `MetaDatabase`, player/ranking services | Preserve score/rank/season/timestamp semantics. The explicit audited PG-3/PG-7 maintenance command promotes `ix_sh_dedup` to five-column `UNIQUE ... NULLS NOT DISTINCT` and permits only contract-v2 null-to-one-known `difficulty`/`season` enrichment; no row cleanup runs at startup. |
 | `score_history_dedup_maintenance_runs`, `score_history_dedup_original_rows` | Immutable maintenance audit/restore source | Explicit `ScoreHistoryDedupMaintenanceService` CLI only | Retention-independent. Stores non-null CLI/database/digest/index provenance and every affected original row before merge/delete; triggers reject update, delete, truncate, and post-seal original-row append. |
 | `player_score_observations` | Empty production rollback schema; absent from fresh schemas after writer/schema-creation retirement | None; solo-history and band-member writers, tracked config, and startup creation are removed, with no production reader | OBSERVATION-RETIRE truncated `10,167,937` rows after scrape `1267` parity, reclaiming `12,682,330,112` database bytes. Existing table/view/index/primary-key/sequence objects await cleanup-image full-scrape parity; exact rehydrate/drop SQL remains retained |
 | `player_stats`, `player_stats_tiers` | Derived projection | Player stats calculator/API | Rebuildable for a published generation |
@@ -962,12 +962,15 @@ retirement performs no live DDL and does not delete or rewrite audit rows.
 
 The nullable `score_history` repair is a separate explicit one-shot safety
 gate. `--score-history-dedup-maintenance` defaults to a canonical
-`REPEATABLE READ`, `READ ONLY` dry run. Its digest binds sorted original rows,
-per-group selected survivor/rank/time values, the merge contract, and the
-structured current index state while excluding transaction/report clocks,
+`REPEATABLE READ`, `READ ONLY` dry run. Contract version `2` keeps the existing
+operation purpose but changes the digest contract. Its digest binds sorted
+original rows, per-group selected survivor/rank/time/difficulty/season values,
+the deterministic merge contract, the exact allowed-null-enrichment list, and
+the structured current index state while excluding transaction/report clocks,
 planner estimates, and relation sizes. Reports include total/null/duplicate
-rows, groups/excess, affected account/song IDs, per-group maxima and semantic
-variance, table/index sizes, and exact merge semantics.
+rows, groups/excess, affected account/song IDs, per-group maxima, selected
+metadata, actual enrichment/conflict fields, classification counts,
+table/index sizes, and exact merge semantics.
 
 Execute additionally requires `--score-history-dedup-execute` and
 `--expected-score-history-dedup-digest`. It uses `SET LOCAL` for the
@@ -983,28 +986,43 @@ audit catalog: tables/columns/defaults, validated constraints, immutable
 function bodies and enabled triggers, digest index shape, and run-ID sequence.
 It fails closed when any object is absent or inexact and never initializes or
 repairs schema. `--initialize-schema-only` remains the normal release owner of
-the entire schema and sequence advancement; it is not a maintenance
-prerequisite.
+the entire schema and sequence advancement; its short audit-schema step widens
+the contract constraint to preserve version-1 runs while accepting version 2.
+It is not a maintenance prerequisite.
 
 After the locked re-read verifies the digest, any duplicate with
-`new_score != 0`, or variation outside `id`, `new_rank`, `all_time_rank`, and
-`changed_at`, blocks before writes. A passing transaction stores every
-original row, preserves the lowest ID, earliest `changed_at`, and minimum
-positive/non-null ranks, deletes only non-survivors, then builds the PostgreSQL
-17 `NULLS NOT DISTINCT` replacement under a temporary name. Reads remain
-available during the index scan/build; the final old-index drop/new-index
-rename creates a brief `ACCESS EXCLUSIVE` pause immediately before commit.
-Existing five-column `ON CONFLICT` paths therefore become null-safe without
-query-specific predicates.
+`new_score != 0`, non-null `score_achieved_at`, variation in `old_score`,
+`old_rank`, `accuracy`, `is_full_combo`, `stars`, `percentile`, or
+`season_rank`, or more than one distinct non-null `difficulty`/`season` value
+blocks before writes. A passing transaction stores every original row,
+preserves the lowest ID, earliest `changed_at`, and minimum positive/non-null
+ranks, selects the single known difficulty/season value (or null when all are
+null), updates the survivor, deletes only audited non-survivors, then builds
+the PostgreSQL 17 `NULLS NOT DISTINCT` replacement under a temporary name.
+Reads remain available during the index scan/build; the final old-index
+drop/new-index rename creates a brief `ACCESS EXCLUSIVE` pause immediately
+before commit. Existing five-column `ON CONFLICT` paths therefore become
+null-safe without query-specific predicates.
+
+The supplied 2026-08-04 contract-v1 dry run recorded `763,908` total rows,
+`1,632` null timestamps, and `324` duplicate groups / `1,398` rows / `1,074`
+excess. Contract v1 accepted `122` rank-only groups and blocked `202` solely
+for null-to-one-known difficulty/season variance (`151` difficulty, `46`
+season, `5` both). Every group is zero-score/null-timestamp, both fields have
+at most one distinct non-null value, and no other invariant varies. This is
+read-only classification evidence, not execute authorization; two matching
+accepted contract-v2 dry runs and the runbook maintenance gate remain required.
 
 The immutable run stores executable rollback SQL. Rollback verifies the target
-index and unchanged merged survivors, proves every audited non-survivor ID is
-still absent, then drops the nulls-not-distinct index, restores exact audited
-originals, recreates the legacy ordinary unique index, and advances the
-sequence without rewinding it. A reused explicit ID fails before any delete;
+index and unchanged merged survivors, including selected difficulty/season,
+proves every audited non-survivor ID is still absent, then drops the
+nulls-not-distinct index, restores exact audited originals, recreates the
+legacy ordinary unique index, and advances the sequence without rewinding it.
+A reused explicit ID or later survivor metadata write fails before any delete;
 unrelated later rows remain untouched. Re-execution after a rollback creates a
-new immutable audit run. Full commands, bounded catalog preflight, and
-lock/runtime planning are in
+new immutable audit run. Contract-v1 digests/runs cannot satisfy version-2
+execution. Full commands, bounded catalog preflight, and lock/runtime planning
+are in
 `docs/database/ScoreHistoryDedupMaintenanceRunbook.md`.
 
 ### Dirty, shadow, and audit-only surfaces
@@ -1441,10 +1459,11 @@ No secondary index is added to the existing event tables.
 
 The score-history dedup audit schema is likewise additive and runs in its own
 short schema transaction with the same two-second lock and fifteen-second
-statement timeouts. It creates only the immutable run/original-row audit
-tables, trigger function, triggers, and small digest lookup index. It does not
-scan, merge, delete, or index-rebuild `score_history`; those actions exist only
-behind the explicit maintenance execute digest gate.
+statement timeouts. It creates only the immutable run/original-row audit tables, trigger
+function, triggers, and small digest lookup index, plus a one-time constraint
+migration that preserves contract-v1 audit rows while accepting contract v2.
+It does not scan, merge, delete, or index-rebuild `score_history`; those
+actions exist only behind the explicit maintenance execute digest gate.
 
 ## Retention and maintenance
 

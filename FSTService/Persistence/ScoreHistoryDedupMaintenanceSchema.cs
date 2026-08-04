@@ -2,7 +2,7 @@ namespace FSTService.Persistence;
 
 public static class ScoreHistoryDedupMaintenanceSchema
 {
-    public const int ContractVersion = 1;
+    public const int ContractVersion = 2;
     public const string Purpose = "score_history_null_timestamp_dedup_v1";
     public const string ExecutionSource = "explicit_cli";
     public const string NullSafeReplacementIndexName =
@@ -43,7 +43,8 @@ public static class ScoreHistoryDedupMaintenanceSchema
             maintenance_purpose      TEXT        NOT NULL
                 CHECK (maintenance_purpose = 'score_history_null_timestamp_dedup_v1'),
             maintenance_contract_version INTEGER NOT NULL
-                CHECK (maintenance_contract_version = 1),
+                CONSTRAINT ck_score_history_dedup_contract_version
+                CHECK (maintenance_contract_version IN (1, 2)),
             execution_source         TEXT        NOT NULL
                 CHECK (execution_source = 'explicit_cli'),
             dry_run_digest           TEXT        NOT NULL
@@ -75,6 +76,41 @@ public static class ScoreHistoryDedupMaintenanceSchema
             CHECK (survivor_rows_updated = duplicate_group_count),
             CHECK (rows_deleted = excess_row_count)
         );
+
+        DO $contract_version$
+        DECLARE
+            old_constraint_name TEXT;
+        BEGIN
+            FOR old_constraint_name IN
+                SELECT constraint_row.conname
+                FROM pg_constraint constraint_row
+                WHERE constraint_row.conrelid =
+                        'public.score_history_dedup_maintenance_runs'::regclass
+                  AND constraint_row.contype = 'c'
+                  AND pg_get_constraintdef(constraint_row.oid, TRUE) =
+                        'CHECK (maintenance_contract_version = 1)'
+            LOOP
+                EXECUTE format(
+                    'ALTER TABLE public.score_history_dedup_maintenance_runs ' ||
+                    'DROP CONSTRAINT %I',
+                    old_constraint_name);
+            END LOOP;
+
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint constraint_row
+                WHERE constraint_row.conrelid =
+                        'public.score_history_dedup_maintenance_runs'::regclass
+                  AND constraint_row.conname =
+                        'ck_score_history_dedup_contract_version'
+            ) THEN
+                ALTER TABLE public.score_history_dedup_maintenance_runs
+                    ADD CONSTRAINT
+                        ck_score_history_dedup_contract_version
+                    CHECK (maintenance_contract_version IN (1, 2));
+            END IF;
+        END
+        $contract_version$;
 
         CREATE INDEX IF NOT EXISTS ix_score_history_dedup_runs_digest
             ON score_history_dedup_maintenance_runs

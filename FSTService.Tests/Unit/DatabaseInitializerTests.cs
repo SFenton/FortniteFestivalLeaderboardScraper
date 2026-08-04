@@ -338,6 +338,60 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public async Task EnsureSchemaAsync_migrates_score_history_dedup_contract_v1()
+    {
+        using (var conn = _metaFixture.DataSource.OpenConnection())
+        using (var downgrade = conn.CreateCommand())
+        {
+            downgrade.CommandText = """
+                ALTER TABLE score_history_dedup_maintenance_runs
+                    DROP CONSTRAINT
+                        ck_score_history_dedup_contract_version;
+                ALTER TABLE score_history_dedup_maintenance_runs
+                    ADD CONSTRAINT
+                        ck_score_history_dedup_contract_version_v1
+                    CHECK (maintenance_contract_version = 1);
+                """;
+            downgrade.ExecuteNonQuery();
+        }
+
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using var inspectConn = _metaFixture.DataSource.OpenConnection();
+        using var inspect = inspectConn.CreateCommand();
+        inspect.CommandText = """
+            SELECT
+                COUNT(*) FILTER (
+                    WHERE pg_get_constraintdef(
+                        constraint_row.oid,
+                        TRUE) =
+                        'CHECK (maintenance_contract_version = ANY (ARRAY[1, 2]))'
+                ),
+                COUNT(*) FILTER (
+                    WHERE pg_get_constraintdef(
+                        constraint_row.oid,
+                        TRUE) =
+                        'CHECK (maintenance_contract_version = 1)'
+                ),
+                COUNT(*)
+            FROM pg_constraint constraint_row
+            WHERE constraint_row.conrelid =
+                    'score_history_dedup_maintenance_runs'::regclass
+              AND constraint_row.contype = 'c'
+              AND pg_get_constraintdef(
+                    constraint_row.oid,
+                    TRUE) LIKE
+                    'CHECK (maintenance_contract_version%';
+            """;
+        using var reader = inspect.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(1L, reader.GetInt64(0));
+        Assert.Equal(0L, reader.GetInt64(1));
+        Assert.Equal(1L, reader.GetInt64(2));
+    }
+
+    [Fact]
     public async Task MaintenanceAuditPublishedScrapeProvenanceIsDurableAndImmutable()
     {
         await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);

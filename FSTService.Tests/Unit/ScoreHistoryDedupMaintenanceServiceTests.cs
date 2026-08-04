@@ -258,6 +258,7 @@ public sealed class ScoreHistoryDedupMaintenanceServiceTests : IDisposable
             JsonSerializer.Serialize(second));
         Assert.Equal(first.DryRunDigest, second.DryRunDigest);
         Assert.Equal(64, first.DryRunDigest.Length);
+        Assert.Equal(2, first.ContractVersion);
         Assert.Equal("repeatable_read", first.Transaction.IsolationLevel);
         Assert.True(first.Transaction.ReadOnly);
         Assert.Equal("ready", first.SafetyDecision);
@@ -294,9 +295,281 @@ public sealed class ScoreHistoryDedupMaintenanceServiceTests : IDisposable
         Assert.Equal(2, first.Maxima.MaximumExcessRowsInGroup);
         Assert.Equal("lowest_id", first.MergeSemantics.Survivor);
         Assert.Equal("earliest_changed_at", first.MergeSemantics.ChangedAt);
+        Assert.Equal(
+            "single_distinct_non_null_else_null",
+            first.MergeSemantics.Difficulty);
+        Assert.Equal(
+            "single_distinct_non_null_else_null",
+            first.MergeSemantics.Season);
+        Assert.Equal(
+            new[] { "difficulty", "season" },
+            first.MergeSemantics.AllowedNullEnrichmentFields);
         Assert.Equal(before, ReadHistoryRows());
         Assert.Equal(0, CountRows("score_history_dedup_maintenance_runs"));
         Assert.Equal(0, CountRows("score_history_dedup_original_rows"));
+    }
+
+    [Fact]
+    public async Task DryRunAndExecuteClassifyAllowedNullEnrichment()
+    {
+        InsertHistoryRow(
+            "account-difficulty",
+            "song-difficulty",
+            newScore: 0,
+            newRank: 2,
+            allTimeRank: 2,
+            changedAt: Utc(1),
+            difficulty: null);
+        InsertHistoryRow(
+            "account-difficulty",
+            "song-difficulty",
+            newScore: 0,
+            newRank: 1,
+            allTimeRank: 1,
+            changedAt: Utc(2),
+            difficulty: 7);
+        InsertHistoryRow(
+            "account-season",
+            "song-season",
+            newScore: 0,
+            newRank: 2,
+            allTimeRank: 2,
+            changedAt: Utc(3),
+            season: null);
+        InsertHistoryRow(
+            "account-season",
+            "song-season",
+            newScore: 0,
+            newRank: 1,
+            allTimeRank: 1,
+            changedAt: Utc(4),
+            season: 12);
+        InsertHistoryRow(
+            "account-both",
+            "song-both",
+            newScore: 0,
+            newRank: 2,
+            allTimeRank: 2,
+            changedAt: Utc(5),
+            season: null,
+            difficulty: null);
+        InsertHistoryRow(
+            "account-both",
+            "song-both",
+            newScore: 0,
+            newRank: 1,
+            allTimeRank: 1,
+            changedAt: Utc(6),
+            season: 14,
+            difficulty: 8);
+        InsertHistoryRow(
+            "account-all-null",
+            "song-all-null",
+            newScore: 0,
+            newRank: 2,
+            allTimeRank: 2,
+            changedAt: Utc(7),
+            season: null,
+            difficulty: null);
+        InsertHistoryRow(
+            "account-all-null",
+            "song-all-null",
+            newScore: 0,
+            newRank: 1,
+            allTimeRank: 1,
+            changedAt: Utc(8),
+            season: null,
+            difficulty: null);
+        var originalRows = ReadHistoryRows();
+
+        var report = await _maintenance.DryRunAsync();
+
+        Assert.True(report.CanExecute);
+        Assert.Equal("ready", report.SafetyDecision);
+        var enrichmentCount = Assert.Single(
+            report.ClassificationCounts,
+            count =>
+                count.Classification ==
+                    "expected_zero_score_null_enrichment");
+        Assert.Equal(3L, enrichmentCount.GroupCount);
+        Assert.Equal(6L, enrichmentCount.RowCount);
+        Assert.Equal(3L, enrichmentCount.ExcessRowCount);
+        Assert.True(enrichmentCount.Allowed);
+        var rankOnlyCount = Assert.Single(
+            report.ClassificationCounts,
+            count =>
+                count.Classification ==
+                    "expected_zero_score_rank_metadata_only");
+        Assert.Equal(1L, rankOnlyCount.GroupCount);
+        Assert.Equal(2L, rankOnlyCount.RowCount);
+        Assert.Equal(1L, rankOnlyCount.ExcessRowCount);
+
+        var difficulty = Assert.Single(
+            report.PerGroupMaxima,
+            group => group.AccountId == "account-difficulty");
+        Assert.Equal(7, difficulty.SelectedDifficulty);
+        Assert.Equal(10, difficulty.SelectedSeason);
+        Assert.Equal(new[] { "difficulty" }, difficulty.NullEnrichmentFields);
+        Assert.Empty(difficulty.ConflictingNonNullFields);
+
+        var season = Assert.Single(
+            report.PerGroupMaxima,
+            group => group.AccountId == "account-season");
+        Assert.Equal(6, season.SelectedDifficulty);
+        Assert.Equal(12, season.SelectedSeason);
+        Assert.Equal(new[] { "season" }, season.NullEnrichmentFields);
+        Assert.Empty(season.ConflictingNonNullFields);
+
+        var both = Assert.Single(
+            report.PerGroupMaxima,
+            group => group.AccountId == "account-both");
+        Assert.Equal(8, both.SelectedDifficulty);
+        Assert.Equal(14, both.SelectedSeason);
+        Assert.Equal(
+            new[] { "difficulty", "season" },
+            both.NullEnrichmentFields);
+        Assert.Equal(
+            new[] { "season", "difficulty" },
+            both.VariedInvariantFields);
+
+        var allNull = Assert.Single(
+            report.PerGroupMaxima,
+            group => group.AccountId == "account-all-null");
+        Assert.Null(allNull.SelectedDifficulty);
+        Assert.Null(allNull.SelectedSeason);
+        Assert.Empty(allNull.NullEnrichmentFields);
+        Assert.Equal(
+            "expected_zero_score_rank_metadata_only",
+            allNull.Classification);
+        Assert.All(report.PerGroupMaxima, group => Assert.True(group.Allowed));
+
+        var executed = await _maintenance.ExecuteAsync(
+            report.DryRunDigest);
+
+        Assert.Equal(8, executed.OriginalRowsAudited);
+        Assert.Equal(4, executed.DuplicateGroupsMerged);
+        Assert.Equal(4, executed.SurvivorRowsUpdated);
+        Assert.Equal(4, executed.RowsDeleted);
+        var mergedRows = ReadHistoryRows();
+        Assert.Equal(4, mergedRows.Count);
+        var mergedDifficulty = Assert.Single(
+            mergedRows,
+            row => row.AccountId == "account-difficulty");
+        Assert.Equal(difficulty.SurvivorId, mergedDifficulty.Id);
+        Assert.Equal(7, mergedDifficulty.Difficulty);
+        Assert.Equal(10, mergedDifficulty.Season);
+        var mergedSeason = Assert.Single(
+            mergedRows,
+            row => row.AccountId == "account-season");
+        Assert.Equal(season.SurvivorId, mergedSeason.Id);
+        Assert.Equal(6, mergedSeason.Difficulty);
+        Assert.Equal(12, mergedSeason.Season);
+        var mergedBoth = Assert.Single(
+            mergedRows,
+            row => row.AccountId == "account-both");
+        Assert.Equal(both.SurvivorId, mergedBoth.Id);
+        Assert.Equal(8, mergedBoth.Difficulty);
+        Assert.Equal(14, mergedBoth.Season);
+        var mergedAllNull = Assert.Single(
+            mergedRows,
+            row => row.AccountId == "account-all-null");
+        Assert.Equal(allNull.SurvivorId, mergedAllNull.Id);
+        Assert.Null(mergedAllNull.Difficulty);
+        Assert.Null(mergedAllNull.Season);
+        Assert.Equal(
+            originalRows,
+            ReadAuditRows(executed.MaintenanceRunId!.Value));
+
+        ExecuteRollback(executed.RollbackSql!);
+
+        Assert.Equal(originalRows, ReadHistoryRows());
+        Assert.False(IndexNullsNotDistinct());
+    }
+
+    [Fact]
+    public async Task ConflictingNonNullDifficultyOrSeasonBlocksExecute()
+    {
+        InsertHistoryRow(
+            "account-difficulty-conflict",
+            "song-difficulty-conflict",
+            newScore: 0,
+            newRank: 3,
+            allTimeRank: 3,
+            changedAt: Utc(1),
+            difficulty: null);
+        InsertHistoryRow(
+            "account-difficulty-conflict",
+            "song-difficulty-conflict",
+            newScore: 0,
+            newRank: 2,
+            allTimeRank: 2,
+            changedAt: Utc(2),
+            difficulty: 6);
+        InsertHistoryRow(
+            "account-difficulty-conflict",
+            "song-difficulty-conflict",
+            newScore: 0,
+            newRank: 1,
+            allTimeRank: 1,
+            changedAt: Utc(3),
+            difficulty: 7);
+        InsertHistoryRow(
+            "account-season-conflict",
+            "song-season-conflict",
+            newScore: 0,
+            newRank: 3,
+            allTimeRank: 3,
+            changedAt: Utc(4),
+            season: null);
+        InsertHistoryRow(
+            "account-season-conflict",
+            "song-season-conflict",
+            newScore: 0,
+            newRank: 2,
+            allTimeRank: 2,
+            changedAt: Utc(5),
+            season: 10);
+        InsertHistoryRow(
+            "account-season-conflict",
+            "song-season-conflict",
+            newScore: 0,
+            newRank: 1,
+            allTimeRank: 1,
+            changedAt: Utc(6),
+            season: 11);
+        var before = ReadHistoryRows();
+
+        var report = await _maintenance.DryRunAsync();
+
+        Assert.False(report.CanExecute);
+        Assert.Equal("blocked_unexpected_history", report.SafetyDecision);
+        var difficulty = Assert.Single(
+            report.PerGroupMaxima,
+            group => group.AccountId == "account-difficulty-conflict");
+        Assert.Equal(
+            "blocked_conflicting_non_null_metadata",
+            difficulty.Classification);
+        Assert.Null(difficulty.SelectedDifficulty);
+        Assert.Equal(
+            new[] { "difficulty" },
+            difficulty.ConflictingNonNullFields);
+        var season = Assert.Single(
+            report.PerGroupMaxima,
+            group => group.AccountId == "account-season-conflict");
+        Assert.Equal(
+            "blocked_conflicting_non_null_metadata",
+            season.Classification);
+        Assert.Null(season.SelectedSeason);
+        Assert.Equal(
+            new[] { "season" },
+            season.ConflictingNonNullFields);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => _maintenance.ExecuteAsync(report.DryRunDigest));
+        Assert.Contains("blocked_unexpected_history", exception.Message);
+        Assert.Equal(before, ReadHistoryRows());
+        Assert.Equal(0, CountRows("score_history_dedup_maintenance_runs"));
+        Assert.False(IndexNullsNotDistinct());
     }
 
     [Fact]
@@ -373,6 +646,75 @@ public sealed class ScoreHistoryDedupMaintenanceServiceTests : IDisposable
         Assert.Equal(0, CountRows("score_history_dedup_maintenance_runs"));
         Assert.Equal(0, CountRows("score_history_dedup_original_rows"));
         Assert.False(IndexNullsNotDistinct());
+    }
+
+    [Fact]
+    public async Task PreviousContractDigestCannotSatisfyVersionTwoExecute()
+    {
+        var current = await _maintenance.DryRunAsync();
+        var applied = await _maintenance.ExecuteAsync(current.DryRunDigest);
+        Assert.NotNull(applied.MaintenanceRunId);
+        Assert.True(IndexNullsNotDistinct());
+
+        var oldDigest = new string('a', 64);
+        using (var conn = _fixture.DataSource.OpenConnection())
+        using (var insert = conn.CreateCommand())
+        {
+            insert.CommandText = """
+                INSERT INTO score_history_dedup_maintenance_runs (
+                    maintenance_purpose,
+                    maintenance_contract_version,
+                    execution_source,
+                    dry_run_digest,
+                    canonical_candidate_data,
+                    safety_classification,
+                    database_name,
+                    database_user,
+                    server_version_num,
+                    duplicate_row_count,
+                    duplicate_group_count,
+                    excess_row_count,
+                    affected_account_count,
+                    affected_song_count,
+                    original_rows_audited,
+                    survivor_rows_updated,
+                    rows_deleted,
+                    index_replaced,
+                    index_definition_before,
+                    index_definition_after,
+                    rollback_sql)
+                VALUES (
+                    'score_history_null_timestamp_dedup_v1',
+                    1,
+                    'explicit_cli',
+                    @digest,
+                    '{"contractVersion":1}',
+                    'ready',
+                    current_database(),
+                    current_user,
+                    current_setting('server_version_num')::INTEGER,
+                    0, 0, 0, 0, 0, 0, 0, 0,
+                    TRUE,
+                    @indexDefinition,
+                    @indexDefinition,
+                    'legacy rollback');
+                """;
+            insert.Parameters.AddWithValue("digest", oldDigest);
+            insert.Parameters.AddWithValue(
+                "indexDefinition",
+                ReadIndexDefinition());
+            Assert.Equal(1, insert.ExecuteNonQuery());
+        }
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => _maintenance.ExecuteAsync(oldDigest));
+
+        Assert.Contains(
+            "dry-run digest changed",
+            exception.Message,
+            StringComparison.Ordinal);
+        Assert.Equal(2, CountRows("score_history_dedup_maintenance_runs"));
+        Assert.True(IndexNullsNotDistinct());
     }
 
     [Fact]
@@ -563,6 +905,76 @@ public sealed class ScoreHistoryDedupMaintenanceServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteEnrichesMetadataAndRollbackRestoresExactOriginals()
+    {
+        InsertHistoryRow(
+            "account-enrichment",
+            "song-enrichment",
+            newScore: 0,
+            newRank: 9,
+            allTimeRank: 15,
+            changedAt: Utc(3),
+            season: null,
+            difficulty: null);
+        InsertHistoryRow(
+            "account-enrichment",
+            "song-enrichment",
+            newScore: 0,
+            newRank: 3,
+            allTimeRank: 7,
+            changedAt: Utc(1),
+            season: 12,
+            difficulty: 8);
+        var originalRows = ReadHistoryRows();
+        var dryRun = await _maintenance.DryRunAsync();
+        var plan = Assert.Single(dryRun.PerGroupMaxima);
+        Assert.Equal(12, plan.SelectedSeason);
+        Assert.Equal(8, plan.SelectedDifficulty);
+        Assert.Equal(
+            new[] { "difficulty", "season" },
+            plan.NullEnrichmentFields);
+
+        var executed = await _maintenance.ExecuteAsync(
+            dryRun.DryRunDigest);
+
+        Assert.NotNull(executed.MaintenanceRunId);
+        var merged = Assert.Single(ReadHistoryRows());
+        Assert.Equal(plan.SurvivorId, merged.Id);
+        Assert.Equal(3, merged.NewRank);
+        Assert.Equal(7, merged.AllTimeRank);
+        Assert.Equal(12, merged.Season);
+        Assert.Equal(8, merged.Difficulty);
+        Assert.Equal(Utc(1), merged.ChangedAt);
+        Assert.Equal(
+            originalRows,
+            ReadAuditRows(executed.MaintenanceRunId.Value));
+        Assert.True(IndexNullsNotDistinct());
+
+        var repeated = await _maintenance.ExecuteAsync(
+            dryRun.DryRunDigest);
+        Assert.True(repeated.AlreadyApplied);
+        Assert.Equal(executed.MaintenanceRunId, repeated.MaintenanceRunId);
+
+        ExecuteRollback(executed.RollbackSql!);
+
+        Assert.Equal(originalRows, ReadHistoryRows());
+        Assert.False(IndexNullsNotDistinct());
+        var restoredDryRun = await _maintenance.DryRunAsync();
+        Assert.Equal(dryRun.DryRunDigest, restoredDryRun.DryRunDigest);
+
+        var rerun = await _maintenance.ExecuteAsync(
+            restoredDryRun.DryRunDigest);
+        Assert.False(rerun.AlreadyApplied);
+        Assert.NotEqual(executed.MaintenanceRunId, rerun.MaintenanceRunId);
+        var rerunMerged = Assert.Single(ReadHistoryRows());
+        Assert.Equal(12, rerunMerged.Season);
+        Assert.Equal(8, rerunMerged.Difficulty);
+        Assert.Equal(2, CountRows("score_history_dedup_maintenance_runs"));
+        Assert.Equal(4, CountRows("score_history_dedup_original_rows"));
+        Assert.True(IndexNullsNotDistinct());
+    }
+
+    [Fact]
     public async Task RollbackRefusesReusedNonSurvivorIdWithoutDeletingIt()
     {
         SeedValidDuplicateGroups();
@@ -663,6 +1075,74 @@ public sealed class ScoreHistoryDedupMaintenanceServiceTests : IDisposable
             Assert.Single(
                 ReadHistoryRows(),
                 row => row.Id == survivorId));
+        Assert.True(IndexNullsNotDistinct());
+    }
+
+    [Theory]
+    [InlineData("difficulty")]
+    [InlineData("season")]
+    public async Task RollbackRefusesChangedSelectedMetadata(
+        string metadataField)
+    {
+        InsertHistoryRow(
+            "account-metadata",
+            "song-metadata",
+            newScore: 0,
+            newRank: 2,
+            allTimeRank: 2,
+            changedAt: Utc(2),
+            season: null,
+            difficulty: null);
+        InsertHistoryRow(
+            "account-metadata",
+            "song-metadata",
+            newScore: 0,
+            newRank: 1,
+            allTimeRank: 1,
+            changedAt: Utc(1),
+            season: 12,
+            difficulty: 8);
+        var dryRun = await _maintenance.DryRunAsync();
+        var executed = await _maintenance.ExecuteAsync(
+            dryRun.DryRunDigest);
+        var survivorId = Assert.Single(dryRun.PerGroupMaxima).SurvivorId;
+        using (var conn = _fixture.DataSource.OpenConnection())
+        using (var update = conn.CreateCommand())
+        {
+            update.CommandText = metadataField switch
+            {
+                "difficulty" => """
+                    UPDATE public.score_history
+                    SET difficulty = 999
+                    WHERE id = @survivorId;
+                    """,
+                "season" => """
+                    UPDATE public.score_history
+                    SET season = 999
+                    WHERE id = @survivorId;
+                    """,
+                _ => throw new ArgumentOutOfRangeException(
+                    nameof(metadataField)),
+            };
+            update.Parameters.AddWithValue("survivorId", survivorId);
+            Assert.Equal(1, update.ExecuteNonQuery());
+        }
+
+        var exception = ExecuteRollbackExpectFailure(
+            executed.RollbackSql!);
+
+        Assert.Contains(
+            "survivor rows no longer match",
+            exception.Message,
+            StringComparison.Ordinal);
+        var survivor = Assert.Single(
+            ReadHistoryRows(),
+            row => row.Id == survivorId);
+        Assert.Equal(
+            999,
+            metadataField == "difficulty"
+                ? survivor.Difficulty
+                : survivor.Season);
         Assert.True(IndexNullsNotDistinct());
     }
 
@@ -885,7 +1365,9 @@ public sealed class ScoreHistoryDedupMaintenanceServiceTests : IDisposable
         int? allTimeRank,
         DateTime changedAt,
         int? accuracy = 99,
-        DateTime? scoreAchievedAt = null)
+        DateTime? scoreAchievedAt = null,
+        int? season = 10,
+        int? difficulty = 6)
     {
         using var conn = _fixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -920,11 +1402,11 @@ public sealed class ScoreHistoryDedupMaintenanceServiceTests : IDisposable
                 FALSE,
                 5,
                 99.5,
-                10,
+                @season,
                 @scoreAchievedAt,
                 50,
                 @allTimeRank,
-                6,
+                @difficulty,
                 @changedAt)
             RETURNING id;
             """;
@@ -950,9 +1432,17 @@ public sealed class ScoreHistoryDedupMaintenanceServiceTests : IDisposable
                 ? scoreAchievedAt.Value
                 : DBNull.Value;
         cmd.Parameters.Add(
+            "season",
+            NpgsqlDbType.Integer).Value =
+            season.HasValue ? season.Value : DBNull.Value;
+        cmd.Parameters.Add(
             "allTimeRank",
             NpgsqlDbType.Integer).Value =
             allTimeRank.HasValue ? allTimeRank.Value : DBNull.Value;
+        cmd.Parameters.Add(
+            "difficulty",
+            NpgsqlDbType.Integer).Value =
+            difficulty.HasValue ? difficulty.Value : DBNull.Value;
         cmd.Parameters.AddWithValue("changedAt", changedAt);
         return Convert.ToInt32(cmd.ExecuteScalar());
     }

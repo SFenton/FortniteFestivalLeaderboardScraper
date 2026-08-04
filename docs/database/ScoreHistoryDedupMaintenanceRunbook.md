@@ -9,24 +9,31 @@ This workflow repairs only duplicate `score_history` rows under:
 ```
 
 It is an explicit one-shot maintenance command. It is never invoked by normal
-service or worker startup. Schema initialization adds only immutable audit
-tables; row merging, deletion, and `ix_sh_dedup` replacement occur only in an
-operator-requested execute transaction.
+service or worker startup. Schema initialization owns only the immutable audit
+schema and its contract-version constraint migration; row merging, deletion,
+and `ix_sh_dedup` replacement occur only in an operator-requested execute
+transaction.
 
-The 2026-08-02 read-only inventory established:
+The user-supplied 2026-08-04 contract-v1 dry run is retained read-only at
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/score-history-dedup-20260804T204520Z/dry-run-1.json`.
+It established:
 
-- `705,687` total rows / about `441 MB`;
-- `1,631` rows with `score_achieved_at IS NULL`;
-- `324` duplicate groups with `1,074` excess rows;
-- every duplicate group has `new_score = 0`;
-- only `id`, `new_rank`, `all_time_rank`, and `changed_at` vary.
+- `763,908` total rows and `1,632` rows with
+  `score_achieved_at IS NULL`;
+- `324` duplicate groups / `1,398` rows / `1,074` excess rows;
+- `122` rank-metadata-only groups / `250` rows / `128` excess rows;
+- `202` groups / `1,148` rows / `946` excess rows blocked by contract v1
+  only because `difficulty` and/or `season` mixed null with one known value;
+- those 202 groups divide into `151` difficulty-only groups (`305` rows /
+  `154` excess), `46` season-only groups (`812` rows / `766` excess), and
+  `5` both-field groups (`31` rows / `26` excess);
+- every group has `new_score = 0` and `score_achieved_at IS NULL`;
+- every group has at most one distinct non-null `difficulty` and at most one
+  distinct non-null `season`; there are zero conflicting non-null values and
+  zero other invariant differences.
 
-This evidence is planning input, not execution authorization. The code was
-implemented while scrape `1274` ran without querying or changing production,
-containers, scrape state, or scrape evidence. Continuous-safe readiness repairs
-were completed in repository code/tests while scrape `1277` was
-post-processing, again without live database, container, or maintenance
-activity.
+This evidence is classification input, not execution authorization. The
+contract-v2 implementation and tests did not query or mutate production.
 
 ## Safety contract
 
@@ -36,11 +43,15 @@ Dry run:
 - uses `lock_timeout = 2s` and `statement_timeout = 120s`;
 - reports exact total/null/duplicate/group/excess counts, affected accounts
   and songs, per-group rank/ID/time maxima, semantic variance, relation/index
-  sizes, index definition, and selected merge values;
+  sizes, index definition, selected rank/difficulty/season values, actual
+  null-enrichment fields, conflicting non-null fields, and classification
+  counts;
 - exits with code `2` after emitting the JSON report when classification or
   index invariants block execute;
 - computes canonical SHA-256 from sorted source rows, selected merge results,
-  merge contract, and structured index state;
+  contract version `2`, deterministic merge semantics, the exact allowed
+  null-enrichment field list (`difficulty`, `season`), and structured index
+  state;
 - excludes transaction/report clocks, planner row estimates, and relation
   sizes from the digest.
 
@@ -60,11 +71,16 @@ Execute:
   exact catalog contract; it never creates or repairs them;
 - re-reads and re-hashes under that lock before reserving an audit run ID;
 - rejects any group whose `new_score` is not exactly zero or whose
-  `old_score`, `old_rank`, `accuracy`, `is_full_combo`, `stars`, `percentile`,
-  `season`, `season_rank`, or `difficulty` varies;
+  `score_achieved_at` is non-null;
+- requires `old_score`, `old_rank`, `accuracy`, `is_full_combo`, `stars`,
+  `percentile`, and `season_rank` to be identical;
+- permits only `difficulty` and `season` null enrichment, independently:
+  select the single distinct non-null value, or null when all values are null;
+  two distinct non-null values remain blocked;
 - audits every original affected row before updating or deleting anything;
 - updates the lowest-ID survivor, preserving the earliest `changed_at` and the
-  minimum positive rank, falling back to the minimum non-null rank;
+  minimum positive rank (falling back to the minimum non-null rank), plus the
+  selected `difficulty` and `season`;
 - deletes only audited non-survivors;
 - replaces the ordinary five-column unique `ix_sh_dedup` with PostgreSQL 17
   `UNIQUE ... NULLS NOT DISTINCT` in the same transaction.
@@ -82,17 +98,29 @@ read pause is bounded and no user request waits behind the cutover.
 1. Use production compose ownership at
    `/home/sfenton/Docker/FestivalServiceTracker`.
 2. Keep all reports and rollback files on the 4 TB FST filesystem.
-3. Do **not** use `--initialize-schema-only` as maintenance preparation. That
-   command owns the entire unbounded main/publication schema and advances
-   sequences. Production already has the exact audit schema; run the bounded,
-   read-only catalog preflight below. If it fails, stop. The normal release
-   schema initialization path remains the sole owner of schema repair.
+3. Contract v2 retains operation purpose
+   `score_history_null_timestamp_dedup_v1` but records
+   `maintenance_contract_version = 2`. Normal release schema initialization
+   widens the immutable audit constraint to accept retained v1 runs plus new
+   v2 runs. Do **not** invoke the unbounded `--initialize-schema-only` command
+   solely as maintenance preparation. Run the bounded, read-only catalog
+   preflight below; if it fails, stop. Normal release initialization remains
+   the sole owner of schema repair.
 4. Before execute, capture Docker/Postgres health, public-read freeze state,
    published/active scrape, locks/long queries, disk, CPU, and memory.
 5. Do not execute during an active scrape/write phase. Use a clean maintenance
    boundary with the required live-scrape parity and restore evidence.
-6. Run two dry runs against unchanged data and require identical digests and
-   accepted classifications.
+6. Run two contract-v2 dry runs against unchanged data and require identical
+   digests, `ContractVersion = 2`, and
+   `MergeSemantics.AllowedNullEnrichmentFields` equal to
+   `["difficulty","season"]`, with zero blocked groups. If the supplied
+   2026-08-04 data is unchanged, `ClassificationCounts` must be exactly `122`
+   `expected_zero_score_rank_metadata_only` groups / `250` rows / `128`
+   excess and `202` `expected_zero_score_null_enrichment` groups / `1,148`
+   rows / `946` excess. Every selected difficulty/season must equal the
+   group's sole non-null value or null when all values are null. Any new field,
+   conflicting non-null value, nonzero score, non-null timestamp, count drift,
+   or digest drift requires a new review; do not execute.
 
 ## Commands
 
@@ -259,8 +287,9 @@ is rejected.
 
 ## Expected lock and runtime
 
-For the measured `705,687`-row / `441 MB` relation, plan for one short
-write-blocking transaction:
+For the supplied `763,908`-row relation, plan for one short write-blocking
+transaction. Use the current v2 dry-run relation sizes rather than the older
+size estimate:
 
 | Step | Lock/load | Planning estimate |
 |---|---|---:|
@@ -277,7 +306,8 @@ index build approaches its statement timeout.
 ## Audit and validation
 
 `score_history_dedup_maintenance_runs` stores non-null purpose, contract
-version, CLI source, digest, canonical candidate data, database/user/server
+version (`2` for the null-enrichment contract), CLI source, digest, canonical
+candidate data, database/user/server
 identity, exact counts, before/after index DDL, execution time, and executable
 rollback SQL.
 
@@ -326,8 +356,8 @@ WHERE maintenance_run_id = <run-id>;
 Save and execute that text only in a gated maintenance window. It:
 
 1. takes the same short timeouts and write-blocking table lock;
-2. verifies the immutable audit count, digest, target index, and current merged
-   survivors;
+2. verifies the immutable audit count, contract version, digest, target index,
+   and current merged survivors, including selected `difficulty` and `season`;
 3. proves every audited non-survivor ID is still absent, refusing rollback
    before any delete if a later explicit-ID row reused one;
 4. drops the `NULLS NOT DISTINCT` index;
@@ -337,9 +367,11 @@ Save and execute that text only in a gated maintenance window. It:
 8. recreates the legacy ordinary unique `ix_sh_dedup`;
 9. advances `score_history_id_seq` without rewinding it.
 
-Rollback fails closed if later writes changed a survivor, reused an audited
-non-survivor ID, or made audit evidence incomplete. Unrelated later rows remain
-untouched. The audit tables remain immutable after rollback. Run a new dry run
-and require the original digest before considering the restore complete; a
+Rollback fails closed if later writes changed any survivor value (including
+selected `difficulty` or `season`), reused an audited non-survivor ID, or made
+audit evidence incomplete. Unrelated later rows remain untouched. The audit
+tables remain immutable after rollback. Run a new contract-v2 dry run and
+require the original digest before considering the restore complete; a
 subsequent execute creates a new immutable run rather than treating the rolled
-back run as currently applied.
+back run as currently applied. A contract-v1 digest or audit run cannot satisfy
+the contract-v2 execute/rerun lookup.

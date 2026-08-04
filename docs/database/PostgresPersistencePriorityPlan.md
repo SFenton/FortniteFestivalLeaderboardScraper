@@ -1939,34 +1939,53 @@ next full scrape must pass normal publication. Operational detail is in
 ## Nullable score-history uniqueness maintenance
 
 The repository now contains an explicit audited implementation for the known
-nullable `score_history` duplicate set. It is not a startup cleanup and is not
-approved for execution during scrape `1277` post-processing. Normal release
-schema initialization owns the immutable, retention-independent
-run/original-row audit tables; the maintenance workflow must not invoke the
-unbounded `--initialize-schema-only` path as preparation.
+nullable `score_history` duplicate set. It is not a startup cleanup and this
+contract-v2 repair was not executed live. Normal release schema initialization
+owns the immutable, retention-independent run/original-row audit tables and
+the one-time constraint widening that preserves v1 runs while accepting v2;
+the maintenance workflow must not invoke the unbounded
+`--initialize-schema-only` path as preparation.
 
 The default dry run is repeatable-read/read-only and produces a deterministic
-digest plus counts, affected identities, semantic variance, per-group maxima,
-sizes, index definition, and merge plan. Execute requires that exact digest,
-uses `SET LOCAL` for the three-second lock timeout and 180-second statement
-timeout, and takes the `SHARE ROW EXCLUSIVE` table lock before the first
-snapshot-establishing `SELECT` and transaction advisory lock. A writer commit
-that precedes table-lock acquisition is therefore analyzed in the protected
-state rather than hidden behind a stale repeatable-read snapshot.
+contract-v2 digest plus counts, affected identities, semantic variance,
+selected difficulty/season, actual enrichment/conflict fields, classification
+counts, per-group maxima, sizes, index definition, and merge plan. Execute
+requires that exact digest, uses `SET LOCAL` for the three-second lock timeout
+and 180-second statement timeout, and takes the `SHARE ROW EXCLUSIVE` table
+lock before the first snapshot-establishing `SELECT` and transaction advisory
+lock. A writer commit that precedes table-lock acquisition is therefore
+analyzed in the protected state rather than hidden behind a stale
+repeatable-read snapshot.
 
 Maintenance performs a bounded exact catalog preflight for the audit
 tables/columns/defaults, constraints, immutable function bodies and triggers,
 digest index, and sequence, failing closed without schema mutation. It then
-blocks on any nonzero score or invariant-field variance, audits all originals,
-and atomically promotes `ix_sh_dedup` to
-`UNIQUE ... NULLS NOT DISTINCT`.
+allows only zero-score/null-timestamp groups whose non-difficulty/season
+invariants are identical and whose difficulty/season each have at most one
+distinct non-null value. It selects that known value (or null when all are
+null), blocks all conflicting non-null or broader metadata variance, audits all
+originals, updates the lowest-ID survivor, deletes only audited
+non-survivors, and atomically promotes `ix_sh_dedup` to `UNIQUE ... NULLS NOT
+DISTINCT`.
+
+The supplied 2026-08-04 dry run recorded `763,908` total rows, `1,632` null
+timestamps, and `324` groups / `1,398` rows / `1,074` excess. Contract v1
+accepted `122` rank-only groups (`250` rows / `128` excess) and blocked `202`
+only for safe null enrichment (`1,148` rows / `946` excess): `151`
+difficulty-only, `46` season-only, and `5` both. Every group is
+zero-score/null-timestamp, each field has at most one distinct non-null value,
+and no other invariant varies. Execution remains gated on two matching
+accepted contract-v2 dry runs with exactly `["difficulty","season"]` allowed,
+zero blocked/conflicting groups, the normal live health/quiescence checks, and
+retained rollback evidence.
 
 Schedule the estimated 15-150 second write-blocking transaction only at a
 clean parity-gated boundary. Preserve the stored rollback SQL, which validates
-unchanged merged survivors and absence of every audited non-survivor ID before
-deleting anything, preserves unrelated later writes, restores every original
-row/ID, recreates the legacy unique index, and never rewinds the sequence. The
-full procedure is
+unchanged merged survivors including selected difficulty/season and absence of
+every audited non-survivor ID before deleting anything, preserves unrelated
+later writes, restores every original row/ID, recreates the legacy unique
+index, and never rewinds the sequence. Contract-v1 digests/runs cannot satisfy
+the version-2 execute or rerun path. The full procedure is
 `docs/database/ScoreHistoryDedupMaintenanceRunbook.md`.
 
 ## Required proof package for every reclaim action

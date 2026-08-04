@@ -113,7 +113,8 @@ public sealed class ScoreHistoryDedupMaintenanceService
                 "'score_history_null_timestamp_dedup_v1'::text)"),
             new(
                 AuditRunTable,
-                "CHECK (maintenance_contract_version = 1)"),
+                "CHECK (maintenance_contract_version = " +
+                "ANY (ARRAY[1, 2]))"),
             new(
                 AuditRunTable,
                 "CHECK (execution_source = 'explicit_cli'::text)"),
@@ -227,6 +228,12 @@ public sealed class ScoreHistoryDedupMaintenanceService
         "difficulty",
     ];
 
+    private static readonly string[] AllowedNullEnrichmentFieldNames =
+    [
+        "difficulty",
+        "season",
+    ];
+
     private static readonly ScoreHistoryDedupMergeSemantics MergeSemantics =
         new(
             Survivor: "lowest_id",
@@ -235,7 +242,11 @@ public sealed class ScoreHistoryDedupMaintenanceService
                 "minimum_positive_non_null_else_minimum_non_null",
             AllTimeRank:
                 "minimum_positive_non_null_else_minimum_non_null",
+            Difficulty: "single_distinct_non_null_else_null",
+            Season: "single_distinct_non_null_else_null",
             InvariantFields: InvariantFieldNames,
+            AllowedNullEnrichmentFields:
+                AllowedNullEnrichmentFieldNames,
             DeleteRule: "delete_non_survivors_only");
 
     private readonly NpgsqlDataSource _dataSource;
@@ -405,7 +416,7 @@ public sealed class ScoreHistoryDedupMaintenanceService
         var rowsDeleted = await DeleteNonSurvivorsAsync(
             conn,
             tx,
-            analysis.Rows,
+            maintenanceRunId,
             analysis.Groups,
             ct);
         if (rowsDeleted != analysis.Report.ExcessRowCount)
@@ -1280,14 +1291,44 @@ public sealed class ScoreHistoryDedupMaintenanceService
                 var ordered = group.OrderBy(row => row.Id).ToArray();
                 var first = ordered[0];
                 var variedFields = GetVariedInvariantFields(first, ordered);
+                var strictVariedFields = variedFields
+                    .Where(field => !AllowedNullEnrichmentFieldNames.Contains(
+                        field,
+                        StringComparer.Ordinal))
+                    .ToArray();
+                var difficultyMerge = AnalyzeAllowedNullEnrichment(
+                    ordered.Select(row => row.Difficulty));
+                var seasonMerge = AnalyzeAllowedNullEnrichment(
+                    ordered.Select(row => row.Season));
+                var nullEnrichmentFields = new List<string>();
+                var conflictingNonNullFields = new List<string>();
+                if (difficultyMerge.HasNullEnrichment)
+                    nullEnrichmentFields.Add("difficulty");
+                if (seasonMerge.HasNullEnrichment)
+                    nullEnrichmentFields.Add("season");
+                if (difficultyMerge.HasConflictingNonNullValues)
+                    conflictingNonNullFields.Add("difficulty");
+                if (seasonMerge.HasConflictingNonNullValues)
+                    conflictingNonNullFields.Add("season");
                 var expectedScore = group.Key.NewScore == 0;
-                var classification = expectedScore
-                    ? variedFields.Count == 0
+                var expectedTimestamp =
+                    group.Key.ScoreAchievedAt is null;
+                var allowed =
+                    expectedScore
+                    && expectedTimestamp
+                    && strictVariedFields.Length == 0
+                    && conflictingNonNullFields.Count == 0;
+                var classification = allowed
+                    ? nullEnrichmentFields.Count == 0
                         ? "expected_zero_score_rank_metadata_only"
-                        : "blocked_semantic_variance"
-                    : variedFields.Count == 0
+                        : "expected_zero_score_null_enrichment"
+                    : !expectedScore
                         ? "blocked_non_zero_score"
-                        : "blocked_non_zero_score_and_semantic_variance";
+                        : !expectedTimestamp
+                            ? "blocked_non_null_score_achieved_at"
+                            : conflictingNonNullFields.Count > 0
+                                ? "blocked_conflicting_non_null_metadata"
+                                : "blocked_semantic_variance";
                 var selectedNewRank = SelectCanonicalRank(
                     ordered.Select(row => row.NewRank));
                 var selectedAllTimeRank = SelectCanonicalRank(
@@ -1315,9 +1356,13 @@ public sealed class ScoreHistoryDedupMaintenanceService
                     MaximumAllTimeRank:
                         MaxNullable(ordered.Select(row => row.AllTimeRank)),
                     SelectedAllTimeRank: selectedAllTimeRank,
+                    SelectedSeason: seasonMerge.SelectedValue,
+                    SelectedDifficulty: difficultyMerge.SelectedValue,
                     VariedInvariantFields: variedFields,
+                    NullEnrichmentFields: nullEnrichmentFields,
+                    ConflictingNonNullFields: conflictingNonNullFields,
                     Classification: classification,
-                    Allowed: expectedScore && variedFields.Count == 0);
+                    Allowed: allowed);
             })
             .ToArray();
     }
@@ -1383,6 +1428,26 @@ public sealed class ScoreHistoryDedupMaintenanceService
 
         var positive = observed.Where(value => value > 0).ToArray();
         return positive.Length > 0 ? positive.Min() : observed.Min();
+    }
+
+    private static NullableFieldMerge AnalyzeAllowedNullEnrichment(
+        IEnumerable<int?> values)
+    {
+        var observed = values.ToArray();
+        var distinctNonNull = observed
+            .Where(value => value.HasValue)
+            .Select(value => value!.Value)
+            .Distinct()
+            .OrderBy(value => value)
+            .Take(2)
+            .ToArray();
+        return new NullableFieldMerge(
+            SelectedValue:
+                distinctNonNull.Length == 1 ? distinctNonNull[0] : null,
+            HasNullEnrichment:
+                observed.Any(value => !value.HasValue)
+                && distinctNonNull.Length == 1,
+            HasConflictingNonNullValues: distinctNonNull.Length > 1);
     }
 
     private static int? MinNullable(IEnumerable<int?> values)
@@ -1571,8 +1636,14 @@ public sealed class ScoreHistoryDedupMaintenanceService
             writer.WriteString("changedAt", MergeSemantics.ChangedAt);
             writer.WriteString("newRank", MergeSemantics.NewRank);
             writer.WriteString("allTimeRank", MergeSemantics.AllTimeRank);
+            writer.WriteString("difficulty", MergeSemantics.Difficulty);
+            writer.WriteString("season", MergeSemantics.Season);
             writer.WriteStartArray("invariantFields");
             foreach (var field in MergeSemantics.InvariantFields)
+                writer.WriteStringValue(field);
+            writer.WriteEndArray();
+            writer.WriteStartArray("allowedNullEnrichmentFields");
+            foreach (var field in MergeSemantics.AllowedNullEnrichmentFields)
                 writer.WriteStringValue(field);
             writer.WriteEndArray();
             writer.WriteString("deleteRule", MergeSemantics.DeleteRule);
@@ -1625,11 +1696,28 @@ public sealed class ScoreHistoryDedupMaintenanceService
                     writer,
                     "selectedAllTimeRank",
                     group.SelectedAllTimeRank);
+                WriteNullableInt32(
+                    writer,
+                    "selectedDifficulty",
+                    group.SelectedDifficulty);
+                WriteNullableInt32(
+                    writer,
+                    "selectedSeason",
+                    group.SelectedSeason);
                 writer.WriteString("classification", group.Classification);
                 writer.WriteStartArray("variedInvariantFields");
                 foreach (var field in group.VariedInvariantFields)
                     writer.WriteStringValue(field);
                 writer.WriteEndArray();
+                writer.WriteStartArray("nullEnrichmentFields");
+                foreach (var field in group.NullEnrichmentFields)
+                    writer.WriteStringValue(field);
+                writer.WriteEndArray();
+                writer.WriteStartArray("conflictingNonNullFields");
+                foreach (var field in group.ConflictingNonNullFields)
+                    writer.WriteStringValue(field);
+                writer.WriteEndArray();
+                writer.WriteBoolean("allowed", group.Allowed);
                 writer.WriteEndObject();
             }
             writer.WriteEndArray();
@@ -1957,17 +2045,23 @@ public sealed class ScoreHistoryDedupMaintenanceService
                     @survivorIds::INTEGER[],
                     @newRanks::INTEGER[],
                     @allTimeRanks::INTEGER[],
+                    @seasons::INTEGER[],
+                    @difficulties::INTEGER[],
                     @changedAts::TIMESTAMPTZ[])
                     AS plan(
                         survivor_id,
                         selected_new_rank,
                         selected_all_time_rank,
+                        selected_season,
+                        selected_difficulty,
                         selected_changed_at)
             )
             UPDATE public.score_history history
             SET
                 new_rank = plan.selected_new_rank,
                 all_time_rank = plan.selected_all_time_rank,
+                season = plan.selected_season,
+                difficulty = plan.selected_difficulty,
                 changed_at = plan.selected_changed_at
             FROM merge_plan plan
             WHERE history.id = plan.survivor_id;
@@ -1985,6 +2079,14 @@ public sealed class ScoreHistoryDedupMaintenanceService
             NpgsqlDbType.Array | NpgsqlDbType.Integer).Value =
             groups.Select(group => group.SelectedAllTimeRank).ToArray();
         cmd.Parameters.Add(
+            "seasons",
+            NpgsqlDbType.Array | NpgsqlDbType.Integer).Value =
+            groups.Select(group => group.SelectedSeason).ToArray();
+        cmd.Parameters.Add(
+            "difficulties",
+            NpgsqlDbType.Array | NpgsqlDbType.Integer).Value =
+            groups.Select(group => group.SelectedDifficulty).ToArray();
+        cmd.Parameters.Add(
             "changedAts",
             NpgsqlDbType.Array | NpgsqlDbType.TimestampTz).Value =
             groups.Select(group => group.EarliestChangedAt).ToArray();
@@ -1994,11 +2096,11 @@ public sealed class ScoreHistoryDedupMaintenanceService
     private static async Task<long> DeleteNonSurvivorsAsync(
         NpgsqlConnection conn,
         NpgsqlTransaction tx,
-        IReadOnlyList<ScoreHistoryOriginalRow> rows,
+        long maintenanceRunId,
         IReadOnlyList<ScoreHistoryDedupGroupReport> groups,
         CancellationToken ct)
     {
-        if (rows.Count == 0)
+        if (groups.Count == 0)
             return 0;
 
         await using var cmd = conn.CreateCommand();
@@ -2006,13 +2108,12 @@ public sealed class ScoreHistoryDedupMaintenanceService
         cmd.CommandTimeout = ExecuteCommandTimeoutSeconds;
         cmd.CommandText = """
             DELETE FROM public.score_history history
-            WHERE history.id = ANY(@originalIds)
+            USING public.score_history_dedup_original_rows original
+            WHERE original.maintenance_run_id = @runId
+              AND history.id = original.original_id
               AND NOT (history.id = ANY(@survivorIds));
             """;
-        cmd.Parameters.Add(
-            "originalIds",
-            NpgsqlDbType.Array | NpgsqlDbType.Integer).Value =
-            rows.Select(row => row.Id).ToArray();
+        cmd.Parameters.AddWithValue("runId", maintenanceRunId);
         cmd.Parameters.Add(
             "survivorIds",
             NpgsqlDbType.Array | NpgsqlDbType.Integer).Value =
@@ -2104,6 +2205,7 @@ public sealed class ScoreHistoryDedupMaintenanceService
                 ) AS persisted_original_rows
             FROM score_history_dedup_maintenance_runs run
             WHERE run.maintenance_purpose = @purpose
+              AND run.maintenance_contract_version = @contractVersion
               AND run.dry_run_digest = @digest
             ORDER BY run.maintenance_run_id DESC
             LIMIT 1;
@@ -2111,6 +2213,9 @@ public sealed class ScoreHistoryDedupMaintenanceService
         cmd.Parameters.AddWithValue(
             "purpose",
             ScoreHistoryDedupMaintenanceSchema.Purpose);
+        cmd.Parameters.AddWithValue(
+            "contractVersion",
+            ScoreHistoryDedupMaintenanceSchema.ContractVersion);
         cmd.Parameters.AddWithValue("digest", expectedDigest);
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct))
@@ -2158,7 +2263,9 @@ public sealed class ScoreHistoryDedupMaintenanceService
                 FROM public.score_history_dedup_maintenance_runs
                 WHERE maintenance_run_id = {{maintenanceRunId}}
                   AND maintenance_purpose =
-                      'score_history_null_timestamp_dedup_v1'
+                      '{{ScoreHistoryDedupMaintenanceSchema.Purpose}}'
+                  AND maintenance_contract_version =
+                      {{ScoreHistoryDedupMaintenanceSchema.ContractVersion}}
                   AND dry_run_digest = '{{normalizedDigest}}';
 
                 IF NOT FOUND THEN
@@ -2254,8 +2361,7 @@ public sealed class ScoreHistoryDedupMaintenanceService
                                 AS stars,
                             (ARRAY_AGG(percentile ORDER BY original_id))[1]
                                 AS percentile,
-                            (ARRAY_AGG(season ORDER BY original_id))[1]
-                                AS season,
+                            MIN(season) AS season,
                             (ARRAY_AGG(score_achieved_at ORDER BY original_id))[1]
                                 AS score_achieved_at,
                             (ARRAY_AGG(season_rank ORDER BY original_id))[1]
@@ -2266,8 +2372,7 @@ public sealed class ScoreHistoryDedupMaintenanceService
                                 MIN(all_time_rank) FILTER (
                                     WHERE all_time_rank IS NOT NULL)
                             ) AS all_time_rank,
-                            (ARRAY_AGG(difficulty ORDER BY original_id))[1]
-                                AS difficulty,
+                            MIN(difficulty) AS difficulty,
                             MIN(changed_at) AS changed_at
                         FROM public.score_history_dedup_original_rows
                         WHERE maintenance_run_id = {{maintenanceRunId}}
@@ -2625,6 +2730,11 @@ public sealed class ScoreHistoryDedupMaintenanceService
         IReadOnlyList<ScoreHistoryDedupGroupReport> Groups,
         string CanonicalData);
 
+    private sealed record NullableFieldMerge(
+        int? SelectedValue,
+        bool HasNullEnrichment,
+        bool HasConflictingNonNullValues);
+
     private sealed record ExecutionProvenance(
         string DatabaseName,
         string DatabaseUser,
@@ -2669,7 +2779,10 @@ public sealed record ScoreHistoryDedupMergeSemantics(
     string ChangedAt,
     string NewRank,
     string AllTimeRank,
+    string Difficulty,
+    string Season,
     IReadOnlyList<string> InvariantFields,
+    IReadOnlyList<string> AllowedNullEnrichmentFields,
     string DeleteRule);
 
 public sealed record ScoreHistoryDedupClassificationCount(
@@ -2697,7 +2810,11 @@ public sealed record ScoreHistoryDedupGroupReport(
     int? MinimumAllTimeRank,
     int? MaximumAllTimeRank,
     int? SelectedAllTimeRank,
+    int? SelectedSeason,
+    int? SelectedDifficulty,
     IReadOnlyList<string> VariedInvariantFields,
+    IReadOnlyList<string> NullEnrichmentFields,
+    IReadOnlyList<string> ConflictingNonNullFields,
     string Classification,
     bool Allowed);
 
