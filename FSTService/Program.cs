@@ -78,21 +78,33 @@ var improvementNotificationRecoveryRequested = args.Any(
     arg => arg.Equals("--recover-improvement-notifications", StringComparison.OrdinalIgnoreCase));
 var scoreHistoryDedupMaintenanceCommand =
     ScoreHistoryDedupMaintenanceCommand.Parse(args);
+var soloFamilyRankingBackfillCommand =
+    SoloFamilyRankingBackfillCommand.Parse(args);
 var initializeSchemaOnlyRequested = args.Any(
     arg => arg.Equals(
         "--initialize-schema-only",
         StringComparison.OrdinalIgnoreCase));
 if (scoreHistoryDedupMaintenanceCommand is not null
     && (improvementNotificationRecoveryRequested
+        || soloFamilyRankingBackfillCommand is not null
         || initializeSchemaOnlyRequested))
 {
     throw new ArgumentException(
         "Score-history dedup maintenance cannot run with another one-shot " +
         "schema or notification command.");
 }
+if (soloFamilyRankingBackfillCommand is not null
+    && (improvementNotificationRecoveryRequested
+        || initializeSchemaOnlyRequested))
+{
+    throw new ArgumentException(
+        "Solo-family ranking backfill cannot run with another one-shot " +
+        "schema or notification command.");
+}
 
 var apiOnlyRequested = improvementNotificationRecoveryRequested
     || scoreHistoryDedupMaintenanceCommand is not null
+    || soloFamilyRankingBackfillCommand is not null
     || initializeSchemaOnlyRequested
     || args.Any(arg => arg.Equals("--api-only", StringComparison.OrdinalIgnoreCase))
     || builder.Configuration.GetValue<bool>($"{ScraperOptions.Section}:ApiOnly");
@@ -313,7 +325,9 @@ var pgConnStr = builder.Configuration.GetConnectionString("PostgreSQL")
     ?? throw new InvalidOperationException("ConnectionStrings:PostgreSQL is required.");
 var pgConnectionStringBuilder = new NpgsqlConnectionStringBuilder(pgConnStr)
 {
-    ApplicationName = hostedWorkerMode switch
+    ApplicationName = soloFamilyRankingBackfillCommand is not null
+        ? "fstservice-solo-family-backfill"
+        : hostedWorkerMode switch
     {
         HostedWorkerMode.FullWorker => "fstworker-scraper",
         HostedWorkerMode.RegistrationSyncWorker => "fstworker-registration",
@@ -346,6 +360,7 @@ builder.Services.AddSingleton<FSTService.Persistence.Maintenance.DeferredRetenti
 builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationService>();
 builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationRecoveryService>();
 builder.Services.AddSingleton<FSTService.Persistence.ScoreHistoryDedupMaintenanceService>();
+builder.Services.AddSingleton<SoloFamilyRankingBackfillService>();
 
 // ─── Shared services ────────────────────────────────────────
 
@@ -637,42 +652,61 @@ builder.Services.AddCors(opts =>
 
 // StartupInitializer must run before ScraperWorker (hosted services start in registration order)
 builder.Services.AddSingleton<StartupInitializer>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<StartupInitializer>());
-builder.Services.AddHostedService<FSTService.Persistence.ImprovementNotificationStalenessMonitor>();
-if (hostedWorkerMode != HostedWorkerMode.FullWorker)
-    builder.Services.AddHostedService<FSTService.Api.PublicationChangeMonitorService>();
-builder.Services.AddHealthChecks()
-    .AddCheck<StartupInitializer>("database", tags: ["ready"]);
-if (hostedWorkerMode == HostedWorkerMode.ApiOnly)
+if (soloFamilyRankingBackfillCommand is not null)
 {
-    builder.Services.AddHostedService<SongCatalogRefreshWorker>();
-}
-else if (hostedWorkerMode == HostedWorkerMode.FrontendOnly)
-{
-    builder.Services.AddHostedService<SongCatalogRefreshWorker>();
-}
-else if (hostedWorkerMode == HostedWorkerMode.RegistrationSyncWorker)
-{
-    builder.Services.AddHostedService<SongCatalogRefreshWorker>();
-    builder.Services.AddHostedService<RegistrationBackfillWorker>();
+    builder.Services.AddHealthChecks();
 }
 else
 {
-    builder.Services.AddHostedService<WorkerStatusHeartbeatService>();
-    builder.Services.AddHostedService<ScraperWorker>();
-    if (HostedWorkerModeResolver.ShouldRunRegistrationBackfillWorker(
-            hostedWorkerMode,
-            runOnceRequested,
-            backfillOnlyRequested))
+    builder.Services.AddHostedService(
+        sp => sp.GetRequiredService<StartupInitializer>());
+    builder.Services.AddHostedService<
+        FSTService.Persistence.ImprovementNotificationStalenessMonitor>();
+    if (hostedWorkerMode != HostedWorkerMode.FullWorker)
+    {
+        builder.Services.AddHostedService<
+            FSTService.Api.PublicationChangeMonitorService>();
+    }
+    builder.Services.AddHealthChecks()
+        .AddCheck<StartupInitializer>("database", tags: ["ready"]);
+    if (hostedWorkerMode == HostedWorkerMode.ApiOnly)
+    {
+        builder.Services.AddHostedService<SongCatalogRefreshWorker>();
+    }
+    else if (hostedWorkerMode == HostedWorkerMode.FrontendOnly)
+    {
+        builder.Services.AddHostedService<SongCatalogRefreshWorker>();
+    }
+    else if (hostedWorkerMode == HostedWorkerMode.RegistrationSyncWorker)
+    {
+        builder.Services.AddHostedService<SongCatalogRefreshWorker>();
         builder.Services.AddHostedService<RegistrationBackfillWorker>();
-    builder.Services.AddHostedService<BandRankHistoryWorker>();
+    }
+    else
+    {
+        builder.Services.AddHostedService<WorkerStatusHeartbeatService>();
+        builder.Services.AddHostedService<ScraperWorker>();
+        if (HostedWorkerModeResolver.ShouldRunRegistrationBackfillWorker(
+                hostedWorkerMode,
+                runOnceRequested,
+                backfillOnlyRequested))
+        {
+            builder.Services.AddHostedService<RegistrationBackfillWorker>();
+        }
+        builder.Services.AddHostedService<BandRankHistoryWorker>();
+    }
 }
 
 // ─── Build and configure pipeline ───────────────────────────
 
 var app = builder.Build();
 
-if (hostedWorkerMode == HostedWorkerMode.ApiOnly)
+if (soloFamilyRankingBackfillCommand is not null)
+{
+    app.Logger.LogInformation(
+        "Solo-family ranking backfill one-shot mode enabled; no hosted services were registered and schema initialization will not run.");
+}
+else if (hostedWorkerMode == HostedWorkerMode.ApiOnly)
 {
     app.Logger.LogInformation("API-only mode enabled; scraper hosted services were not registered. Song catalog refresh remains active.");
 }
@@ -710,6 +744,19 @@ if (scoreHistoryDedupMaintenanceCommand is not null)
         : await maintenance.DryRunAsync(CancellationToken.None);
     Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(report));
     if (report is ScoreHistoryDedupDryRunReport { CanExecute: false })
+        Environment.ExitCode = 2;
+    return;
+}
+
+// Explicit one-shot solo family ranking rebuild. Dry run is the default.
+if (soloFamilyRankingBackfillCommand is not null)
+{
+    var backfill = app.Services.GetRequiredService<
+        SoloFamilyRankingBackfillService>();
+    var report = backfill.Rebuild(
+        soloFamilyRankingBackfillCommand.Execute);
+    Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(report));
+    if (report.InvalidRowCount > 0)
         Environment.ExitCode = 2;
     return;
 }

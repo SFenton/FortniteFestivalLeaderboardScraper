@@ -832,6 +832,34 @@ and retained old-table rollback; bounded unlogged samples are evaluation-only.
 | `composite_rank_history_latest` | Empty obsolete latest projection schema | No current exact caller | ORPHAN-RECLAIM truncated stale rows; deterministic rebuild from retained `composite_rank_history` |
 | `solo_family_rankings`, `combo_leaderboard`, `combo_stats`, `combo_ranking_deltas` | Derived ranking projections | Rankings pipeline/API | Rebuildable from published solo current state |
 
+Solo-family ranking denominators are selected identically by runtime and the
+one-shot backfill. For each instrument, the effective denominator is the
+greater of the supplied exact catalog chart count and the maximum canonical
+`account_rankings.total_charted_songs`; a family denominator is the sum of its
+effective instrument values. This preserves retained valid canonical scores
+when the current catalog has fewer chart properties, without capping songs,
+full combos, or total score.
+
+Every produced family row is rejected before replacement if songs played or
+full combos exceed the family denominator, or if coverage/FC rate exceeds
+`1 + 1e-9` or is non-finite. Runtime logs deterministic catalog/canonical/
+effective overrides. The standalone `--solo-family-ranking-backfill` command
+returns the same evidence as JSON and uses the existing transactional
+`TRUNCATE`/binary-`COPY` replacement only with explicit
+`--solo-family-ranking-backfill-execute`.
+
+The command takes the global publication advisory key by try-lock, holds the
+canonical `account_rankings` source under a bounded share lock, holds the
+publication-state row against freeze/pointer changes, requires no active scrape
+or worker operation, no working publication, unfrozen reads, a stable current
+generation/completed published scrape, and an exact ready published catalog.
+It initializes no schema and starts no hosted workers. Because
+`solo_family_rankings` is unversioned, live execute still requires worker and
+service quiescence (or separately proven bounded table-lock behavior). Scrape
+`1277` failed publication on the former denominator mismatch and is not
+republished by maintenance; a later full scrape must prove publication. See
+`docs/database/SoloFamilyRankingBackfillRunbook.md`.
+
 ### Band source, identity, membership, and projections
 
 Band-partitioned source/current families use `Band_Duets`, `Band_Trios`, and

@@ -383,12 +383,38 @@ public sealed class RankingsCalculator
         _progress.SetSubOperation("solo_family_rankings");
         _workerStatus?.BeginOperation("rankings.solo_family", "Computing solo family rankings", phase: "ComputingRankings", subOperation: "solo_family_rankings");
         var familySw = System.Diagnostics.Stopwatch.StartNew();
-        ComputeSoloFamilyRankings(rankingDataFull, totalChartedByInstrument);
-        familySw.Stop();
-        _progress.ReportPhaseItemComplete();
-        _workerStatus?.CompleteOperation("rankings.solo_family");
-        _log.LogInformation("Solo family rankings complete in {Elapsed}.", familySw.Elapsed);
-        LogPhase("solo_family_rankings", instrument: null, familySw.Elapsed);
+        try
+        {
+            ComputeSoloFamilyRankings(
+                rankingDataFull,
+                totalChartedByInstrument);
+            familySw.Stop();
+            _progress.ReportPhaseItemComplete();
+            _workerStatus?.CompleteOperation("rankings.solo_family");
+            _log.LogInformation(
+                "Solo family rankings complete in {Elapsed}.",
+                familySw.Elapsed);
+            LogPhase(
+                "solo_family_rankings",
+                instrument: null,
+                familySw.Elapsed);
+        }
+        catch (OperationCanceledException)
+        {
+            familySw.Stop();
+            _workerStatus?.CompleteOperation(
+                "rankings.solo_family",
+                "cancelled");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            familySw.Stop();
+            _workerStatus?.FailOperation(
+                "rankings.solo_family",
+                ex);
+            throw;
+        }
 
         // ── Phase 4: All-combo rankings ──
         _progress.SetSubOperation("combo_rankings");
@@ -620,19 +646,35 @@ public sealed class RankingsCalculator
         _log.LogInformation("Computed {Combos} combo leaderboards with {TotalRows:N0} total ranked entries.", combosComputed, totalRows);
     }
 
-    internal void ComputeSoloFamilyRankings(
+    internal SoloFamilyRankingBuildResult ComputeSoloFamilyRankings(
         Dictionary<string, Dictionary<string, AccountMetrics>> rankingDataFull,
         IReadOnlyDictionary<string, int> totalChartedByInstrument)
     {
-        var rankings = SoloFamilyRankingBuilder.BuildRankings(
+        var result = SoloFamilyRankingBuilder.BuildRankings(
             SoloFamilyRankingScopes.All,
             rankingDataFull,
             totalChartedByInstrument,
             CredibilityThreshold,
             PopulationMedian);
 
-        _metaDb.ReplaceSoloFamilyRankings(rankings);
-        _log.LogInformation("Computed solo family rankings for {RowCount:N0} account-scope rows.", rankings.Count);
+        foreach (var denominator in result.InstrumentDenominators
+                     .Where(static row => row.IsOverride))
+        {
+            _log.LogWarning(
+                "Solo family ranking denominator override for {Instrument}: catalog={CatalogDenominator:N0}, canonical={CanonicalDenominator:N0}, effective={EffectiveDenominator:N0}.",
+                denominator.Instrument,
+                denominator.CatalogDenominator,
+                denominator.CanonicalDenominator,
+                denominator.EffectiveDenominator);
+        }
+
+        result.ThrowIfInvalid();
+        _metaDb.ReplaceSoloFamilyRankings(result.Rankings);
+        _log.LogInformation(
+            "Computed solo family rankings for {RowCount:N0} account-scope rows with {OverrideCount:N0} denominator override(s).",
+            result.Rankings.Count,
+            result.InstrumentDenominators.Count(static row => row.IsOverride));
+        return result;
     }
 
     private async Task RunRankHistorySnapshotsAndBandRankingsOverlappedAsync(
@@ -1037,6 +1079,11 @@ public sealed class RankingsCalculator
     /// the song has no chart for that instrument and are excluded.
     /// </summary>
     internal static int CountChartedSongs(FestivalService festivalService, string instrument)
+        => CountChartedSongs(festivalService.Songs, instrument);
+
+    internal static int CountChartedSongs(
+        IEnumerable<Song> songs,
+        string instrument)
     {
         if (!GlobalLeaderboardScraper.AllInstruments.Contains(
                 instrument,
@@ -1045,7 +1092,7 @@ public sealed class RankingsCalculator
             return 0;
         }
 
-        return festivalService.Songs.Count(song =>
+        return songs.Count(song =>
             GlobalLeaderboardScraper.TrackSupportsInstrument(
                 song.track,
                 instrument));

@@ -2607,10 +2607,13 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return list;
     }
 
-    public List<AccountRankingSummary> GetAllRankingSummariesDetailed()
+    public List<AccountRankingSummary> GetAllRankingSummariesDetailed(
+        int commandTimeoutSeconds = 0)
     {
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
+        if (commandTimeoutSeconds > 0)
+            cmd.CommandTimeout = commandTimeoutSeconds;
         cmd.CommandText = "SELECT account_id, adjusted_skill_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, total_charted_songs, raw_skill_rating, raw_weighted_rating, raw_max_score_percent FROM account_rankings WHERE instrument = @instrument";
         cmd.Parameters.AddWithValue("instrument", Instrument);
         var list = new List<AccountRankingSummary>();

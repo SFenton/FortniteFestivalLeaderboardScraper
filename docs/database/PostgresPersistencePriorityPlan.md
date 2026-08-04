@@ -1855,6 +1855,52 @@ Decision tier: lower immediate storage reclaim, good operational efficiency.
 | Bloat | High-dead derived/history tables | Refreshed P7 stats show about 4.93-17.17% dead tuples on candidates | Vacuum/repack/rebuild after headroom | Relation size down | Parity/maintenance gate |
 | Hot reads | Status/songs/member-score/cache paths | Count scans, fan-out, live cache writes | Maintained counters/projections, batched reads | p95/query count down | Response parity |
 
+## Solo-family ranking denominator repair
+
+Scrape `1277` completed post-processing and `6,273/6,273` scope-source
+validation, then publication safely failed with PostgreSQL `P0001` on an
+impossible solo-family denominator row. PAD account
+`195e93ef108143b2975ee46662d4d0e1` had `2,788` songs played/full combos against
+`2,786` chart slots. Raw PAD catalog counts were Guitar `695`, Bass `697`,
+Drums `697`, and Vocals `697`; retained canonical Guitar account rows carried
+valid denominators `696` and `697`.
+
+The accepted repository repair centralizes one runtime/backfill invariant:
+each instrument uses `max(catalog count, maximum canonical account denominator)`
+and each family sums those effective values. The incident PAD denominator is
+therefore `2,788` for every row. Numerators and total score are unchanged.
+Rows with counts above the denominator or coverage/FC rate above `1 + 1e-9`
+are rejected before replacement.
+
+The generic `SoloFamilyRankingBackfillService` is now exposed as a dry-run
+default one-shot:
+
+```bash
+dotnet FSTService.dll --solo-family-ranking-backfill
+
+dotnet FSTService.dll \
+  --solo-family-ranking-backfill \
+  --solo-family-ranking-backfill-execute
+```
+
+Its deterministic JSON records published/current IDs, source row counts,
+catalog/canonical/effective denominators, scope denominators/counts,
+invalid-row count, and execution state. It starts no hosted services and does
+not initialize schema. Both modes take the publication lock by try-lock and
+hold canonical `account_rankings` under a five-second-bounded share lock. They
+require no active scrape/worker operation, no working publication, unfrozen
+reads, a stable completed current publication, and an exact ready catalog.
+Execute uses the existing transactional replacement with a five-second target
+table-lock timeout.
+
+This command does not alter
+`fst_account_rankings_denominator_guard_1100` or weaken publication. Because
+the family table is unversioned, live execute requires a stopped worker plus a
+quiesced service or separate atomic table-lock proof and retained same-drive
+rollback evidence. Scrape `1277` remains failed and is not republished; the
+next full scrape must pass normal publication. Operational detail is in
+`docs/database/SoloFamilyRankingBackfillRunbook.md`.
+
 ## Nullable score-history uniqueness maintenance
 
 The repository now contains an explicit audited implementation for the known

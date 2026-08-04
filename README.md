@@ -95,6 +95,40 @@ audited non-survivor ID before deleting anything. See
 for the bounded catalog preflight, maintenance-window checks, locks, runtime
 estimate, validation, and exact per-run rollback SQL.
 
+Solo-family ranking denominator repair is also an explicit one-shot command.
+It rebuilds every fixed family from canonical `account_rankings`, using the
+shared runtime invariant `effective instrument denominator = max(catalog,
+canonical maximum)`. Dry run is the default:
+
+```bash
+# Deterministic JSON only; no ranking replacement
+dotnet FSTService.dll --solo-family-ranking-backfill
+
+# Execute explicitly after matching dry runs and the maintenance gate
+dotnet FSTService.dll \
+  --solo-family-ranking-backfill \
+  --solo-family-ranking-backfill-execute
+```
+
+The command starts no hosted workers, performs no schema initialization, and
+takes the transaction-scoped publication advisory lock without waiting. It
+requires the worker ledger to be absent, explicitly offline, or stale; a live
+heartbeat blocks maintenance even when the worker is idle. Publication-state
+and canonical-ranking locks, `TRUNCATE`/`COPY`, and commit remain on one
+connection and transaction, with the idle-in-transaction timeout disabled
+locally plus bounded lock/statement timeouts. Every runtime-ledger and
+canonical-ranking read performed on a separate connection has an explicit
+30-second command timeout; a stalled read rolls back the lock transaction
+without replacement. Lock loss therefore cannot be followed by a separately
+committed replacement. Frozen reads, unstable publication pointers, active
+updates, and impossible produced rows also fail closed. Because
+`solo_family_rankings` is an unversioned live table, execute requires a stopped
+worker plus quiesced service (or separately proven bounded table-lock
+behavior). Scrape `1277` is not republished by this repair; the next full
+scrape must pass normal publication. See
+[`docs/database/SoloFamilyRankingBackfillRunbook.md`](docs/database/SoloFamilyRankingBackfillRunbook.md)
+for incident evidence, JSON fields, safety checks, validation, and rollback.
+
 Worker correctness rollout uses three rollback-safe environment switches:
 
 - `Features__EnforceScopeCompletenessManifests=true`

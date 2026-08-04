@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using FSTService;
 using FSTService.Persistence;
+using FSTService.Scraping;
 using Microsoft.Extensions.Configuration;
 
 namespace FSTService.Tests.Unit;
@@ -66,6 +67,29 @@ public sealed class RetiredMaintenanceCommandGuardTests
                 .ToUpperInvariant(),
             ScoreHistoryDedupMaintenanceCommand.MaintenanceFlag
                 .ToUpperInvariant(),
+        },
+    };
+
+    public static TheoryData<string[]> ActiveSoloFamilyBackfillForms => new()
+    {
+        new[]
+        {
+            SoloFamilyRankingBackfillCommand.MaintenanceFlag,
+        },
+        new[]
+        {
+            SoloFamilyRankingBackfillCommand.MaintenanceFlag,
+            "--api-only",
+        },
+        new[]
+        {
+            SoloFamilyRankingBackfillCommand.MaintenanceFlag,
+            SoloFamilyRankingBackfillCommand.ExecuteFlag,
+        },
+        new[]
+        {
+            SoloFamilyRankingBackfillCommand.ExecuteFlag.ToUpperInvariant(),
+            SoloFamilyRankingBackfillCommand.MaintenanceFlag.ToUpperInvariant(),
         },
     };
 
@@ -230,6 +254,22 @@ public sealed class RetiredMaintenanceCommandGuardTests
         Assert.Equal(
             arguments.Any(argument => argument.Equals(
                 ScoreHistoryDedupMaintenanceCommand.ExecuteFlag,
+                StringComparison.OrdinalIgnoreCase)),
+            command.Execute);
+    }
+
+    [Theory]
+    [MemberData(nameof(ActiveSoloFamilyBackfillForms))]
+    public void GuardAllowsActiveSoloFamilyBackfillArguments(
+        string[] arguments)
+    {
+        RetiredMaintenanceCommandGuard.ThrowIfPresent(arguments);
+
+        var command = SoloFamilyRankingBackfillCommand.Parse(arguments);
+        Assert.NotNull(command);
+        Assert.Equal(
+            arguments.Any(argument => argument.Equals(
+                SoloFamilyRankingBackfillCommand.ExecuteFlag,
                 StringComparison.OrdinalIgnoreCase)),
             command.Execute);
     }
@@ -399,6 +439,7 @@ public sealed class RetiredMaintenanceCommandGuardTests
     [Theory]
     [InlineData("--initialize-schema-only")]
     [InlineData("--recover-improvement-notifications")]
+    [InlineData("--solo-family-ranking-backfill")]
     public async Task ProgramStartupRejectsConflictingScoreHistoryOneShots(
         string otherOneShot)
     {
@@ -409,6 +450,44 @@ public sealed class RetiredMaintenanceCommandGuardTests
         Assert.NotEqual(0, result.ExitCode);
         Assert.Contains(
             "cannot run with another one-shot",
+            result.Output,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "Retired maintenance option",
+            result.Output,
+            StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("--initialize-schema-only")]
+    [InlineData("--recover-improvement-notifications")]
+    public async Task ProgramStartupRejectsConflictingSoloFamilyOneShots(
+        string otherOneShot)
+    {
+        var result = await RunProgramAsync(
+            SoloFamilyRankingBackfillCommand.MaintenanceFlag,
+            otherOneShot);
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains(
+            "Solo-family ranking backfill cannot run with another one-shot",
+            result.Output,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "Retired maintenance option",
+            result.Output,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ProgramStartupRejectsSoloFamilyExecuteWithoutCommand()
+    {
+        var result = await RunProgramAsync(
+            SoloFamilyRankingBackfillCommand.ExecuteFlag);
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains(
+            $"{SoloFamilyRankingBackfillCommand.MaintenanceFlag} must be specified exactly once",
             result.Output,
             StringComparison.Ordinal);
         Assert.DoesNotContain(

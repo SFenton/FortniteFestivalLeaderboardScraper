@@ -2403,10 +2403,14 @@ public sealed class MetaDatabase : IMetaDatabase
         };
     }
 
-    public ServiceRuntimeState GetServiceRuntimeState(string workerKey)
+    public ServiceRuntimeState GetServiceRuntimeState(
+        string workerKey,
+        int commandTimeoutSeconds = 0)
     {
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
+        if (commandTimeoutSeconds > 0)
+            cmd.CommandTimeout = commandTimeoutSeconds;
         cmd.CommandText = """
             WITH latest_scrape AS (
                 SELECT id, started_at, completed_at, songs_scraped, total_entries,
@@ -5364,17 +5368,51 @@ public sealed class MetaDatabase : IMetaDatabase
 
     // ── Solo family rankings ────────────────────────────────────────
 
-    public void ReplaceSoloFamilyRankings(IReadOnlyList<SoloFamilyRankingDto> rankings)
+    public void ReplaceSoloFamilyRankings(
+        IReadOnlyList<SoloFamilyRankingDto> rankings,
+        int lockTimeoutSeconds = 0)
     {
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "TRUNCATE solo_family_rankings"; c.ExecuteNonQuery(); }
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "SET LOCAL synchronous_commit = off"; c.ExecuteNonQuery(); }
+        if (lockTimeoutSeconds > 0)
+        {
+            using var timeout = conn.CreateCommand();
+            timeout.Transaction = tx;
+            timeout.CommandText =
+                "SELECT set_config('lock_timeout', @lockTimeout, TRUE)";
+            timeout.Parameters.AddWithValue(
+                "lockTimeout",
+                $"{lockTimeoutSeconds}s");
+            timeout.ExecuteNonQuery();
+        }
+
+        ReplaceSoloFamilyRankings(rankings, conn, tx);
+        tx.Commit();
+    }
+
+    public void ReplaceSoloFamilyRankings(
+        IReadOnlyList<SoloFamilyRankingDto> rankings,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction)
+    {
+        ArgumentNullException.ThrowIfNull(rankings);
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(transaction.Connection, connection))
+        {
+            throw new ArgumentException(
+                "The solo-family replacement transaction must belong to " +
+                "the supplied connection.",
+                nameof(transaction));
+        }
+
+        using (var c = connection.CreateCommand()) { c.Transaction = transaction; c.CommandText = "TRUNCATE solo_family_rankings"; c.ExecuteNonQuery(); }
+        using (var c = connection.CreateCommand()) { c.Transaction = transaction; c.CommandText = "SET LOCAL synchronous_commit = off"; c.ExecuteNonQuery(); }
 
         if (rankings.Count > 0)
         {
             var now = DateTime.UtcNow;
-            using var writer = conn.BeginBinaryImport(
+            using var writer = connection.BeginBinaryImport(
                 "COPY solo_family_rankings (scope_id, account_id, songs_played, total_charted_songs, coverage, raw_skill_rating, adjusted_skill_rating, adjusted_skill_rank, weighted_rating, weighted_rank, fc_rate, fc_rate_rank, total_score, total_score_rank, max_score_percent, max_score_percent_rank, full_combo_count, raw_max_score_percent, raw_weighted_rating, computed_at) FROM STDIN (FORMAT BINARY)");
             foreach (var ranking in rankings)
             {
@@ -5403,8 +5441,6 @@ public sealed class MetaDatabase : IMetaDatabase
 
             writer.Complete();
         }
-
-        tx.Commit();
     }
 
     public (List<SoloFamilyRankingDto> Entries, int TotalCount) GetSoloFamilyRankings(string scopeId, string rankBy = "adjusted", int page = 1, int pageSize = 50)

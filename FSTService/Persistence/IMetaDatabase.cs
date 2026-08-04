@@ -1,5 +1,6 @@
 using FortniteFestival.Core.Persistence;
 using FSTService.Scraping;
+using Npgsql;
 
 namespace FSTService.Persistence;
 
@@ -49,7 +50,9 @@ public interface IMetaDatabase : IDisposable
         WorkerOperationInfo? lastOperation = null, string? status = null, string? message = null,
         DateTime? updatedAtUtc = null);
     WorkerStatusInfo? GetWorkerStatus(string workerKey);
-    ServiceRuntimeState GetServiceRuntimeState(string workerKey);
+    ServiceRuntimeState GetServiceRuntimeState(
+        string workerKey,
+        int commandTimeoutSeconds = 0);
 
     // ── Score history ────────────────────────────────────────────────
     void InsertScoreChange(string songId, string instrument, string accountId,
@@ -249,7 +252,13 @@ public interface IMetaDatabase : IDisposable
     int CleanupCompositeRankHistoryRetention(int retentionDays = 365, int batchSize = 5000, int maxBatches = 1, int commandTimeoutSeconds = 0, CancellationToken ct = default);
 
     // ── Solo family rankings ────────────────────────────────────────
-    void ReplaceSoloFamilyRankings(IReadOnlyList<SoloFamilyRankingDto> rankings);
+    void ReplaceSoloFamilyRankings(
+        IReadOnlyList<SoloFamilyRankingDto> rankings,
+        int lockTimeoutSeconds = 0);
+    void ReplaceSoloFamilyRankings(
+        IReadOnlyList<SoloFamilyRankingDto> rankings,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction);
     (List<SoloFamilyRankingDto> Entries, int TotalCount) GetSoloFamilyRankings(string scopeId, string rankBy = "adjusted", int page = 1, int pageSize = 50);
     SoloFamilyRankingDto? GetSoloFamilyRanking(string scopeId, string accountId);
     Dictionary<string, SoloFamilyRankingDto> GetSoloFamilyRankingsForAccount(string accountId);

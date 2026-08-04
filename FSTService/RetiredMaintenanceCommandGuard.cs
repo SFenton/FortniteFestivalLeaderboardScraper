@@ -49,6 +49,8 @@ internal static class RetiredMaintenanceCommandGuard
             "notification-force",
             "score-history-dedup-maintenance",
             "score-history-dedup-execute",
+            "solo-family-ranking-backfill",
+            "solo-family-ranking-backfill-execute",
         };
 
     public static void ThrowIfPresent(IReadOnlyList<string> args)

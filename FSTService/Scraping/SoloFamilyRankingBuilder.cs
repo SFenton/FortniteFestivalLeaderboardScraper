@@ -29,34 +29,151 @@ public static class SoloFamilyRankingScopes
 
 public readonly record struct SoloFamilyScope(string ScopeId, IReadOnlyList<string> Instruments);
 
+internal sealed record SoloFamilyInstrumentDenominator(
+    string Instrument,
+    int CatalogDenominator,
+    int CanonicalDenominator,
+    int EffectiveDenominator)
+{
+    internal bool IsOverride => EffectiveDenominator != CatalogDenominator;
+}
+
+internal sealed record SoloFamilyRankingInvariantViolation(
+    string ScopeId,
+    string AccountId,
+    int SongsPlayed,
+    int FullComboCount,
+    int TotalChartedSongs,
+    double Coverage,
+    double FcRate,
+    string Reason);
+
+internal sealed record SoloFamilyRankingBuildResult(
+    IReadOnlyList<SoloFamilyRankingDto> Rankings,
+    IReadOnlyList<SoloFamilyInstrumentDenominator> InstrumentDenominators,
+    IReadOnlyDictionary<string, int> ScopeDenominators,
+    int InvalidRowCount,
+    SoloFamilyRankingInvariantViolation? FirstInvalidRow)
+{
+    internal void ThrowIfInvalid()
+    {
+        if (InvalidRowCount == 0)
+            return;
+
+        var first = FirstInvalidRow;
+        throw new InvalidOperationException(
+            $"Solo family ranking build produced {InvalidRowCount:N0} " +
+            "publication-incompatible row(s). " +
+            (first is null
+                ? ""
+                : $"First invalid row: scope={first.ScopeId}, " +
+                  $"account={first.AccountId}, songs={first.SongsPlayed}, " +
+                  $"fullCombos={first.FullComboCount}, " +
+                  $"denominator={first.TotalChartedSongs}, " +
+                  $"coverage={first.Coverage:R}, fcRate={first.FcRate:R}, " +
+                  $"reason={first.Reason}."));
+    }
+}
+
 internal static class SoloFamilyRankingBuilder
 {
     private const double MissingPercentile = 1.0;
     private const double MissingMaxScorePercent = 0.0;
+    internal const double RateTolerance = 1e-9;
 
-    internal static List<SoloFamilyRankingDto> BuildRankings(
+    internal static SoloFamilyRankingBuildResult BuildRankings(
         IReadOnlyList<SoloFamilyScope> scopes,
         Dictionary<string, Dictionary<string, RankingsCalculator.AccountMetrics>> perInstrument,
         IReadOnlyDictionary<string, int> totalChartedByInstrument,
         int credibilityThreshold,
         double populationMedian)
     {
+        var denominatorEvidence = BuildDenominatorEvidence(
+            scopes,
+            perInstrument,
+            totalChartedByInstrument);
+        var effectiveByInstrument = denominatorEvidence.ToDictionary(
+            row => row.Instrument,
+            row => row.EffectiveDenominator,
+            StringComparer.OrdinalIgnoreCase);
         var rankings = new List<SoloFamilyRankingDto>();
+        var scopeDenominators = new Dictionary<string, int>(
+            StringComparer.OrdinalIgnoreCase);
+        var invalidRowCount = 0;
+        SoloFamilyRankingInvariantViolation? firstInvalidRow = null;
 
         foreach (var scope in scopes)
-            rankings.AddRange(BuildScope(scope, perInstrument, totalChartedByInstrument, credibilityThreshold, populationMedian));
+        {
+            var scopeDenominator = scope.Instruments.Sum(
+                instrument => effectiveByInstrument.GetValueOrDefault(
+                    instrument));
+            scopeDenominators[scope.ScopeId] = scopeDenominator;
+            rankings.AddRange(BuildScope(
+                scope,
+                perInstrument,
+                scopeDenominator,
+                credibilityThreshold,
+                populationMedian,
+                ref invalidRowCount,
+                ref firstInvalidRow));
+        }
 
-        return rankings;
+        return new SoloFamilyRankingBuildResult(
+            rankings,
+            denominatorEvidence,
+            scopeDenominators,
+            invalidRowCount,
+            firstInvalidRow);
+    }
+
+    private static IReadOnlyList<SoloFamilyInstrumentDenominator>
+        BuildDenominatorEvidence(
+            IReadOnlyList<SoloFamilyScope> scopes,
+            Dictionary<string, Dictionary<string, RankingsCalculator.AccountMetrics>> perInstrument,
+            IReadOnlyDictionary<string, int> totalChartedByInstrument)
+    {
+        var evidence = new List<SoloFamilyInstrumentDenominator>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var instrument in scopes.SelectMany(scope => scope.Instruments))
+        {
+            if (!seen.Add(instrument))
+                continue;
+
+            var catalogDenominator = Math.Max(
+                0,
+                totalChartedByInstrument.GetValueOrDefault(instrument));
+            var canonicalDenominator = 0;
+            if (perInstrument.TryGetValue(instrument, out var instrumentRows))
+            {
+                foreach (var metrics in instrumentRows.Values)
+                {
+                    canonicalDenominator = Math.Max(
+                        canonicalDenominator,
+                        metrics.TotalChartedSongs);
+                }
+            }
+
+            canonicalDenominator = Math.Max(0, canonicalDenominator);
+            evidence.Add(new SoloFamilyInstrumentDenominator(
+                instrument,
+                catalogDenominator,
+                canonicalDenominator,
+                Math.Max(catalogDenominator, canonicalDenominator)));
+        }
+
+        return evidence;
     }
 
     private static List<SoloFamilyRankingDto> BuildScope(
         SoloFamilyScope scope,
         Dictionary<string, Dictionary<string, RankingsCalculator.AccountMetrics>> perInstrument,
-        IReadOnlyDictionary<string, int> totalChartedByInstrument,
+        int totalChartedSongs,
         int credibilityThreshold,
-        double populationMedian)
+        double populationMedian,
+        ref int invalidRowCount,
+        ref SoloFamilyRankingInvariantViolation? firstInvalidRow)
     {
-        var totalChartedSongs = scope.Instruments.Sum(instrument => totalChartedByInstrument.GetValueOrDefault(instrument));
         if (totalChartedSongs <= 0)
             return [];
 
@@ -114,7 +231,63 @@ internal static class SoloFamilyRankingBuilder
         }
 
         ApplyRanks(rows);
+        rows.Sort(static (left, right) =>
+        {
+            var comparison = string.Compare(
+                left.AccountId,
+                right.AccountId,
+                StringComparison.OrdinalIgnoreCase);
+            return comparison != 0
+                ? comparison
+                : string.Compare(
+                    left.AccountId,
+                    right.AccountId,
+                    StringComparison.Ordinal);
+        });
+
+        foreach (var row in rows)
+        {
+            var violation = GetInvariantViolation(row);
+            if (violation is null)
+                continue;
+
+            invalidRowCount++;
+            firstInvalidRow ??= violation;
+        }
+
         return rows;
+    }
+
+    private static SoloFamilyRankingInvariantViolation? GetInvariantViolation(
+        SoloFamilyRankingDto row)
+    {
+        var reasons = new List<string>(4);
+        if (row.SongsPlayed > row.TotalChartedSongs)
+            reasons.Add("songs_played_exceeds_denominator");
+        if (row.FullComboCount > row.TotalChartedSongs)
+            reasons.Add("full_combo_count_exceeds_denominator");
+        if (!double.IsFinite(row.Coverage)
+            || row.Coverage > 1.0 + RateTolerance)
+        {
+            reasons.Add("coverage_exceeds_one");
+        }
+        if (!double.IsFinite(row.FcRate)
+            || row.FcRate > 1.0 + RateTolerance)
+        {
+            reasons.Add("fc_rate_exceeds_one");
+        }
+
+        return reasons.Count == 0
+            ? null
+            : new SoloFamilyRankingInvariantViolation(
+                row.ScopeId,
+                row.AccountId,
+                row.SongsPlayed,
+                row.FullComboCount,
+                row.TotalChartedSongs,
+                row.Coverage,
+                row.FcRate,
+                string.Join(",", reasons));
     }
 
     private static void ApplyRanks(List<SoloFamilyRankingDto> rows)

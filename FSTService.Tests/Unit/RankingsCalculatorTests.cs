@@ -51,7 +51,8 @@ public sealed class RankingsCalculatorTests : IDisposable
         FeatureOptions? features = null,
         BandRankHistoryOptions? bandHistoryOptions = null,
         BandTeamRankingRebuildOptions? bandRankingOptions = null,
-        ScrapeProgressTracker? progress = null)
+        ScrapeProgressTracker? progress = null,
+        WorkerStatusPublisher? workerStatus = null)
     {
         return new RankingsCalculator(
             _persistence,
@@ -61,7 +62,9 @@ public sealed class RankingsCalculatorTests : IDisposable
             Options.Create(features ?? new FeatureOptions()),
             Substitute.For<ILogger<RankingsCalculator>>(),
             Options.Create(bandHistoryOptions ?? new BandRankHistoryOptions()),
-            Options.Create(bandRankingOptions ?? BandTeamRankingRebuildOptions.Default));
+            Options.Create(bandRankingOptions ?? BandTeamRankingRebuildOptions.Default),
+            scraperOptions: null,
+            workerStatus: workerStatus);
     }
 
     private static LeaderboardEntry MakeEntry(string accountId, int score,
@@ -533,6 +536,173 @@ public sealed class RankingsCalculatorTests : IDisposable
         Assert.Equal(0.25, partial.FcRate, precision: 6);
         Assert.Equal(1, complete.FcRateRank);
         Assert.True(partial.FcRateRank > complete.FcRateRank);
+    }
+
+    [Fact]
+    public async Task ComputeAllAsync_AndBackfillProduceIdenticalSoloFamilyRows()
+    {
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        var bassDb = _persistence.GetOrCreateInstrumentDb("Solo_Bass");
+        var drumsDb = _persistence.GetOrCreateInstrumentDb("Solo_Drums");
+        var vocalsDb = _persistence.GetOrCreateInstrumentDb("Solo_Vocals");
+        var proGuitarDb = _persistence.GetOrCreateInstrumentDb(
+            "Solo_PeripheralGuitar");
+
+        guitarDb.UpsertEntries(
+            "song_0",
+            [
+                MakeEntry("complete", 1000, rank: 1, fc: true),
+                MakeEntry("partial", 950, rank: 2, fc: true),
+            ]);
+        bassDb.UpsertEntries(
+            "song_0",
+            [MakeEntry("complete", 900, rank: 1, fc: true)]);
+        drumsDb.UpsertEntries(
+            "song_0",
+            [MakeEntry("complete", 800, rank: 1, fc: true)]);
+        vocalsDb.UpsertEntries(
+            "song_0",
+            [MakeEntry("complete", 700, rank: 1, fc: true)]);
+        proGuitarDb.UpsertEntries(
+            "song_0",
+            [MakeEntry("strings", 600, rank: 1, fc: true)]);
+
+        var festivalService = CreateFestivalServiceWithSongs(1);
+        await _sut.ComputeAllAsync(
+            festivalService,
+            CancellationToken.None);
+        var runtimeRows = ReadAllSoloFamilyRows();
+
+        var catalogPersistence = new FestivalPersistence(
+            _metaFixture.DataSource);
+        var catalogToken = await catalogPersistence.SaveSongsVersionedAsync(
+            festivalService.Songs);
+        var publishedScrapeId = _metaFixture.Db.StartScrapeRun(catalogToken);
+        _metaFixture.Db.CompleteScrapeRun(
+            publishedScrapeId,
+            festivalService.Songs.Count,
+            0,
+            0,
+            0);
+        _metaFixture.Db.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+
+        var backfill = new SoloFamilyRankingBackfillService(
+            _persistence,
+            _metaFixture.Db,
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<SoloFamilyRankingBackfillService>>());
+
+        var dryRun = backfill.Rebuild(execute: false);
+        Assert.False(dryRun.Executed);
+        Assert.Equal(0, dryRun.InvalidRowCount);
+        Assert.Equal(1, dryRun.CatalogDenominatorsByInstrument[
+            "Solo_Guitar"]);
+        Assert.Equal(1, dryRun.CanonicalDenominatorsByInstrument[
+            "Solo_Guitar"]);
+        Assert.Equal(1, dryRun.EffectiveDenominatorsByInstrument[
+            "Solo_Guitar"]);
+        AssertSoloFamilyRowsEquivalent(
+            runtimeRows,
+            ReadAllSoloFamilyRows());
+
+        var execute = backfill.Rebuild(execute: true);
+        Assert.True(execute.Executed);
+        Assert.Equal(0, execute.InvalidRowCount);
+        Assert.Equal(
+            dryRun.SourceRowsByInstrument.OrderBy(row => row.Key),
+            execute.SourceRowsByInstrument.OrderBy(row => row.Key));
+        Assert.Equal(
+            dryRun.ScopeRows.OrderBy(row => row.Key),
+            execute.ScopeRows.OrderBy(row => row.Key));
+        Assert.Equal(
+            dryRun.EffectiveDenominatorsByInstrument.OrderBy(row => row.Key),
+            execute.EffectiveDenominatorsByInstrument.OrderBy(row => row.Key));
+        AssertSoloFamilyRowsEquivalent(
+            runtimeRows,
+            ReadAllSoloFamilyRows());
+    }
+
+    [Fact]
+    public void ComputeSoloFamilyRankings_InvalidRowsDoNotReplaceProjection()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        var sut = CreateSut(metaDb);
+        var perInstrument = GlobalLeaderboardScraper.AllInstruments
+            .ToDictionary(
+                instrument => instrument,
+                _ => new Dictionary<
+                    string,
+                    RankingsCalculator.AccountMetrics>(
+                    StringComparer.OrdinalIgnoreCase),
+                StringComparer.OrdinalIgnoreCase);
+        perInstrument["Solo_Guitar"]["invalid"] = new(
+            AdjustedRating: 0.2,
+            WeightedRating: 0.3,
+            FcRate: 2,
+            TotalScore: 100,
+            MaxScorePercent: 0.9,
+            SongsPlayed: 2,
+            FullComboCount: 2,
+            TotalChartedSongs: 1,
+            RawSkillRating: 0.2,
+            RawWeightedRating: 0.3,
+            RawMaxScorePercent: 0.9);
+        var catalog = GlobalLeaderboardScraper.AllInstruments.ToDictionary(
+            instrument => instrument,
+            instrument => instrument == "Solo_Guitar" ? 1 : 0,
+            StringComparer.OrdinalIgnoreCase);
+
+        Assert.Throws<InvalidOperationException>(
+            () => sut.ComputeSoloFamilyRankings(perInstrument, catalog));
+        metaDb.DidNotReceive().ReplaceSoloFamilyRankings(
+            Arg.Any<IReadOnlyList<SoloFamilyRankingDto>>(),
+            Arg.Any<int>());
+    }
+
+    [Fact]
+    public async Task ComputeAllAsync_SoloFamilyFailureMarksOperationFailed()
+    {
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries(
+            "song_0",
+            [MakeEntry("operation-failure", 1000, rank: 1, fc: true)]);
+
+        var failingMetaDb = CreateBandFailingMetaDatabase(
+            _metaFixture.Db,
+            [],
+            failSoloFamilyRankings: true);
+        var workerStatus = new WorkerStatusPublisher(
+            _metaFixture.Db,
+            Substitute.For<ILogger<WorkerStatusPublisher>>());
+        workerStatus.PublishHeartbeat();
+        var sut = CreateSut(
+            failingMetaDb,
+            workerStatus: workerStatus);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => sut.ComputeAllAsync(
+                CreateFestivalServiceWithSongs(1),
+                CancellationToken.None));
+
+        Assert.Contains(
+            "synthetic solo-family replacement failure",
+            exception.Message,
+            StringComparison.Ordinal);
+        var status = _metaFixture.Db.GetWorkerStatus(
+            WorkerStatusPublisher.ScraperWorkerKey);
+        Assert.NotNull(status);
+        Assert.Null(status.CurrentOperation);
+        Assert.NotNull(status.LastOperation);
+        Assert.Equal(
+            "rankings.solo_family",
+            status.LastOperation.OperationKey);
+        Assert.Equal("failed", status.LastOperation.Status);
+        Assert.Contains(
+            "synthetic solo-family replacement failure",
+            status.LastOperation.Detail,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1106,6 +1276,80 @@ public sealed class RankingsCalculatorTests : IDisposable
         Assert.Equal("p1:p2:p3", trioEntries[0].TeamKey);
     }
 
+    private Dictionary<(string ScopeId, string AccountId), SoloFamilyRankingDto>
+        ReadAllSoloFamilyRows()
+    {
+        var rows = new Dictionary<
+            (string ScopeId, string AccountId),
+            SoloFamilyRankingDto>();
+        foreach (var scope in SoloFamilyRankingScopes.All)
+        {
+            var (entries, _) = _metaFixture.Db.GetSoloFamilyRankings(
+                scope.ScopeId,
+                pageSize: 10_000);
+            foreach (var row in entries)
+                rows[(row.ScopeId, row.AccountId)] = row;
+        }
+
+        return rows;
+    }
+
+    private static void AssertSoloFamilyRowsEquivalent(
+        IReadOnlyDictionary<
+            (string ScopeId, string AccountId),
+            SoloFamilyRankingDto> expected,
+        IReadOnlyDictionary<
+            (string ScopeId, string AccountId),
+            SoloFamilyRankingDto> actual)
+    {
+        Assert.Equal(expected.Keys.OrderBy(key => key), actual.Keys.OrderBy(key => key));
+        foreach (var (key, expectedRow) in expected)
+        {
+            var actualRow = actual[key];
+            Assert.Equal(expectedRow.SongsPlayed, actualRow.SongsPlayed);
+            Assert.Equal(
+                expectedRow.TotalChartedSongs,
+                actualRow.TotalChartedSongs);
+            Assert.Equal(expectedRow.Coverage, actualRow.Coverage, precision: 6);
+            Assert.Equal(
+                expectedRow.RawSkillRating,
+                actualRow.RawSkillRating,
+                precision: 6);
+            Assert.Equal(
+                expectedRow.AdjustedSkillRating,
+                actualRow.AdjustedSkillRating,
+                precision: 6);
+            Assert.Equal(
+                expectedRow.AdjustedSkillRank,
+                actualRow.AdjustedSkillRank);
+            Assert.Equal(
+                expectedRow.WeightedRating,
+                actualRow.WeightedRating,
+                precision: 6);
+            Assert.Equal(expectedRow.WeightedRank, actualRow.WeightedRank);
+            Assert.Equal(expectedRow.FcRate, actualRow.FcRate, precision: 6);
+            Assert.Equal(expectedRow.FcRateRank, actualRow.FcRateRank);
+            Assert.Equal(expectedRow.TotalScore, actualRow.TotalScore);
+            Assert.Equal(expectedRow.TotalScoreRank, actualRow.TotalScoreRank);
+            Assert.Equal(
+                expectedRow.MaxScorePercent,
+                actualRow.MaxScorePercent,
+                precision: 6);
+            Assert.Equal(
+                expectedRow.MaxScorePercentRank,
+                actualRow.MaxScorePercentRank);
+            Assert.Equal(
+                expectedRow.FullComboCount,
+                actualRow.FullComboCount);
+            Assert.Equal(
+                expectedRow.RawMaxScorePercent,
+                actualRow.RawMaxScorePercent);
+            Assert.Equal(
+                expectedRow.RawWeightedRating,
+                actualRow.RawWeightedRating);
+        }
+    }
+
     private void InsertSnapshotEntry(long snapshotId, string songId, string instrument, string accountId, int score, int rank)
     {
         using var conn = _metaFixture.DataSource.OpenConnection();
@@ -1187,7 +1431,11 @@ public sealed class RankingsCalculatorTests : IDisposable
         return proxy;
     }
 
-    private static IMetaDatabase CreateBandFailingMetaDatabase(IMetaDatabase inner, IReadOnlyList<string> failingBandTypes, List<string>? attemptedBandTypes = null)
+    private static IMetaDatabase CreateBandFailingMetaDatabase(
+        IMetaDatabase inner,
+        IReadOnlyList<string> failingBandTypes,
+        List<string>? attemptedBandTypes = null,
+        bool failSoloFamilyRankings = false)
     {
         var failingSet = new HashSet<string>(failingBandTypes, StringComparer.OrdinalIgnoreCase);
         var proxy = Substitute.For<IMetaDatabase>();
@@ -1199,8 +1447,21 @@ public sealed class RankingsCalculatorTests : IDisposable
                 call.Arg<Dictionary<(string AccountId, string SongId), int>>()));
         proxy.When(x => x.ReplaceCompositeRankings(Arg.Any<IReadOnlyList<CompositeRankingDto>>()))
             .Do(call => inner.ReplaceCompositeRankings(call.Arg<IReadOnlyList<CompositeRankingDto>>()));
-        proxy.When(x => x.ReplaceSoloFamilyRankings(Arg.Any<IReadOnlyList<SoloFamilyRankingDto>>()))
-            .Do(call => inner.ReplaceSoloFamilyRankings(call.Arg<IReadOnlyList<SoloFamilyRankingDto>>()));
+        proxy.When(x => x.ReplaceSoloFamilyRankings(
+                Arg.Any<IReadOnlyList<SoloFamilyRankingDto>>(),
+                Arg.Any<int>()))
+            .Do(call =>
+            {
+                if (failSoloFamilyRankings)
+                {
+                    throw new InvalidOperationException(
+                        "synthetic solo-family replacement failure");
+                }
+
+                inner.ReplaceSoloFamilyRankings(
+                    call.ArgAt<IReadOnlyList<SoloFamilyRankingDto>>(0),
+                    call.ArgAt<int>(1));
+            });
         proxy.When(x => x.TruncateCompositeRankingDeltas())
             .Do(_ => inner.TruncateCompositeRankingDeltas());
         proxy.When(x => x.WriteCompositeRankingDeltas(Arg.Any<IReadOnlyList<(string AccountId, double LeewayBucket,
