@@ -61,6 +61,13 @@ describe('Manual screenshot asset manifest', () => {
     expect(nginx).toContain('location = /icons/fst-icon-maskable-512.png');
     expect(nginx).toContain('song-detail-cards-(mobile|compact|wide)');
   });
+
+  it('falls back to the SPA before matching static directories', () => {
+    const nginx = readFileSync(resolve(process.cwd(), 'nginx.conf'), 'utf8');
+
+    expect(nginx).toContain('try_files $uri /index.html;');
+    expect(nginx).not.toContain('try_files $uri $uri/ /index.html;');
+  });
 });
 
 function sha256(filePath: string): string {
