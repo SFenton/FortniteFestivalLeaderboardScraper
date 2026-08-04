@@ -143,7 +143,6 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 instrument, _pgDataSource,
                 _loggerFactory.CreateLogger<InstrumentDatabase>())
             {
-                UseTiers = _features.UseRankingDeltaTiers,
                 UsePublishedScopeSources = UsePublishedScopeSources,
                 UseStoredProjectionRanksForFilteredReads = _features.UseStoredSoloProjectionRanksForFilteredReads,
                 WriteLegacyLiveLeaderboardSupplementalRows = _features.WriteLegacyLiveLeaderboardSupplementalRows,
@@ -243,7 +242,6 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             instrument, _pgDataSource,
             _loggerFactory.CreateLogger<InstrumentDatabase>())
         {
-            UseTiers = _features.UseRankingDeltaTiers,
             UsePublishedScopeSources = UsePublishedScopeSources,
             UseStoredProjectionRanksForFilteredReads = _features.UseStoredSoloProjectionRanksForFilteredReads,
             WriteLegacyLiveLeaderboardSupplementalRows = _features.WriteLegacyLiveLeaderboardSupplementalRows,

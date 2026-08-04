@@ -91,7 +91,6 @@ public interface IInstrumentDatabase : IDisposable
     AccountRankingDto? GetAccountRanking(string accountId);
     (List<AccountRankingDto> Above, AccountRankingDto? Self, List<AccountRankingDto> Below) GetAccountRankingNeighborhood(string accountId, int radius = 5, string rankBy = "totalscore");
     List<RankHistoryDto> GetRankHistory(string accountId, int days = 30);
-    List<RankHistoryDeltaDto> GetRankHistoryDeltas(string accountId, double leewayBucket, int days = 30);
     int GetRankedAccountCount();
     int GetTotalChartedSongs();
     List<(string AccountId, double AdjustedSkillRating, int SongsPlayed, int AdjustedSkillRank)> GetAllRankingSummaries();
@@ -99,55 +98,15 @@ public interface IInstrumentDatabase : IDisposable
     List<AccountRankingSummary> GetAllRankingSummariesDetailed(
         int commandTimeoutSeconds = 0);
 
-    // ── Leeway-aware ranking queries ─────────────────────────────────
-    (List<AccountRankingDto> Entries, int TotalCount) GetRankingsAtLeeway(double leewayBucket, string rankBy = "adjusted", int page = 1, int pageSize = 50);
-    AccountRankingDto? GetAccountRankingAtLeeway(string accountId, double leewayBucket, string rankBy = "adjusted");
-
     // ── Cache pre-warming ────────────────────────────────────────────
     void PreWarmRankingsBatch(IReadOnlyCollection<string> accountIds);
-
-    // ── Ranking deltas ───────────────────────────────────────────────
-    List<(string AccountId, double ActivationLeeway)> GetBandEntries(double baseThreshold = 0.95, double maxThreshold = 1.05);
-    Dictionary<string, InstrumentDatabase.AccountAggregateMetrics> ComputeMetricsAtThreshold(
-        double threshold, HashSet<string> accountIds, int totalChartedSongs,
-        int credibilityThreshold, double populationMedian);
-    Dictionary<string, InstrumentDatabase.AccountAggregateMetrics> ComputeMetricsUnfiltered(
-        HashSet<string> accountIds, int totalChartedSongs,
-        int credibilityThreshold, double populationMedian);
-    void TruncateRankingDeltas();
-    void WriteRankingDeltas(IReadOnlyList<(string AccountId, double LeewayBucket,
-        int SongsPlayed, double AdjustedSkill, double Weighted, double FcRate, long TotalScore,
-        double MaxScorePct, int FullComboCount, double AvgAccuracy, int BestRank, double Coverage)> deltas);
-    List<(string AccountId, double LeewayBucket, int SongsPlayed, double AdjustedSkill,
-        double Weighted, double FcRate, long TotalScore, double MaxScorePct, int FullComboCount)> GetAllRankingDeltas();
-    List<(double LeewayBucket, int DeltaAdj, int DeltaWgt, int DeltaFc, int DeltaTs, int DeltaMs)> GetTodayRankDeltas(string accountId);
-
-    // ── Ranking delta tiers (interval-compressed deltas) ─────────────
-    void TruncateRankingDeltaTiers();
-    void WriteRankingDeltaTiersBulk(IReadOnlyList<(string AccountId, int StartBucketIdx, int EndBucketIdx,
-        int SongsPlayed, double AdjustedSkill, double Weighted, double FcRate, long TotalScore,
-        double MaxScorePct, int FullComboCount, double AvgAccuracy, int BestRank, double Coverage)> tiers);
 
     // ── Materialized ranking pipeline ────────────────────────────────
     void MaterializeValidEntries(Npgsql.NpgsqlConnection conn, double baseThreshold);
     void MaterializeCurrentStateValidEntries(Npgsql.NpgsqlConnection conn, double baseThreshold);
     int ComputeAccountRankingsFromMaterialized(Npgsql.NpgsqlConnection conn, int totalChartedSongs,
         int credibilityThreshold, double populationMedian, double thresholdMultiplier);
-    List<(string AccountId, double ActivationLeeway)> GetBandEntriesFromMaterialized(
-        Npgsql.NpgsqlConnection conn, double baseThreshold, double maxThreshold);
-    List<(string AccountId, double LeewayBucket, InstrumentDatabase.AccountAggregateMetrics Metrics)> ComputeAllBucketDeltas(
-        Npgsql.NpgsqlConnection conn,
-        SortedDictionary<double, HashSet<string>> affectedAccountsByBucket,
-        HashSet<string> allAffectedAccounts,
-        int totalChartedSongs, int credibilityThreshold, double populationMedian);
-    void WriteRankingDeltasBulk(IReadOnlyList<(string AccountId, double LeewayBucket,
-        int SongsPlayed, double AdjustedSkill, double Weighted, double FcRate, long TotalScore,
-        double MaxScorePct, int FullComboCount, double AvgAccuracy, int BestRank, double Coverage)> deltas);
     Npgsql.NpgsqlConnection OpenConnection();
-
-    // ── Rank history deltas ──────────────────────────────────────────
-    void SnapshotRankHistoryDeltas(int retentionDays = 365);
-    List<RankHistoryDto> GetRankHistoryAtLeeway(string accountId, double leewayBucket, int days = 30);
 
     // ── Maintenance ──────────────────────────────────────────────────
     void Checkpoint();

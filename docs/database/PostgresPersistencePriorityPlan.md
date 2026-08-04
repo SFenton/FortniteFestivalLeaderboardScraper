@@ -195,6 +195,16 @@ This plan records the approved direction for improving FST Postgres persistence 
   `12,682,330,112` bytes, and immediate plus 60-second public suites remained
   `13/13` exact. The table, union view, indexes, primary key, and sequence stay
   available for rollback.
+- RANKING-DELTA-RETIRE uses the operator-supplied same-drive catalog evidence
+  from 2026-08-03: all 32 physical relations in `ranking_deltas*`,
+  `ranking_delta_tiers*`, `rank_history_deltas*`,
+  `composite_ranking_deltas`, and `combo_ranking_deltas` contain zero rows,
+  while scrape `1277` logs show all nine instruments unconditionally using the
+  canonical ranking path. The repository now removes their flags, runtime
+  compute/read/persistence surface, client merge logic, and startup DDL. No
+  live object is dropped by this change; the relations remain for rollback
+  until cleanup-image full-scrape publication/public-fingerprint parity, then
+  require a separate explicit no-`CASCADE` drop.
 - The refreshed P9 evaluation retains legacy `leaderboard_entries_*`:
   `36,769,051` rows / `40,825,225,216` bytes. Main scrape writes are off, but
   supplemental writes added `970` backfill rows, `PostScrapeBandExtractor`
@@ -223,6 +233,31 @@ This plan records the approved direction for improving FST Postgres persistence 
   route ownership. Composite retention now uses BRIN cutoff rejection plus the
   primary key for account/date probes.
 - All FST database/storage/reclaim work must remain on the 4 TB FST drive. Do not use alternate drives for data, scratch, migration, export, or repack workspace unless SFenton explicitly overrides this rule later.
+
+## Dormant aggregate ranking-delta retirement gate
+
+Fresh schemas no longer create the five aggregate ranking-delta families, and
+the service no longer owns their feature flags, compute paths, persistence
+methods, DTOs, or API/client merge logic. Canonical per-instrument,
+composite, solo-family, combo, and base-history materialization remains active.
+Ranking and history endpoints still accept `leeway` for compatibility;
+list/single ranking responses continue echoing it while all reads resolve from
+the canonical base projections. Uncached player stats emit base-only
+`instrumentRanks` entries with `tiers: []`, or `instrumentRanks: null` only
+when no base instrument rank exists.
+
+This retirement does not include score-filter `minLeeway`, valid-score/local
+filter tiers, population tiers/rank offsets, `player_stats_tiers`, stored-rank
+filtered reads, band ranking/history change detection, rival `rankDelta`, or
+API score filtering. Those mechanisms remain active and must not be selected
+for cleanup by generic `Delta` or `RankDelta` name matching.
+
+No live DDL belongs to this repository change. The catalog baseline, rollback
+DDL, and checksums for all 32 empty physical relations remain at
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/branch-cleanup-20260803/ranking-deltas/`.
+Physical cleanup is blocked until a cleanup image completes one full scrape,
+publication, and public-fingerprint parity. Cleanup then runs as a separate
+explicit object list using `DROP` without `CASCADE`.
 
 ## Capacity preflight guard
 

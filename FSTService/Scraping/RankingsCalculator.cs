@@ -38,17 +38,13 @@ public sealed class RankingsCalculator
     /// <summary>Base threshold multiplier for CHOpt max score filtering (+5.0% leeway).</summary>
     private const double BaseThresholdMultiplier = 1.05;
 
-    /// <summary>Maximum threshold multiplier (+5.0% leeway).</summary>
-    private const double MaxThresholdMultiplier = 1.05;
-
     internal static int ComputeMaxScoreThreshold(int maxScore)
-        => (int)(maxScore * MaxThresholdMultiplier);
+        => (int)(maxScore * BaseThresholdMultiplier);
 
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly IMetaDatabase _metaDb;
     private readonly IPathDataStore _pathStore;
     private readonly ScrapeProgressTracker _progress;
-    private readonly FeatureOptions _features;
     private readonly ScraperOptions _scraperOptions;
     private readonly BandRankHistoryOptions _bandRankHistoryOptions;
     private readonly BandTeamRankingRebuildOptions _bandTeamRankingOptions;
@@ -61,7 +57,6 @@ public sealed class RankingsCalculator
         IMetaDatabase metaDb,
         IPathDataStore pathStore,
         ScrapeProgressTracker progress,
-        IOptions<FeatureOptions> features,
         ILogger<RankingsCalculator> log,
         IOptions<BandRankHistoryOptions>? bandRankHistoryOptions = null,
         IOptions<BandTeamRankingRebuildOptions>? bandTeamRankingOptions = null,
@@ -72,7 +67,6 @@ public sealed class RankingsCalculator
         _metaDb = metaDb;
         _pathStore = pathStore;
         _progress = progress;
-        _features = features.Value;
         _scraperOptions = scraperOptions?.Value ?? new ScraperOptions();
         _bandRankHistoryOptions = bandRankHistoryOptions?.Value ?? new BandRankHistoryOptions();
         _bandTeamRankingOptions = bandTeamRankingOptions?.Value ?? BandTeamRankingRebuildOptions.Default;
@@ -265,9 +259,8 @@ public sealed class RankingsCalculator
             overridesSw.Stop();
             LogPhase("per_instrument.populate_valid_overrides", instrument, overridesSw.Elapsed, overrideRows);
 
-            // Phase 2: AccountRankings + Phase 2.5: Ranking deltas
-            // Materialized pipeline: one join into a temp table, reused for
-            // base rankings, band-entry discovery, and all bucket deltas.
+            // Phase 2: canonical account rankings.
+            // Materialize the current leaderboard join once for base rankings.
             var totalCharted = totalChartedByInstrument[instrument];
             if (totalCharted == 0)
             {
@@ -305,8 +298,6 @@ public sealed class RankingsCalculator
             LogPhase("per_instrument.compute_account_rankings", instrument, arSw.Elapsed);
             _progress.ReportPhaseItemComplete();
 
-            _log.LogDebug("{Instrument}: skipping ranking delta computation; canonical leaderboard path is active.", instrument);
-
             instrumentSw.Stop();
             LogPhase("per_instrument.total", instrument, instrumentSw.Elapsed);
             _workerStatus?.CompleteOperation(operationKey);
@@ -326,9 +317,8 @@ public sealed class RankingsCalculator
         });
 
         _workerStatus?.CompleteOperation("rankings.per_instrument");
-        _log.LogInformation("Per-instrument rankings + deltas complete in {Elapsed}.", sw.Elapsed);
+        _log.LogInformation("Per-instrument rankings complete in {Elapsed}.", sw.Elapsed);
         LogPhase("per_instrument.all", instrument: null, sw.Elapsed);
-        var perInstrumentEndMs = sw.ElapsedMilliseconds;
 
         // ── Load per-instrument ranking data ONCE (shared across phases 3–5) ──
         var loadSw = System.Diagnostics.Stopwatch.StartNew();
@@ -376,8 +366,6 @@ public sealed class RankingsCalculator
         _workerStatus?.CompleteOperation("rankings.composite");
         _log.LogInformation("Composite rankings complete in {Elapsed}.", compositeSw.Elapsed);
         LogPhase("composite_rankings", instrument: null, compositeSw.Elapsed);
-
-        _log.LogInformation("Skipping composite and combo delta computation; canonical leaderboard path is active.");
 
         // ── Phase 3.5: Fixed solo family rankings for Statistics global cards ──
         _progress.SetSubOperation("solo_family_rankings");
@@ -445,7 +433,6 @@ public sealed class RankingsCalculator
 
         _log.LogInformation("Full rankings computation complete in {Total}.", sw.Elapsed);
         LogPhase("total", instrument: null, sw.Elapsed);
-        _ = perInstrumentEndMs; // retained for future delta arithmetic if needed
     }
 
     /// <summary>
@@ -1101,554 +1088,8 @@ public sealed class RankingsCalculator
     private static double? GetInstrumentSkill(Dictionary<string, AccountMetrics> data, string instrument)
         => data.TryGetValue(instrument, out var v) ? v.AdjustedRating : null;
 
-    // ── Ranking delta computation ────────────────────────────────────
-
-    /// <summary>
-    /// Compute ranking deltas using the materialized <c>_valid_entries</c> temp table.
-    /// Replaces the 101× <c>ComputeMetricsAtThreshold</c> C# loop with a single SQL pass.
-    /// Must be called on the same connection that created the temp table.
-    /// </summary>
-    private int ComputeRankingDeltasFromMaterialized(
-        string instrument, Npgsql.NpgsqlConnection conn,
-        IInstrumentDatabase db, int totalCharted)
-    {
-        // Load base metrics from the just-computed account_rankings
-        var baseMetrics = new Dictionary<string, InstrumentDatabase.AccountAggregateMetrics>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (accountId, adj, wgt, fc, ts, ms, songs, fcc) in db.GetAllRankingSummariesFull())
-        {
-            baseMetrics[accountId] = new InstrumentDatabase.AccountAggregateMetrics
-            {
-                SongsPlayed = songs,
-                AdjustedSkill = adj,
-                Weighted = wgt,
-                FcRate = fc,
-                TotalScore = ts,
-                MaxScorePct = ms,
-                FullComboCount = fcc,
-            };
-        }
-
-        // Get band entries from materialized temp table
-        var bandEntries = db.GetBandEntriesFromMaterialized(conn, BaseThresholdMultiplier, MaxThresholdMultiplier);
-        if (bandEntries.Count == 0)
-        {
-            _log.LogDebug("{Instrument}: no band entries found, skipping delta computation.", instrument);
-            db.TruncateRankingDeltas();
-            return 0;
-        }
-
-        // Group affected accounts by their earliest activation bucket
-        var affectedAccountsByBucket = new SortedDictionary<double, HashSet<string>>();
-        var allAffectedAccounts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (accountId, activationLeeway) in bandEntries)
-        {
-            double bucket = Math.Ceiling(activationLeeway * 10) / 10.0;
-            bucket = Math.Clamp(bucket, -4.9, 5.0);
-            bucket = Math.Round(bucket, 1);
-
-            if (!affectedAccountsByBucket.TryGetValue(bucket, out var set))
-            {
-                set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                affectedAccountsByBucket[bucket] = set;
-            }
-            set.Add(accountId);
-            allAffectedAccounts.Add(accountId);
-        }
-
-        _log.LogInformation("{Instrument}: {AffectedCount} accounts have {BandCount} band entries across {BucketCount} buckets.",
-            instrument, allAffectedAccounts.Count, bandEntries.Count, affectedAccountsByBucket.Count);
-
-        db.TruncateRankingDeltas();
-
-        // Single SQL pass: compute metrics for all buckets + unfiltered at once
-        var bucketResults = db.ComputeAllBucketDeltas(
-            conn, affectedAccountsByBucket, allAffectedAccounts,
-            totalCharted, CredibilityThreshold, PopulationMedian);
-
-        // Diff against base and collect deltas
-        var allDeltas = new List<(string AccountId, double LeewayBucket,
-            int SongsPlayed, double AdjustedSkill, double Weighted, double FcRate, long TotalScore,
-            double MaxScorePct, int FullComboCount, double AvgAccuracy, int BestRank, double Coverage)>();
-
-        foreach (var (accountId, bucket, m) in bucketResults)
-        {
-            if (!baseMetrics.TryGetValue(accountId, out var @base)) continue;
-            if (MetricsEqual(@base, m)) continue;
-
-            allDeltas.Add((accountId, bucket, m.SongsPlayed, m.AdjustedSkill,
-                m.Weighted, m.FcRate, m.TotalScore, m.MaxScorePct,
-                m.FullComboCount, m.AvgAccuracy, m.BestRank, m.Coverage));
-        }
-
-        // Write deltas using COPY binary (dense path — always written for fallback)
-        db.WriteRankingDeltasBulk(allDeltas);
-
-        // Compress dense deltas to interval tiers and dual-write
-        var tiers = InstrumentDatabase.CompressDeltasToTiers(allDeltas);
-        db.TruncateRankingDeltaTiers();
-        db.WriteRankingDeltaTiersBulk(tiers);
-
-        _log.LogInformation("{Instrument}: wrote {DeltaCount} ranking deltas ({TierCount} tiers, {Ratio:P0} compression) for {AccountCount} affected accounts.",
-            instrument, allDeltas.Count, tiers.Count,
-            allDeltas.Count > 0 ? 1.0 - (double)tiers.Count / allDeltas.Count : 0.0,
-            allAffectedAccounts.Count);
-        return allDeltas.Count;
-    }
-
-    /// <summary>
-    /// Compute ranking metric deltas across all leeway buckets for a single instrument.
-    /// For each bucket from -4.9% to +5.0% (101 buckets) plus unfiltered:
-    /// 1. Identify accounts with entries in the score band
-    /// 2. Compute their aggregate metrics at that threshold
-    /// 3. Compare to base (account_rankings at -5.0%), store deltas
-    /// </summary>
-    internal int ComputeRankingDeltasForInstrument(
-        string instrument, FestivalService festivalService,
-        Dictionary<string, AccountMetrics>? preloadedMetrics = null)
-    {
-        var db = _persistence.GetOrCreateInstrumentDb(instrument);
-        var totalCharted = CountChartedSongs(festivalService, instrument);
-        if (totalCharted == 0) return 0;
-
-        // Load base metrics from pre-loaded data or DB
-        var baseMetrics = new Dictionary<string, InstrumentDatabase.AccountAggregateMetrics>(StringComparer.OrdinalIgnoreCase);
-        if (preloadedMetrics is not null)
-        {
-            foreach (var (accountId, m) in preloadedMetrics)
-            {
-                baseMetrics[accountId] = new InstrumentDatabase.AccountAggregateMetrics
-                {
-                    SongsPlayed = m.SongsPlayed,
-                    AdjustedSkill = m.AdjustedRating,
-                    Weighted = m.WeightedRating,
-                    FcRate = m.FcRate,
-                    TotalScore = m.TotalScore,
-                    MaxScorePct = m.MaxScorePercent,
-                    FullComboCount = m.FullComboCount,
-                };
-            }
-        }
-        else
-        {
-            foreach (var (accountId, adj, wgt, fc, ts, ms, songs, fcc) in db.GetAllRankingSummariesFull())
-            {
-                baseMetrics[accountId] = new InstrumentDatabase.AccountAggregateMetrics
-                {
-                    SongsPlayed = songs,
-                    AdjustedSkill = adj,
-                    Weighted = wgt,
-                    FcRate = fc,
-                    TotalScore = ts,
-                    MaxScorePct = ms,
-                    FullComboCount = fcc,
-                };
-            }
-        }
-
-        // Get all band entries with activation leeway
-        var bandEntries = db.GetBandEntries(BaseThresholdMultiplier, MaxThresholdMultiplier);
-        if (bandEntries.Count == 0)
-        {
-            _log.LogDebug("{Instrument}: no band entries found, skipping delta computation.", instrument);
-            db.TruncateRankingDeltas();
-            return 0;
-        }
-
-        // Group affected accounts by their earliest activation bucket (quantized to 0.1)
-        var affectedAccountsByBucket = new SortedDictionary<double, HashSet<string>>();
-        var allAffectedAccounts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (accountId, activationLeeway) in bandEntries)
-        {
-            // Quantize to nearest 0.1 step, ceiling (entry becomes valid at this bucket)
-            double bucket = Math.Ceiling(activationLeeway * 10) / 10.0;
-            bucket = Math.Clamp(bucket, -4.9, 5.0);
-            bucket = Math.Round(bucket, 1); // avoid floating-point drift
-
-            if (!affectedAccountsByBucket.TryGetValue(bucket, out var set))
-            {
-                set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                affectedAccountsByBucket[bucket] = set;
-            }
-            set.Add(accountId);
-            allAffectedAccounts.Add(accountId);
-        }
-
-        _log.LogInformation("{Instrument}: {AffectedCount} accounts have {BandCount} band entries across {BucketCount} buckets.",
-            instrument, allAffectedAccounts.Count, bandEntries.Count, affectedAccountsByBucket.Count);
-
-        // Truncate existing deltas
-        db.TruncateRankingDeltas();
-
-        // Sweep through buckets -4.9 to 5.0
-        var cumulativeAccounts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var allDeltas = new List<(string AccountId, double LeewayBucket,
-            int SongsPlayed, double AdjustedSkill, double Weighted, double FcRate, long TotalScore,
-            double MaxScorePct, int FullComboCount, double AvgAccuracy, int BestRank, double Coverage)>();
-
-        for (double bucket = -4.9; bucket <= 5.05; bucket = Math.Round(bucket + 0.1, 1))
-        {
-            double roundedBucket = Math.Round(bucket, 1);
-            // Add accounts newly affected at this bucket
-            if (affectedAccountsByBucket.TryGetValue(roundedBucket, out var newAccounts))
-                foreach (var a in newAccounts)
-                    cumulativeAccounts.Add(a);
-
-            if (cumulativeAccounts.Count == 0) continue;
-
-            // Compute metrics at this threshold for all cumulative affected accounts
-            double threshold = 1.0 + roundedBucket / 100.0;
-            var metrics = db.ComputeMetricsAtThreshold(
-                threshold, cumulativeAccounts, totalCharted, CredibilityThreshold, PopulationMedian);
-
-            // Diff against base
-            foreach (var kvp in metrics)
-            {
-                var accountId = kvp.Key;
-                var m = kvp.Value;
-                if (!baseMetrics.TryGetValue(accountId, out var @base)) continue;
-                if (MetricsEqual(@base, m)) continue;
-
-                allDeltas.Add((accountId, roundedBucket, m.SongsPlayed, m.AdjustedSkill,
-                    m.Weighted, m.FcRate, m.TotalScore, m.MaxScorePct,
-                    m.FullComboCount, m.AvgAccuracy, m.BestRank, m.Coverage));
-            }
-        }
-
-        // Unfiltered bucket: compute for all affected accounts with no threshold
-        var unfilteredMetrics = db.ComputeMetricsUnfiltered(
-            allAffectedAccounts, totalCharted, CredibilityThreshold, PopulationMedian);
-        foreach (var kvp in unfilteredMetrics)
-        {
-            var accountId = kvp.Key;
-            var m = kvp.Value;
-            if (!baseMetrics.TryGetValue(accountId, out var @base)) continue;
-            if (MetricsEqual(@base, m)) continue;
-
-            // Use a sentinel value for unfiltered bucket (larger than any real bucket)
-            allDeltas.Add((accountId, 99.0, m.SongsPlayed, m.AdjustedSkill,
-                m.Weighted, m.FcRate, m.TotalScore, m.MaxScorePct,
-                m.FullComboCount, m.AvgAccuracy, m.BestRank, m.Coverage));
-        }
-
-        // Write all deltas in batch
-        db.WriteRankingDeltas(allDeltas);
-
-        _log.LogInformation("{Instrument}: wrote {DeltaCount} ranking deltas for {AccountCount} affected accounts.",
-            instrument, allDeltas.Count, allAffectedAccounts.Count);
-        return allDeltas.Count;
-    }
-
-    private static bool MetricsEqual(InstrumentDatabase.AccountAggregateMetrics a, InstrumentDatabase.AccountAggregateMetrics b) =>
-        a.SongsPlayed == b.SongsPlayed &&
-        Math.Abs(a.AdjustedSkill - b.AdjustedSkill) < 1e-9 &&
-        Math.Abs(a.Weighted - b.Weighted) < 1e-9 &&
-        Math.Abs(a.FcRate - b.FcRate) < 1e-9 &&
-        a.TotalScore == b.TotalScore &&
-        Math.Abs(a.MaxScorePct - b.MaxScorePct) < 1e-9 &&
-        a.FullComboCount == b.FullComboCount;
-
-    // ── Composite + combo delta computation ──────────────────────────
-
-    /// <summary>
-    /// Compute composite ranking deltas at each leeway bucket.
-    /// Loads per-instrument ranking_deltas, merges with base per-instrument metrics,
-    /// aggregates into composite, compares to base composite, writes diffs.
-    /// </summary>
-    internal int ComputeCompositeDeltas(IReadOnlyList<string> instruments,
-        Dictionary<string, Dictionary<string, AccountMetrics>>? preloadedPerInstrument = null,
-        (Dictionary<string, Dictionary<double, Dictionary<string, AccountMetrics>>> DeltasPerInstrument, SortedSet<double> AllBuckets)? preloadedDeltas = null)
-    {
-        // Use pre-loaded data or fall back to DB
-        var basePerInstrument = preloadedPerInstrument
-            ?? LoadPerInstrumentMetrics(instruments);
-
-        // Use pre-loaded deltas or load from DB
-        var (deltasPerInstrument, allBuckets) = preloadedDeltas ?? LoadPerInstrumentDeltas(instruments);
-
-        _metaDb.TruncateCompositeRankingDeltas();
-        if (allBuckets.Count == 0) return 0;
-
-        // Compute base composite for ALL accounts (not just affected)
-        var baseComposite = new Dictionary<string, CompositeMetrics>(StringComparer.OrdinalIgnoreCase);
-        var allAccounts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var instDict in basePerInstrument.Values)
-            foreach (var aid in instDict.Keys)
-                allAccounts.Add(aid);
-
-        foreach (var accountId in allAccounts)
-        {
-            int totalSongs = 0, instCount = 0;
-            double adjWS = 0, wgtWS = 0, fcWS = 0, ts = 0, msWS = 0;
-            foreach (var instrument in instruments)
-            {
-                if (basePerInstrument[instrument].TryGetValue(accountId, out var m))
-                {
-                    adjWS += m.AdjustedRating * m.SongsPlayed;
-                    wgtWS += m.WeightedRating * m.SongsPlayed;
-                    fcWS += m.FcRate * m.SongsPlayed;
-                    ts += m.TotalScore;
-                    msWS += m.MaxScorePercent * m.SongsPlayed;
-                    totalSongs += m.SongsPlayed;
-                    instCount++;
-                }
-            }
-            if (totalSongs > 0)
-                baseComposite[accountId] = new CompositeMetrics(
-                    adjWS / totalSongs, wgtWS / totalSongs, fcWS / totalSongs,
-                    ts, msWS / totalSongs, instCount, totalSongs);
-        }
-
-        // Sweep buckets, compute effective composite, diff against base
-        var compositeDeltas = new List<(string AccountId, double Bucket, double Adj, double Wgt,
-            double Fc, double Ts, double Ms, int Inst, int Songs)>();
-
-        foreach (var bucket in allBuckets)
-        {
-            // Find accounts affected at this bucket (any instrument has a delta)
-            var accountsAtBucket = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var instrument in instruments)
-                if (deltasPerInstrument[instrument].TryGetValue(bucket, out var d))
-                    foreach (var aid in d.Keys)
-                        accountsAtBucket.Add(aid);
-
-            foreach (var accountId in accountsAtBucket)
-            {
-                int totalSongs = 0, instCount = 0;
-                double adjWS = 0, wgtWS = 0, fcWS = 0, ts = 0, msWS = 0;
-
-                foreach (var instrument in instruments)
-                {
-                    AccountMetrics m;
-                    bool hasData = false;
-
-                    if (deltasPerInstrument[instrument].TryGetValue(bucket, out var bucketDict) &&
-                        bucketDict.TryGetValue(accountId, out m))
-                        hasData = true;
-                    else if (basePerInstrument[instrument].TryGetValue(accountId, out m))
-                        hasData = true;
-
-                    if (!hasData) continue;
-
-                    adjWS += m.AdjustedRating * m.SongsPlayed;
-                    wgtWS += m.WeightedRating * m.SongsPlayed;
-                    fcWS += m.FcRate * m.SongsPlayed;
-                    ts += m.TotalScore;
-                    msWS += m.MaxScorePercent * m.SongsPlayed;
-                    totalSongs += m.SongsPlayed;
-                    instCount++;
-                }
-
-                if (totalSongs == 0) continue;
-
-                double adj = adjWS / totalSongs;
-                double wgt = wgtWS / totalSongs;
-                double fc = fcWS / totalSongs;
-                double ms = msWS / totalSongs;
-
-                if (!baseComposite.TryGetValue(accountId, out var b)) continue;
-                if (Math.Abs(adj - b.AdjustedRating) < 1e-7 &&
-                    Math.Abs(wgt - b.WeightedRating) < 1e-7 &&
-                    Math.Abs(fc - b.FcRateRating) < 1e-7 &&
-                    Math.Abs(ts - b.TotalScore) < 1e-7 &&
-                    Math.Abs(ms - b.MaxScoreRating) < 1e-7 &&
-                    instCount == b.InstrumentsPlayed && totalSongs == b.TotalSongsPlayed)
-                    continue;
-
-                compositeDeltas.Add((accountId, bucket, adj, wgt, fc, ts, ms, instCount, totalSongs));
-            }
-        }
-
-        _metaDb.WriteCompositeRankingDeltas(compositeDeltas);
-        _log.LogInformation("Computed {DeltaCount} composite ranking deltas across {BucketCount} buckets.",
-            compositeDeltas.Count, allBuckets.Count);
-        return compositeDeltas.Count;
-    }
-
-    /// <summary>
-    /// Compute combo ranking deltas at each leeway bucket for all within-group combos.
-    /// For each combo, at each bucket where any member instrument has a per-instrument delta,
-    /// recalculate the combo aggregation and diff against the base combo.
-    /// </summary>
-    internal int ComputeComboDeltas(IReadOnlyList<string> instruments,
-        Dictionary<string, Dictionary<string, AccountMetrics>>? preloadedPerInstrument = null,
-        (Dictionary<string, Dictionary<double, Dictionary<string, AccountMetrics>>> DeltasPerInstrument, SortedSet<double> AllBuckets)? preloadedDeltas = null)
-    {
-        if (instruments.Count < 2) return 0;
-
-        // Use pre-loaded data or fall back to DB
-        var basePerInstrument = preloadedPerInstrument
-            ?? LoadPerInstrumentMetrics(instruments);
-
-        // Use pre-loaded deltas or load from DB
-        var (deltasPerInstrument, allBuckets) = preloadedDeltas ?? LoadPerInstrumentDeltas(instruments);
-
-        _metaDb.TruncateComboRankingDeltas();
-        if (allBuckets.Count == 0) return 0;
-
-        // Compute base combo metrics per combo per account
-        var baseComboMetrics = new Dictionary<string, Dictionary<string, ComboAccountMetrics>>(StringComparer.Ordinal);
-
-        foreach (int mask in ComboIds.WithinGroupComboMasks)
-        {
-            var comboInstruments = ComboIds.ToInstruments(ComboIds.FromMask(mask));
-            if (!comboInstruments.All(i => basePerInstrument.ContainsKey(i))) continue;
-            var comboId = ComboIds.FromMask(mask);
-
-            var perAccount = new Dictionary<string, ComboAccountMetrics>(StringComparer.OrdinalIgnoreCase);
-            // Intersect accounts that have ALL instruments in this combo
-            HashSet<string>? commonAccounts = null;
-            foreach (var inst in comboInstruments)
-            {
-                var instAccounts = new HashSet<string>(basePerInstrument[inst].Keys, StringComparer.OrdinalIgnoreCase);
-                commonAccounts = commonAccounts is null ? instAccounts : new HashSet<string>(commonAccounts.Intersect(instAccounts), StringComparer.OrdinalIgnoreCase);
-            }
-
-            if (commonAccounts is null) continue;
-
-            foreach (var aid in commonAccounts)
-            {
-                double adjWS = 0, wgtWS = 0; int fcc = 0; long ts = 0; double msSum = 0; int totalSongs = 0;
-                foreach (var inst in comboInstruments)
-                {
-                    var m = basePerInstrument[inst][aid];
-                    adjWS += m.AdjustedRating * m.SongsPlayed;
-                    wgtWS += m.WeightedRating * m.SongsPlayed;
-                    fcc += m.FullComboCount;
-                    ts += m.TotalScore;
-                    msSum += m.MaxScorePercent;
-                    totalSongs += m.SongsPlayed;
-                }
-                if (totalSongs == 0) continue;
-                perAccount[aid] = new ComboAccountMetrics(
-                    adjWS / totalSongs, wgtWS / totalSongs,
-                    totalSongs > 0 ? (double)fcc / totalSongs : 0.0,
-                    ts, msSum / comboInstruments.Count, totalSongs, fcc);
-            }
-            baseComboMetrics[comboId] = perAccount;
-        }
-
-        // Sweep buckets, compute effective combo, diff against base
-        var comboDeltas = new List<(string ComboId, string AccountId, double Bucket,
-            double Adj, double Wgt, double Fc, long Ts, double Ms, int Songs, int Fcc)>();
-
-        foreach (var bucket in allBuckets)
-        {
-            foreach (int mask in ComboIds.WithinGroupComboMasks)
-            {
-                var comboInstruments = ComboIds.ToInstruments(ComboIds.FromMask(mask));
-                if (!comboInstruments.All(i => basePerInstrument.ContainsKey(i))) continue;
-                var comboId = ComboIds.FromMask(mask);
-                if (!baseComboMetrics.TryGetValue(comboId, out var baseForCombo)) continue;
-
-                // Check if any member instrument has deltas at this bucket
-                bool hasAnyDelta = false;
-                foreach (var inst in comboInstruments)
-                {
-                    if (deltasPerInstrument[inst].TryGetValue(bucket, out var d) && d.Count > 0)
-                    { hasAnyDelta = true; break; }
-                }
-                if (!hasAnyDelta) continue;
-
-                // Recompute for accounts that have all combo instruments AND at least one delta
-                foreach (var aid in baseForCombo.Keys)
-                {
-                    bool anyDelta = false;
-                    foreach (var inst in comboInstruments)
-                    {
-                        if (deltasPerInstrument[inst].TryGetValue(bucket, out var bd) && bd.ContainsKey(aid))
-                        { anyDelta = true; break; }
-                    }
-                    if (!anyDelta) continue;
-
-                    double adjWS = 0, wgtWS = 0; int fcc = 0; long ts = 0; double msSum = 0; int totalSongs = 0;
-                    bool allPresent = true;
-
-                    foreach (var inst in comboInstruments)
-                    {
-                        AccountMetrics m;
-                        if (deltasPerInstrument[inst].TryGetValue(bucket, out var bd) && bd.TryGetValue(aid, out m))
-                        { /* use delta */ }
-                        else if (basePerInstrument[inst].TryGetValue(aid, out m))
-                        { /* use base */ }
-                        else { allPresent = false; break; }
-
-                        adjWS += m.AdjustedRating * m.SongsPlayed;
-                        wgtWS += m.WeightedRating * m.SongsPlayed;
-                        fcc += m.FullComboCount;
-                        ts += m.TotalScore;
-                        msSum += m.MaxScorePercent;
-                        totalSongs += m.SongsPlayed;
-                    }
-
-                    if (!allPresent || totalSongs == 0) continue;
-
-                    double adj = adjWS / totalSongs;
-                    double wgt = wgtWS / totalSongs;
-                    double fc = totalSongs > 0 ? (double)fcc / totalSongs : 0.0;
-                    double ms = msSum / comboInstruments.Count;
-
-                    var b = baseForCombo[aid];
-                    if (Math.Abs(adj - b.AdjustedRating) < 1e-7 &&
-                        Math.Abs(wgt - b.WeightedRating) < 1e-7 &&
-                        Math.Abs(fc - b.FcRate) < 1e-7 &&
-                        ts == (long)b.TotalScore &&
-                        Math.Abs(ms - b.MaxScorePct) < 1e-7 &&
-                        totalSongs == b.SongsPlayed && fcc == b.FullComboCount)
-                        continue;
-
-                    comboDeltas.Add((comboId, aid, bucket, adj, wgt, fc, ts, ms, totalSongs, fcc));
-                }
-            }
-        }
-
-        _metaDb.WriteComboRankingDeltas(comboDeltas);
-        _log.LogInformation("Computed {DeltaCount} combo ranking deltas across {BucketCount} buckets for {ComboCount} combos.",
-            comboDeltas.Count, allBuckets.Count, ComboIds.WithinGroupComboMasks.Count);
-        return comboDeltas.Count;
-    }
-
-    private readonly record struct CompositeMetrics(
-        double AdjustedRating, double WeightedRating, double FcRateRating,
-        double TotalScore, double MaxScoreRating, int InstrumentsPlayed, int TotalSongsPlayed);
-
-    private readonly record struct ComboAccountMetrics(
-        double AdjustedRating, double WeightedRating, double FcRate,
-        double TotalScore, double MaxScorePct, int SongsPlayed, int FullComboCount);
-
-    /// <summary>
-    /// Load per-instrument ranking deltas once, grouped by instrument → bucket → accountId.
-    /// Shared between ComputeCompositeDeltas and ComputeComboDeltas to avoid redundant DB reads.
-    /// </summary>
-    private (Dictionary<string, Dictionary<double, Dictionary<string, AccountMetrics>>> DeltasPerInstrument, SortedSet<double> AllBuckets)
-        LoadPerInstrumentDeltas(IReadOnlyList<string> instruments)
-    {
-        var deltasPerInstrument = new Dictionary<string, Dictionary<double, Dictionary<string, AccountMetrics>>>(StringComparer.OrdinalIgnoreCase);
-        var allBuckets = new SortedSet<double>();
-
-        foreach (var instrument in instruments)
-        {
-            var db = _persistence.GetOrCreateInstrumentDb(instrument);
-            var allDeltas = db.GetAllRankingDeltas();
-            var byBucket = new Dictionary<double, Dictionary<string, AccountMetrics>>();
-            foreach (var (accountId, bucket, songs, adj, wgt, fc, ts, ms, fcc) in allDeltas)
-            {
-                if (!byBucket.TryGetValue(bucket, out var dict))
-                {
-                    dict = new Dictionary<string, AccountMetrics>(StringComparer.OrdinalIgnoreCase);
-                    byBucket[bucket] = dict;
-                }
-                dict[accountId] = new AccountMetrics(adj, wgt, fc, ts, ms, songs, fcc);
-                allBuckets.Add(bucket);
-            }
-            deltasPerInstrument[instrument] = byBucket;
-        }
-
-        return (deltasPerInstrument, allBuckets);
-    }
-
     /// <summary>
     /// Fallback: load per-instrument metrics from DB when pre-loaded data is not available.
-    /// Used by internal test methods that call ComputeCompositeDeltas/ComputeComboDeltas directly.
     /// </summary>
     private Dictionary<string, Dictionary<string, AccountMetrics>> LoadPerInstrumentMetrics(
         IReadOnlyList<string> instruments)

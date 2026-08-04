@@ -475,7 +475,7 @@ public static partial class ApiEndpoints
 
                 var familyRanks = BuildSoloFamilyRankPayload(metaDb.GetSoloFamilyRankingsForAccount(accountId));
 
-                // Build per-instrument rank tiers from rank_history_deltas
+                // Build canonical per-instrument ranks with an empty compatibility tier list.
                 var instrumentKeys = persistence.GetInstrumentKeys();
                 var instrumentRanks = new List<object>();
                 foreach (var instrument in instrumentKeys)
@@ -484,42 +484,16 @@ public static partial class ApiEndpoints
                     var baseRanking = db.GetAccountRanking(accountId);
                     if (baseRanking is null) continue;
 
-                    var deltas = db.GetTodayRankDeltas(accountId);
-                    var tiers = new List<object>();
-                    int prevAdj = baseRanking.AdjustedSkillRank, prevWgt = baseRanking.WeightedRank,
-                        prevFc = baseRanking.FcRateRank, prevTs = baseRanking.TotalScoreRank, prevMs = baseRanking.MaxScorePercentRank;
-
-                    foreach (var (bucket, dAdj, dWgt, dFc, dTs, dMs) in deltas)
-                    {
-                        int effAdj = baseRanking.AdjustedSkillRank + dAdj;
-                        int effWgt = baseRanking.WeightedRank + dWgt;
-                        int effFc = baseRanking.FcRateRank + dFc;
-                        int effTs = baseRanking.TotalScoreRank + dTs;
-                        int effMs = baseRanking.MaxScorePercentRank + dMs;
-
-                        if (effAdj == prevAdj && effWgt == prevWgt && effFc == prevFc && effTs == prevTs && effMs == prevMs)
-                            continue;
-
-                        var tier = new Dictionary<string, object?> { ["l"] = bucket >= 90.0 ? null : (object)Math.Round(bucket, 1) };
-                        if (effAdj != prevAdj) tier["adjusted"] = effAdj;
-                        if (effWgt != prevWgt) tier["weighted"] = effWgt;
-                        if (effFc != prevFc) tier["fcRate"] = effFc;
-                        if (effTs != prevTs) tier["totalScore"] = effTs;
-                        if (effMs != prevMs) tier["maxScore"] = effMs;
-                        tiers.Add(tier);
-                        prevAdj = effAdj; prevWgt = effWgt; prevFc = effFc; prevTs = effTs; prevMs = effMs;
-                    }
-
                     instrumentRanks.Add(new
                     {
                         ins = ComboIds.FromInstruments(new[] { instrument }),
                         totalRanked = db.GetRankedAccountCount(),
                         @base = new { adjusted = baseRanking.AdjustedSkillRank, weighted = baseRanking.WeightedRank, fcRate = baseRanking.FcRateRank, totalScore = baseRanking.TotalScoreRank, maxScore = baseRanking.MaxScorePercentRank },
-                        tiers,
+                        tiers = Array.Empty<object>(),
                     });
                 }
 
-                    var bands = persistence.GetPlayerBands(accountId);
+                var bands = persistence.GetPlayerBands(accountId);
 
                 var payload = new
                 {
@@ -527,7 +501,10 @@ public static partial class ApiEndpoints
                     totalSongs,
                     compositeRanks,
                     familyRanks,
-                    instrumentRanks = instrumentRanks.Count > 0 ? instrumentRanks : null,
+                    // Keep the compatibility property even when null; null-valued properties are otherwise omitted.
+                    instrumentRanks = instrumentRanks.Count > 0
+                        ? (object)instrumentRanks
+                        : JsonSerializer.Deserialize<JsonElement>("null"),
                     bands,
                     notifications = improvementNotifications.GetPlayerNotifications(accountId, 20),
                     instruments = tierRows.Select(r => new

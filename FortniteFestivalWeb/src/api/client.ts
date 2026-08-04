@@ -494,17 +494,29 @@ export const api = {
 
   // ─── Rankings ──────────────────────────────────────────────────
 
-  getRankings: (instrument: InstrumentKey, rankBy: RankingMetric = 'totalscore', page = 1, pageSize = 10, options?: ApiRequestOptions) =>
-    get<RankingsPageResponse>(
-      `/api/rankings/${encodeURIComponent(instrument)}?rankBy=${encodeURIComponent(rankBy)}&page=${page}&pageSize=${pageSize}`,
-      options,
-    ),
+  getRankings: (
+    instrument: InstrumentKey,
+    rankBy: RankingMetric = 'totalscore',
+    page = 1,
+    pageSize = 10,
+    options?: ApiRequestOptions & { leeway?: number },
+  ) => {
+    const { leeway, ...requestOptions } = options ?? {};
+    return get<RankingsPageResponse>(
+      `/api/rankings/${encodeURIComponent(instrument)}?rankBy=${encodeURIComponent(rankBy)}&page=${page}&pageSize=${pageSize}${leeway != null ? `&leeway=${leeway}` : ''}`,
+      requestOptions,
+    );
+  },
 
-  getPlayerRanking: (instrument: InstrumentKey, accountId: string, rankBy?: string, options?: ApiRequestOptions) => {
-    const params = rankBy ? `rankBy=${encodeURIComponent(rankBy)}` : '';
+  getPlayerRanking: (instrument: InstrumentKey, accountId: string, rankBy?: string, options?: ApiRequestOptions & { leeway?: number }) => {
+    const { leeway, ...requestOptions } = options ?? {};
+    const params = new URLSearchParams();
+    if (rankBy) params.set('rankBy', rankBy);
+    if (leeway != null) params.set('leeway', String(leeway));
+    const query = params.toString();
     return get<AccountRankingDto>(
-      `/api/rankings/${encodeURIComponent(instrument)}/${encodeURIComponent(accountId)}${params ? `?${params}` : ''}`,
-      options,
+      `/api/rankings/${encodeURIComponent(instrument)}/${encodeURIComponent(accountId)}${query ? `?${query}` : ''}`,
+      requestOptions,
     );
   },
 
@@ -657,13 +669,15 @@ export const api = {
       options,
     ),
 
-  getRankHistory: (instrument: InstrumentKey, accountId: string, days?: number, options?: ApiRequestOptions) => {
+  getRankHistory: (instrument: InstrumentKey, accountId: string, days?: number, options?: ApiRequestOptions & { leeway?: number }) => {
+    const { leeway, ...requestOptions } = options ?? {};
     const params = new URLSearchParams();
     if (days != null) params.set('days', String(days));
+    if (leeway != null) params.set('leeway', String(leeway));
     const qs = params.toString();
     return get<RankHistoryResponse>(
       `/api/rankings/${encodeURIComponent(instrument)}/${encodeURIComponent(accountId)}/history${qs ? `?${qs}` : ''}`,
-      options,
+      requestOptions,
     );
   },
 };

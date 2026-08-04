@@ -263,12 +263,6 @@ public interface IMetaDatabase : IDisposable
     SoloFamilyRankingDto? GetSoloFamilyRanking(string scopeId, string accountId);
     Dictionary<string, SoloFamilyRankingDto> GetSoloFamilyRankingsForAccount(string accountId);
 
-    // ── Composite ranking deltas ─────────────────────────────────────
-    void TruncateCompositeRankingDeltas();
-    void WriteCompositeRankingDeltas(IReadOnlyList<(string AccountId, double LeewayBucket,
-        double AdjustedRating, double WeightedRating, double FcRateRating,
-        double TotalScore, double MaxScoreRating, int InstrumentsPlayed, int TotalSongsPlayed)> deltas);
-
     // ── Combo leaderboard ────────────────────────────────────────────
     void ReplaceComboLeaderboard(string comboId,
         IReadOnlyList<(string AccountId, double AdjustedRating, double WeightedRating, double FcRate, long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount)> entries,
@@ -311,12 +305,6 @@ public interface IMetaDatabase : IDisposable
     SongBandLeaderboardEntryDto? GetSongBandLeaderboardEntryForTeam(string songId, string bandType, string teamKey, string? comboId = null, bool requireCurrentProjection = false);
     IReadOnlyList<string> GetBandLeaderboardSongIds();
     List<BandComboCatalogEntry> GetBandRankingCombos(string bandType, bool usePublishedSnapshot = false);
-
-    // ── Combo ranking deltas ─────────────────────────────────────────
-    void TruncateComboRankingDeltas();
-    void WriteComboRankingDeltas(IReadOnlyList<(string ComboId, string AccountId, double LeewayBucket,
-        double AdjustedRating, double WeightedRating, double FcRate,
-        long TotalScore, double MaxScorePct, int SongsPlayed, int FullComboCount)> deltas);
 
     // ── API response cache ───────────────────────────────────────────
     (byte[] Json, string ETag)? GetCachedResponse(string cacheKey);

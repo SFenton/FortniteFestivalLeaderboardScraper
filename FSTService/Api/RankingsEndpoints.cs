@@ -40,7 +40,7 @@ public static partial class ApiEndpoints
             if (frozenMiss is not null) return frozenMiss;
 
             var metric = rankBy ?? "adjusted";
-            var bucket = InstrumentDatabase.QuantizeBucket(leeway);
+            _ = leeway;
             var names = metaDb.GetDisplayNames(selectedAccountIds);
 
             var instrumentPayloads = selectedInstruments.Select(instrument =>
@@ -48,7 +48,7 @@ public static partial class ApiEndpoints
                 var db = persistence.GetOrCreateInstrumentDb(instrument);
                 var totalRanked = db.GetRankedAccountCount();
                 var entries = selectedAccountIds
-                    .Select(accountId => db.GetAccountRankingAtLeeway(accountId, bucket, metric))
+                    .Select(db.GetAccountRanking)
                     .Where(static ranking => ranking is not null)
                     .Select(ranking => MapAccountRanking(ranking!, instrument, names, totalRanked))
                     .ToList();
@@ -201,7 +201,6 @@ public static partial class ApiEndpoints
             var effectivePage = page ?? 1;
             var effectivePageSize = Math.Clamp(pageSize ?? 50, 1, 200);
             var metric = rankBy ?? "adjusted";
-            var bucket = InstrumentDatabase.QuantizeBucket(leeway);
 
             if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
                 return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
@@ -221,7 +220,7 @@ public static partial class ApiEndpoints
             if (frozenMiss is not null) return frozenMiss;
 
             var db = persistence.GetOrCreateInstrumentDb(instrument);
-            var (entries, total) = db.GetRankingsAtLeeway(bucket, metric, effectivePage, effectivePageSize);
+            var (entries, total) = db.GetAccountRankings(metric, effectivePage, effectivePageSize);
 
             // Bulk resolve display names (single DB call)
             var names = metaDb.GetDisplayNames(entries.Select(e => e.AccountId));
@@ -287,10 +286,9 @@ public static partial class ApiEndpoints
             var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
             if (frozenMiss is not null) return frozenMiss;
 
-            var metric = rankBy ?? "adjusted";
             var db = persistence.GetOrCreateInstrumentDb(instrument);
-            var bucket = InstrumentDatabase.QuantizeBucket(leeway);
-            var ranking = db.GetAccountRankingAtLeeway(accountId, bucket, metric);
+            _ = rankBy;
+            var ranking = db.GetAccountRanking(accountId);
             if (ranking is null)
                 return Results.NotFound(new { error = "Account not found in rankings for this instrument." });
 
@@ -408,14 +406,9 @@ public static partial class ApiEndpoints
             if (frozenMiss is not null) return frozenMiss;
 
             var db = persistence.GetOrCreateInstrumentDb(instrument);
-            if (leeway is not null)
-            {
-                var bucket = InstrumentDatabase.QuantizeBucket(leeway);
-                var history = db.GetRankHistoryAtLeeway(accountId, bucket, days ?? 30);
-                return Results.Ok(new { instrument, accountId, history });
-            }
-            var baseHistory = db.GetRankHistory(accountId, days ?? 30);
-            return Results.Ok(new { instrument, accountId, history = baseHistory });
+            _ = leeway;
+            var history = db.GetRankHistory(accountId, days ?? 30);
+            return Results.Ok(new { instrument, accountId, history });
         })
         .WithTags("Rankings")
         .RequireRateLimiting("public");
@@ -1296,7 +1289,7 @@ public static partial class ApiEndpoints
             foreach (var instrument in instrumentKeys)
             {
                 var db = persistence.GetOrCreateInstrumentDb(instrument);
-                var (entries, total) = db.GetRankingsAtLeeway(99.0, metric, 1, effectivePageSize);
+                var (entries, total) = db.GetAccountRankings(metric, 1, effectivePageSize);
                 var entryList = entries.ToList();
 
                 foreach (var e in entryList)

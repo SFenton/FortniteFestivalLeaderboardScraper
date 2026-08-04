@@ -1,4 +1,4 @@
-import type { RankHistoryEntry, RankHistoryDeltaEntry } from '@festival/core/api';
+import type { RankHistoryEntry } from '@festival/core/api';
 
 const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
@@ -54,38 +54,6 @@ export function fillRankHistoryGaps(sparse: RankHistoryEntry[], now = new Date()
   }
 
   return result;
-}
-
-/**
- * Merge sparse base history + sparse delta history for leeway-adjusted chart.
- * Base entries are carry-forwarded; delta entries default to 0 on missing days.
- * Returns dense entries with effective (base + delta) ranks.
- */
-export function mergeRankHistoryWithDeltas(
-  baseHistory: RankHistoryEntry[],
-  deltas: RankHistoryDeltaEntry[],
-  now = new Date(),
-): RankHistoryEntry[] {
-  if (baseHistory.length === 0) return [];
-
-  // Index deltas by date for fast lookup
-  const deltaMap = new Map<string, RankHistoryDeltaEntry>();
-  for (const d of deltas) deltaMap.set(d.snapshotDate, d);
-
-  // Gap-fill base, then apply deltas (default 0 for missing)
-  const filled = fillRankHistoryGaps(baseHistory, now);
-  return filled.map((entry) => {
-    const d = deltaMap.get(entry.snapshotDate);
-    if (!d) return entry;
-    return {
-      ...entry,
-      adjustedSkillRank: entry.adjustedSkillRank + d.adjustedRankDelta,
-      weightedRank: entry.weightedRank + d.weightedRankDelta,
-      fcRateRank: entry.fcRateRank + d.fcRateRankDelta,
-      totalScoreRank: entry.totalScoreRank + d.totalScoreRankDelta,
-      maxScorePercentRank: entry.maxScorePercentRank + d.maxScoreRankDelta,
-    };
-  });
 }
 
 function formatDate(d: Date): string {

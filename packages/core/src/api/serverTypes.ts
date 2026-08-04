@@ -842,31 +842,21 @@ export type SoloFamilyRanks = CompositeRanks & {
 
 export type SoloFamilyRanksByScope = Partial<Record<SoloFamilyScopeId, SoloFamilyRanks>>;
 
-/** Per-instrument rank entry with base ranks and leeway-responsive tiers. */
+/** Canonical per-instrument ranks. `tiers` is retained as an empty compatibility field. */
 export type InstrumentRankEntry = {
   ins: string;
   totalRanked: number;
   base: InstrumentRankBase;
-  tiers: InstrumentRankTier[];
+  tiers: [];
 };
 
-/** Base rank values at the most restrictive leeway (-5.0%). */
+/** Canonical base rank values. */
 export type InstrumentRankBase = {
   adjusted: number;
   weighted: number;
   fcRate: number;
   totalScore: number;
   maxScore: number;
-};
-
-/** Sparse rank tier — only changed fields present. l=null means unfiltered. */
-export type InstrumentRankTier = {
-  l: number | null;
-  adjusted?: number;
-  weighted?: number;
-  fcRate?: number;
-  totalScore?: number;
-  maxScore?: number;
 };
 
 // ─── Rivals types ──────────────────────────────────────────────
@@ -1143,18 +1133,6 @@ export type RankHistoryResponse = {
   instrument: string;
   accountId: string;
   history: RankHistoryEntry[];
-  /** Present only for leeway-filtered requests — sparse rank delta entries. */
-  deltas?: RankHistoryDeltaEntry[];
-};
-
-/** Daily rank delta entry for a specific leeway bucket. */
-export type RankHistoryDeltaEntry = {
-  snapshotDate: string;
-  adjustedRankDelta: number;
-  weightedRankDelta: number;
-  fcRateRankDelta: number;
-  totalScoreRankDelta: number;
-  maxScoreRankDelta: number;
 };
 
 /** Per-instrument ranking entry as returned by /api/rankings/{instrument}. */
@@ -1192,6 +1170,7 @@ export type RankingsPageResponse = {
   page: number;
   pageSize: number;
   totalAccounts: number;
+  leeway?: number | null;
   entries: AccountRankingEntry[];
 };
 
@@ -1199,6 +1178,7 @@ export type RankingsPageResponse = {
 export type AccountRankingDto = AccountRankingEntry & {
   instrument: string;
   totalRankedAccounts: number;
+  leeway?: number | null;
 };
 
 export type SoloFamilyRankingEntry = AccountRankingEntry & {
@@ -1754,7 +1734,7 @@ export function expandWireStatsResponse(wire: WireStatsResponse): PlayerStatsRes
     instruments: (wire.instruments ?? []).map(expandStatsInstrument),
     compositeRanks: wire.compositeRanks ?? null,
     familyRanks: wire.familyRanks ?? null,
-    instrumentRanks: wire.instrumentRanks ?? null,
+    instrumentRanks: wire.instrumentRanks?.map(entry => ({ ...entry, tiers: [] as [] })) ?? null,
     bands: wire.bands ?? null,
   };
 }

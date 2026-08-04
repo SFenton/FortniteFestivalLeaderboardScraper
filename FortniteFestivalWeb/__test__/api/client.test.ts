@@ -578,6 +578,12 @@ describe('api/client', () => {
         accountId: 'p1',
         totalSongs: 10,
         instruments: [],
+        instrumentRanks: [{
+          ins: '01',
+          totalRanked: 25,
+          base: { adjusted: 1, weighted: 2, fcRate: 3, totalScore: 4, maxScore: 5 },
+          tiers: [{ l: 0, adjusted: 99 }],
+        }],
         bands: {
           all: {
             totalCount: 1,
@@ -603,6 +609,38 @@ describe('api/client', () => {
       expect(result.bands?.all.entries[0]?.bandId).toBe('band-guid-1');
       expect(result.bands?.all.entries[0]?.appearanceCount).toBe(2);
       expect(result.bands?.all.entries[0]?.members[0]?.displayName).toBe('Player One');
+      expect(result.instrumentRanks?.[0]?.base.adjusted).toBe(1);
+      expect(result.instrumentRanks?.[0]?.tiers).toEqual([]);
+    });
+  });
+
+  describe('ranking compatibility parameters', () => {
+    it('passes leeway through ranking list and single-account requests', async () => {
+      mockFetchOk({ instrument: 'Solo_Guitar', rankBy: 'adjusted', page: 1, pageSize: 10, totalAccounts: 0, leeway: 2.5, entries: [] });
+      await api.getRankings('Solo_Guitar' as any, 'adjusted', 1, 10, { leeway: 2.5 });
+      expect(global.fetch).toHaveBeenLastCalledWith(
+        '/api/rankings/Solo_Guitar?rankBy=adjusted&page=1&pageSize=10&leeway=2.5',
+        { headers: {} },
+      );
+
+      mockFetchOk({ accountId: 'p1', instrument: 'Solo_Guitar', totalRankedAccounts: 1, leeway: -1.5 });
+      await api.getPlayerRanking('Solo_Guitar' as any, 'p1', 'totalscore', { leeway: -1.5 });
+      expect(global.fetch).toHaveBeenLastCalledWith(
+        '/api/rankings/Solo_Guitar/p1?rankBy=totalscore&leeway=-1.5',
+        { headers: {} },
+      );
+    });
+
+    it('passes leeway through rank-history requests while retaining the base response type', async () => {
+      mockFetchOk({ instrument: 'Solo_Guitar', accountId: 'p1', history: [] });
+
+      const result = await api.getRankHistory('Solo_Guitar' as any, 'p1', 30, { leeway: 1.5 });
+
+      expect(result.history).toEqual([]);
+      expect(global.fetch).toHaveBeenLastCalledWith(
+        '/api/rankings/Solo_Guitar/p1/history?days=30&leeway=1.5',
+        { headers: {} },
+      );
     });
   });
 

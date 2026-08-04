@@ -1016,7 +1016,7 @@ public sealed class ScrapeTimePrecomputer
         var familyRanks = BuildSoloFamilyRankPayload(_metaDb.GetSoloFamilyRankingsForAccount(accountId));
 
         // Expose canonical per-instrument ranks; alternate leeway tiers are retired.
-        var instrumentRanks = BuildInstrumentRankTiers(accountId);
+        var instrumentRanks = BuildInstrumentRankPayload(accountId);
         var bands = _persistence.GetPlayerBands(accountId);
 
         var payload = new
@@ -1025,7 +1025,8 @@ public sealed class ScrapeTimePrecomputer
             totalSongs,
             compositeRanks,
             familyRanks,
-            instrumentRanks,
+            // Keep the compatibility property even when null; null-valued properties are otherwise omitted.
+            instrumentRanks = (object?)instrumentRanks ?? JsonSerializer.Deserialize<JsonElement>("null"),
             bands,
             instruments = tierRows.Select(r => new
             {
@@ -1094,7 +1095,7 @@ public sealed class ScrapeTimePrecomputer
     /// Build canonical per-instrument rank data.
     /// Returns an array of { ins, base: {ranks}, tiers: [] }.
     /// </summary>
-    private List<object>? BuildInstrumentRankTiers(string accountId)
+    private List<object>? BuildInstrumentRankPayload(string accountId)
     {
         var instrumentKeys = _persistence.GetInstrumentKeys();
         var result = new List<object>();
@@ -1416,13 +1417,13 @@ public sealed class ScrapeTimePrecomputer
 
     private void PrecomputeRankingsPages(IReadOnlyList<string> instrumentKeys)
     {
-        // Per-instrument page 1 (unfiltered — leeway=null maps to sentinel 99.0)
+        // Canonical per-instrument page 1.
         foreach (var instrument in instrumentKeys)
         {
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
             foreach (var metric in RankingMetrics)
             {
-                var (entries, total) = db.GetRankingsAtLeeway(99.0, metric, 1, 50);
+                var (entries, total) = db.GetAccountRankings(metric, 1, 50);
                 var entryList = entries.ToList();
                 var names = _metaDb.GetDisplayNames(entryList.Select(e => e.AccountId));
                 var enriched = entryList.Select(e => new
@@ -1561,7 +1562,7 @@ public sealed class ScrapeTimePrecomputer
             foreach (var instrument in instrumentKeys)
             {
                 var db = _persistence.GetOrCreateInstrumentDb(instrument);
-                var (entries, total) = db.GetRankingsAtLeeway(99.0, metric, 1, 10);
+                var (entries, total) = db.GetAccountRankings(metric, 1, 10);
                 var entryList = entries.ToList();
                 foreach (var e in entryList) allAccountIds.Add(e.AccountId);
                 perInstrument[instrument] = (entryList, total);

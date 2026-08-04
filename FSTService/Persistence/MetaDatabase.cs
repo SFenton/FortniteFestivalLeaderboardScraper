@@ -5647,55 +5647,6 @@ public sealed class MetaDatabase : IMetaDatabase
         return ExecuteNonQueryWithCancellation(c, ct);
     }
 
-    // ── Composite ranking deltas ─────────────────────────────────────
-
-    public void TruncateCompositeRankingDeltas()
-    {
-        using var conn = _ds.OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "TRUNCATE composite_ranking_deltas";
-        cmd.ExecuteNonQuery();
-    }
-
-    public void WriteCompositeRankingDeltas(IReadOnlyList<(string AccountId, double LeewayBucket,
-        double AdjustedRating, double WeightedRating, double FcRateRating,
-        double TotalScore, double MaxScoreRating, int InstrumentsPlayed, int TotalSongsPlayed)> deltas)
-    {
-        if (deltas.Count == 0) return;
-        using var conn = _ds.OpenConnection();
-        using var tx = conn.BeginTransaction();
-        using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText =
-            "INSERT INTO composite_ranking_deltas (account_id, leeway_bucket, adjusted_rating, weighted_rating, " +
-            "fc_rate_rating, total_score, max_score_rating, instruments_played, total_songs_played) " +
-            "VALUES (@aid, @bucket, @adj, @wgt, @fc, @ts, @ms, @inst, @songs)";
-        cmd.Parameters.Add("aid", NpgsqlTypes.NpgsqlDbType.Text);
-        cmd.Parameters.Add("bucket", NpgsqlTypes.NpgsqlDbType.Real);
-        cmd.Parameters.Add("adj", NpgsqlTypes.NpgsqlDbType.Real);
-        cmd.Parameters.Add("wgt", NpgsqlTypes.NpgsqlDbType.Real);
-        cmd.Parameters.Add("fc", NpgsqlTypes.NpgsqlDbType.Real);
-        cmd.Parameters.Add("ts", NpgsqlTypes.NpgsqlDbType.Real);
-        cmd.Parameters.Add("ms", NpgsqlTypes.NpgsqlDbType.Real);
-        cmd.Parameters.Add("inst", NpgsqlTypes.NpgsqlDbType.Integer);
-        cmd.Parameters.Add("songs", NpgsqlTypes.NpgsqlDbType.Integer);
-        cmd.Prepare();
-        foreach (var d in deltas)
-        {
-            cmd.Parameters["aid"].Value = d.AccountId;
-            cmd.Parameters["bucket"].Value = (float)d.LeewayBucket;
-            cmd.Parameters["adj"].Value = (float)d.AdjustedRating;
-            cmd.Parameters["wgt"].Value = (float)d.WeightedRating;
-            cmd.Parameters["fc"].Value = (float)d.FcRateRating;
-            cmd.Parameters["ts"].Value = (float)d.TotalScore;
-            cmd.Parameters["ms"].Value = (float)d.MaxScoreRating;
-            cmd.Parameters["inst"].Value = d.InstrumentsPlayed;
-            cmd.Parameters["songs"].Value = d.TotalSongsPlayed;
-            cmd.ExecuteNonQuery();
-        }
-        tx.Commit();
-    }
-
     // ── Combo leaderboard ────────────────────────────────────────────
 
     public void ReplaceComboLeaderboard(string comboId, IReadOnlyList<(string AccountId, double AdjustedRating, double WeightedRating, double FcRate, long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount)> entries, int totalAccounts)
@@ -11213,57 +11164,6 @@ public sealed class MetaDatabase : IMetaDatabase
         }
 
         return combos;
-    }
-
-    // ── Combo ranking deltas ─────────────────────────────────────────
-
-    public void TruncateComboRankingDeltas()
-    {
-        using var conn = _ds.OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "TRUNCATE combo_ranking_deltas";
-        cmd.ExecuteNonQuery();
-    }
-
-    public void WriteComboRankingDeltas(IReadOnlyList<(string ComboId, string AccountId, double LeewayBucket,
-        double AdjustedRating, double WeightedRating, double FcRate,
-        long TotalScore, double MaxScorePct, int SongsPlayed, int FullComboCount)> deltas)
-    {
-        if (deltas.Count == 0) return;
-        using var conn = _ds.OpenConnection();
-        using var tx = conn.BeginTransaction();
-        using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText =
-            "INSERT INTO combo_ranking_deltas (combo_id, account_id, leeway_bucket, adjusted_rating, " +
-            "weighted_rating, fc_rate, total_score, max_score_pct, songs_played, full_combo_count) " +
-            "VALUES (@cid, @aid, @bucket, @adj, @wgt, @fc, @ts, @ms, @songs, @fcc)";
-        cmd.Parameters.Add("cid", NpgsqlTypes.NpgsqlDbType.Text);
-        cmd.Parameters.Add("aid", NpgsqlTypes.NpgsqlDbType.Text);
-        cmd.Parameters.Add("bucket", NpgsqlTypes.NpgsqlDbType.Real);
-        cmd.Parameters.Add("adj", NpgsqlTypes.NpgsqlDbType.Double);
-        cmd.Parameters.Add("wgt", NpgsqlTypes.NpgsqlDbType.Double);
-        cmd.Parameters.Add("fc", NpgsqlTypes.NpgsqlDbType.Double);
-        cmd.Parameters.Add("ts", NpgsqlTypes.NpgsqlDbType.Bigint);
-        cmd.Parameters.Add("ms", NpgsqlTypes.NpgsqlDbType.Double);
-        cmd.Parameters.Add("songs", NpgsqlTypes.NpgsqlDbType.Integer);
-        cmd.Parameters.Add("fcc", NpgsqlTypes.NpgsqlDbType.Integer);
-        cmd.Prepare();
-        foreach (var d in deltas)
-        {
-            cmd.Parameters["cid"].Value = d.ComboId;
-            cmd.Parameters["aid"].Value = d.AccountId;
-            cmd.Parameters["bucket"].Value = (float)d.LeewayBucket;
-            cmd.Parameters["adj"].Value = d.AdjustedRating;
-            cmd.Parameters["wgt"].Value = d.WeightedRating;
-            cmd.Parameters["fc"].Value = d.FcRate;
-            cmd.Parameters["ts"].Value = d.TotalScore;
-            cmd.Parameters["ms"].Value = d.MaxScorePct;
-            cmd.Parameters["songs"].Value = d.SongsPlayed;
-            cmd.Parameters["fcc"].Value = d.FullComboCount;
-            cmd.ExecuteNonQuery();
-        }
-        tx.Commit();
     }
 
     // ── Maintenance ──────────────────────────────────────────────────

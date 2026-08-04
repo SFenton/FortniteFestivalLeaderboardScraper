@@ -9,21 +9,6 @@ public sealed class FeatureOptions
     public const string Section = "Features";
 
     /// <summary>
-    /// When true, the scrape pipeline computes per-bucket ranking deltas for
-    /// leeway-aware global rankings. When false, global rankings always use
-    /// the base 1.05× CHOpt threshold with no per-leeway adjustments.
-    /// All delta code is preserved; this flag only gates computation.
-    /// </summary>
-    public bool ComputeRankingDeltas { get; set; }
-
-    /// <summary>
-    /// When true, leeway-aware ranking reads use interval-tier resolution
-    /// instead of exact-bucket dense delta lookups. Dense path is retained as fallback.
-    /// Only meaningful when <see cref="ComputeRankingDeltas"/> is also true.
-    /// </summary>
-    public bool UseRankingDeltaTiers { get; set; } = true;
-
-    /// <summary>
     /// When true, scrape spool flushes continue to maintain the legacy mutable
     /// leaderboard_entries table. When false, scrape flushes write snapshot
     /// current-state rows only and leave legacy live rows unchanged for rollback.

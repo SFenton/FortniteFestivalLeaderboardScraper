@@ -206,6 +206,35 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public async Task EnsureSchemaAsync_DoesNotCreateRetiredAggregateRankingDeltaRelations()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT COUNT(*)
+            FROM pg_class relation
+            JOIN pg_namespace schema_row
+              ON schema_row.oid = relation.relnamespace
+            WHERE schema_row.nspname = 'public'
+              AND relation.relkind IN ('r', 'p')
+              AND (
+                    relation.relname = 'ranking_deltas'
+                 OR relation.relname LIKE 'ranking_deltas_%'
+                 OR relation.relname = 'ranking_delta_tiers'
+                 OR relation.relname LIKE 'ranking_delta_tiers_%'
+                 OR relation.relname = 'rank_history_deltas'
+                 OR relation.relname LIKE 'rank_history_deltas_%'
+                 OR relation.relname = 'composite_ranking_deltas'
+                 OR relation.relname = 'combo_ranking_deltas'
+              )
+            """;
+
+        Assert.Equal(0L, (long)cmd.ExecuteScalar()!);
+    }
+
+    [Fact]
     public async Task EnsureSchemaAsync_creates_immutable_score_history_dedup_audit_schema()
     {
         await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);

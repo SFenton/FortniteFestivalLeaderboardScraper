@@ -802,19 +802,6 @@ public sealed class RankHistoryDto
 }
 
 /// <summary>
-/// A single rank history delta snapshot at a specific leeway bucket.
-/// </summary>
-public sealed class RankHistoryDeltaDto
-{
-    public string SnapshotDate { get; init; } = "";
-    public int AdjustedRankDelta { get; init; }
-    public int WeightedRankDelta { get; init; }
-    public int FcRateRankDelta { get; init; }
-    public int TotalScoreRankDelta { get; init; }
-    public int MaxScoreRankDelta { get; init; }
-}
-
-/// <summary>
 /// A single entry in a combo leaderboard.
 /// </summary>
 public sealed class ComboLeaderboardEntry

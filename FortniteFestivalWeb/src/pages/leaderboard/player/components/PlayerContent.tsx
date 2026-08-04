@@ -9,7 +9,6 @@ import {
   getInstrumentTiers,
   tierToInstrumentStats,
   computeInstrumentStats,
-  resolveInstrumentRanks,
 } from '../../../player/helpers/playerStats';
 import { comboIdFromInstruments } from '@festival/core/config';
 import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey as InstrumentKey, type PlayerResponse, type ServerSong as Song } from '@festival/core/api';
@@ -300,27 +299,26 @@ export default function PlayerContent({
   // Effective leeway for tier selection: when filtering disabled, pick the last (all-inclusive) tier
   const effectiveLeeway = filterInvalidScores ? leeway : Infinity;
 
-  // Use rank tiers from stats response when available; fall back to per-instrument ranking results
-  const hasRankTiers = !!statsData?.instrumentRanks?.length;
+  // Use canonical ranks embedded in stats when available; otherwise use ranking queries.
+  const hasInstrumentRanks = !!statsData?.instrumentRanks?.length;
 
   // Build map of instrument → AccountRankingEntry for passing to sections
   const instrumentRankings = useMemo(() => {
     const map = new Map<InstrumentKey, AccountRankingEntry>();
 
-    // If rank tiers available from stats, resolve ranks at current leeway
+    // Canonical ranks embedded in stats are independent of score-filter leeway.
     if (statsData?.instrumentRanks?.length) {
       for (const entry of statsData.instrumentRanks as InstrumentRankEntry[]) {
         const inst = visibleKeys.find(k => entry.ins === comboIdFromInstruments([k]));
         if (!inst) continue;
-        const resolved = resolveInstrumentRanks(entry, effectiveLeeway);
         // Build a minimal AccountRankingEntry with rank fields
         map.set(inst, {
           accountId: data.accountId,
-          adjustedSkillRank: resolved.adjusted,
-          weightedRank: resolved.weighted,
-          fcRateRank: resolved.fcRate,
-          totalScoreRank: resolved.totalScore,
-          maxScorePercentRank: resolved.maxScore,
+          adjustedSkillRank: entry.base.adjusted,
+          weightedRank: entry.base.weighted,
+          fcRateRank: entry.base.fcRate,
+          totalScoreRank: entry.base.totalScore,
+          maxScorePercentRank: entry.base.maxScore,
           // Non-rank fields default — only ranks used in stat cards
           songsPlayed: 0, totalChartedSongs: 0, coverage: 0,
           rawSkillRating: 0, adjustedSkillRating: 0,
@@ -339,7 +337,7 @@ export default function PlayerContent({
       if (entry) map.set(visibleKeys[i]!, entry);
     }
     return map;
-  }, [visibleKeys, rankingQueryResults, statsData, effectiveLeeway, hasRankTiers, data.accountId]);
+  }, [visibleKeys, rankingQueryResults, statsData, data.accountId]);
 
   const songMap = useMemo(() => new Map(songs.map((s) => [s.songId, s])), [songs]);
   const byInstrument = useMemo(() => groupByInstrument(effectiveScores), [effectiveScores]);
@@ -484,7 +482,7 @@ export default function PlayerContent({
         : undefined);
 
     const rankingDto = rankingQueryResults[visibleKeys.indexOf(inst)];
-    const totalRanked = hasRankTiers
+    const totalRanked = hasInstrumentRanks
       ? (statsData!.instrumentRanks as InstrumentRankEntry[])?.find(e => e.ins === comboIdFromInstruments([inst]))?.totalRanked
       : rankingDto?.totalRankedAccounts;
     const instrumentItems = buildInstrumentStatsItems(

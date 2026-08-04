@@ -48,7 +48,6 @@ public sealed class RankingsCalculatorTests : IDisposable
 
     private RankingsCalculator CreateSut(
         IMetaDatabase? metaDb = null,
-        FeatureOptions? features = null,
         BandRankHistoryOptions? bandHistoryOptions = null,
         BandTeamRankingRebuildOptions? bandRankingOptions = null,
         ScrapeProgressTracker? progress = null,
@@ -59,7 +58,6 @@ public sealed class RankingsCalculatorTests : IDisposable
             metaDb ?? _metaFixture.Db,
             _pathStore,
             progress ?? new ScrapeProgressTracker(),
-            Options.Create(features ?? new FeatureOptions()),
             Substitute.For<ILogger<RankingsCalculator>>(),
             Options.Create(bandHistoryOptions ?? new BandRankHistoryOptions()),
             Options.Create(bandRankingOptions ?? BandTeamRankingRebuildOptions.Default),
@@ -886,118 +884,11 @@ public sealed class RankingsCalculatorTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════════════
-    // ComputeCompositeDeltas
+    // Full canonical pipeline
     // ═══════════════════════════════════════════════════════════
 
     [Fact]
-    public void CompositeDeltas_ProducesDeltas_WhenInstrumentDeltasExist()
-    {
-        // Seed two instruments with ranking data
-        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
-        var bassDb = _persistence.GetOrCreateInstrumentDb("Solo_Bass");
-
-        guitarDb.UpsertEntries("song_0", [
-            MakeEntry("p1", 1000, rank: 1), MakeEntry("p2", 500, rank: 2),
-        ]);
-        bassDb.UpsertEntries("song_0", [
-            MakeEntry("p1", 800, rank: 1), MakeEntry("p2", 600, rank: 2),
-        ]);
-
-        guitarDb.RecomputeAllRanks(); bassDb.RecomputeAllRanks();
-        guitarDb.ComputeSongStats(); bassDb.ComputeSongStats();
-        guitarDb.ComputeAccountRankings(totalChartedSongs: 1);
-        bassDb.ComputeAccountRankings(totalChartedSongs: 1);
-
-        // Compute base composite rankings first
-        _sut.ComputeCompositeRankings(["Solo_Guitar", "Solo_Bass"]);
-
-        // Write per-instrument ranking deltas at bucket -3.0
-        guitarDb.TruncateRankingDeltas();
-        guitarDb.WriteRankingDeltas([
-            ("p2", -3.0, 5, 0.01, 0.02, 0.8, 40000, 0.90, 4, 92.0, 2, 0.5),
-        ]);
-
-        // Should not throw, may or may not produce composite deltas depending on re-aggregation
-        _sut.ComputeCompositeDeltas(["Solo_Guitar", "Solo_Bass"]);
-    }
-
-    [Fact]
-    public void CompositeDeltas_NoError_WhenNoDeltasExist()
-    {
-        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
-        guitarDb.UpsertEntries("song_0", [MakeEntry("p1", 1000, rank: 1)]);
-        guitarDb.RecomputeAllRanks();
-        guitarDb.ComputeSongStats();
-        guitarDb.ComputeAccountRankings(totalChartedSongs: 1);
-        _sut.ComputeCompositeRankings(["Solo_Guitar"]);
-
-        guitarDb.TruncateRankingDeltas();
-        // No ranking_deltas → should complete without error
-        _sut.ComputeCompositeDeltas(["Solo_Guitar"]);
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // ComputeComboDeltas
-    // ═══════════════════════════════════════════════════════════
-
-    [Fact]
-    public void ComboDeltas_ProducesDeltas_WhenInstrumentDeltasExist()
-    {
-        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
-        var bassDb = _persistence.GetOrCreateInstrumentDb("Solo_Bass");
-
-        guitarDb.UpsertEntries("song_0", [
-            MakeEntry("p1", 1000, rank: 1), MakeEntry("p2", 500, rank: 2),
-        ]);
-        bassDb.UpsertEntries("song_0", [
-            MakeEntry("p1", 800, rank: 1), MakeEntry("p2", 600, rank: 2),
-        ]);
-
-        guitarDb.RecomputeAllRanks(); bassDb.RecomputeAllRanks();
-        guitarDb.ComputeSongStats(); bassDb.ComputeSongStats();
-        guitarDb.ComputeAccountRankings(totalChartedSongs: 1);
-        bassDb.ComputeAccountRankings(totalChartedSongs: 1);
-
-        // Compute base combo leaderboard first
-        _sut.ComputeAllCombos(["Solo_Guitar", "Solo_Bass"]);
-
-        // Write per-instrument ranking deltas
-        guitarDb.TruncateRankingDeltas();
-        guitarDb.WriteRankingDeltas([
-            ("p2", -3.0, 5, 0.01, 0.02, 0.8, 40000, 0.90, 4, 92.0, 2, 0.5),
-        ]);
-
-        // Should not throw
-        _sut.ComputeComboDeltas(["Solo_Guitar", "Solo_Bass"]);
-    }
-
-    [Fact]
-    public void ComboDeltas_NoError_WhenNoDeltasExist()
-    {
-        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
-        var bassDb = _persistence.GetOrCreateInstrumentDb("Solo_Bass");
-
-        guitarDb.UpsertEntries("song_0", [MakeEntry("p1", 1000, rank: 1)]);
-        bassDb.UpsertEntries("song_0", [MakeEntry("p1", 800, rank: 1)]);
-
-        guitarDb.RecomputeAllRanks(); bassDb.RecomputeAllRanks();
-        guitarDb.ComputeSongStats(); bassDb.ComputeSongStats();
-        guitarDb.ComputeAccountRankings(totalChartedSongs: 1);
-        bassDb.ComputeAccountRankings(totalChartedSongs: 1);
-        _sut.ComputeAllCombos(["Solo_Guitar", "Solo_Bass"]);
-
-        guitarDb.TruncateRankingDeltas();
-        bassDb.TruncateRankingDeltas();
-        // No ranking_deltas → should complete without error
-        _sut.ComputeComboDeltas(["Solo_Guitar", "Solo_Bass"]);
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // Full Pipeline with Deltas
-    // ═══════════════════════════════════════════════════════════
-
-    [Fact]
-    public async Task ComputeAllAsync_ProducesCanonicalOutputsWithoutDeltas()
+    public async Task ComputeAllAsync_ProducesCanonicalOutputs()
     {
         var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
         guitarDb.UpsertEntries("song_0", [
@@ -1017,17 +908,15 @@ public sealed class RankingsCalculatorTests : IDisposable
         var c1 = _metaFixture.Db.GetCompositeRanking("p1");
         Assert.NotNull(c1);
 
-        // Verify rank history snapshotted (base + deltas)
+        // Verify base rank history was snapshotted.
         var history = guitarDb.GetRankHistory("p1", 1);
         Assert.Single(history);
-        Assert.Empty(guitarDb.GetAllRankingDeltas());
     }
 
     [Fact]
-    public async Task ComputeAllAsync_BandEntries_SkipsDeltaWritesWithoutException()
+    public async Task ComputeAllAsync_OverThresholdEntry_UsesCanonicalRanking()
     {
-        // Score 1020 on max_score 1000 → 102% → inside the 95%-105% band.
-        // This previously exercised the delta pipeline on a real PostgreSQL connection.
+        // Score 1020 on max_score 1000 is valid under the canonical 1.05 threshold.
         _pathStore.UpdateMaxScores("song_0", new SongMaxScores { MaxLeadScore = 1000 }, "hash_band");
 
         var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
@@ -1039,15 +928,10 @@ public sealed class RankingsCalculatorTests : IDisposable
 
         var svc = CreateFestivalServiceWithSongs(1);
 
-        // This formerly threw NpgsqlOperationInProgressException when the
-        // bucket-delta reader wasn't closed before cleanup ran.
         await _sut.ComputeAllAsync(svc, CancellationToken.None);
 
-        // Base rankings should exist
         var r1 = guitarDb.GetAccountRanking("p1");
         Assert.NotNull(r1);
-        Assert.Empty(guitarDb.GetAllRankingDeltas());
-        Assert.Empty(guitarDb.GetTodayRankDeltas("p1"));
     }
 
     [Fact]
@@ -1425,7 +1309,6 @@ public sealed class RankingsCalculatorTests : IDisposable
         proxy.GetAllRankingSummariesFull().Returns(_ => inner.GetAllRankingSummariesFull());
         proxy.GetAllRankingSummariesDetailed().Returns(_ => inner.GetAllRankingSummariesDetailed());
         proxy.GetAllRankingSummaries().Returns(_ => inner.GetAllRankingSummaries());
-        proxy.GetAllRankingDeltas().Returns(_ => inner.GetAllRankingDeltas());
         proxy.SnapshotRankHistory(Arg.Any<int>(), Arg.Any<bool>())
             .Returns(_ => throw new TimeoutException("synthetic snapshot failure"));
         return proxy;
@@ -1462,14 +1345,6 @@ public sealed class RankingsCalculatorTests : IDisposable
                     call.ArgAt<IReadOnlyList<SoloFamilyRankingDto>>(0),
                     call.ArgAt<int>(1));
             });
-        proxy.When(x => x.TruncateCompositeRankingDeltas())
-            .Do(_ => inner.TruncateCompositeRankingDeltas());
-        proxy.When(x => x.WriteCompositeRankingDeltas(Arg.Any<IReadOnlyList<(string AccountId, double LeewayBucket,
-            double AdjustedRating, double WeightedRating, double FcRateRating,
-            double TotalScore, double MaxScoreRating, int InstrumentsPlayed, int TotalSongsPlayed)>>()))
-            .Do(call => inner.WriteCompositeRankingDeltas(call.Arg<IReadOnlyList<(string AccountId, double LeewayBucket,
-                double AdjustedRating, double WeightedRating, double FcRateRating,
-                double TotalScore, double MaxScoreRating, int InstrumentsPlayed, int TotalSongsPlayed)>>()));
         proxy.When(x => x.ReplaceComboLeaderboard(
                 Arg.Any<string>(),
                 Arg.Any<IReadOnlyList<(string AccountId, double AdjustedRating, double WeightedRating, double FcRate,
@@ -1480,14 +1355,6 @@ public sealed class RankingsCalculatorTests : IDisposable
                 call.Arg<IReadOnlyList<(string AccountId, double AdjustedRating, double WeightedRating, double FcRate,
                     long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount)>>(),
                 call.ArgAt<int>(2)));
-        proxy.When(x => x.TruncateComboRankingDeltas())
-            .Do(_ => inner.TruncateComboRankingDeltas());
-        proxy.When(x => x.WriteComboRankingDeltas(Arg.Any<IReadOnlyList<(string ComboId, string AccountId, double LeewayBucket,
-            double AdjustedRating, double WeightedRating, double FcRate,
-            long TotalScore, double MaxScorePct, int SongsPlayed, int FullComboCount)>>()))
-            .Do(call => inner.WriteComboRankingDeltas(call.Arg<IReadOnlyList<(string ComboId, string AccountId, double LeewayBucket,
-                double AdjustedRating, double WeightedRating, double FcRate,
-                long TotalScore, double MaxScorePct, int SongsPlayed, int FullComboCount)>>()));
         proxy.When(x => x.SnapshotCompositeRankHistory(Arg.Any<int>(), Arg.Any<bool>()))
             .Do(call => inner.SnapshotCompositeRankHistory(call.ArgAt<int>(0), call.ArgAt<bool>(1)));
         proxy.When(x => x.SnapshotBandRankHistory(Arg.Any<string>(), Arg.Any<int>()))

@@ -45,7 +45,7 @@ Flags are **additive** — combine them freely. They modify each scrape pass, no
 | 1 | `SoloScrape` | `--solo-scrape` | `--solo-scrape` | V1 alltime scrape for 6 solo instruments, spool flush, index rebuild, score change detection |
 | 2 | `SoloEnrichment` | `--solo-scrape` | `--solo-enrichment` | Rank recomputation, FirstSeenSeason binary search, account name resolution, pruning |
 | 3 | `SoloRefreshUsers` | `--solo-scrape` | `--solo-refresh-users` | V2 batch lookups for registered users, backfill + history recon integration |
-| 4 | `SoloRankings` | `--solo-leaderboards` | `--solo-leaderboards` | Per-instrument stats, composite rankings, combo rankings, daily history snapshots |
+| 4 | `SoloRankings` | `--solo-leaderboards` | `--solo-leaderboards` | Canonical per-instrument, composite, solo-family, and combo rankings plus base daily history snapshots |
 | 5 | `SoloRivals` | `--solo-leaderboards` | `--solo-rivals` | Per-song ±50 rank rivals + leaderboard-wide rivals |
 | 6 | `SoloPlayerStats` | `--solo-leaderboards` | `--solo-player-stats` | Leeway-tiered stats per instrument + overall |
 | 7 | `SoloPrecompute` | `--solo-leaderboards` | `--solo-precompute` | Cache player + leaderboard API responses to PostgreSQL |
@@ -147,6 +147,24 @@ writer and publication-critical failure counts are zero, the scrape is not
 already published, and all metrics are positive. The resumed pass reuses the
 same scrape ID for rankings, cleanup, source-map validation, and atomic global
 publication; it cannot run scrape or enrichment phases.
+
+### Canonical aggregate ranking contract
+
+`SoloRankings` no longer computes or persists aggregate leeway-responsive
+ranking projections. The retired `ranking_deltas*`, `ranking_delta_tiers*`,
+`rank_history_deltas*`, `composite_ranking_deltas`, and
+`combo_ranking_deltas` families are absent from fresh startup schemas.
+Ranking/history routes continue accepting `leeway` for compatibility but read
+canonical base rankings/history directly; list and single ranking responses
+retain their existing leeway echo.
+
+This retirement does not change per-score `minLeeway` and valid-score/local
+filter tiers, population tiers/rank offsets, `player_stats_tiers`, stored-rank
+filtered reads, solo-family/combo/composite rankings, band ranking/history
+change detection, rival `rankDelta`, or API score filtering. The 32 existing
+empty physical aggregate-delta relations remain rollback-only until a cleanup
+image completes a full scrape with publication and public-fingerprint parity.
+Their later removal is a separate explicit no-`CASCADE` maintenance action.
 
 ### `--band-scrape` vs `EnableBandScraping`
 

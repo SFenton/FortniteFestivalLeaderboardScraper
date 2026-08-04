@@ -129,7 +129,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
     [settings],
   );
 
-  // Fetch pre-computed tiered stats (hoisted from PlayerContent so stagger waits for data)
+  // Fetch pre-computed stats (hoisted from PlayerContent so stagger waits for data).
   const statsQuery = useQuery({
     queryKey: queryKeys.playerStats(accountId ?? ''),
     queryFn: ({ signal }) => api.getPlayerStats(accountId!, { signal }),
@@ -138,10 +138,10 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   });
   const statsData = statsQuery.data ?? null;
   const statsSettled = statsQuery.isSuccess || statsQuery.isError;
-  const hasRankTiers = !!statsData?.instrumentRanks?.length;
-  const shouldFetchRankingFallback = !!accountId && statsSettled && !hasRankTiers;
+  const hasInstrumentRanks = !!statsData?.instrumentRanks?.length;
+  const shouldFetchRankingFallback = !!accountId && statsSettled && !hasInstrumentRanks;
 
-  // Fetch per-instrument rankings (only when stats don't already provide rank tiers)
+  // Fetch per-instrument rankings only when stats do not embed canonical ranks.
   const instrumentRankingQueries = useQueries({
     queries: accountId
       ? visibleKeys.map((inst) => ({
@@ -171,14 +171,14 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   /* v8 ignore stop */
   const skipAnim = skipAnimRef.current;
   const statsReady = !statsQuery.isLoading;
-  const rankingsReady = hasRankTiers || !shouldFetchRankingFallback || instrumentRankingQueries.every(q => !q.isLoading);
+  const rankingsReady = hasInstrumentRanks || !shouldFetchRankingFallback || instrumentRankingQueries.every(q => !q.isLoading);
   const dataReady = !loading && !error && !!data && statsReady && rankingsReady;
 
   // Prefetch rank-history after critical profile/stats data is ready so it cannot compete with first render.
   const allHistory = useRankHistoryAll(visibleKeys, accountId, 'totalscore', 30, dataReady);
   const historyAllCached = !accountId || visibleKeys.every(inst => allHistory[inst]?.chartData != null && !allHistory[inst]?.loading);
   const allCached = !!data && statsQuery.data != null
-    && (hasRankTiers || instrumentRankingQueries.every(q => q.data != null))
+    && (hasInstrumentRanks || instrumentRankingQueries.every(q => q.data != null))
     && historyAllCached;
   const { phase: loadPhase, triggerContentOut } = useLoadPhase(dataReady, { skipAnimation: skipAnim || allCached });
   useSetPageReady(loadPhase === LoadPhase.ContentIn);

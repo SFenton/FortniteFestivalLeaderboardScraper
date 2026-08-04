@@ -3303,6 +3303,76 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task ApiPlayerStats_UncachedInstrumentRanksUseCanonicalBaseShape()
+    {
+        const string accountId = "playerStatsCanonicalRanksAcct";
+        AccountRankingDto expectedRanking;
+        int expectedTotalRanked;
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+            db.UpsertEntries("playerStatsCanonicalRanksSong", [
+                new LeaderboardEntry { AccountId = accountId, Score = 100_000, Rank = 1, Accuracy = 99, Stars = 6 },
+                new LeaderboardEntry { AccountId = "playerStatsCanonicalRanksOther", Score = 90_000, Rank = 2, Accuracy = 95, Stars = 5 },
+            ]);
+            db.RecomputeAllRanks();
+            db.ComputeSongStats();
+            db.ComputeAccountRankings(totalChartedSongs: 1);
+            expectedRanking = db.GetAccountRanking(accountId)!;
+            expectedTotalRanked = db.GetRankedAccountCount();
+
+            metaDb.UpsertPlayerStatsTiers(accountId, "Solo_Guitar", JsonSerializer.Serialize(new[]
+            {
+                new PlayerStatsTier { SongsPlayed = 1, TotalScore = 100_000, CompletionPercent = 100, BestRank = 1 },
+            }));
+        }
+
+        var response = await _client.GetAsync($"/api/player/{accountId}/stats");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        var instrumentRanks = json.GetProperty("instrumentRanks");
+        Assert.Equal(1, instrumentRanks.GetArrayLength());
+
+        var entry = instrumentRanks[0];
+        Assert.Equal("01", entry.GetProperty("ins").GetString());
+        Assert.Equal(expectedTotalRanked, entry.GetProperty("totalRanked").GetInt32());
+        Assert.Equal(0, entry.GetProperty("tiers").GetArrayLength());
+
+        var baseRanks = entry.GetProperty("base");
+        Assert.Equal(expectedRanking.AdjustedSkillRank, baseRanks.GetProperty("adjusted").GetInt32());
+        Assert.Equal(expectedRanking.WeightedRank, baseRanks.GetProperty("weighted").GetInt32());
+        Assert.Equal(expectedRanking.FcRateRank, baseRanks.GetProperty("fcRate").GetInt32());
+        Assert.Equal(expectedRanking.TotalScoreRank, baseRanks.GetProperty("totalScore").GetInt32());
+        Assert.Equal(expectedRanking.MaxScorePercentRank, baseRanks.GetProperty("maxScore").GetInt32());
+    }
+
+    [Fact]
+    public async Task ApiPlayerStats_UncachedInstrumentRanksAreNullWithoutBaseRanks()
+    {
+        const string accountId = "playerStatsNoCanonicalRanksAcct";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            metaDb.UpsertPlayerStatsTiers(accountId, "Solo_Guitar", JsonSerializer.Serialize(new[]
+            {
+                new PlayerStatsTier { SongsPlayed = 1, TotalScore = 90_000, CompletionPercent = 100, BestRank = 1 },
+            }));
+        }
+
+        var response = await _client.GetAsync($"/api/player/{accountId}/stats");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal(JsonValueKind.Null, json.GetProperty("instrumentRanks").ValueKind);
+    }
+
+    [Fact]
     public async Task ApiPlayerStats_ReturnsPreComputedStats()
     {
         // Seed player stats
@@ -4822,7 +4892,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
-    public async Task Rankings_PerInstrument_ReturnsRankings_WhenSeeded()
+    public async Task Rankings_PerInstrument_LeewayEchoesWhileReturningCanonicalRankings()
     {
         var persistence = _factory.Services.GetRequiredService<GlobalLeaderboardPersistence>();
         var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
@@ -4834,11 +4904,15 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         db.ComputeSongStats();
         db.ComputeAccountRankings(totalChartedSongs: 1);
 
-        var response = await _client.GetAsync("/api/rankings/Solo_Guitar?page=1&pageSize=50");
+        var response = await _client.GetAsync("/api/rankings/Solo_Guitar?page=1&pageSize=200&leeway=-3.2");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.True(json.GetProperty("totalAccounts").GetInt32() >= 2);
         Assert.True(json.GetProperty("entries").GetArrayLength() >= 2);
+        Assert.Equal(-3.2, json.GetProperty("leeway").GetDouble());
+        Assert.Contains(
+            json.GetProperty("entries").EnumerateArray(),
+            entry => entry.GetProperty("accountId").GetString() == "rank_p1");
     }
 
     [Fact]
@@ -4908,7 +4982,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
-    public async Task Rankings_SingleAccount_ReturnsRanking()
+    public async Task Rankings_SingleAccount_LeewayEchoesWhileReturningCanonicalRanking()
     {
         var persistence = _factory.Services.GetRequiredService<GlobalLeaderboardPersistence>();
         var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
@@ -4919,11 +4993,12 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         db.ComputeSongStats();
         db.ComputeAccountRankings(totalChartedSongs: 1);
 
-        var response = await _client.GetAsync("/api/rankings/Solo_Guitar/single_rank_p1");
+        var response = await _client.GetAsync("/api/rankings/Solo_Guitar/single_rank_p1?leeway=4.5");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("single_rank_p1", json.GetProperty("accountId").GetString());
         Assert.True(json.GetProperty("adjustedSkillRank").GetInt32() >= 1);
+        Assert.Equal(4.5, json.GetProperty("leeway").GetDouble());
     }
 
     [Fact]
@@ -4934,7 +5009,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
-    public async Task Rankings_History_ReturnsData()
+    public async Task Rankings_History_AcceptsLeewayAndReturnsBaseOnlyShape()
     {
         var persistence = _factory.Services.GetRequiredService<GlobalLeaderboardPersistence>();
         var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
@@ -4946,10 +5021,14 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         db.ComputeAccountRankings(totalChartedSongs: 1);
         db.SnapshotRankHistory();
 
-        var response = await _client.GetAsync("/api/rankings/Solo_Guitar/hist_p1/history?days=7");
+        var response = await _client.GetAsync("/api/rankings/Solo_Guitar/hist_p1/history?days=7&leeway=2.5");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("Solo_Guitar", json.GetProperty("instrument").GetString());
+        Assert.Equal("hist_p1", json.GetProperty("accountId").GetString());
         Assert.True(json.GetProperty("history").GetArrayLength() > 0);
+        Assert.False(json.TryGetProperty("deltas", out _));
+        Assert.False(json.TryGetProperty("leeway", out _));
     }
 
     [Fact]

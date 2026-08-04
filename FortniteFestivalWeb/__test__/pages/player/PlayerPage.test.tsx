@@ -61,7 +61,7 @@ const mockApi = vi.hoisted(() => {
     getLeaderboard: fn().mockResolvedValue({ songId: 'song-1', instrument: 'Solo_Guitar', count: 0, totalEntries: 0, localEntries: 0, entries: [] }),
     getAllLeaderboards: fn().mockResolvedValue({ songId: 'song-1', instruments: [] }),
     getPlayerRanking: fn().mockResolvedValue({ accountId: 'test-player-1', instrument: 'Solo_Guitar', adjustedSkillRank: 1, weightedRank: 1, fcRateRank: 1, totalScoreRank: 1, maxScorePercentRank: 1, totalRankedAccounts: 1 }),
-    getRankHistory: fn().mockResolvedValue({ accountId: 'test-player-1', instrument: 'Solo_Guitar', count: 0, history: [], deltas: [] }),
+    getRankHistory: fn().mockResolvedValue({ accountId: 'test-player-1', instrument: 'Solo_Guitar', count: 0, history: [] }),
     getPlayerHistory: fn().mockResolvedValue({ accountId: 'test-player-1', count: 0, history: [] }),
     searchAccounts: fn().mockResolvedValue({ results: [] }),
     getRivalsAll: fn().mockResolvedValue({ accountId: 'test-player-1', songs: [], combos: [] }),
@@ -100,7 +100,7 @@ beforeEach(() => {
   mockApi.getLeaderboard.mockResolvedValue({ songId: 'song-1', instrument: 'Solo_Guitar', count: 0, totalEntries: 0, localEntries: 0, entries: [] });
   mockApi.getAllLeaderboards.mockResolvedValue({ songId: 'song-1', instruments: [] });
   mockApi.getPlayerRanking.mockResolvedValue({ accountId: 'test-player-1', instrument: 'Solo_Guitar', adjustedSkillRank: 1, weightedRank: 1, fcRateRank: 1, totalScoreRank: 1, maxScorePercentRank: 1, totalRankedAccounts: 1 });
-  mockApi.getRankHistory.mockResolvedValue({ accountId: 'test-player-1', instrument: 'Solo_Guitar', count: 0, history: [], deltas: [] });
+  mockApi.getRankHistory.mockResolvedValue({ accountId: 'test-player-1', instrument: 'Solo_Guitar', count: 0, history: [] });
   mockApi.getPlayerHistory.mockResolvedValue({ accountId: 'test-player-1', count: 0, history: [] });
   mockApi.searchAccounts.mockResolvedValue({ results: [] });
 });
@@ -334,7 +334,7 @@ describe('PlayerPage', () => {
     expect(mockApi.getRankHistory).not.toHaveBeenCalled();
   });
 
-  it('does not fetch fallback rankings when stats include rank tiers', async () => {
+  it('does not fetch fallback rankings when stats include canonical instrument ranks', async () => {
     mockApi.getPlayerStats.mockResolvedValue({
       accountId: 'test-player-1',
       totalSongs: 3,

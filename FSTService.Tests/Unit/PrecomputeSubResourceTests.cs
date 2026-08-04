@@ -209,6 +209,26 @@ public sealed class PrecomputeSubResourceTests : IDisposable
     }
 
     [Fact]
+    public async Task PrecomputeAllAsync_PlayerStatsUseNullInstrumentRanksWithoutBaseRanks()
+    {
+        RegisterUser("u-no-ranks");
+        _metaDb.UpsertPlayerStatsTiers(
+            "u-no-ranks",
+            "Solo_Guitar",
+            "[{\"leeway\":0,\"rank\":1}]");
+
+        await _sut.PrecomputeAllAsync(CancellationToken.None);
+
+        var result = _sut.TryGet("playerstats:u-no-ranks");
+        Assert.NotNull(result);
+
+        var json = JsonDocument.Parse(result.Value.Json);
+        Assert.Equal(
+            JsonValueKind.Null,
+            json.RootElement.GetProperty("instrumentRanks").ValueKind);
+    }
+
+    [Fact]
     public async Task PrecomputeAllAsync_ProducesPlayerBands()
     {
         RegisterUser("u1", "Bands User");

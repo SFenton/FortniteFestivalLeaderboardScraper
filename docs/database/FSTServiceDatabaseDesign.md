@@ -827,10 +827,29 @@ and retained old-table rollback; bounded unlogged samples are evaluation-only.
 | `account_rankings`, `account_ranking_stats` | Derived ranking projection | Rankings pipeline | Rebuildable; generation/source must remain auditable |
 | `rank_history` partitions, `rank_history_snapshot_stats`, `rank_history_tracked_accounts` | Durable user-visible history and snapshot metadata | Ranking/history pipeline and API | Append only on meaningful change after PG-5 redesign |
 | `rank_history_latest` | Empty obsolete latest projection schema | No current exact caller | ORPHAN-RECLAIM truncated stale rows; deterministic rebuild from retained `rank_history` |
-| `ranking_deltas`, `ranking_delta_tiers`, `rank_history_deltas` partitions | Derived experimental projections | Rankings pipeline | Feature-flagged; rebuildable |
-| `composite_rankings`, `composite_rank_history`, `composite_ranking_deltas` | Derived current plus durable history | `MetaDatabase`, rankings API | Current/deltas rebuildable; history retained by explicit policy |
+| `ranking_deltas`, `ranking_delta_tiers`, `rank_history_deltas` partitions | Empty retired aggregate-leeway projection schemas; absent from fresh schemas | None; compute/read/persistence code, flags, DTOs, and startup DDL are removed | Existing physical relations remain rollback-only until cleanup-image full-scrape parity |
+| `composite_rankings`, `composite_rank_history` | Derived current plus durable history | `MetaDatabase`, rankings API | Current rankings rebuildable; history retained by explicit policy |
+| `composite_ranking_deltas` | Empty retired aggregate-leeway projection schema; absent from fresh schemas | None; compute/persistence code and startup DDL are removed | Existing physical relation remains rollback-only until cleanup-image full-scrape parity |
 | `composite_rank_history_latest` | Empty obsolete latest projection schema | No current exact caller | ORPHAN-RECLAIM truncated stale rows; deterministic rebuild from retained `composite_rank_history` |
-| `solo_family_rankings`, `combo_leaderboard`, `combo_stats`, `combo_ranking_deltas` | Derived ranking projections | Rankings pipeline/API | Rebuildable from published solo current state |
+| `solo_family_rankings`, `combo_leaderboard`, `combo_stats` | Derived ranking projections | Rankings pipeline/API | Rebuildable from published solo current state |
+| `combo_ranking_deltas` | Empty retired aggregate-leeway projection schema; absent from fresh schemas | None; compute/persistence code and startup DDL are removed | Existing physical relation remains rollback-only until cleanup-image full-scrape parity |
+
+The 2026-08-04 aggregate ranking-delta retirement removes all runtime and
+startup ownership for the five empty relation families above. Operator-supplied
+catalog evidence records zero rows across all 32 physical relations and keeps
+the same-drive catalog baseline, rollback DDL, and checksums under
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/branch-cleanup-20260803/ranking-deltas/`.
+This repository change executes no live DDL: the physical relations stay in
+place until a cleanup image completes one full scrape with publication and
+public-fingerprint parity. Their later cleanup is a separate explicit
+object-by-object `DROP` without `CASCADE`.
+
+Canonical `account_rankings`, base `rank_history`, `composite_rankings`,
+`composite_rank_history`, solo-family rankings, combo rankings, and all band
+ranking/history change detection remain active. Score `minLeeway` filtering,
+valid-score fallbacks and local filter tiers, population tiers/rank offsets,
+`player_stats_tiers`, stored-rank filtered reads, rival `rankDelta`, and API
+score filtering are separate mechanisms and are not retired.
 
 Solo-family ranking denominators are selected identically by runtime and the
 one-shot backfill. For each instrument, the effective denominator is the
