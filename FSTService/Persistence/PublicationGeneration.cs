@@ -40,6 +40,29 @@ public sealed record PublicationSurfaceBinding(
     string Status,
     DateTime BuiltAtUtc);
 
+public sealed record PublicationSurfaceSourceEvidence(
+    string SurfaceName,
+    bool Exists,
+    long PublicationId,
+    long? ScrapeId,
+    long? RowCount,
+    string? ContentHash,
+    long? SourceGeneration = null);
+
+public static class PublicationSurfaceNames
+{
+    public const string AccountNames = "account_names";
+    public const string AccountOverlays = "account_overlays";
+    public const string ApiResponseCache = "api_response_cache";
+    public const string BandRankings = "band_rankings";
+    public const string History = "history";
+    public const string ImprovementNotifications = "improvement_notifications";
+    public const string ItemShop = "item_shop";
+    public const string PathArtifacts = "path_artifacts";
+    public const string SoloScopeSources = "solo_scope_sources";
+    public const string SongCatalog = "song_catalog";
+}
+
 public sealed record PublicationSongCatalogInfo(
     long PublicationId,
     long ScrapeId,

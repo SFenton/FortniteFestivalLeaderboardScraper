@@ -338,6 +338,9 @@ public static class ApiPublicationEndpointDescriptions
 
     public static void Validate(EndpointDataSource dataSource)
     {
+        PublicationRouteSurfaceContractCatalog.Validate(
+            ApiPublicationRouteCatalog.Routes);
+
         var endpoints = GetApiRouteEndpoints(dataSource);
         var failures = new List<string>();
 

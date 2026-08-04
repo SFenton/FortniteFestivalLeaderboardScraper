@@ -34,6 +34,9 @@ public interface IMetaDatabase : IDisposable
     PublicationGenerationInfo? GetPublicationGenerationForScrape(long scrapeId);
     PublicationSongCatalogInfo? GetPublicationSongCatalogForScrape(long scrapeId);
     IReadOnlyList<PublicationSurfaceBinding> GetPublicationSurfaceBindings(long publicationId);
+    PublicationSurfaceSourceEvidence? GetPublicationSurfaceSourceEvidence(
+        long publicationId,
+        string surfaceName);
     bool IsBandCurrentProjectionGloballyPublished();
     bool ShouldShowLeaderboardEntryTotals();
     void RecordScrapePhaseTiming(ScrapePhaseTimingRecord timing);

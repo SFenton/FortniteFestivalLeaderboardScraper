@@ -945,6 +945,178 @@ public sealed class MetaDatabase : IMetaDatabase
         return bindings;
     }
 
+    public PublicationSurfaceSourceEvidence? GetPublicationSurfaceSourceEvidence(
+        long publicationId,
+        string surfaceName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(surfaceName);
+
+        return surfaceName switch
+        {
+            PublicationSurfaceNames.ApiResponseCache =>
+                GetPublicationApiResponseCacheEvidence(publicationId),
+            PublicationSurfaceNames.BandRankings =>
+                GetPublicationBandRankingsEvidence(publicationId),
+            PublicationSurfaceNames.SoloScopeSources =>
+                GetPublicationSoloScopeSourceEvidence(publicationId),
+            PublicationSurfaceNames.SongCatalog =>
+                GetPublicationSongCatalogEvidence(publicationId),
+            _ => null,
+        };
+    }
+
+    private PublicationSurfaceSourceEvidence?
+        GetPublicationApiResponseCacheEvidence(long publicationId)
+    {
+        using var conn = _ds.OpenConnection();
+        EnsureScrapePublicationStateTable(conn);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            WITH target AS (
+                SELECT publication_id, scrape_id
+                FROM publication_generations
+                WHERE publication_id = @publicationId
+            )
+            SELECT
+                target.publication_id,
+                target.scrape_id,
+                COUNT(cache.cache_key),
+                md5(COALESCE(
+                    string_agg(
+                        cache.cache_key || ':' || cache.etag,
+                        '|' ORDER BY cache.cache_key),
+                    ''))
+            FROM target
+            LEFT JOIN publication_api_response_cache cache
+              ON cache.publication_id = target.publication_id
+            GROUP BY target.publication_id, target.scrape_id
+            """;
+        cmd.Parameters.AddWithValue("publicationId", publicationId);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return null;
+
+        return new PublicationSurfaceSourceEvidence(
+            PublicationSurfaceNames.ApiResponseCache,
+            Exists: true,
+            reader.GetInt64(0),
+            reader.IsDBNull(1) ? null : reader.GetInt64(1),
+            reader.GetInt64(2),
+            reader.GetString(3));
+    }
+
+    private PublicationSurfaceSourceEvidence?
+        GetPublicationBandRankingsEvidence(long publicationId)
+    {
+        using var conn = _ds.OpenConnection();
+        EnsureScrapePublicationStateTable(conn);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT
+                generation.publication_id,
+                generation.scrape_id,
+                publication.current_publication_id =
+                    generation.publication_id
+                AND publication.band_projection_generation IS NOT NULL
+                AND publication.band_projection_generation =
+                    projection.current_generation,
+                projection.current_generation
+            FROM publication_generations generation
+            LEFT JOIN scrape_publication_state publication
+              ON publication.id = TRUE
+            LEFT JOIN band_current_projection_state projection
+              ON projection.id = TRUE
+            WHERE generation.publication_id = @publicationId
+            """;
+        cmd.Parameters.AddWithValue("publicationId", publicationId);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return null;
+
+        return new PublicationSurfaceSourceEvidence(
+            PublicationSurfaceNames.BandRankings,
+            Exists: !reader.IsDBNull(2) && reader.GetBoolean(2),
+            reader.GetInt64(0),
+            reader.IsDBNull(1) ? null : reader.GetInt64(1),
+            RowCount: null,
+            ContentHash: null,
+            SourceGeneration:
+                reader.IsDBNull(3) ? null : reader.GetInt64(3));
+    }
+
+    private PublicationSurfaceSourceEvidence?
+        GetPublicationSoloScopeSourceEvidence(long publicationId)
+    {
+        using var conn = _ds.OpenConnection();
+        EnsureScrapePublicationStateTable(conn);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            WITH target AS (
+                SELECT publication_id, scrape_id
+                FROM publication_generations
+                WHERE publication_id = @publicationId
+            )
+            SELECT
+                target.publication_id,
+                target.scrape_id,
+                COUNT(source.song_id)
+            FROM target
+            LEFT JOIN leaderboard_published_scope_source source
+              ON source.published_scrape_id = target.scrape_id
+            GROUP BY target.publication_id, target.scrape_id
+            """;
+        cmd.Parameters.AddWithValue("publicationId", publicationId);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return null;
+
+        var rowCount = reader.GetInt64(2);
+        return new PublicationSurfaceSourceEvidence(
+            PublicationSurfaceNames.SoloScopeSources,
+            Exists: rowCount > 0,
+            reader.GetInt64(0),
+            reader.IsDBNull(1) ? null : reader.GetInt64(1),
+            rowCount,
+            ContentHash: null);
+    }
+
+    private PublicationSurfaceSourceEvidence?
+        GetPublicationSongCatalogEvidence(long publicationId)
+    {
+        using var conn = _ds.OpenConnection();
+        EnsureScrapePublicationStateTable(conn);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT
+                generation.publication_id,
+                generation.scrape_id,
+                catalog.song_count,
+                catalog.content_hash,
+                catalog.is_exact
+                    AND catalog.source_kind = 'provider_exact'
+                    AND catalog.schema_version = @schemaVersion
+            FROM publication_generations generation
+            LEFT JOIN publication_song_catalog catalog
+              ON catalog.publication_id = generation.publication_id
+            WHERE generation.publication_id = @publicationId
+            """;
+        cmd.Parameters.AddWithValue("publicationId", publicationId);
+        cmd.Parameters.AddWithValue(
+            "schemaVersion",
+            SongCatalogSnapshotBuilder.SchemaVersion);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return null;
+
+        return new PublicationSurfaceSourceEvidence(
+            PublicationSurfaceNames.SongCatalog,
+            Exists: !reader.IsDBNull(4) && reader.GetBoolean(4),
+            reader.GetInt64(0),
+            reader.IsDBNull(1) ? null : reader.GetInt64(1),
+            reader.IsDBNull(2) ? null : reader.GetInt64(2),
+            reader.IsDBNull(3) ? null : reader.GetString(3));
+    }
+
     public void PublishScrapeRun(
         long scrapeId,
         bool promoteCachedResponses = true,

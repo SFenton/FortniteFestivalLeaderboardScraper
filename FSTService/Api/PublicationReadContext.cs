@@ -43,6 +43,7 @@ public sealed class PublicationReadContextService
     private readonly IMetaDatabase _metaDb;
     private readonly NpgsqlDataSource _dataSource;
     private readonly IOptions<FeatureOptions> _features;
+    private readonly PublicationReadinessEvaluator _readinessEvaluator;
 
     public PublicationReadContextService(
         IMetaDatabase metaDb,
@@ -52,6 +53,7 @@ public sealed class PublicationReadContextService
         _metaDb = metaDb;
         _dataSource = dataSource;
         _features = features;
+        _readinessEvaluator = new PublicationReadinessEvaluator(metaDb);
     }
 
     public PublicationReadContextService(
@@ -62,10 +64,55 @@ public sealed class PublicationReadContextService
     {
     }
 
-    public bool PinningEnabled => _features.Value.EnablePublicationReadContext;
+    public bool PinningConfigured =>
+        _features.Value.EnablePublicationReadContext;
+
+    public bool PinningEnabled
+    {
+        get
+        {
+            if (!PinningConfigured)
+                return false;
+
+            var pointers = GetPointers();
+            return pointers.CurrentPublicationId.HasValue
+                   && pointers.PublishedScrapeId.HasValue
+                   && EvaluateReadiness(pointers).ReadyForPinning;
+        }
+    }
 
     public PublicationPointerState GetPointers() =>
         _metaDb.GetPublicationPointerState();
+
+    public PublicationReadinessResult EvaluateReadiness(
+        PublicationPointerState pointers)
+    {
+        if (!pointers.CurrentPublicationId.HasValue
+            || !pointers.PublishedScrapeId.HasValue)
+        {
+            throw new InvalidOperationException(
+                "Publication readiness requires current publication and scrape pointers.");
+        }
+
+        return _readinessEvaluator.Evaluate(
+            pointers.CurrentPublicationId.Value,
+            pointers.PublishedScrapeId.Value);
+    }
+
+    public PublicationBootstrapResponse BuildBootstrapResponse(
+        PublicationPointerState pointers)
+    {
+        var readiness = EvaluateReadiness(pointers);
+        return new PublicationBootstrapResponse(
+            readiness.ContractVersion,
+            readiness.PublicationId,
+            pointers.PreviousPublicationId,
+            readiness.PublishedScrapeId,
+            pointers.PublishedAtUtc,
+            readiness.ReadyForPinning,
+            PinningConfigured && readiness.ReadyForPinning,
+            readiness.UnreadySurfaces);
+    }
 
     public async Task<PublicationReadLease> AcquireAsync(
         CancellationToken ct)
@@ -254,7 +301,7 @@ public sealed class PublicationReadContextMiddleware
         HttpContext context,
         PublicationReadContextService publicationService)
     {
-        if (!publicationService.PinningEnabled)
+        if (!publicationService.PinningConfigured)
         {
             await _next(context);
             return;
@@ -312,6 +359,17 @@ public sealed class PublicationReadContextMiddleware
                     previousPublicationId = pointers.PreviousPublicationId,
                     publishedScrapeId = pointers.PublishedScrapeId,
                 }, statusCode: StatusCodes.Status409Conflict).ExecuteAsync(context);
+                return;
+            }
+
+            var readiness =
+                publicationService.EvaluateReadiness(pointers);
+            if (!readiness.ReadyForPinning)
+            {
+                context.Response.Headers.CacheControl = "no-store";
+                await PublicationReadinessHttpResults
+                    .Unavailable(readiness)
+                    .ExecuteAsync(context);
                 return;
             }
 

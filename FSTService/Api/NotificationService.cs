@@ -377,7 +377,7 @@ public sealed class NotificationService
         try
         {
             if (publicationId.HasValue
-                && publicationService?.PinningEnabled == true)
+                && publicationService?.PinningConfigured == true)
             {
                 registrationLease =
                     await publicationService.AcquireAsync(ct);
@@ -386,6 +386,21 @@ public sealed class NotificationService
                         publicationId,
                         registrationLease.Pointers.CurrentPublicationId))
                 {
+                    return;
+                }
+
+                if (!registrationLease.Pointers.PublishedScrapeId.HasValue
+                    || !publicationService
+                        .EvaluateReadiness(registrationLease.Pointers)
+                        .ReadyForPinning)
+                {
+                    if (ws.State == WebSocketState.Open)
+                    {
+                        await ws.CloseOutputAsync(
+                            WebSocketCloseStatus.PolicyViolation,
+                            "Publication unavailable",
+                            CancellationToken.None);
+                    }
                     return;
                 }
             }

@@ -1119,6 +1119,51 @@ generation-addressable surface binding. Catalog and API response cache now
 have ready generation bindings; shop, path, and the remaining inherited
 surfaces stay deliberately incomplete.
 
+PUB-CONTRACT/PUB-READINESS adds a fail-closed decision layer without changing
+schema, readers, publication promotion, or production configuration:
+
+- contract version `1` maps all 55 current `PublicationBound` route
+  definitions to immutable route-family descriptors and the named surfaces
+  `account_names`, `account_overlays`, `band_rankings`, `history`,
+  `improvement_notifications`, `item_shop`, `path_artifacts`,
+  `solo_scope_sources`, and `song_catalog`; `api_response_cache` is a required
+  pinning-infrastructure surface;
+- startup/tests reject duplicate contracts, unmapped publication-bound routes,
+  stale contracts, unknown families, unknown surfaces, duplicate surface
+  requirements, and family drift. Operational and private routes remain
+  explicitly outside this contract; no publication-bound route has an
+  independent/live exemption;
+- readiness requires the current generation to exist, match the published
+  scrape, remain `current`, and carry source-cut/ready/published timestamps.
+  Every required binding must be unique, `ready`, use an allowed kind, carry
+  contract version `1`, match its publication/scrape/source identity, and
+  provide the row count or content hash promised by that binding type;
+- source existence/count/hash is rechecked for generation cache rows, exact
+  song-catalog rows, retained published solo scope mappings, and the current
+  published band projection. Candidate-mutated latest fingerprint rows are
+  not used to invalidate the still-current generation. Missing or retired
+  sources fail closed;
+- existing binding producers intentionally do not receive synthetic contract
+  readiness in this phase. In particular, `item_shop` and `path_artifacts`
+  remain `legacy_live_unversioned`/`building`; existing catalog, cache,
+  scope-map, band, and notification bindings also lack the full versioned
+  route-reader contract required to activate pinning;
+- `/api/publication` now returns additive `contractVersion`,
+  `readyForPinning`, effective `pinningEnabled`, and deterministically sorted
+  `unreadySurfaces`/reason arrays. The web client must add these fields to
+  `FortniteFestivalWeb/src/api/client.ts` in a non-conflicting follow-up;
+- when configuration remains false, request behavior is unchanged. If it is
+  set true while the current generation is unready, publication-bound pinned
+  requests return the existing problem-details `503`; a stale requested ID is
+  still evaluated first and returns `409`. `/api/publication` and operational
+  health routes remain available to explain the block.
+
+This is continuous-safe readiness code only. No production deployment,
+restart, live probe, database mutation, schema migration, reader cutover, or
+flag enablement is part of the phase. Shop, path, overlay, history, names, and
+remaining reader source cuts are still required before
+`Features:EnablePublicationReadContext` can be enabled.
+
 The first completed source cut is the API response cache:
 
 - `publication_api_response_cache` and its staging sibling use

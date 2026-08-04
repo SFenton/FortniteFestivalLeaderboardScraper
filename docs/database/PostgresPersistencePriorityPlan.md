@@ -422,7 +422,37 @@ path, and post-action validation are documented.
 | Atomic publication Phase 2 foundation | Code complete / default-off cutover | Added durable generation lifecycle, current/previous/working pointers, typed surface bindings, cross-process publication locks, `/api/publication`, pinned HTTP/path/WebSocket client support, API-side socket rotation monitoring, and retention-safe predecessor links. `EnablePublicationReadContext` remains off while source cuts proceed. |
 | Publication cache source cut | Code complete / deployment pending | Added generation-keyed live/staging cache tables, explicit build targeting, deadlock-safe cross-process locks, current+previous retention, exact pinned reads, rollback reconciliation, failed-generation cleanup, and watchdog lifecycle parity. |
 | CATALOG-1 immutable song catalog | Code complete / review blockers repaired / deployment and reader cutover pending | Preserves known and unknown Epic fields through sync/restart, persists only complete non-merged responses, pins resume phases to the allocation-time catalog without provider refresh, replaces untrusted legacy baselines wholesale, rejects failed refreshes and token races before new allocation, and retains exact current/previous/working snapshots. No endpoint reader changed and `EnablePublicationReadContext` remains false. |
+| PUB-CONTRACT + PUB-READINESS | Code complete / continuous-safe / default-off | Contract version `1` maps all 55 publication-bound route definitions to required surfaces. Current-generation readiness now validates binding kind/status/version/source identity, promised count/hash, and supported retained-source evidence. `/api/publication` reports effective readiness, while configured unready pinning fails `503` after stale-ID `409` ordering. No schema, deployment, restart, live probe, source cut, or flag enablement occurred. |
 | Next implementation phase | Create remaining immutable source cuts | Version shop, path, overlay, history, and names; replace every remaining `legacy_live_unversioned` binding with a ready generation-addressable binding before enabling request pinning. |
+
+## PUB-CONTRACT + PUB-READINESS continuous-safe phase (2026-08-03)
+
+Decision: accepted as fail-closed repository readiness only. Production
+pinning remains blocked and `Features:EnablePublicationReadContext` stays
+false.
+
+| Gate | Result | Decision |
+|---|---|---|
+| Route coverage | All 55 `PublicationBound` definitions have one immutable method/pattern/family contract; duplicate, missing, stale, and family/surface drift are rejected | Accepted |
+| Required surfaces | Route families require `account_names`, `account_overlays`, `band_rankings`, `history`, `improvement_notifications`, `item_shop`, `path_artifacts`, `solo_scope_sources`, and `song_catalog`; `api_response_cache` remains required pinning infrastructure | Accepted |
+| Generation | Publication ID, published scrape ID, `current` status, source cut, ready time, and publish time must agree | Accepted |
+| Binding | Unique row, allowed kind, `ready` status, contract version `1`, exact source identity, and binding-type count/hash promises must pass | Accepted |
+| Retention/source existence | Cache, exact catalog, solo scope map, and current band projection are rechecked against their retained source where current schema supports it | Accepted |
+| Legacy state | `item_shop` and `path_artifacts` remain `legacy_live_unversioned`/`building`; missing overlay/history/name cuts and incomplete existing binding contracts remain unready | **Blocks pinning** |
+| Middleware ordering | Config false is unchanged; config true plus unready returns problem-details `503`; stale requested publication returns `409` before readiness; publication and health bootstrap routes remain available | Accepted |
+| API contract | `/api/publication` adds `contractVersion`, `readyForPinning`, effective `pinningEnabled`, and sorted `unreadySurfaces` reasons | Additive backend accepted; web client typing follow-up required |
+| Runtime/schema | No production deploy/restart/probe, database mutation, migration, or publication promotion behavior change | Continuous-safe |
+
+Required follow-up before any rollout:
+
+1. Complete generation-addressable shop, path, overlay, history, and account
+   name source cuts plus every route-reader cut represented by the contract.
+2. Emit contract-versioned ready bindings with correct identity/count/hash and
+   retained-source evidence; never relabel legacy rows as ready.
+3. Update `FortniteFestivalWeb/src/api/client.ts` for the additive bootstrap
+   fields in a dedicated web-client follow-up.
+4. Re-run full scrape/publication parity and only then consider enabling the
+   flag. This phase does not authorize a production config change.
 
 ## CATALOG-1 immutable song catalog source cut (2026-07-31)
 

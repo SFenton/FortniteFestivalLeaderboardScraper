@@ -43,12 +43,15 @@ public static partial class ApiEndpoints
         .WithTags("Progress")
         .RequireRateLimiting("public");
 
-        app.MapGet("/api/publication", (
+        app.MapGet("/api/publication", async (
             HttpContext httpContext,
-            PublicationReadContextService publicationService) =>
+            PublicationReadContextService publicationService,
+            CancellationToken ct) =>
         {
             httpContext.Response.Headers.CacheControl = "no-store";
-            var pointers = publicationService.GetPointers();
+            await using var lease =
+                await publicationService.AcquireAsync(ct);
+            var pointers = lease.Pointers;
             if (!pointers.CurrentPublicationId.HasValue
                 || !pointers.PublishedScrapeId.HasValue)
             {
@@ -58,14 +61,8 @@ public static partial class ApiEndpoints
                     statusCode: StatusCodes.Status503ServiceUnavailable);
             }
 
-            return Results.Ok(new
-            {
-                publicationId = pointers.CurrentPublicationId.Value,
-                previousPublicationId = pointers.PreviousPublicationId,
-                publishedScrapeId = pointers.PublishedScrapeId.Value,
-                publishedAt = pointers.PublishedAtUtc,
-                pinningEnabled = publicationService.PinningEnabled,
-            });
+            return Results.Ok(
+                publicationService.BuildBootstrapResponse(pointers));
         })
         .WithTags("Health")
         .RequireRateLimiting("public");

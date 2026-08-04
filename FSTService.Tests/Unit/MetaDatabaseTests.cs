@@ -93,6 +93,204 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void Publication_surface_source_evidence_matches_generation_sources()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        Db.BulkSetCachedResponses(
+        [
+            (
+                Key: "public-route:/api/example",
+                Json: new byte[] { 1, 2, 3 },
+                ETag: "\"example\""),
+        ]);
+        Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var publicationId =
+            Db.GetPublicationGenerationForScrape(scrapeId)!.PublicationId;
+        var bindings = Db.GetPublicationSurfaceBindings(publicationId)
+            .ToDictionary(static binding => binding.SurfaceName);
+
+        foreach (var surfaceName in new[]
+                 {
+                     PublicationSurfaceNames.ApiResponseCache,
+                     PublicationSurfaceNames.SongCatalog,
+                 })
+        {
+            var evidence = Db.GetPublicationSurfaceSourceEvidence(
+                publicationId,
+                surfaceName);
+            Assert.NotNull(evidence);
+            Assert.True(evidence!.Exists);
+            Assert.Equal(publicationId, evidence.PublicationId);
+            Assert.Equal(scrapeId, evidence.ScrapeId);
+            Assert.Equal(bindings[surfaceName].RowCount, evidence.RowCount);
+            Assert.Equal(
+                bindings[surfaceName].ContentHash,
+                evidence.ContentHash);
+        }
+
+        var soloEvidence = Db.GetPublicationSurfaceSourceEvidence(
+            publicationId,
+            PublicationSurfaceNames.SoloScopeSources);
+        Assert.NotNull(soloEvidence);
+        Assert.False(soloEvidence!.Exists);
+        Assert.Equal(0, soloEvidence.RowCount);
+    }
+
+    [Fact]
+    public void Solo_scope_source_evidence_ignores_later_mutable_fingerprints()
+    {
+        using (var conn = DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                INSERT INTO scrape_log (id, started_at, completed_at, status)
+                VALUES
+                    (700, now() - interval '5 minutes', now(), 'completed'),
+                    (701, now() - interval '1 minute', NULL, 'running')
+                ON CONFLICT (id) DO NOTHING;
+
+                INSERT INTO leaderboard_scope_fingerprints (
+                    song_id,
+                    instrument,
+                    scope_kind,
+                    fingerprint_version,
+                    source_scrape_id,
+                    published_scrape_id,
+                    first_seen_scrape_id,
+                    last_changed_scrape_id,
+                    last_seen_scrape_id,
+                    is_complete,
+                    entry_count,
+                    reported_total_entries,
+                    reported_total_pages,
+                    content_fingerprint,
+                    coverage_fingerprint,
+                    changed_at,
+                    seen_at)
+                VALUES (
+                    'readiness-song',
+                    'Solo_Guitar',
+                    'alltime',
+                    2,
+                    701,
+                    NULL,
+                    701,
+                    701,
+                    701,
+                    TRUE,
+                    2,
+                    2,
+                    1,
+                    'candidate-content',
+                    'candidate-coverage',
+                    now(),
+                    now())
+                ON CONFLICT (song_id, instrument, scope_kind)
+                DO UPDATE SET
+                    last_seen_scrape_id = EXCLUDED.last_seen_scrape_id,
+                    is_complete = EXCLUDED.is_complete,
+                    entry_count = EXCLUDED.entry_count,
+                    reported_total_entries =
+                        EXCLUDED.reported_total_entries,
+                    reported_total_pages =
+                        EXCLUDED.reported_total_pages,
+                    content_fingerprint =
+                        EXCLUDED.content_fingerprint,
+                    coverage_fingerprint =
+                        EXCLUDED.coverage_fingerprint,
+                    changed_at = EXCLUDED.changed_at,
+                    seen_at = EXCLUDED.seen_at;
+
+                INSERT INTO leaderboard_published_scope_source (
+                    published_scrape_id,
+                    song_id,
+                    instrument,
+                    scope_kind,
+                    source_kind,
+                    source_snapshot_id,
+                    source_scrape_id,
+                    is_complete,
+                    row_count,
+                    reported_total_entries,
+                    reported_total_pages,
+                    content_fingerprint,
+                    coverage_fingerprint,
+                    created_at,
+                    validated_at)
+                VALUES (
+                    700,
+                    'readiness-song',
+                    'Solo_Guitar',
+                    'alltime',
+                    'snapshot',
+                    699,
+                    699,
+                    TRUE,
+                    1,
+                    1,
+                    1,
+                    'published-content',
+                    'published-coverage',
+                    now(),
+                    now())
+                ON CONFLICT (
+                    published_scrape_id,
+                    song_id,
+                    instrument,
+                    scope_kind)
+                DO UPDATE SET
+                    source_scrape_id = EXCLUDED.source_scrape_id,
+                    is_complete = EXCLUDED.is_complete,
+                    row_count = EXCLUDED.row_count,
+                    reported_total_entries =
+                        EXCLUDED.reported_total_entries,
+                    content_fingerprint =
+                        EXCLUDED.content_fingerprint,
+                    coverage_fingerprint =
+                        EXCLUDED.coverage_fingerprint,
+                    created_at = EXCLUDED.created_at,
+                    validated_at = EXCLUDED.validated_at;
+
+                INSERT INTO publication_generations (
+                    publication_id,
+                    scrape_id,
+                    status,
+                    created_at,
+                    source_cut_at,
+                    ready_at,
+                    published_at)
+                VALUES (
+                    700,
+                    700,
+                    'current',
+                    now() - interval '5 minutes',
+                    now() - interval '2 minutes',
+                    now() - interval '1 minute',
+                    now())
+                ON CONFLICT (publication_id) DO UPDATE SET
+                    scrape_id = EXCLUDED.scrape_id,
+                    status = EXCLUDED.status,
+                    source_cut_at = EXCLUDED.source_cut_at,
+                    ready_at = EXCLUDED.ready_at,
+                    published_at = EXCLUDED.published_at;
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        var evidence = Db.GetPublicationSurfaceSourceEvidence(
+            700,
+            PublicationSurfaceNames.SoloScopeSources);
+
+        Assert.NotNull(evidence);
+        Assert.True(evidence!.Exists);
+        Assert.Equal(1, evidence.RowCount);
+        Assert.Equal(700, evidence.ScrapeId);
+    }
+
+    [Fact]
     public async Task StartScrapeRun_rejects_cross_process_catalog_race()
     {
         var workerPersistence = new FestivalPersistence(DataSource);

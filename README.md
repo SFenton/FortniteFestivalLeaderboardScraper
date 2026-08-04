@@ -123,6 +123,22 @@ rankings, rivals, exports, and notification feeds all have ready
 generation-addressable bindings. The current ledger deliberately marks legacy
 live/inherited bindings as incomplete.
 
+Publication contract version `1` explicitly maps all 55
+`PublicationBound` route definitions to named required surfaces. The
+`/api/publication` bootstrap reports `contractVersion`, `readyForPinning`, the
+effective `pinningEnabled` value, and sorted `unreadySurfaces` reasons.
+Configuration alone cannot activate pinning: a current-generation readiness
+failure keeps effective pinning off and makes a configured pinned read fail
+closed with `503`; a stale requested publication still returns `409` first.
+Current `item_shop` and `path_artifacts` bindings remain
+`legacy_live_unversioned`/`building`, and the remaining source cuts are still
+required. The production flag remains false.
+
+Required web-client follow-up before rollout: extend
+`FortniteFestivalWeb/src/api/client.ts` to type and consume the additive
+publication readiness fields. The backend JSON is already additive and
+backward-compatible; this phase intentionally does not enable pinning.
+
 API response caches now have generation-keyed live and staging storage.
 Current and previous generations are retained; older cache generations and
 failed candidate staging are removed independently of scrape-log retention.

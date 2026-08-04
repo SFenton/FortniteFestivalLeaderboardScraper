@@ -4,6 +4,7 @@ using FSTService.Api;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
 
@@ -338,6 +339,61 @@ public sealed class NotificationServiceTests
         // Should have received text then close
         await ws.Received(2).ReceiveAsync(
             Arg.Any<ArraySegment<byte>>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task HandleConnectionAsync_ConfiguredUnreadyPublication_ClosesWithoutRegistering()
+    {
+        using var fixture = new Helpers.InMemoryMetaDatabase();
+        var metaDb = Substitute.For<IMetaDatabase>();
+        var now = DateTime.UtcNow;
+        var pointers = new PublicationPointerState(
+            CurrentPublicationId: 42,
+            PreviousPublicationId: 41,
+            WorkingPublicationId: null,
+            PublishedScrapeId: 1277,
+            PublishedAtUtc: now);
+        metaDb.GetPublicationPointerState().Returns(pointers);
+        metaDb.GetPublicationGeneration(42).Returns(
+            new PublicationGenerationInfo(
+                42,
+                1277,
+                PublicationGenerationStatus.Current,
+                41,
+                now.AddMinutes(-5),
+                now.AddMinutes(-4),
+                now.AddMinutes(-2),
+                now,
+                null,
+                null,
+                null));
+        metaDb.GetPublicationSurfaceBindings(42).Returns([]);
+        var publicationService = new PublicationReadContextService(
+            metaDb,
+            fixture.DataSource,
+            Options.Create(new FeatureOptions
+            {
+                EnablePublicationReadContext = true,
+            }));
+        var svc = CreateService();
+        var ws = Substitute.For<WebSocket>();
+        ws.State.Returns(WebSocketState.Open);
+
+        await svc.HandleConnectionAsync(
+            "acct1",
+            "dev1",
+            ws,
+            publicationId: 42,
+            publicationService,
+            CancellationToken.None);
+
+        await ws.Received(1).CloseOutputAsync(
+            WebSocketCloseStatus.PolicyViolation,
+            "Publication unavailable",
+            CancellationToken.None);
+        await ws.DidNotReceive().ReceiveAsync(
+            Arg.Any<ArraySegment<byte>>(),
+            Arg.Any<CancellationToken>());
     }
 
     // ─── BroadcastAllAsync ──────────────────────────────────
