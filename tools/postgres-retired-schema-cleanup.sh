@@ -1451,12 +1451,13 @@ scan_rg_root() {
         printf 'ERROR: unsafe source scan root label\n' >&2
         return 2
     fi
-    set +e
-    rg -n -o --no-heading --color never "$pattern" "$full_root" \
+    if rg -n -o --no-heading --color never "$pattern" "$full_root" \
         --glob '!**/bin/**' --glob '!**/obj/**' \
-        >> "$output_file" 2> "$stderr_file"
-    status=$?
-    set -e
+        >> "$output_file" 2> "$stderr_file"; then
+        status=0
+    else
+        status=$?
+    fi
     if (( status > 1 )); then
         printf '%s,%s,%s,error\n' \
             "$scan" "$root_label" "$status" >> "$roots_file"
@@ -1641,13 +1642,14 @@ capture_source_references() {
             "$pattern"
     done
 
-    set +e
-    rg -n -o --no-heading --color never "$pattern" "$REPO_ROOT" \
+    if rg -n -o --no-heading --color never "$pattern" "$REPO_ROOT" \
         --glob '!**/.git/**' --glob '!FortniteFestivalWeb/test-results/**' \
         > "$retained_file" \
-        2> "$CAPTURE_DIR/source-scan-retained.stderr"
-    status=$?
-    set -e
+        2> "$CAPTURE_DIR/source-scan-retained.stderr"; then
+        status=0
+    else
+        status=$?
+    fi
     if (( status > 1 )); then
         printf 'retained-audit,.,%s,error\n' "$status" >> "$roots_file"
         printf 'ERROR: retained source audit failed (rg exit %s)\n' \
@@ -3739,10 +3741,11 @@ capture_startup_database_routing_attestation() {
     local -a ids=()
     mkdir -p "$output_dir" || return 3
 
-    set +e
-    capture_target_attestation "$target_file"
-    status=$?
-    set -e
+    if capture_target_attestation "$target_file"; then
+        status=0
+    else
+        status=$?
+    fi
     if (( status != 0 )); then
         record_startup_database_routing_failure \
             target-attestation "$status" || return 3
@@ -3763,8 +3766,7 @@ capture_startup_database_routing_attestation() {
         return 3
     fi
 
-    set +e
-    docker inspect "${ids[@]}" \
+    if docker inspect "${ids[@]}" \
         | python3 "$HELPER" attest-startup-database-routing \
             --startup-attestation "$startup_attestation" \
             --target-attestation "$target_file" \
@@ -3780,9 +3782,11 @@ capture_startup_database_routing_attestation() {
             --expected-networks-json \
                 "$APPROVED_FSTSERVICE_NETWORKS_JSON" \
             --output "$routing_file" \
-        2> "$LOG_DIR/startup-database-routing.log"
-    status=$?
-    set -e
+        2> "$LOG_DIR/startup-database-routing.log"; then
+        status=0
+    else
+        status=$?
+    fi
     if (( status != 0 )); then
         record_startup_database_routing_failure \
             alias-or-target-drift "$status" || return 3
@@ -3793,8 +3797,7 @@ capture_startup_database_routing_attestation() {
             missing-routing-evidence 3 || return 3
         return 3
     }
-    set +e
-    python3 - "$routing_file" "$EXPECTED_MANIFEST_SHA256" <<'PY'
+    if python3 - "$routing_file" "$EXPECTED_MANIFEST_SHA256" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -3806,8 +3809,11 @@ if (
 ):
     raise SystemExit("startup database routing evidence is not accepted")
 PY
-    status=$?
-    set -e
+    then
+        status=0
+    else
+        status=$?
+    fi
     if (( status != 0 )); then
         record_startup_database_routing_failure \
             invalid-routing-evidence "$status" || return 3
@@ -4066,11 +4072,12 @@ PY
         || return 3
 
     CURRENT_STAGE="post-drop initializer execution"
-    set +e
-    timeout 10m docker start -a "$container_id" \
-        > "$LOG_DIR/startup-schema.log" 2>&1
-    status=$?
-    set -e
+    if timeout 10m docker start -a "$container_id" \
+        > "$LOG_DIR/startup-schema.log" 2>&1; then
+        status=0
+    else
+        status=$?
+    fi
     if ! inspect_row="$(
         docker inspect --format \
             '{{.Id}}|{{.Image}}|{{.Config.Image}}|{{.State.Status}}|{{.State.Running}}|{{.State.ExitCode}}' \
@@ -4163,10 +4170,12 @@ run_rollback_rehearsal() {
     } > "$rehearsal_sql"
 
     local status
-    set +e
-    psql_stream < "$rehearsal_sql" > "$LOG_DIR/rollback-rehearsal.log" 2>&1
-    status=$?
-    set -e
+    if psql_stream < "$rehearsal_sql" \
+        > "$LOG_DIR/rollback-rehearsal.log" 2>&1; then
+        status=0
+    else
+        status=$?
+    fi
     printf 'check,status\nrollback-rehearsal,%s\n' "$status" \
         > "$POST_DIR/rollback-rehearsal.csv"
     if (( status != 0 )); then
