@@ -179,7 +179,16 @@ namespace FortniteFestival.Core.Services
             try { Log?.Invoke(msg); } catch { }
         }
 
-        public async Task InitializeAsync()
+        public Task InitializeAsync() => InitializeCoreAsync(persistedOnly: false);
+
+        /// <summary>
+        /// Loads persisted scores and songs without provider sync, image-directory
+        /// creation, image downloads, or persistence writes.
+        /// </summary>
+        public Task InitializePersistedStateOnlyAsync() =>
+            InitializeCoreAsync(persistedOnly: true);
+
+        private async Task InitializeCoreAsync(bool persistedOnly)
         {
             if (_initialized)
                 return;
@@ -252,6 +261,9 @@ namespace FortniteFestival.Core.Services
                     }
                 }
             }
+            if (persistedOnly)
+                return;
+
             // Establish image root and /images subfolder early
             try
             {

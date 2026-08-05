@@ -366,6 +366,112 @@ boundaries, rank/page boundaries, current and reused published sources,
 source-mismatch fallback, explicit empty scopes, and player, member, and
 leaderboard API reads.
 
+The rollout proof is implemented by `tools/FstStoredRankRollout` and
+`tools/postgres-stored-rank-rollout.sh`; operator procedure and acceptance are
+in `docs/database/StoredRankFilteredReadsRolloutRunbook.md`. The C# harness
+calls the real `InstrumentDatabase` readers rather than maintaining copied
+baseline/candidate SQL. Manifest selection uses the current complete published
+source CTE and records projection-generation/source guards, active overlays,
+selected accounts, ties, thresholds from the same `PathDataStore` reader used
+by APIs, and all nine instruments. The guard is rechecked before every measured
+block; both page offsets must return non-empty ranks 100/101, cold and warm
+resource regressions are gated independently, and PostgreSQL counter resets
+reject the run. Bounded service-health curl deadlines preserve automatic false
+rollback; the marker clears only after verified false service/worker state.
+Only container samples overlapping request windows are accepted, and API
+parity requires explicit successful statuses rather than equality of matching
+failures. Qualification uses the actual sample observation time, not Docker
+process lifetime. Overlay evidence must traverse a source-matched current/
+reused candidate row, threshold evidence must prove real boundary transitions,
+and all post-mutation Docker operations are deadline-bounded/cancellable.
+Zero-baseline resource increases are represented as nullable finite JSON and
+reject automatically. One reviewed tag+digest/image ID is embedded in the
+manifest and enforced for every service recreate and rollback. Full-run outputs
+are rejected outside the configured 4 TB evidence tree. The manifest also
+binds the exact mounted source/filesystem, a global lock spans mutation through
+rollback, per-block identity/state checks detect external redeploys, health
+requires exact HTTP 200 plus valid publication/worker JSON, and acceptance is
+finalized only after verified false rollback.
+
+Stored-rank rollout recreates use `Scraper:RolloutReadOnlyStartup`. That mode
+opens existing instrument readers and loads persisted catalog/item-shop state
+without schema DDL, startup cleanup, provider/image sync, item-shop refresh or
+timers, or mutation-capable hosted services. It is service-only and defaults
+off, so normal API and worker startup behavior is unchanged.
+The rollout always follows its read-only false rollback with a second
+digest-pinned recovery recreate that restores
+`RolloutReadOnlyStartup=false`; final acceptance requires that normal-mode
+state and health.
+Recovery captures exactly one post-recreate service container ID before any
+normal-state check. All image/env/direct-port/hostname/nonce/health checks and
+the final recheck remain pinned to that ID; health probing cannot adopt a
+concurrent replacement. Marker clearing occurs only after the complete pinned
+verification succeeds. Recovery/final quiescence and role-evidence functions
+also require that same ID before, during, and after persistence. A replacement
+during evidence collection keeps the marker armed and returns to recovery.
+Runtime recovery is unconditional even if evidence storage fails. The
+mutation marker is cleared only from verified normal state, while missing
+rollback/recovery evidence still rejects the run and cannot cause the EXIT
+trap to reinstall read-only mode.
+Recovery evidence records freshly observed container IDs, image, flags, and
+health rather than expected constants. The same runtime state is rechecked
+immediately before acceptance, so same-image external recreate drift cannot
+pass.
+The direct benchmark/API endpoint is derived from the inspected service
+container's sole loopback `8080/tcp` host binding. Service-info exposes a
+per-host-instance nonce, container hostname, process ID, and start time. Every
+recreate binds that nonce/hostname to the captured container ID; the web proxy
+is checked separately and cannot substitute for direct endpoint identity.
+The final DB-quiescence report is hashed before a fresh final runtime capture;
+acceptance embeds both and is published with an atomic rename.
+`fstworker` must be stopped and is separately manifest-pinned by container ID,
+image, full Docker state timestamps/restart count, and false role flags. The
+durable worker ledger must be offline/stale with no active connections or
+jobs; any worker start/restart or role drift invalidates the service-only
+experiment while normal service recovery remains mandatory.
+Hashed DB-quiescence checkpoints cover every block, both recovery phases, and
+pre-acceptance, rejecting worker application sessions and granted advisory
+mutation leases such as path-generation admission.
+The evidence connection remains non-superuser/select+temp-only but must be a
+effective `USAGE` holder of `pg_read_all_stats` or `pg_monitor`; `MEMBER`
+through a `NOINHERIT` chain is insufficient. Validation opens a controlled
+session as the production service role and directly proves cross-role
+`pg_stat_activity` user/application/query visibility before evidence queries.
+The manifest additionally binds the evidence database name, PostgreSQL
+`system_identifier`, server address/port and socket directories to the
+sanitized effective service target and the production Compose Postgres
+container ID, image, one shared network ID, addresses, and the service host
+alias exclusively owned by that container. Every active endpoint on that
+network is inspected across Docker `Aliases`, `DNSNames`, and normalized
+container names, so a name-resolvable stale clone fails closed. The identity is
+reattested immediately before every request block and in every hashed
+quiescence checkpoint. Alternate databases, clones, `POSTGRES_CONTAINER`
+mismatches, service-target drift, or container/network drift fail closed.
+`/api/service-info` exposes only host, port, database, username, and the
+read-only-option boolean; passwords and raw connection strings are never
+reported.
+`StartupInitializer` reads the actual `default_transaction_read_only` setting
+before all startup modes. Rollout mode requires `on`; normal startup and final
+recovery require `off`, and service-info reports the observed value.
+Rollout service Npgsql sessions also force `default_transaction_read_only=on`.
+Request middleware rejects mutating and
+mutation-on-GET paths, suppresses selected-profile activity persistence, and
+surfaces any read-only SQL violation through unhealthy readiness.
+Mutation-route matching canonicalizes trailing slashes and uses consistent
+case-insensitive comparisons.
+Filtered player/member rank and population readers no longer create temporary
+threshold tables. They bind deterministic parallel song/score arrays through
+materialized `unnest` CTEs; the player valid-score and last-played helpers use
+the same typed song/instrument/score staging. This preserves score filtering
+and total ordering while remaining valid under
+`default_transaction_read_only=on`. Nested or aggregate PostgreSQL `25006`
+errors are unwrapped by the request guard and returned as no-store HTTP 503.
+
+The candidate compose override sets only `fstservice` true and explicitly sets
+`fstworker` false. The baseline/rollback override sets both false and recreates
+only `fstservice`. Publication mapping, freeze/unfreeze behavior, score/leeway
+filtering, and worker post-process reads are unchanged.
+
 Tracked Compose templates load non-secret role defaults from
 `deploy/config/fstservice-role.env` and
 `deploy/config/fstworker-role.env`. The API role reads published solo sources

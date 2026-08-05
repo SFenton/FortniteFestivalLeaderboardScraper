@@ -1353,6 +1353,18 @@ live-scrape parity, health, lock, and restore gates. See
 - Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/solo-dynamic-ab-20260725T2346Z`.
 
+**2026-08-04 evidence correction:** the stored-rank result above is research
+only because its harness had threshold, source/fallback, instrument sampling,
+cache-order, exact-tie, and service-flag gaps. The replacement rollout package
+is `docs/database/StoredRankFilteredReadsRolloutRunbook.md` plus
+`tools/FstStoredRankRollout` and
+`tools/postgres-stored-rank-rollout.sh`. It invokes current application
+readers, uses exact C# threshold truncation, requires all nine instruments and
+the complete source/fallback matrix, randomizes service-only ABBA/BAAB order,
+and captures block-local PostgreSQL current resources. Promotion remains
+blocked on cleanup scrape `1278` publication followed by a zero-difference,
+performance-passing service A/B; the worker and defaults remain false.
+
 ## Phase PG-4: Make scrape writes proportional to semantic changes
 
 **Decision:** Experimental until live-scrape parity  

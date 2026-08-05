@@ -712,6 +712,127 @@ or old projection drop.
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/solo-dynamic-ab-20260725T2346Z`.
 
+### Stored-rank filtered-read rollout repair package (2026-08-04)
+
+The July performance result is retained as historical research evidence, not a
+promotion result. Its harness did not exactly reproduce the current reader:
+thresholds used PostgreSQL rounding rather than C# truncation, source and
+projection-generation fallbacks were incomplete, exact score/time peers were
+not proved, the sample was instrument-biased, cache order was not matched, and
+the service feature flag was not A/B tested.
+
+`docs/database/StoredRankFilteredReadsRolloutRunbook.md` now owns the repaired
+package. `tools/FstStoredRankRollout` invokes the real
+`InstrumentDatabase` baseline and candidate methods, reuses the application
+published-source and total-order SQL helpers, generates a seed-fingerprinted
+all-nine-instrument manifest, and fails closed on missing current/reused/empty/
+source-mismatch, overlay, tie, page, or API-path evidence. The service runner
+uses randomized ABBA/BAAB process-cold and warm c1/c8 blocks, captures
+block-local PostgreSQL CPU/read/temp/current-memory evidence, paces warm starts
+below the service rate limit, and automatically recreates only `fstservice`
+with the false override on exit. Raw thresholds come from the application
+`PathDataStore`; selected mapping/projection/overlay/path-max guards are
+rechecked before every block. Resource regressions are gated separately for
+process-cold and warm blocks, both offset-99 and offset-100 cases must execute
+non-empty with ranks 100/101, and bounded curl deadlines ensure a hung
+candidate reaches automatic rollback. The mutation marker is armed before
+recreate, rollback evidence/marker clearing require verified false service and
+worker state, resource samples must overlap request windows, and identical
+failed HTTP captures are rejected against explicit 2xx expectations. Overlay
+proof now requires an overlay-derived row through a source-matched current/
+reused candidate scope; threshold proof requires real exact/+1 rows and count/
+membership transitions. Resource qualification uses the actual observation
+timestamp, and every post-mutation Docker stats/inspect/recreate is bounded and
+cancellable. Zero-baseline resource increases now reject with nullable finite
+JSON instead of `Infinity`. The operator-reviewed service tag+digest is
+resolved before mutation, fingerprinted into the manifest, applied with
+`--pull never`, and reverified after every block and rollback. Both tracked
+overrides explicitly keep `fstworker` false. Final acceptance is now
+post-rollback only; failures append incident evidence. One global lock spans
+mutation through rollback, every block rechecks container identity and exact
+state, the manifest binds the reviewed `/mnt/docker-storage` mount, and health
+requires HTTP 200 plus valid publication/worker service-info JSON. The core
+player query is a dedicated one-account member workload, multi-account parity
+is separate, sampler arming precedes every request window and preserves the
+first in-flight observation, and standalone rollback uses the same durable
+retry/incident trap while loading the original published scrape ID from the
+manifest and rejecting conflicting operator input. Every rollout recreate now
+uses the service-only read-only startup mode, which loads persisted state while
+suppressing schema, cleanup, provider, item-shop, timer, and mutation-hosted
+service work; the worker explicitly remains in normal mode.
+After read-only rollback evidence, a second pinned-image recovery recreate
+restores normal service startup ownership with stored-rank false. Acceptance is
+impossible until that recovery is verified; failures emit incident evidence.
+That recovery pins one exact container ID before checking flags or health.
+Port, hostname, process nonce, image, env, health, and final identity are
+rechecked only against that ID; a concurrent replacement keeps recovery armed
+and triggers another recovery attempt.
+Recovery/final quiescence and role evidence are likewise parameterized by the
+immutable ID and reject current-container drift instead of rebasing. The
+mutation marker clears only after pinned recovery evidence and its final
+quiescence are persisted and reverified.
+Normal recovery runs even when rollback evidence storage is full or
+unavailable. The mutation marker clears from verified normal runtime state
+before evidence persistence; incomplete evidence remains a nonzero rejection
+without allowing the EXIT trap to replay read-only mode.
+Standalone rollback now validates its manifest/target in memory and arms the
+normal-recovery trap before any evidence lock or write. Lock ENOSPC or an
+unwritable evidence mount still forces operational recovery, attempts incident
+evidence best-effort afterward, and preserves a nonzero command result.
+Rollback/recovery evidence now records freshly observed IDs, image, flags, and
+health. Those exact values are reverified immediately before acceptance, so a
+same-image external recreate or env/health drift rejects and incidents.
+The runner derives its direct API URL from the exact captured service
+container's loopback port binding and binds a per-process service-info nonce
+and container hostname to that ID. A stale direct responder fails even if the
+web proxy remains healthy.
+Final DB quiescence is hashed before a new final runtime capture; both are
+embedded in an acceptance file published by atomic same-filesystem rename.
+The final service ID must equal the verified recovery service ID; same-image
+replacement after recovery is rejection/incident evidence.
+The worker must be stopped (`exited`/`created`) before mutation and is
+independently pinned by container ID, image, full Docker state timestamps,
+status, and false role flags through every block, both recovery phases, and
+final acceptance. Its durable ledger must be offline/stale with no worker
+connections or active registration/history/rivals/deep/band jobs.
+SHA-256 quiescence evidence is captured after every block and recovery boundary
+and immediately before acceptance; worker-related sessions and granted
+advisory admission leases (including path generation) are rejection signals.
+The read-only evidence role must additionally have effective `USAGE` on
+`pg_read_all_stats` or `pg_monitor`; membership alone is insufficient.
+Validation opens a controlled distinct-role service session and directly
+attests visible `pg_stat_activity` user/application/query fields, rejecting
+`NOINHERIT` and redaction.
+Rollout service connections force PostgreSQL
+`default_transaction_read_only=on` without replacing/logging the secret.
+Startup queries the actual setting in every mode; rollout requires `on`, while
+normal startup/recovery requires `off`, and health reports the observed value.
+Request middleware blocks mutating methods and mutation-on-GET paths, skips
+selected-profile activity writes, and latches read-only SQL violations into
+unhealthy readiness. Pending durable jobs are non-quiescent.
+Filtered player/member rank, population, valid-fallback, and last-played
+threshold staging now uses typed array/`unnest` materialized CTEs instead of
+temporary-table DDL/COPY/DML. Actual read-only service integration tests cover
+player and member leeway routes; nested/parallel PostgreSQL `25006` failures
+are unwrapped to explicit no-store HTTP 503.
+The manifest now also binds the evidence database name, PostgreSQL system
+identifier, server address/port/socket directories, sanitized effective
+service target, and production Postgres container/image/network ID, addresses,
+and exclusive service-host alias owner. Those values are reattested before every API/benchmark block, in
+each hashed quiescence checkpoint, during rollback/recovery, and immediately
+before acceptance. Same-named clones, alternate databases, mismatched
+`POSTGRES_CONTAINER`, duplicate alias owners, or service/container/network
+drift reject. Alias ownership counts Docker `Aliases`, `DNSNames`, and
+normalized container names so name-resolvable clones cannot pass.
+
+**Decision:** readiness accepted; promotion remains blocked. Cleanup scrape
+`1278` must first complete, publish, and unfreeze public reads. One
+uncontaminated service-only A/B must then show zero row/API/status/source
+differences, real exact score/time-peer coverage, at least 10% warm p95
+improvement in filtered top and player-query workloads at c1/c8, and no
+greater than 10% regression elsewhere or in PostgreSQL resources. Defaults
+remain false.
+
 ## SNAPSHOT-REUSE decision package (2026-07-26)
 
 | Gate | Evidence | Decision |

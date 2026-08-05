@@ -26,6 +26,8 @@ public class ScraperOptionsAndModelsTests
         Assert.Equal("data/device-auth.json", opts.DeviceAuthPath);
         Assert.False(opts.ApiOnly);
         Assert.False(opts.SkipStartupSchemaInitialization);
+        Assert.False(opts.RolloutReadOnlyStartup);
+        Assert.False(opts.RolloutPostgresReadOnly);
         Assert.False(opts.DisableScraperWorker);
         Assert.False(opts.RegistrationSyncWorkerOnly);
         Assert.False(opts.SetupOnly);
@@ -53,6 +55,8 @@ public class ScraperOptionsAndModelsTests
             QueryLead = false,
             QueryBass = false,
             ApiOnly = true,
+            RolloutReadOnlyStartup = true,
+            RolloutPostgresReadOnly = true,
             DisableScraperWorker = true,
             RegistrationSyncWorkerOnly = true,
             RegistrationBackfillMode = RegistrationBackfillMode.ForegroundEpicExclusive,
@@ -64,6 +68,8 @@ public class ScraperOptionsAndModelsTests
         Assert.False(opts.QueryLead);
         Assert.False(opts.QueryBass);
         Assert.True(opts.ApiOnly);
+        Assert.True(opts.RolloutReadOnlyStartup);
+        Assert.True(opts.RolloutPostgresReadOnly);
         Assert.True(opts.DisableScraperWorker);
         Assert.True(opts.RegistrationSyncWorkerOnly);
         Assert.Equal(RegistrationBackfillMode.ForegroundEpicExclusive, opts.RegistrationBackfillMode);

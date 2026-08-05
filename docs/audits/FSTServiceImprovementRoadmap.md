@@ -483,6 +483,17 @@ and old cache artifacts.
   occurred because failed-candidate isolation prevents a complete player/export
   API A/B and current DB margin cannot host the compact shadow. Evidence:
   `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/solo-dynamic-ab-20260725T2346Z`.
+- The 2026-08-04 stored-rank rollout repair reclassifies those latency numbers
+  as research evidence only. The old harness did not use exact C# threshold
+  truncation or complete publication-source/fallback/tie/instrument coverage
+  and did not A/B the service flag. The replacement package in
+  `docs/database/StoredRankFilteredReadsRolloutRunbook.md` invokes current
+  application readers, covers single/list/player/member APIs and all nine
+  instruments, randomizes service-only ABBA/BAAB order, samples block-local
+  PostgreSQL resources, and guarantees false-only service rollback while the
+  worker stays false. Promotion is hard-gated on cleanup scrape `1278`
+  publication/unfreeze plus one zero-difference, performance-passing service
+  A/B.
 - SNAPSHOT-REUSE changed no public service read contract. The candidate now
   reuses only the validated published physical source; changed, incomplete,
   coverage-changed, missing-source, and failed-active cases write new rows.

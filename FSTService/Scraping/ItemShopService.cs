@@ -112,19 +112,7 @@ public sealed partial class ItemShopService : IShopProvider
     /// </summary>
     public async Task InitializeAsync(CancellationToken ct = default)
     {
-        // Load stale-but-valid data from DB to serve immediately
-        var (persisted, persistedLeaving, persistedNew) = _metaDb.LoadItemShopTracks();
-        if (persisted.Count > 0)
-        {
-            lock (_lock)
-            {
-                _inShopSongIds = persisted;
-                _leavingTomorrowSongIds = persistedLeaving;
-                _newSongIds = persistedNew;
-                _log.LogInformation("Loaded {Count} in-shop songs from DB ({Leaving} leaving tomorrow, {New} new).",
-                    persisted.Count, persistedLeaving.Count, persistedNew.Count);
-            }
-        }
+        LoadPersistedState();
 
         // Scrape for fresh data (best-effort on startup)
         try
@@ -138,6 +126,37 @@ public sealed partial class ItemShopService : IShopProvider
 
         // Schedule midnight UTC timer
         ScheduleMidnightTimer();
+    }
+
+    /// <summary>
+    /// Loads and caches existing persisted shop data without HTTP, database writes,
+    /// notifications, cleanup, or timer registration.
+    /// </summary>
+    public Task InitializePersistedStateOnlyAsync(CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        LoadPersistedState();
+        PrimeShopCache(_inShopSongIds, _leavingTomorrowSongIds, _newSongIds);
+        return Task.CompletedTask;
+    }
+
+    internal bool HasScheduledRefresh => _midnightTimer is not null;
+
+    private void LoadPersistedState()
+    {
+        // Load stale-but-valid data from DB to serve immediately
+        var (persisted, persistedLeaving, persistedNew) = _metaDb.LoadItemShopTracks();
+        if (persisted.Count > 0)
+        {
+            lock (_lock)
+            {
+                _inShopSongIds = persisted;
+                _leavingTomorrowSongIds = persistedLeaving;
+                _newSongIds = persistedNew;
+                _log.LogInformation("Loaded {Count} in-shop songs from DB ({Leaving} leaving tomorrow, {New} new).",
+                    persisted.Count, persistedLeaving.Count, persistedNew.Count);
+            }
+        }
     }
 
     // ─── Scrape Logic ───────────────────────────────────────────

@@ -552,13 +552,22 @@ public sealed class InstrumentDatabaseTests : IDisposable
         InsertProjectionEntry("song_published_reused", "acct-reused", 250_000, "reused-projection");
         InsertProjectionScope("song_published_mismatch", sourceSnapshotId: 41);
         InsertProjectionEntry("song_published_mismatch", "acct-mismatch", 999_000, "stale-projection");
+        InsertOverlayEntry(
+            "song_published_mismatch",
+            "acct-mismatch",
+            350_000,
+            source: "backfill",
+            sourcePriority: 200,
+            overlayReason: "active-overlay");
         InsertProjectionScope("song_published_empty", sourceSnapshotId: 50, rowCount: 0);
 
         Db.UsePublishedScopeSources = true;
 
         Assert.Equal(150_000, Assert.Single(Db.GetCurrentStateLeaderboard("song_published_current")).Score);
         Assert.Equal(250_000, Assert.Single(Db.GetCurrentStateLeaderboard("song_published_reused")).Score);
-        Assert.Equal(300_000, Assert.Single(Db.GetCurrentStateLeaderboard("song_published_mismatch")).Score);
+        var mismatchEntry = Assert.Single(Db.GetCurrentStateLeaderboard("song_published_mismatch"));
+        Assert.Equal(350_000, mismatchEntry.Score);
+        Assert.Equal("backfill", mismatchEntry.Source);
         Assert.Empty(Db.GetCurrentStateLeaderboard("song_published_empty"));
 
         foreach (var (songId, maxScore) in new[]
@@ -601,6 +610,11 @@ public sealed class InstrumentDatabaseTests : IDisposable
                     "acct-mismatch",
                     new Dictionary<string, int> { ["song_published_mismatch"] = 400_000 },
                     "song_published_mismatch")["song_published_mismatch"]);
+            Assert.Empty(
+                Db.GetCurrentStatePlayerRankingsFiltered(
+                    "acct-mismatch",
+                    new Dictionary<string, int> { ["song_published_empty"] = 400_000 },
+                    "song_published_empty"));
         }
     }
 

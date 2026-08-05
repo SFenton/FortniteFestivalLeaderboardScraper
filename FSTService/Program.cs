@@ -35,6 +35,7 @@ if (File.Exists(envPath))
 RetiredMaintenanceCommandGuard.ThrowIfPresent(args);
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddSingleton<ServiceInstanceIdentity>();
 
 // ─── ThreadPool tuning ──────────────────────────────────────
 // Default min threads = processor count, which on small VPS (2–4 cores)
@@ -84,6 +85,32 @@ var initializeSchemaOnlyRequested = args.Any(
     arg => arg.Equals(
         "--initialize-schema-only",
         StringComparison.OrdinalIgnoreCase));
+var rolloutReadOnlyStartupRequested = args.Any(
+        arg => arg.Equals(
+            "--rollout-read-only-startup",
+            StringComparison.OrdinalIgnoreCase))
+    || builder.Configuration.GetValue<bool>(
+        $"{ScraperOptions.Section}:RolloutReadOnlyStartup");
+var rolloutPostgresReadOnlyRequested = args.Any(
+        arg => arg.Equals(
+            "--rollout-postgres-read-only",
+            StringComparison.OrdinalIgnoreCase))
+    || builder.Configuration.GetValue<bool>(
+        $"{ScraperOptions.Section}:RolloutPostgresReadOnly");
+if (rolloutReadOnlyStartupRequested != rolloutPostgresReadOnlyRequested)
+{
+    throw new ArgumentException(
+        "Rollout read-only startup and PostgreSQL read-only enforcement must be enabled together.");
+}
+if (rolloutReadOnlyStartupRequested
+    && (improvementNotificationRecoveryRequested
+        || scoreHistoryDedupMaintenanceCommand is not null
+        || soloFamilyRankingBackfillCommand is not null
+        || initializeSchemaOnlyRequested))
+{
+    throw new ArgumentException(
+        "Rollout read-only startup cannot run with schema or maintenance commands.");
+}
 if (scoreHistoryDedupMaintenanceCommand is not null
     && (improvementNotificationRecoveryRequested
         || soloFamilyRankingBackfillCommand is not null
@@ -108,7 +135,8 @@ var apiOnlyRequested = improvementNotificationRecoveryRequested
     || initializeSchemaOnlyRequested
     || args.Any(arg => arg.Equals("--api-only", StringComparison.OrdinalIgnoreCase))
     || builder.Configuration.GetValue<bool>($"{ScraperOptions.Section}:ApiOnly");
-var scraperWorkerDisabled = args.Any(arg => arg.Equals("--no-scraper-worker", StringComparison.OrdinalIgnoreCase))
+var scraperWorkerDisabled = rolloutReadOnlyStartupRequested
+    || args.Any(arg => arg.Equals("--no-scraper-worker", StringComparison.OrdinalIgnoreCase))
     || builder.Configuration.GetValue<bool>($"{ScraperOptions.Section}:DisableScraperWorker");
 var registrationSyncWorkerRequested = args.Any(arg => arg.Equals("--registration-sync-worker", StringComparison.OrdinalIgnoreCase))
     || builder.Configuration.GetValue<bool>($"{ScraperOptions.Section}:RegistrationSyncWorkerOnly");
@@ -120,6 +148,11 @@ var hostedWorkerMode = HostedWorkerModeResolver.Resolve(
     apiOnlyRequested,
     scraperWorkerDisabled,
     registrationSyncWorkerRequested);
+var hostedServicePlan = HostedWorkerModeResolver.ResolveHostedServicePlan(
+    hostedWorkerMode,
+    rolloutReadOnlyStartupRequested,
+    runOnceRequested,
+    backfillOnlyRequested);
 
 builder.Services.Configure<ScraperOptions>(
     builder.Configuration.GetSection(ScraperOptions.Section));
@@ -174,6 +207,15 @@ builder.Services.PostConfigure<ScraperOptions>(opts =>
         else if (args[i].Equals("--no-scraper-worker", StringComparison.OrdinalIgnoreCase))
         {
             opts.DisableScraperWorker = true;
+        }
+        else if (args[i].Equals("--rollout-read-only-startup", StringComparison.OrdinalIgnoreCase))
+        {
+            opts.RolloutReadOnlyStartup = true;
+            opts.DisableScraperWorker = true;
+        }
+        else if (args[i].Equals("--rollout-postgres-read-only", StringComparison.OrdinalIgnoreCase))
+        {
+            opts.RolloutPostgresReadOnly = true;
         }
         else if (args[i].Equals("--registration-sync-worker", StringComparison.OrdinalIgnoreCase))
         {
@@ -336,8 +378,19 @@ var pgConnectionStringBuilder = new NpgsqlConnectionStringBuilder(pgConnStr)
         _ => "fstservice",
     },
 };
+if (rolloutPostgresReadOnlyRequested)
+{
+    const string readOnlyOption = "-c default_transaction_read_only=on";
+    pgConnectionStringBuilder.Options = string.IsNullOrWhiteSpace(
+        pgConnectionStringBuilder.Options)
+        ? readOnlyOption
+        : $"{pgConnectionStringBuilder.Options} {readOnlyOption}";
+}
 var pgDataSource = NpgsqlDataSource.Create(pgConnectionStringBuilder.ConnectionString);
 builder.Services.AddSingleton(pgDataSource);
+builder.Services.AddSingleton(sp =>
+    PostgresRuntimeTarget.FromConnectionString(
+        sp.GetRequiredService<NpgsqlDataSource>().ConnectionString));
 
 builder.Services.AddSingleton<IMetaDatabase>(sp =>
     new FSTService.Persistence.MetaDatabase(sp.GetRequiredService<NpgsqlDataSource>(),
@@ -405,16 +458,14 @@ builder.Services.AddSingleton<FSTService.Api.ShopCacheService>();
 builder.Services.AddSingleton<FSTService.Api.PublicReadGateService>();
 builder.Services.AddSingleton(sp =>
     new FSTService.Api.PublicationReadLockDataSource(
-        sp.GetRequiredService<IConfiguration>()
-            .GetConnectionString("PostgreSQL")
-        ?? throw new InvalidOperationException(
-            "Missing PostgreSQL connection string for publication read locks.")));
+        pgConnectionStringBuilder.ConnectionString));
 builder.Services.AddSingleton<FSTService.Api.PublicationReadContextService>(sp =>
     new FSTService.Api.PublicationReadContextService(
         sp.GetRequiredService<IMetaDatabase>(),
         sp.GetRequiredService<FSTService.Api.PublicationReadLockDataSource>(),
         sp.GetRequiredService<IOptions<FeatureOptions>>()));
 builder.Services.AddSingleton<FSTService.Api.PublicApiCacheTelemetry>();
+builder.Services.AddSingleton<FSTService.Api.RolloutReadOnlyViolationMonitor>();
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("PlayerCache",
     (sp, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(2),
         sp.GetRequiredService<FSTService.Api.PublicReadGateService>(),
@@ -660,40 +711,38 @@ else
 {
     builder.Services.AddHostedService(
         sp => sp.GetRequiredService<StartupInitializer>());
-    builder.Services.AddHostedService<
-        FSTService.Persistence.ImprovementNotificationStalenessMonitor>();
-    if (hostedWorkerMode != HostedWorkerMode.FullWorker)
+    if (hostedServicePlan.RegisterStalenessMonitor)
+    {
+        builder.Services.AddHostedService<
+            FSTService.Persistence.ImprovementNotificationStalenessMonitor>();
+    }
+    if (hostedServicePlan.RegisterPublicationChangeMonitor)
     {
         builder.Services.AddHostedService<
             FSTService.Api.PublicationChangeMonitorService>();
     }
     builder.Services.AddHealthChecks()
         .AddCheck<StartupInitializer>("database", tags: ["ready"]);
-    if (hostedWorkerMode == HostedWorkerMode.ApiOnly)
-    {
-        builder.Services.AddHostedService<SongCatalogRefreshWorker>();
-    }
-    else if (hostedWorkerMode == HostedWorkerMode.FrontendOnly)
-    {
-        builder.Services.AddHostedService<SongCatalogRefreshWorker>();
-    }
-    else if (hostedWorkerMode == HostedWorkerMode.RegistrationSyncWorker)
-    {
-        builder.Services.AddHostedService<SongCatalogRefreshWorker>();
-        builder.Services.AddHostedService<RegistrationBackfillWorker>();
-    }
-    else
+    if (hostedServicePlan.RegisterFullWorkerServices)
     {
         builder.Services.AddHostedService<WorkerStatusHeartbeatService>();
         builder.Services.AddHostedService<ScraperWorker>();
-        if (HostedWorkerModeResolver.ShouldRunRegistrationBackfillWorker(
-                hostedWorkerMode,
-                runOnceRequested,
-                backfillOnlyRequested))
+        if (hostedServicePlan.RegisterRegistrationBackfill)
         {
             builder.Services.AddHostedService<RegistrationBackfillWorker>();
         }
         builder.Services.AddHostedService<BandRankHistoryWorker>();
+    }
+    else
+    {
+        if (hostedServicePlan.RegisterSongCatalogRefresh)
+        {
+            builder.Services.AddHostedService<SongCatalogRefreshWorker>();
+        }
+        if (hostedServicePlan.RegisterRegistrationBackfill)
+        {
+            builder.Services.AddHostedService<RegistrationBackfillWorker>();
+        }
     }
 }
 
@@ -705,6 +754,11 @@ if (soloFamilyRankingBackfillCommand is not null)
 {
     app.Logger.LogInformation(
         "Solo-family ranking backfill one-shot mode enabled; no hosted services were registered and schema initialization will not run.");
+}
+else if (rolloutReadOnlyStartupRequested)
+{
+    app.Logger.LogWarning(
+        "Rollout read-only startup mode enabled; only persisted state loading and HTTP serving are active.");
 }
 else if (hostedWorkerMode == HostedWorkerMode.ApiOnly)
 {
@@ -858,6 +912,7 @@ if (improvementNotificationRecoveryRequested)
 app.UseMiddleware<PathTraversalGuardMiddleware>();
 
 app.UseResponseCompression();
+app.UseMiddleware<FSTService.Api.RolloutReadOnlyRequestGuardMiddleware>();
 
 // Wire up cross-references between NotificationService and ItemShopService
 var shopService = app.Services.GetRequiredService<ItemShopService>();
@@ -891,31 +946,7 @@ app.UseMiddleware<FSTService.Api.PublicationReadContextMiddleware>();
 app.UseMiddleware<FSTService.Api.PublicationBoundaryReadLeaseMiddleware>();
 app.UseMiddleware<FSTService.Api.PublicApiResponseCacheMiddleware>();
 app.UseMiddleware<FSTService.Api.PublicReadGateMiddleware>();
-app.Use(async (context, next) =>
-{
-    await next();
-
-    if (context.WebSockets.IsWebSocketRequest
-        || !context.Request.Path.StartsWithSegments("/api")
-        || context.Response.StatusCode >= StatusCodes.Status500InternalServerError)
-    {
-        return;
-    }
-
-    if (!SelectedProfileHeaders.TryParse(context.Request.Headers, out var selection) || selection is null)
-        return;
-
-    var metaDatabase = context.RequestServices.GetRequiredService<IMetaDatabase>();
-    switch (selection)
-    {
-        case SelectedPlayerSelection player:
-            metaDatabase.TouchWebRegistrationActivity(player.AccountId);
-            break;
-        case SelectedBandSelection band:
-            metaDatabase.RegisterSelectedBandActivity(band.BandType, band.TeamKey, band.BandId);
-            break;
-    }
-});
+app.UseMiddleware<FSTService.Api.SelectedProfileActivityMiddleware>();
 
 // Serve static files (wwwroot/) and fall back to index.html for non-API routes,
 // but only when the web app has been embedded (e.g. single-container deployment).

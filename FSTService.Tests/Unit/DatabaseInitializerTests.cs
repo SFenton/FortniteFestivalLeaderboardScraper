@@ -1,7 +1,9 @@
 using FortniteFestival.Core.Persistence;
 using FortniteFestival.Core.Services;
+using FortniteFestival.Core;
 using FSTService.Persistence;
 using FSTService.Scraping;
+using FSTService.Api;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
@@ -59,7 +61,39 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
-    public async Task StartAsync_InitializesAndSignalsReady()
+    public async Task CheckHealthAsync_ReadOnlyViolation_ReturnsUnhealthy()
+    {
+        var festivalService = new FestivalService((IFestivalPersistence?)null);
+        var shopService = new ItemShopService(
+            new HttpClient(new NoOpHandler()),
+            festivalService,
+            _metaFixture.Db,
+            Substitute.For<ILogger<ItemShopService>>());
+        var violations = new RolloutReadOnlyViolationMonitor();
+        violations.Report(new InvalidOperationException("injected read-only violation"));
+        var initializer = new StartupInitializer(
+            _persistence,
+            _metaFixture.DataSource,
+            festivalService,
+            shopService,
+            Substitute.For<IHostApplicationLifetime>(),
+            Options.Create(new ScraperOptions
+            {
+                RolloutReadOnlyStartup = true,
+                RolloutPostgresReadOnly = true,
+            }),
+            Substitute.For<ILogger<StartupInitializer>>(),
+            violations);
+
+        var result = await initializer.CheckHealthAsync(
+            new HealthCheckContext());
+
+        Assert.Equal(HealthStatus.Unhealthy, result.Status);
+        Assert.Contains("read-only violation", result.Description);
+    }
+
+    [Fact]
+    public async Task StartAsync_NormalMode_QueriesWritablePostgresAndSignalsReady()
     {
         var festivalService = new FestivalService((IFestivalPersistence?)null);
         var handler = new HttpClient(new NoOpHandler());
@@ -79,8 +113,256 @@ public class DatabaseInitializerTests : IDisposable
         await init.WaitForReadyAsync(cts.Token);
 
         Assert.True(init.IsReady);
+        Assert.False(init.PostgresDefaultTransactionReadOnly);
         var result = await init.CheckHealthAsync(new HealthCheckContext());
         Assert.Equal(HealthStatus.Healthy, result.Status);
+    }
+
+    [Fact]
+    public async Task StartAsync_RolloutReadOnlyStartup_PerformsNoDatabaseOrFilesystemWrites()
+    {
+        var song = new Song
+        {
+            track = new Track
+            {
+                su = "rollout-read-only-song",
+                tt = "Persisted Song",
+                an = "Artist",
+            },
+        };
+        var writableFestivalPersistence = new FestivalPersistence(
+            _metaFixture.DataSource);
+        await writableFestivalPersistence.SaveSongsAsync([song]);
+        _metaFixture.Db.SaveItemShopTracks(
+            new HashSet<string> { song.track.su },
+            new HashSet<string>(),
+            new HashSet<string>(),
+            DateTime.UtcNow);
+
+        string databaseName;
+        using (var connection = _metaFixture.DataSource.OpenConnection())
+            databaseName = connection.Database;
+        var readOnlyBuilder = new NpgsqlConnectionStringBuilder(
+            SharedPostgresContainer.ConnectionString)
+        {
+            Database = databaseName,
+            Options = "-c default_transaction_read_only=on",
+            MinPoolSize = 0,
+            MaxPoolSize = 5,
+        };
+        await using var readOnlyDataSource =
+            NpgsqlDataSource.Create(readOnlyBuilder.ConnectionString);
+        using var readOnlyMeta = new MetaDatabase(
+            readOnlyDataSource,
+            Substitute.For<ILogger<MetaDatabase>>());
+        var readOnlyLoggerFactory = Substitute.For<ILoggerFactory>();
+        readOnlyLoggerFactory.CreateLogger(Arg.Any<string>())
+            .Returns(Substitute.For<ILogger>());
+        using var readOnlyPersistence = new GlobalLeaderboardPersistence(
+            readOnlyMeta,
+            readOnlyLoggerFactory,
+            Substitute.For<ILogger<GlobalLeaderboardPersistence>>(),
+            readOnlyDataSource,
+            Options.Create(new FeatureOptions()));
+        var providerHandler = new CountingFailureHandler();
+        var shopHandler = new CountingFailureHandler();
+        var festivalService = new FestivalService(
+            new FestivalPersistence(readOnlyDataSource),
+            new HttpClient(providerHandler));
+        var shopService = new ItemShopService(
+            new HttpClient(shopHandler),
+            festivalService,
+            readOnlyMeta,
+            Substitute.For<ILogger<ItemShopService>>());
+        var lifetime = Substitute.For<IHostApplicationLifetime>();
+
+        var midiDirectory = Path.Combine(_tempDir, "midi");
+        Directory.CreateDirectory(midiDirectory);
+        var legacyDat = Path.Combine(midiDirectory, "preserve.dat");
+        await File.WriteAllTextAsync(legacyDat, "preserve");
+        var staleSpool = Path.Combine(_tempDir, "spool", "fst_scrape_preserve");
+        Directory.CreateDirectory(staleSpool);
+        Directory.SetLastWriteTimeUtc(staleSpool, DateTime.UtcNow.AddDays(-7));
+
+        var initializer = new StartupInitializer(
+            readOnlyPersistence,
+            readOnlyDataSource,
+            festivalService,
+            shopService,
+            lifetime,
+            Options.Create(new ScraperOptions
+            {
+                DataDirectory = _tempDir,
+                RolloutReadOnlyStartup = true,
+                RolloutPostgresReadOnly = true,
+            }),
+            Substitute.For<ILogger<StartupInitializer>>());
+
+        await initializer.StartAsync(CancellationToken.None);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await initializer.WaitForReadyAsync(cts.Token);
+
+        Assert.True(initializer.IsReady);
+        Assert.True(initializer.PostgresDefaultTransactionReadOnly);
+        Assert.Contains(
+            festivalService.Songs,
+            loaded => loaded.track.su == song.track.su);
+        Assert.Contains(song.track.su, shopService.InShopSongIds);
+        Assert.False(shopService.HasScheduledRefresh);
+        Assert.Equal(0, providerHandler.RequestCount);
+        Assert.Equal(0, shopHandler.RequestCount);
+        Assert.True(File.Exists(legacyDat));
+        Assert.True(Directory.Exists(staleSpool));
+        lifetime.DidNotReceive().StopApplication();
+
+        using var secondPersistence = new GlobalLeaderboardPersistence(
+            readOnlyMeta,
+            readOnlyLoggerFactory,
+            Substitute.For<ILogger<GlobalLeaderboardPersistence>>(),
+            readOnlyDataSource,
+            Options.Create(new FeatureOptions()));
+        var secondProviderHandler = new CountingFailureHandler();
+        var secondShopHandler = new CountingFailureHandler();
+        var secondFestivalService = new FestivalService(
+            new FestivalPersistence(readOnlyDataSource),
+            new HttpClient(secondProviderHandler));
+        var secondShopService = new ItemShopService(
+            new HttpClient(secondShopHandler),
+            secondFestivalService,
+            readOnlyMeta,
+            Substitute.For<ILogger<ItemShopService>>());
+        var secondInitializer = new StartupInitializer(
+            secondPersistence,
+            readOnlyDataSource,
+            secondFestivalService,
+            secondShopService,
+            lifetime,
+            Options.Create(new ScraperOptions
+            {
+                DataDirectory = _tempDir,
+                RolloutReadOnlyStartup = true,
+                RolloutPostgresReadOnly = true,
+            }),
+            Substitute.For<ILogger<StartupInitializer>>());
+
+        await secondInitializer.StartAsync(CancellationToken.None);
+        await secondInitializer.WaitForReadyAsync(cts.Token);
+
+        Assert.Equal(0, secondProviderHandler.RequestCount);
+        Assert.Equal(0, secondShopHandler.RequestCount);
+        Assert.False(secondShopService.HasScheduledRefresh);
+        Assert.True(secondInitializer.PostgresDefaultTransactionReadOnly);
+        Assert.True(File.Exists(legacyDat));
+        Assert.True(Directory.Exists(staleSpool));
+    }
+
+    [Fact]
+    public async Task StartAsync_RolloutReadOnlyStartup_RejectsServerWritablePostgresSession()
+    {
+        var festivalService = new FestivalService((IFestivalPersistence?)null);
+        var shopService = new ItemShopService(
+            new HttpClient(new NoOpHandler()),
+            festivalService,
+            _metaFixture.Db,
+            Substitute.For<ILogger<ItemShopService>>());
+        var lifetime = Substitute.For<IHostApplicationLifetime>();
+        var initializer = new StartupInitializer(
+            _persistence,
+            _metaFixture.DataSource,
+            festivalService,
+            shopService,
+            lifetime,
+            Options.Create(new ScraperOptions
+            {
+                DataDirectory = _tempDir,
+                RolloutReadOnlyStartup = true,
+                RolloutPostgresReadOnly = true,
+            }),
+            Substitute.For<ILogger<StartupInitializer>>());
+
+        await initializer.StartAsync(CancellationToken.None);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => initializer.WaitForReadyAsync(cts.Token));
+
+        Assert.False(initializer.PostgresDefaultTransactionReadOnly);
+        lifetime.Received(1).StopApplication();
+    }
+
+    [Fact]
+    public async Task StartAsync_NormalMode_RejectsRoleLevelReadOnlyPostgresSession()
+    {
+        string databaseName;
+        using (var connection = _metaFixture.DataSource.OpenConnection())
+            databaseName = connection.Database;
+        var roleName = $"startup_read_only_{Guid.NewGuid():N}";
+        const string password = "startup-read-only-test";
+        using (var connection = _metaFixture.DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = $"""
+                CREATE ROLE "{roleName}" LOGIN PASSWORD '{password}';
+                GRANT CONNECT ON DATABASE "{databaseName}" TO "{roleName}";
+                ALTER ROLE "{roleName}" SET default_transaction_read_only = on;
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        NpgsqlDataSource? roleDataSource = null;
+        try
+        {
+            var builder = new NpgsqlConnectionStringBuilder(
+                _metaFixture.DataSource.ConnectionString)
+            {
+                Database = databaseName,
+                Username = roleName,
+                Password = password,
+                MinPoolSize = 0,
+                MaxPoolSize = 2,
+            };
+            roleDataSource = NpgsqlDataSource.Create(builder.ConnectionString);
+            var festivalService = new FestivalService((IFestivalPersistence?)null);
+            var shopService = new ItemShopService(
+                new HttpClient(new NoOpHandler()),
+                festivalService,
+                _metaFixture.Db,
+                Substitute.For<ILogger<ItemShopService>>());
+            var lifetime = Substitute.For<IHostApplicationLifetime>();
+            var initializer = new StartupInitializer(
+                _persistence,
+                roleDataSource,
+                festivalService,
+                shopService,
+                lifetime,
+                Options.Create(new ScraperOptions
+                {
+                    DataDirectory = _tempDir,
+                }),
+                Substitute.For<ILogger<StartupInitializer>>());
+
+            await initializer.StartAsync(CancellationToken.None);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => initializer.WaitForReadyAsync(cts.Token));
+
+            Assert.Contains(
+                "Normal startup requires default_transaction_read_only=off",
+                error.Message);
+            Assert.True(initializer.PostgresDefaultTransactionReadOnly);
+            lifetime.Received(1).StopApplication();
+        }
+        finally
+        {
+            if (roleDataSource is not null)
+                await roleDataSource.DisposeAsync();
+            using var connection = _metaFixture.DataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = $"""
+                DROP OWNED BY "{roleName}";
+                DROP ROLE "{roleName}";
+                """;
+            command.ExecuteNonQuery();
+        }
     }
 
     [Fact]
@@ -1220,5 +1502,18 @@ public class DatabaseInitializerTests : IDisposable
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken ct)
             => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK));
+    }
+
+    private sealed class CountingFailureHandler : HttpMessageHandler
+    {
+        public int RequestCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            RequestCount++;
+            throw new InvalidOperationException("HTTP is forbidden in read-only startup.");
+        }
     }
 }

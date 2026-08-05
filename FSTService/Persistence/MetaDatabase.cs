@@ -52,6 +52,18 @@ public sealed class MetaDatabase : IMetaDatabase
         PublicationReadIsolationFailurePhase,
     ];
     private const string LeaderboardStagingReadColumns = "scrape_id, song_id, instrument, page_num, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, staged_at";
+    private const string SongInstrumentThresholdsCte = """
+        requested_thresholds AS MATERIALIZED (
+            SELECT threshold.song_id,
+                   threshold.instrument,
+                   threshold.max_score
+            FROM unnest(
+                @thresholdSongIds::TEXT[],
+                @thresholdInstruments::TEXT[],
+                @thresholdMaxScores::INTEGER[])
+                AS threshold(song_id, instrument, max_score)
+        )
+        """;
 
     public MetaDatabase(
         NpgsqlDataSource dataSource,
@@ -76,6 +88,28 @@ public sealed class MetaDatabase : IMetaDatabase
     internal static string GetLeaderboardStagingReadSource(string alias) =>
         $"(SELECT {LeaderboardStagingReadColumns} FROM {LeaderboardStagingTable} " +
         $"UNION ALL SELECT {LeaderboardStagingReadColumns} FROM {LegacyLeaderboardStagingTable}) AS {alias}";
+
+    private static void AddSongInstrumentThresholdParameters(
+        NpgsqlCommand command,
+        IReadOnlyDictionary<(string SongId, string Instrument), int> thresholds)
+    {
+        var ordered = thresholds
+            .OrderBy(static pair => pair.Key.SongId, StringComparer.Ordinal)
+            .ThenBy(static pair => pair.Key.Instrument, StringComparer.Ordinal)
+            .ToArray();
+        command.Parameters.Add(
+                "thresholdSongIds",
+                NpgsqlDbType.Array | NpgsqlDbType.Text)
+            .Value = ordered.Select(static pair => pair.Key.SongId).ToArray();
+        command.Parameters.Add(
+                "thresholdInstruments",
+                NpgsqlDbType.Array | NpgsqlDbType.Text)
+            .Value = ordered.Select(static pair => pair.Key.Instrument).ToArray();
+        command.Parameters.Add(
+                "thresholdMaxScores",
+                NpgsqlDbType.Array | NpgsqlDbType.Integer)
+            .Value = ordered.Select(static pair => pair.Value).ToArray();
+    }
 
     // ── Scrape log ───────────────────────────────────────────────────
 
@@ -2800,31 +2834,43 @@ public sealed class MetaDatabase : IMetaDatabase
     {
         if (thresholds.Count == 0) return new();
         using var conn = _ds.OpenConnection();
-        using var tx = conn.BeginTransaction();
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "CREATE TEMP TABLE _valid_thresholds (song_id TEXT, instrument TEXT, max_score INTEGER, PRIMARY KEY (song_id, instrument)) ON COMMIT DROP"; c.ExecuteNonQuery(); }
-        using (var writer = conn.BeginBinaryImport("COPY _valid_thresholds (song_id, instrument, max_score) FROM STDIN (FORMAT BINARY)"))
-        {
-            foreach (var ((songId, instrument), maxScore) in thresholds)
-            {
-                writer.StartRow();
-                writer.Write(songId, NpgsqlDbType.Text);
-                writer.Write(instrument, NpgsqlDbType.Text);
-                writer.Write(maxScore, NpgsqlDbType.Integer);
-            }
-
-            writer.Complete();
-        }
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "ANALYZE _valid_thresholds"; c.ExecuteNonQuery(); }
         using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = "SELECT sh.song_id, sh.instrument, sh.new_score, sh.accuracy, sh.is_full_combo, sh.stars FROM score_history sh JOIN _valid_thresholds vt ON vt.song_id = sh.song_id AND vt.instrument = sh.instrument WHERE sh.account_id = @accountId AND sh.new_score <= vt.max_score AND sh.new_score = (SELECT MAX(sh2.new_score) FROM score_history sh2 WHERE sh2.account_id = @accountId AND sh2.song_id = sh.song_id AND sh2.instrument = sh.instrument AND sh2.new_score <= vt.max_score) GROUP BY sh.song_id, sh.instrument, sh.new_score, sh.accuracy, sh.is_full_combo, sh.stars";
+        cmd.CommandText = $"""
+            WITH {SongInstrumentThresholdsCte}
+            SELECT sh.song_id,
+                   sh.instrument,
+                   sh.new_score,
+                   sh.accuracy,
+                   sh.is_full_combo,
+                   sh.stars
+            FROM score_history sh
+            JOIN requested_thresholds threshold
+              ON threshold.song_id = sh.song_id
+             AND threshold.instrument = sh.instrument
+            WHERE sh.account_id = @accountId
+              AND sh.new_score <= threshold.max_score
+              AND sh.new_score = (
+                  SELECT MAX(sh2.new_score)
+                  FROM score_history sh2
+                  WHERE sh2.account_id = @accountId
+                    AND sh2.song_id = sh.song_id
+                    AND sh2.instrument = sh.instrument
+                    AND sh2.new_score <= threshold.max_score
+              )
+            GROUP BY sh.song_id,
+                     sh.instrument,
+                     sh.new_score,
+                     sh.accuracy,
+                     sh.is_full_combo,
+                     sh.stars
+            """;
+        AddSongInstrumentThresholdParameters(cmd, thresholds);
         cmd.Parameters.AddWithValue("accountId", accountId);
         var result = new Dictionary<(string, string), ValidScoreFallback>();
         using (var r = cmd.ExecuteReader())
         {
             while (r.Read()) result[(r.GetString(0), r.GetString(1))] = new ValidScoreFallback { Score = r.GetInt32(2), Accuracy = r.IsDBNull(3) ? null : r.GetInt32(3), IsFullCombo = r.IsDBNull(4) ? null : r.GetBoolean(4), Stars = r.IsDBNull(5) ? null : r.GetInt32(5) };
         }
-        tx.Commit();
         return result;
     }
 
@@ -2937,21 +2983,22 @@ public sealed class MetaDatabase : IMetaDatabase
     {
         if (maxThresholds.Count == 0) return new();
         using var conn = _ds.OpenConnection();
-        using var tx = conn.BeginTransaction();
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "CREATE TEMP TABLE _lp_thresholds (song_id TEXT, instrument TEXT, max_score INTEGER, PRIMARY KEY (song_id, instrument)) ON COMMIT DROP"; c.ExecuteNonQuery(); }
-        using (var c = conn.CreateCommand())
-        {
-            c.Transaction = tx;
-            c.CommandText = "INSERT INTO _lp_thresholds VALUES (@s, @i, @m)";
-            var ps = c.Parameters.Add("s", NpgsqlTypes.NpgsqlDbType.Text);
-            var pi = c.Parameters.Add("i", NpgsqlTypes.NpgsqlDbType.Text);
-            var pm = c.Parameters.Add("m", NpgsqlTypes.NpgsqlDbType.Integer);
-            c.Prepare();
-            foreach (var ((s, i), m) in maxThresholds) { ps.Value = s; pi.Value = i; pm.Value = m; c.ExecuteNonQuery(); }
-        }
         using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = "SELECT sh.song_id, sh.instrument, MAX(sh.score_achieved_at) FROM score_history sh JOIN _lp_thresholds lt ON lt.song_id = sh.song_id AND lt.instrument = sh.instrument WHERE sh.account_id = @accountId AND sh.new_score <= lt.max_score AND sh.score_achieved_at IS NOT NULL GROUP BY sh.song_id, sh.instrument";
+        cmd.CommandText = $"""
+            WITH {SongInstrumentThresholdsCte}
+            SELECT sh.song_id,
+                   sh.instrument,
+                   MAX(sh.score_achieved_at)
+            FROM score_history sh
+            JOIN requested_thresholds threshold
+              ON threshold.song_id = sh.song_id
+             AND threshold.instrument = sh.instrument
+            WHERE sh.account_id = @accountId
+              AND sh.new_score <= threshold.max_score
+              AND sh.score_achieved_at IS NOT NULL
+            GROUP BY sh.song_id, sh.instrument
+            """;
+        AddSongInstrumentThresholdParameters(cmd, maxThresholds);
         cmd.Parameters.AddWithValue("accountId", accountId);
         var result = new Dictionary<(string, string), string>();
         using (var r = cmd.ExecuteReader())
@@ -2962,7 +3009,6 @@ public sealed class MetaDatabase : IMetaDatabase
                 result[(r.GetString(0), r.GetString(1))] = ts;
             }
         }
-        tx.Commit();
         return result;
     }
 

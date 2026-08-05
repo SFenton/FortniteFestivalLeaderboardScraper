@@ -25,6 +25,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\FSTService\FSTService.csproj" />
+    <ProjectReference Include="..\tools\FstStoredRankRollout\FstStoredRankRollout.csproj" />
   </ItemGroup>
 
   <ItemGroup>

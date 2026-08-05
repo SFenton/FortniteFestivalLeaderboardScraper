@@ -1,0 +1,12 @@
+services:
+  fstservice:
+    image: ${FST_STORED_RANK_SERVICE_IMAGE:?Set immutable service image tag@digest}
+    environment:
+      Scraper__RolloutReadOnlyStartup: "true"
+      Scraper__RolloutPostgresReadOnly: "true"
+      Features__UseStoredSoloProjectionRanksForFilteredReads: "true"
+  fstworker:
+    environment:
+      Scraper__RolloutReadOnlyStartup: "false"
+      Scraper__RolloutPostgresReadOnly: "false"
+      Features__UseStoredSoloProjectionRanksForFilteredReads: "false"

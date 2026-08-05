@@ -35,4 +35,39 @@ internal static class HostedWorkerModeResolver
         (mode == HostedWorkerMode.FullWorker
          && !runOnceRequested
          && !backfillOnlyRequested);
+
+    public static HostedServiceRegistrationPlan ResolveHostedServicePlan(
+        HostedWorkerMode mode,
+        bool rolloutReadOnlyStartup,
+        bool runOnceRequested,
+        bool backfillOnlyRequested)
+    {
+        if (rolloutReadOnlyStartup)
+            return HostedServiceRegistrationPlan.ReadOnlyRollout;
+
+        return new HostedServiceRegistrationPlan(
+            RegisterStalenessMonitor: true,
+            RegisterPublicationChangeMonitor: mode != HostedWorkerMode.FullWorker,
+            RegisterSongCatalogRefresh: mode != HostedWorkerMode.FullWorker,
+            RegisterRegistrationBackfill: ShouldRunRegistrationBackfillWorker(
+                mode,
+                runOnceRequested,
+                backfillOnlyRequested),
+            RegisterFullWorkerServices: mode == HostedWorkerMode.FullWorker);
+    }
+}
+
+internal sealed record HostedServiceRegistrationPlan(
+    bool RegisterStalenessMonitor,
+    bool RegisterPublicationChangeMonitor,
+    bool RegisterSongCatalogRefresh,
+    bool RegisterRegistrationBackfill,
+    bool RegisterFullWorkerServices)
+{
+    public static HostedServiceRegistrationPlan ReadOnlyRollout { get; } = new(
+        RegisterStalenessMonitor: false,
+        RegisterPublicationChangeMonitor: false,
+        RegisterSongCatalogRefresh: false,
+        RegisterRegistrationBackfill: false,
+        RegisterFullWorkerServices: false);
 }

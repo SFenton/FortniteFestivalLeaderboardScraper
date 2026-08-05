@@ -70,4 +70,25 @@ public class HostedWorkerModeResolverTests
                 runOnceRequested,
                 backfillOnlyRequested));
     }
+
+    [Theory]
+    [InlineData((int)HostedWorkerMode.FullWorker)]
+    [InlineData((int)HostedWorkerMode.ApiOnly)]
+    [InlineData((int)HostedWorkerMode.FrontendOnly)]
+    [InlineData((int)HostedWorkerMode.RegistrationSyncWorker)]
+    public void ResolveHostedServicePlan_ReadOnlyRolloutSuppressesMutationServices(
+        int modeValue)
+    {
+        var plan = HostedWorkerModeResolver.ResolveHostedServicePlan(
+            (HostedWorkerMode)modeValue,
+            rolloutReadOnlyStartup: true,
+            runOnceRequested: false,
+            backfillOnlyRequested: false);
+
+        Assert.False(plan.RegisterStalenessMonitor);
+        Assert.False(plan.RegisterPublicationChangeMonitor);
+        Assert.False(plan.RegisterSongCatalogRefresh);
+        Assert.False(plan.RegisterRegistrationBackfill);
+        Assert.False(plan.RegisterFullWorkerServices);
+    }
 }

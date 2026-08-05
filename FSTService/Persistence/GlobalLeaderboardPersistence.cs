@@ -131,9 +131,18 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// Ensure all schemas exist (meta DB + one instrument DB per known instrument).
     /// Call once at startup before the first scrape pass.
     /// </summary>
-    public void Initialize()
+    public void Initialize() => InitializeCore(allowStartupWrites: true);
+
+    /// <summary>
+    /// Opens existing instrument readers without schema creation or startup
+    /// published-source backfills.
+    /// </summary>
+    public void InitializeReadOnly() => InitializeCore(allowStartupWrites: false);
+
+    private void InitializeCore(bool allowStartupWrites)
     {
-        _metaDb.EnsureSchema();
+        if (allowStartupWrites)
+            _metaDb.EnsureSchema();
 
         var instruments = GlobalLeaderboardScraper.AllInstruments;
 
@@ -162,7 +171,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             _log.LogWarning("Removed phantom instrument DB: {Instrument}", key);
         }
 
-        if (WritePublishedScopeSources)
+        if (allowStartupWrites && WritePublishedScopeSources)
         {
             var backfillStopwatch = System.Diagnostics.Stopwatch.StartNew();
             var backfill = BackfillCurrentPublishedScopeSources();

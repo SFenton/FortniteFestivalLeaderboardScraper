@@ -624,6 +624,22 @@ export type ServiceInfoResponse = {
     currentOperation?: ServiceInfoWorkerOperation | null;
     lastOperation?: ServiceInfoWorkerOperation | null;
   } | null;
+  rolloutReadOnlyStartup?: boolean;
+  postgresDefaultTransactionReadOnly?: boolean;
+  postgresConnectionTarget?: {
+    host: string;
+    port: number;
+    database: string;
+    username: string;
+    defaultTransactionReadOnlyOption: boolean;
+  };
+  serviceInstance?: {
+    nonce: string;
+    hostName: string;
+    processId: number;
+    startedAtUtc: string;
+  };
+  readOnlyViolationDetected?: boolean;
   nextScheduledUpdateAt: string | null;
 };
 

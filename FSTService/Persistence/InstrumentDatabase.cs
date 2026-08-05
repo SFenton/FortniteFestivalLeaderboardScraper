@@ -26,6 +26,15 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     private const string InstrumentScrapeStateTable = "instrument_scrape_state";
     private const string AccountRankingStatsTable = "account_ranking_stats";
     private const string RankHistorySnapshotStatsTable = "rank_history_snapshot_stats";
+    private const string MaxThresholdsCte = """
+        max_thresholds AS MATERIALIZED (
+            SELECT threshold.song_id, threshold.max_score
+            FROM unnest(
+                @thresholdSongIds::TEXT[],
+                @thresholdMaxScores::INTEGER[])
+                AS threshold(song_id, max_score)
+        )
+        """;
     public string Instrument { get; }
 
     /// <summary>
@@ -1369,21 +1378,59 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return dict;
     }
 
+    private static void AddMaxThresholdParameters(
+        NpgsqlCommand command,
+        IReadOnlyDictionary<string, int> maxScores)
+    {
+        var ordered = maxScores
+            .OrderBy(static pair => pair.Key, StringComparer.Ordinal)
+            .ToArray();
+        command.Parameters.Add(
+                "thresholdSongIds",
+                NpgsqlDbType.Array | NpgsqlDbType.Text)
+            .Value = ordered.Select(static pair => pair.Key).ToArray();
+        command.Parameters.Add(
+                "thresholdMaxScores",
+                NpgsqlDbType.Array | NpgsqlDbType.Integer)
+            .Value = ordered.Select(static pair => pair.Value).ToArray();
+    }
+
     public Dictionary<string, int> GetPlayerRankingsFiltered(string accountId, Dictionary<string, int> maxScores, string? songId = null)
     {
         if (maxScores.Count == 0) return GetPlayerRankings(accountId, songId);
         using var conn = _ds.OpenConnection();
-        using var tx = conn.BeginTransaction();
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "CREATE TEMP TABLE _max_thresholds (song_id TEXT PRIMARY KEY, max_score INTEGER NOT NULL) ON COMMIT DROP"; c.ExecuteNonQuery(); }
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "INSERT INTO _max_thresholds VALUES (@sid, @ms)"; var ps = c.Parameters.Add("sid", NpgsqlTypes.NpgsqlDbType.Text); var pm = c.Parameters.Add("ms", NpgsqlTypes.NpgsqlDbType.Integer); c.Prepare(); foreach (var (s, m) in maxScores) { ps.Value = s; pm.Value = m; c.ExecuteNonQuery(); } }
-        using var cmd = conn.CreateCommand(); cmd.Transaction = tx;
+        using var cmd = conn.CreateCommand();
         var songFilter = songId is not null ? "AND song_id = @songId" : "";
-        cmd.CommandText = $"WITH player_songs AS (SELECT song_id FROM leaderboard_entries WHERE account_id = @accountId AND instrument = @instrument {songFilter}), ranked AS (SELECT le.account_id, le.song_id, ROW_NUMBER() OVER (PARTITION BY le.song_id ORDER BY {SoloLeaderboardOrderingSql.OrderBy("le")}) AS rank FROM leaderboard_entries le LEFT JOIN _max_thresholds mt ON mt.song_id = le.song_id WHERE le.instrument = @instrument AND le.song_id IN (SELECT song_id FROM player_songs) AND le.score <= COALESCE(mt.max_score, le.score + 1)) SELECT song_id, rank FROM ranked WHERE account_id = @accountId";
+        cmd.CommandText = $"""
+            WITH {MaxThresholdsCte},
+            player_songs AS (
+                SELECT song_id
+                FROM leaderboard_entries
+                WHERE account_id = @accountId
+                  AND instrument = @instrument
+                  {songFilter}
+            ),
+            ranked AS (
+                SELECT le.account_id,
+                       le.song_id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY le.song_id
+                           ORDER BY {SoloLeaderboardOrderingSql.OrderBy("le")}) AS rank
+                FROM leaderboard_entries le
+                LEFT JOIN max_thresholds mt ON mt.song_id = le.song_id
+                WHERE le.instrument = @instrument
+                  AND le.song_id IN (SELECT song_id FROM player_songs)
+                  AND le.score <= COALESCE(mt.max_score, le.score + 1)
+            )
+            SELECT song_id, rank
+            FROM ranked
+            WHERE account_id = @accountId
+            """;
+        AddMaxThresholdParameters(cmd, maxScores);
         cmd.Parameters.AddWithValue("accountId", accountId); cmd.Parameters.AddWithValue("instrument", Instrument);
         if (songId is not null) cmd.Parameters.AddWithValue("songId", songId);
         var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         using var r = cmd.ExecuteReader(); while (r.Read()) dict[r.GetString(0)] = (int)r.GetInt64(1);
-        r.Close(); tx.Commit();
         return dict;
     }
 
@@ -1394,33 +1441,11 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         if (songId is null ? HasAnyReadyCurrentProjectionScope(conn) : TryGetReadyCurrentProjectionRowCount(conn, songId).HasValue)
             return GetProjectedCurrentStatePlayerRankingsFiltered(conn, accountId, maxScores, songId);
 
-        using var tx = conn.BeginTransaction();
-        using (var c = conn.CreateCommand())
-        {
-            c.Transaction = tx;
-            c.CommandText = "CREATE TEMP TABLE _max_thresholds_current_state (song_id TEXT PRIMARY KEY, max_score INTEGER NOT NULL) ON COMMIT DROP";
-            c.ExecuteNonQuery();
-        }
-        using (var c = conn.CreateCommand())
-        {
-            c.Transaction = tx;
-            c.CommandText = "INSERT INTO _max_thresholds_current_state VALUES (@sid, @ms)";
-            var songParam = c.Parameters.Add("sid", NpgsqlTypes.NpgsqlDbType.Text);
-            var maxParam = c.Parameters.Add("ms", NpgsqlTypes.NpgsqlDbType.Integer);
-            c.Prepare();
-            foreach (var (sid, maxScore) in maxScores)
-            {
-                songParam.Value = sid;
-                maxParam.Value = maxScore;
-                c.ExecuteNonQuery();
-            }
-        }
-
         using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
         var songFilter = songId is not null ? "AND song_id = @songId" : string.Empty;
         cmd.CommandText = $"""
-            WITH current_rows AS (
+            WITH {MaxThresholdsCte},
+            current_rows AS (
                 {BuildCurrentStateResolvedEntriesSql()}
             ),
             player_songs AS (
@@ -1432,7 +1457,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 SELECT current_rows.account_id, current_rows.song_id,
                        ROW_NUMBER() OVER (PARTITION BY current_rows.song_id ORDER BY {SoloLeaderboardOrderingSql.OrderBy("current_rows")}) AS rank
                 FROM current_rows
-                LEFT JOIN _max_thresholds_current_state mt ON mt.song_id = current_rows.song_id
+                LEFT JOIN max_thresholds mt ON mt.song_id = current_rows.song_id
                 WHERE current_rows.song_id IN (SELECT song_id FROM player_songs)
                   AND current_rows.score <= COALESCE(mt.max_score, current_rows.score + 1)
             )
@@ -1440,6 +1465,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             FROM ranked
             WHERE account_id = @accountId
             """;
+        AddMaxThresholdParameters(cmd, maxScores);
         cmd.Parameters.AddWithValue("accountId", accountId);
         cmd.Parameters.AddWithValue("instrument", Instrument);
         if (songId is not null)
@@ -1448,8 +1474,6 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
             dict[reader.GetString(0)] = (int)reader.GetInt64(1);
-        reader.Close();
-        tx.Commit();
         return dict;
     }
 
@@ -1459,34 +1483,12 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         Dictionary<string, int> maxScores,
         string? songId)
     {
-        using var tx = conn.BeginTransaction();
-        using (var c = conn.CreateCommand())
-        {
-            c.Transaction = tx;
-            c.CommandText = "CREATE TEMP TABLE _max_thresholds_projected_current_state (song_id TEXT PRIMARY KEY, max_score INTEGER NOT NULL) ON COMMIT DROP";
-            c.ExecuteNonQuery();
-        }
-        using (var c = conn.CreateCommand())
-        {
-            c.Transaction = tx;
-            c.CommandText = "INSERT INTO _max_thresholds_projected_current_state VALUES (@sid, @ms)";
-            var songParam = c.Parameters.Add("sid", NpgsqlDbType.Text);
-            var maxParam = c.Parameters.Add("ms", NpgsqlDbType.Integer);
-            c.Prepare();
-            foreach (var (sid, maxScore) in maxScores)
-            {
-                songParam.Value = sid;
-                maxParam.Value = maxScore;
-                c.ExecuteNonQuery();
-            }
-        }
-
         using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
         var songFilter = songId is not null ? "AND projection.song_id = @songId" : string.Empty;
         cmd.CommandText = UseStoredProjectionRanksForFilteredReads
             ? $"""
-                WITH {BuildProjectionSourceCtes(filterSong: false)},
+                WITH {MaxThresholdsCte},
+                {BuildProjectionSourceCtes(filterSong: false)},
                 player_rows AS (
                     SELECT projection.song_id,
                            projection.account_id,
@@ -1507,7 +1509,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                     JOIN selected_sources source
                       ON source.song_id = scope.song_id
                      AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
-                    LEFT JOIN _max_thresholds_projected_current_state mt ON mt.song_id = projection.song_id
+                    LEFT JOIN max_thresholds mt ON mt.song_id = projection.song_id
                     WHERE projection.account_id = @accountId
                       AND projection.instrument = @instrument
                       {songFilter}
@@ -1531,7 +1533,8 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 WHERE player.score <= player.max_score
                 """
             : $"""
-                WITH {BuildProjectionSourceCtes(filterSong: false)},
+                WITH {MaxThresholdsCte},
+                {BuildProjectionSourceCtes(filterSong: false)},
                 player_songs AS (
                     SELECT projection.song_id
                     FROM {SoloCurrentProjectionTable} projection
@@ -1563,7 +1566,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                     JOIN selected_sources source
                       ON source.song_id = scope.song_id
                      AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
-                    LEFT JOIN _max_thresholds_projected_current_state mt ON mt.song_id = projection.song_id
+                    LEFT JOIN max_thresholds mt ON mt.song_id = projection.song_id
                     WHERE projection.instrument = @instrument
                       AND projection.song_id IN (SELECT song_id FROM player_songs)
                       AND projection.score <= COALESCE(mt.max_score, projection.score + 1)
@@ -1572,6 +1575,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 FROM ranked
                 WHERE account_id = @accountId
                 """;
+        AddMaxThresholdParameters(cmd, maxScores);
         cmd.Parameters.AddWithValue("accountId", accountId);
         cmd.Parameters.AddWithValue("instrument", Instrument);
         if (songId is not null)
@@ -1580,8 +1584,6 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
             dict[reader.GetString(0)] = (int)reader.GetInt64(1);
-        reader.Close();
-        tx.Commit();
         return dict;
     }
 
@@ -1708,7 +1710,28 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             reader.IsDBNull(2) ? null : reader.GetInt32(2));
     }
 
-    public Dictionary<string, int> GetFilteredEntryCounts(Dictionary<string, int> maxScores) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); if (maxScores.Count == 0) return GetAllSongCounts(); using var tx = conn.BeginTransaction(); using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "CREATE TEMP TABLE _max_thresholds2 (song_id TEXT PRIMARY KEY, max_score INTEGER NOT NULL) ON COMMIT DROP"; c.ExecuteNonQuery(); } using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "INSERT INTO _max_thresholds2 VALUES (@sid, @ms)"; var ps = c.Parameters.Add("sid", NpgsqlTypes.NpgsqlDbType.Text); var pm = c.Parameters.Add("ms", NpgsqlTypes.NpgsqlDbType.Integer); c.Prepare(); foreach (var (s, m) in maxScores) { ps.Value = s; pm.Value = m; c.ExecuteNonQuery(); } } cmd.Transaction = tx; cmd.CommandText = "SELECT le.song_id, COUNT(*) FROM leaderboard_entries le LEFT JOIN _max_thresholds2 mt ON mt.song_id = le.song_id WHERE le.instrument = @instrument AND le.score <= COALESCE(mt.max_score, le.score + 1) GROUP BY le.song_id"; cmd.Parameters.AddWithValue("instrument", Instrument); var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase); using var r = cmd.ExecuteReader(); while (r.Read()) dict[r.GetString(0)] = r.GetInt32(1); return dict; }
+    public Dictionary<string, int> GetFilteredEntryCounts(Dictionary<string, int> maxScores)
+    {
+        if (maxScores.Count == 0) return GetAllSongCounts();
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            WITH {MaxThresholdsCte}
+            SELECT le.song_id, COUNT(*)::INT
+            FROM leaderboard_entries le
+            LEFT JOIN max_thresholds mt ON mt.song_id = le.song_id
+            WHERE le.instrument = @instrument
+              AND le.score <= COALESCE(mt.max_score, le.score + 1)
+            GROUP BY le.song_id
+            """;
+        AddMaxThresholdParameters(cmd, maxScores);
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            dict[reader.GetString(0)] = reader.GetInt32(1);
+        return dict;
+    }
     public Dictionary<string, int> GetCurrentStateFilteredEntryCounts(Dictionary<string, int> maxScores)
     {
         if (maxScores.Count == 0) return GetCurrentStateAllSongCounts();
@@ -1716,47 +1739,24 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         if (HasAnyReadyCurrentProjectionScope(conn))
             return GetProjectedCurrentStateFilteredEntryCounts(conn, maxScores);
 
-        using var tx = conn.BeginTransaction();
-        using (var c = conn.CreateCommand())
-        {
-            c.Transaction = tx;
-            c.CommandText = "CREATE TEMP TABLE _max_thresholds_current_state_counts (song_id TEXT PRIMARY KEY, max_score INTEGER NOT NULL) ON COMMIT DROP";
-            c.ExecuteNonQuery();
-        }
-        using (var c = conn.CreateCommand())
-        {
-            c.Transaction = tx;
-            c.CommandText = "INSERT INTO _max_thresholds_current_state_counts VALUES (@sid, @ms)";
-            var songParam = c.Parameters.Add("sid", NpgsqlTypes.NpgsqlDbType.Text);
-            var maxParam = c.Parameters.Add("ms", NpgsqlTypes.NpgsqlDbType.Integer);
-            c.Prepare();
-            foreach (var (sid, maxScore) in maxScores)
-            {
-                songParam.Value = sid;
-                maxParam.Value = maxScore;
-                c.ExecuteNonQuery();
-            }
-        }
-
         using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
         cmd.CommandText = $"""
-            WITH current_rows AS (
+            WITH {MaxThresholdsCte},
+            current_rows AS (
                 {BuildCurrentStateResolvedEntriesSql()}
             )
             SELECT current_rows.song_id, COUNT(*)::INT
             FROM current_rows
-            LEFT JOIN _max_thresholds_current_state_counts mt ON mt.song_id = current_rows.song_id
+            LEFT JOIN max_thresholds mt ON mt.song_id = current_rows.song_id
             WHERE current_rows.score <= COALESCE(mt.max_score, current_rows.score + 1)
             GROUP BY current_rows.song_id
             """;
+        AddMaxThresholdParameters(cmd, maxScores);
         cmd.Parameters.AddWithValue("instrument", Instrument);
         var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
             dict[reader.GetString(0)] = reader.GetInt32(1);
-        reader.Close();
-        tx.Commit();
         return dict;
     }
 
@@ -1764,32 +1764,10 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         NpgsqlConnection conn,
         Dictionary<string, int> maxScores)
     {
-        using var tx = conn.BeginTransaction();
-        using (var c = conn.CreateCommand())
-        {
-            c.Transaction = tx;
-            c.CommandText = "CREATE TEMP TABLE _max_thresholds_projected_current_state_counts (song_id TEXT PRIMARY KEY, max_score INTEGER NOT NULL) ON COMMIT DROP";
-            c.ExecuteNonQuery();
-        }
-        using (var c = conn.CreateCommand())
-        {
-            c.Transaction = tx;
-            c.CommandText = "INSERT INTO _max_thresholds_projected_current_state_counts VALUES (@sid, @ms)";
-            var songParam = c.Parameters.Add("sid", NpgsqlDbType.Text);
-            var maxParam = c.Parameters.Add("ms", NpgsqlDbType.Integer);
-            c.Prepare();
-            foreach (var (sid, maxScore) in maxScores)
-            {
-                songParam.Value = sid;
-                maxParam.Value = maxScore;
-                c.ExecuteNonQuery();
-            }
-        }
-
         using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
         cmd.CommandText = $"""
-            WITH {BuildProjectionSourceCtes(filterSong: false)}
+            WITH {MaxThresholdsCte},
+            {BuildProjectionSourceCtes(filterSong: false)}
             SELECT projection.song_id, COUNT(*)::INT
             FROM {SoloCurrentProjectionTable} projection
             JOIN {SoloCurrentProjectionScopeTable} scope
@@ -1801,18 +1779,17 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             JOIN selected_sources source
               ON source.song_id = scope.song_id
              AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
-            LEFT JOIN _max_thresholds_projected_current_state_counts mt ON mt.song_id = projection.song_id
+            LEFT JOIN max_thresholds mt ON mt.song_id = projection.song_id
             WHERE projection.instrument = @instrument
               AND projection.score <= COALESCE(mt.max_score, projection.score + 1)
             GROUP BY projection.song_id
             """;
+        AddMaxThresholdParameters(cmd, maxScores);
         cmd.Parameters.AddWithValue("instrument", Instrument);
         var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
             dict[reader.GetString(0)] = reader.GetInt32(1);
-        reader.Close();
-        tx.Commit();
         return dict;
     }
     public Dictionary<string, (int Rank, int Total)> GetPlayerStoredRankings(string accountId, string? songId = null) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); var filter = songId is not null ? "AND le.song_id = @songId" : ""; cmd.CommandText = $"SELECT le.song_id, le.rank, (SELECT COUNT(*) FROM leaderboard_entries le2 WHERE le2.song_id = le.song_id AND le2.instrument = @instrument) FROM leaderboard_entries le WHERE le.account_id = @accountId AND le.instrument = @instrument {filter}"; cmd.Parameters.AddWithValue("accountId", accountId); cmd.Parameters.AddWithValue("instrument", Instrument); if (songId is not null) cmd.Parameters.AddWithValue("songId", songId); var dict = new Dictionary<string, (int, int)>(StringComparer.OrdinalIgnoreCase); using var r = cmd.ExecuteReader(); while (r.Read()) dict[r.GetString(0)] = (r.GetInt32(1), r.GetInt32(2)); return dict; }

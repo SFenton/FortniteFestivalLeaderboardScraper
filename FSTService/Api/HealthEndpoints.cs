@@ -71,7 +71,11 @@ public static partial class ApiEndpoints
             HttpContext httpContext,
             ScrapeProgressTracker tracker,
             IMetaDatabase metaDb,
-            IOptions<ScraperOptions> scraperOptions) =>
+            IOptions<ScraperOptions> scraperOptions,
+            StartupInitializer startup,
+            RolloutReadOnlyViolationMonitor readOnlyViolations,
+            PostgresRuntimeTarget postgresRuntimeTarget,
+            ServiceInstanceIdentity serviceInstance) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1";
 
@@ -179,6 +183,13 @@ public static partial class ApiEndpoints
                     freezeReason = runtime.PublicReadFreeze.Reason,
                 },
                 workerStatus,
+                rolloutReadOnlyStartup =
+                    scraperOptions.Value.RolloutReadOnlyStartup,
+                postgresDefaultTransactionReadOnly =
+                    startup.PostgresDefaultTransactionReadOnly,
+                postgresConnectionTarget = postgresRuntimeTarget,
+                serviceInstance,
+                readOnlyViolationDetected = readOnlyViolations.HasViolation,
                 nextScheduledUpdateAt,
             });
         })

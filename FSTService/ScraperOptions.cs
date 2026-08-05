@@ -225,6 +225,20 @@ public sealed class ScraperOptions
     public bool SkipStartupSchemaInitialization { get; set; }
 
     /// <summary>
+    /// Rollout-only API startup mode. Loads existing persisted state while
+    /// suppressing startup schema, cleanup, provider sync, item-shop refresh,
+    /// timers, and mutation-capable hosted services.
+    /// </summary>
+    public bool RolloutReadOnlyStartup { get; set; }
+
+    /// <summary>
+    /// Requires service PostgreSQL sessions to set
+    /// <c>default_transaction_read_only=on</c>. Valid only with rollout
+    /// read-only startup.
+    /// </summary>
+    public bool RolloutPostgresReadOnly { get; set; }
+
+    /// <summary>
     /// When true, run as the API frontend: register HTTP/API services and
     /// lightweight catalog/path refresh, but do not register scrape or mutation
     /// background workers such as band rank-history maintenance.

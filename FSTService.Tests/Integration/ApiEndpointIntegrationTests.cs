@@ -20,6 +20,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
@@ -356,6 +357,35 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.True(json.TryGetProperty("workerStatus", out _));
         if (updateStatus is "idle" or "failed")
             Assert.True(json.TryGetProperty("nextScheduledUpdateAt", out _));
+    }
+
+    [Fact]
+    public async Task ApiServiceInfo_ExposesSanitizedPostgresTarget()
+    {
+        var response = await _client.GetAsync("/api/service-info");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var target = json.GetProperty("postgresConnectionTarget");
+        var expectedTarget = _factory.Services
+            .GetRequiredService<PostgresRuntimeTarget>();
+        Assert.Equal(expectedTarget.Host, target.GetProperty("host").GetString());
+        Assert.Equal(expectedTarget.Port, target.GetProperty("port").GetInt32());
+        Assert.Equal(expectedTarget.Database, target.GetProperty("database").GetString());
+        Assert.Equal(expectedTarget.Username, target.GetProperty("username").GetString());
+        Assert.Equal(
+            expectedTarget.DefaultTransactionReadOnlyOption,
+            target.GetProperty("defaultTransactionReadOnlyOption").GetBoolean());
+        Assert.DoesNotContain(
+            "password",
+            target.GetRawText(),
+            StringComparison.OrdinalIgnoreCase);
+        var instance = json.GetProperty("serviceInstance");
+        var expectedInstance = _factory.Services
+            .GetRequiredService<ServiceInstanceIdentity>();
+        Assert.Equal(expectedInstance.Nonce, instance.GetProperty("nonce").GetString());
+        Assert.Equal(expectedInstance.HostName, instance.GetProperty("hostName").GetString());
+        Assert.Equal(expectedInstance.ProcessId, instance.GetProperty("processId").GetInt32());
     }
 
     [Fact]
@@ -1372,6 +1402,63 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task RolloutReadOnly_PlayerLeeway_UsesReadOnlySafeFilteredQueries()
+    {
+        const string songId = "readonlyPlayerLeewaySong";
+        const string accountId = "readonlyPlayerLeewayAccount";
+        using var factory = new FstWebApplicationFactory(
+            useStoredProjectionRanks: true,
+            rolloutReadOnly: true);
+        SeedReadOnlyLeewayFixture(
+            factory.WritableDataSource,
+            songId,
+            accountId);
+        using var client = factory.CreateClient();
+
+        await AssertDefaultTransactionReadOnlyAsync(factory.Services);
+        using var response = await client.GetAsync(
+            $"/api/player/{accountId}?songId={songId}&instruments=Solo_Guitar&leeway=0");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var score = Assert.Single(json.GetProperty("scores").EnumerateArray());
+        Assert.False(score.GetProperty("isValid").GetBoolean());
+        Assert.Equal(80_000, score.GetProperty("validScore").GetInt32());
+        Assert.False(factory.Services
+            .GetRequiredService<RolloutReadOnlyViolationMonitor>()
+            .HasViolation);
+    }
+
+    [Fact]
+    public async Task RolloutReadOnly_MemberScoresLeeway_UsesReadOnlySafeFilteredQueries()
+    {
+        const string songId = "readonlyMemberLeewaySong";
+        const string accountId = "readonlyMemberLeewayAccount";
+        using var factory = new FstWebApplicationFactory(
+            useStoredProjectionRanks: true,
+            rolloutReadOnly: true);
+        SeedReadOnlyLeewayFixture(
+            factory.WritableDataSource,
+            songId,
+            accountId);
+        using var client = factory.CreateClient();
+
+        await AssertDefaultTransactionReadOnlyAsync(factory.Services);
+        using var response = await client.GetAsync(
+            $"/api/leaderboard/{songId}/members/scores" +
+            $"?accountIds={accountId}&instruments=Solo_Guitar&leeway=0");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var score = Assert.Single(json.GetProperty("scores").EnumerateArray());
+        Assert.False(score.GetProperty("isValid").GetBoolean());
+        Assert.Equal(80_000, score.GetProperty("validScore").GetInt32());
+        Assert.False(factory.Services
+            .GetRequiredService<RolloutReadOnlyViolationMonitor>()
+            .HasViolation);
+    }
+
+    [Fact]
     public async Task StoredProjectionRankFlag_preserves_leaderboard_and_member_api_bytes_for_exact_ties()
     {
         const string songId = "storedRankApiParitySong";
@@ -1457,6 +1544,162 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         using var membersJson = JsonDocument.Parse(candidateMembers);
         var memberScore = membersJson.RootElement.GetProperty("scores")[0];
         Assert.Equal(2, memberScore.GetProperty("validRank").GetInt32());
+    }
+
+    [Fact]
+    public async Task StoredProjectionRankServiceFlag_preserves_single_list_player_and_member_APIs_for_all_instruments()
+    {
+        const string songId = "storedRankServiceFlagSong";
+        const string selectedAccountId = "stored-rank-service-selected";
+        using var baselineFactory = new FstWebApplicationFactory(
+            useStoredProjectionRanks: false,
+            usePublishedScopeSources: true);
+        using var candidateFactory = new FstWebApplicationFactory(
+            useStoredProjectionRanks: true,
+            usePublishedScopeSources: true);
+        using var baselineClient = baselineFactory.CreateClient();
+        using var candidateClient = candidateFactory.CreateClient();
+
+        Seed(baselineFactory);
+        Seed(candidateFactory);
+
+        var paths = GlobalLeaderboardScraper.AllInstruments
+            .Select(instrument =>
+                $"/api/leaderboard/{songId}/{instrument}?top=3&offset=0&leeway=0.1")
+            .Concat(
+            [
+                $"/api/leaderboard/{songId}/all?top=3&leeway=0.1",
+                $"/api/player/{selectedAccountId}?songId={songId}&instruments=Solo_Guitar&leeway=0.1",
+                $"/api/leaderboard/{songId}/members/scores?accountIds={selectedAccountId}&instruments=Solo_Guitar&leeway=0.1",
+            ])
+            .ToArray();
+
+        foreach (var path in paths)
+        {
+            using var baselineResponse = await baselineClient.GetAsync(path);
+            using var candidateResponse = await candidateClient.GetAsync(path);
+            var baselineBytes = await baselineResponse.Content.ReadAsByteArrayAsync();
+            var candidateBytes = await candidateResponse.Content.ReadAsByteArrayAsync();
+
+            Assert.Equal(baselineResponse.StatusCode, candidateResponse.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, candidateResponse.StatusCode);
+            Assert.Equal(baselineBytes, candidateBytes);
+        }
+
+        using var exactResponse = await candidateClient.GetAsync(
+            $"/api/leaderboard/{songId}/Solo_Guitar?top=3&offset=0&leeway=0.1");
+        var exactJson = await exactResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var entries = exactJson.GetProperty("entries");
+        Assert.Equal(3, entries.GetArrayLength());
+        Assert.Equal("stored-rank-service-a-Solo_Guitar", entries[0].GetProperty("accountId").GetString());
+        Assert.Equal(selectedAccountId, entries[1].GetProperty("accountId").GetString());
+        Assert.Equal(1, entries[0].GetProperty("localRank").GetInt32());
+        Assert.Equal(2, entries[1].GetProperty("localRank").GetInt32());
+        Assert.Equal(100_098, entries[0].GetProperty("score").GetInt32());
+
+        void Seed(FstWebApplicationFactory factory)
+        {
+            using var scope = factory.Services.CreateScope();
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var pathStore = scope.ServiceProvider.GetRequiredService<PathDataStore>();
+            var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+            Assert.True(persistence.UsePublishedScopeSources);
+            EnsureSongRow(pathStore, songId);
+            pathStore.UpdateMaxScores(songId, new SongMaxScores
+            {
+                MaxLeadScore = 99_999,
+                MaxBassScore = 99_999,
+                MaxDrumsScore = 99_999,
+                MaxVocalsScore = 99_999,
+                MaxProLeadScore = 99_999,
+                MaxProBassScore = 99_999,
+            }, "storedRankServiceFlagHash");
+            ScrapeRunTestHelper.EnsureAllocated(dataSource, 50, completed: true);
+            using (var connection = dataSource.OpenConnection())
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    INSERT INTO scrape_publication_state
+                        (id, published_scrape_id, published_at, public_reads_frozen, updated_at)
+                    VALUES (TRUE, 50, now(), FALSE, now())
+                    ON CONFLICT (id) DO UPDATE SET
+                        published_scrape_id = EXCLUDED.published_scrape_id,
+                        published_at = EXCLUDED.published_at,
+                        public_reads_frozen = FALSE,
+                        updated_at = EXCLUDED.updated_at
+                    """;
+                command.ExecuteNonQuery();
+            }
+
+            foreach (var instrument in GlobalLeaderboardScraper.AllInstruments)
+            {
+                var database = Assert.IsType<InstrumentDatabase>(
+                    persistence.GetOrCreateInstrumentDb(instrument));
+                Assert.Equal(factory.UseStoredProjectionRanks, database.UseStoredProjectionRanksForFilteredReads);
+                var selected = instrument == "Solo_Guitar"
+                    ? selectedAccountId
+                    : $"stored-rank-service-b-{instrument}";
+                InsertCurrentLeaderboardEntry(
+                    dataSource,
+                    songId,
+                    instrument,
+                    $"stored-rank-service-invalid-{instrument}",
+                    100_099,
+                    rank: 1,
+                    apiRank: 1);
+                InsertCurrentLeaderboardEntry(
+                    dataSource,
+                    songId,
+                    instrument,
+                    $"stored-rank-service-a-{instrument}",
+                    100_098,
+                    rank: 2,
+                    apiRank: 2);
+                InsertCurrentLeaderboardEntry(
+                    dataSource,
+                    songId,
+                    instrument,
+                    selected,
+                    100_098,
+                    rank: 3,
+                    apiRank: 3);
+                InsertCurrentLeaderboardEntry(
+                    dataSource,
+                    songId,
+                    instrument,
+                    $"stored-rank-service-low-{instrument}",
+                    100_097,
+                    rank: 4,
+                    apiRank: 4);
+
+                using var connection = dataSource.OpenConnection();
+                using var command = connection.CreateCommand();
+                command.CommandText = """
+                    INSERT INTO leaderboard_published_scope_source (
+                        published_scrape_id, song_id, instrument, scope_kind, source_kind,
+                        source_snapshot_id, source_scrape_id, row_count, content_fingerprint,
+                        coverage_fingerprint, reported_total_entries, reported_total_pages,
+                        is_complete, created_at, validated_at)
+                    VALUES (
+                        50, @songId, @instrument, 'alltime', 'snapshot',
+                        50, 50, 4, md5(@songId || @instrument),
+                        md5(@instrument || @songId), 4, 1, TRUE, now(), now());
+
+                    INSERT INTO solo_current_projection_scope
+                    (song_id, instrument, projection_generation, row_count, source_snapshot_id, status, updated_at)
+                    VALUES (@songId, @instrument, 1, 4, 50, 'ready', now())
+                    ON CONFLICT (song_id, instrument) DO UPDATE SET
+                        projection_generation = EXCLUDED.projection_generation,
+                        row_count = EXCLUDED.row_count,
+                        source_snapshot_id = EXCLUDED.source_snapshot_id,
+                        status = EXCLUDED.status,
+                        updated_at = EXCLUDED.updated_at
+                    """;
+                command.Parameters.AddWithValue("songId", songId);
+                command.Parameters.AddWithValue("instrument", instrument);
+                command.ExecuteNonQuery();
+            }
+        }
     }
 
     // ─── Player profile ─────────────────────────────────────────
@@ -3897,6 +4140,129 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         cmd.CommandText = "INSERT INTO songs (song_id, title) VALUES (@songId, 'Test Song') ON CONFLICT DO NOTHING";
         cmd.Parameters.AddWithValue("songId", songId);
         cmd.ExecuteNonQuery();
+    }
+
+    private static void SeedReadOnlyLeewayFixture(
+        NpgsqlDataSource dataSource,
+        string songId,
+        string accountId)
+    {
+        var pathStore = new PathDataStore(dataSource);
+        EnsureSongRow(pathStore, songId);
+        pathStore.UpdateMaxScores(songId, new SongMaxScores
+        {
+            MaxLeadScore = 90_000,
+        }, $"readonly-{songId}");
+
+        using var database = new InstrumentDatabase(
+            "Solo_Guitar",
+            dataSource,
+            NullLogger<InstrumentDatabase>.Instance);
+        database.UpsertEntries(songId,
+        [
+            new LeaderboardEntry
+            {
+                AccountId = accountId,
+                Score = 200_000,
+                ApiRank = 1,
+                Accuracy = 1_000_000,
+                Stars = 6,
+                Source = "scrape",
+            },
+            new LeaderboardEntry
+            {
+                AccountId = $"{accountId}-other",
+                Score = 85_000,
+                ApiRank = 2,
+                Accuracy = 990_000,
+                Stars = 5,
+                Source = "scrape",
+            },
+        ]);
+        InsertCurrentLeaderboardEntry(
+            dataSource,
+            songId,
+            "Solo_Guitar",
+            accountId,
+            200_000,
+            rank: 1,
+            apiRank: 1);
+        InsertCurrentLeaderboardEntry(
+            dataSource,
+            songId,
+            "Solo_Guitar",
+            $"{accountId}-other",
+            85_000,
+            rank: 2,
+            apiRank: 2);
+
+        using var connection = dataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO solo_current_projection_scope (
+                song_id,
+                instrument,
+                projection_generation,
+                row_count,
+                source_snapshot_id,
+                status,
+                updated_at)
+            VALUES (
+                @songId,
+                'Solo_Guitar',
+                1,
+                2,
+                NULL,
+                'ready',
+                now())
+            ON CONFLICT (song_id, instrument) DO UPDATE SET
+                projection_generation = EXCLUDED.projection_generation,
+                row_count = EXCLUDED.row_count,
+                source_snapshot_id = EXCLUDED.source_snapshot_id,
+                status = EXCLUDED.status,
+                updated_at = EXCLUDED.updated_at;
+
+            INSERT INTO score_history (
+                song_id,
+                instrument,
+                account_id,
+                new_score,
+                accuracy,
+                is_full_combo,
+                stars,
+                score_achieved_at,
+                changed_at)
+            VALUES (
+                @songId,
+                'Solo_Guitar',
+                @accountId,
+                80000,
+                980000,
+                FALSE,
+                5,
+                @achievedAt,
+                @achievedAt)
+            """;
+        command.Parameters.AddWithValue("songId", songId);
+        command.Parameters.AddWithValue("accountId", accountId);
+        command.Parameters.AddWithValue(
+            "achievedAt",
+            DateTime.UtcNow.AddDays(-1));
+        command.ExecuteNonQuery();
+    }
+
+    private static async Task AssertDefaultTransactionReadOnlyAsync(
+        IServiceProvider services)
+    {
+        var dataSource = services.GetRequiredService<NpgsqlDataSource>();
+        await using var connection = await dataSource.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SHOW default_transaction_read_only";
+        Assert.Equal(
+            "on",
+            Convert.ToString(
+                await command.ExecuteScalarAsync(),
+                System.Globalization.CultureInfo.InvariantCulture));
     }
 
     private static async Task<JsonElement> WaitForCachedPlayerPayloadAsync(
@@ -6842,8 +7208,57 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     {
         public const string TestApiKey = "test-api-key-12345";
 
-        private readonly string _tempDir = Path.Combine(
-            Path.GetTempPath(), $"fst_api_test_{Guid.NewGuid():N}");
+        private readonly string _tempDir;
+        private readonly NpgsqlDataSource? _writableDataSource;
+        private readonly string _serviceConnectionString;
+        private readonly bool _rolloutReadOnly;
+        public bool UseStoredProjectionRanks { get; }
+        public bool UsePublishedScopeSources { get; }
+        internal NpgsqlDataSource WritableDataSource =>
+            _writableDataSource
+            ?? throw new InvalidOperationException(
+                "A writable seed data source is available only for rollout read-only factories.");
+
+        public FstWebApplicationFactory()
+            : this(
+                useStoredProjectionRanks: false,
+                usePublishedScopeSources: false)
+        {
+        }
+
+        internal FstWebApplicationFactory(
+            bool useStoredProjectionRanks,
+            bool usePublishedScopeSources = false,
+            bool rolloutReadOnly = false)
+        {
+            UseStoredProjectionRanks = useStoredProjectionRanks;
+            UsePublishedScopeSources = usePublishedScopeSources;
+            _rolloutReadOnly = rolloutReadOnly;
+            if (rolloutReadOnly)
+            {
+                _writableDataSource = SharedPostgresContainer.CreateDatabase();
+                string databaseName;
+                using (var connection = _writableDataSource.OpenConnection())
+                    databaseName = connection.Database;
+                var connectionBuilder = new NpgsqlConnectionStringBuilder(
+                    SharedPostgresContainer.ConnectionString)
+                {
+                    Database = databaseName,
+                    MinPoolSize = 0,
+                    MaxPoolSize = 16,
+                };
+                connectionBuilder.Options = "-c default_transaction_read_only=on";
+                _serviceConnectionString = connectionBuilder.ConnectionString;
+            }
+            else
+            {
+                _serviceConnectionString = SharedPostgresContainer.ConnectionString;
+            }
+            _tempDir = Path.Combine(
+                AppContext.BaseDirectory,
+                "test-artifacts",
+                $"fst_api_test_{Guid.NewGuid():N}");
+        }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -6859,7 +7274,15 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                     ["Scraper:DeviceAuthPath"] = Path.Combine(_tempDir, "device-auth.json"),
                     ["Scraper:ApiOnly"] = "true",
                     ["Scraper:EnableAutomaticPathGeneration"] = "true",
-                    ["ConnectionStrings:PostgreSQL"] = SharedPostgresContainer.ConnectionString,
+                    ["Scraper:RolloutReadOnlyStartup"] =
+                        _rolloutReadOnly.ToString(),
+                    ["Scraper:RolloutPostgresReadOnly"] =
+                        _rolloutReadOnly.ToString(),
+                    ["Features:UseStoredSoloProjectionRanksForFilteredReads"] =
+                        UseStoredProjectionRanks.ToString(),
+                    ["Features:UsePublishedScopeSources"] =
+                        UsePublishedScopeSources.ToString(),
+                    ["ConnectionStrings:PostgreSQL"] = _serviceConnectionString,
                     ["Api:ApiKey"] = TestApiKey,
                     ["Api:AllowedOrigins:0"] = "*",
                     ["Jwt:SecretKey"] = "TestSecretKey_SuperLongEnough_For_HMACSHA256_12345678",
@@ -6881,7 +7304,9 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 // from builder.Configuration (which still has appsettings.json values
                 // at that point, before test config overrides are applied).
                 services.RemoveAll<NpgsqlDataSource>();
-                var testDs = SharedPostgresContainer.CreateDatabase();
+                var testDs = _rolloutReadOnly
+                    ? NpgsqlDataSource.Create(_serviceConnectionString)
+                    : SharedPostgresContainer.CreateDatabase();
                 services.AddSingleton(testDs);
                 services.RemoveAll<PublicationReadLockDataSource>();
                 services.AddSingleton(
@@ -6897,6 +7322,14 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 // Ensure API key auth options are set (Program.cs resolves them early
                 // before test config is applied, so we must override here)
                 services.Configure<ApiKeyAuthOptions>("ApiKey", opts => opts.ApiKey = TestApiKey);
+                if (_rolloutReadOnly)
+                {
+                    services.PostConfigure<ScraperOptions>(options =>
+                    {
+                        options.RolloutReadOnlyStartup = true;
+                        options.RolloutPostgresReadOnly = true;
+                    });
+                }
 
                 // Replace TokenManager with a mock that returns a valid token
                 // This unlocks coverage for endpoints gated by GetAccessTokenAsync
@@ -6990,6 +7423,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         protected override void Dispose(bool disposing)
         {
             base.Dispose(disposing);
+            if (disposing)
+                _writableDataSource?.Dispose();
             try { Directory.Delete(_tempDir, true); } catch { }
         }
 
@@ -7009,18 +7444,24 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         {
             private readonly GlobalLeaderboardPersistence _persistence;
             private readonly StartupInitializer _dbInitializer;
+            private readonly ScraperOptions _options;
 
             public TestDatabaseInitializer(
                 GlobalLeaderboardPersistence persistence,
-                StartupInitializer dbInitializer)
+                StartupInitializer dbInitializer,
+                IOptions<ScraperOptions> options)
             {
                 _persistence = persistence;
                 _dbInitializer = dbInitializer;
+                _options = options.Value;
             }
 
             public Task StartAsync(CancellationToken cancellationToken)
             {
-                _persistence.Initialize();
+                if (_options.RolloutReadOnlyStartup)
+                    _persistence.InitializeReadOnly();
+                else
+                    _persistence.Initialize();
                 // Signal ready on the real StartupInitializer singleton so
                 // /readyz health check and ScraperWorker see it as ready.
                 // Use reflection to set the TaskCompletionSource since it's private.

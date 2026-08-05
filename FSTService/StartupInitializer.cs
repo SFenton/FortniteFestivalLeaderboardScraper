@@ -1,4 +1,5 @@
 using FortniteFestival.Core.Services;
+using FSTService.Api;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -20,11 +21,13 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
     private readonly ItemShopService _shopService;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ScraperOptions _scraperOptions;
+    private readonly RolloutReadOnlyViolationMonitor? _readOnlyViolations;
     private readonly ILogger<StartupInitializer> _log;
     private readonly TaskCompletionSource _readySignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>True once databases and song catalog are fully initialized.</summary>
     public bool IsReady => _readySignal.Task.IsCompletedSuccessfully;
+    public bool PostgresDefaultTransactionReadOnly { get; private set; }
 
     /// <summary>Awaitable task that completes when initialization finishes.</summary>
     public Task WaitForReadyAsync(CancellationToken ct = default)
@@ -37,7 +40,8 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
         ItemShopService shopService,
         IHostApplicationLifetime lifetime,
         IOptions<ScraperOptions> scraperOptions,
-        ILogger<StartupInitializer> log)
+        ILogger<StartupInitializer> log,
+        RolloutReadOnlyViolationMonitor? readOnlyViolations = null)
     {
         _persistence = persistence;
         _dataSource = dataSource;
@@ -46,6 +50,7 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
         _lifetime = lifetime;
         _scraperOptions = scraperOptions.Value;
         _log = log;
+        _readOnlyViolations = readOnlyViolations;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -59,6 +64,21 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
         try
         {
             _log.LogInformation("Initializing databases and song catalog...");
+            await VerifyPostgresTransactionModeAsync(ct);
+
+            if (_scraperOptions.RolloutReadOnlyStartup)
+            {
+                _log.LogWarning(
+                    "Rollout read-only startup enabled. Loading existing published state without schema, cleanup, provider sync, item-shop refresh, timers, or persistence writes.");
+                _persistence.InitializeReadOnly();
+                await _festivalService.InitializePersistedStateOnlyAsync();
+                await _shopService.InitializePersistedStateOnlyAsync(ct);
+                _readySignal.TrySetResult();
+                _log.LogInformation(
+                    "Rollout read-only initialization complete. {SongCount} persisted songs loaded.",
+                    _festivalService.Songs.Count);
+                return;
+            }
 
             if (_scraperOptions.ApiOnly || _scraperOptions.SkipStartupSchemaInitialization)
             {
@@ -124,11 +144,47 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
         }
     }
 
+    private async Task VerifyPostgresTransactionModeAsync(CancellationToken ct)
+    {
+        await using var connection = await _dataSource.OpenConnectionAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SHOW default_transaction_read_only";
+        var value = Convert.ToString(
+            await command.ExecuteScalarAsync(ct),
+            System.Globalization.CultureInfo.InvariantCulture);
+        var isReadOnly = string.Equals(
+            value,
+            "on",
+            StringComparison.OrdinalIgnoreCase)
+            ? true
+            : string.Equals(
+                value,
+                "off",
+                StringComparison.OrdinalIgnoreCase)
+                ? false
+                : throw new InvalidOperationException(
+                    $"Unexpected default_transaction_read_only value: {value ?? "<null>"}.");
+        PostgresDefaultTransactionReadOnly = isReadOnly;
+        if (isReadOnly != _scraperOptions.RolloutReadOnlyStartup)
+        {
+            throw new InvalidOperationException(
+                _scraperOptions.RolloutReadOnlyStartup
+                    ? "Rollout read-only startup requires default_transaction_read_only=on."
+                    : "Normal startup requires default_transaction_read_only=off.");
+        }
+    }
+
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     public Task<HealthCheckResult> CheckHealthAsync(
         HealthCheckContext context, CancellationToken cancellationToken = default)
     {
+        if (_readOnlyViolations?.HasViolation == true)
+        {
+            return Task.FromResult(HealthCheckResult.Unhealthy(
+                "A PostgreSQL read-only violation was detected.",
+                _readOnlyViolations.LastViolation));
+        }
         return Task.FromResult(IsReady
             ? HealthCheckResult.Healthy("Databases initialized.")
             : HealthCheckResult.Unhealthy("Databases still initializing."));
