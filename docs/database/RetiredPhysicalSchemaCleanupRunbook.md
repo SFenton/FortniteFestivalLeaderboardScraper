@@ -431,6 +431,61 @@ the only data removed is the exact manifest-bound 108-row audit payload and
 The orchestrator never restores automatically. Any failure writes
 `FAILED.txt`, the atomic commit state, and `ROLLBACK-INSTRUCTIONS.txt`.
 
+### Committed post-drop resume
+
+When reconciliation proves all four families committed and all 61 relations
+are absent, a post-drop initializer/validation failure must use
+`--resume-committed`; it must not rerun `drop.sql` and should not restore the
+retired schema merely to repeat validation.
+
+Resume requires a new evidence directory plus the exact failed execute root and
+operator-approved manifest hash and explicit SHA-256 approvals for the current
+resume orchestrator/helper. It verifies the source `FAILED.txt`, ordered
+four-family commit ledger, nonzero process status with
+`reconciliation_state=committed`, both 61-row absence inventories, manifest and
+all manifest-bound package hashes, and regenerated executable/canonical
+rollback variants. Partial, all-present, unknown, package drift, or identity
+drift blocks.
+
+Resume never trusts the failed package's `expected-objects.sql` or
+`rollback-rehearsal-check.sql`; both are deleted from the copied package and
+regenerated from the verified `objects.tsv` with the explicitly approved
+current helper. Every other working-tree helper/SQL/capacity artifact used by
+resume is checked against the source manifest's `toolingHashes`. Only the
+orchestrator and Python helper may differ, and only when their exact current
+hashes are supplied on the command line and recorded as
+`operator-approved-current`; capture SQL remains `source-manifest-exact`.
+
+The source manifest/package path is never trusted after the initial source
+validation. Resume copies the package, hashes the copied `manifest.json`
+against `--expected-manifest-sha256`, derives its runtime manifest identity
+from that measured hash, and rechecks every copied manifest-bound file against
+the source-validation inventory. Tooling validation then reads only the
+verified copied manifest. Source replacement or copy corruption therefore
+fails before initializer creation or rehearsal.
+
+It then reattests the exact production Compose/container/database target,
+worker-offline state, publication `1278`, unfrozen reads, capacity, health,
+13 fingerprints, and current absence; creates and starts a fresh immutable
+initializer; verifies absence; runs the rollback package only inside a bounded
+transaction that is rolled back; verifies absence again; repeats all public and
+runtime gates; and writes `RECOVERY-SUCCESS.json` plus new checksums. The failed
+source evidence is never modified.
+
+`RECOVERY-SUCCESS.json` binds five validations under explicit unique labels:
+source validation, tooling validation, pre-resume gate, post-resume gate, and
+final post-action validation. Copied-package validation is separately hashed;
+basename collisions cannot discard either gate.
+
+```bash
+tools/postgres-retired-schema-cleanup.sh \
+  --resume-committed /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/<failed-execute> \
+  --expected-manifest-sha256 <approved-sha256> \
+  --expected-resume-orchestrator-sha256 <approved-current-script-sha256> \
+  --expected-resume-helper-sha256 <approved-current-helper-sha256> \
+  --output "/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/retired-schema-resume-$(date -u +%Y%m%dT%H%M%SZ)"
+```
+
 Before an explicit restore:
 
 1. Keep the worker stopped and publication fixed on scrape `1278`.
@@ -438,8 +493,9 @@ Before an explicit restore:
    committed drop leaves all absent.
 3. Verify `rollback-all.sql`, both retained payload hashes, and generated
    family hashes.
-4. Restore `rollback-all.sql` using `psql --single-transaction` only when all
-   61 objects are absent.
+4. For an accepted committed all-absent cleanup, prefer the post-drop resume
+   above. Restore `rollback-all.sql` only for an explicit operator decision to
+   undo the cleanup, using `psql --single-transaction`.
 5. Re-run schema, startup, publication, health, and public fingerprint checks.
 
 Do not apply `rollback-all.sql` to a partially present schema. Do not use a
@@ -491,6 +547,14 @@ A streamer fsyncs both source identities, hashes, sealed inode/size/seal masks,
 then waits for an explicit release token. Only the sealed SQL bytes are
 streamed; neither mutable pathname is reopened or trusted afterward.
 Simultaneous replacement of manifest and SQL therefore cannot change execution.
+Only the launcher uses Bash `coproc`. The immutable streamer uses a private
+0600 FIFO and an explicitly tracked background PID/control FD, avoiding Bash's
+single-active-coprocess warning and latent descriptor race. All streamer and
+launcher descriptors are closed, processes waited, and coprocess variables
+unset on success and cleanup. Container inventory loops use function-local
+candidate variables; repository tests reject any unlocalized
+`while ... read -r container_id` that could dynamically overwrite a caller's
+attested ID.
 
 The PostgreSQL target is resolved from the exact compose `postgres` service,
 not an operator-selected name. Sanitized `POSTGRES_DB`/`POSTGRES_USER` and

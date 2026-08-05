@@ -1589,6 +1589,24 @@ run_cleanup() {
         "$@"
 }
 
+run_resume() {
+    local fixture="$1"
+    local source_evidence="$2"
+    local output="$3"
+    local expected_manifest="$4"
+    local orchestrator_sha helper_sha
+    orchestrator_sha="$(sha256sum "$SCRIPT" | awk '{print $1}')"
+    helper_sha="$(sha256sum "$HELPER" | awk '{print $1}')"
+    env FST_RETIRED_SCHEMA_TEST_MODE=1 \
+        "$SCRIPT" \
+        --fixture-dir "$fixture" \
+        --resume-committed "$source_evidence" \
+        --output "$output" \
+        --expected-manifest-sha256 "$expected_manifest" \
+        --expected-resume-orchestrator-sha256 "$orchestrator_sha" \
+        --expected-resume-helper-sha256 "$helper_sha"
+}
+
 run_status 64 parsing-unknown-option \
     "$SCRIPT" --output "$WORK_ROOT/parse-unknown" --unknown
 run_status 64 parsing-conflicting-modes \
@@ -1601,6 +1619,21 @@ run_status 64 parsing-execute-needs-parity \
         --expected-manifest-sha256 \
         aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
         --output "$WORK_ROOT/parse-no-parity"
+run_status 64 parsing-resume-needs-hash \
+    "$SCRIPT" \
+        --resume-committed "$WORK_ROOT/missing-resume-source" \
+        --output "$WORK_ROOT/parse-resume-no-hash"
+run_status 64 parsing-resume-needs-tooling-hashes \
+    "$SCRIPT" \
+        --resume-committed "$WORK_ROOT/missing-resume-source" \
+        --expected-manifest-sha256 \
+        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+        --output "$WORK_ROOT/parse-resume-no-tooling"
+run_status 64 parsing-conflicting-resume-mode \
+    "$SCRIPT" \
+        --check \
+        --resume-committed "$WORK_ROOT/missing-resume-source" \
+        --output "$WORK_ROOT/parse-resume-conflict"
 run_status 64 parsing-fixture-needs-test-mode \
     "$SCRIPT" --fixture-dir "$READY_FIXTURE" --output "$WORK_ROOT/parse-fixture"
 run_status 64 libpq-pghost-override-rejected \
@@ -3290,6 +3323,260 @@ run_status 0 execute-fixture-success \
         --execute \
         --expected-manifest-sha256 "$sha_one"
 
+resume_fixture="$(copy_fixture committed-resume-fixture)"
+mkdir -p "$resume_fixture/resume-success-post"
+cp -R "$WORK_ROOT/execute-success/post/." \
+    "$resume_fixture/resume-success-post/"
+resume_source="$WORK_ROOT/committed-resume-source"
+cp -R "$WORK_ROOT/execute-success" "$resume_source"
+cat > "$resume_source/FAILED.txt" <<'EOF'
+status=failed
+exit_code=3
+safety_status=0
+stage=post-drop initializer execution
+EOF
+printf '%s\n' \
+    logical-shadow \
+    score-observations \
+    band-song-projection \
+    aggregate-ranking-deltas \
+    > "$resume_source/committed-families.txt"
+printf '%s\n' \
+    'process_status,reconciliation_state,attempts' \
+    '3,committed,1' \
+    > "$resume_source/post/drop-process-status.csv"
+cp "$resume_source/post/relations.csv" \
+    "$resume_source/post/drop-reconciliation-1.csv"
+python3 - "$resume_source/post/startup-initializer-release.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+value = json.loads(path.read_text(encoding="utf-8"))
+value["containerId"] = ""
+path.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n")
+PY
+printf 'check,status\nstartup-schema,1\n' \
+    > "$resume_source/post/startup-check.csv"
+cat > "$resume_source/package/expected-objects.sql" <<'EOF'
+SELECT 'UNTRUSTED_EXPECTED_OBJECTS_SQL';
+EOF
+cat > "$resume_source/package/rollback-rehearsal-check.sql" <<'EOF'
+COMMIT;
+SELECT 'UNTRUSTED_REHEARSAL_SQL';
+EOF
+rm -f "$resume_source/package-checksums.sha256" \
+    "$resume_source/post/validation.json"
+source_failed_hash_before="$(
+    sha256sum "$resume_source/FAILED.txt" | awk '{print $1}'
+)"
+run_status 0 committed-resume-success \
+    run_resume \
+        "$resume_fixture" \
+        "$resume_source" \
+        "$WORK_ROOT/committed-resume-success" \
+        "$sha_one"
+python3 - \
+    "$WORK_ROOT/committed-resume-success/RECOVERY-SUCCESS.json" \
+    "$resume_source" \
+    "$sha_one" \
+    "$WORK_ROOT/committed-resume-success" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+root = Path(sys.argv[4])
+assert value["success"] is True
+assert value["mode"] == "resume-committed"
+assert value["sourceEvidence"] == sys.argv[2]
+assert value["acceptedManifestSha256"] == sys.argv[3]
+assert value["dropRerun"] is False
+assert value["restorePerformed"] is False
+assert value["rollbackRehearsalRolledBack"] is True
+expected_paths = {
+    "sourceValidation": root / "resume-source-validation.json",
+    "toolingValidation": root / "resume-tooling-validation.json",
+    "preResumeGateValidation": root / "pre-resume-gate/validation.json",
+    "postResumeGateValidation":
+        root / "post/post-resume-gate/validation.json",
+    "finalPostValidation": root / "post/validation.json",
+}
+assert set(value["validationArtifacts"]) == set(expected_paths)
+assert value["validationArtifacts"] == {
+    label: hashlib.sha256(path.read_bytes()).hexdigest()
+    for label, path in expected_paths.items()
+}
+assert len(set(value["validationArtifacts"].values())) == 5
+copied_validation = root / "resume-copied-package-validation.json"
+assert value["copiedPackageValidationSha256"] == hashlib.sha256(
+    copied_validation.read_bytes()
+).hexdigest()
+PY
+grep -q '^3,committed,1$' \
+    "$WORK_ROOT/committed-resume-success/post/drop-process-status.csv"
+test -s "$WORK_ROOT/committed-resume-success/post/validation.json"
+test -s "$WORK_ROOT/committed-resume-success/package-checksums.sha256"
+! grep -q 'UNTRUSTED_' \
+    "$WORK_ROOT/committed-resume-success/package/expected-objects.sql"
+! grep -q 'UNTRUSTED_' \
+    "$WORK_ROOT/committed-resume-success/package/rollback-rehearsal-check.sql"
+grep -q '^CREATE TEMP TABLE retired_cleanup_expected (' \
+    "$WORK_ROOT/committed-resume-success/package/expected-objects.sql"
+grep -Fq 'DO $rollback_check$' \
+    "$WORK_ROOT/committed-resume-success/package/rollback-rehearsal-check.sql"
+test -s "$WORK_ROOT/committed-resume-success/resume-generated-sql.csv"
+python3 - \
+    "$WORK_ROOT/committed-resume-success/resume-tooling-validation.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert value["success"] is True
+by_name = {row["name"]: row for row in value["tooling"]}
+assert by_name[
+    "tools/postgres-retired-schema-cleanup.sh"
+]["mode"] == "operator-approved-current"
+assert by_name[
+    "tools/postgres-retired-schema-cleanup.py"
+]["mode"] == "operator-approved-current"
+assert by_name[
+    "tools/sql/postgres-retired-schema-cleanup/capture-preflight.sql"
+]["mode"] == "source-manifest-exact"
+assert all(row["accepted"] for row in value["tooling"])
+PY
+source_failed_hash_after="$(
+    sha256sum "$resume_source/FAILED.txt" | awk '{print $1}'
+)"
+[[ "$source_failed_hash_before" == "$source_failed_hash_after" ]]
+printf 'PASS: committed resume preserves failed source evidence\n'
+
+resume_partial_source="$WORK_ROOT/committed-resume-partial-source"
+cp -R "$resume_source" "$resume_partial_source"
+mutate_csv \
+    "$resume_partial_source/post/relations.csv" \
+    actual_relkind \
+    r
+run_status 3 committed-resume-partial-block \
+    run_resume \
+        "$resume_fixture" \
+        "$resume_partial_source" \
+        "$WORK_ROOT/out-committed-resume-partial" \
+        "$sha_one"
+test ! -e "$WORK_ROOT/out-committed-resume-partial/RECOVERY-SUCCESS.json"
+
+resume_reconcile_source="$WORK_ROOT/committed-resume-reconcile-source"
+cp -R "$resume_source" "$resume_reconcile_source"
+printf '%s\n' \
+    'process_status,reconciliation_state,attempts' \
+    '3,partial,1' \
+    > "$resume_reconcile_source/post/drop-process-status.csv"
+run_status 3 committed-resume-reconciliation-block \
+    run_resume \
+        "$resume_fixture" \
+        "$resume_reconcile_source" \
+        "$WORK_ROOT/out-committed-resume-reconcile" \
+        "$sha_one"
+
+resume_package_source="$WORK_ROOT/committed-resume-package-source"
+cp -R "$resume_source" "$resume_package_source"
+printf '\n-- drift\n' >> "$resume_package_source/package/drop.sql"
+run_status 3 committed-resume-package-drift-block \
+    run_resume \
+        "$resume_fixture" \
+        "$resume_package_source" \
+        "$WORK_ROOT/out-committed-resume-package" \
+        "$sha_one"
+
+resume_manifest_toctou_source="$WORK_ROOT/committed-resume-manifest-toctou-source"
+cp -R "$resume_source" "$resume_manifest_toctou_source"
+resume_manifest_toctou_fixture="$(
+    copy_fixture committed-resume-manifest-toctou
+)"
+cp -R "$resume_fixture/resume-success-post" \
+    "$resume_manifest_toctou_fixture/resume-success-post"
+: > "$resume_manifest_toctou_fixture/replace-resume-manifest-after-validation"
+run_status 3 committed-resume-manifest-copy-toctou-block \
+    run_resume \
+        "$resume_manifest_toctou_fixture" \
+        "$resume_manifest_toctou_source" \
+        "$WORK_ROOT/out-committed-resume-manifest-toctou" \
+        "$sha_one"
+
+resume_copy_toctou_source="$WORK_ROOT/committed-resume-copy-toctou-source"
+cp -R "$resume_source" "$resume_copy_toctou_source"
+resume_copy_toctou_fixture="$(
+    copy_fixture committed-resume-copy-toctou
+)"
+cp -R "$resume_fixture/resume-success-post" \
+    "$resume_copy_toctou_fixture/resume-success-post"
+: > "$resume_copy_toctou_fixture/mutate-resume-package-after-validation"
+run_status 3 committed-resume-package-copy-toctou-block \
+    run_resume \
+        "$resume_copy_toctou_fixture" \
+        "$resume_copy_toctou_source" \
+        "$WORK_ROOT/out-committed-resume-copy-toctou" \
+        "$sha_one"
+
+resume_identity_fixture="$(copy_fixture committed-resume-identity)"
+cp -R "$resume_fixture/resume-success-post" \
+    "$resume_identity_fixture/resume-success-post"
+mutate_csv \
+    "$resume_identity_fixture/post/containers.csv" \
+    container_id \
+    "$(printf '9%.0s' {1..64})"
+run_status 3 committed-resume-identity-drift-block \
+    run_resume \
+        "$resume_identity_fixture" \
+        "$resume_source" \
+        "$WORK_ROOT/out-committed-resume-identity" \
+        "$sha_one"
+
+resume_tooling_root="$WORK_ROOT/resume-tooling-root"
+python3 - \
+    "$resume_source/package/manifest.json" \
+    "$REPO_ROOT" \
+    "$resume_tooling_root" <<'PY'
+import json
+import shutil
+import sys
+from pathlib import Path
+
+manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source = Path(sys.argv[2])
+destination = Path(sys.argv[3])
+for row in manifest["toolingHashes"]:
+    target = destination / row["name"]
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source / row["name"], target)
+PY
+resume_orchestrator_sha="$(
+    sha256sum "$SCRIPT" | awk '{print $1}'
+)"
+resume_helper_sha="$(
+    sha256sum "$HELPER" | awk '{print $1}'
+)"
+python3 "$HELPER" validate-committed-resume-tooling \
+    --manifest "$resume_source/package/manifest.json" \
+    --expected-manifest-sha256 "$sha_one" \
+    --repository-root "$resume_tooling_root" \
+    --expected-orchestrator-sha256 "$resume_orchestrator_sha" \
+    --expected-helper-sha256 "$resume_helper_sha" \
+    --output "$WORK_ROOT/resume-tooling-valid.json"
+printf '\n-- drift\n' >> \
+    "$resume_tooling_root/tools/sql/postgres-retired-schema-cleanup/capture-preflight.sql"
+run_status 3 committed-resume-capture-tooling-drift-block \
+    python3 "$HELPER" validate-committed-resume-tooling \
+        --manifest "$resume_source/package/manifest.json" \
+        --expected-manifest-sha256 "$sha_one" \
+        --repository-root "$resume_tooling_root" \
+        --expected-orchestrator-sha256 "$resume_orchestrator_sha" \
+        --expected-helper-sha256 "$resume_helper_sha" \
+        --output "$WORK_ROOT/resume-tooling-drift.json"
+
 startup_recreate_fixture="$(copy_fixture startup-recreate)"
 mutate_csv \
     "$startup_recreate_fixture/post/startup-relations.csv" \
@@ -4515,6 +4802,49 @@ assert "run --rm" not in startup_check
 assert "if ! capture_startup_database_routing_attestation" not in script
 assert "startup-database-routing-failure.csv" in script
 assert "attest-startup-database-routing" in script
+routing_capture = script[
+    script.index("capture_startup_database_routing_attestation()"):
+    script.index("run_startup_schema_check()")
+]
+assert "local ids_output status candidate_container_id" in routing_capture
+assert "read -r candidate_container_id" in routing_capture
+assert "read -r container_id" not in routing_capture
+assert "read -r container_id" not in script
+container_config_capture = script[
+    script.index("capture_container_config_attestation()"):
+    script.index("run_catalog_signature_capture_database()")
+]
+assert "local ids_output candidate_container_id" in \
+    container_config_capture
+assert script.count("coproc ") == 1
+assert "coproc IMMUTABLE_SQL_STREAMER" not in script
+assert 'mkfifo -m 0600 "$streamer_release_fifo"' in script
+assert "close_sql_streamer_control_fd" in script
+assert "finalize_drop_launcher_coproc" in script
+resume_start = script.index("run_committed_resume()")
+resume_flow = script[
+    resume_start:
+    script.index('if [[ "$MODE" == "resume-committed" ]]', resume_start)
+]
+assert "perform_atomic_drop" not in resume_flow
+assert "run_live_atomic_drop" not in resume_flow
+assert "run_scratch_roundtrip_proof" not in resume_flow
+assert "run_startup_schema_check" in resume_flow
+assert "run_rollback_rehearsal" in resume_flow
+assert "validate-post" in resume_flow
+assert '"dropRerun": False' in resume_flow
+assert '"restorePerformed": False' in resume_flow
+for label in [
+    "sourceValidation",
+    "toolingValidation",
+    "preResumeGateValidation",
+    "postResumeGateValidation",
+    "finalPostValidation",
+]:
+    assert f'"{label}"' in resume_flow
+assert "path.name" not in resume_flow
+assert "validate-committed-resume-copied-package" in resume_flow
+assert 'sha256sum "$PACKAGE_DIR/manifest.json"' in resume_flow
 assert "drop-runtime.sql" not in script
 assert "immutable-drop-sql-ready" in script
 capacity_capture = script[
@@ -4547,9 +4877,9 @@ assert "DIGEST-ONLY CANONICAL ROLLBACK PLAN; NEVER EXECUTE" in script
 assert "FSTRetiredSchemaCleanup20260804" not in script
 assert "canonicalize-pg-dump" in script
 assert "prepare-executable-pg-dump" in script
-assert 'cat "$ROLLBACK_EXECUTABLE_DIR/$family.sql"' in script
+assert 'cat "$executable_dir/$family.sql"' in script
 assert '< "$ROLLBACK_EXECUTABLE_DIR/rollback-all.sql"' in script
-assert 'cat "$ROLLBACK_EXECUTABLE_DIR/rollback-all.sql"' in script
+assert 'cat "$rollback_all"' in script
 scratch_proof = script[
     script.index("run_scratch_roundtrip_proof()"):
     script.index("load_approved_startup_identity_from_proof()")
@@ -4624,6 +4954,20 @@ assert "pg_terminate_backend(pid)" in cleanup
 assert 'terminate_container_psql_exact "$late_pid"' in cleanup
 PY
 printf 'PASS: bounded capture, catalog signature, rollback timeout, and rg checks\n'
+
+container_id="$(printf 'b%.0s' {1..64})"
+scope_probe() {
+    local candidate_container_id
+    while IFS= read -r candidate_container_id; do
+        [[ -n "$candidate_container_id" ]]
+    done <<EOF
+$(printf 'a%.0s' {1..64})
+EOF
+}
+scope_probe
+[[ "$container_id" == "$(printf 'b%.0s' {1..64})" ]]
+unset container_id
+printf 'PASS: routing inventory cannot clobber caller container identity\n'
 
 STARTUP_TEST_SOURCE="fst-retired-schema-startup-source-$$"
 STARTUP_TEST_CLONE="fst-retired-schema-startup-clone-$$"

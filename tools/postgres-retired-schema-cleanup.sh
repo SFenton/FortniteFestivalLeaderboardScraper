@@ -41,7 +41,10 @@ MODE="check"
 MODE_EXPLICIT=false
 OUTPUT_DIR=""
 EXPECTED_MANIFEST_SHA256=""
+EXPECTED_RESUME_ORCHESTRATOR_SHA256=""
+EXPECTED_RESUME_HELPER_SHA256=""
 PARITY_EVIDENCE=""
+SOURCE_EVIDENCE=""
 FIXTURE_DIR=""
 OUTPUT_READY=false
 CURRENT_STAGE="argument validation"
@@ -58,6 +61,8 @@ DROP_SQL_STREAMER_PID=""
 DROP_SQL_STREAMER_START_TICKS=""
 DROP_SQL_STREAMER_CMD_SHA256=""
 DROP_SQL_STREAMER_WAIT_COMPLETED=false
+DROP_SQL_STREAMER_CONTROL_FD=""
+DROP_SQL_STREAMER_CONTROL_FD=""
 DROP_IMMUTABLE_BUNDLE_SHA256=""
 APPROVED_FSTSERVICE_IMAGE_ID=""
 APPROVED_FSTSERVICE_CONTAINER_ID=""
@@ -89,7 +94,7 @@ DROP_PROCESS_IDENTITY_CONFIRMED=false
 
 usage() {
     cat <<'EOF'
-Usage: tools/postgres-retired-schema-cleanup.sh [--check|--execute] --output DIR [options]
+Usage: tools/postgres-retired-schema-cleanup.sh [--check|--execute|--resume-committed DIR] --output DIR [options]
 
 Prepares or executes the exact parity-gated cleanup of 61 retired PostgreSQL
 relations. Check mode is the default and is read-only. Execute is blocked until
@@ -99,7 +104,13 @@ attestation, and the freshly regenerated manifest matches the supplied SHA-256.
 Options:
   --check                         Inventory and prepare only (default)
   --execute                       Revalidate and execute exact drops
-  --expected-manifest-sha256 SHA  Required with --execute
+  --resume-committed DIR          Resume only post-drop validation from one
+                                  exact failed committed execute evidence root
+  --expected-manifest-sha256 SHA  Required with --execute/--resume-committed
+  --expected-resume-orchestrator-sha256 SHA
+                                  Operator-approved current resume script hash
+  --expected-resume-helper-sha256 SHA
+                                  Operator-approved current Python helper hash
   --output DIR                    New evidence directory on the FST drive
   --parity-evidence FILE          Accepted scrape-1278 attestation JSON
   --fingerprint-spec FILE         Public/API fingerprint request TSV
@@ -130,7 +141,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --check)
             if $MODE_EXPLICIT && [[ "$MODE" != "check" ]]; then
-                printf 'ERROR: --check and --execute are mutually exclusive\n' >&2
+                printf 'ERROR: cleanup modes are mutually exclusive\n' >&2
                 exit 64
             fi
             MODE="check"
@@ -139,16 +150,37 @@ while [[ $# -gt 0 ]]; do
             ;;
         --execute)
             if $MODE_EXPLICIT && [[ "$MODE" != "execute" ]]; then
-                printf 'ERROR: --check and --execute are mutually exclusive\n' >&2
+                printf 'ERROR: cleanup modes are mutually exclusive\n' >&2
                 exit 64
             fi
             MODE="execute"
             MODE_EXPLICIT=true
             shift
             ;;
+        --resume-committed)
+            require_option_value "$@"
+            if $MODE_EXPLICIT && [[ "$MODE" != "resume-committed" ]]; then
+                printf 'ERROR: cleanup modes are mutually exclusive\n' >&2
+                exit 64
+            fi
+            MODE="resume-committed"
+            MODE_EXPLICIT=true
+            SOURCE_EVIDENCE="$2"
+            shift 2
+            ;;
         --expected-manifest-sha256)
             require_option_value "$@"
             EXPECTED_MANIFEST_SHA256="$2"
+            shift 2
+            ;;
+        --expected-resume-orchestrator-sha256)
+            require_option_value "$@"
+            EXPECTED_RESUME_ORCHESTRATOR_SHA256="$2"
+            shift 2
+            ;;
+        --expected-resume-helper-sha256)
+            require_option_value "$@"
+            EXPECTED_RESUME_HELPER_SHA256="$2"
             shift 2
             ;;
         --output)
@@ -217,12 +249,12 @@ if [[ -z "$OUTPUT_DIR" ]]; then
     exit 64
 fi
 if [[ "$MODE" == "check" && -n "$EXPECTED_MANIFEST_SHA256" ]]; then
-    printf 'ERROR: --expected-manifest-sha256 is valid only with --execute\n' >&2
+    printf 'ERROR: --expected-manifest-sha256 is valid only with execute/resume\n' >&2
     exit 64
 fi
-if [[ "$MODE" == "execute" ]]; then
+if [[ "$MODE" == "execute" || "$MODE" == "resume-committed" ]]; then
     if [[ ! "$EXPECTED_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
-        printf 'ERROR: --execute requires a lowercase 64-character manifest SHA-256\n' >&2
+        printf 'ERROR: execute/resume requires a lowercase 64-character manifest SHA-256\n' >&2
         exit 64
     fi
 
@@ -234,9 +266,26 @@ if [[ "$MODE" == "execute" ]]; then
         fi
         unset "$libpq_override"
     done
-    if [[ -z "$PARITY_EVIDENCE" ]]; then
+    if [[ "$MODE" == "execute" && -z "$PARITY_EVIDENCE" ]]; then
         printf 'ERROR: --execute requires --parity-evidence\n' >&2
         exit 64
+    fi
+    if [[ "$MODE" == "resume-committed" ]]; then
+        if [[ -z "$SOURCE_EVIDENCE" ]]; then
+            printf 'ERROR: --resume-committed requires a source evidence root\n' >&2
+            exit 64
+        fi
+        if [[ -n "$PARITY_EVIDENCE" ]]; then
+            printf 'ERROR: resume consumes parity only from the source manifest\n' >&2
+            exit 64
+        fi
+        if [[ ! "$EXPECTED_RESUME_ORCHESTRATOR_SHA256" \
+            =~ ^[0-9a-f]{64}$ \
+            || ! "$EXPECTED_RESUME_HELPER_SHA256" \
+            =~ ^[0-9a-f]{64}$ ]]; then
+            printf 'ERROR: resume requires both operator-approved tooling hashes\n' >&2
+            exit 64
+        fi
     fi
 fi
 
@@ -250,6 +299,18 @@ require_command() {
 for command in awk cp find grep python3 realpath sed sha256sum sort sync xargs; do
     require_command "$command"
 done
+if [[ "$MODE" == "resume-committed" ]]; then
+    [[ "$(sha256sum "$ORCHESTRATOR" | awk '{print $1}')" \
+        == "$EXPECTED_RESUME_ORCHESTRATOR_SHA256" ]] || {
+        printf 'ERROR: current resume orchestrator hash differs from approval\n' >&2
+        exit 64
+    }
+    [[ "$(sha256sum "$HELPER" | awk '{print $1}')" \
+        == "$EXPECTED_RESUME_HELPER_SHA256" ]] || {
+        printf 'ERROR: current resume helper hash differs from approval\n' >&2
+        exit 64
+    }
+fi
 
 TEST_MODE=false
 if [[ -n "$FIXTURE_DIR" ]]; then
@@ -280,6 +341,9 @@ FST_EVIDENCE_ROOT="$(realpath -m "$FST_EVIDENCE_ROOT")"
 ROLLBACK_EVIDENCE_ROOT="$(realpath -m "$ROLLBACK_EVIDENCE_ROOT")"
 COMPOSE_DIR="$(realpath -m "$COMPOSE_DIR")"
 FINGERPRINT_SPEC="$(realpath -m "$FINGERPRINT_SPEC")"
+if [[ -n "$SOURCE_EVIDENCE" ]]; then
+    SOURCE_EVIDENCE="$(realpath -m "$SOURCE_EVIDENCE")"
+fi
 
 if ! realpath_under "$FINGERPRINT_SPEC" "$REPO_ROOT_REAL" \
     && ! realpath_under "$FINGERPRINT_SPEC" "$FST_EVIDENCE_ROOT"; then
@@ -301,6 +365,16 @@ if $TEST_MODE; then
         printf 'ERROR: fixture pre-capture directory is missing\n' >&2
         exit 1
     }
+    if [[ "$MODE" == "resume-committed" ]]; then
+        realpath_under "$SOURCE_EVIDENCE" "$REPO_ROOT_REAL" || {
+            printf 'ERROR: fixture resume source must remain in repository\n' >&2
+            exit 64
+        }
+        [[ -d "$SOURCE_EVIDENCE/package" ]] || {
+            printf 'ERROR: fixture resume package is missing\n' >&2
+            exit 1
+        }
+    fi
 else
     if [[ "$FST_STORAGE_ROOT" != "$PRODUCTION_FST_STORAGE_ROOT" ]]; then
         printf 'ERROR: FST storage root must be %s\n' \
@@ -343,6 +417,21 @@ else
             printf 'ERROR: parity evidence must remain on the FST evidence root\n' >&2
             exit 64
         }
+    fi
+    if [[ "$MODE" == "resume-committed" ]]; then
+        realpath_under "$SOURCE_EVIDENCE" "$FST_EVIDENCE_ROOT" || {
+            printf 'ERROR: resume source must remain under FST evidence root\n' >&2
+            exit 64
+        }
+        [[ -d "$SOURCE_EVIDENCE/package" ]] || {
+            printf 'ERROR: resume source package is missing\n' >&2
+            exit 1
+        }
+        if realpath_under "$OUTPUT_DIR" "$SOURCE_EVIDENCE" \
+            || realpath_under "$SOURCE_EVIDENCE" "$OUTPUT_DIR"; then
+            printf 'ERROR: resume output and source evidence must be disjoint\n' >&2
+            exit 64
+        fi
     fi
 fi
 
@@ -402,6 +491,21 @@ OUTPUT_READY=true
 write_rollback_instructions() {
     local destination="$OUTPUT_DIR/ROLLBACK-INSTRUCTIONS.txt"
     local committed_file="$OUTPUT_DIR/committed-families.txt"
+    if [[ "$MODE" == "resume-committed" ]]; then
+        if [[ -f "$SOURCE_EVIDENCE/committed-families.txt" ]]; then
+            cp "$SOURCE_EVIDENCE/committed-families.txt" "$committed_file"
+        fi
+        {
+            printf 'Committed cleanup resume never reruns drops or restores schema.\n'
+            printf 'Source evidence: %s\n' "$SOURCE_EVIDENCE"
+            printf 'Manifest: %s\n' "$EXPECTED_MANIFEST_SHA256"
+            printf 'Current stage: %s\n\n' "$CURRENT_STAGE"
+            printf 'On failure, keep all 61 retired relations absent, keep the worker offline,\n'
+            printf 'and rerun only --resume-committed after repairing the reported gate.\n'
+            printf 'Do not execute rollback-all.sql for this committed all-absent state.\n'
+        } > "$destination"
+        return 0
+    fi
     : > "$committed_file"
     if [[ -f "$LOG_DIR/drop.log" ]] \
         && grep -q 'FST_ALL_COMMITTED' "$LOG_DIR/drop.log"; then
@@ -505,6 +609,7 @@ trap 'on_signal INT 130' INT
 trap 'on_signal TERM 143' TERM
 trap 'on_signal HUP 129' HUP
 
+if [[ "$MODE" != "resume-committed" ]]; then
 cp "$OBJECTS_FILE" "$PACKAGE_DIR/objects.tsv"
 cp "$RETAINED_SPEC" "$PACKAGE_DIR/retained-data.tsv"
 cp "$CATALOG_QUERY" "$CATALOG_DIR/query.sql"
@@ -693,6 +798,7 @@ if extra:
 PY
     cp "$PARITY_EVIDENCE" "$PACKAGE_DIR/parity-acceptance.json"
     PACKAGE_PARITY_EVIDENCE="$PACKAGE_DIR/parity-acceptance.json"
+fi
 fi
 
 compose_command() {
@@ -1041,11 +1147,12 @@ PY
 
 capture_container_config_attestation() {
     local output_file="$1"
-    local ids_output
+    local ids_output candidate_container_id
     local -a ids=()
     ids_output="$(docker ps -a -q)" || return 3
-    while IFS= read -r container_id; do
-        [[ -n "$container_id" ]] && ids+=("$container_id")
+    while IFS= read -r candidate_container_id; do
+        [[ -n "$candidate_container_id" ]] \
+            && ids+=("$candidate_container_id")
     done <<< "$ids_output"
     (( ${#ids[@]} > 0 )) || return 3
     docker inspect "${ids[@]}" \
@@ -1782,6 +1889,8 @@ prepare_live_rollbacks() {
 }
 
 combine_rollbacks() {
+    local executable_dir="${1:-$ROLLBACK_EXECUTABLE_DIR}"
+    local canonical_dir="${2:-$ROLLBACK_CANONICAL_DIR}"
     {
         printf '%s\n' \
             '-- Exact combined rollback DDL and retained rows. Apply only to a fully absent cleanup schema.' \
@@ -1796,14 +1905,14 @@ combine_rollbacks() {
             'END' \
             '$guards$;'
         for family in logical-shadow score-observations band-song-projection aggregate-ranking-deltas; do
-            cat "$ROLLBACK_EXECUTABLE_DIR/$family.sql"
+                cat "$executable_dir/$family.sql"
             printf '\n'
             if [[ -f "$ROLLBACK_DATA_DIR/$family.data.sql" ]]; then
                 cat "$ROLLBACK_DATA_DIR/$family.data.sql"
                 printf '\n'
             fi
         done
-    } > "$ROLLBACK_EXECUTABLE_DIR/rollback-all.sql"
+    } > "$executable_dir/rollback-all.sql"
 
     {
         printf '%s\n' \
@@ -1820,14 +1929,14 @@ combine_rollbacks() {
             'END' \
             '$guards$;'
         for family in logical-shadow score-observations band-song-projection aggregate-ranking-deltas; do
-            cat "$ROLLBACK_CANONICAL_DIR/$family.sql"
+                cat "$canonical_dir/$family.sql"
             printf '\n'
             if [[ -f "$ROLLBACK_DATA_DIR/$family.data.sql" ]]; then
                 cat "$ROLLBACK_DATA_DIR/$family.data.sql"
                 printf '\n'
             fi
         done
-    } > "$ROLLBACK_CANONICAL_DIR/rollback-all.sql"
+    } > "$canonical_dir/rollback-all.sql"
 }
 
 append_hash_row() {
@@ -2011,6 +2120,7 @@ PY
     done
 }
 
+if [[ "$MODE" != "resume-committed" ]]; then
 if ! $TEST_MODE; then
     CURRENT_STAGE="production compose and database target resolution"
     initialize_production_compose_project
@@ -2165,6 +2275,7 @@ if [[ "$MANIFEST_SHA256" != "$EXPECTED_MANIFEST_SHA256" ]]; then
     printf 'ERROR: manifest drift: expected %s, regenerated %s\n' \
         "$EXPECTED_MANIFEST_SHA256" "$MANIFEST_SHA256" >&2
     exit 3
+fi
 fi
 
 capture_preexecute_gate() {
@@ -2741,6 +2852,71 @@ PY
     return 0
 }
 
+load_approved_startup_identity_from_manifest() {
+    local manifest_file="$1" identity
+    identity="$(
+        python3 - "$manifest_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+service = [
+    row for row in manifest["containers"]
+    if row.get("service") == "fstservice"
+]
+if len(service) != 1:
+    raise SystemExit("manifest lacks one fstservice container")
+service = service[0]
+target = manifest["productionDatabaseTarget"]["runtime"]
+print("|".join([
+    service["image_id"],
+    service["container_id"],
+    manifest["productionComposeOwnership"][
+        "fstserviceImageReferenceSha256"
+    ],
+    json.dumps(
+        sorted(
+            manifest["containerConfigAttestation"]["services"][
+                "fstservice"
+            ]["networks"]
+        ),
+        separators=(",", ":"),
+    ),
+    target["container_id"],
+    target["system_identifier"],
+    target["configured_host"],
+    target["configured_port"],
+    target["configured_database"],
+    target["configured_user"],
+]))
+PY
+    )" || return 3
+    IFS='|' read -r \
+        APPROVED_FSTSERVICE_IMAGE_ID \
+        APPROVED_FSTSERVICE_CONTAINER_ID \
+        APPROVED_FSTSERVICE_IMAGE_REFERENCE_SHA256 \
+        APPROVED_FSTSERVICE_NETWORKS_JSON \
+        APPROVED_POSTGRES_CONTAINER_ID \
+        APPROVED_POSTGRES_SYSTEM_IDENTIFIER \
+        APPROVED_DATABASE_HOST \
+        APPROVED_DATABASE_PORT \
+        APPROVED_DATABASE_NAME \
+        APPROVED_DATABASE_USER \
+        <<< "$identity"
+    [[ "$APPROVED_FSTSERVICE_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] \
+        || return 3
+    [[ "$APPROVED_FSTSERVICE_CONTAINER_ID" =~ ^[0-9a-f]{64}$ ]] \
+        || return 3
+    [[ "$APPROVED_FSTSERVICE_IMAGE_REFERENCE_SHA256" \
+        =~ ^[0-9a-f]{64}$ ]] || return 3
+    [[ "$APPROVED_POSTGRES_CONTAINER_ID" =~ ^[0-9a-f]{64}$ ]] \
+        || return 3
+    [[ "$APPROVED_POSTGRES_SYSTEM_IDENTIFIER" =~ ^[0-9]+$ ]] \
+        || return 3
+    return 0
+}
+
 execute_fixture() {
     printf '%s\n' \
         "'FST_FAMILY_DROPPED logical-shadow'" \
@@ -3141,8 +3317,31 @@ terminate_recorded_local_child() {
     return 0
 }
 
+close_sql_streamer_control_fd() {
+    local control_fd="$DROP_SQL_STREAMER_CONTROL_FD"
+    if [[ "$control_fd" =~ ^[0-9]+$ ]]; then
+        exec {control_fd}>&- 2>/dev/null || true
+    fi
+    DROP_SQL_STREAMER_CONTROL_FD=""
+    return 0
+}
+
+finalize_drop_launcher_coproc() {
+    local read_fd="${DROP_LAUNCHER[0]:-}"
+    local write_fd="${DROP_LAUNCHER[1]:-}"
+    if [[ "$read_fd" =~ ^[0-9]+$ ]]; then
+        exec {read_fd}<&- 2>/dev/null || true
+    fi
+    if [[ "$write_fd" =~ ^[0-9]+$ ]]; then
+        exec {write_fd}>&- 2>/dev/null || true
+    fi
+    unset DROP_LAUNCHER DROP_LAUNCHER_PID
+    return 0
+}
+
 terminate_recorded_sql_streamer() {
     local current_start current_cmd_sha
+    close_sql_streamer_control_fd
     $DROP_SQL_STREAMER_WAIT_COMPLETED && return 0
     [[ "$DROP_SQL_STREAMER_PID" =~ ^[0-9]+$ ]] || return 0
     if ! kill -0 "$DROP_SQL_STREAMER_PID" 2>/dev/null; then
@@ -3239,6 +3438,7 @@ cleanup_active_drop() {
     fi
     terminate_recorded_sql_streamer || streamer_cleanup_failed=true
     terminate_recorded_local_child || local_cleanup_failed=true
+    finalize_drop_launcher_coproc
 
     if ! rows="$(backend_rows_for_drop_app 2>/dev/null)"; then
         control_query_failed=true
@@ -3485,15 +3685,21 @@ exec psql "$@"
     local drop_sql_proof
     drop_sql_proof="$POST_DIR/drop-sql-stream-proof.json"
     rm -f "$drop_sql_proof"
-    coproc IMMUTABLE_SQL_STREAMER {
-        python3 "$HELPER" stream-verified-manifest-drop-sql \
-            --manifest "$PACKAGE_DIR/manifest.json" \
-            --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256" \
-            --drop-sql "$PACKAGE_DIR/drop.sql" \
-            --proof "$drop_sql_proof" \
-            --wait-for-release
-    } >&"$launch_fd"
-    DROP_SQL_STREAMER_PID="$IMMUTABLE_SQL_STREAMER_PID"
+    local streamer_release_fifo="$POST_DIR/drop-sql-release.fifo"
+    local streamer_fd
+    rm -f "$streamer_release_fifo"
+    mkfifo -m 0600 "$streamer_release_fifo"
+    python3 "$HELPER" stream-verified-manifest-drop-sql \
+        --manifest "$PACKAGE_DIR/manifest.json" \
+        --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256" \
+        --drop-sql "$PACKAGE_DIR/drop.sql" \
+        --proof "$drop_sql_proof" \
+        --wait-for-release \
+        < "$streamer_release_fifo" >&"$launch_fd" &
+    DROP_SQL_STREAMER_PID="$!"
+    exec {streamer_fd}> "$streamer_release_fifo"
+    DROP_SQL_STREAMER_CONTROL_FD="$streamer_fd"
+    rm -f "$streamer_release_fifo"
     DROP_SQL_STREAMER_START_TICKS="$(
         awk '{print $22}' "/proc/$DROP_SQL_STREAMER_PID/stat"
     )"
@@ -3539,9 +3745,9 @@ PY
         sha256sum "$drop_sql_proof" | awk '{print $1}'
     )"
     write_drop_control immutable-drop-sql-ready launch
-    local streamer_fd="${IMMUTABLE_SQL_STREAMER[1]}"
     printf 'RELEASE\n' >&"$streamer_fd"
     exec {streamer_fd}>&-
+    DROP_SQL_STREAMER_CONTROL_FD=""
     if wait "$DROP_SQL_STREAMER_PID"; then
         DROP_SQL_STREAMER_WAIT_COMPLETED=true
     else
@@ -3562,6 +3768,7 @@ PY
         status=$?
     fi
     DROP_LOCAL_WAIT_COMPLETED=true
+    finalize_drop_launcher_coproc
     [[ "$DROP_CONTAINER_PSQL_PID" =~ ^[0-9]+$ ]] || \
         DROP_CONTAINER_PSQL_PID="$(
             sed -n 's/^FST_CONTAINER_PSQL_PID=//p' "$LOG_DIR/drop.log" |
@@ -3790,7 +3997,7 @@ capture_startup_database_routing_attestation() {
     local output_dir="$2"
     local target_file="$output_dir/production-target-attestation.csv"
     local routing_file="$output_dir/attestation.json"
-    local ids_output status
+    local ids_output status candidate_container_id
     local -a ids=()
     mkdir -p "$output_dir" || return 3
 
@@ -3810,8 +4017,9 @@ capture_startup_database_routing_attestation() {
             container-inventory 3 || return 3
         return 3
     }
-    while IFS= read -r container_id; do
-        [[ -n "$container_id" ]] && ids+=("$container_id")
+    while IFS= read -r candidate_container_id; do
+        [[ -n "$candidate_container_id" ]] \
+            && ids+=("$candidate_container_id")
     done <<< "$ids_output"
     if (( ${#ids[@]} == 0 )); then
         record_startup_database_routing_failure \
@@ -4194,6 +4402,7 @@ PY
 
 run_rollback_rehearsal() {
     local rehearsal_sql="$POST_DIR/rollback-rehearsal.sql"
+    local rollback_all="${1:-$ROLLBACK_EXECUTABLE_DIR/rollback-all.sql}"
     {
         printf '%s\n' '\set ON_ERROR_STOP on'
         printf '%s\n' 'BEGIN;'
@@ -4215,7 +4424,7 @@ run_rollback_rehearsal() {
         cat "$PACKAGE_DIR/expected-objects.sql"
         cat "$PACKAGE_DIR/catalog-rollback-expected.sql"
         cat "$PACKAGE_DIR/retained-expected.sql"
-        cat "$ROLLBACK_EXECUTABLE_DIR/rollback-all.sql"
+        cat "$rollback_all"
         cat "$PACKAGE_DIR/catalog-rollback-assert.sql"
         cat "$PACKAGE_DIR/retained-assert.sql"
         cat "$PACKAGE_DIR/rollback-rehearsal-check.sql"
@@ -4235,6 +4444,392 @@ run_rollback_rehearsal() {
         return "$status"
     fi
 }
+
+initialize_resume_fixture_target() {
+    local values
+    values="$(
+        python3 - "$PACKAGE_DIR/manifest.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+target = manifest["productionDatabaseTarget"]["runtime"]
+containers = {
+    row["service"]: row["container_id"]
+    for row in manifest["containers"]
+}
+print("|".join([
+    target["container_id"],
+    target["runtime_database"],
+    target["runtime_user"],
+    target["runtime_port"],
+    containers["fstservice"],
+    containers["festivalweb"],
+    containers["fstworker"],
+]))
+PY
+    )" || return 3
+    local service_id web_id worker_id
+    IFS='|' read -r \
+        PG_CONTAINER PG_DB PG_USER PG_PORT \
+        service_id web_id worker_id <<< "$values"
+    EXPECTED_OWNER="$PG_USER"
+    PROJECT_SERVICE_CONTAINER_IDS[postgres]="$PG_CONTAINER"
+    PROJECT_SERVICE_CONTAINER_IDS[fstservice]="$service_id"
+    PROJECT_SERVICE_CONTAINER_IDS[festivalweb]="$web_id"
+    PROJECT_SERVICE_CONTAINER_IDS[fstworker]="$worker_id"
+    return 0
+}
+
+capture_committed_resume_gate() {
+    local gate_dir="$1"
+    local phase="$2"
+    mkdir -p "$gate_dir" || return 3
+    if $TEST_MODE; then
+        local filename
+        for filename in \
+            preflight.csv \
+            production-target-attestation.csv \
+            containers.csv \
+            health.csv \
+            fingerprints.csv \
+            storage.csv \
+            relations.csv \
+            capacity-guard.json \
+            capacity-guard.policy.json; do
+            cp "$FIXTURE_DIR/post/$filename" "$gate_dir/$filename" \
+                || return 3
+        done
+        cp "$FIXTURE_DIR/post/container-config-attestation.json" \
+            "$gate_dir/container-config-attestation.json" || return 3
+    else
+        reverify_production_compose_project "$gate_dir/compose" || return 3
+        run_plain_capture capture-preflight.sql "$gate_dir/preflight.csv" \
+            || return 3
+        capture_target_attestation \
+            "$gate_dir/production-target-attestation.csv" || return 3
+        capture_containers "$gate_dir/containers.csv" || return 3
+        capture_container_config_attestation \
+            "$gate_dir/container-config-attestation.json" || return 3
+        capture_health "$gate_dir/health.csv" "$gate_dir/health-bodies" \
+            || return 3
+        capture_capacity_guard \
+            "$gate_dir/capacity-guard.json" \
+            "$gate_dir/health.csv" \
+            "$gate_dir/capacity-guard.stdout.txt" || return 3
+        capture_fingerprints \
+            "$gate_dir/fingerprints.csv" \
+            "$gate_dir/fingerprint-bodies" || return 3
+        capture_post_relations "$gate_dir/relations.csv" || return 3
+        capture_storage \
+            "$gate_dir/storage.csv" \
+            "$gate_dir/relations.csv" || return 3
+    fi
+    python3 "$HELPER" validate-committed-resume-gate \
+        --manifest "$PACKAGE_DIR/manifest.json" \
+        --objects "$PACKAGE_DIR/objects.tsv" \
+        --gate-dir "$gate_dir" \
+        --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256" \
+        --phase "$phase" \
+        --output "$gate_dir/validation.json" || return 3
+    sync -f "$gate_dir/validation.json" || return 3
+    return 0
+}
+
+revalidate_resume_rollback_package() {
+    local integrity_dir="$OUTPUT_DIR/source-package-revalidation"
+    local executable_dir="$integrity_dir/rollback-executable"
+    local canonical_dir="$integrity_dir/rollback-canonical"
+    local family source_hash regenerated_hash
+    mkdir -p "$executable_dir" "$canonical_dir" || return 3
+    prepare_rollback_variants \
+        "$executable_dir" \
+        "$canonical_dir" \
+        "$integrity_dir/rollback-raw-hashes.csv" || return 3
+    for family in \
+        logical-shadow \
+        score-observations \
+        band-song-projection \
+        aggregate-ranking-deltas; do
+        source_hash="$(
+            sha256sum "$ROLLBACK_EXECUTABLE_DIR/$family.sql" |
+                awk '{print $1}'
+        )" || return 3
+        regenerated_hash="$(
+            sha256sum "$executable_dir/$family.sql" | awk '{print $1}'
+        )" || return 3
+        [[ "$source_hash" == "$regenerated_hash" ]] || return 3
+        source_hash="$(
+            sha256sum "$ROLLBACK_CANONICAL_DIR/$family.sql" |
+                awk '{print $1}'
+        )" || return 3
+        regenerated_hash="$(
+            sha256sum "$canonical_dir/$family.sql" | awk '{print $1}'
+        )" || return 3
+        [[ "$source_hash" == "$regenerated_hash" ]] || return 3
+    done
+    combine_rollbacks "$executable_dir" "$canonical_dir" || return 3
+    local expected_canonical
+    expected_canonical="$(
+        python3 - "$PACKAGE_DIR/manifest.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+print(
+    json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))[
+        "rollbackAllSha256"
+    ]
+)
+PY
+    )" || return 3
+    [[ "$(
+        sha256sum "$canonical_dir/rollback-all.sql" | awk '{print $1}'
+    )" == "$expected_canonical" ]] || return 3
+    printf 'status,canonical_sha256,executable_sha256\npassed,%s,%s\n' \
+        "$expected_canonical" \
+        "$(sha256sum "$executable_dir/rollback-all.sql" | awk '{print $1}')" \
+        > "$integrity_dir/status.csv" || return 3
+    sync -f "$integrity_dir/status.csv" || return 3
+    RESUME_ROLLBACK_EXECUTABLE="$executable_dir/rollback-all.sql"
+    return 0
+}
+
+run_committed_resume() {
+    local source_validation="$OUTPUT_DIR/resume-source-validation.json"
+    local copied_package_validation="$OUTPUT_DIR/resume-copied-package-validation.json"
+    local tooling_validation="$OUTPUT_DIR/resume-tooling-validation.json"
+    local pre_gate="$OUTPUT_DIR/pre-resume-gate"
+    local post_gate="$POST_DIR/post-resume-gate"
+    RESUME_ROLLBACK_EXECUTABLE=""
+
+    CURRENT_STAGE="committed resume source validation"
+    python3 "$HELPER" validate-committed-resume-source \
+        --source "$SOURCE_EVIDENCE" \
+        --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256" \
+        --output "$source_validation"
+    sync -f "$source_validation"
+
+    if $TEST_MODE \
+        && [[ -f "$FIXTURE_DIR/replace-resume-manifest-after-validation" ]]; then
+        printf '\n' >> "$SOURCE_EVIDENCE/package/manifest.json"
+    fi
+    if $TEST_MODE \
+        && [[ -f "$FIXTURE_DIR/mutate-resume-package-after-validation" ]]; then
+        printf '\n-- post-validation drift\n' \
+            >> "$SOURCE_EVIDENCE/package/drop.sql"
+    fi
+
+    CURRENT_STAGE="committed resume package copy"
+    cp -a "$SOURCE_EVIDENCE/package/." "$PACKAGE_DIR/"
+    MANIFEST_SHA256="$(
+        sha256sum "$PACKAGE_DIR/manifest.json" | awk '{print $1}'
+    )"
+    [[ "$MANIFEST_SHA256" == "$EXPECTED_MANIFEST_SHA256" ]] || {
+        printf 'ERROR: copied resume manifest hash differs from approval\n' >&2
+        return 3
+    }
+    python3 "$HELPER" validate-committed-resume-copied-package \
+        --package "$PACKAGE_DIR" \
+        --source-validation "$source_validation" \
+        --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256" \
+        --output "$copied_package_validation"
+    sync -f "$copied_package_validation"
+
+    CURRENT_STAGE="committed resume tooling validation"
+    python3 "$HELPER" validate-committed-resume-tooling \
+        --manifest "$PACKAGE_DIR/manifest.json" \
+        --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256" \
+        --repository-root "$REPO_ROOT" \
+        --expected-orchestrator-sha256 \
+            "$EXPECTED_RESUME_ORCHESTRATOR_SHA256" \
+        --expected-helper-sha256 "$EXPECTED_RESUME_HELPER_SHA256" \
+        --output "$tooling_validation"
+    sync -f "$tooling_validation"
+
+    rm -f \
+        "$PACKAGE_DIR/expected-objects.sql" \
+        "$PACKAGE_DIR/rollback-rehearsal-check.sql"
+    python3 "$HELPER" render-expected-sql \
+        --objects "$PACKAGE_DIR/objects.tsv" \
+        > "$PACKAGE_DIR/expected-objects.sql"
+    python3 "$HELPER" render-rehearsal-check-sql \
+        --objects "$PACKAGE_DIR/objects.tsv" \
+        > "$PACKAGE_DIR/rollback-rehearsal-check.sql"
+    printf 'name,sha256\nexpected-objects.sql,%s\nrollback-rehearsal-check.sql,%s\n' \
+        "$(sha256sum "$PACKAGE_DIR/expected-objects.sql" | awk '{print $1}')" \
+        "$(sha256sum "$PACKAGE_DIR/rollback-rehearsal-check.sql" |
+            awk '{print $1}')" \
+        > "$OUTPUT_DIR/resume-generated-sql.csv"
+    sync -f "$PACKAGE_DIR/expected-objects.sql"
+    sync -f "$PACKAGE_DIR/rollback-rehearsal-check.sql"
+    sync -f "$OUTPUT_DIR/resume-generated-sql.csv"
+    cp "$SOURCE_EVIDENCE/committed-families.txt" \
+        "$OUTPUT_DIR/committed-families.txt"
+    mkdir -p "$OUTPUT_DIR/pre-destructive-roundtrip"
+    cp "$SOURCE_EVIDENCE/pre-destructive-roundtrip/status.csv" \
+        "$OUTPUT_DIR/pre-destructive-roundtrip/status.csv"
+    if [[ -d "$SOURCE_EVIDENCE/post-scratch-live-gate" ]]; then
+        cp -a "$SOURCE_EVIDENCE/post-scratch-live-gate" \
+            "$OUTPUT_DIR/post-scratch-live-gate"
+    fi
+    for filename in \
+        drop-process-control.csv \
+        drop-process-status.csv \
+        drop-reconciliation-1.csv \
+        drop-sql-stream-proof.json; do
+        cp "$SOURCE_EVIDENCE/post/$filename" "$POST_DIR/$filename"
+    done
+    if [[ -f "$SOURCE_EVIDENCE/logs/drop.log" ]]; then
+        cp "$SOURCE_EVIDENCE/logs/drop.log" "$LOG_DIR/drop.log"
+    fi
+    printf '%s\n' "$MANIFEST_SHA256" > "$OUTPUT_DIR/manifest-sha256.txt"
+    load_approved_startup_identity_from_manifest \
+        "$PACKAGE_DIR/manifest.json"
+
+    CURRENT_STAGE="committed resume rollback package revalidation"
+    revalidate_resume_rollback_package
+
+    if $TEST_MODE; then
+        initialize_resume_fixture_target
+    else
+        CURRENT_STAGE="committed resume production target resolution"
+        initialize_production_compose_project
+    fi
+
+    CURRENT_STAGE="committed resume pre-start safety gate"
+    capture_committed_resume_gate "$pre_gate" pre-start
+
+    CURRENT_STAGE="committed resume immutable initializer"
+    if $TEST_MODE; then
+        local filename
+        for filename in \
+            startup-check.csv \
+            startup-image-attestation.csv \
+            startup-image-creation-attestation.json \
+            startup-image-prestart-attestation.json \
+            startup-image-attested-before-start.sha256 \
+            startup-initializer-release.json \
+            startup-relations.csv \
+            rollback-rehearsal.csv \
+            rehearsal-relations.csv; do
+            cp "$FIXTURE_DIR/resume-success-post/$filename" \
+                "$POST_DIR/$filename"
+        done
+        cp -R "$FIXTURE_DIR/resume-success-post/startup-database-routing" \
+            "$POST_DIR/startup-database-routing"
+    else
+        reverify_production_compose_project \
+            "$POST_DIR/pre-startup-compose"
+        run_startup_schema_check
+        capture_post_relations "$POST_DIR/startup-relations.csv"
+        assert_absent_capture \
+            "$POST_DIR/startup-relations.csv" \
+            "committed resume initializer validation"
+    fi
+
+    CURRENT_STAGE="committed resume rollback rehearsal"
+    if ! $TEST_MODE; then
+        run_rollback_rehearsal "$RESUME_ROLLBACK_EXECUTABLE"
+        capture_post_relations "$POST_DIR/rehearsal-relations.csv"
+        assert_absent_capture \
+            "$POST_DIR/rehearsal-relations.csv" \
+            "committed resume rollback rehearsal"
+    fi
+
+    CURRENT_STAGE="committed resume final safety gate"
+    capture_committed_resume_gate "$post_gate" post-rehearsal
+    cp "$post_gate/preflight.csv" "$POST_DIR/preflight.csv"
+    cp "$post_gate/production-target-attestation.csv" \
+        "$POST_DIR/production-target-attestation.csv"
+    cp "$post_gate/containers.csv" "$POST_DIR/containers.csv"
+    cp "$post_gate/container-config-attestation.json" \
+        "$POST_DIR/container-config-attestation.json"
+    cp "$post_gate/health.csv" "$POST_DIR/health.csv"
+    cp "$post_gate/capacity-guard.json" "$POST_DIR/capacity-guard.json"
+    cp "$post_gate/capacity-guard.policy.json" \
+        "$POST_DIR/capacity-guard.policy.json"
+    cp "$post_gate/fingerprints.csv" "$POST_DIR/fingerprints.csv"
+    cp "$post_gate/storage.csv" "$POST_DIR/storage.csv"
+    cp "$post_gate/relations.csv" "$POST_DIR/relations.csv"
+
+    CURRENT_STAGE="committed resume final validation"
+    python3 "$HELPER" validate-post \
+        --objects "$PACKAGE_DIR/objects.tsv" \
+        --before-manifest "$PACKAGE_DIR/manifest.json" \
+        --post-dir "$POST_DIR" \
+        --output "$POST_DIR/validation.json"
+
+    python3 - \
+        "$OUTPUT_DIR/RECOVERY-SUCCESS.json" \
+        "$SOURCE_EVIDENCE" \
+        "$EXPECTED_MANIFEST_SHA256" \
+        "$EXPECTED_RESUME_ORCHESTRATOR_SHA256" \
+        "$EXPECTED_RESUME_HELPER_SHA256" \
+        "$source_validation" \
+        "$tooling_validation" \
+        "$pre_gate/validation.json" \
+        "$post_gate/validation.json" \
+        "$POST_DIR/validation.json" \
+        "$copied_package_validation" <<'PY'
+import hashlib
+import json
+import os
+import sys
+from pathlib import Path
+
+output = Path(sys.argv[1])
+validation_paths = {
+    "sourceValidation": Path(sys.argv[6]),
+    "toolingValidation": Path(sys.argv[7]),
+    "preResumeGateValidation": Path(sys.argv[8]),
+    "postResumeGateValidation": Path(sys.argv[9]),
+    "finalPostValidation": Path(sys.argv[10]),
+}
+copied_package_validation = Path(sys.argv[11])
+value = {
+    "schemaVersion": 1,
+    "success": True,
+    "mode": "resume-committed",
+    "sourceEvidence": sys.argv[2],
+    "acceptedManifestSha256": sys.argv[3],
+    "resumeOrchestratorSha256": sys.argv[4],
+    "resumeHelperSha256": sys.argv[5],
+    "dropRerun": False,
+    "restorePerformed": False,
+    "rollbackRehearsalRolledBack": True,
+    "validationArtifacts": {
+        label: hashlib.sha256(path.read_bytes()).hexdigest()
+        for label, path in validation_paths.items()
+    },
+    "copiedPackageValidationSha256": hashlib.sha256(
+        copied_package_validation.read_bytes()
+    ).hexdigest(),
+}
+with output.open("x", encoding="utf-8") as handle:
+    handle.write(json.dumps(value, sort_keys=True, indent=2) + "\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+PY
+    write_rollback_instructions
+    (
+        cd "$OUTPUT_DIR"
+        find . -type f ! -name package-checksums.sha256 -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > package-checksums.sha256
+    )
+    printf 'Mode: resume-committed\n'
+    printf 'Manifest SHA-256: %s\n' "$EXPECTED_MANIFEST_SHA256"
+    printf 'Source evidence: %s\n' "$SOURCE_EVIDENCE"
+    printf 'Evidence: %s\n' "$OUTPUT_DIR"
+    printf 'Decision: committed cleanup post-drop recovery completed\n'
+}
+
+if [[ "$MODE" == "resume-committed" ]]; then
+    run_committed_resume
+    exit 0
+fi
 
 if ! $TEST_MODE; then
     CURRENT_STAGE="immediate pre-execute revalidation"

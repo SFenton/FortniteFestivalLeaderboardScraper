@@ -4861,6 +4861,520 @@ def validate_absent_inventory(path, objects, label, failures):
             failures.append(f"{label} recreated or retained {expected.key}")
 
 
+def validate_committed_resume_source(args):
+    source = Path(args.source)
+    package = source / "package"
+    manifest_path = package / "manifest.json"
+    failures = []
+    checked_files = {}
+
+    if not manifest_path.is_file():
+        raise ValueError("resume source manifest is missing")
+    manifest_sha = sha256_path(manifest_path)
+    if manifest_sha != args.expected_manifest_sha256:
+        failures.append("resume source manifest hash differs from approval")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("ready") is not True:
+        failures.append("resume source manifest was not ready")
+    parity = manifest.get("parityEvidence", {})
+    if (
+        parity.get("decision") != "accepted"
+        or parity.get("scrapeId") != CLEANUP_SCRAPE_ID
+        or parity.get("exactPublicFingerprintParity") is not True
+        or parity.get("fingerprintCount") != len(PUBLIC_FINGERPRINT_NAMES)
+    ):
+        failures.append("resume source parity acceptance is invalid")
+
+    manifest_text_path = source / "manifest-sha256.txt"
+    if (
+        not manifest_text_path.is_file()
+        or manifest_text_path.read_text(encoding="utf-8").strip()
+        != args.expected_manifest_sha256
+    ):
+        failures.append("resume source manifest-sha256.txt is invalid")
+    manifest_sum_path = package / "manifest.sha256"
+    if (
+        not manifest_sum_path.is_file()
+        or manifest_sum_path.read_text(encoding="utf-8").split()[0]
+        != args.expected_manifest_sha256
+    ):
+        failures.append("resume source package manifest checksum is invalid")
+
+    def check(relative, expected, label):
+        path = package / relative
+        if not path.is_file():
+            failures.append(f"resume package file is missing: {label}")
+            return
+        actual = sha256_path(path)
+        checked_files[str(relative)] = actual
+        if actual != expected:
+            failures.append(f"resume package hash drift: {label}")
+
+    check("objects.tsv", manifest.get("expectedObjectsSha256", ""), "objects")
+    check("drop.sql", manifest.get("dropSqlSha256", ""), "drop SQL")
+    check(
+        "rollback-canonical/rollback-all.sql",
+        manifest.get("rollbackAllSha256", ""),
+        "canonical rollback-all",
+    )
+    check(
+        "catalog/columns.csv",
+        manifest.get("columnCatalogSha256", ""),
+        "column catalog",
+    )
+    check(
+        "catalog/signature.csv",
+        manifest.get("catalogSignature", {}).get("sha256", ""),
+        "exact catalog signature",
+    )
+    check(
+        "catalog/signature-metadata.json",
+        manifest.get("catalogMetadataSha256", ""),
+        "exact catalog metadata",
+    )
+    check(
+        "catalog/query.sql",
+        manifest.get("catalogSignature", {}).get("querySha256", ""),
+        "catalog query",
+    )
+    check(
+        "catalog-expected.sql",
+        manifest.get("catalogExpectedSqlSha256", ""),
+        "exact catalog expected SQL",
+    )
+    check(
+        "catalog-assert.sql",
+        manifest.get("catalogAssertSqlSha256", ""),
+        "exact catalog assertion SQL",
+    )
+    check(
+        "catalog/rollback-signature.csv",
+        manifest.get("rollbackCatalogSignature", {}).get("sha256", ""),
+        "rollback-canonical catalog signature",
+    )
+    check(
+        "catalog/rollback-signature-metadata.json",
+        manifest.get("rollbackCatalogMetadataSha256", ""),
+        "rollback-canonical catalog metadata",
+    )
+    check(
+        "catalog-rollback-expected.sql",
+        manifest.get("rollbackCatalogExpectedSqlSha256", ""),
+        "rollback-canonical expected SQL",
+    )
+    check(
+        "catalog-rollback-assert.sql",
+        manifest.get("rollbackCatalogAssertSqlSha256", ""),
+        "rollback-canonical assertion SQL",
+    )
+    check(
+        "retained-data.tsv",
+        manifest.get("retainedDataSpecSha256", ""),
+        "retained-data specification",
+    )
+    check(
+        "retained-expected.sql",
+        manifest.get("retainedExpectedSqlSha256", ""),
+        "retained expected SQL",
+    )
+    check(
+        "retained-assert.sql",
+        manifest.get("retainedAssertSqlSha256", ""),
+        "retained assertion SQL",
+    )
+    check(
+        "public-fingerprints.tsv",
+        manifest.get("fingerprintSpecSha256", ""),
+        "fingerprint specification",
+    )
+    check(
+        "parity-acceptance.json",
+        parity.get("sha256", ""),
+        "parity acceptance",
+    )
+    for row in manifest.get("retainedCaptureSql", []):
+        check(
+            f"retained-capture/{row.get('name', '')}",
+            row.get("sha256", ""),
+            f"retained capture {row.get('name', '')}",
+        )
+    for row in manifest.get("retainedData", []):
+        check(
+            f"retained-data/{row.get('canonical_file', '')}",
+            row.get("sha256", ""),
+            f"retained payload {row.get('canonical_file', '')}",
+        )
+    for row in manifest.get("rollbackHashes", []):
+        kind = row.get("kind", "")
+        name = row.get("name", "")
+        if kind == "generated-family":
+            relative = f"rollback-canonical/{name}"
+        elif kind == "generated-data":
+            relative = f"rollback-data/{name}"
+        elif kind == "generated-all":
+            relative = "rollback-canonical/rollback-all.sql"
+        else:
+            continue
+        check(relative, row.get("sha256", ""), f"{kind} {name}")
+
+    failed_path = source / "FAILED.txt"
+    failed_text = (
+        failed_path.read_text(encoding="utf-8")
+        if failed_path.is_file()
+        else ""
+    )
+    if (
+        "status=failed" not in failed_text
+        or "stage=post-drop initializer" not in failed_text
+    ):
+        failures.append("resume source is not a post-drop initializer failure")
+    committed = (
+        (source / "committed-families.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if (source / "committed-families.txt").is_file()
+        else []
+    )
+    if committed != FAMILY_ORDER:
+        failures.append("resume source does not record all four committed families")
+    process_rows = read_csv(source / "post" / "drop-process-status.csv")
+    if (
+        len(process_rows) != 1
+        or process_rows[0].get("process_status") == "0"
+        or process_rows[0].get("reconciliation_state") != "committed"
+        or not re.fullmatch(r"[1-9]\d*", process_rows[0].get("attempts", ""))
+    ):
+        failures.append("resume source drop reconciliation is not committed")
+    control_rows = read_csv(source / "post" / "drop-process-control.csv")
+    control = control_rows[0] if len(control_rows) == 1 else {}
+    if (
+        control.get("state") != "completed"
+        or control.get("sql_released") != "true"
+        or control.get("local_wait_completed") != "true"
+        or control.get("sql_streamer_wait_completed") != "true"
+    ):
+        failures.append("resume source destructive process control is incomplete")
+
+    try:
+        objects = read_objects(package / "objects.tsv")
+    except (OSError, ValueError) as exc:
+        failures.append(f"resume source object allowlist is invalid: {exc}")
+        objects = []
+    if objects:
+        validate_absent_inventory(
+            source / "post" / "relations.csv",
+            objects,
+            "resume source post-drop",
+            failures,
+        )
+        validate_absent_inventory(
+            source / "post" / "drop-reconciliation-1.csv",
+            objects,
+            "resume source reconciliation",
+            failures,
+        )
+
+    result = {
+        "schemaVersion": 1,
+        "success": not failures,
+        "sourceEvidence": str(source),
+        "acceptedManifestSha256": args.expected_manifest_sha256,
+        "committedFamilies": committed,
+        "reconciliation": process_rows[0] if len(process_rows) == 1 else {},
+        "checkedPackageFiles": sorted(
+            (
+                {"path": path, "sha256": sha256}
+                for path, sha256 in checked_files.items()
+            ),
+            key=lambda row: row["path"],
+        ),
+        "failures": sorted(set(failures)),
+    }
+    Path(args.output).write_text(
+        json.dumps(result, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    if failures:
+        for failure in result["failures"]:
+            print(f"ERROR: {failure}", file=sys.stderr)
+        return 3
+    return 0
+
+
+def validate_committed_resume_copied_package(args):
+    package = Path(args.package)
+    source_validation = json.loads(
+        Path(args.source_validation).read_text(encoding="utf-8")
+    )
+    failures = []
+    if (
+        source_validation.get("success") is not True
+        or source_validation.get("acceptedManifestSha256")
+        != args.expected_manifest_sha256
+    ):
+        failures.append("source validation is not approved for package copy")
+    manifest_path = package / "manifest.json"
+    manifest_sha = (
+        sha256_path(manifest_path) if manifest_path.is_file() else ""
+    )
+    if manifest_sha != args.expected_manifest_sha256:
+        failures.append("copied resume manifest hash differs from approval")
+    checked_rows = source_validation.get("checkedPackageFiles", [])
+    if not checked_rows:
+        failures.append("source validation has no package file inventory")
+    if len({row.get("path", "") for row in checked_rows}) != len(checked_rows):
+        failures.append("source validation package inventory has duplicates")
+    copied_files = []
+    for row in checked_rows:
+        relative = row.get("path", "")
+        expected = row.get("sha256", "")
+        path = package / relative
+        actual = sha256_path(path) if path.is_file() else ""
+        copied_files.append({
+            "path": relative,
+            "expectedSha256": expected,
+            "actualSha256": actual,
+            "verified": actual == expected,
+        })
+        if actual != expected:
+            failures.append(f"copied resume package drift: {relative}")
+    result = {
+        "schemaVersion": 1,
+        "success": not failures,
+        "acceptedManifestSha256": args.expected_manifest_sha256,
+        "measuredManifestSha256": manifest_sha,
+        "checkedPackageFiles": sorted(
+            copied_files,
+            key=lambda row: row["path"],
+        ),
+        "failures": sorted(set(failures)),
+    }
+    Path(args.output).write_text(
+        json.dumps(result, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    if failures:
+        for failure in result["failures"]:
+            print(f"ERROR: {failure}", file=sys.stderr)
+        return 3
+    return 0
+
+
+def validate_committed_resume_tooling(args):
+    manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
+    repository_root = Path(args.repository_root)
+    expected_operator_hashes = {
+        "tools/postgres-retired-schema-cleanup.sh":
+            args.expected_orchestrator_sha256,
+        "tools/postgres-retired-schema-cleanup.py":
+            args.expected_helper_sha256,
+    }
+    failures = []
+    if sha256_path(args.manifest) != args.expected_manifest_sha256:
+        failures.append("resume tooling manifest hash differs from approval")
+    rows = []
+    source_tooling = {
+        row.get("name", ""): row.get("sha256", "")
+        for row in manifest.get("toolingHashes", [])
+    }
+    if set(expected_operator_hashes) - set(source_tooling):
+        failures.append("source manifest lacks resume orchestrator/helper hashes")
+    for name, source_sha in sorted(source_tooling.items()):
+        path = repository_root / name
+        actual_sha = sha256_path(path) if path.is_file() else ""
+        mode = "source-manifest-exact"
+        accepted_sha = source_sha
+        if name in expected_operator_hashes:
+            mode = "operator-approved-current"
+            accepted_sha = expected_operator_hashes[name]
+        if not re.fullmatch(r"[0-9a-f]{64}", accepted_sha):
+            failures.append(f"resume tooling approval hash is invalid: {name}")
+        if actual_sha != accepted_sha:
+            failures.append(f"resume tooling drift: {name}")
+        rows.append({
+            "name": name,
+            "sourceManifestSha256": source_sha,
+            "acceptedSha256": accepted_sha,
+            "actualSha256": actual_sha,
+            "mode": mode,
+            "matchesSourceManifest": actual_sha == source_sha,
+            "accepted": actual_sha == accepted_sha,
+        })
+    required_capture_artifacts = {
+        "tools/postgres-capacity-guard.sh",
+        "tools/sql/postgres-retired-schema-cleanup/capture-preflight.sql",
+        "tools/sql/postgres-retired-schema-cleanup/capture-relations.sql",
+        "tools/sql/postgres-retired-schema-cleanup/capture-target-attestation.sql",
+        "tools/sql/postgres-retired-schema-cleanup/catalog-signature-query.sql",
+        "tools/sql/postgres-retired-schema-cleanup/objects.tsv",
+        "tools/sql/postgres-retired-schema-cleanup/public-fingerprints.tsv",
+        "tools/sql/postgres-retired-schema-cleanup/retained-data.tsv",
+    }
+    if not required_capture_artifacts.issubset(source_tooling):
+        failures.append("source manifest lacks required resume capture tooling")
+    result = {
+        "schemaVersion": 1,
+        "success": not failures,
+        "sourceManifestSha256": sha256_path(args.manifest),
+        "tooling": rows,
+        "failures": sorted(set(failures)),
+    }
+    Path(args.output).write_text(
+        json.dumps(result, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    if failures:
+        for failure in result["failures"]:
+            print(f"ERROR: {failure}", file=sys.stderr)
+        return 3
+    return 0
+
+
+def validate_committed_resume_gate(args):
+    manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
+    gate = Path(args.gate_dir)
+    objects = read_objects(args.objects)
+    failures = []
+    validate_absent_inventory(
+        gate / "relations.csv",
+        objects,
+        "committed resume gate",
+        failures,
+    )
+    preflight_rows = read_csv(gate / "preflight.csv")
+    preflight = preflight_rows[0] if len(preflight_rows) == 1 else {}
+    before = manifest.get("preflight", {})
+    for key in [
+        "published_scrape_id",
+        "published_at",
+        "publication_updated_at",
+        "current_publication_id",
+        "current_publication_scrape_id",
+        "current_publication_status",
+        "current_publication_published_at",
+        "cleanup_scrape_status",
+        "cleanup_scrape_completed",
+        "cleanup_scrape_completed_at",
+    ]:
+        if preflight.get(key, "") != before.get(key, ""):
+            failures.append(f"committed resume publication drift: {key}")
+    for key, expected in {
+        "public_reads_frozen": "false",
+        "working_publication_id": "",
+        "active_scrape_count": "0",
+        "worker_current_operation": "false",
+        "ungranted_lock_count": "0",
+        "long_query_count": "0",
+        "target_query_count": "0",
+        "active_vacuum_count": "0",
+        "active_index_build_count": "0",
+        "active_rewrite_count": "0",
+        "critical_phase_failure_count": "0",
+        "ddl_guard_available": "true",
+        "sequence_guard_available": "true",
+    }.items():
+        if preflight.get(key, "").lower() != expected:
+            failures.append(f"committed resume gate failed: {key}")
+    if preflight.get("worker_status", "").lower() not in {"absent", "offline"}:
+        failures.append("committed resume worker ledger is not offline")
+
+    target_rows = read_csv(gate / "production-target-attestation.csv")
+    expected_target = manifest.get("productionDatabaseTarget", {}).get(
+        "runtime",
+        {},
+    )
+    if len(target_rows) != 1 or target_rows[0] != expected_target:
+        failures.append("committed resume production target drift")
+    container_config_path = gate / "container-config-attestation.json"
+    container_config = (
+        json.loads(container_config_path.read_text(encoding="utf-8"))
+        if container_config_path.is_file()
+        else {}
+    )
+    if container_config != manifest.get("containerConfigAttestation"):
+        failures.append("committed resume container configuration drift")
+    containers = {
+        row.get("service"): row
+        for row in read_csv(gate / "containers.csv")
+    }
+    expected_containers = {
+        row.get("service"): row for row in manifest.get("containers", [])
+    }
+    for service in ["postgres", "fstservice", "festivalweb"]:
+        actual = containers.get(service, {})
+        expected = expected_containers.get(service, {})
+        if (
+            actual.get("container_id") != expected.get("container_id")
+            or actual.get("image_id") != expected.get("image_id")
+            or actual.get("state") != "running"
+            or actual.get("health") != "healthy"
+        ):
+            failures.append(f"committed resume container drift: {service}")
+    worker = containers.get("fstworker", {})
+    expected_worker = expected_containers.get("fstworker", {})
+    if (
+        worker.get("container_id") != expected_worker.get("container_id")
+        or worker.get("image_id") != expected_worker.get("image_id")
+        or worker.get("state", "").lower()
+        not in {"created", "dead", "exited", "missing"}
+        or worker.get("restart_policy", "").lower() != "no"
+    ):
+        failures.append("committed resume worker container drift")
+
+    health_rows = read_csv(gate / "health.csv")
+    if not health_rows or any(
+        row.get("status") != "ok" for row in health_rows
+    ):
+        failures.append("committed resume health gate failed")
+    capacity_report, capacity_policy = validate_capacity_evidence(
+        gate,
+        failures,
+    )
+    if capacity_policy != manifest.get("capacityGuardPolicy"):
+        failures.append("committed resume capacity policy drift")
+    fingerprint_rows = [
+        row
+        for row in read_csv(gate / "fingerprints.csv")
+        if bool_value(row.get("gate", "false"))
+    ]
+    if stable_rows(fingerprint_rows) != manifest.get("fingerprints"):
+        failures.append("committed resume public fingerprint drift")
+    storage_rows = read_csv(gate / "storage.csv")
+    storage = storage_rows[0] if len(storage_rows) == 1 else {}
+    if storage.get("target_total_bytes", "") != "0":
+        failures.append("committed resume target relations consume bytes")
+    storage_identity = {
+        key: storage.get(key, "")
+        for key in [
+            "pgdata_source",
+            "filesystem_source",
+            "filesystem_type",
+            "evidence_root",
+            "on_fst_drive",
+        ]
+    }
+    if storage_identity != manifest.get("storageIdentity"):
+        failures.append("committed resume storage identity drift")
+
+    result = {
+        "schemaVersion": 1,
+        "success": not failures,
+        "phase": args.phase,
+        "acceptedManifestSha256": args.expected_manifest_sha256,
+        "capacityDecision": capacity_report.get("decision"),
+        "failures": sorted(set(failures)),
+    }
+    Path(args.output).write_text(
+        json.dumps(result, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    if failures:
+        for failure in result["failures"]:
+            print(f"ERROR: {failure}", file=sys.stderr)
+        return 3
+    return 0
+
+
 def validate_post(args):
     objects = read_objects(args.objects)
     manifest = json.loads(Path(args.before_manifest).read_text(encoding="utf-8"))
@@ -6895,6 +7409,59 @@ def build_parser():
     post.add_argument("--post-dir", required=True)
     post.add_argument("--output", required=True)
 
+    resume_source = subparsers.add_parser(
+        "validate-committed-resume-source"
+    )
+    resume_source.add_argument("--source", required=True)
+    resume_source.add_argument(
+        "--expected-manifest-sha256",
+        required=True,
+    )
+    resume_source.add_argument("--output", required=True)
+
+    resume_copy = subparsers.add_parser(
+        "validate-committed-resume-copied-package"
+    )
+    resume_copy.add_argument("--package", required=True)
+    resume_copy.add_argument("--source-validation", required=True)
+    resume_copy.add_argument(
+        "--expected-manifest-sha256",
+        required=True,
+    )
+    resume_copy.add_argument("--output", required=True)
+
+    resume_tooling = subparsers.add_parser(
+        "validate-committed-resume-tooling"
+    )
+    resume_tooling.add_argument("--manifest", required=True)
+    resume_tooling.add_argument(
+        "--expected-manifest-sha256",
+        required=True,
+    )
+    resume_tooling.add_argument("--repository-root", required=True)
+    resume_tooling.add_argument(
+        "--expected-orchestrator-sha256",
+        required=True,
+    )
+    resume_tooling.add_argument(
+        "--expected-helper-sha256",
+        required=True,
+    )
+    resume_tooling.add_argument("--output", required=True)
+
+    resume_gate = subparsers.add_parser(
+        "validate-committed-resume-gate"
+    )
+    resume_gate.add_argument("--manifest", required=True)
+    resume_gate.add_argument("--objects", required=True)
+    resume_gate.add_argument("--gate-dir", required=True)
+    resume_gate.add_argument(
+        "--expected-manifest-sha256",
+        required=True,
+    )
+    resume_gate.add_argument("--phase", required=True)
+    resume_gate.add_argument("--output", required=True)
+
     live_gate = subparsers.add_parser("validate-complete-live-gate")
     live_gate.add_argument("--manifest", required=True)
     live_gate.add_argument("--expected-manifest-sha256", required=True)
@@ -7136,6 +7703,14 @@ def main():
             return manifest_ready(args)
         if args.command == "validate-post":
             return validate_post(args)
+        if args.command == "validate-committed-resume-source":
+            return validate_committed_resume_source(args)
+        if args.command == "validate-committed-resume-copied-package":
+            return validate_committed_resume_copied_package(args)
+        if args.command == "validate-committed-resume-tooling":
+            return validate_committed_resume_tooling(args)
+        if args.command == "validate-committed-resume-gate":
+            return validate_committed_resume_gate(args)
         if args.command == "validate-complete-live-gate":
             return validate_complete_live_gate(args)
         if args.command == "canonicalize-json":
