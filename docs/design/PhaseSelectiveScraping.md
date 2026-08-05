@@ -166,6 +166,14 @@ empty physical aggregate-delta relations remain rollback-only until a cleanup
 image completes a full scrape with publication and public-fingerprint parity.
 Their later removal is a separate explicit no-`CASCADE` maintenance action.
 
+The exact repository-only maintenance package is now prepared at
+`tools/postgres-retired-schema-cleanup.sh`; it does not run from phase
+selection or startup. Its aggregate allowlist is those 32 relations only, and
+its combined 61-relation package excludes canonical ranking/history/current
+state. Execution remains blocked on accepted scrape-`1278`
+publication/unfreeze and exact public/API parity. See
+`docs/database/RetiredPhysicalSchemaCleanupRunbook.md`.
+
 ### `--band-scrape` vs `EnableBandScraping`
 
 The `--band-scrape` CLI flag overrides `EnableBandScraping=false` in appsettings, since the CLI intent is explicit. When no phase flags are specified, the `EnableBandScraping` config setting controls whether band phases run in the default full pipeline.

@@ -134,6 +134,44 @@ scrape must pass normal publication. See
 [`docs/database/SoloFamilyRankingBackfillRunbook.md`](docs/database/SoloFamilyRankingBackfillRunbook.md)
 for incident evidence, JSON fields, safety checks, validation, and rollback.
 
+The exact retired physical-schema cleanup is prepared but **not executed**.
+Default check mode is read-only and emits a deterministic 61-relation manifest;
+its public gate is the proven 13-fingerprint leaderboard/player/ranking/band
+suite. Execute requires accepted cleanup scrape `1278` publication/unfreeze
+parity and the exact accepted manifest SHA-256:
+
+```bash
+tools/postgres-retired-schema-cleanup.sh \
+  --check \
+  --output /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/<check-package> \
+  --parity-evidence /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/<scrape-1278-evidence>/retired-schema-parity-acceptance.json
+```
+
+The package uses the production compose directory and FST drive only, drops no
+active current/snapshot/history table, contains no cascading drop, and performs
+all 61 drops in one transaction. It manifest-binds and restores the exact 108
+logical-metric rows and 3 band-state rows from a complete bound column catalog,
+recaptures the full catalog signature under lock, bounds rollback capture
+timeouts, scans the sanitized actual production compose project and relevant
+nonsecret bind configs, uses shared DDL/sequence advisory guards plus a final
+pre-drop signature check, preserves the exact label-discovered compose override
+order, pins PostgreSQL to the resolved production service container/runtime
+cluster identity, and terminates the identified backend/client before
+ambiguous timeout reconciliation. All libpq access is forced through the local
+Unix socket; incoming inheritance and non-restorable catalog states are
+rejected; a same-cluster scratch restore/catalog proof runs before destruction;
+all target RLS/forced-RLS is rejected while row probes force
+`row_security=off`; and PID start-time/command identity prevents reuse kills.
+The destructive client also waits behind fsynced launch, connect, and
+post-connect SQL barriers: backend/container PIDs are recorded before
+`drop.sql` is released. Signals poll and terminate exact late arrivals before
+reconciliation. Container process discovery requires an actual `psql`
+executable and exact application-name argv token, excluding scanner/control
+processes; ambiguity still terminates recorded clients and fails closed. It
+rehearses
+rollback transactionally after cleanup and never restores automatically. See
+[`docs/database/RetiredPhysicalSchemaCleanupRunbook.md`](docs/database/RetiredPhysicalSchemaCleanupRunbook.md).
+
 Worker correctness rollout uses three rollback-safe environment switches:
 
 - `Features__EnforceScopeCompletenessManifests=true`

@@ -1,0 +1,17 @@
+name	url	format	expected_status	gate
+readyz	http://127.0.0.1:8081/readyz	text	200	false
+web-shell	http://127.0.0.1:3001/	text	200	false
+service-info	http://127.0.0.1:3001/api/service-info	json	200	false
+leaderboard	http://127.0.0.1:3001/api/leaderboard/1fcee9b4-dc49-41b1-8e7d-add244f556a2/Solo_Vocals?top=23&offset=11	json	200	true
+leaderboard-semantic	http://127.0.0.1:3001/api/leaderboard/1fcee9b4-dc49-41b1-8e7d-add244f556a2/Solo_Vocals?top=23&offset=11	leaderboard-semantic	200	true
+rankings	http://127.0.0.1:3001/api/rankings/Solo_Vocals?rankBy=totalscore&page=1&pageSize=10	json	200	true
+player-ranking	http://127.0.0.1:3001/api/rankings/Solo_Vocals/{account_id}?rankBy=totalscore	json	200	true
+rank-history	http://127.0.0.1:3001/api/rankings/Solo_Vocals/{account_id}/history?days=3650	json	200	true
+composite-rankings	http://127.0.0.1:3001/api/rankings/composite?page=1&pageSize=10	json	200	true
+band-rankings	http://127.0.0.1:3001/api/rankings/bands/Band_Duets?rankBy=adjusted&page=1&pageSize=10	json	200	true
+band-ranking	http://127.0.0.1:3001/api/rankings/bands/Band_Duets/{team_key}?rankBy=adjusted	json	200	true
+band-history	http://127.0.0.1:3001/api/rankings/bands/Band_Duets/{team_key}/history?days=3650	json	200	true
+band-songs	http://127.0.0.1:3001/api/rankings/bands/Band_Duets/{team_key}/songs?limit=20	json	200	true
+band-song-rows	http://127.0.0.1:3001/api/rankings/bands/Band_Duets/{team_key}/song-rows	json	200	true
+player-export	http://127.0.0.1:3001/api/player/{account_id}/export	player-export	200	true
+player-export-solo	http://127.0.0.1:3001/api/player/{account_id}/export	player-export-solo	200	true

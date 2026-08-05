@@ -1,0 +1,3 @@
+family	schema	name	expected_rows	canonical_file
+logical-shadow	public	leaderboard_logical_write_metrics	108	leaderboard_logical_write_metrics.csv
+band-song-projection	public	band_song_team_ranking_state	3	band_song_team_ranking_state.csv

@@ -1,0 +1,434 @@
+# Retired Physical Schema Cleanup Runbook
+
+## Decision
+
+**Tier:** package prepared; execution blocked.
+
+This repository contains the exact cleanup package for four retired physical
+schema families. It has **not** been run against PostgreSQL. It is eligible
+only after cleanup scrape `1278` completes, publishes, unfreezes public reads,
+passes exact public/API fingerprint parity, and that parity is explicitly
+accepted in the attestation consumed by the tool.
+
+The package is:
+
+- `tools/postgres-retired-schema-cleanup.sh`
+- `tools/postgres-retired-schema-cleanup.py`
+- `tools/sql/postgres-retired-schema-cleanup/`
+
+Check mode is the default and is read-only. Execute requires both
+`--execute` and the exact SHA-256 from a separately accepted check:
+
+```bash
+tools/postgres-retired-schema-cleanup.sh \
+  --check \
+  --output /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/<check-package> \
+  --parity-evidence /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/<scrape-1278-evidence>/retired-schema-parity-acceptance.json
+
+tools/postgres-retired-schema-cleanup.sh \
+  --execute \
+  --expected-manifest-sha256 <accepted-check-manifest-sha256> \
+  --output /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/<execute-package> \
+  --parity-evidence /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/<scrape-1278-evidence>/retired-schema-parity-acceptance.json
+```
+
+Use a new output directory for each command. The script requires the production
+compose directory `/home/sfenton/Docker/FestivalServiceTracker` and verifies
+that PostgreSQL data and all evidence remain on the 4 TB FST drive.
+
+## Exact scope
+
+`objects.tsv` is the only drop allowlist. It contains 61 relations: 59 tables
+or partitioned tables, one view, and one sequence.
+
+| Ownership family | Exact relations | Count |
+|---|---|---:|
+| Logical shadow | `leaderboard_current_entries` plus 9 leaves; `leaderboard_entry_versions` plus 9 leaves; `leaderboard_logical_write_metrics` | 21 |
+| Score observations | `player_score_observation_union`; `player_score_observations_id_seq`; `player_score_observations` | 3 |
+| Optional band-song projection | `band_song_team_rankings`; its 3 current-band tables; `band_song_team_ranking_state` | 5 |
+| Aggregate ranking deltas | `ranking_deltas` plus 9 leaves; `ranking_delta_tiers` plus 9 leaves; `rank_history_deltas` plus 9 leaves; `composite_ranking_deltas`; `combo_ranking_deltas` | 32 |
+| **Total** |  | **61** |
+
+Indexes, constraints, TOAST relations, defaults, sequence ownership, and
+partition attachments are inventoried and hashed as owned objects. They are not
+separate wildcard drop targets. Table-owned objects disappear only through the
+exact table drop that PostgreSQL already owns.
+
+Two allowlisted tables are intentionally nonempty:
+
+- `leaderboard_logical_write_metrics`: exactly 108 historical audit rows;
+- `band_song_team_ranking_state`: exactly 3 rebuild-state rows.
+
+Check mode exports both tables in deterministic primary-key order, canonicalizes
+the CSV payloads, and binds their row counts, byte counts, SHA-256 values,
+under-lock equality SQL, and rollback `COPY` payloads into the manifest. Export
+and restore columns are generated from a separately canonicalized complete
+column catalog: ordinal/name, type/type OID/typmod, default, nullability,
+identity/generated state, collation, storage/compression, inheritance/missing
+state, statistics target, options, FDW options, and ACL. Any extra, missing, or
+drifted column blocks before data comparison. Every other allowlisted table or
+partition must be exactly empty. The retained rows are explicitly rebuildable
+state, but they are never silently truncated or dropped without an identical
+manifest-bound payload.
+
+The package deliberately excludes all active current-state and physical-source
+families, including:
+
+- `current_leaderboard_entries*`
+- `leaderboard_entries_snapshot*`
+- `leaderboard_entries_overlay*`
+- `score_history*`
+- `current_band_leaderboard_entries*`
+- `band_team_rankings_current_*` and `band_team_rankings_published_*`
+- base `account_rankings`, `rank_history*`, `composite_rankings`,
+  `composite_rank_history*`, `solo_family_rankings`, and `combo_leaderboard`
+- all audit/maintenance tables not named in the 61-row allowlist
+
+Generic matching on `Delta`, `RankDelta`, `current`, `history`, or `ranking`
+is forbidden.
+
+## Retained evidence
+
+The package verifies the existing same-drive evidence before it can become
+ready:
+
+| Evidence | SHA-256 |
+|---|---|
+| `retired-schema-baseline.txt` | `f83ba535997a6a1c5a3cad80c715eb9bece7a3cefc382d31d2fbcf2540bf879f` |
+| `retired-schema-external-dependencies.txt` | `07e6cb6eb173f2a8cef6b340e001ca091815855207b6a9396c88a5780233968c` |
+| `retired-schema-rollback.sql` | `35f0df8e9d3f1e24dd2ab0c019b1b53a5adfdc0c7fa00736c6608a3011aa7aba` |
+| `ranking-deltas/catalog-baseline.tsv` | `d6ae264202b2b91207676a35710f76299dec1042618fd3f642025b56785d2f5c` |
+| `ranking-deltas/rollback-schema.sql` | `1e5529ede22b48cbf8950fccef15582b6c8717da02fc53f92f764e14546c43f7` |
+
+Root:
+
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/branch-cleanup-20260803/`
+
+The two retained rollback dumps overlap on 22 ranking relations. The
+orchestrator therefore also creates fresh, non-overlapping schema-only rollback
+DDL for each of the four ownership families plus `rollback-all.sql`. Their
+normalized SHA-256 values are part of the approved manifest.
+The generated observation-family rollback also restores the captured sequence
+`last_value`/`is_called` state after recreating its ownership and default.
+Logical-shadow and band-song rollback files include the exact canonical
+108-row and 3-row payloads, respectively.
+
+Every `pg_dump` rollback capture uses `--lock-wait-timeout=5s`, a 30-second
+catalog statement timeout through `PGOPTIONS`, and an outer two-minute process
+timeout. The sequence-state query has a two-second lock timeout, 15-second
+statement timeout, and 30-second process timeout. Timeout or capture failure
+records a failed rollback hash and prevents execute readiness.
+
+## Parity attestation
+
+The cleanup tool does not infer human acceptance merely because scrape `1278`
+is published. `--parity-evidence` must be a same-drive JSON file with:
+
+```json
+{
+  "schemaVersion": 1,
+  "decision": "accepted",
+  "scrapeId": 1278,
+  "published": true,
+  "unfrozen": true,
+  "exactPublicFingerprintParity": true,
+  "fingerprintCount": 13,
+  "cleanupImageId": "sha256:<accepted-running-image-id>",
+  "fingerprintSpecSha256": "<accepted-request-spec-sha256>",
+  "acceptedAtUtc": "<accepted-evidence-time>Z",
+  "evidenceRoot": "/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/<scrape-1278-evidence>"
+}
+```
+
+Use
+`tools/sql/postgres-retired-schema-cleanup/parity-acceptance.example.json` as
+the shape only. Do not create an accepted attestation until the full scrape,
+publication, unfreeze, and exact parity evidence actually pass.
+The fingerprint-spec hash and count bind acceptance to the same exact
+13-surface request/normalization suite that check and execute recapture.
+
+## Check-mode evidence and gates
+
+Check mode:
+
+1. Verifies the production compose directory and FST-drive data/evidence paths.
+2. Runs the zero-scratch reclaim capacity guard.
+3. Captures PostgreSQL, service, web, worker, `/readyz`, web-shell, and
+   `/api/service-info` health plus Docker CPU/memory diagnostics.
+4. Requires scrape `1278` to be completed and published, public reads
+   unfrozen, no working publication, no running scrape, and no failed
+   publication-critical phase.
+5. Requires `fstworker` stopped with restart policy `no`, pinned to the same
+   cleanup image as `fstservice`, and its durable ledger absent or `offline`
+   with no current operation.
+6. Captures ungranted locks, long queries, active target queries, vacuum/index
+   progress, and rewrite-like activity.
+7. Inventories every exact relation, relkind, owner, partition parent,
+   sequence owner/value, and total bytes. Fifty-seven table/partition objects
+   use a bounded exact-zero probe. The two retained-state tables require exact
+   counts of 108 and 3 plus canonical payload SHA-256 values.
+8. Captures every direct `pg_inherits` child of all five partitioned parents,
+   regardless of child name or schema, and requires exact set equality with
+   the 45 allowlisted leaves. Any custom-named attached child blocks.
+   A second inventory captures every incoming `pg_inherits` edge for all 61
+   targets: standalone tables and partitioned parents must be parentless, while
+   each leaf must have exactly its allowlisted parent. Any external parent,
+   extra parent, or detach-in-progress state blocks.
+9. Rejects missing or extra matching relations.
+10. Rejects external views/materialized views, routines, non-internal triggers,
+   foreign keys, rules, policies, or publications that depend on the targets.
+11. Captures internal indexes, constraints, partition bindings, TOAST objects,
+    and sequence ownership.
+12. Builds a complete canonical catalog signature covering relations and
+    columns, constraints, indexes, all triggers, policies/RLS, target and
+    dependent view/rule definitions, publications, sequence definition/
+    ownership/state, partition keys/bounds/attachments, direct dependencies,
+    and matching routine definitions.
+13. Searches each repository runtime source/config root and the actual
+    production compose project separately for retired object names. Production
+    ownership includes every discovered raw compose YAML/override, a
+    purpose-built sanitized projection of `docker compose config --format
+    json`, the resolved bind inventory, and every bounded nonsecret
+    bind-mounted config file. Environment values, label values, secret bind
+    paths, and secret contents are never persisted; only retired-name matches
+    are emitted from raw files. `rg` exit `0` and `1` are accepted; exit `2+`,
+    render failure, a missing root, unreadable relevant bind, or a config hash
+    changing during scan fails closed. The manifest records every successful
+    root, rendered-config hash, raw compose hash, bind classification, and
+    nonsecret bind-config hash.
+    The file list comes from every running project container's
+    `com.docker.compose.project.config_files` label. All containers must agree
+    on project, working directory, and ordered list. Every render, service-ID
+    lookup, initializer, and validation uses that exact ordered
+    `docker compose -f <base> -f <override> ...` sequence, preserving
+    production-only overrides such as PIA image and bind routing.
+    Tests, docs, evidence tools, and rollback packages are retained separately
+    as an audit rather than treated as runtime owners.
+14. Captures the proven 13-fingerprint public suite: leaderboard raw and
+    semantic views; solo list/player/history; composite; band list/team/history/
+    songs/song rows; and full/solo normalized player exports. The account and
+    band team keys are derived from the captured ranking lists, and the exact
+    resolved sample URLs are manifest-bound. `/readyz`, web-shell, and
+    `/api/service-info` remain separate health evidence.
+15. Generates exact drop SQL, per-family rollback DDL, a combined rollback
+    file, hashes the orchestrator/helper/capture SQL, and emits a deterministic
+    `manifest.json`.
+
+Dynamic capture timestamps, free-byte counters, and CPU/memory samples remain
+in evidence but are intentionally outside the deterministic manifest. Object
+shape, sizes, publication pointers, image IDs, parity evidence, public
+fingerprints, source ownership, and rollback hashes are inside it.
+
+## Execute behavior
+
+Execute rebuilds the complete check package from current state and refuses to
+continue unless its manifest SHA-256 exactly equals
+`--expected-manifest-sha256`. It then repeats publication, worker, health,
+capacity, image, and fingerprint checks immediately before DDL.
+
+The generated SQL:
+
+- takes the nonblocking global publication maintenance lock;
+- starts one atomic transaction for all 61 objects;
+- owns the documented FST schema-DDL advisory namespace
+  `5067481511116519501` and the retired-sequence namespace
+  `5067481511116519502`; package rollback rehearsal uses the same guards;
+- reasserts the existing sequence ownership with a transactional no-op
+  `ALTER SEQUENCE ... OWNED BY ...`; PostgreSQL holds its
+  `SHARE ROW EXCLUSIVE` sequence lock through commit, conflicting with
+  `nextval`'s relation lock before either catalog signature is evaluated;
+- runs the scrape/publication/freeze/worker/contention gate once before taking
+  target locks, so cleanup-created public waiters cannot cause a later partial
+  family commit;
+- locks all five partitioned parents first with a 5-second lock timeout, then
+  proves their complete attached-child sets equal the allowlist;
+- locks every remaining table before the first drop;
+- immediately recaptures the complete manifest-bound catalog signature after
+  the final target lock and rejects any column, constraint, index, trigger,
+  policy/RLS, view/rule, sequence, partition, dependency, or routine drift;
+- repeats that complete signature comparison at the last possible database
+  statement before the first drop. External DDL that ignores the advisory
+  namespace cannot be universally excluded, so the stopped worker, removed
+  writers, table/view/sequence locks, bound sequence state, and final recheck
+  fail closed on observed sequence/routine drift;
+- rejects catalog states that a schema-only dump cannot faithfully recreate,
+  including dropped/missing-value columns, invalid/not-ready/not-live indexes,
+  `indcheckxmin`, and pending partition detach state;
+- rejects every target with `relrowsecurity` or `relforcerowsecurity` enabled.
+  All table-count, emptiness, retained-data, scratch-proof, rehearsal, and
+  destructive probes set `row_security=off`; policy enforcement therefore
+  errors instead of hiding rows. The pinned runtime role must attest either
+  superuser or `BYPASSRLS` privilege before the package can become ready;
+- uses a 30-second statement timeout, 5-minute transaction timeout, and
+  60-second idle transaction timeout;
+- exact-zero-checks the 57 empty table/partition objects and compares the two
+  retained tables bidirectionally against typed manifest payloads under lock;
+- rejects missing, inexact, incorrectly owned, wrongly attached, unexpected,
+  or retained-data-drifted objects;
+- commits all four ownership families together or rolls all four back;
+- uses no wildcard drops, `IF EXISTS`, or cascading clause.
+
+Dependency-safe order is fixed:
+
+1. logical-shadow leaves, parents, then metrics;
+2. observation union view, observation column default/sequence ownership,
+   sequence, then table;
+3. exact band-song tables;
+4. ranking-delta leaves before each partitioned parent, then the two standalone
+   aggregate tables.
+
+Family drop markers are diagnostic only and occur inside the uncommitted
+transaction. Only `FST_ALL_COMMITTED` proves the single atomic commit; there is
+no supported partial-family completion state.
+
+## Post-action validation
+
+After the one all-family transaction commits, execute must pass every step:
+
+1. All 61 relations are absent.
+2. `docker compose run --rm --no-deps fstservice --initialize-schema-only`
+   runs from the pinned cleanup image.
+3. All 61 relations remain absent after startup initialization.
+4. The freshly captured rollback DDL is executed inside one bounded transaction,
+   the complete catalog/column signature, all 61 relkinds, and the exact
+   108-row and 3-row retained payloads are verified before rollback.
+5. All 61 relations remain absent after the rollback rehearsal.
+6. Public/API HTTP statuses and canonical fingerprints exactly match the
+   approved pre-action manifest.
+7. Published scrape/current publication remain unchanged, reads remain
+   unfrozen, no working publication or scrape appears, and the worker remains
+   stopped/offline.
+8. PostgreSQL/service/web health, the capacity guard, database bytes,
+   filesystem bytes, and target bytes are recaptured.
+9. The complete evidence directory receives `package-checksums.sha256`.
+
+No minimum byte reclaim is claimed: nearly all tables are already empty and
+the only data removed is the exact manifest-bound 108-row audit payload and
+3-row rebuild-state payload. The post-action package records measured bytes.
+
+## Failure and rollback
+
+The orchestrator never restores automatically. Any failure writes
+`FAILED.txt`, the atomic commit state, and `ROLLBACK-INSTRUCTIONS.txt`.
+
+Before an explicit restore:
+
+1. Keep the worker stopped and publication fixed on scrape `1278`.
+2. Inventory all 61 objects. A failed drop transaction leaves all present; a
+   committed drop leaves all absent.
+3. Verify `rollback-all.sql`, both retained payload hashes, and generated
+   family hashes.
+4. Restore `rollback-all.sql` using `psql --single-transaction` only when all
+   61 objects are absent.
+5. Re-run schema, startup, publication, health, and public fingerprint checks.
+
+Do not apply `rollback-all.sql` to a partially present schema. Do not use a
+cascading clause. Do not restart the worker until the restored or cleaned state
+is accepted.
+
+All shared and destructive `docker exec ... psql` calls use
+`PGCONNECT_TIMEOUT=10` and an outer seven-minute timeout with a 30-second kill
+grace, exceeding the five-minute database transaction bound. If the destructive
+client exits nonzero or times out, the orchestrator performs bounded catalog
+reconciliation. It continues only when all 61 objects are proven absent and
+then still requires every post-action validation; all-present is recorded as a
+rolled-back failure and mixed/unknown state is a hard stop.
+
+The destructive client uses a unique `application_name` and records its local
+timeout PID, container-side `psql` PID, PostgreSQL backend PID, and state in
+`post/drop-process-control.csv`. Timeout, `ERR`, `INT`, `TERM`, or `HUP`
+cancels and then terminates only that exact backend/client, waits until both
+are gone and the transaction has ended, and only then permits reconciliation.
+Unidentified or still-active processes forbid both all-present and all-absent
+acceptance.
+
+Container client discovery uses `/proc/<pid>/exe` with basename exactly
+`psql` plus an exact `application_name=<run-id>` argv token. The scanner's own
+shell/parent PIDs and differently named control connections are excluded;
+substring matches are forbidden. Ambiguous discovery never returns early:
+the already recorded backend, container client, and local child are still
+cancelled/terminated and waited, while final ambiguity remains a hard failure.
+
+Launch uses a three-stage pipe barrier. A local coprocess waits before starting
+`docker exec`; the orchestrator first records and fsyncs its PID, start ticks,
+command hash, active state, and armed traps. After the local command identity
+changes to the exact timeout/docker/application command, a container shell
+still waits on a second `CONNECT` token. The connected `psql` receives only a
+backend-PID probe, then blocks on stdin. Container and backend PIDs are
+independently matched, recorded, and fsynced as
+`post-connect-barrier-ready`; only then is `drop.sql` released through the
+third gate. A signal at any barrier terminates and waits the exact local child
+and polls for any late-arriving exact backend/client before catalog
+classification; all-present can never clear active state for a client that
+might later connect or receive SQL.
+
+The PostgreSQL target is resolved from the exact compose `postgres` service,
+not an operator-selected name. Sanitized `POSTGRES_DB`/`POSTGRES_USER` and
+service/worker connection host/port/database/user must agree. The resolved
+container ID plus runtime database, user, port, recovery state, and PostgreSQL
+system identifier are manifest-bound and reverified before execute,
+reconciliation, initializer, and post-check. Explicit clone container,
+database, or user arguments are rejected.
+
+Every libpq client (`psql`, `pg_dump`, `pg_isready`, `createdb`, and `dropdb`)
+is forced to `host=/var/run/postgresql` and the compose-attested port.
+`PGHOST`, `PGHOSTADDR`, `PGPORT`, `PGSERVICE`, and `PGSERVICEFILE` overrides
+are rejected and cleared inside the target container. Runtime attestation must
+report `local-socket`; a remote cluster is rejected even if its database,
+user, and system identifier otherwise match.
+
+Before the destructive client starts, the package creates a uniquely named
+scratch database in the same pinned PostgreSQL container/cluster, restores the
+fresh schema plus retained 108/3-row payload, and runs the complete relkind,
+retained-data, incoming-inheritance, and catalog-signature assertions. The
+scratch database is then dropped. This pre-destructive proof must pass; the
+post-drop rollback rehearsal remains an independent second proof.
+
+Trap handling never treats cleanup failure as success. Known container/local
+clients are terminated even if the backend control query fails, and every
+`ERR`/`INT`/`TERM`/`HUP` after destructive launch performs bounded,
+target-attested catalog reconciliation before exit. The result is classified
+as `committed`, `all-present`, `partial`, or `unknown`; only normal non-signal
+execution with a confirmed-dead backend/client may accept `committed`.
+
+The local timeout PID is bound to `/proc/<pid>/stat` start ticks and a command
+line SHA-256. It is never signaled after `wait` succeeds, and a live PID is
+signaled only when both identities still match, preventing PID-reuse kills.
+
+## Repository-only validation
+
+These tests use generated fixtures and static SQL inspection only:
+
+```bash
+bash -n tools/postgres-retired-schema-cleanup.sh
+python3 -m py_compile tools/postgres-retired-schema-cleanup.py
+bash tools/postgres-retired-schema-cleanup.test.sh
+```
+
+They cover argument parsing, deterministic manifests, arbitrary-named attached
+partitions, exact retained 108/3-row payloads and rollback hashes, retained-data
+and complete-column catalog drift, complete under-lock catalog signatures,
+atomic transaction/concurrency boundaries, sequence/routine drift, bounded
+rollback and psql process capture, post-timeout commit/rollback reconciliation,
+sanitized production compose/raw override/bind ownership, `rg`
+error/missing-root/render failures, ordered PIA override behavior,
+project-container disagreement, clone-target rejection, delayed backend
+`INT`/`TERM`/`HUP` commit-state classification, control-query failure,
+incoming external-parent edges, non-restorable catalog states, scratch
+round-trip failure, local-socket override/remote-target rejection, forced-RLS
+hidden rows, missing RLS-bypass privilege, and PID reuse,
+deterministic signal-at-launch barrier cleanup, unexpected/missing ownership
+evidence, and scanner self-match/prefix/control-process regressions,
+including deterministic interruption after connect but before SQL release,
+dependencies, nonzero rows elsewhere, active scrape, frozen reads,
+worker/source-reference gates, post-action validation, the exact 13-surface
+fingerprint contract and normalizers, absence of cascading/optional drops,
+sequence handling, exact family counts, child-before-parent order, and
+exclusion of active relations.
+
+## Current limitation
+
+This package is prepared evidence, not clearance. It cannot certify that
+scrape `1278` succeeded or that parity was accepted until the real attestation
+and live check package exist. No production, Docker, PostgreSQL, API, or scrape
+operation was run while preparing this repository change.

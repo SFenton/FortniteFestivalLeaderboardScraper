@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "decision": "accepted",
+  "scrapeId": 1278,
+  "published": true,
+  "unfrozen": true,
+  "exactPublicFingerprintParity": true,
+  "fingerprintCount": 13,
+  "cleanupImageId": "sha256:replace-with-the-accepted-cleanup-image-id",
+  "fingerprintSpecSha256": "replace-with-the-accepted-public-fingerprint-spec-sha256",
+  "acceptedAtUtc": "replace-with-accepted-evidence-time",
+  "evidenceRoot": "/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/replace-with-scrape-1278-evidence"
+}

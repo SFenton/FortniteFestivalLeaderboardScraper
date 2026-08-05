@@ -844,6 +844,34 @@ place until a cleanup image completes one full scrape with publication and
 public-fingerprint parity. Their later cleanup is a separate explicit
 object-by-object `DROP` without `CASCADE`.
 
+That later action is now packaged, but not executed, in
+`tools/postgres-retired-schema-cleanup.sh`. The 61-row allowlist also includes
+the independently retired logical shadow, observation, and optional band-song
+families. Check mode hashes exact relkinds, owners, bounded exact-zero probes,
+the complete attached partition set, canonical payloads for the retained 108
+logical-metric and 3 band-state rows, complete column/catalog signatures,
+owned objects, external dependencies, verified repository and sanitized
+production-compose/bind source roots, bounded rollback/psql processes,
+cleanup-image identity, publication state, and the exact 13-fingerprint
+leaderboard/player/ranking/band public suite. Account and team samples are
+resolved from the captured ranking lists and then bound into the manifest.
+Execute uses one all-family transaction, cooperative DDL/sequence advisory
+guards, signature checks after all locks and immediately before the first drop,
+the exact ordered compose-label file set for every render/run, a
+compose/runtime-attested production PostgreSQL container and cluster target,
+and PID/application-name-controlled timeout-state reconciliation. It still
+forces local-socket libpq access, rejects all unexpected incoming inheritance
+parents and non-roundtrippable catalog states, and requires a same-cluster
+pre-destructive scratch restore/signature proof. Target RLS/forced-RLS must be
+off, probes force `row_security=off`, and the pinned role must be superuser or
+`BYPASSRLS`. Fsynced launch/connect/post-connect barriers record local,
+container, and backend identity before the destructive client receives SQL.
+Container
+discovery requires executable `psql` plus an exact application-name argv token,
+so scanner/control processes cannot self-match. It still requires accepted
+scrape-`1278` publication/unfreeze parity and an identical manifest. See
+`docs/database/RetiredPhysicalSchemaCleanupRunbook.md`.
+
 Canonical `account_rankings`, base `rank_history`, `composite_rankings`,
 `composite_rank_history`, solo-family rankings, combo rankings, and all band
 ranking/history change detection remain active. Score `minLeeway` filtering,
@@ -913,7 +941,7 @@ boundary.
 | `band_team_rankings_published_band_*` | Derived published ranking projection | Publication transaction | Public ranking source and rollback target |
 | `band_team_ranking_stats_current_band_*`, `band_team_ranking_stats_published_band_*` | Derived stats projection | Ranking rebuild/publication | Must promote with ranking rows |
 | `band_team_ranking_generation` | Publication/audit metadata | Ranking pipeline | Tracks durable generation and source scrape |
-| `band_song_team_rankings`, `band_song_team_ranking_state`, `band_song_team_rankings_current_band_duets`, `band_song_team_rankings_current_band_trios`, `band_song_team_rankings_current_band_quad` | Empty retired optional song/team ranking projection objects; absent from fresh schemas | None; writer, legacy reader, config, maintenance ownership, and startup creation are removed | Existing physical objects await cleanup-image full-scrape parity; public reads use published current-band rows or fail closed |
+| `band_song_team_rankings`, `band_song_team_ranking_state`, `band_song_team_rankings_current_band_duets`, `band_song_team_rankings_current_band_trios`, `band_song_team_rankings_current_band_quad` | Retired optional song/team ranking projection objects; ranking rows are empty, while the state ledger retains 3 rebuild rows; absent from fresh schemas | None; writer, legacy reader, config, maintenance ownership, and startup creation are removed | Existing physical objects await cleanup-image full-scrape parity; cleanup must hash and preserve the 3 state rows; public reads use published current-band rows or fail closed |
 | `band_team_rank_history`, `band_team_rank_history_points`, `band_team_rank_history_latest`, `band_team_ranking_stats_history` | Legacy durable history/latest | `MetaDatabase`, history API | Retain until v2/read-source parity and restore prove removal |
 | `band_team_rank_history_points_v2` partitions | Durable public history for Quad | Disabled history writer; API/export for non-promoted band types | Duets and Trios leaves retired; Quad remains `359,383,226` rows / `388,775,297,024` bytes |
 | `band_team_rank_history_points_v3_duets` monthly partitions and dictionaries | Durable compact Duets public history | `MetaDatabase` when the default-off compact flag and ready state are enabled | `215,134,574` rows / `52,134,436,864` bytes; rebuilds v2 through checked-in SQL |

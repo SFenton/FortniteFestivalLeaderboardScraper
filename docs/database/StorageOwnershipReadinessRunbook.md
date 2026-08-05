@@ -45,6 +45,14 @@ change performs no live DDL; existing physical objects remain until a cleanup
 image completes one full scrape with publication and public-fingerprint
 parity.
 
+The combined exact physical cleanup package is now prepared at
+`tools/postgres-retired-schema-cleanup.sh` and
+`docs/database/RetiredPhysicalSchemaCleanupRunbook.md`. Its observation scope
+is exactly the union view, owned sequence, and empty table; it does not select
+`score_history`, band facts, notifications, or any other audit/history table.
+Execution remains blocked on accepted scrape-`1278` publication/unfreeze and
+fingerprint parity.
+
 Live preflight at `2026-07-26T01:35:54Z`:
 
 | Gate | Result |
@@ -100,6 +108,13 @@ fallback and fail-closed generation gates remain. This code change performs no
 live DDL. Existing physical copies, indexes, TOAST objects, and the state
 ledger await one cleanup-image full scrape with publication and exact public
 fingerprint parity before physical removal.
+
+The prepared combined package names exactly these five relations and no active
+band current/ranking table. It inventories their owned indexes/TOAST objects,
+drops only the five named tables as part of the all-family atomic transaction,
+and preserves the exact three-row state ledger as canonical, hashed rollback
+data. See
+`docs/database/RetiredPhysicalSchemaCleanupRunbook.md`.
 
 P9 remains governed by its unchanged gate below; P6 and P8 were later
 executed. Evidence:

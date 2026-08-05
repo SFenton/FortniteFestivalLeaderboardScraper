@@ -246,7 +246,7 @@ work, rebuild/restore validation, tests, and a new full live-scrape promotion.
 
 The repository change intentionally performs no live DDL. Existing production
 objects remain as the empty current/version parents and 18 leaves, their
-retained primary-key families, and the 108-row metrics table. They await a
+retained primary-key families, and the retired metrics table. They await a
 cleanup image followed by a successful full scrape with publication and
 public-fingerprint parity before an exact, separately recorded physical drop.
 Repository scrape-evidence and bounded-restore tooling checks `to_regclass`
@@ -256,16 +256,17 @@ failing the evidence workflow.
 
 ## Next storage phase
 
-The only remaining logical-shadow phase is cleanup-image full-scrape parity
-and, after that gate clears, exact physical removal of the retired current,
-version, and metrics objects. Until then, preserve the rebuild/rollback SQL,
-scope fingerprints, published source maps, current projection, manifests, and
-execution evidence.
+The exact physical cleanup package is now prepared at
+`tools/postgres-retired-schema-cleanup.sh` and
+`docs/database/RetiredPhysicalSchemaCleanupRunbook.md`. It combines this
+21-relation logical family with the independently retired observation,
+band-song, and aggregate ranking-delta families in one atomic transaction. Its
+check manifest preserves the exact 108 logical metrics rows as canonical CSV,
+SHA-256, under-lock equality data, and rollback `COPY` payload. It is not
+clearance and has not executed.
 
-Keep `player_score_observations` separate from this completed phase. The next
-lowest-risk storage phase is to independently verify that both observation
-writers were disabled for published scrape `1267`, refresh its manifest and
-rehydration package, and apply the same pre/post public parity gate before any
-observation truncate. The compact solo projection remains an implementation
-candidate, but optional-build/rewrite work is still below the seven-day
-headroom threshold.
+The hard gate remains cleanup scrape `1278`: successful completion,
+publication, unfreeze, exact public/API fingerprint parity, an explicit
+accepted parity attestation, and a matching deterministic check manifest.
+Until then, preserve the rebuild/rollback SQL, scope fingerprints, published
+source maps, current projection, manifests, and execution evidence.

@@ -5,6 +5,7 @@ COMPOSE_DIR="${COMPOSE_DIR:-/home/sfenton/Docker/FestivalServiceTracker}"
 PG_CONTAINER="${PG_CONTAINER:-fst-postgres}"
 PG_USER="${PG_USER:-fst}"
 PG_DB="${PG_DB:-fstservice}"
+PG_PORT="${PG_PORT:-5432}"
 FST_STORAGE_ROOT="${FST_STORAGE_ROOT:-/mnt/docker-storage}"
 ACTION_CLASS="${ACTION_CLASS:-observation}"
 OUTPUT_FILE="${OUTPUT_FILE:-}"
@@ -35,6 +36,9 @@ Options:
   --output FILE                 Also persist the JSON report to FILE
   --compose-dir DIR             Production compose directory
   --pg-container NAME           PostgreSQL container name
+  --pg-user USER                PostgreSQL user
+  --pg-db DATABASE              PostgreSQL database
+  --pg-port PORT                PostgreSQL local socket port
   --fst-storage-root DIR        Required FST storage root
   -h, --help                    Show this help
 
@@ -67,6 +71,9 @@ while [[ $# -gt 0 ]]; do
         --output) OUTPUT_FILE="$2"; shift 2 ;;
         --compose-dir) COMPOSE_DIR="$2"; shift 2 ;;
         --pg-container) PG_CONTAINER="$2"; shift 2 ;;
+        --pg-user) PG_USER="$2"; shift 2 ;;
+        --pg-db) PG_DB="$2"; shift 2 ;;
+        --pg-port) PG_PORT="$2"; shift 2 ;;
         --fst-storage-root) FST_STORAGE_ROOT="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) printf 'Unknown option: %s\n\n' "$1" >&2; usage >&2; exit 64 ;;
@@ -95,7 +102,7 @@ require_positive_integer() {
     fi
 }
 
-for command in docker df findmnt python3 realpath; do
+for command in docker df findmnt python3 realpath timeout; do
     require_command "$command"
 done
 
@@ -179,8 +186,18 @@ read -r filesystem_source filesystem_type < <(
 )
 
 sql_result="$(
-    docker exec "$PG_CONTAINER" psql \
-        -X -v ON_ERROR_STOP=1 -U "$PG_USER" -d "$PG_DB" -AtF '|' \
+    timeout --signal=TERM --kill-after=30s 7m \
+        docker exec \
+        -e PGCONNECT_TIMEOUT=10 \
+        -e PGOPTIONS="-c row_security=off" \
+        -e PGHOST= \
+        -e PGHOSTADDR= \
+        -e PGPORT= \
+        -e PGSERVICE= \
+        -e PGSERVICEFILE= \
+        "$PG_CONTAINER" psql \
+        -X -v ON_ERROR_STOP=1 -h /var/run/postgresql -p "$PG_PORT" \
+        -U "$PG_USER" -d "$PG_DB" -AtF '|' \
         -c "
             SELECT
                 pg_database_size(current_database()),

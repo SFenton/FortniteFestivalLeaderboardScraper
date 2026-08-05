@@ -259,6 +259,39 @@ Physical cleanup is blocked until a cleanup image completes one full scrape,
 publication, and public-fingerprint parity. Cleanup then runs as a separate
 explicit object list using `DROP` without `CASCADE`.
 
+The repository-only cleanup package is now prepared:
+
+- `tools/postgres-retired-schema-cleanup.sh`
+- `tools/sql/postgres-retired-schema-cleanup/objects.tsv`
+- `docs/database/RetiredPhysicalSchemaCleanupRunbook.md`
+
+It covers 61 exact relations across the logical shadow, observations,
+band-song projection, and aggregate ranking-delta families. Default check mode
+captures the complete attached partition set, exact-zero evidence for 57
+table/partition objects, canonical SHA-256 payloads for the retained 108
+logical-metric and 3 band-state rows from a complete column catalog, a complete
+catalog/dependency signature, verified source-scan roots, bounded rollback
+capture, sanitized actual production-compose and nonsecret bind ownership,
+publication/worker/health evidence, and the proven 13-fingerprint public suite.
+Execute uses one atomic all-family transaction, DDL/sequence advisory guards,
+signature checks after all target locks and immediately before the first drop,
+the exact ordered compose-label file/override sequence for every render and
+initializer, a compose/runtime-attested production PostgreSQL container and
+cluster target, and exact backend/container-client termination before catalog
+reconciliation after ambiguous timeout or signal. Local-socket-only libpq,
+complete incoming-inheritance rejection, restorable-catalog gates, a
+same-cluster pre-destructive scratch round trip, and PID-reuse-safe termination
+are also mandatory. All target RLS/forced-RLS must be disabled, data probes
+force `row_security=off`, and the pinned role must attest superuser or
+`BYPASSRLS`. Fsynced launch/connect/post-connect barriers prevent signals from
+racing identity capture or SQL release. Exact executable/argv matching
+prevents scanner/control self-matches, and ambiguous discovery still terminates
+recorded clients before failing. It remains hard-blocked until cleanup scrape
+`1278` is
+successfully published and unfrozen, exact public/API parity is explicitly
+accepted, and the regenerated manifest matches the supplied SHA-256. This
+preparation ran no live DDL and does not mark the parity gate clear.
+
 ## Capacity preflight guard
 
 Run the read-only guard before every broad scrape, post-process, optional

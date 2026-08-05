@@ -1,0 +1,62 @@
+order	family	object_type	relkind	schema	name	parent_schema	parent_name	owner_column	drop_method
+1	logical-shadow	table	r	public	leaderboard_current_entries_bass	public	leaderboard_current_entries		table
+2	logical-shadow	table	r	public	leaderboard_current_entries_default	public	leaderboard_current_entries		table
+3	logical-shadow	table	r	public	leaderboard_current_entries_drums	public	leaderboard_current_entries		table
+4	logical-shadow	table	r	public	leaderboard_current_entries_guitar	public	leaderboard_current_entries		table
+5	logical-shadow	table	r	public	leaderboard_current_entries_solo_bass	public	leaderboard_current_entries		table
+6	logical-shadow	table	r	public	leaderboard_current_entries_solo_drums	public	leaderboard_current_entries		table
+7	logical-shadow	table	r	public	leaderboard_current_entries_solo_guitar	public	leaderboard_current_entries		table
+8	logical-shadow	table	r	public	leaderboard_current_entries_solo_vocals	public	leaderboard_current_entries		table
+9	logical-shadow	table	r	public	leaderboard_current_entries_vocals	public	leaderboard_current_entries		table
+10	logical-shadow	partitioned_table	p	public	leaderboard_current_entries				table
+11	logical-shadow	table	r	public	leaderboard_entry_versions_bass	public	leaderboard_entry_versions		table
+12	logical-shadow	table	r	public	leaderboard_entry_versions_default	public	leaderboard_entry_versions		table
+13	logical-shadow	table	r	public	leaderboard_entry_versions_drums	public	leaderboard_entry_versions		table
+14	logical-shadow	table	r	public	leaderboard_entry_versions_guitar	public	leaderboard_entry_versions		table
+15	logical-shadow	table	r	public	leaderboard_entry_versions_solo_bass	public	leaderboard_entry_versions		table
+16	logical-shadow	table	r	public	leaderboard_entry_versions_solo_drums	public	leaderboard_entry_versions		table
+17	logical-shadow	table	r	public	leaderboard_entry_versions_solo_guitar	public	leaderboard_entry_versions		table
+18	logical-shadow	table	r	public	leaderboard_entry_versions_solo_vocals	public	leaderboard_entry_versions		table
+19	logical-shadow	table	r	public	leaderboard_entry_versions_vocals	public	leaderboard_entry_versions		table
+20	logical-shadow	partitioned_table	p	public	leaderboard_entry_versions				table
+21	logical-shadow	table	r	public	leaderboard_logical_write_metrics				table
+22	score-observations	view	v	public	player_score_observation_union				view
+23	score-observations	sequence	S	public	player_score_observations_id_seq	public	player_score_observations	id	owned_sequence
+24	score-observations	table	r	public	player_score_observations				table
+25	band-song-projection	table	r	public	band_song_team_rankings_current_band_duets				table
+26	band-song-projection	table	r	public	band_song_team_rankings_current_band_trios				table
+27	band-song-projection	table	r	public	band_song_team_rankings_current_band_quad				table
+28	band-song-projection	table	r	public	band_song_team_rankings				table
+29	band-song-projection	table	r	public	band_song_team_ranking_state				table
+30	aggregate-ranking-deltas	table	r	public	ranking_deltas_pro_bass	public	ranking_deltas		table
+31	aggregate-ranking-deltas	table	r	public	ranking_deltas_pro_cymbals	public	ranking_deltas		table
+32	aggregate-ranking-deltas	table	r	public	ranking_deltas_pro_drums	public	ranking_deltas		table
+33	aggregate-ranking-deltas	table	r	public	ranking_deltas_pro_guitar	public	ranking_deltas		table
+34	aggregate-ranking-deltas	table	r	public	ranking_deltas_pro_vocals	public	ranking_deltas		table
+35	aggregate-ranking-deltas	table	r	public	ranking_deltas_solo_bass	public	ranking_deltas		table
+36	aggregate-ranking-deltas	table	r	public	ranking_deltas_solo_drums	public	ranking_deltas		table
+37	aggregate-ranking-deltas	table	r	public	ranking_deltas_solo_guitar	public	ranking_deltas		table
+38	aggregate-ranking-deltas	table	r	public	ranking_deltas_solo_vocals	public	ranking_deltas		table
+39	aggregate-ranking-deltas	partitioned_table	p	public	ranking_deltas				table
+40	aggregate-ranking-deltas	table	r	public	ranking_delta_tiers_pro_bass	public	ranking_delta_tiers		table
+41	aggregate-ranking-deltas	table	r	public	ranking_delta_tiers_pro_cymbals	public	ranking_delta_tiers		table
+42	aggregate-ranking-deltas	table	r	public	ranking_delta_tiers_pro_drums	public	ranking_delta_tiers		table
+43	aggregate-ranking-deltas	table	r	public	ranking_delta_tiers_pro_guitar	public	ranking_delta_tiers		table
+44	aggregate-ranking-deltas	table	r	public	ranking_delta_tiers_pro_vocals	public	ranking_delta_tiers		table
+45	aggregate-ranking-deltas	table	r	public	ranking_delta_tiers_solo_bass	public	ranking_delta_tiers		table
+46	aggregate-ranking-deltas	table	r	public	ranking_delta_tiers_solo_drums	public	ranking_delta_tiers		table
+47	aggregate-ranking-deltas	table	r	public	ranking_delta_tiers_solo_guitar	public	ranking_delta_tiers		table
+48	aggregate-ranking-deltas	table	r	public	ranking_delta_tiers_solo_vocals	public	ranking_delta_tiers		table
+49	aggregate-ranking-deltas	partitioned_table	p	public	ranking_delta_tiers				table
+50	aggregate-ranking-deltas	table	r	public	rank_history_deltas_pro_bass	public	rank_history_deltas		table
+51	aggregate-ranking-deltas	table	r	public	rank_history_deltas_pro_cymbals	public	rank_history_deltas		table
+52	aggregate-ranking-deltas	table	r	public	rank_history_deltas_pro_drums	public	rank_history_deltas		table
+53	aggregate-ranking-deltas	table	r	public	rank_history_deltas_pro_guitar	public	rank_history_deltas		table
+54	aggregate-ranking-deltas	table	r	public	rank_history_deltas_pro_vocals	public	rank_history_deltas		table
+55	aggregate-ranking-deltas	table	r	public	rank_history_deltas_solo_bass	public	rank_history_deltas		table
+56	aggregate-ranking-deltas	table	r	public	rank_history_deltas_solo_drums	public	rank_history_deltas		table
+57	aggregate-ranking-deltas	table	r	public	rank_history_deltas_solo_guitar	public	rank_history_deltas		table
+58	aggregate-ranking-deltas	table	r	public	rank_history_deltas_solo_vocals	public	rank_history_deltas		table
+59	aggregate-ranking-deltas	partitioned_table	p	public	rank_history_deltas				table
+60	aggregate-ranking-deltas	table	r	public	composite_ranking_deltas				table
+61	aggregate-ranking-deltas	table	r	public	combo_ranking_deltas				table
