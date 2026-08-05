@@ -107,26 +107,27 @@ COPY (
         SELECT 'sequence-owner',
                sequence_schema.nspname,
                sequence_row.relname,
-               owner_schema.nspname,
-               owner_table.relname,
+               owner_target.schema_name,
+               owner_target.object_name,
                owner_attribute.attname,
                dependency.deptype::text
-        FROM target sequence_target
+        FROM target owner_target
+        JOIN pg_catalog.pg_depend dependency
+          ON dependency.refclassid = 'pg_class'::regclass
+         AND dependency.refobjid = owner_target.oid
+         AND dependency.refobjsubid > 0
+         AND dependency.classid = 'pg_class'::regclass
+         AND dependency.objsubid = 0
+         AND dependency.deptype IN ('a', 'i')
         JOIN pg_catalog.pg_class sequence_row
-          ON sequence_row.oid = sequence_target.oid
+          ON sequence_row.oid = dependency.objid
          AND sequence_row.relkind = 'S'
         JOIN pg_catalog.pg_namespace sequence_schema
           ON sequence_schema.oid = sequence_row.relnamespace
-        JOIN pg_catalog.pg_depend dependency
-          ON dependency.objid = sequence_row.oid
-         AND dependency.deptype = 'a'
-        JOIN pg_catalog.pg_class owner_table
-          ON owner_table.oid = dependency.refobjid
-        JOIN pg_catalog.pg_namespace owner_schema
-          ON owner_schema.oid = owner_table.relnamespace
         JOIN pg_catalog.pg_attribute owner_attribute
-          ON owner_attribute.attrelid = owner_table.oid
+          ON owner_attribute.attrelid = owner_target.oid
          AND owner_attribute.attnum = dependency.refobjsubid
+         AND NOT owner_attribute.attisdropped
     )
     SELECT kind,
            schema_name AS schema,

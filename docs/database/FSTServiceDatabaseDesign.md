@@ -871,6 +871,28 @@ discovery requires executable `psql` plus an exact application-name argv token,
 so scanner/control processes cannot self-match. It still requires accepted
 scrape-`1278` publication/unfreeze parity and an identical manifest. See
 `docs/database/RetiredPhysicalSchemaCleanupRunbook.md`.
+After scratch restore proof, the connected destructive client remains blocked
+while a second complete HTTP/capacity/container/publication/lock/catalog/
+retained-data/target gate is recaptured and matched to that manifest.
+Container validation includes secret-sanitized actual command, relevant
+environment hashes/presence, mounts, networks/IP aliases, and Compose labels.
+The service's password-free database target must resolve through a shared
+network alias to the same Postgres container/system identifier used by
+maintenance.
+All running endpoints on each shared network are enumerated; the configured
+database alias must be owned exclusively by that attested container.
+The operator-approved manifest is SHA-verified and sealed after the last gate;
+its captured drop hash controls a separately sealed destructive-SQL memfd.
+Neither manifest nor SQL pathname is reopened before streaming.
+Post-drop `--initialize-schema-only` uses an immutable manifest image ID, not
+the mutable Compose tag, and inspects the temporary container's actual image
+before accepting the startup check.
+Raw rollback dumps remain immutable evidence; executable rollback copies retain
+their random restriction keys while replacing only pg_dump's zero timeout
+preamble with bounded statement/lock/idle/transaction values.
+Its capacity gate clears inherited policy overrides, passes the accepted
+zero-reclaim/zero-scratch emergency-window constants explicitly, and
+manifest-binds the effective policy plus guard-script SHA-256.
 
 Canonical `account_rankings`, base `rank_history`, `composite_rankings`,
 `composite_rank_history`, solo-family rankings, combo rankings, and all band

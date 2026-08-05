@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
 
 import argparse
+import copy
 import csv
+import fcntl
 import hashlib
+import http.client
+import ipaddress
 import io
 import json
+import os
 import re
+import socket
+import stat
 import sys
 import zipfile
 from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from urllib.parse import quote, urlparse
 from xml.etree import ElementTree
 
 
@@ -18,6 +26,15 @@ CLEANUP_SCRAPE_ID = 1278
 PUBLICATION_LOCK_KEY = 5067481511116519500
 DDL_MAINTENANCE_LOCK_KEY = 5067481511116519501
 SEQUENCE_MAINTENANCE_LOCK_KEY = 5067481511116519502
+CAPACITY_POLICY = {
+    "estimatedFullScrapeGrowthBytes": 60392999803,
+    "expectedFullScrapesPerDay": 2,
+    "minimumHeadroomDays": 7,
+    "minimumHeadroomBytesOverride": 0,
+    "transientBuildBytes": 0,
+    "requiredScratchBytes": 0,
+    "expectedReclaimBytes": 0,
+}
 FAMILY_COUNTS = {
     "logical-shadow": 21,
     "score-observations": 3,
@@ -433,6 +450,25 @@ $function$;
 """.strip()
 
 
+def effective_publication_gate_sql():
+    return """
+DO $effective_publication_membership$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM retired_cleanup_expected expected
+        JOIN pg_catalog.pg_publication_tables publication_table
+          ON publication_table.schemaname = expected.schema_name
+         AND publication_table.tablename = expected.object_name
+    ) THEN
+        RAISE EXCEPTION
+            'Effective publication membership exists for a cleanup target';
+    END IF;
+END
+$effective_publication_membership$;
+""".strip()
+
+
 def render_drop_sql(
     objects,
     catalog_expected_sql,
@@ -490,15 +526,6 @@ def render_drop_sql(
         "SET LOCAL idle_in_transaction_session_timeout = '60s';",
         "SET LOCAL row_security = off;",
         "SELECT pg_temp.fst_assert_retired_cleanup_runtime();",
-        "DO $sequence_guard$",
-        "BEGIN",
-        f"    IF NOT pg_catalog.pg_try_advisory_xact_lock({SEQUENCE_MAINTENANCE_LOCK_KEY}) THEN",
-        "        RAISE EXCEPTION 'The retired sequence guard is busy';",
-        "    END IF;",
-        "END",
-        "$sequence_guard$;",
-        'ALTER SEQUENCE "public"."player_score_observations_id_seq"',
-        '    OWNED BY "public"."player_score_observations"."id";',
         "",
     ]
 
@@ -582,6 +609,179 @@ def render_drop_sql(
             )
     lines.extend(
         [
+            "",
+            "DO $sequence_dependency_lock$",
+            "DECLARE",
+            "    locked_dependency record;",
+            "BEGIN",
+            "    FOR locked_dependency IN",
+            "        SELECT dependency.objid,",
+            "               dependency.refobjid,",
+            "               dependency.refobjsubid,",
+            "               dependency.deptype",
+            "        FROM pg_catalog.pg_depend dependency",
+            "        WHERE dependency.classid = 'pg_class'::regclass",
+            "          AND dependency.objsubid = 0",
+            "          AND dependency.refclassid = 'pg_class'::regclass",
+            "          AND dependency.refobjsubid > 0",
+            "          AND dependency.deptype IN ('a', 'i')",
+            "          AND (",
+            "              dependency.objid IN (",
+            "                  SELECT sequence_row.oid",
+            "                  FROM retired_cleanup_expected",
+            "                       sequence_expected",
+            "                  JOIN pg_catalog.pg_namespace sequence_schema",
+            "                    ON sequence_schema.nspname =",
+            "                       sequence_expected.schema_name",
+            "                  JOIN pg_catalog.pg_class sequence_row",
+            "                    ON sequence_row.relnamespace =",
+            "                       sequence_schema.oid",
+            "                   AND sequence_row.relname =",
+            "                       sequence_expected.object_name",
+            "                   AND sequence_row.relkind = 'S'",
+            "                  WHERE sequence_expected.object_type =",
+            "                        'sequence'",
+            "              )",
+            "              OR dependency.refobjid IN (",
+            "                  SELECT owner_table.oid",
+            "                  FROM retired_cleanup_expected owner_expected",
+            "                  JOIN pg_catalog.pg_namespace owner_schema",
+            "                    ON owner_schema.nspname =",
+            "                       owner_expected.schema_name",
+            "                  JOIN pg_catalog.pg_class owner_table",
+            "                    ON owner_table.relnamespace =",
+            "                       owner_schema.oid",
+            "                   AND owner_table.relname =",
+            "                       owner_expected.object_name",
+            "                  WHERE owner_expected.object_type IN",
+            "                        ('table', 'partitioned_table')",
+            "              )",
+            "          )",
+            "        ORDER BY dependency.objid,",
+            "                 dependency.refobjid,",
+            "                 dependency.refobjsubid",
+            "        FOR SHARE OF dependency",
+            "    LOOP",
+            "        NULL;",
+            "    END LOOP;",
+            "END",
+            "$sequence_dependency_lock$;",
+            "",
+            "DO $owned_sequence_set$",
+            "BEGIN",
+            "    IF EXISTS (",
+            "        WITH actual_owned_sequences AS (",
+            "            SELECT sequence_schema.nspname AS sequence_schema,",
+            "                   sequence_row.relname AS sequence_name,",
+            "                   owner_schema.nspname AS target_schema,",
+            "                   owner_table.relname AS target_name,",
+            "                   owner_attribute.attname AS target_column,",
+            "                   dependency.deptype::text AS dependency_type",
+            "            FROM retired_cleanup_expected owner_expected",
+            "            JOIN pg_catalog.pg_namespace owner_schema",
+            "              ON owner_schema.nspname =",
+            "                 owner_expected.schema_name",
+            "            JOIN pg_catalog.pg_class owner_table",
+            "              ON owner_table.relnamespace = owner_schema.oid",
+            "             AND owner_table.relname =",
+            "                 owner_expected.object_name",
+            "            JOIN pg_catalog.pg_depend dependency",
+            "              ON dependency.refclassid =",
+            "                 'pg_class'::regclass",
+            "             AND dependency.refobjid = owner_table.oid",
+            "             AND dependency.refobjsubid > 0",
+            "             AND dependency.classid =",
+            "                 'pg_class'::regclass",
+            "             AND dependency.objsubid = 0",
+            "             AND dependency.deptype IN ('a', 'i')",
+            "            JOIN pg_catalog.pg_class sequence_row",
+            "              ON sequence_row.oid = dependency.objid",
+            "             AND sequence_row.relkind = 'S'",
+            "            JOIN pg_catalog.pg_namespace sequence_schema",
+            "              ON sequence_schema.oid =",
+            "                 sequence_row.relnamespace",
+            "            JOIN pg_catalog.pg_attribute owner_attribute",
+            "              ON owner_attribute.attrelid = owner_table.oid",
+            "             AND owner_attribute.attnum =",
+            "                 dependency.refobjsubid",
+            "             AND NOT owner_attribute.attisdropped",
+            "            WHERE owner_expected.object_type IN",
+            "                  ('table', 'partitioned_table')",
+            "        ),",
+            "        expected_owned_sequences AS (",
+            "            SELECT sequence_expected.schema_name",
+            "                       AS sequence_schema,",
+            "                   sequence_expected.object_name",
+            "                       AS sequence_name,",
+            "                   sequence_expected.parent_schema",
+            "                       AS target_schema,",
+            "                   sequence_expected.parent_name",
+            "                       AS target_name,",
+            "                   sequence_expected.owner_column",
+            "                       AS target_column,",
+            "                   'a'::text AS dependency_type",
+            "            FROM retired_cleanup_expected sequence_expected",
+            "            WHERE sequence_expected.object_type = 'sequence'",
+            "        )",
+            "        SELECT 1",
+            "        FROM (",
+            "            (SELECT * FROM actual_owned_sequences",
+            "             EXCEPT ALL",
+            "             SELECT * FROM expected_owned_sequences)",
+            "            UNION ALL",
+            "            (SELECT * FROM expected_owned_sequences",
+            "             EXCEPT ALL",
+            "             SELECT * FROM actual_owned_sequences)",
+            "        ) mismatch",
+            "    ) THEN",
+            "        RAISE EXCEPTION",
+            "            'Owned sequence set differs from allowlist';",
+            "    END IF;",
+            "END",
+            "$owned_sequence_set$;",
+            "",
+            "DO $sequence_guard$",
+            "BEGIN",
+            f"    IF NOT pg_catalog.pg_try_advisory_xact_lock({SEQUENCE_MAINTENANCE_LOCK_KEY}) THEN",
+            "        RAISE EXCEPTION 'The retired sequence guard is busy';",
+            "    END IF;",
+            "END",
+            "$sequence_guard$;",
+            "",
+            "DO $sequence_state_lock$",
+            "DECLARE",
+            "    locked_catalog_row record;",
+            "BEGIN",
+            "    PERFORM last_value, is_called",
+            '    FROM "public"."player_score_observations_id_seq";',
+            "",
+            "    FOR locked_catalog_row IN",
+            "        SELECT relation.oid",
+            "        FROM pg_catalog.pg_class relation",
+            "        JOIN pg_catalog.pg_namespace sequence_schema",
+            "          ON sequence_schema.oid = relation.relnamespace",
+            "        WHERE sequence_schema.nspname = 'public'",
+            "          AND relation.relname =",
+            "              'player_score_observations_id_seq'",
+            "          AND relation.relkind = 'S'",
+            "        FOR SHARE OF relation",
+            "    LOOP",
+            "        NULL;",
+            "    END LOOP;",
+            "",
+            "    FOR locked_catalog_row IN",
+            "        SELECT sequence_catalog.seqrelid",
+            "        FROM pg_catalog.pg_sequence sequence_catalog",
+            "        WHERE sequence_catalog.seqrelid =",
+            "              'public.player_score_observations_id_seq'::regclass",
+            "        FOR SHARE OF sequence_catalog",
+            "    LOOP",
+            "        NULL;",
+            "    END LOOP;",
+            "END",
+            "$sequence_state_lock$;",
+            "",
+            effective_publication_gate_sql(),
             "",
             catalog_assert_sql.rstrip(),
             "",
@@ -750,6 +950,8 @@ def render_drop_sql(
             "",
             catalog_assert_sql.rstrip(),
             "",
+            effective_publication_gate_sql(),
+            "",
         ]
     )
 
@@ -909,33 +1111,82 @@ def validate_drop_sql_text(objects, sql):
     catalog_gate = sql.find("DO $catalog_signature$")
     final_catalog_gate = sql.rfind("DO $catalog_signature$")
     object_gate = sql.find("DO $objects$")
-    if not (last_lock < catalog_gate < object_gate < first_drop):
+    owned_sequence_gate = sql.find("DO $owned_sequence_set$")
+    sequence_dependency_lock = sql.find("DO $sequence_dependency_lock$")
+    sequence_guard = sql.find("DO $sequence_guard$")
+    sequence_state_lock = sql.find("DO $sequence_state_lock$")
+    publication_gate = sql.find("DO $effective_publication_membership$")
+    final_publication_gate = sql.rfind(
+        "DO $effective_publication_membership$"
+    )
+    if not (
+        last_lock
+        < sequence_dependency_lock
+        < owned_sequence_gate
+        < sequence_guard
+        < sequence_state_lock
+        < publication_gate
+        < catalog_gate
+        < object_gate
+        < first_drop
+    ):
         errors.append(
-            "complete catalog signature must be recaptured immediately "
-            "after all target locks and before object checks/drops"
+            "sequence ownership/state locks and complete catalog gates must "
+            "run after all target locks and before object checks/drops"
         )
-    if not (object_gate < final_catalog_gate < first_drop):
+    if not (
+        object_gate
+        < final_catalog_gate
+        < final_publication_gate
+        < first_drop
+    ):
         errors.append(
-            "final catalog signature recheck must be the last database "
-            "gate before drops"
+            "final catalog and effective publication rechecks must be the "
+            "last database gates before drops"
+        )
+    if not (
+        final_publication_gate
+        < default_drop
+        < owned_none
+        < sequence_drop
+        < owner_table_drop
+    ):
+        errors.append(
+            "owned sequence changes are allowed only in the exact "
+            "post-validation destructive order"
         )
     if sql.count("Complete cleanup catalog signature drifted") != 2:
         errors.append("both complete catalog signature gates are required")
     if sql.count("Incoming inheritance edges differ from allowlist") != 1:
         errors.append("complete incoming inheritance gate is missing")
+    if sql.count("Owned sequence set differs from allowlist") != 1:
+        errors.append("exact inverse owned-sequence gate is missing")
+    if sql.count(
+        "Effective publication membership exists for a cleanup target"
+    ) != 2:
+        errors.append("both effective publication gates are required")
     if str(SEQUENCE_MAINTENANCE_LOCK_KEY) not in sql:
         errors.append("retired sequence advisory guard is missing")
+    if sql.count("DO $sequence_guard$") != 1:
+        errors.append("exactly one retired sequence advisory guard is required")
     if str(DDL_MAINTENANCE_LOCK_KEY) not in sql:
         errors.append("schema-DDL advisory guard is missing")
-    sequence_lock = sql.find(
+    if (
         'ALTER SEQUENCE "public"."player_score_observations_id_seq"\n'
         '    OWNED BY "public"."player_score_observations"."id";'
-    )
-    if not (runtime_gate < sequence_lock < first_lock):
-        errors.append(
-            "owned sequence must take its transactional ALTER lock "
-            "before catalog signatures and drops"
-        )
+    ) in sql:
+        errors.append("pre-validation sequence ownership mutation is forbidden")
+    if "FOR SHARE OF dependency" not in sql:
+        errors.append("sequence ownership dependency rows are not locked")
+    if sql.count("DO $sequence_dependency_lock$") != 1:
+        errors.append("exactly one sequence dependency lock gate is required")
+    if sql.count("DO $sequence_state_lock$") != 1:
+        errors.append("exactly one sequence state lock gate is required")
+    if (
+        "FOR SHARE OF relation" not in sql
+        or "FOR SHARE OF sequence_catalog" not in sql
+    ):
+        errors.append("sequence state/option catalog rows are not locked")
     partition_gate = sql.find("DO $partition_set$")
     first_child_lock = min(
         sql.find(f"LOCK TABLE {row.qualified} IN ACCESS EXCLUSIVE MODE;")
@@ -1352,17 +1603,16 @@ def prepare_retained_data(args):
             ]
         )
 
-        rollback_path = (
-            Path(args.logical_rollback)
+        data_path = (
+            Path(args.logical_data)
             if definition["family"] == "logical-shadow"
-            else Path(args.band_rollback)
+            else Path(args.band_data)
         )
         marker = f"-- Retained payload: {key}"
-        rollback_text = rollback_path.read_text(encoding="utf-8")
-        if marker in rollback_text:
+        if data_path.exists() and data_path.stat().st_size:
             raise ValueError(f"rollback payload already exists: {key}")
-        with rollback_path.open("a", encoding="utf-8", newline="") as handle:
-            handle.write("\n" + marker + "\n")
+        with data_path.open("w", encoding="utf-8", newline="") as handle:
+            handle.write(marker + "\n")
             handle.write(
                 _render_copy_payload(
                     actual_name,
@@ -1415,6 +1665,82 @@ def prepare_retained_data(args):
         writer = csv.DictWriter(
             handle,
             fieldnames=metadata_fields,
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(metadata)
+
+
+def validate_retained_recapture(args):
+    specs = read_retained_specs(args.spec)
+    column_catalog = read_column_catalog(args.column_catalog)
+    expected_rows = read_csv(args.expected_metadata)
+    expected_by_key = {
+        f"{row.get('schema', '')}.{row.get('name', '')}": row
+        for row in expected_rows
+    }
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    metadata = []
+    fields = [
+        "family",
+        "schema",
+        "name",
+        "expected_rows",
+        "row_count",
+        "canonical_file",
+        "sha256",
+        "payload_bytes",
+        "column_count",
+        "column_catalog_sha256",
+    ]
+    for spec in specs:
+        key = f"{spec['schema']}.{spec['name']}"
+        definition = RETAINED_DATA[key]
+        bound_columns = retained_columns(column_catalog, key)
+        field_names = [row["column_name"] for row in bound_columns]
+        raw_path = Path(args.raw_dir) / definition["canonical_file"]
+        with raw_path.open(newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            if reader.fieldnames != field_names:
+                raise ValueError(f"{key} recapture header is inexact")
+            rows = _validate_retained_rows(
+                key,
+                list(reader),
+                bound_columns,
+            )
+        canonical_path = output_dir / definition["canonical_file"]
+        with canonical_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=field_names,
+                lineterminator="\n",
+            )
+            writer.writeheader()
+            writer.writerows(rows)
+        row = {
+            "family": definition["family"],
+            "schema": spec["schema"],
+            "name": spec["name"],
+            "expected_rows": str(definition["expected_rows"]),
+            "row_count": str(len(rows)),
+            "canonical_file": definition["canonical_file"],
+            "sha256": sha256_path(canonical_path),
+            "payload_bytes": str(canonical_path.stat().st_size),
+            "column_count": str(len(bound_columns)),
+            "column_catalog_sha256": sha256_path(args.column_catalog),
+        }
+        metadata.append(row)
+        if row != expected_by_key.get(key):
+            raise ValueError(f"retained data drifted after scratch: {key}")
+    with Path(args.metadata_output).open(
+        "w",
+        newline="",
+        encoding="utf-8",
+    ) as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=fields,
             lineterminator="\n",
         )
         writer.writeheader()
@@ -1609,6 +1935,1192 @@ def prepare_catalog_signature(args):
     )
 
 
+def validate_pg_dump_source(source):
+    if "\x00" in source:
+        raise ValueError("pg_dump contains a NUL byte")
+    meta_commands = []
+    for line_number, line in enumerate(source.splitlines(), 1):
+        stripped = line.lstrip()
+        if not stripped.startswith("\\"):
+            continue
+        parts = stripped.split()
+        command = parts[0]
+        meta_commands.append((line_number, command, parts[1:]))
+    if len(meta_commands) != 2:
+        raise ValueError(
+            "pg_dump must contain exactly one restrict/unrestrict pair"
+        )
+    restrict = meta_commands[0]
+    unrestrict = meta_commands[1]
+    if restrict[1] != r"\restrict" or unrestrict[1] != r"\unrestrict":
+        raise ValueError(
+            "pg_dump contains an unsafe or unexpected psql meta-command"
+        )
+    if len(restrict[2]) != 1 or len(unrestrict[2]) != 1:
+        raise ValueError("pg_dump restrict boundaries are malformed")
+    key = restrict[2][0]
+    if key != unrestrict[2][0]:
+        raise ValueError("pg_dump restrict boundary keys differ")
+    if not re.fullmatch(r"[A-Za-z0-9]{32,}", key):
+        raise ValueError("pg_dump restrict boundary key is invalid")
+    return key
+
+
+def canonicalize_pg_dump(args):
+    source = Path(args.input).read_text(encoding="utf-8")
+    validate_pg_dump_source(source)
+    canonical_lines = []
+    for line in source.splitlines(keepends=True):
+        stripped = line.lstrip()
+        prefix = line[: len(line) - len(stripped)]
+        ending = "\n" if line.endswith("\n") else ""
+        if stripped.startswith(r"\restrict "):
+            canonical_lines.append(
+                prefix + r"\restrict <PG_DUMP_RANDOM_KEY>" + ending
+            )
+        elif stripped.startswith(r"\unrestrict "):
+            canonical_lines.append(
+                prefix + r"\unrestrict <PG_DUMP_RANDOM_KEY>" + ending
+            )
+        else:
+            canonical_lines.append(line)
+    canonical = (
+        "-- DIGEST-ONLY CANONICAL PG_DUMP; NEVER EXECUTE THIS FILE.\n"
+        + "".join(canonical_lines)
+    )
+    Path(args.output).write_text(canonical, encoding="utf-8")
+
+
+def prepare_executable_pg_dump(args):
+    source = Path(args.input).read_text(encoding="utf-8")
+    boundary_key = validate_pg_dump_source(source)
+    replacements = {
+        "SET statement_timeout = 0;": "SET statement_timeout = '30s';",
+        "SET lock_timeout = 0;": "SET lock_timeout = '5s';",
+        "SET idle_in_transaction_session_timeout = 0;":
+            "SET idle_in_transaction_session_timeout = '60s';",
+        "SET transaction_timeout = 0;":
+            "SET transaction_timeout = '5min';",
+    }
+    lines = source.splitlines(keepends=True)
+    counts = {line: 0 for line in replacements}
+    output_lines = []
+    for line in lines:
+        ending = "\n" if line.endswith("\n") else ""
+        content = line[:-1] if ending else line
+        if content in replacements:
+            counts[content] += 1
+            output_lines.append(replacements[content] + ending)
+        else:
+            output_lines.append(line)
+    missing = [line for line, count in counts.items() if count != 1]
+    if missing:
+        raise ValueError(
+            "pg_dump timeout preamble is missing, duplicated, or drifted: "
+            + ", ".join(missing)
+        )
+    output = "".join(output_lines)
+    validate_pg_dump_source(output)
+    if (
+        f"\\restrict {boundary_key}" not in output
+        or f"\\unrestrict {boundary_key}" not in output
+    ):
+        raise ValueError("executable pg_dump changed restriction boundaries")
+    for unsafe in replacements:
+        if unsafe in output:
+            raise ValueError("executable pg_dump can disable timeout bounds")
+    Path(args.output).write_text(output, encoding="utf-8")
+
+
+def stream_verified_drop_sql(args):
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    source_fd = os.open(args.input, flags)
+    try:
+        before = os.fstat(source_fd)
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError("drop SQL source is not a regular file")
+        chunks = []
+        while True:
+            chunk = os.read(source_fd, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        after = os.fstat(source_fd)
+        identity_before = (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        )
+        identity_after = (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        )
+        if identity_before != identity_after:
+            raise ValueError("drop SQL source changed while being read")
+        data = b"".join(chunks)
+    finally:
+        os.close(source_fd)
+
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != args.expected_sha256:
+        raise ValueError("drop SQL SHA-256 differs from accepted manifest")
+    if not hasattr(os, "memfd_create"):
+        raise ValueError("sealed memfd support is required")
+    memfd = os.memfd_create(
+        "fst-retired-schema-drop-sql",
+        os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING,
+    )
+    try:
+        offset = 0
+        while offset < len(data):
+            offset += os.write(memfd, data[offset:])
+        seal_mask = (
+            fcntl.F_SEAL_SEAL
+            | fcntl.F_SEAL_SHRINK
+            | fcntl.F_SEAL_GROW
+            | fcntl.F_SEAL_WRITE
+        )
+        fcntl.fcntl(memfd, fcntl.F_ADD_SEALS, seal_mask)
+        applied_seals = fcntl.fcntl(memfd, fcntl.F_GET_SEALS)
+        if applied_seals & seal_mask != seal_mask:
+            raise ValueError("drop SQL memfd was not fully sealed")
+        memfd_stat = os.fstat(memfd)
+        proof = {
+            "schemaVersion": 1,
+            "sha256": digest,
+            "bytes": len(data),
+            "source": {
+                "device": before.st_dev,
+                "inode": before.st_ino,
+                "size": before.st_size,
+                "mtimeNs": before.st_mtime_ns,
+            },
+            "sealedMemfd": {
+                "inode": memfd_stat.st_ino,
+                "size": memfd_stat.st_size,
+                "seals": applied_seals,
+                "requiredSeals": seal_mask,
+            },
+        }
+        proof_path = Path(args.proof)
+        with proof_path.open("w", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(proof, sort_keys=True, indent=2) + "\n"
+            )
+            handle.flush()
+            os.fsync(handle.fileno())
+        if args.wait_for_release:
+            release = sys.stdin.readline()
+            if release != "RELEASE\n":
+                raise ValueError("drop SQL release token was not received")
+        os.lseek(memfd, 0, os.SEEK_SET)
+        while True:
+            chunk = os.read(memfd, 1024 * 1024)
+            if not chunk:
+                break
+            sys.stdout.buffer.write(chunk)
+        sys.stdout.buffer.flush()
+    finally:
+        os.close(memfd)
+
+
+def stream_verified_manifest_drop_sql(args):
+    def read_stable(path):
+        flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(path, flags)
+        try:
+            before = os.fstat(descriptor)
+            if not stat.S_ISREG(before.st_mode):
+                raise ValueError(f"not a regular file: {path}")
+            chunks = []
+            while True:
+                chunk = os.read(descriptor, 1024 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            after = os.fstat(descriptor)
+            before_identity = (
+                before.st_dev,
+                before.st_ino,
+                before.st_size,
+                before.st_mtime_ns,
+            )
+            after_identity = (
+                after.st_dev,
+                after.st_ino,
+                after.st_size,
+                after.st_mtime_ns,
+            )
+            if before_identity != after_identity:
+                raise ValueError(f"file changed while reading: {path}")
+            return b"".join(chunks), before
+        finally:
+            os.close(descriptor)
+
+    def seal_bytes(name, data):
+        if not hasattr(os, "memfd_create"):
+            raise ValueError("sealed memfd support is required")
+        descriptor = os.memfd_create(
+            name,
+            os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING,
+        )
+        offset = 0
+        while offset < len(data):
+            offset += os.write(descriptor, data[offset:])
+        required = (
+            fcntl.F_SEAL_SEAL
+            | fcntl.F_SEAL_SHRINK
+            | fcntl.F_SEAL_GROW
+            | fcntl.F_SEAL_WRITE
+        )
+        fcntl.fcntl(descriptor, fcntl.F_ADD_SEALS, required)
+        seals = fcntl.fcntl(descriptor, fcntl.F_GET_SEALS)
+        if seals & required != required:
+            os.close(descriptor)
+            raise ValueError(f"memfd was not fully sealed: {name}")
+        return descriptor, required, seals
+
+    manifest_data, manifest_stat = read_stable(args.manifest)
+    manifest_sha = hashlib.sha256(manifest_data).hexdigest()
+    if manifest_sha != args.expected_manifest_sha256:
+        raise ValueError("manifest SHA-256 differs from operator approval")
+    try:
+        manifest = json.loads(manifest_data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"sealed manifest is invalid JSON: {exc}") from exc
+    drop_sha = manifest.get("dropSqlSha256", "")
+    if not re.fullmatch(r"[0-9a-f]{64}", drop_sha):
+        raise ValueError("sealed manifest has an invalid drop SQL hash")
+    service_rows = [
+        row
+        for row in manifest.get("containers", [])
+        if row.get("service") == "fstservice"
+    ]
+    if len(service_rows) != 1:
+        raise ValueError("sealed manifest lacks one fstservice container")
+    service_row = service_rows[0]
+    service_image_id = service_row.get("image_id", "")
+    service_compose_image_id = service_row.get("compose_image_id", "")
+    service_container_id = service_row.get("container_id", "")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", service_image_id):
+        raise ValueError("sealed manifest lacks one immutable service image ID")
+    if service_compose_image_id != service_image_id:
+        raise ValueError("sealed manifest service and Compose image IDs differ")
+    if not re.fullmatch(r"[0-9a-f]{64}", service_container_id):
+        raise ValueError("sealed manifest lacks one immutable service container ID")
+    service_image_reference_sha256 = (
+        manifest.get("productionComposeOwnership", {}).get(
+            "fstserviceImageReferenceSha256",
+            "",
+        )
+    )
+    if not re.fullmatch(r"[0-9a-f]{64}", service_image_reference_sha256):
+        raise ValueError(
+            "sealed manifest lacks the fstservice image reference hash"
+        )
+    service_networks = sorted(
+        manifest.get("containerConfigAttestation", {}).get(
+            "services",
+            {},
+        ).get("fstservice", {}).get("networks", {})
+    )
+    if not service_networks or any(
+        not isinstance(network, str) or not network
+        for network in service_networks
+    ):
+        raise ValueError("sealed manifest lacks fstservice network ownership")
+    postgres_rows = [
+        row
+        for row in manifest.get("containers", [])
+        if row.get("service") == "postgres"
+    ]
+    if len(postgres_rows) != 1:
+        raise ValueError("sealed manifest lacks one postgres container")
+    postgres_container_id = postgres_rows[0].get("container_id", "")
+    if not re.fullmatch(r"[0-9a-f]{64}", postgres_container_id):
+        raise ValueError("sealed manifest postgres container ID is invalid")
+    production_target = manifest.get("productionDatabaseTarget", {}).get(
+        "runtime",
+        {},
+    )
+    required_target = {
+        "container_id": postgres_container_id,
+        "configured_host": "postgres",
+        "configured_port": production_target.get("runtime_port", ""),
+        "configured_database": production_target.get("runtime_database", ""),
+        "configured_user": production_target.get("runtime_user", ""),
+        "runtime_address": "local-socket",
+        "runtime_port": production_target.get("configured_port", ""),
+        "runtime_database": production_target.get("configured_database", ""),
+        "runtime_user": production_target.get("configured_user", ""),
+        "in_recovery": "false",
+    }
+    if any(
+        production_target.get(key, "") != value
+        for key, value in required_target.items()
+    ):
+        raise ValueError("sealed manifest production database target is invalid")
+    postgres_system_identifier = production_target.get(
+        "system_identifier",
+        "",
+    )
+    if not re.fullmatch(r"\d+", postgres_system_identifier):
+        raise ValueError("sealed manifest system identifier is invalid")
+    host_mapping = manifest.get("containerConfigAttestation", {}).get(
+        "databaseHostMapping",
+        {},
+    )
+    if (
+        host_mapping.get("host") != production_target["configured_host"]
+        or host_mapping.get("postgresContainerId") != postgres_container_id
+        or host_mapping.get("postgresSystemIdentifier")
+        != postgres_system_identifier
+        or sorted(host_mapping.get("sharedNetworks", []))
+        != service_networks
+    ):
+        raise ValueError("sealed manifest database host mapping is inconsistent")
+
+    drop_data, drop_stat = read_stable(args.drop_sql)
+    actual_drop_sha = hashlib.sha256(drop_data).hexdigest()
+    if actual_drop_sha != drop_sha:
+        raise ValueError("drop SQL differs from sealed manifest")
+
+    manifest_fd, manifest_required, manifest_seals = seal_bytes(
+        "fst-retired-schema-manifest",
+        manifest_data,
+    )
+    drop_fd, drop_required, drop_seals = seal_bytes(
+        "fst-retired-schema-drop-sql",
+        drop_data,
+    )
+    try:
+        proof = {
+            "schemaVersion": 1,
+            "manifest": {
+                "sha256": manifest_sha,
+                "bytes": len(manifest_data),
+                "source": {
+                    "device": manifest_stat.st_dev,
+                    "inode": manifest_stat.st_ino,
+                    "size": manifest_stat.st_size,
+                    "mtimeNs": manifest_stat.st_mtime_ns,
+                },
+                "sealedMemfd": {
+                    "inode": os.fstat(manifest_fd).st_ino,
+                    "size": os.fstat(manifest_fd).st_size,
+                    "seals": manifest_seals,
+                    "requiredSeals": manifest_required,
+                },
+                "approvedFstserviceImageId": service_image_id,
+                "approvedFstserviceContainerId": service_container_id,
+                "approvedFstserviceImageReferenceSha256": (
+                    service_image_reference_sha256
+                ),
+                "approvedFstserviceNetworks": service_networks,
+                "approvedPostgresContainerId": postgres_container_id,
+                "approvedPostgresSystemIdentifier": (
+                    postgres_system_identifier
+                ),
+                "approvedProductionDatabaseTarget": production_target,
+            },
+            "dropSql": {
+                "sha256": actual_drop_sha,
+                "manifestSha256": drop_sha,
+                "bytes": len(drop_data),
+                "source": {
+                    "device": drop_stat.st_dev,
+                    "inode": drop_stat.st_ino,
+                    "size": drop_stat.st_size,
+                    "mtimeNs": drop_stat.st_mtime_ns,
+                },
+                "sealedMemfd": {
+                    "inode": os.fstat(drop_fd).st_ino,
+                    "size": os.fstat(drop_fd).st_size,
+                    "seals": drop_seals,
+                    "requiredSeals": drop_required,
+                },
+            },
+        }
+        with Path(args.proof).open("w", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(proof, sort_keys=True, indent=2) + "\n"
+            )
+            handle.flush()
+            os.fsync(handle.fileno())
+        if args.wait_for_release:
+            if sys.stdin.readline() != "RELEASE\n":
+                raise ValueError("immutable manifest/SQL release was not received")
+        os.lseek(drop_fd, 0, os.SEEK_SET)
+        while True:
+            chunk = os.read(drop_fd, 1024 * 1024)
+            if not chunk:
+                break
+            sys.stdout.buffer.write(chunk)
+        sys.stdout.buffer.flush()
+    finally:
+        os.close(manifest_fd)
+        os.close(drop_fd)
+
+
+class _DockerSocketConnection(http.client.HTTPConnection):
+    def __init__(self, socket_path):
+        super().__init__("localhost")
+        self.socket_path = socket_path
+
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.connect(self.socket_path)
+
+
+def _docker_api_request(
+    socket_path,
+    method,
+    path,
+    payload=None,
+    accepted_statuses=None,
+):
+    body = None
+    headers = {"Host": "localhost"}
+    if payload is not None:
+        body = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        headers.update({
+            "Content-Type": "application/json",
+            "Content-Length": str(len(body)),
+        })
+    connection = _DockerSocketConnection(socket_path)
+    try:
+        connection.request(method, path, body=body, headers=headers)
+        response = connection.getresponse()
+        response_body = response.read()
+    finally:
+        connection.close()
+    accepted = accepted_statuses or range(200, 300)
+    if response.status not in accepted:
+        safe_path = path.partition("?")[0]
+        raise ValueError(
+            f"Docker API {method} {safe_path} failed with HTTP "
+            f"{response.status}"
+        )
+    if not response_body:
+        return None
+    return json.loads(response_body.decode("utf-8"))
+
+
+def _write_fsynced_json(path, value):
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("x", encoding="utf-8") as handle:
+        handle.write(json.dumps(value, sort_keys=True, indent=2) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    directory_fd = os.open(output.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _startup_command(args):
+    command = json.loads(args.command_json)
+    if (
+        not isinstance(command, list)
+        or not command
+        or any(not isinstance(item, str) or not item for item in command)
+    ):
+        raise ValueError("startup command must be a nonempty JSON string array")
+    return command
+
+
+def _startup_clone_projection(container):
+    config = container.get("Config") or {}
+    host_config = container.get("HostConfig") or {}
+    excluded_config = {
+        "AttachStderr",
+        "AttachStdin",
+        "AttachStdout",
+        "Cmd",
+        "Healthcheck",
+        "Hostname",
+        "Image",
+        "Labels",
+        "OpenStdin",
+        "StdinOnce",
+        "Tty",
+    }
+    excluded_host = {
+        "AutoRemove",
+        "ContainerIDFile",
+        "ExtraHosts",
+        "Links",
+        "NetworkMode",
+        "PortBindings",
+        "PublishAllPorts",
+        "RestartPolicy",
+        "VolumesFrom",
+    }
+    projected_host = {
+        key: value
+        for key, value in sorted(host_config.items())
+        if key not in excluded_host
+    }
+    if "OomKillDisable" in projected_host:
+        projected_host["OomKillDisable"] = bool(
+            projected_host["OomKillDisable"]
+        )
+    return {
+        "config": {
+            key: value
+            for key, value in sorted(config.items())
+            if key not in excluded_config
+        },
+        "hostConfig": projected_host,
+    }
+
+
+def _startup_projection_sha256(container):
+    encoded = json.dumps(
+        _startup_clone_projection(container),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _inspect_docker_container(socket_path, container_id):
+    return _docker_api_request(
+        socket_path,
+        "GET",
+        f"/containers/{quote(container_id, safe='')}/json",
+    )
+
+
+def _inspect_docker_image(socket_path, image_reference):
+    return _docker_api_request(
+        socket_path,
+        "GET",
+        f"/images/{quote(image_reference, safe='')}/json",
+    )
+
+
+def _validate_startup_identity_args(args):
+    if not re.fullmatch(r"[0-9a-f]{64}", args.source_container_id):
+        raise ValueError("source service container ID is invalid")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", args.expected_image_id):
+        raise ValueError("expected service image ID is invalid")
+    if not re.fullmatch(r"[0-9a-f]{64}", args.expected_manifest_sha256):
+        raise ValueError("expected manifest SHA-256 is invalid")
+    if not re.fullmatch(
+        r"[0-9a-f]{64}",
+        args.expected_image_reference_sha256,
+    ):
+        raise ValueError("expected image reference SHA-256 is invalid")
+    if (
+        hashlib.sha256(
+            args.compose_image_reference.encode("utf-8")
+        ).hexdigest()
+        != args.expected_image_reference_sha256
+    ):
+        raise ValueError("Compose service image reference differs from manifest")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,127}", args.container_name):
+        raise ValueError("startup container name is invalid")
+    if not re.fullmatch(r"[0-9a-f]{64}", args.expected_postgres_container_id):
+        raise ValueError("expected postgres container ID is invalid")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", args.database_host):
+        raise ValueError("database host is invalid")
+
+
+def _expected_startup_networks(args):
+    networks = json.loads(args.expected_networks_json)
+    if (
+        not isinstance(networks, list)
+        or not networks
+        or any(not isinstance(network, str) or not network for network in networks)
+        or len(set(networks)) != len(networks)
+        or networks != sorted(networks)
+    ):
+        raise ValueError("expected startup networks must be a sorted JSON array")
+    return networks
+
+
+def _startup_database_host_pin(source, args):
+    postgres = _inspect_docker_container(
+        args.docker_socket,
+        args.expected_postgres_container_id,
+    )
+    if postgres.get("Id") != args.expected_postgres_container_id:
+        raise ValueError("postgres container identity drift")
+    if not (postgres.get("State") or {}).get("Running"):
+        raise ValueError("postgres container is not running")
+    primary_network = str(
+        (source.get("HostConfig") or {}).get("NetworkMode") or ""
+    )
+    endpoint = (
+        (postgres.get("NetworkSettings") or {})
+        .get("Networks", {})
+        .get(primary_network)
+    ) or {}
+    postgres_ip = str(endpoint.get("IPAddress") or "")
+    try:
+        parsed_ip = ipaddress.ip_address(postgres_ip)
+    except ValueError as exc:
+        raise ValueError("postgres primary-network IP is invalid") from exc
+    if parsed_ip.version != 4:
+        raise ValueError("postgres primary-network pin must be IPv4")
+    return {
+        "host": args.database_host,
+        "ipAddress": postgres_ip,
+        "network": primary_network,
+        "postgresContainerId": args.expected_postgres_container_id,
+        "extraHost": f"{args.database_host}:{postgres_ip}",
+    }
+
+
+def _attest_immutable_startup_container(args, phase):
+    _validate_startup_identity_args(args)
+    command = _startup_command(args)
+    expected_networks = _expected_startup_networks(args)
+    source = _inspect_docker_container(
+        args.docker_socket,
+        args.source_container_id,
+    )
+    if source.get("Id") != args.source_container_id:
+        raise ValueError("source service container identity drift")
+    if source.get("Image") != args.expected_image_id:
+        raise ValueError("source service image differs from manifest")
+    if not (source.get("State") or {}).get("Running"):
+        raise ValueError("source service container is not running")
+
+    compose_image = _inspect_docker_image(
+        args.docker_socket,
+        args.compose_image_reference,
+    )
+    compose_image_id = compose_image.get("Id", "")
+    if compose_image_id != args.expected_image_id:
+        raise ValueError("mutable Compose service image reference was retagged")
+
+    container = _inspect_docker_container(
+        args.docker_socket,
+        args.container_id,
+    )
+    state = container.get("State") or {}
+    config = container.get("Config") or {}
+    host_config = container.get("HostConfig") or {}
+    if container.get("Id") != args.container_id:
+        raise ValueError("startup container identity drift")
+    if container.get("Name", "").lstrip("/") != args.container_name:
+        raise ValueError("startup container name drift")
+    if container.get("Image") != args.expected_image_id:
+        raise ValueError("startup container actual image differs from manifest")
+    if config.get("Image") != args.expected_image_id:
+        raise ValueError("startup container configured image differs from manifest")
+    if config.get("Cmd") != command:
+        raise ValueError("startup container command drift")
+    if (
+        state.get("Status") != "created"
+        or bool(state.get("Running"))
+        or int(state.get("Pid") or 0) != 0
+    ):
+        raise ValueError("startup container was started before image attestation")
+    if bool(host_config.get("AutoRemove")):
+        raise ValueError("startup container must not auto-remove")
+    if (host_config.get("RestartPolicy") or {}).get("Name") != "no":
+        raise ValueError("startup container restart policy is not disabled")
+    if host_config.get("PortBindings"):
+        raise ValueError("startup container unexpectedly publishes ports")
+
+    source_networks = set(
+        (source.get("NetworkSettings") or {}).get("Networks") or {}
+    )
+    if source_networks != set(expected_networks):
+        raise ValueError("source service network set differs from manifest")
+    database_host_pin = _startup_database_host_pin(source, args)
+    actual_networks = (
+        (container.get("NetworkSettings") or {}).get("Networks") or {}
+    )
+    if set(actual_networks) != set(expected_networks):
+        raise ValueError("startup container network set differs from service")
+    forbidden_aliases = {"fstservice"}
+    actual_aliases = sorted({
+        str(alias)
+        for network in actual_networks.values()
+        for alias in (network.get("Aliases") or [])
+        if alias
+    })
+    if forbidden_aliases.intersection(actual_aliases):
+        raise ValueError("startup container acquired a production service alias")
+    resolution_names = sorted({
+        str(name)
+        for network in actual_networks.values()
+        for name in (
+            list(network.get("Aliases") or [])
+            + list(network.get("DNSNames") or [])
+        )
+        if name
+    } | {container.get("Name", "").lstrip("/")})
+    if args.database_host in resolution_names:
+        raise ValueError("startup container itself resolves as the database host")
+    source_extra_hosts = list(
+        (source.get("HostConfig") or {}).get("ExtraHosts") or []
+    )
+    if any(
+        str(entry).partition(":")[0] == args.database_host
+        for entry in source_extra_hosts
+    ):
+        raise ValueError("source service already overrides the database host")
+    expected_extra_hosts = source_extra_hosts + [
+        database_host_pin["extraHost"]
+    ]
+    if list(host_config.get("ExtraHosts") or []) != expected_extra_hosts:
+        raise ValueError("startup database host pin drift")
+
+    source_projection_sha256 = _startup_projection_sha256(source)
+    actual_projection_sha256 = _startup_projection_sha256(container)
+    if actual_projection_sha256 != source_projection_sha256:
+        raise ValueError("startup container runtime configuration drift")
+
+    command_sha256 = hashlib.sha256(
+        json.dumps(command, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {
+        "schemaVersion": 1,
+        "phase": phase,
+        "expectedManifestSha256": args.expected_manifest_sha256,
+        "sourceContainerId": args.source_container_id,
+        "containerName": args.container_name,
+        "containerId": args.container_id,
+        "expectedImageId": args.expected_image_id,
+        "composeImageReferenceSha256": (
+            args.expected_image_reference_sha256
+        ),
+        "composeImageResolvedId": compose_image_id,
+        "actualImageId": container.get("Image", ""),
+        "configuredImage": config.get("Image", ""),
+        "state": {
+            "status": state.get("Status", ""),
+            "running": bool(state.get("Running")),
+            "pid": int(state.get("Pid") or 0),
+            "startedAt": state.get("StartedAt", ""),
+        },
+        "commandSha256": command_sha256,
+        "sourceConfigurationSha256": source_projection_sha256,
+        "actualConfigurationSha256": actual_projection_sha256,
+        "networks": expected_networks,
+        "networkAliases": actual_aliases,
+        "networkResolutionNames": resolution_names,
+        "databaseHostPin": database_host_pin,
+        "autoRemove": bool(host_config.get("AutoRemove")),
+        "restartPolicy": (
+            (host_config.get("RestartPolicy") or {}).get("Name") or ""
+        ),
+        "portBindingsPresent": bool(host_config.get("PortBindings")),
+    }
+
+
+def create_immutable_startup_container(args):
+    _validate_startup_identity_args(args)
+    command = _startup_command(args)
+    expected_networks = _expected_startup_networks(args)
+    source = _inspect_docker_container(
+        args.docker_socket,
+        args.source_container_id,
+    )
+    if source.get("Id") != args.source_container_id:
+        raise ValueError("source service container identity drift")
+    if source.get("Image") != args.expected_image_id:
+        raise ValueError("source service image differs from manifest")
+    if not (source.get("State") or {}).get("Running"):
+        raise ValueError("source service container is not running")
+    compose_image = _inspect_docker_image(
+        args.docker_socket,
+        args.compose_image_reference,
+    )
+    if compose_image.get("Id") != args.expected_image_id:
+        raise ValueError("mutable Compose service image reference was retagged")
+
+    source_networks = (
+        (source.get("NetworkSettings") or {}).get("Networks") or {}
+    )
+    if set(source_networks) != set(expected_networks):
+        raise ValueError("source service network set differs from manifest")
+    source_host_config = source.get("HostConfig") or {}
+    primary_network = str(source_host_config.get("NetworkMode") or "")
+    if primary_network not in source_networks:
+        raise ValueError("source service primary network is not attestable")
+    database_host_pin = _startup_database_host_pin(source, args)
+    source_extra_hosts = list(source_host_config.get("ExtraHosts") or [])
+    if any(
+        str(entry).partition(":")[0] == args.database_host
+        for entry in source_extra_hosts
+    ):
+        raise ValueError("source service already overrides the database host")
+
+    config = copy.deepcopy(source.get("Config") or {})
+    config.update({
+        "AttachStderr": True,
+        "AttachStdin": False,
+        "AttachStdout": True,
+        "Cmd": command,
+        "Healthcheck": {"Test": ["NONE"]},
+        "Hostname": args.container_name,
+        "Image": args.expected_image_id,
+        "Labels": {
+            "com.fst.retired-schema-cleanup": "startup-check",
+            "com.fst.retired-schema-cleanup.manifest-sha256": (
+                args.expected_manifest_sha256
+            ),
+            "com.fst.retired-schema-cleanup.source-container-id": (
+                args.source_container_id
+            ),
+        },
+        "OpenStdin": False,
+        "StdinOnce": False,
+        "Tty": False,
+    })
+    host_config = copy.deepcopy(source_host_config)
+    host_config.update({
+        "AutoRemove": False,
+        "ContainerIDFile": "",
+        "ExtraHosts": source_extra_hosts + [database_host_pin["extraHost"]],
+        "Links": None,
+        "NetworkMode": primary_network,
+        "PortBindings": {},
+        "PublishAllPorts": False,
+        "RestartPolicy": {"Name": "no", "MaximumRetryCount": 0},
+        "VolumesFrom": None,
+    })
+    primary_endpoint = {}
+    if primary_network not in {"bridge", "host", "none"}:
+        primary_endpoint["Aliases"] = [args.container_name]
+    create_payload = {
+        **config,
+        "HostConfig": host_config,
+        "Image": args.expected_image_id,
+        "NetworkingConfig": {
+            "EndpointsConfig": {
+                primary_network: primary_endpoint,
+            },
+        },
+    }
+
+    created_id = ""
+    try:
+        created = _docker_api_request(
+            args.docker_socket,
+            "POST",
+            f"/containers/create?name={quote(args.container_name, safe='')}",
+            create_payload,
+        )
+        created_id = str((created or {}).get("Id") or "")
+        if not re.fullmatch(r"[0-9a-f]{64}", created_id):
+            raise ValueError("Docker returned an invalid startup container ID")
+        for network_name, endpoint in sorted(source_networks.items()):
+            if network_name == primary_network:
+                continue
+            network_id = str(endpoint.get("NetworkID") or "")
+            if not re.fullmatch(r"[0-9a-f]{64}", network_id):
+                raise ValueError("source service network ID is invalid")
+            endpoint_config = {}
+            if network_name not in {"bridge", "host", "none"}:
+                endpoint_config["Aliases"] = [args.container_name]
+            _docker_api_request(
+                args.docker_socket,
+                "POST",
+                f"/networks/{quote(network_id, safe='')}/connect",
+                {
+                    "Container": created_id,
+                    "EndpointConfig": endpoint_config,
+                },
+            )
+        args.container_id = created_id
+        attestation = _attest_immutable_startup_container(
+            args,
+            "created-prestart",
+        )
+        _write_fsynced_json(args.output, attestation)
+    except BaseException:
+        if created_id:
+            try:
+                _docker_api_request(
+                    args.docker_socket,
+                    "DELETE",
+                    f"/containers/{quote(created_id, safe='')}?force=1&v=1",
+                    accepted_statuses={204, 404},
+                )
+            except Exception:
+                pass
+        raise
+    print(created_id)
+
+
+def attest_immutable_startup_container(args):
+    attestation = _attest_immutable_startup_container(
+        args,
+        "attested-before-start",
+    )
+    _write_fsynced_json(args.output, attestation)
+
+
+def attest_startup_database_routing(args):
+    failures = []
+    if not re.fullmatch(r"[0-9a-f]{64}", args.expected_manifest_sha256):
+        raise ValueError("expected manifest SHA-256 is invalid")
+    if not re.fullmatch(r"[0-9a-f]{64}", args.expected_postgres_container_id):
+        raise ValueError("expected postgres container ID is invalid")
+    if not re.fullmatch(r"\d+", args.expected_system_identifier):
+        raise ValueError("expected postgres system identifier is invalid")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", args.expected_host):
+        raise ValueError("expected database host is invalid")
+    if not re.fullmatch(r"\d+", args.expected_port):
+        raise ValueError("expected database port is invalid")
+    if not args.expected_database or not args.expected_user:
+        raise ValueError("expected database identity is incomplete")
+    expected_networks = _expected_startup_networks(args)
+
+    startup = json.loads(
+        Path(args.startup_attestation).read_text(encoding="utf-8")
+    )
+    target_rows = read_csv(args.target_attestation)
+    inspected = json.load(sys.stdin)
+    if not isinstance(inspected, list):
+        raise ValueError("docker inspect payload must be a JSON array")
+    inspect_by_id = {
+        str(item.get("Id") or ""): item
+        for item in inspected
+        if item.get("Id")
+    }
+
+    startup_container_id = str(startup.get("containerId") or "")
+    startup_item = inspect_by_id.get(startup_container_id, {})
+    startup_state = startup_item.get("State") or {}
+    startup_host_config = startup_item.get("HostConfig") or {}
+    startup_networks = (
+        (startup_item.get("NetworkSettings") or {}).get("Networks") or {}
+    )
+    database_host_pin = startup.get("databaseHostPin") or {}
+    expected_extra_host = (
+        f"{database_host_pin.get('host', '')}:"
+        f"{database_host_pin.get('ipAddress', '')}"
+    )
+    if (
+        startup.get("phase") != "attested-before-start"
+        or startup.get("expectedManifestSha256")
+        != args.expected_manifest_sha256
+        or startup.get("networks") != expected_networks
+        or not re.fullmatch(r"[0-9a-f]{64}", startup_container_id)
+        or startup_item.get("Id") != startup_container_id
+        or startup_state.get("Status") != "created"
+        or bool(startup_state.get("Running"))
+        or int(startup_state.get("Pid") or 0) != 0
+        or set(startup_networks) != set(expected_networks)
+        or database_host_pin.get("host") != args.expected_host
+        or database_host_pin.get("network") not in expected_networks
+        or database_host_pin.get("postgresContainerId")
+        != args.expected_postgres_container_id
+        or expected_extra_host
+        not in list(startup_host_config.get("ExtraHosts") or [])
+    ):
+        failures.append("startup container prestart identity/state drift")
+
+    target = target_rows[0] if len(target_rows) == 1 else {}
+    expected_target = {
+        "configured_host": args.expected_host,
+        "configured_port": args.expected_port,
+        "configured_database": args.expected_database,
+        "configured_user": args.expected_user,
+        "container_id": args.expected_postgres_container_id,
+        "runtime_address": "local-socket",
+        "runtime_port": args.expected_port,
+        "runtime_database": args.expected_database,
+        "runtime_user": args.expected_user,
+        "in_recovery": "false",
+        "system_identifier": args.expected_system_identifier,
+    }
+    for key, expected in expected_target.items():
+        if target.get(key, "") != expected:
+            failures.append(f"startup database target drift: {key}")
+
+    postgres_item = inspect_by_id.get(args.expected_postgres_container_id, {})
+    postgres_state = postgres_item.get("State") or {}
+    postgres_networks = (
+        (postgres_item.get("NetworkSettings") or {}).get("Networks") or {}
+    )
+    if (
+        postgres_item.get("Id") != args.expected_postgres_container_id
+        or postgres_state.get("Status") != "running"
+        or not bool(postgres_state.get("Running"))
+    ):
+        failures.append("manifest-bound postgres container is not running")
+
+    alias_owners = {}
+    postgres_endpoints = {}
+    for network_name in expected_networks:
+        startup_endpoint = startup_networks.get(network_name) or {}
+        postgres_endpoint = postgres_networks.get(network_name) or {}
+        postgres_network_id = str(postgres_endpoint.get("NetworkID") or "")
+        postgres_aliases = {
+            str(alias)
+            for alias in (postgres_endpoint.get("Aliases") or [])
+            if alias
+        }
+        postgres_ip = str(postgres_endpoint.get("IPAddress") or "")
+        if (
+            not startup_endpoint
+            or not re.fullmatch(r"[0-9a-f]{64}", postgres_network_id)
+            or args.expected_host not in postgres_aliases
+            or not postgres_ip
+        ):
+            failures.append(
+                f"manifest-bound postgres network mapping drift: {network_name}"
+            )
+        postgres_endpoints[network_name] = {
+            "networkId": postgres_network_id,
+            "ipAddress": postgres_ip,
+            "hostAliasPresent": args.expected_host in postgres_aliases,
+        }
+        if (
+            network_name == database_host_pin.get("network")
+            and postgres_ip != database_host_pin.get("ipAddress")
+        ):
+            failures.append("startup database host pin no longer maps to postgres")
+
+        owners = []
+        for item in inspected:
+            endpoint = (
+                (item.get("NetworkSettings") or {})
+                .get("Networks", {})
+                .get(network_name)
+            )
+            if not endpoint:
+                continue
+            aliases = {
+                str(alias)
+                for alias in (endpoint.get("Aliases") or [])
+                if alias
+            }
+            dns_names = {
+                str(name)
+                for name in (endpoint.get("DNSNames") or [])
+                if name
+            }
+            container_name = str(item.get("Name") or "").lstrip("/")
+            resolution_sources = []
+            if args.expected_host in aliases:
+                resolution_sources.append("Aliases")
+            if args.expected_host in dns_names:
+                resolution_sources.append("DNSNames")
+            if args.expected_host == container_name:
+                resolution_sources.append("containerName")
+            if not resolution_sources:
+                continue
+            state = item.get("State") or {}
+            owners.append({
+                "containerId": str(item.get("Id") or ""),
+                "containerName": container_name,
+                "state": str(state.get("Status") or ""),
+                "running": bool(state.get("Running")),
+                "networkId": str(endpoint.get("NetworkID") or ""),
+                "ipAddress": str(endpoint.get("IPAddress") or ""),
+                "resolutionSources": resolution_sources,
+                "resolutionNames": sorted(
+                    aliases | dns_names | {container_name}
+                ),
+            })
+        owners.sort(key=lambda row: row["containerId"])
+        alias_owners[network_name] = owners
+        if (
+            len(owners) != 1
+            or owners[0]["containerId"]
+            != args.expected_postgres_container_id
+            or owners[0]["state"] != "running"
+            or owners[0]["running"] is not True
+        ):
+            failures.append(
+                f"database alias ownership is not exclusive: {network_name}"
+            )
+
+    result = {
+        "schemaVersion": 1,
+        "success": not failures,
+        "acceptedManifestSha256": args.expected_manifest_sha256,
+        "startupContainerId": startup_container_id,
+        "attachedNetworks": expected_networks,
+        "databaseTarget": expected_target,
+        "databaseHostPin": database_host_pin,
+        "postgres": {
+            "containerId": args.expected_postgres_container_id,
+            "systemIdentifier": args.expected_system_identifier,
+            "endpoints": postgres_endpoints,
+        },
+        "aliasOwners": alias_owners,
+        "failures": sorted(set(failures)),
+    }
+    _write_fsynced_json(args.output, result)
+    if failures:
+        for failure in result["failures"]:
+            print(f"ERROR: {failure}", file=sys.stderr)
+        return 3
+    return 0
+
+
+def validate_capacity_evidence(capture_dir, failures):
+    capture_dir = Path(capture_dir)
+    report_path = capture_dir / "capacity-guard.json"
+    policy_path = capture_dir / "capacity-guard.policy.json"
+    if not report_path.is_file():
+        failures.append("full capacity guard JSON report is missing")
+        report = {}
+    else:
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            failures.append(f"capacity guard report is invalid: {exc}")
+            report = {}
+    if not policy_path.is_file():
+        failures.append("capacity guard effective policy is missing")
+        policy = {}
+    else:
+        try:
+            policy = json.loads(policy_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            failures.append(f"capacity guard policy is invalid: {exc}")
+            policy = {}
+
+    if policy.get("schemaVersion") != 1:
+        failures.append("capacity guard policy schema is invalid")
+    if policy.get("actionClass") != "reclaim":
+        failures.append("capacity guard policy action is not reclaim")
+    if policy.get("effectiveParameters") != CAPACITY_POLICY:
+        failures.append("capacity guard effective parameters are not pinned")
+    script_hash = policy.get("guardScriptSha256", "")
+    if not re.fullmatch(r"[0-9a-f]{64}", script_hash):
+        failures.append("capacity guard script hash is invalid")
+    capacity = report.get("capacity", {})
+    for key, expected in CAPACITY_POLICY.items():
+        if capacity.get(key) != expected:
+            failures.append(f"capacity guard report policy drift: {key}")
+    if report.get("actionClass") != "reclaim":
+        failures.append("capacity guard report action is not reclaim")
+    if report.get("decision") not in {
+        "accepted",
+        "accepted_with_capacity_alert",
+    }:
+        failures.append("capacity guard decision is not accepted")
+    if capacity.get("reclaimAllowed") is not True:
+        failures.append("capacity guard did not allow reclaim")
+    return report, policy
+
+
 def build_manifest(args):
     objects = read_objects(args.objects)
     capture_dir = Path(args.capture_dir)
@@ -1774,6 +3286,49 @@ def build_manifest(args):
     owned_rows = read_csv(capture_dir / "owned-objects.csv")
     if not (capture_dir / "owned-objects.csv").is_file():
         failures.append("owned-object inventory is missing")
+    expected_owned_sequences = Counter(
+        (
+            "sequence-owner",
+            row.schema,
+            row.name,
+            row.parent_schema,
+            row.parent_name,
+            row.owner_column,
+            "a",
+        )
+        for row in objects
+        if row.object_type == "sequence"
+    )
+    actual_owned_sequences = Counter(
+        (
+            row.get("kind", ""),
+            row.get("schema", ""),
+            row.get("name", ""),
+            row.get("target_schema", ""),
+            row.get("target_name", ""),
+            row.get("definition", ""),
+            row.get("state", ""),
+        )
+        for row in owned_rows
+        if row.get("kind", "") == "sequence-owner"
+    )
+    if actual_owned_sequences != expected_owned_sequences:
+        missing = list(
+            (expected_owned_sequences - actual_owned_sequences).elements()
+        )
+        unexpected = list(
+            (actual_owned_sequences - expected_owned_sequences).elements()
+        )
+        if missing:
+            failures.append(
+                f"{len(missing)} expected owned sequence relationship(s) "
+                "are missing"
+            )
+        if unexpected:
+            failures.append(
+                f"{len(unexpected)} unexpected owned sequence "
+                "relationship(s) exist"
+            )
     tooling_rows = read_csv(capture_dir / "tooling-hashes.csv")
     if not tooling_rows:
         failures.append("tooling hash inventory is missing")
@@ -1871,6 +3426,18 @@ def build_manifest(args):
     for row in health_rows:
         if row.get("status", "").lower() != "ok":
             failures.append(f"health check failed: {row.get('check', '<unknown>')}")
+    capacity_report, capacity_policy = validate_capacity_evidence(
+        capture_dir,
+        failures,
+    )
+    tooling_by_name = {
+        row.get("name", ""): row.get("sha256", "")
+        for row in tooling_rows
+    }
+    if capacity_policy.get("guardScriptSha256") != tooling_by_name.get(
+        "tools/postgres-capacity-guard.sh"
+    ):
+        failures.append("capacity guard policy script hash is not tooling-bound")
 
     source_path = capture_dir / "runtime-source-references.txt"
     source_references = (
@@ -2009,6 +3576,7 @@ def build_manifest(args):
     sanitized_compose_path = (
         capture_dir / "production-compose.sanitized.json"
     )
+    sanitized_compose = {}
     if not sanitized_compose_path.is_file():
         failures.append("sanitized rendered production compose is missing")
         sanitized_compose_sha = ""
@@ -2023,6 +3591,17 @@ def build_manifest(args):
             sanitized_compose = {}
         if sanitized_compose.get("schemaVersion") != 1:
             failures.append("sanitized production compose schema is invalid")
+    fstservice_image_reference_sha256 = (
+        sanitized_compose.get("services", {}).get(
+            "fstservice",
+            {},
+        ).get("imageReferenceSha256", "")
+    )
+    if not re.fullmatch(
+        r"[0-9a-f]{64}",
+        fstservice_image_reference_sha256,
+    ):
+        failures.append("fstservice Compose image reference hash is invalid")
     compose_binds_path = capture_dir / "production-compose-binds.tsv"
     compose_bind_rows = []
     if not compose_binds_path.is_file():
@@ -2118,6 +3697,71 @@ def build_manifest(args):
             )
         ):
             failures.append("runtime PostgreSQL target attestation is invalid")
+    container_config_path = (
+        capture_dir / "container-config-attestation.json"
+    )
+    if not container_config_path.is_file():
+        failures.append("actual container configuration attestation is missing")
+        container_config = {}
+    else:
+        try:
+            container_config = json.loads(
+                container_config_path.read_text(encoding="utf-8")
+            )
+        except (json.JSONDecodeError, OSError) as exc:
+            failures.append(
+                f"actual container configuration attestation is invalid: {exc}"
+            )
+            container_config = {}
+    if container_config.get("success") is not True:
+        failures.append("actual containers do not match resolved compose")
+    config_services = container_config.get("services", {})
+    if set(config_services) != {
+        "postgres",
+        "fstservice",
+        "festivalweb",
+        "fstworker",
+    }:
+        failures.append("actual container attestation service set is inexact")
+    host_mapping = container_config.get("databaseHostMapping", {})
+    if (
+        host_mapping.get("postgresContainerId")
+        != runtime_target.get("container_id")
+        or host_mapping.get("postgresSystemIdentifier")
+        != runtime_target.get("system_identifier")
+        or host_mapping.get("host") != "postgres"
+        or not host_mapping.get("sharedNetworks")
+    ):
+        failures.append("fstservice-to-postgres host mapping is invalid")
+    alias_owners = host_mapping.get("aliasOwners", {})
+    if not alias_owners or any(
+        len(owners) != 1
+        or owners[0].get("containerId")
+        != runtime_target.get("container_id")
+        for owners in alias_owners.values()
+    ):
+        failures.append("postgres network alias ownership is not exclusive")
+    expected_fingerprint_names = set(PUBLIC_FINGERPRINT_NAMES) | {
+        "readyz",
+        "web-shell",
+        "service-info",
+    }
+    if set(container_config.get("fingerprintBindings", {})) != (
+        expected_fingerprint_names
+    ):
+        failures.append("fingerprint-to-container port binding is incomplete")
+    bases = container_config.get("fingerprintBaseUrls", {})
+    if (
+        not re.fullmatch(r"http://(?:127\.0\.0\.1|localhost):\d+", bases.get(
+            "service",
+            "",
+        ))
+        or not re.fullmatch(
+            r"http://(?:127\.0\.0\.1|localhost):\d+",
+            bases.get("web", ""),
+        )
+    ):
+        failures.append("fingerprint base URLs are not attested")
 
     storage_rows = read_csv(capture_dir / "storage.csv")
     storage = storage_rows[0] if len(storage_rows) == 1 else {}
@@ -2331,6 +3975,17 @@ def build_manifest(args):
     }
     if generated_families != set(FAMILY_ORDER):
         failures.append("generated rollback DDL does not cover all four families")
+    generated_data_families = {
+        row.get("family")
+        for row in rollback_rows
+        if row.get("kind") == "generated-data"
+    }
+    if generated_data_families != {
+        "logical-shadow",
+        "score-observations",
+        "band-song-projection",
+    }:
+        failures.append("generated rollback data coverage is inexact")
 
     parity = {}
     parity_path = Path(args.parity_evidence) if args.parity_evidence else None
@@ -2433,6 +4088,18 @@ def build_manifest(args):
         },
         "containers": stable_rows(container_rows),
         "health": stable_rows(health_rows),
+        "capacityGuardPolicy": capacity_policy,
+        "capacityGuardPolicySha256": sha256_path(
+            capture_dir / "capacity-guard.policy.json"
+        ),
+        "capacityGuardCheck": {
+            "decision": capacity_report.get("decision"),
+            "actionClass": capacity_report.get("actionClass"),
+            "reclaimAllowed": capacity_report.get(
+                "capacity",
+                {},
+            ).get("reclaimAllowed"),
+        },
         "storageIdentity": {
             key: storage.get(key, "")
             for key in [
@@ -2452,6 +4119,9 @@ def build_manifest(args):
             ],
             "projectContainers": stable_rows(project_container_rows),
             "sanitizedConfigSha256": sanitized_compose_sha,
+            "fstserviceImageReferenceSha256": (
+                fstservice_image_reference_sha256
+            ),
             "binds": stable_rows(compose_bind_rows),
             "bindConfigFiles": stable_rows(bind_config_rows),
         },
@@ -2459,6 +4129,12 @@ def build_manifest(args):
             "configured": configured_target,
             "runtime": runtime_target,
         },
+        "containerConfigAttestation": container_config,
+        "containerConfigAttestationSha256": (
+            sha256_path(container_config_path)
+            if container_config_path.is_file()
+            else ""
+        ),
         "columnCatalogSha256": column_catalog_sha,
         "columnCatalogRowCount": len(column_catalog_rows),
         "catalogSignature": catalog_metadata,
@@ -2594,6 +4270,119 @@ def validate_post(args):
             failures.append("destructive connection barrier was not released")
         if control.get("sql_released") != "true":
             failures.append("destructive SQL barrier was not released")
+        if not re.fullmatch(
+            r"[0-9a-f]{64}",
+            control.get("second_gate_sha256", ""),
+        ):
+            failures.append("complete second live gate is not process-bound")
+        else:
+            second_gate_path = (
+                post_dir.parent
+                / "post-scratch-live-gate"
+                / "validation.json"
+            )
+            if (
+                not second_gate_path.is_file()
+                or sha256_path(second_gate_path)
+                != control.get("second_gate_sha256")
+            ):
+                failures.append("complete second live gate evidence hash drift")
+            else:
+                second_gate = json.loads(
+                    second_gate_path.read_text(encoding="utf-8")
+                )
+                if (
+                    second_gate.get("success") is not True
+                    or second_gate.get("acceptedManifestSha256")
+                    != sha256_path(args.before_manifest)
+                ):
+                    failures.append(
+                        "complete second live gate did not bind accepted manifest"
+                    )
+        for key in ["sql_streamer_pid", "sql_streamer_start_ticks"]:
+            if not re.fullmatch(r"\d+", control.get(key, "")):
+                failures.append(f"immutable SQL streamer {key} is invalid")
+        if not re.fullmatch(
+            r"[0-9a-f]{64}",
+            control.get("sql_streamer_cmd_sha256", ""),
+        ):
+            failures.append("immutable SQL streamer command identity is invalid")
+        if control.get("sql_streamer_wait_completed") != "true":
+            failures.append("immutable SQL streamer was not waited")
+        immutable_proof_path = post_dir / "drop-sql-stream-proof.json"
+        if not re.fullmatch(
+            r"[0-9a-f]{64}",
+            control.get("immutable_bundle_sha256", ""),
+        ):
+            failures.append("immutable manifest/SQL proof is not process-bound")
+        elif (
+            not immutable_proof_path.is_file()
+            or sha256_path(immutable_proof_path)
+            != control.get("immutable_bundle_sha256")
+        ):
+            failures.append("immutable manifest/SQL proof hash drift")
+        else:
+            immutable_proof = json.loads(
+                immutable_proof_path.read_text(encoding="utf-8")
+            )
+            proof_manifest = immutable_proof.get("manifest", {})
+            manifest_service_rows = [
+                row
+                for row in manifest.get("containers", [])
+                if row.get("service") == "fstservice"
+            ]
+            manifest_service = (
+                manifest_service_rows[0]
+                if len(manifest_service_rows) == 1
+                else {}
+            )
+            manifest_postgres_rows = [
+                row
+                for row in manifest.get("containers", [])
+                if row.get("service") == "postgres"
+            ]
+            manifest_postgres = (
+                manifest_postgres_rows[0]
+                if len(manifest_postgres_rows) == 1
+                else {}
+            )
+            expected_networks = sorted(
+                manifest.get("containerConfigAttestation", {}).get(
+                    "services",
+                    {},
+                ).get("fstservice", {}).get("networks", {})
+            )
+            expected_target = manifest.get(
+                "productionDatabaseTarget",
+                {},
+            ).get("runtime", {})
+            if (
+                proof_manifest.get("sha256")
+                != sha256_path(args.before_manifest)
+                or immutable_proof.get("dropSql", {}).get("sha256")
+                != manifest.get("dropSqlSha256")
+                or proof_manifest.get("approvedFstserviceImageId")
+                != manifest_service.get("image_id")
+                or proof_manifest.get("approvedFstserviceContainerId")
+                != manifest_service.get("container_id")
+                or proof_manifest.get(
+                    "approvedFstserviceImageReferenceSha256"
+                )
+                != manifest.get("productionComposeOwnership", {}).get(
+                    "fstserviceImageReferenceSha256"
+                )
+                or proof_manifest.get("approvedFstserviceNetworks")
+                != expected_networks
+                or proof_manifest.get("approvedPostgresContainerId")
+                != manifest_postgres.get("container_id")
+                or proof_manifest.get("approvedPostgresSystemIdentifier")
+                != expected_target.get("system_identifier")
+                or proof_manifest.get("approvedProductionDatabaseTarget")
+                != expected_target
+            ):
+                failures.append(
+                    "immutable manifest/SQL proof did not bind accepted bytes"
+                )
     for filename, label in [
         ("relations.csv", "post-drop"),
         ("startup-relations.csv", "startup schema check"),
@@ -2609,6 +4398,261 @@ def validate_post(args):
         rows = read_csv(post_dir / filename)
         if len(rows) != 1 or rows[0].get("status") != "0":
             failures.append(f"{label} did not succeed")
+    startup_image_rows = read_csv(
+        post_dir / "startup-image-attestation.csv"
+    )
+    expected_service_rows = [
+        row
+        for row in manifest.get("containers", [])
+        if row.get("service") == "fstservice"
+    ]
+    prestart_path = post_dir / "startup-image-prestart-attestation.json"
+    creation_path = post_dir / "startup-image-creation-attestation.json"
+    routing_dir = post_dir / "startup-database-routing"
+    routing_path = routing_dir / "attestation.json"
+    routing_target_path = routing_dir / "production-target-attestation.csv"
+    routing_status_path = routing_dir / "status.csv"
+    release_path = post_dir / "startup-initializer-release.json"
+    if (
+        len(startup_image_rows) != 1
+        or len(expected_service_rows) != 1
+        or not prestart_path.is_file()
+        or not creation_path.is_file()
+        or not routing_path.is_file()
+        or not routing_target_path.is_file()
+        or not routing_status_path.is_file()
+        or not release_path.is_file()
+    ):
+        failures.append("startup image attestation is missing")
+    else:
+        startup_image = startup_image_rows[0]
+        expected_service = expected_service_rows[0]
+        expected_image = expected_service.get("image_id", "")
+        expected_source_container = expected_service.get("container_id", "")
+        expected_reference_sha256 = manifest.get(
+            "productionComposeOwnership",
+            {},
+        ).get("fstserviceImageReferenceSha256", "")
+        expected_networks = sorted(
+            manifest.get("containerConfigAttestation", {}).get(
+                "services",
+                {},
+            ).get("fstservice", {}).get("networks", {})
+        )
+        expected_target = manifest.get(
+            "productionDatabaseTarget",
+            {},
+        ).get("runtime", {})
+        expected_postgres_container = expected_target.get("container_id", "")
+        expected_system_identifier = expected_target.get(
+            "system_identifier",
+            "",
+        )
+        expected_pin = {
+            "host": expected_target.get("configured_host", ""),
+            "ipAddress": startup_image_rows[0].get(
+                "pinned_database_ip",
+                "",
+            ),
+            "network": startup_image_rows[0].get(
+                "pinned_database_network",
+                "",
+            ),
+            "postgresContainerId": expected_postgres_container,
+            "extraHost": (
+                f"{expected_target.get('configured_host', '')}:"
+                f"{startup_image_rows[0].get('pinned_database_ip', '')}"
+            ),
+        }
+        prestart = json.loads(prestart_path.read_text(encoding="utf-8"))
+        creation = json.loads(creation_path.read_text(encoding="utf-8"))
+        routing = json.loads(routing_path.read_text(encoding="utf-8"))
+        release = json.loads(release_path.read_text(encoding="utf-8"))
+        routing_target_rows = read_csv(routing_target_path)
+        routing_status_rows = read_csv(routing_status_path)
+        expected_command_sha256 = hashlib.sha256(
+            b'["--initialize-schema-only"]'
+        ).hexdigest()
+        marker_path = post_dir / "startup-image-attested-before-start.sha256"
+        marker = (
+            marker_path.read_text(encoding="utf-8").strip()
+            if marker_path.is_file()
+            else ""
+        )
+        if (
+            startup_image.get("manifest_image_id") != expected_image
+            or startup_image.get("source_container_id")
+            != expected_source_container
+            or startup_image.get("compose_image_reference_sha256")
+            != expected_reference_sha256
+            or startup_image.get("compose_image_id_before_create")
+            != expected_image
+            or startup_image.get("compose_image_id_before_start")
+            != expected_image
+            or startup_image.get("prestart_actual_image_id")
+            != expected_image
+            or startup_image.get("prestart_config_image") != expected_image
+            or startup_image.get("prestart_state") != "created"
+            or startup_image.get("prestart_running") != "false"
+            or startup_image.get("prestart_command_sha256")
+            != expected_command_sha256
+            or startup_image.get("pinned_database_host")
+            != expected_pin["host"]
+            or not re.fullmatch(
+                r"(?:\d{1,3}\.){3}\d{1,3}",
+                startup_image.get("pinned_database_ip", ""),
+            )
+            or startup_image.get("pinned_database_network")
+            not in expected_networks
+            or startup_image.get("pinned_postgres_container_id")
+            != expected_postgres_container
+            or startup_image.get("poststart_actual_image_id")
+            != expected_image
+            or startup_image.get("poststart_config_image") != expected_image
+            or startup_image.get("exit_code") != "0"
+            or not re.fullmatch(
+                r"[0-9a-f]{64}",
+                startup_image.get("container_id", ""),
+            )
+            or not re.fullmatch(
+                r"[0-9a-f]{64}",
+                startup_image.get("creation_attestation_sha256", ""),
+            )
+            or not re.fullmatch(
+                r"[0-9a-f]{64}",
+                startup_image.get("prestart_attestation_sha256", ""),
+            )
+            or startup_image.get("creation_attestation_sha256")
+            != sha256_path(creation_path)
+            or startup_image.get("prestart_attestation_sha256")
+            != sha256_path(prestart_path)
+            or startup_image.get("database_routing_attestation_sha256")
+            != sha256_path(routing_path)
+            or startup_image.get("database_target_attestation_sha256")
+            != sha256_path(routing_target_path)
+            or startup_image.get("initializer_release_sha256")
+            != sha256_path(release_path)
+            or marker != sha256_path(prestart_path)
+        ):
+            failures.append("startup initializer image identity drift")
+        for attestation, phase in [
+            (creation, "created-prestart"),
+            (prestart, "attested-before-start"),
+        ]:
+            state = attestation.get("state", {})
+            if (
+                attestation.get("schemaVersion") != 1
+                or attestation.get("phase") != phase
+                or attestation.get("expectedManifestSha256")
+                != sha256_path(args.before_manifest)
+                or attestation.get("sourceContainerId")
+                != expected_source_container
+                or attestation.get("containerId")
+                != startup_image.get("container_id")
+                or attestation.get("expectedImageId") != expected_image
+                or attestation.get("composeImageReferenceSha256")
+                != expected_reference_sha256
+                or attestation.get("composeImageResolvedId")
+                != expected_image
+                or attestation.get("actualImageId") != expected_image
+                or attestation.get("configuredImage") != expected_image
+                or attestation.get("networks") != expected_networks
+                or attestation.get("databaseHostPin") != expected_pin
+                or expected_target.get("configured_host", "")
+                in attestation.get("networkResolutionNames", [])
+                or state.get("status") != "created"
+                or state.get("running") is not False
+                or state.get("pid") != 0
+                or attestation.get("commandSha256")
+                != expected_command_sha256
+                or attestation.get("sourceConfigurationSha256")
+                != attestation.get("actualConfigurationSha256")
+                or attestation.get("autoRemove") is not False
+                or attestation.get("restartPolicy") != "no"
+                or attestation.get("portBindingsPresent") is not False
+                or "fstservice" in attestation.get("networkAliases", [])
+            ):
+                failures.append(
+                    f"startup initializer {phase} attestation drift"
+                )
+        expected_routing_target = {
+            "configured_host": expected_target.get("configured_host", ""),
+            "configured_port": expected_target.get("configured_port", ""),
+            "configured_database": expected_target.get(
+                "configured_database",
+                "",
+            ),
+            "configured_user": expected_target.get("configured_user", ""),
+            "container_id": expected_postgres_container,
+            "runtime_address": "local-socket",
+            "runtime_port": expected_target.get("runtime_port", ""),
+            "runtime_database": expected_target.get("runtime_database", ""),
+            "runtime_user": expected_target.get("runtime_user", ""),
+            "in_recovery": "false",
+            "system_identifier": expected_system_identifier,
+        }
+        routing_owners = routing.get("aliasOwners", {})
+        routing_endpoints = routing.get("postgres", {}).get("endpoints", {})
+        if (
+            routing.get("schemaVersion") != 1
+            or routing.get("success") is not True
+            or routing.get("acceptedManifestSha256")
+            != sha256_path(args.before_manifest)
+            or routing.get("startupContainerId")
+            != startup_image.get("container_id")
+            or routing.get("attachedNetworks") != expected_networks
+            or routing.get("databaseTarget") != expected_routing_target
+            or routing.get("databaseHostPin") != expected_pin
+            or routing.get("postgres", {}).get("containerId")
+            != expected_postgres_container
+            or routing.get("postgres", {}).get("systemIdentifier")
+            != expected_system_identifier
+            or sorted(routing_owners) != expected_networks
+            or sorted(routing_endpoints) != expected_networks
+            or any(
+                len(routing_owners.get(network, [])) != 1
+                or routing_owners[network][0].get("containerId")
+                != expected_postgres_container
+                or routing_owners[network][0].get("state") != "running"
+                or routing_owners[network][0].get("running") is not True
+                or not routing_owners[network][0].get("resolutionSources")
+                or expected_target.get("configured_host", "")
+                not in routing_owners[network][0].get(
+                    "resolutionNames",
+                    [],
+                )
+                or routing_endpoints[network].get("hostAliasPresent")
+                is not True
+                for network in expected_networks
+            )
+            or routing_endpoints.get(
+                expected_pin["network"],
+                {},
+            ).get("ipAddress") != expected_pin["ipAddress"]
+            or len(routing_target_rows) != 1
+            or routing_target_rows[0] != expected_target
+            or len(routing_status_rows) != 1
+            or routing_status_rows[0].get("status") != "passed"
+            or routing_status_rows[0].get("manifest_sha256")
+            != sha256_path(args.before_manifest)
+            or (post_dir / "startup-database-routing-failure.csv").exists()
+        ):
+            failures.append("startup database routing attestation drift")
+        if (
+            release.get("schemaVersion") != 1
+            or release.get("acceptedManifestSha256")
+            != sha256_path(args.before_manifest)
+            or release.get("containerId")
+            != startup_image.get("container_id")
+            or release.get("prestartAttestationSha256")
+            != sha256_path(prestart_path)
+            or release.get("databaseRoutingAttestationSha256")
+            != sha256_path(routing_path)
+            or release.get("databaseTargetAttestationSha256")
+            != sha256_path(routing_target_path)
+            or release.get("released") is not True
+        ):
+            failures.append("startup initializer release evidence drift")
 
     preflight_rows = read_csv(post_dir / "preflight.csv")
     preflight = preflight_rows[0] if len(preflight_rows) == 1 else {}
@@ -2656,6 +4700,20 @@ def validate_post(args):
     ).get("runtime", {})
     if len(post_target_rows) != 1 or post_target_rows[0] != before_target:
         failures.append("post-action production database target changed")
+    post_container_config_path = (
+        post_dir / "container-config-attestation.json"
+    )
+    post_container_config = (
+        json.loads(
+            post_container_config_path.read_text(encoding="utf-8")
+        )
+        if post_container_config_path.is_file()
+        else {}
+    )
+    if post_container_config != manifest.get(
+        "containerConfigAttestation"
+    ):
+        failures.append("post-action actual container configuration changed")
 
     after_fingerprints = {
         row.get("name"): row
@@ -2702,6 +4760,16 @@ def validate_post(args):
     for row in health_rows:
         if row.get("status", "").lower() != "ok":
             failures.append(f"post-action health failed: {row.get('check')}")
+    post_capacity_report, post_capacity_policy = validate_capacity_evidence(
+        post_dir,
+        failures,
+    )
+    if post_capacity_policy != manifest.get("capacityGuardPolicy"):
+        failures.append("post-action capacity policy changed")
+    elif sha256_path(
+        post_dir / "capacity-guard.policy.json"
+    ) != manifest.get("capacityGuardPolicySha256"):
+        failures.append("post-action capacity policy hash changed")
     containers = {
         row.get("service"): row for row in read_csv(post_dir / "containers.csv")
     }
@@ -2757,6 +4825,136 @@ def validate_post(args):
         "publishedScrapeId": preflight.get("published_scrape_id"),
         "objectCountAbsent": len(objects) if not failures else None,
         "storage": storage_rows,
+    }
+    output = Path(args.output)
+    output.write_text(
+        json.dumps(result, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    if failures:
+        for failure in result["failures"]:
+            print(f"ERROR: {failure}", file=sys.stderr)
+        return 3
+    return 0
+
+
+def validate_complete_live_gate(args):
+    manifest_path = Path(args.manifest)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    gate = Path(args.gate_dir)
+    failures = []
+    if sha256_path(manifest_path) != args.expected_manifest_sha256:
+        failures.append("accepted manifest hash changed")
+
+    csv_bindings = [
+        ("relations.csv", "relations"),
+        ("partition-children.csv", "partitionChildren"),
+        ("incoming-inheritance.csv", "incomingInheritance"),
+        ("owned-objects.csv", "ownedObjects"),
+        ("unexpected-relations.csv", "unexpectedRelations"),
+        ("external-dependencies.csv", "externalDependencies"),
+        ("containers.csv", "containers"),
+        ("health.csv", "health"),
+        ("retained-data.csv", "retainedData"),
+    ]
+    stable_state = {}
+    for filename, manifest_key in csv_bindings:
+        actual = stable_rows(read_csv(gate / filename))
+        expected = manifest.get(manifest_key, [])
+        stable_state[manifest_key] = actual
+        if actual != expected:
+            failures.append(f"complete live gate drift: {manifest_key}")
+
+    preflight_rows = read_csv(gate / "preflight.csv")
+    preflight = preflight_rows[0] if len(preflight_rows) == 1 else {}
+    stable_state["preflight"] = preflight
+    if preflight != manifest.get("preflight"):
+        failures.append("complete live gate preflight drift")
+
+    target_rows = read_csv(gate / "production-target-attestation.csv")
+    target = target_rows[0] if len(target_rows) == 1 else {}
+    stable_state["productionDatabaseTarget"] = target
+    if target != manifest.get("productionDatabaseTarget", {}).get("runtime"):
+        failures.append("complete live gate production target drift")
+    container_config_path = gate / "container-config-attestation.json"
+    container_config = (
+        json.loads(container_config_path.read_text(encoding="utf-8"))
+        if container_config_path.is_file()
+        else {}
+    )
+    stable_state["containerConfigAttestation"] = container_config
+    if container_config != manifest.get("containerConfigAttestation"):
+        failures.append("complete live gate container configuration drift")
+
+    columns_path = gate / "catalog" / "columns.csv"
+    column_hash = sha256_path(columns_path) if columns_path.is_file() else ""
+    stable_state["columnCatalogSha256"] = column_hash
+    if column_hash != manifest.get("columnCatalogSha256"):
+        failures.append("complete live gate column catalog drift")
+
+    metadata_path = gate / "catalog" / "signature-metadata.json"
+    metadata = (
+        json.loads(metadata_path.read_text(encoding="utf-8"))
+        if metadata_path.is_file()
+        else {}
+    )
+    stable_state["catalogSignature"] = metadata
+    if metadata != manifest.get("catalogSignature"):
+        failures.append("complete live gate catalog signature drift")
+
+    capacity_report, capacity_policy = validate_capacity_evidence(
+        gate,
+        failures,
+    )
+    stable_state["capacityGuardPolicy"] = capacity_policy
+    stable_state["capacityGuardDecision"] = capacity_report.get("decision")
+    if capacity_policy != manifest.get("capacityGuardPolicy"):
+        failures.append("complete live gate capacity policy drift")
+    if sha256_path(gate / "capacity-guard.policy.json") != manifest.get(
+        "capacityGuardPolicySha256"
+    ):
+        failures.append("complete live gate capacity policy hash drift")
+
+    fingerprint_rows = [
+        row
+        for row in read_csv(gate / "fingerprints.csv")
+        if bool_value(row.get("gate", "false"))
+    ]
+    fingerprints = stable_rows(fingerprint_rows)
+    stable_state["fingerprints"] = fingerprints
+    if fingerprints != manifest.get("fingerprints"):
+        failures.append("complete live gate public fingerprint drift")
+
+    storage_rows = read_csv(gate / "storage.csv")
+    storage = storage_rows[0] if len(storage_rows) == 1 else {}
+    storage_identity = {
+        key: storage.get(key, "")
+        for key in [
+            "pgdata_source",
+            "filesystem_source",
+            "filesystem_type",
+            "evidence_root",
+            "on_fst_drive",
+        ]
+    }
+    stable_state["storageIdentity"] = storage_identity
+    if storage_identity != manifest.get("storageIdentity"):
+        failures.append("complete live gate storage identity drift")
+
+    stable_text = json.dumps(
+        stable_state,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    result = {
+        "schemaVersion": 1,
+        "success": not failures,
+        "acceptedManifestSha256": args.expected_manifest_sha256,
+        "stableStateSha256": hashlib.sha256(
+            stable_text.encode("utf-8")
+        ).hexdigest(),
+        "failures": sorted(set(failures)),
     }
     output = Path(args.output)
     output.write_text(
@@ -3021,26 +5219,44 @@ def sanitize_compose_config(args):
     def environment_projection(environment):
         names = []
         references = []
+        nonsecret_hashes = {}
+        secret_names = []
+        sensitive_name = re.compile(
+            r"(^|__|[_-])(password|passwd|secret|token|credential|"
+            r"private|certificate|cert|api[_-]?key|ssh[_-]?key)"
+            r"($|__|[_-])",
+            re.IGNORECASE,
+        )
         if isinstance(environment, dict):
-            for name, raw_value in environment.items():
-                names.append(str(name))
-                references.extend(
-                    match.group(0)
-                    for match in target_pattern.finditer(str(raw_value or ""))
-                )
+            items = environment.items()
         else:
+            parsed = []
             for item in sequence(environment):
                 text = str(item)
-                name, _, raw_value = text.partition("=")
-                if name.strip():
-                    names.append(name.strip())
-                references.extend(
-                    match.group(0)
-                    for match in target_pattern.finditer(raw_value)
-                )
+                name, separator, raw_value = text.partition("=")
+                parsed.append((name.strip(), raw_value if separator else ""))
+            items = parsed
+        for name, raw_value in items:
+            name = str(name)
+            raw_value = "" if raw_value is None else str(raw_value)
+            names.append(name)
+            references.extend(
+                match.group(0) for match in target_pattern.finditer(raw_value)
+            )
+            if (
+                sensitive_name.search(name)
+                or name.casefold() == "connectionstrings__postgresql"
+            ):
+                secret_names.append(name)
+            else:
+                nonsecret_hashes[name] = hashlib.sha256(
+                    raw_value.encode("utf-8")
+                ).hexdigest()
         return {
             "names": sorted(set(names)),
             "retiredValueReferences": sorted(set(references)),
+            "nonSecretValueSha256": dict(sorted(nonsecret_hashes.items())),
+            "secretConfiguredNames": sorted(set(secret_names)),
         }
 
     def environment_map(environment):
@@ -3059,14 +5275,18 @@ def sanitize_compose_config(args):
     def command_projection(command):
         flags = []
         references = []
-        for token in sequence(command):
-            text = str(token)
+        tokens = [str(token) for token in sequence(command)]
+        for text in tokens:
             if text.startswith("--"):
                 flags.append(text.split("=", 1)[0])
             references.extend(
                 match.group(0) for match in target_pattern.finditer(text)
             )
         return {
+            "present": command is not None,
+            "argvSha256": hashlib.sha256(
+                json.dumps(tokens, separators=(",", ":")).encode("utf-8")
+            ).hexdigest(),
             "flags": sorted(set(flags)),
             "retiredReferences": sorted(set(references)),
         }
@@ -3178,12 +5398,59 @@ def sanitize_compose_config(args):
             elif isinstance(secret, dict):
                 secrets.append(str(secret.get("source") or ""))
         labels = service.get("labels", {})
-        label_names = (
-            sorted(str(name) for name in labels)
-            if isinstance(labels, dict)
-            else sorted(
-                str(item).split("=", 1)[0]
-                for item in sequence(labels)
+        if isinstance(labels, dict):
+            label_map = {
+                str(name): "" if raw_value is None else str(raw_value)
+                for name, raw_value in labels.items()
+            }
+        else:
+            label_map = {}
+            for item in sequence(labels):
+                name, separator, raw_value = str(item).partition("=")
+                if separator:
+                    label_map[name] = raw_value
+        ports = []
+        for port in sequence(service.get("ports")):
+            if isinstance(port, dict):
+                ports.append(
+                    {
+                        "target": int(port.get("target")),
+                        "published": str(port.get("published")),
+                        "protocol": str(port.get("protocol") or "tcp"),
+                        "hostIp": str(
+                            port.get("host_ip")
+                            or port.get("hostIp")
+                            or "0.0.0.0"
+                        ),
+                        "mode": str(port.get("mode") or "ingress"),
+                    }
+                )
+            elif isinstance(port, str):
+                parts = port.split(":")
+                if len(parts) == 3:
+                    host_ip, published, target = parts
+                elif len(parts) == 2:
+                    host_ip, (published, target) = "0.0.0.0", parts
+                else:
+                    raise ValueError(
+                        f"invalid rendered compose port: {service_name}"
+                    )
+                target_value, _, protocol = target.partition("/")
+                ports.append(
+                    {
+                        "target": int(target_value),
+                        "published": str(published),
+                        "protocol": protocol or "tcp",
+                        "hostIp": host_ip,
+                        "mode": "ingress",
+                    }
+                )
+        ports.sort(
+            key=lambda row: (
+                row["protocol"],
+                row["published"],
+                row["target"],
+                row["hostIp"],
             )
         )
         services_projection[service_name] = {
@@ -3210,10 +5477,42 @@ def sanitize_compose_config(args):
                 key=lambda row: (row["source"], row["target"]),
             ),
             "secretNames": sorted(set(secrets)),
-            "labelNames": label_names,
+            "labels": {
+                "names": sorted(label_map),
+                "valueSha256": {
+                    name: hashlib.sha256(
+                        value.encode("utf-8")
+                    ).hexdigest()
+                    for name, value in sorted(label_map.items())
+                },
+            },
             "profiles": sorted(str(item) for item in sequence(
                 service.get("profiles")
             )),
+            "networks": {
+                str(network_name): {
+                    "aliases": sorted(
+                        str(alias)
+                        for alias in (
+                            network_config.get("aliases", [])
+                            or []
+                            if isinstance(network_config, dict)
+                            else []
+                        )
+                    )
+                }
+                for network_name, network_config in sorted(
+                    (
+                        service.get("networks")
+                        if isinstance(service.get("networks"), dict)
+                        else {
+                            str(name): {}
+                            for name in sequence(service.get("networks"))
+                        }
+                    ).items()
+                )
+            },
+            "ports": ports,
         }
 
     postgres_environment = environment_map(
@@ -3282,9 +5581,15 @@ def sanitize_compose_config(args):
         "volumeNames": sorted(
             str(name) for name in (value.get("volumes") or {})
         ),
-        "networkNames": sorted(
-            str(name) for name in (value.get("networks") or {})
-        ),
+        "networks": {
+            str(name): {
+                "name": str(
+                    (config or {}).get("name") or name
+                ),
+                "external": bool((config or {}).get("external", False)),
+            }
+            for name, config in sorted((value.get("networks") or {}).items())
+        },
         "databaseTarget": {
             "service": "postgres",
             "host": "postgres",
@@ -3328,6 +5633,544 @@ def sanitize_compose_config(args):
                 ),
             )
         )
+
+
+def attest_container_config(args):
+    compose = json.loads(Path(args.compose).read_text(encoding="utf-8"))
+    target_rows = read_csv(args.target_attestation)
+    project_rows = read_csv(args.project_containers)
+    inspected = json.load(sys.stdin)
+    with Path(args.fingerprint_spec).open(
+        newline="",
+        encoding="utf-8",
+    ) as handle:
+        fingerprint_rows = list(csv.DictReader(handle, delimiter="\t"))
+    failures = []
+    required_services = {"postgres", "fstservice", "festivalweb", "fstworker"}
+    if not isinstance(inspected, list):
+        raise ValueError("docker inspect payload must be a JSON array")
+
+    sensitive_name = re.compile(
+        r"(^|__|[_-])(password|passwd|secret|token|credential|"
+        r"private|certificate|cert|api[_-]?key|ssh[_-]?key)"
+        r"($|__|[_-])",
+        re.IGNORECASE,
+    )
+    sensitive_path = re.compile(
+        r"(^|[/_.-])(secrets?|password|passwd|tokens?|credentials?|private|"
+        r"certificates?|certs?|api[-_]?keys?|ssh[-_]?keys?)([/_.-]|$)",
+        re.IGNORECASE,
+    )
+
+    def env_map(values):
+        result = {}
+        for item in values or []:
+            name, separator, raw_value = str(item).partition("=")
+            if separator:
+                result[name] = raw_value
+        return result
+
+    def env_projection(values, expected):
+        actual = env_map(values)
+        expected_names = expected.get("names", [])
+        projection = {
+            "names": sorted(actual),
+            "requiredNames": expected_names,
+            "nonSecretValueSha256": {},
+            "secretConfiguredNames": [],
+        }
+        for name in expected_names:
+            if name not in actual:
+                failures.append(f"container environment lacks {name}")
+                continue
+            if (
+                sensitive_name.search(name)
+                or name.casefold() == "connectionstrings__postgresql"
+            ):
+                projection["secretConfiguredNames"].append(name)
+            else:
+                projection["nonSecretValueSha256"][name] = hashlib.sha256(
+                    actual[name].encode("utf-8")
+                ).hexdigest()
+        projection["secretConfiguredNames"].sort()
+        projection["nonSecretValueSha256"] = dict(
+            sorted(projection["nonSecretValueSha256"].items())
+        )
+        if (
+            projection["nonSecretValueSha256"]
+            != expected.get("nonSecretValueSha256", {})
+        ):
+            failures.append("container nonsecret environment value drift")
+        if (
+            projection["secretConfiguredNames"]
+            != expected.get("secretConfiguredNames", [])
+        ):
+            failures.append("container secret environment presence drift")
+        return projection, actual
+
+    def argv_projection(values):
+        tokens = [str(token) for token in values or []]
+        return {
+            "present": bool(tokens),
+            "argvSha256": hashlib.sha256(
+                json.dumps(tokens, separators=(",", ":")).encode("utf-8")
+            ).hexdigest(),
+        }
+
+    def classify_bind(source, target):
+        lowered = f"{source} {target}".lower()
+        if (
+            "/run/secrets" in lowered
+            or sensitive_path.search(source)
+            or sensitive_path.search(target)
+        ):
+            return "secret"
+        if (
+            "/var/lib/postgresql/data" in target
+            or "docker.sock" in lowered
+            or "/fst-data" in source
+            or "postgres-data" in source.lower()
+        ):
+            return "data"
+        return "other"
+
+    project_by_service = {
+        row.get("service", ""): row for row in project_rows
+    }
+    inspect_by_id = {
+        item.get("Id", ""): item for item in inspected if item.get("Id")
+    }
+
+    expected_networks = compose.get("networks", {})
+    service_results = {}
+    actual_env_maps = {}
+    for service in sorted(required_services):
+        project = project_by_service.get(service, {})
+        item = inspect_by_id.get(project.get("container_id", ""), {})
+        config = item.get("Config") or {}
+        host_config = item.get("HostConfig") or {}
+        network_settings = item.get("NetworkSettings") or {}
+        container_state = str((item.get("State") or {}).get("Status") or "")
+        labels = config.get("Labels") or {}
+        expected_service = compose.get("services", {}).get(service, {})
+        container_id = item.get("Id", "")
+        if container_id != project.get("container_id", ""):
+            failures.append(f"container ID drift: {service}")
+        if labels.get("com.docker.compose.service", "") != service:
+            failures.append(f"container service label drift: {service}")
+        for label_name, expected_value in {
+            "com.docker.compose.service": service,
+            "com.docker.compose.project": project.get("project", ""),
+            "com.docker.compose.project.working_dir": project.get(
+                "working_dir",
+                "",
+            ),
+        }.items():
+            if labels.get(label_name, "") != expected_value:
+                failures.append(
+                    f"container compose label drift: {service}.{label_name}"
+                )
+        config_files_hash = hashlib.sha256(
+            labels.get(
+                "com.docker.compose.project.config_files",
+                "",
+            ).encode("utf-8")
+        ).hexdigest()
+        if config_files_hash != project.get("config_files_sha256", ""):
+            failures.append(f"container compose file label drift: {service}")
+        expected_labels = expected_service.get("labels", {})
+        actual_label_hashes = {}
+        for name in expected_labels.get("names", []):
+            if name not in labels:
+                failures.append(f"container label missing: {service}.{name}")
+                continue
+            actual_label_hashes[name] = hashlib.sha256(
+                str(labels[name]).encode("utf-8")
+            ).hexdigest()
+        if actual_label_hashes != expected_labels.get("valueSha256", {}):
+            failures.append(f"container label value drift: {service}")
+
+        environment, actual_env = env_projection(
+            config.get("Env") or [],
+            expected_service.get("environment", {}),
+        )
+        actual_env_maps[service] = actual_env
+        command = argv_projection(config.get("Cmd"))
+        entrypoint = argv_projection(config.get("Entrypoint"))
+        for name, actual_projection in [
+            ("command", command),
+            ("entrypoint", entrypoint),
+        ]:
+            expected_projection = expected_service.get(name, {})
+            if expected_projection.get("present") and (
+                actual_projection["argvSha256"]
+                != expected_projection.get("argvSha256")
+            ):
+                failures.append(f"container {name} drift: {service}")
+
+        expected_volumes = expected_service.get("volumes", [])
+        actual_mounts = []
+        for mount in item.get("Mounts") or []:
+            mount_type = str(mount.get("Type") or "")
+            source = (
+                str(mount.get("Name") or "")
+                if mount_type == "volume"
+                else str(mount.get("Source") or "")
+            )
+            target = str(mount.get("Destination") or "")
+            classification = (
+                classify_bind(source, target)
+                if mount_type == "bind"
+                else "not-bind"
+            )
+            actual_mounts.append(
+                {
+                    "type": mount_type,
+                    "source": (
+                        "<redacted-secret-bind>"
+                        if classification == "secret"
+                        else source
+                    ),
+                    "target": (
+                        "<redacted-secret-target>"
+                        if classification == "secret"
+                        else target
+                    ),
+                    "readOnly": not bool(mount.get("RW", False)),
+                }
+            )
+        actual_mounts.sort(
+            key=lambda row: (row["type"], row["target"], row["source"])
+        )
+        expected_volumes = sorted(
+            expected_volumes,
+            key=lambda row: (row["type"], row["target"], row["source"]),
+        )
+        if actual_mounts != expected_volumes:
+            failures.append(f"container mount drift: {service}")
+
+        def inspect_port_rows(mapping):
+            rows = []
+            for container_port, bindings in sorted((mapping or {}).items()):
+                target_text, _, protocol = container_port.partition("/")
+                for binding in bindings or []:
+                    rows.append(
+                        {
+                            "target": int(target_text),
+                            "published": str(
+                                binding.get("HostPort") or ""
+                            ),
+                            "protocol": protocol or "tcp",
+                            "hostIp": str(
+                                binding.get("HostIp") or "0.0.0.0"
+                            ),
+                            "mode": "ingress",
+                        }
+                    )
+            return sorted(
+                rows,
+                key=lambda row: (
+                    row["protocol"],
+                    row["published"],
+                    row["target"],
+                    row["hostIp"],
+                ),
+            )
+
+        expected_ports = expected_service.get("ports", [])
+        host_ports = inspect_port_rows(host_config.get("PortBindings"))
+        runtime_ports = inspect_port_rows(network_settings.get("Ports"))
+        if host_ports != expected_ports:
+            failures.append(f"container host port binding drift: {service}")
+        if runtime_ports != expected_ports:
+            failures.append(f"container runtime port binding drift: {service}")
+
+        actual_networks = {}
+        for network_name, network in sorted(
+            (network_settings.get("Networks") or {}).items()
+        ):
+            actual_networks[network_name] = {
+                "aliases": sorted(
+                    str(alias)
+                    for alias in (network.get("Aliases") or [])
+                    if alias
+                ),
+                "ipAddress": str(network.get("IPAddress") or ""),
+            }
+            if (
+                container_state == "running"
+                and not actual_networks[network_name]["ipAddress"]
+            ):
+                failures.append(
+                    f"container network lacks IP: {service}.{network_name}"
+                )
+        expected_service_networks = expected_service.get("networks", {})
+        expected_actual_names = {
+            expected_networks.get(logical_name, {}).get("name", logical_name)
+            for logical_name in expected_service_networks
+        }
+        if set(actual_networks) != expected_actual_names:
+            failures.append(f"container network set drift: {service}")
+        for logical_name, expected_network in expected_service_networks.items():
+            actual_name = expected_networks.get(logical_name, {}).get(
+                "name",
+                logical_name,
+            )
+            aliases = set(actual_networks.get(actual_name, {}).get(
+                "aliases",
+                [],
+            ))
+            required_aliases = set(expected_network.get("aliases", []))
+            required_aliases.add(service)
+            if not required_aliases.issubset(aliases):
+                failures.append(
+                    f"container network alias drift: {service}.{actual_name}"
+                )
+
+        service_results[service] = {
+            "containerId": container_id,
+            "imageId": str(item.get("Image") or ""),
+            "command": command,
+            "entrypoint": entrypoint,
+            "environment": environment,
+            "mounts": actual_mounts,
+            "ports": host_ports,
+            "networks": actual_networks,
+            "composeLabels": {
+                "project": labels.get("com.docker.compose.project", ""),
+                "service": labels.get("com.docker.compose.service", ""),
+                "workingDir": labels.get(
+                    "com.docker.compose.project.working_dir",
+                    "",
+                ),
+                "configFilesSha256": config_files_hash,
+                "resolvedLabelValueSha256": dict(
+                    sorted(actual_label_hashes.items())
+                ),
+            },
+            "restartPolicy": str(
+                (host_config.get("RestartPolicy") or {}).get("Name") or ""
+            ),
+            "state": container_state,
+        }
+
+    published_owners = {}
+    for service, result in service_results.items():
+        for port in result.get("ports", []):
+            key = (port["protocol"], port["hostIp"], port["published"])
+            if key in published_owners:
+                failures.append(
+                    f"published port has multiple target owners: {key}"
+                )
+            published_owners[key] = service
+
+    target_container_ids = {
+        row.get("container_id", "") for row in project_rows
+    }
+    wildcard_ips = {"", "0.0.0.0", "::"}
+    for item in inspected:
+        if item.get("Id", "") in target_container_ids:
+            continue
+        other_ports = inspect_port_rows(
+            (item.get("HostConfig") or {}).get("PortBindings")
+        )
+        for other in other_ports:
+            for expected_key, owner in published_owners.items():
+                protocol, host_ip, published = expected_key
+                if (
+                    other["protocol"] == protocol
+                    and other["published"] == published
+                    and (
+                        other["hostIp"] == host_ip
+                        or other["hostIp"] in wildcard_ips
+                        or host_ip in wildcard_ips
+                    )
+                ):
+                    failures.append(
+                        f"stale container also owns {host_ip}:{published}/"
+                        f"{protocol} for {owner}"
+                    )
+
+    target = compose.get("databaseTarget", {})
+    connection_targets = {}
+    for service in ["fstservice", "fstworker"]:
+        connection = actual_env_maps.get(service, {}).get(
+            "ConnectionStrings__PostgreSQL",
+            "",
+        )
+        values = {}
+        for item in connection.split(";"):
+            key, separator, raw_value = item.partition("=")
+            if separator:
+                values[key.strip().casefold()] = raw_value.strip()
+        connection_targets[service] = {
+            "host": values.get("host", ""),
+            "port": values.get("port", "5432"),
+            "database": values.get("database", ""),
+            "user": (
+                values.get("username")
+                or values.get("user id")
+                or values.get("user")
+                or ""
+            ),
+            "passwordConfigured": any(
+                key in values for key in {"password", "pwd"}
+            ) or actual_env_maps.get(service, {}).get(
+                "ConnectionStrings__PostgreSQLPasswordConfigured",
+                "",
+            ).casefold() == "true",
+        }
+        if connection_targets[service] != {
+            key: target.get(key)
+            for key in [
+                "host",
+                "port",
+                "database",
+                "user",
+                "passwordConfigured",
+            ]
+        }:
+            failures.append(f"actual database target drift: {service}")
+
+    target_attestation = target_rows[0] if len(target_rows) == 1 else {}
+    postgres_networks = service_results.get("postgres", {}).get("networks", {})
+    service_networks = service_results.get("fstservice", {}).get("networks", {})
+    shared_networks = sorted(set(postgres_networks) & set(service_networks))
+    host = target.get("host", "")
+    mapped_networks = [
+        network
+        for network in shared_networks
+        if host in postgres_networks.get(network, {}).get("aliases", [])
+    ]
+    if not mapped_networks:
+        failures.append("fstservice database host does not map to postgres")
+    if target_attestation.get("container_id") != service_results.get(
+        "postgres",
+        {},
+    ).get("containerId"):
+        failures.append("database system identifier container mapping drift")
+    system_identifier = target_attestation.get("system_identifier", "")
+    if not re.fullmatch(r"\d+", system_identifier):
+        failures.append("database system identifier is invalid")
+    alias_owners = {}
+    for network_name in shared_networks:
+        owners = []
+        for item in inspected:
+            if str((item.get("State") or {}).get("Status") or "") != "running":
+                continue
+            endpoint = (
+                (item.get("NetworkSettings") or {})
+                .get("Networks", {})
+                .get(network_name)
+            )
+            if not endpoint:
+                continue
+            aliases = {
+                str(alias)
+                for alias in (endpoint.get("Aliases") or [])
+                if alias
+            }
+            if host not in aliases:
+                continue
+            item_labels = (item.get("Config") or {}).get("Labels") or {}
+            owners.append(
+                {
+                    "containerId": str(item.get("Id") or ""),
+                    "containerName": str(
+                        item.get("Name") or ""
+                    ).lstrip("/"),
+                    "composeProject": str(
+                        item_labels.get("com.docker.compose.project") or ""
+                    ),
+                    "composeService": str(
+                        item_labels.get("com.docker.compose.service") or ""
+                    ),
+                    "ipAddress": str(endpoint.get("IPAddress") or ""),
+                }
+            )
+        owners.sort(key=lambda row: row["containerId"])
+        alias_owners[network_name] = owners
+        if (
+            len(owners) != 1
+            or owners[0]["containerId"]
+            != service_results.get("postgres", {}).get("containerId")
+        ):
+            failures.append(
+                f"database alias ownership is not exclusive: {network_name}"
+            )
+
+    fingerprint_bindings = {}
+    bases = {}
+    for row in fingerprint_rows:
+        name = row.get("name", "")
+        parsed = urlparse(row.get("url", ""))
+        service = "fstservice" if name == "readyz" else "festivalweb"
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname not in {"127.0.0.1", "localhost"}
+            or parsed.port is None
+        ):
+            failures.append(f"fingerprint URL is not locally bound: {name}")
+            continue
+        candidates = [
+            port
+            for port in service_results.get(service, {}).get("ports", [])
+            if port["published"] == str(parsed.port)
+            and port["protocol"] == "tcp"
+            and port["hostIp"] in {"127.0.0.1", "::1"}
+        ]
+        if len(candidates) != 1:
+            failures.append(
+                f"fingerprint URL does not map to {service}: {name}"
+            )
+            continue
+        binding = candidates[0]
+        base = f"http://{parsed.hostname}:{parsed.port}"
+        base_kind = "service" if service == "fstservice" else "web"
+        if base_kind in bases and bases[base_kind] != base:
+            failures.append(f"fingerprint base URL drift: {base_kind}")
+        bases[base_kind] = base
+        fingerprint_bindings[name] = {
+            "service": service,
+            "containerId": service_results[service]["containerId"],
+            "hostIp": binding["hostIp"],
+            "hostPort": binding["published"],
+            "containerPort": binding["target"],
+            "protocol": binding["protocol"],
+            "baseUrl": base,
+        }
+    if set(fingerprint_bindings) != {
+        row.get("name", "") for row in fingerprint_rows
+    }:
+        failures.append("fingerprint port binding coverage is incomplete")
+
+    result = {
+        "schemaVersion": 1,
+        "success": not failures,
+        "failures": sorted(set(failures)),
+        "services": service_results,
+        "databaseHostMapping": {
+            "consumer": "fstservice",
+            "host": host,
+            "sharedNetworks": mapped_networks,
+            "postgresContainerId": service_results.get("postgres", {}).get(
+                "containerId"
+            ),
+            "postgresSystemIdentifier": system_identifier,
+            "aliasOwners": alias_owners,
+        },
+        "fingerprintBindings": dict(sorted(fingerprint_bindings.items())),
+        "fingerprintBaseUrls": dict(sorted(bases.items())),
+    }
+    Path(args.output).write_text(
+        json.dumps(result, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    if failures:
+        for failure in result["failures"]:
+            print(f"ERROR: {failure}", file=sys.stderr)
+        return 3
+    return 0
 
 
 def validate_drop_command(args):
@@ -3406,6 +6249,12 @@ def build_parser():
     post.add_argument("--post-dir", required=True)
     post.add_argument("--output", required=True)
 
+    live_gate = subparsers.add_parser("validate-complete-live-gate")
+    live_gate.add_argument("--manifest", required=True)
+    live_gate.add_argument("--expected-manifest-sha256", required=True)
+    live_gate.add_argument("--gate-dir", required=True)
+    live_gate.add_argument("--output", required=True)
+
     canonical = subparsers.add_parser("canonicalize-json")
     canonical.add_argument("--input", required=True)
     canonical.add_argument("--output", required=True)
@@ -3436,8 +6285,18 @@ def build_parser():
     retained.add_argument("--metadata-output", required=True)
     retained.add_argument("--expected-sql-output", required=True)
     retained.add_argument("--assert-sql-output", required=True)
-    retained.add_argument("--logical-rollback", required=True)
-    retained.add_argument("--band-rollback", required=True)
+    retained.add_argument("--logical-data", required=True)
+    retained.add_argument("--band-data", required=True)
+
+    retained_recheck = subparsers.add_parser(
+        "validate-retained-recapture"
+    )
+    retained_recheck.add_argument("--spec", required=True)
+    retained_recheck.add_argument("--column-catalog", required=True)
+    retained_recheck.add_argument("--raw-dir", required=True)
+    retained_recheck.add_argument("--expected-metadata", required=True)
+    retained_recheck.add_argument("--output-dir", required=True)
+    retained_recheck.add_argument("--metadata-output", required=True)
 
     columns = subparsers.add_parser("prepare-column-catalog")
     columns.add_argument("--objects", required=True)
@@ -3463,6 +6322,119 @@ def build_parser():
     compose = subparsers.add_parser("sanitize-compose-config")
     compose.add_argument("--output", required=True)
     compose.add_argument("--binds-output", required=True)
+
+    container_config = subparsers.add_parser(
+        "attest-container-config"
+    )
+    container_config.add_argument("--compose", required=True)
+    container_config.add_argument("--target-attestation", required=True)
+    container_config.add_argument("--project-containers", required=True)
+    container_config.add_argument("--fingerprint-spec", required=True)
+    container_config.add_argument("--output", required=True)
+
+    pg_dump = subparsers.add_parser("canonicalize-pg-dump")
+    pg_dump.add_argument("--input", required=True)
+    pg_dump.add_argument("--output", required=True)
+
+    executable_pg_dump = subparsers.add_parser(
+        "prepare-executable-pg-dump"
+    )
+    executable_pg_dump.add_argument("--input", required=True)
+    executable_pg_dump.add_argument("--output", required=True)
+
+    drop_stream = subparsers.add_parser("stream-verified-drop-sql")
+    drop_stream.add_argument("--input", required=True)
+    drop_stream.add_argument("--expected-sha256", required=True)
+    drop_stream.add_argument("--proof", required=True)
+    drop_stream.add_argument(
+        "--wait-for-release",
+        action="store_true",
+    )
+
+    manifest_drop_stream = subparsers.add_parser(
+        "stream-verified-manifest-drop-sql"
+    )
+    manifest_drop_stream.add_argument("--manifest", required=True)
+    manifest_drop_stream.add_argument(
+        "--expected-manifest-sha256",
+        required=True,
+    )
+    manifest_drop_stream.add_argument("--drop-sql", required=True)
+    manifest_drop_stream.add_argument("--proof", required=True)
+    manifest_drop_stream.add_argument(
+        "--wait-for-release",
+        action="store_true",
+    )
+
+    def add_startup_identity_arguments(startup_parser):
+        startup_parser.add_argument(
+            "--docker-socket",
+            default="/var/run/docker.sock",
+        )
+        startup_parser.add_argument("--source-container-id", required=True)
+        startup_parser.add_argument("--expected-image-id", required=True)
+        startup_parser.add_argument(
+            "--compose-image-reference",
+            required=True,
+        )
+        startup_parser.add_argument(
+            "--expected-image-reference-sha256",
+            required=True,
+        )
+        startup_parser.add_argument(
+            "--expected-manifest-sha256",
+            required=True,
+        )
+        startup_parser.add_argument("--container-name", required=True)
+        startup_parser.add_argument("--command-json", required=True)
+        startup_parser.add_argument(
+            "--expected-networks-json",
+            required=True,
+        )
+        startup_parser.add_argument(
+            "--expected-postgres-container-id",
+            required=True,
+        )
+        startup_parser.add_argument("--database-host", required=True)
+        startup_parser.add_argument("--output", required=True)
+
+    create_startup = subparsers.add_parser(
+        "create-immutable-startup-container"
+    )
+    add_startup_identity_arguments(create_startup)
+
+    attest_startup = subparsers.add_parser(
+        "attest-immutable-startup-container"
+    )
+    add_startup_identity_arguments(attest_startup)
+    attest_startup.add_argument("--container-id", required=True)
+
+    startup_routing = subparsers.add_parser(
+        "attest-startup-database-routing"
+    )
+    startup_routing.add_argument("--startup-attestation", required=True)
+    startup_routing.add_argument("--target-attestation", required=True)
+    startup_routing.add_argument(
+        "--expected-manifest-sha256",
+        required=True,
+    )
+    startup_routing.add_argument(
+        "--expected-postgres-container-id",
+        required=True,
+    )
+    startup_routing.add_argument(
+        "--expected-system-identifier",
+        required=True,
+    )
+    startup_routing.add_argument("--expected-host", required=True)
+    startup_routing.add_argument("--expected-port", required=True)
+    startup_routing.add_argument("--expected-database", required=True)
+    startup_routing.add_argument("--expected-user", required=True)
+    startup_routing.add_argument(
+        "--expected-networks-json",
+        required=True,
+    )
+    startup_routing.add_argument("--output", required=True)
     return parser
 
 
@@ -3505,6 +6477,8 @@ def main():
             return manifest_ready(args)
         if args.command == "validate-post":
             return validate_post(args)
+        if args.command == "validate-complete-live-gate":
+            return validate_complete_live_gate(args)
         if args.command == "canonicalize-json":
             canonicalize_json(args)
             return 0
@@ -3523,6 +6497,9 @@ def main():
         if args.command == "prepare-retained-data":
             prepare_retained_data(args)
             return 0
+        if args.command == "validate-retained-recapture":
+            validate_retained_recapture(args)
+            return 0
         if args.command == "prepare-column-catalog":
             prepare_column_catalog(args)
             return 0
@@ -3535,6 +6512,28 @@ def main():
         if args.command == "sanitize-compose-config":
             sanitize_compose_config(args)
             return 0
+        if args.command == "attest-container-config":
+            return attest_container_config(args)
+        if args.command == "canonicalize-pg-dump":
+            canonicalize_pg_dump(args)
+            return 0
+        if args.command == "prepare-executable-pg-dump":
+            prepare_executable_pg_dump(args)
+            return 0
+        if args.command == "stream-verified-drop-sql":
+            stream_verified_drop_sql(args)
+            return 0
+        if args.command == "stream-verified-manifest-drop-sql":
+            stream_verified_manifest_drop_sql(args)
+            return 0
+        if args.command == "create-immutable-startup-container":
+            create_immutable_startup_container(args)
+            return 0
+        if args.command == "attest-immutable-startup-container":
+            attest_immutable_startup_container(args)
+            return 0
+        if args.command == "attest-startup-database-routing":
+            return attest_startup_database_routing(args)
     except (
         ElementTree.ParseError,
         IndexError,

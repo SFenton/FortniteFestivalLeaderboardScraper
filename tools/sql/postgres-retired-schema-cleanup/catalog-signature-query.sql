@@ -2,6 +2,7 @@ WITH target AS (
     SELECT relation.oid,
            expected.family,
            expected.object_order,
+           schema_row.oid AS namespace_oid,
            schema_row.nspname AS schema_name,
            relation.relname AS object_name,
            relation.relkind
@@ -11,6 +12,41 @@ WITH target AS (
     JOIN pg_catalog.pg_class relation
       ON relation.relnamespace = schema_row.oid
      AND relation.relname = expected.object_name
+),
+effective_publication AS (
+    SELECT target.oid AS target_oid,
+            target.schema_name,
+            target.object_name,
+            publication.oid AS publication_oid,
+            publication.pubname,
+            publication.puballtables,
+            publication.pubinsert,
+            publication.pubupdate,
+            publication.pubdelete,
+            publication.pubtruncate,
+            publication.pubviaroot,
+            publication_table.attnames,
+            publication_table.rowfilter,
+            EXISTS (
+                SELECT 1
+                FROM pg_catalog.pg_publication_namespace
+                     publication_namespace
+                WHERE publication_namespace.pnpubid = publication.oid
+                  AND publication_namespace.pnnspid =
+                      target.namespace_oid
+            ) AS schema_member,
+            EXISTS (
+                SELECT 1
+                FROM pg_catalog.pg_publication_rel direct_relation
+                WHERE direct_relation.prpubid = publication.oid
+                  AND direct_relation.prrelid = target.oid
+            ) AS explicit_member
+    FROM target
+    JOIN pg_catalog.pg_publication_tables publication_table
+       ON publication_table.schemaname = target.schema_name
+      AND publication_table.tablename = target.object_name
+    JOIN pg_catalog.pg_publication publication
+       ON publication.pubname = publication_table.pubname
 ),
 signature AS (
     SELECT 'relation'::text AS category,
@@ -314,30 +350,35 @@ signature AS (
     UNION ALL
 
     SELECT 'publication',
-           publication.pubname || ':' ||
-               target.schema_name || '.' || target.object_name,
+           effective_publication.pubname || ':' ||
+               effective_publication.schema_name || '.' ||
+               effective_publication.object_name,
            jsonb_build_object(
-               'allTables', publication.puballtables,
-               'insert', publication.pubinsert,
-               'update', publication.pubupdate,
-               'delete', publication.pubdelete,
-               'truncate', publication.pubtruncate,
-               'viaRoot', publication.pubviaroot,
+               'membershipMode', CASE
+                   WHEN effective_publication.puballtables
+                   THEN 'all-tables'
+                   WHEN effective_publication.schema_member
+                   THEN 'schema'
+                   WHEN effective_publication.explicit_member
+                   THEN 'explicit'
+                   ELSE 'effective'
+               END,
+               'allTables', effective_publication.puballtables,
+               'schemaMember', effective_publication.schema_member,
+               'explicitMember', effective_publication.explicit_member,
+               'insert', effective_publication.pubinsert,
+               'update', effective_publication.pubupdate,
+               'delete', effective_publication.pubdelete,
+               'truncate', effective_publication.pubtruncate,
+               'viaRoot', effective_publication.pubviaroot,
                'columns', COALESCE(
-                   publication_relation.prattrs::text,
-                   ''),
+                   to_jsonb(effective_publication.attnames),
+                   '[]'::jsonb),
                'rowFilter', COALESCE(
-                   pg_catalog.pg_get_expr(
-                       publication_relation.prqual,
-                       publication_relation.prrelid,
-                       true),
+                   effective_publication.rowfilter,
                    '')
            )
-    FROM target
-    JOIN pg_catalog.pg_publication_rel publication_relation
-      ON publication_relation.prrelid = target.oid
-    JOIN pg_catalog.pg_publication publication
-      ON publication.oid = publication_relation.prpubid
+    FROM effective_publication
 
     UNION ALL
 
@@ -461,7 +502,7 @@ signature AS (
                        dependency.refclassid,
                        dependency.refobjid,
                        dependency.refobjsubid),
-                   '') || ':' || dependency.deptype,
+                   '') || ':' || dependency.deptype::text,
            jsonb_build_object(
                'dependentClass', dependency.classid::regclass::text,
                'dependentSubId', dependency.objsubid,
@@ -511,7 +552,7 @@ signature AS (
                        shared_dependency.refobjid)
                    ELSE shared_dependency.refclassid::regclass::text ||
                        ':' || shared_dependency.refobjid::text
-               END || ':' || shared_dependency.deptype,
+               END || ':' || shared_dependency.deptype::text,
                jsonb_build_object(
                    'dependentClass',
                    shared_dependency.classid::regclass::text,

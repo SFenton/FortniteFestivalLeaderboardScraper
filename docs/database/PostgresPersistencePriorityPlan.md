@@ -291,6 +291,30 @@ recorded clients before failing. It remains hard-blocked until cleanup scrape
 successfully published and unfrozen, exact public/API parity is explicitly
 accepted, and the regenerated manifest matches the supplied SHA-256. This
 preparation ran no live DDL and does not mark the parity gate clear.
+The cleanup invocation clears inherited capacity variables and explicitly pins
+expected reclaim/transient/scratch to zero plus the accepted
+`60,392,999,803`-byte, two-runs/day, seven-day policy. Full guard JSON is
+retained and the effective parameters plus guard-script SHA-256 are
+manifest-bound and revalidated.
+Scratch proof is followed by a second complete live manifest gate while the
+identified destructive client waits before SQL release; drift in health,
+capacity, images/state, publication/freeze/scrape/locks, retained data, catalog,
+fingerprints, or target attestation aborts.
+Initial, pre-execute, post-scratch, and post-action gates also compare
+secret-sanitized actual commands/environment/mounts/networks/IP aliases/labels
+for all four production services against resolved Compose and bind the
+`fstservice` database alias to the maintenance Postgres system identifier.
+Each shared network must have exactly one running owner of the configured DB
+alias, so stale nonproject Postgres clones fail the gate even without ports.
+After the post-scratch gate, the operator-approved manifest and then its
+referenced destructive SQL are captured into separate sealed memfds and streamed
+without reopening either pathname.
+The subsequent startup-schema check uses a final image-ID override and retains
+the temporary container until its actual image/config/exit identity is
+attested, preventing tag-retargeting after destructive commit.
+Rollback rehearsal/restore never executes the raw pg_dump timeout-zero
+preamble: a strictly parsed executable copy preserves random restriction keys
+and rewrites only the four timeout assignments to bounded values.
 
 ## Capacity preflight guard
 

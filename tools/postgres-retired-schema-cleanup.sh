@@ -10,6 +10,14 @@ PROCESS_MATCHER="$SCRIPT_DIR/postgres-retired-schema-process-match.sh"
 OBJECTS_FILE="$SQL_DIR/objects.tsv"
 RETAINED_SPEC="$SQL_DIR/retained-data.tsv"
 CATALOG_QUERY="$SQL_DIR/catalog-signature-query.sql"
+CAPACITY_GUARD="$SCRIPT_DIR/postgres-capacity-guard.sh"
+CAPACITY_ESTIMATED_FULL_SCRAPE_GROWTH_BYTES="60392999803"
+CAPACITY_EXPECTED_FULL_SCRAPES_PER_DAY="2"
+CAPACITY_MINIMUM_HEADROOM_DAYS="7"
+CAPACITY_MINIMUM_HEADROOM_BYTES_OVERRIDE="0"
+CAPACITY_TRANSIENT_BUILD_BYTES="0"
+CAPACITY_REQUIRED_SCRATCH_BYTES="0"
+CAPACITY_EXPECTED_RECLAIM_BYTES="0"
 
 PRODUCTION_COMPOSE_DIR="/home/sfenton/Docker/FestivalServiceTracker"
 PRODUCTION_FST_STORAGE_ROOT="/mnt/docker-storage"
@@ -45,6 +53,24 @@ DROP_LOCAL_CMD_SHA256=""
 DROP_LOCAL_WAIT_COMPLETED=false
 DROP_CONNECT_RELEASED=false
 DROP_SQL_RELEASED=false
+DROP_SECOND_GATE_SHA256=""
+DROP_SQL_STREAMER_PID=""
+DROP_SQL_STREAMER_START_TICKS=""
+DROP_SQL_STREAMER_CMD_SHA256=""
+DROP_SQL_STREAMER_WAIT_COMPLETED=false
+DROP_IMMUTABLE_BUNDLE_SHA256=""
+APPROVED_FSTSERVICE_IMAGE_ID=""
+APPROVED_FSTSERVICE_CONTAINER_ID=""
+APPROVED_FSTSERVICE_IMAGE_REFERENCE_SHA256=""
+APPROVED_FSTSERVICE_NETWORKS_JSON=""
+APPROVED_POSTGRES_CONTAINER_ID=""
+APPROVED_POSTGRES_SYSTEM_IDENTIFIER=""
+APPROVED_DATABASE_HOST=""
+APPROVED_DATABASE_PORT=""
+APPROVED_DATABASE_NAME=""
+APPROVED_DATABASE_USER=""
+STARTUP_CHECK_CONTAINER_NAME=""
+STARTUP_CHECK_CONTAINER_ACTIVE=false
 DROP_SQL_RELEASED=false
 DROP_LOCAL_START_TICKS=""
 DROP_LOCAL_CMD_SHA256=""
@@ -323,6 +349,7 @@ fi
 for file in \
     "$HELPER" \
     "$PROCESS_MATCHER" \
+    "$CAPACITY_GUARD" \
     "$OBJECTS_FILE" \
     "$RETAINED_SPEC" \
     "$CATALOG_QUERY" \
@@ -341,6 +368,9 @@ fi
 CAPTURE_DIR="$OUTPUT_DIR/capture"
 PACKAGE_DIR="$OUTPUT_DIR/package"
 ROLLBACK_DIR="$PACKAGE_DIR/rollback"
+ROLLBACK_EXECUTABLE_DIR="$PACKAGE_DIR/rollback-executable"
+ROLLBACK_CANONICAL_DIR="$PACKAGE_DIR/rollback-canonical"
+ROLLBACK_DATA_DIR="$PACKAGE_DIR/rollback-data"
 RETAINED_DIR="$PACKAGE_DIR/retained-data"
 RETAINED_RAW_DIR="$CAPTURE_DIR/retained-data"
 CATALOG_DIR="$PACKAGE_DIR/catalog"
@@ -358,6 +388,9 @@ mkdir -p \
     "$CAPTURE_DIR" \
     "$PACKAGE_DIR" \
     "$ROLLBACK_DIR" \
+    "$ROLLBACK_EXECUTABLE_DIR" \
+    "$ROLLBACK_CANONICAL_DIR" \
+    "$ROLLBACK_DATA_DIR" \
     "$RETAINED_DIR" \
     "$RETAINED_RAW_DIR" \
     "$CATALOG_DIR" \
@@ -395,7 +428,7 @@ write_rollback_instructions() {
         printf '  1. Keep fstworker stopped and the worker ledger offline.\n'
         printf '  2. Keep public reads on published scrape 1278 and unfrozen.\n'
         printf '  3. Reinventory exact absent/present objects and dependencies.\n'
-        printf '  4. Verify rollback and retained-payload SHA-256 values.\n'
+        printf '  4. Re-parse original pg_dump boundaries and verify canonical/data SHA-256 values.\n'
         printf '  5. If all 61 objects are absent, restore rollback-all.sql atomically.\n'
         printf '  6. Repeat startup, absence/presence, public fingerprint, publication, and health checks.\n\n'
         printf 'Per-family rollback DDL:\n'
@@ -403,9 +436,9 @@ write_rollback_instructions() {
             printf '  - %s: %s/%s.sql\n' "$family" "$ROLLBACK_DIR" "$family"
         done
         printf '\nExample explicit full restore command after catalog review:\n'
-        printf '  timeout --signal=TERM --kill-after=30s 7m docker exec -i -e PGCONNECT_TIMEOUT=10 -e PGOPTIONS="-c row_security=off" -e PGHOST= -e PGHOSTADDR= -e PGPORT= -e PGSERVICE= -e PGSERVICEFILE= %q psql -X --single-transaction -v ON_ERROR_STOP=1 -h %q -p %q -U %q -d %q \\\n' \
+        printf '  timeout --signal=TERM --kill-after=30s 7m docker exec -i -e PGCONNECT_TIMEOUT=10 -e PGOPTIONS="-c row_security=off" %q env -u PGHOST -u PGHOSTADDR -u PGPORT -u PGSERVICE -u PGSERVICEFILE psql -X --single-transaction -v ON_ERROR_STOP=1 -h %q -p %q -U %q -d %q \\\n' \
             "$PG_CONTAINER" "$PG_SOCKET_DIR" "$PG_PORT" "$PG_USER" "$PG_DB"
-        printf '    < %q/rollback-all.sql\n' "$ROLLBACK_DIR"
+        printf '    < %q/rollback-all.sql\n' "$ROLLBACK_EXECUTABLE_DIR"
         printf '\nThe drop is one transaction: either all families commit or none do.\n'
         printf 'Do not apply rollback-all.sql unless all 61 objects are absent.\n'
     } > "$destination"
@@ -614,6 +647,7 @@ python3 "$HELPER" render-expected-sql \
         "$ORCHESTRATOR" \
         "$HELPER" \
         "$PROCESS_MATCHER" \
+        "$CAPACITY_GUARD" \
         "$SQL_DIR"/capture-*.sql \
         "$SQL_DIR/catalog-signature-query.sql" \
         "$SQL_DIR/objects.tsv" \
@@ -840,7 +874,7 @@ reverify_production_compose_project() {
     local evidence_dir="$1"
     local ids_output id inspect_row project working_dir config_files_label
     local service service_ids path rendered_json binds_tsv
-    mkdir -p "$evidence_dir"
+    mkdir -p "$evidence_dir" || return 3
     if ! ids_output="$(
         docker ps -a \
             --filter "label=com.docker.compose.project.working_dir=$COMPOSE_DIR" \
@@ -885,7 +919,8 @@ reverify_production_compose_project() {
             | awk '{print $1}')" ]] || return 2
     printf 'status,project,postgres_container_id\nok,%s,%s\n' \
         "$COMPOSE_PROJECT_NAME" "$RESOLVED_PG_CONTAINER_ID" \
-        > "$evidence_dir/compose-reverification.csv"
+        > "$evidence_dir/compose-reverification.csv" || return 3
+    return 0
 }
 
 psql_stream_database() {
@@ -894,12 +929,9 @@ psql_stream_database() {
         docker exec -i \
         -e PGCONNECT_TIMEOUT=10 \
         -e PGOPTIONS="-c row_security=off" \
-        -e PGHOST= \
-        -e PGHOSTADDR= \
-        -e PGPORT= \
-        -e PGSERVICE= \
-        -e PGSERVICEFILE= \
         "$PG_CONTAINER" \
+        env -u PGHOST -u PGHOSTADDR -u PGPORT \
+        -u PGSERVICE -u PGSERVICEFILE \
         psql -X -q -v ON_ERROR_STOP=1 \
         -h "$PG_SOCKET_DIR" -p "$PG_PORT" \
         -U "$PG_USER" -d "$database" -P pager=off
@@ -915,23 +947,23 @@ run_expected_capture() {
     {
         cat "$PACKAGE_DIR/expected-objects.sql"
         cat "$SQL_DIR/$sql_file"
-    } | psql_stream > "$output_file"
+    } | psql_stream > "$output_file" || return 3
 }
 
 run_plain_capture() {
     local sql_file="$1"
     local output_file="$2"
-    psql_stream < "$SQL_DIR/$sql_file" > "$output_file"
+    psql_stream < "$SQL_DIR/$sql_file" > "$output_file" || return 3
 }
 
 capture_target_attestation() {
     local output_file="$1"
     local raw_file="$output_file.raw"
-    run_plain_capture capture-target-attestation.sql "$raw_file"
+    run_plain_capture capture-target-attestation.sql "$raw_file" || return 3
     python3 - \
         "$CAPTURE_DIR/production-database-target.csv" \
         "$raw_file" \
-        "$output_file" <<'PY'
+        "$output_file" <<'PY' || return 3
 import csv
 import re
 import sys
@@ -1003,7 +1035,29 @@ with Path(sys.argv[3]).open("w", newline="", encoding="utf-8") as handle:
     writer.writeheader()
     writer.writerow(row)
 PY
-    rm -f "$raw_file"
+    [[ -s "$output_file" ]] || return 3
+    rm -f "$raw_file" || return 3
+}
+
+capture_container_config_attestation() {
+    local output_file="$1"
+    local ids_output
+    local -a ids=()
+    ids_output="$(docker ps -a -q)" || return 3
+    while IFS= read -r container_id; do
+        [[ -n "$container_id" ]] && ids+=("$container_id")
+    done <<< "$ids_output"
+    (( ${#ids[@]} > 0 )) || return 3
+    docker inspect "${ids[@]}" \
+        | python3 "$HELPER" attest-container-config \
+            --compose "$CAPTURE_DIR/production-compose.sanitized.json" \
+            --target-attestation \
+                "${output_file%/*}/production-target-attestation.csv" \
+            --project-containers \
+                "$CAPTURE_DIR/production-compose-project-containers.csv" \
+            --fingerprint-spec "$PACKAGE_DIR/public-fingerprints.tsv" \
+            --output "$output_file" || return 3
+    [[ -s "$output_file" ]] || return 3
 }
 
 run_catalog_signature_capture() {
@@ -1021,17 +1075,18 @@ run_catalog_signature_capture() {
         printf '%s\n' \
             ') TO STDOUT WITH (FORMAT CSV, HEADER TRUE);' \
             'COMMIT;'
-    } | psql_stream > "$output_file"
+    } | psql_stream > "$output_file" || return 3
 }
 
 capture_containers() {
     local output_file="$1"
     local compose_json
-    compose_json="$(compose_command config --format json)"
-    printf 'service,container_id,container,state,health,image_id,compose_image_id,restart_policy\n' > "$output_file"
+    compose_json="$(compose_command config --format json)" || return 3
+    printf 'service,container_id,container,state,health,image_id,compose_image_id,restart_policy\n' \
+        > "$output_file" || return 3
     local service container_id inspect_row state health image_id image_ref compose_image_id container_name restart_policy
     for service in postgres fstservice festivalweb fstworker; do
-        container_id="$(compose_command ps -a -q "$service")"
+        container_id="$(compose_command ps -a -q "$service")" || return 3
         [[ "$container_id" == "${PROJECT_SERVICE_CONTAINER_IDS[$service]}" ]] \
             || {
                 printf 'ERROR: exact compose service container drift: %s\n' \
@@ -1045,44 +1100,48 @@ service = sys.argv[1]
 config = json.load(sys.stdin)
 print((config.get("services", {}).get(service, {}).get("image") or "").strip())
 ' "$service" <<< "$compose_json"
-        )"
+        )" || return 3
         compose_image_id=""
         if [[ -n "$image_ref" ]]; then
             compose_image_id="$(docker image inspect --format '{{.Id}}' "$image_ref" 2>/dev/null || true)"
         fi
         if [[ -z "$container_id" ]]; then
-            printf '%s,,,missing,none,,%s,\n' "$service" "$compose_image_id" >> "$output_file"
+            printf '%s,,,missing,none,,%s,\n' \
+                "$service" "$compose_image_id" >> "$output_file" || return 3
             continue
         fi
         inspect_row="$(
             docker inspect --format \
                 '{{.Name}}|{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}|{{.Image}}|{{.HostConfig.RestartPolicy.Name}}' \
                 "$container_id"
-        )"
+        )" || return 3
         IFS='|' read -r container_name state health image_id restart_policy <<< "$inspect_row"
         container_name="${container_name#/}"
         printf '%s,%s,%s,%s,%s,%s,%s,%s\n' \
             "$service" "$container_id" "$container_name" "$state" "$health" \
             "$image_id" "$compose_image_id" "$restart_policy" \
-            >> "$output_file"
+            >> "$output_file" || return 3
     done
+    return 0
 }
 
 capture_health() {
     local output_file="$1"
     local body_dir="$2"
-    mkdir -p "$body_dir"
-    printf 'check,status,detail\n' > "$output_file"
+    mkdir -p "$body_dir" || return 3
+    printf 'check,status,detail\n' > "$output_file" || return 3
     if docker exec \
-        -e PGHOST= -e PGHOSTADDR= -e PGPORT= \
-        -e PGSERVICE= -e PGSERVICEFILE= \
         "$PG_CONTAINER" \
+        env -u PGHOST -u PGHOSTADDR -u PGPORT \
+        -u PGSERVICE -u PGSERVICEFILE \
         pg_isready -h "$PG_SOCKET_DIR" -p "$PG_PORT" \
         -U "$PG_USER" -d "$PG_DB" \
         > "$body_dir/pg-isready.txt" 2>&1; then
-        printf 'postgres-readiness,ok,pg_isready\n' >> "$output_file"
+        printf 'postgres-readiness,ok,pg_isready\n' >> "$output_file" \
+            || return 3
     else
-        printf 'postgres-readiness,failed,pg_isready\n' >> "$output_file"
+        printf 'postgres-readiness,failed,pg_isready\n' >> "$output_file" \
+            || return 3
     fi
 
     local name url code _format _gate
@@ -1100,19 +1159,81 @@ capture_health() {
             code="000"
         fi
         if [[ "$code" == "$expected_status" ]]; then
-            printf '%s,ok,http-%s\n' "$name" "$code" >> "$output_file"
+            printf '%s,ok,http-%s\n' "$name" "$code" >> "$output_file" \
+                || return 3
         else
-            printf '%s,failed,http-%s\n' "$name" "$code" >> "$output_file"
+            printf '%s,failed,http-%s\n' "$name" "$code" >> "$output_file" \
+                || return 3
         fi
     done < "$PACKAGE_DIR/public-fingerprints.tsv"
+    return 0
 }
 
 capture_capacity_guard() {
     local output_file="$1"
     local health_file="$2"
     local stdout_file="$3"
-    if "$SCRIPT_DIR/postgres-capacity-guard.sh" \
+    local policy_file="${output_file%.json}.policy.json"
+    python3 - \
+        "$CAPACITY_GUARD" \
+        "$policy_file" \
+        "$CAPACITY_ESTIMATED_FULL_SCRAPE_GROWTH_BYTES" \
+        "$CAPACITY_EXPECTED_FULL_SCRAPES_PER_DAY" \
+        "$CAPACITY_MINIMUM_HEADROOM_DAYS" \
+        "$CAPACITY_MINIMUM_HEADROOM_BYTES_OVERRIDE" \
+        "$CAPACITY_TRANSIENT_BUILD_BYTES" \
+        "$CAPACITY_REQUIRED_SCRATCH_BYTES" \
+        "$CAPACITY_EXPECTED_RECLAIM_BYTES" <<'PY' || return 3
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+script, output, growth, runs, days, override, transient, scratch, reclaim = (
+    sys.argv[1:]
+)
+policy = {
+    "schemaVersion": 1,
+    "actionClass": "reclaim",
+    "guardScriptSha256": hashlib.sha256(
+        Path(script).read_bytes()
+    ).hexdigest(),
+    "effectiveParameters": {
+        "estimatedFullScrapeGrowthBytes": int(growth),
+        "expectedFullScrapesPerDay": int(runs),
+        "minimumHeadroomDays": int(days),
+        "minimumHeadroomBytesOverride": int(override),
+        "transientBuildBytes": int(transient),
+        "requiredScratchBytes": int(scratch),
+        "expectedReclaimBytes": int(reclaim),
+    },
+}
+Path(output).write_text(
+    json.dumps(policy, sort_keys=True, indent=2) + "\n",
+    encoding="utf-8",
+)
+PY
+    if env \
+        -u ACTION_CLASS \
+        -u TRANSIENT_BUILD_BYTES \
+        -u REQUIRED_SCRATCH_BYTES \
+        -u EXPECTED_RECLAIM_BYTES \
+        -u ESTIMATED_FULL_SCRAPE_GROWTH_BYTES \
+        -u EXPECTED_FULL_SCRAPES_PER_DAY \
+        -u MINIMUM_HEADROOM_DAYS \
+        -u MINIMUM_HEADROOM_BYTES_OVERRIDE \
+        "$CAPACITY_GUARD" \
         --action-class reclaim \
+        --transient-build-bytes "$CAPACITY_TRANSIENT_BUILD_BYTES" \
+        --required-scratch-bytes "$CAPACITY_REQUIRED_SCRATCH_BYTES" \
+        --expected-reclaim-bytes "$CAPACITY_EXPECTED_RECLAIM_BYTES" \
+        --estimated-full-scrape-growth-bytes \
+            "$CAPACITY_ESTIMATED_FULL_SCRAPE_GROWTH_BYTES" \
+        --expected-full-scrapes-per-day \
+            "$CAPACITY_EXPECTED_FULL_SCRAPES_PER_DAY" \
+        --minimum-headroom-days "$CAPACITY_MINIMUM_HEADROOM_DAYS" \
+        --minimum-headroom-bytes \
+            "$CAPACITY_MINIMUM_HEADROOM_BYTES_OVERRIDE" \
         --compose-dir "$COMPOSE_DIR" \
         --pg-container "$PG_CONTAINER" \
         --pg-user "$PG_USER" \
@@ -1124,15 +1245,18 @@ capture_capacity_guard() {
         printf 'capacity-guard,ok,reclaim\n' >> "$health_file"
     else
         printf 'capacity-guard,failed,reclaim\n' >> "$health_file"
+        return 3
     fi
+    [[ -s "$output_file" && -s "$policy_file" ]] || return 3
+    return 0
 }
 
 capture_fingerprints() {
     local output_file="$1"
     local body_dir="$2"
-    mkdir -p "$body_dir"
+    mkdir -p "$body_dir" || return 3
     printf 'name,url,resolved_url,format,expected_status,gate,http_status,body_bytes,sha256\n' \
-        > "$output_file"
+        > "$output_file" || return 3
     local -A cached_body=()
     local -A cached_code=()
     local account_id=""
@@ -1163,7 +1287,7 @@ capture_fingerprints() {
             code="000"
             : > "$body"
         elif [[ -n "${cached_body[$resolved_url]:-}" ]]; then
-            cp "${cached_body[$resolved_url]}" "$body"
+            cp "${cached_body[$resolved_url]}" "$body" || return 3
             code="${cached_code[$resolved_url]}"
         else
             if ! code="$(
@@ -1189,7 +1313,7 @@ capture_fingerprints() {
                 fi
                 ;;
             text)
-                cp "$body" "$canonical"
+                cp "$body" "$canonical" || return 3
                 ;;
             leaderboard-semantic)
                 if ! python3 "$HELPER" normalize-leaderboard \
@@ -1242,16 +1366,18 @@ capture_fingerprints() {
             fi
         fi
 
-        bytes="$(wc -c < "$canonical" | tr -d ' ')"
+        bytes="$(wc -c < "$canonical" | tr -d ' ')" || return 3
         if [[ "$bytes" == "0" ]]; then
             hash=""
         else
-            hash="$(sha256sum "$canonical" | awk '{print $1}')"
+            hash="$(sha256sum "$canonical" | awk '{print $1}')" || return 3
         fi
         printf '%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
             "$name" "$url" "$resolved_url" "$format" "$expected_status" \
-            "$gate" "$code" "$bytes" "$hash" >> "$output_file"
+            "$gate" "$code" "$bytes" "$hash" >> "$output_file" || return 3
+        [[ -s "$output_file" ]] || return 3
     done < "$PACKAGE_DIR/public-fingerprints.tsv"
+    return 0
 }
 
 capture_storage() {
@@ -1263,7 +1389,7 @@ capture_storage() {
         docker inspect --format \
             '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Source}}{{end}}{{end}}' \
             "$PG_CONTAINER"
-    )"
+    )" || return 3
     if [[ -z "$pgdata_source" ]]; then
         printf 'ERROR: %s has no PostgreSQL data mount\n' "$PG_CONTAINER" >&2
         return 1
@@ -1271,46 +1397,44 @@ capture_storage() {
     pgdata_source="$(realpath -m "$pgdata_source")"
     read -r total_bytes used_bytes free_bytes used_percent mount_point < <(
         df -B1 --output=size,used,avail,pcent,target "$pgdata_source" | tail -n 1
-    )
+    ) || return 3
     used_percent="${used_percent%\%}"
     read -r filesystem_source filesystem_type < <(
         findmnt -T "$pgdata_source" -n -o SOURCE,FSTYPE
-    )
+    ) || return 3
     database_bytes="$(
         timeout --signal=TERM --kill-after=30s 7m \
             docker exec \
             -e PGCONNECT_TIMEOUT=10 \
             -e PGOPTIONS="-c row_security=off" \
-            -e PGHOST= \
-            -e PGHOSTADDR= \
-            -e PGPORT= \
-            -e PGSERVICE= \
-            -e PGSERVICEFILE= \
             "$PG_CONTAINER" \
+            env -u PGHOST -u PGHOSTADDR -u PGPORT \
+            -u PGSERVICE -u PGSERVICEFILE \
             psql -X -qAt -v ON_ERROR_STOP=1 \
             -h "$PG_SOCKET_DIR" -p "$PG_PORT" \
             -U "$PG_USER" -d "$PG_DB" \
             -c 'SELECT pg_database_size(current_database())'
-    )"
+    )" || return 3
     target_bytes="$(
         python3 - "$relations_file" <<'PY'
 import csv, sys
 with open(sys.argv[1], newline="", encoding="utf-8") as handle:
     print(sum(int(row["total_bytes"] or 0) for row in csv.DictReader(handle)))
 PY
-    )"
+    )" || return 3
     local on_fst_drive=false
     if realpath_under "$pgdata_source" "$FST_STORAGE_ROOT" \
         && realpath_under "$OUTPUT_DIR" "$FST_STORAGE_ROOT"; then
         on_fst_drive=true
     fi
     printf 'pgdata_source,filesystem_source,filesystem_type,evidence_root,on_fst_drive,filesystem_total_bytes,filesystem_used_bytes,filesystem_free_bytes,filesystem_used_percent,filesystem_mount,database_bytes,target_total_bytes\n' \
-        > "$output_file"
+        > "$output_file" || return 3
     printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
         "$pgdata_source" "$filesystem_source" "$filesystem_type" \
         "$FST_EVIDENCE_ROOT" "$on_fst_drive" "$total_bytes" "$used_bytes" \
         "$free_bytes" "$used_percent" "$mount_point" "$database_bytes" \
-        "$target_bytes" >> "$output_file"
+        "$target_bytes" >> "$output_file" || return 3
+    return 0
 }
 
 scan_rg_root() {
@@ -1538,41 +1662,40 @@ capture_source_references() {
         "$pattern"
 }
 
-normalize_dump() {
+canonicalize_dump_for_digest() {
     local input_file="$1"
     local output_file="$2"
-    python3 - "$input_file" "$output_file" <<'PY'
-from pathlib import Path
-import re
-import sys
+    python3 "$HELPER" canonicalize-pg-dump \
+        --input "$input_file" \
+        --output "$output_file"
+}
 
-source = Path(sys.argv[1]).read_text(encoding="utf-8")
-source = re.sub(
-    r"^\\restrict .*$",
-    r"\\restrict FSTRetiredSchemaCleanup20260804",
-    source,
-    flags=re.MULTILINE,
-)
-source = re.sub(
-    r"^\\unrestrict .*$",
-    r"\\unrestrict FSTRetiredSchemaCleanup20260804",
-    source,
-    flags=re.MULTILINE,
-)
-source = source.replace(
-    "SET statement_timeout = 0;",
-    "SET statement_timeout = '30s';",
-)
-source = source.replace(
-    "SET lock_timeout = 0;",
-    "SET lock_timeout = '5s';",
-)
-source = source.replace(
-    "SET transaction_timeout = 0;",
-    "SET transaction_timeout = '5min';",
-)
-Path(sys.argv[2]).write_text(source, encoding="utf-8")
-PY
+prepare_rollback_variants() {
+    local executable_dir="$1"
+    local canonical_dir="$2"
+    local raw_hash_file="$3"
+    local family raw_hash
+    mkdir -p "$executable_dir" "$canonical_dir" || return 3
+    printf 'family,file,sha256\n' > "$raw_hash_file" || return 3
+    for family in \
+        logical-shadow \
+        score-observations \
+        band-song-projection \
+        aggregate-ranking-deltas; do
+        raw_hash="$(
+            sha256sum "$ROLLBACK_DIR/$family.sql" | awk '{print $1}'
+        )" || return 3
+        printf '%s,%s,%s\n' \
+            "$family" "$family.sql" "$raw_hash" \
+            >> "$raw_hash_file" || return 3
+        python3 "$HELPER" prepare-executable-pg-dump \
+            --input "$ROLLBACK_DIR/$family.sql" \
+            --output "$executable_dir/$family.sql" || return 3
+        canonicalize_dump_for_digest \
+            "$executable_dir/$family.sql" \
+            "$canonical_dir/$family.sql" || return 3
+    done
+    return 0
 }
 
 prepare_live_rollbacks() {
@@ -1600,12 +1723,9 @@ prepare_live_rollbacks() {
         if ! timeout --signal=TERM --kill-after=10s 2m \
             docker exec \
                 -e PGOPTIONS="-c statement_timeout=30s -c row_security=off" \
-                -e PGHOST= \
-                -e PGHOSTADDR= \
-                -e PGPORT= \
-                -e PGSERVICE= \
-                -e PGSERVICEFILE= \
                 "$PG_CONTAINER" \
+                env -u PGHOST -u PGHOSTADDR -u PGPORT \
+                -u PGSERVICE -u PGSERVICEFILE \
                 "${dump_args[@]}" > "$raw" \
             2> "$LOG_DIR/pg-dump-$family.log"; then
             printf '%s\n' "$family" >> "$CAPTURE_DIR/rollback-generation-failures.txt"
@@ -1615,8 +1735,7 @@ prepare_live_rollbacks() {
             rm -f "$raw"
             continue
         fi
-        normalize_dump "$raw" "$output"
-        rm -f "$raw"
+        mv "$raw" "$output"
         if [[ "$family" == "score-observations" ]]; then
             local sequence_state sequence_last_value sequence_is_called sequence_called_sql
             if ! sequence_state="$(
@@ -1624,12 +1743,9 @@ prepare_live_rollbacks() {
                     docker exec \
                     -e PGCONNECT_TIMEOUT=10 \
                     -e PGOPTIONS="-c row_security=off" \
-                    -e PGHOST= \
-                    -e PGHOSTADDR= \
-                    -e PGPORT= \
-                    -e PGSERVICE= \
-                    -e PGSERVICEFILE= \
                     "$PG_CONTAINER" \
+                    env -u PGHOST -u PGHOSTADDR -u PGPORT \
+                    -u PGSERVICE -u PGSERVICEFILE \
                     psql -X -qAt -v ON_ERROR_STOP=1 -F '|' \
                     -h "$PG_SOCKET_DIR" -p "$PG_PORT" \
                     -U "$PG_USER" -d "$PG_DB" \
@@ -1653,7 +1769,7 @@ prepare_live_rollbacks() {
                 printf '\n-- Preserve the captured empty-table sequence state.\n'
                 printf "SELECT pg_catalog.setval('public.player_score_observations_id_seq'::regclass, %s, %s);\n" \
                     "$sequence_last_value" "$sequence_called_sql"
-            } >> "$output"
+            } > "$ROLLBACK_DATA_DIR/score-observations.data.sql"
         fi
     done
 }
@@ -1673,10 +1789,38 @@ combine_rollbacks() {
             'END' \
             '$guards$;'
         for family in logical-shadow score-observations band-song-projection aggregate-ranking-deltas; do
-            cat "$ROLLBACK_DIR/$family.sql"
+            cat "$ROLLBACK_EXECUTABLE_DIR/$family.sql"
             printf '\n'
+            if [[ -f "$ROLLBACK_DATA_DIR/$family.data.sql" ]]; then
+                cat "$ROLLBACK_DATA_DIR/$family.data.sql"
+                printf '\n'
+            fi
         done
-    } > "$ROLLBACK_DIR/rollback-all.sql"
+    } > "$ROLLBACK_EXECUTABLE_DIR/rollback-all.sql"
+
+    {
+        printf '%s\n' \
+            '-- DIGEST-ONLY CANONICAL ROLLBACK PLAN; NEVER EXECUTE THIS FILE.' \
+            '-- Canonical pg_dump boundaries plus trusted generated data payloads.' \
+            'DO $guards$' \
+            'BEGIN' \
+            '    IF NOT pg_catalog.pg_try_advisory_xact_lock(5067481511116519501) THEN' \
+            "        RAISE EXCEPTION 'The FST schema-DDL maintenance guard is busy';" \
+            '    END IF;' \
+            '    IF NOT pg_catalog.pg_try_advisory_xact_lock(5067481511116519502) THEN' \
+            "        RAISE EXCEPTION 'The retired sequence guard is busy';" \
+            '    END IF;' \
+            'END' \
+            '$guards$;'
+        for family in logical-shadow score-observations band-song-projection aggregate-ranking-deltas; do
+            cat "$ROLLBACK_CANONICAL_DIR/$family.sql"
+            printf '\n'
+            if [[ -f "$ROLLBACK_DATA_DIR/$family.data.sql" ]]; then
+                cat "$ROLLBACK_DATA_DIR/$family.data.sql"
+                printf '\n'
+            fi
+        done
+    } > "$ROLLBACK_CANONICAL_DIR/rollback-all.sql"
 }
 
 append_hash_row() {
@@ -1735,7 +1879,7 @@ prepare_rollback_hashes() {
 
     local family hash
     for family in logical-shadow score-observations band-song-projection aggregate-ranking-deltas; do
-        hash="$(sha256sum "$ROLLBACK_DIR/$family.sql" | awk '{print $1}')"
+        hash="$(sha256sum "$ROLLBACK_CANONICAL_DIR/$family.sql" | awk '{print $1}')"
         if [[ -f "$CAPTURE_DIR/rollback-generation-failures.txt" ]] \
             && grep -Fxq "$family" "$CAPTURE_DIR/rollback-generation-failures.txt"; then
             append_hash_row "$output_file" generated-family "$family" \
@@ -1745,7 +1889,12 @@ prepare_rollback_hashes() {
                 "$family.sql" "$hash" "$hash"
         fi
     done
-    hash="$(sha256sum "$ROLLBACK_DIR/rollback-all.sql" | awk '{print $1}')"
+    for family in logical-shadow score-observations band-song-projection; do
+        hash="$(sha256sum "$ROLLBACK_DATA_DIR/$family.data.sql" | awk '{print $1}')"
+        append_hash_row "$output_file" generated-data "$family" \
+            "$family.data.sql" "$hash" "$hash"
+    done
+    hash="$(sha256sum "$ROLLBACK_CANONICAL_DIR/rollback-all.sql" | awk '{print $1}')"
     if [[ -s "$CAPTURE_DIR/rollback-generation-failures.txt" ]]; then
         append_hash_row "$output_file" generated-all all rollback-all.sql "$hash" ""
     else
@@ -1773,6 +1922,8 @@ capture_live_precheck() {
     run_plain_capture capture-preflight.sql "$CAPTURE_DIR/preflight.csv"
     capture_target_attestation "$CAPTURE_DIR/production-target-attestation.csv"
     capture_containers "$CAPTURE_DIR/containers.csv"
+    capture_container_config_attestation \
+        "$CAPTURE_DIR/container-config-attestation.json"
     capture_health "$CAPTURE_DIR/health.csv" "$CAPTURE_DIR/health-bodies"
     capture_capacity_guard \
         "$CAPTURE_DIR/capacity-guard.json" \
@@ -1842,6 +1993,9 @@ PY
     if [[ -d "$FIXTURE_DIR/rollback" ]]; then
         cp "$FIXTURE_DIR/rollback/"*.sql "$ROLLBACK_DIR/"
     fi
+    if [[ -d "$FIXTURE_DIR/rollback-data" ]]; then
+        cp "$FIXTURE_DIR/rollback-data/"*.sql "$ROLLBACK_DATA_DIR/"
+    fi
     for family in logical-shadow score-observations band-song-projection aggregate-ranking-deltas; do
         [[ -f "$ROLLBACK_DIR/$family.sql" ]] || {
             printf 'ERROR: fixture rollback file is missing for %s\n' "$family" >&2
@@ -1862,6 +2016,12 @@ else
     prepare_live_rollbacks
     capture_live_precheck
 fi
+
+CURRENT_STAGE="rollback pg_dump boundary and meta-command verification"
+prepare_rollback_variants \
+    "$ROLLBACK_EXECUTABLE_DIR" \
+    "$ROLLBACK_CANONICAL_DIR" \
+    "$CAPTURE_DIR/rollback-raw-hashes.csv"
 
 CURRENT_STAGE="complete catalog canonicalization"
 python3 "$HELPER" prepare-column-catalog \
@@ -1900,8 +2060,8 @@ python3 "$HELPER" prepare-retained-data \
     --metadata-output "$CAPTURE_DIR/retained-data.csv" \
     --expected-sql-output "$PACKAGE_DIR/retained-expected.sql" \
     --assert-sql-output "$PACKAGE_DIR/retained-assert.sql" \
-    --logical-rollback "$ROLLBACK_DIR/logical-shadow.sql" \
-    --band-rollback "$ROLLBACK_DIR/band-song-projection.sql"
+    --logical-data "$ROLLBACK_DATA_DIR/logical-shadow.data.sql" \
+    --band-data "$ROLLBACK_DATA_DIR/band-song-projection.data.sql"
 combine_rollbacks
 
 CURRENT_STAGE="exact atomic drop generation"
@@ -1925,7 +2085,7 @@ manifest_args=(
     --objects "$PACKAGE_DIR/objects.tsv"
     --capture-dir "$CAPTURE_DIR"
     --drop-sql "$PACKAGE_DIR/drop.sql"
-    --rollback-all "$ROLLBACK_DIR/rollback-all.sql"
+    --rollback-all "$ROLLBACK_CANONICAL_DIR/rollback-all.sql"
     --column-catalog "$CATALOG_DIR/columns.csv"
     --catalog-signature "$CATALOG_DIR/signature.csv"
     --catalog-metadata "$CATALOG_DIR/signature-metadata.json"
@@ -1986,10 +2146,16 @@ fi
 capture_preexecute_gate() {
     local gate_dir="$OUTPUT_DIR/pre-execute"
     mkdir -p "$gate_dir"
+    prepare_rollback_variants \
+        "$gate_dir/rollback-executable" \
+        "$gate_dir/rollback-canonical" \
+        "$gate_dir/rollback-raw-hashes.csv"
     reverify_production_compose_project "$gate_dir/compose"
     run_plain_capture capture-preflight.sql "$gate_dir/preflight.csv"
     capture_target_attestation "$gate_dir/production-target-attestation.csv"
     capture_containers "$gate_dir/containers.csv"
+    capture_container_config_attestation \
+        "$gate_dir/container-config-attestation.json"
     capture_health "$gate_dir/health.csv" "$gate_dir/health-bodies"
     capture_capacity_guard \
         "$gate_dir/capacity-guard.json" \
@@ -2021,7 +2187,10 @@ if sha256(Path(sys.argv[1])) != expected_manifest_sha256:
 for path, expected in [
     (package / "objects.tsv", manifest["expectedObjectsSha256"]),
     (package / "drop.sql", manifest["dropSqlSha256"]),
-    (package / "rollback" / "rollback-all.sql", manifest["rollbackAllSha256"]),
+    (
+        package / "rollback-canonical" / "rollback-all.sql",
+        manifest["rollbackAllSha256"],
+    ),
     (
         package / "catalog" / "columns.csv",
         manifest["columnCatalogSha256"],
@@ -2065,11 +2234,29 @@ for path, expected in [
         raise SystemExit(f"pre-execute package hash drift: {path.name}")
 
 for row in manifest["rollbackHashes"]:
-    if row.get("kind") != "generated-family":
-        continue
-    path = package / "rollback" / row["name"]
-    if not path.is_file() or sha256(path) != row["sha256"]:
-        raise SystemExit(f"pre-execute rollback hash drift: {row['name']}")
+    if row.get("kind") == "generated-family":
+        path = package / "rollback-canonical" / row["name"]
+        recaptured = gate / "rollback-canonical" / row["name"]
+        executable = package / "rollback-executable" / row["name"]
+        recaptured_executable = gate / "rollback-executable" / row["name"]
+        if (
+            not path.is_file()
+            or not recaptured.is_file()
+            or not executable.is_file()
+            or not recaptured_executable.is_file()
+            or sha256(path) != row["sha256"]
+            or sha256(recaptured) != row["sha256"]
+            or sha256(executable) != sha256(recaptured_executable)
+        ):
+            raise SystemExit(
+                f"pre-execute rollback canonical drift: {row['name']}"
+            )
+    elif row.get("kind") == "generated-data":
+        path = package / "rollback-data" / row["name"]
+        if not path.is_file() or sha256(path) != row["sha256"]:
+            raise SystemExit(
+                f"pre-execute rollback data drift: {row['name']}"
+            )
 
 for row in manifest["retainedData"]:
     path = package / "retained-data" / row["canonical_file"]
@@ -2106,6 +2293,16 @@ if (
     or target_rows[0] != manifest["productionDatabaseTarget"]["runtime"]
 ):
     raise SystemExit("pre-execute production database target drift")
+container_config = json.loads(
+    (gate / "container-config-attestation.json").read_text(
+        encoding="utf-8"
+    )
+)
+if container_config != manifest["containerConfigAttestation"]:
+    raise SystemExit("pre-execute actual container configuration drift")
+if sha256(gate / "container-config-attestation.json") != \
+        manifest["containerConfigAttestationSha256"]:
+    raise SystemExit("pre-execute container attestation hash drift")
 
 before_containers = {
     row["service"]: row for row in manifest["containers"]
@@ -2131,6 +2328,32 @@ for row in rows("health.csv"):
     if row.get("status", "").lower() != "ok":
         raise SystemExit(f"pre-execute health failed: {row.get('check')}")
 
+capacity_policy = json.loads(
+    (gate / "capacity-guard.policy.json").read_text(encoding="utf-8")
+)
+capacity_report = json.loads(
+    (gate / "capacity-guard.json").read_text(encoding="utf-8")
+)
+if capacity_policy != manifest["capacityGuardPolicy"]:
+    raise SystemExit("pre-execute capacity policy drift")
+if sha256(gate / "capacity-guard.policy.json") != \
+        manifest["capacityGuardPolicySha256"]:
+    raise SystemExit("pre-execute capacity policy hash drift")
+if capacity_report.get("actionClass") != "reclaim":
+    raise SystemExit("pre-execute capacity action drift")
+if capacity_report.get("decision") not in {
+    "accepted",
+    "accepted_with_capacity_alert",
+}:
+    raise SystemExit("pre-execute capacity decision blocked")
+if capacity_report.get("capacity", {}).get("reclaimAllowed") is not True:
+    raise SystemExit("pre-execute reclaim capacity is not allowed")
+if {
+    key: capacity_report.get("capacity", {}).get(key)
+    for key in capacity_policy["effectiveParameters"]
+} != capacity_policy["effectiveParameters"]:
+    raise SystemExit("pre-execute capacity parameters drift")
+
 before_fingerprints = {
     row["name"]: row
     for row in manifest["fingerprints"]
@@ -2151,6 +2374,160 @@ for name, before in before_fingerprints.items():
     ):
         raise SystemExit(f"pre-execute fingerprint drift: {name}")
 PY
+    combine_rollbacks
+}
+
+capture_complete_post_scratch_gate() {
+    local gate_dir="$OUTPUT_DIR/post-scratch-live-gate"
+    local source_dir
+    rm -rf "$gate_dir" || return 3
+    mkdir -p \
+        "$gate_dir/catalog" \
+        "$gate_dir/retained-data-raw" \
+        "$gate_dir/retained-data" \
+        "$gate_dir/health-bodies" \
+        "$gate_dir/fingerprint-bodies" || return 3
+    if $TEST_MODE && [[ -f "$FIXTURE_DIR/fail-complete-gate-setup" ]]; then
+        return 3
+    fi
+    if $TEST_MODE; then
+        source_dir="$FIXTURE_DIR/pre"
+        [[ -d "$FIXTURE_DIR/post-scratch-gate" ]] \
+            && source_dir="$FIXTURE_DIR/post-scratch-gate"
+        local filename
+        for filename in \
+            relations.csv \
+            partition-children.csv \
+            incoming-inheritance.csv \
+            owned-objects.csv \
+            unexpected-relations.csv \
+            external-dependencies.csv \
+            preflight.csv \
+            production-target-attestation.csv \
+            container-config-attestation.json \
+            containers.csv \
+            health.csv \
+            capacity-guard.json \
+            capacity-guard.policy.json \
+            fingerprints.csv \
+            storage.csv \
+            column-catalog.raw.csv \
+            catalog-signature.raw.csv; do
+            cp "$source_dir/$filename" "$gate_dir/$filename" || return 3
+        done
+        cp "$source_dir/retained-data/"*.csv \
+            "$gate_dir/retained-data-raw/" || return 3
+    else
+        reverify_production_compose_project "$gate_dir/compose" || return 3
+        run_expected_capture capture-relations.sql "$gate_dir/relations.csv" \
+            || return 3
+        run_expected_capture \
+            capture-column-catalog.sql \
+            "$gate_dir/column-catalog.raw.csv" || return 3
+        run_catalog_signature_capture \
+            "$gate_dir/catalog-signature.raw.csv" || return 3
+        run_expected_capture \
+            capture-partition-children.sql \
+            "$gate_dir/partition-children.csv" || return 3
+        run_expected_capture \
+            capture-incoming-inheritance.sql \
+            "$gate_dir/incoming-inheritance.csv" || return 3
+        run_expected_capture \
+            capture-unexpected-relations.sql \
+            "$gate_dir/unexpected-relations.csv" || return 3
+        run_expected_capture \
+            capture-owned-objects.sql \
+            "$gate_dir/owned-objects.csv" || return 3
+        run_expected_capture \
+            capture-external-dependencies.sql \
+            "$gate_dir/external-dependencies.csv" || return 3
+        run_plain_capture capture-preflight.sql "$gate_dir/preflight.csv" \
+            || return 3
+        capture_target_attestation \
+            "$gate_dir/production-target-attestation.csv" || return 3
+        capture_containers "$gate_dir/containers.csv" || return 3
+        capture_container_config_attestation \
+            "$gate_dir/container-config-attestation.json" || return 3
+        capture_health "$gate_dir/health.csv" "$gate_dir/health-bodies" \
+            || return 3
+        capture_capacity_guard \
+            "$gate_dir/capacity-guard.json" \
+            "$gate_dir/health.csv" \
+            "$gate_dir/capacity-guard.stdout.txt" || return 3
+        capture_fingerprints \
+            "$gate_dir/fingerprints.csv" \
+            "$gate_dir/fingerprint-bodies" || return 3
+        capture_storage "$gate_dir/storage.csv" "$gate_dir/relations.csv" \
+            || return 3
+        psql_stream \
+            < "$RETAINED_CAPTURE_SQL_DIR/leaderboard_logical_write_metrics.sql" \
+            > "$gate_dir/retained-data-raw/leaderboard_logical_write_metrics.csv" \
+            || return 3
+        psql_stream \
+            < "$RETAINED_CAPTURE_SQL_DIR/band_song_team_ranking_state.sql" \
+            > "$gate_dir/retained-data-raw/band_song_team_ranking_state.csv" \
+            || return 3
+    fi
+    if $TEST_MODE && [[ -f "$FIXTURE_DIR/fail-complete-gate-capture" ]]; then
+        return 3
+    fi
+
+    python3 "$HELPER" prepare-column-catalog \
+        --objects "$PACKAGE_DIR/objects.tsv" \
+        --input "$gate_dir/column-catalog.raw.csv" \
+        --output "$gate_dir/catalog/columns.csv" || return 3
+    python3 "$HELPER" prepare-catalog-signature \
+        --input "$gate_dir/catalog-signature.raw.csv" \
+        --query "$CATALOG_DIR/query.sql" \
+        --column-catalog "$gate_dir/catalog/columns.csv" \
+        --output "$gate_dir/catalog/signature.csv" \
+        --metadata-output "$gate_dir/catalog/signature-metadata.json" \
+        --expected-sql-output "$gate_dir/catalog-expected.sql" \
+        --assert-sql-output "$gate_dir/catalog-assert.sql" || return 3
+    if $TEST_MODE && [[ -f "$FIXTURE_DIR/fail-complete-gate-catalog" ]]; then
+        return 3
+    fi
+    python3 "$HELPER" validate-retained-recapture \
+        --spec "$PACKAGE_DIR/retained-data.tsv" \
+        --column-catalog "$gate_dir/catalog/columns.csv" \
+        --raw-dir "$gate_dir/retained-data-raw" \
+        --expected-metadata "$CAPTURE_DIR/retained-data.csv" \
+        --output-dir "$gate_dir/retained-data" \
+        --metadata-output "$gate_dir/retained-data.csv" || return 3
+    if $TEST_MODE && [[ -f "$FIXTURE_DIR/fail-complete-gate-retained" ]]; then
+        return 3
+    fi
+    python3 "$HELPER" validate-complete-live-gate \
+        --manifest "$PACKAGE_DIR/manifest.json" \
+        --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256" \
+        --gate-dir "$gate_dir" \
+        --output "$gate_dir/validation.json" || return 3
+    if $TEST_MODE && [[ -f "$FIXTURE_DIR/fail-complete-gate-validation" ]]; then
+        return 3
+    fi
+    DROP_SECOND_GATE_SHA256="$(
+        sha256sum "$gate_dir/validation.json" | awk '{print $1}'
+    )" || return 3
+    printf '%s  validation.json\n' "$DROP_SECOND_GATE_SHA256" \
+        > "$gate_dir/validation.sha256" || return 3
+    python3 - "$gate_dir/validation.json" "$EXPECTED_MANIFEST_SHA256" \
+        <<'PY' || return 3
+import json
+import sys
+from pathlib import Path
+
+value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if value.get("success") is not True:
+    raise SystemExit("second gate validation did not succeed")
+if value.get("acceptedManifestSha256") != sys.argv[2]:
+    raise SystemExit("second gate did not bind accepted manifest")
+PY
+    [[ "$(sha256sum "$gate_dir/validation.json" | awk '{print $1}')" \
+        == "$DROP_SECOND_GATE_SHA256" ]] || return 3
+    if $TEST_MODE && [[ -f "$FIXTURE_DIR/fail-complete-gate-artifact" ]]; then
+        return 3
+    fi
+    return 0
 }
 
 drop_scratch_database() {
@@ -2158,12 +2535,9 @@ drop_scratch_database() {
     if timeout --signal=TERM --kill-after=15s 2m \
         docker exec \
         -e PGCONNECT_TIMEOUT=10 \
-        -e PGHOST= \
-        -e PGHOSTADDR= \
-        -e PGPORT= \
-        -e PGSERVICE= \
-        -e PGSERVICEFILE= \
         "$PG_CONTAINER" \
+        env -u PGHOST -u PGHOSTADDR -u PGPORT \
+        -u PGSERVICE -u PGSERVICEFILE \
         dropdb --if-exists -h "$PG_SOCKET_DIR" -p "$PG_PORT" -U "$PG_USER" \
         "$SCRATCH_DB_NAME"; then
         SCRATCH_DB_ACTIVE=false
@@ -2198,12 +2572,9 @@ run_scratch_roundtrip_proof() {
     timeout --signal=TERM --kill-after=15s 2m \
         docker exec \
         -e PGCONNECT_TIMEOUT=10 \
-        -e PGHOST= \
-        -e PGHOSTADDR= \
-        -e PGPORT= \
-        -e PGSERVICE= \
-        -e PGSERVICEFILE= \
         "$PG_CONTAINER" \
+        env -u PGHOST -u PGHOSTADDR -u PGPORT \
+        -u PGSERVICE -u PGSERVICEFILE \
         createdb -h "$PG_SOCKET_DIR" -p "$PG_PORT" -U "$PG_USER" \
         --owner="$PG_USER" --template=template0 "$SCRATCH_DB_NAME"
 
@@ -2211,17 +2582,14 @@ run_scratch_roundtrip_proof() {
         docker exec -i \
         -e PGCONNECT_TIMEOUT=10 \
         -e PGOPTIONS="-c row_security=off" \
-        -e PGHOST= \
-        -e PGHOSTADDR= \
-        -e PGPORT= \
-        -e PGSERVICE= \
-        -e PGSERVICEFILE= \
         "$PG_CONTAINER" \
+        env -u PGHOST -u PGHOSTADDR -u PGPORT \
+        -u PGSERVICE -u PGSERVICEFILE \
         psql -X --single-transaction -v ON_ERROR_STOP=1 \
         -h "$PG_SOCKET_DIR" -p "$PG_PORT" \
         -U "$PG_USER" -d "$SCRATCH_DB_NAME" \
         -P pager=off \
-        < "$ROLLBACK_DIR/rollback-all.sql" \
+        < "$ROLLBACK_EXECUTABLE_DIR/rollback-all.sql" \
         > "$proof_dir/restore.log" 2>&1
 
     {
@@ -2246,6 +2614,78 @@ run_scratch_roundtrip_proof() {
         > "$proof_dir/status.csv"
 }
 
+load_approved_startup_identity_from_proof() {
+    local proof_file="$1" identity
+    identity="$(
+        python3 - "$proof_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))[
+    "manifest"
+]
+print(
+    "|".join([
+        manifest["approvedFstserviceImageId"],
+        manifest["approvedFstserviceContainerId"],
+        manifest["approvedFstserviceImageReferenceSha256"],
+        json.dumps(
+            manifest["approvedFstserviceNetworks"],
+            separators=(",", ":"),
+        ),
+        manifest["approvedPostgresContainerId"],
+        manifest["approvedPostgresSystemIdentifier"],
+        manifest["approvedProductionDatabaseTarget"]["configured_host"],
+        manifest["approvedProductionDatabaseTarget"]["configured_port"],
+        manifest["approvedProductionDatabaseTarget"]["configured_database"],
+        manifest["approvedProductionDatabaseTarget"]["configured_user"],
+    ])
+)
+PY
+    )" || return 3
+    IFS='|' read -r \
+        APPROVED_FSTSERVICE_IMAGE_ID \
+        APPROVED_FSTSERVICE_CONTAINER_ID \
+        APPROVED_FSTSERVICE_IMAGE_REFERENCE_SHA256 \
+        APPROVED_FSTSERVICE_NETWORKS_JSON \
+        APPROVED_POSTGRES_CONTAINER_ID \
+        APPROVED_POSTGRES_SYSTEM_IDENTIFIER \
+        APPROVED_DATABASE_HOST \
+        APPROVED_DATABASE_PORT \
+        APPROVED_DATABASE_NAME \
+        APPROVED_DATABASE_USER \
+        <<< "$identity"
+    [[ "$APPROVED_FSTSERVICE_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] \
+        || return 3
+    [[ "$APPROVED_FSTSERVICE_CONTAINER_ID" =~ ^[0-9a-f]{64}$ ]] \
+        || return 3
+    [[ "$APPROVED_FSTSERVICE_IMAGE_REFERENCE_SHA256" \
+        =~ ^[0-9a-f]{64}$ ]] || return 3
+    python3 - "$APPROVED_FSTSERVICE_NETWORKS_JSON" <<'PY' || return 3
+import json
+import sys
+
+networks = json.loads(sys.argv[1])
+if (
+    not isinstance(networks, list)
+    or not networks
+    or networks != sorted(set(networks))
+    or any(not isinstance(network, str) or not network for network in networks)
+):
+    raise SystemExit("approved startup network set is invalid")
+PY
+    [[ "$APPROVED_POSTGRES_CONTAINER_ID" =~ ^[0-9a-f]{64}$ ]] \
+        || return 3
+    [[ "$APPROVED_POSTGRES_SYSTEM_IDENTIFIER" =~ ^[0-9]+$ ]] \
+        || return 3
+    [[ "$APPROVED_DATABASE_HOST" == "postgres" ]] || return 3
+    [[ "$APPROVED_DATABASE_PORT" =~ ^[0-9]+$ ]] || return 3
+    [[ -n "$APPROVED_DATABASE_NAME" && -n "$APPROVED_DATABASE_USER" ]] \
+        || return 3
+    return 0
+}
+
 execute_fixture() {
     printf '%s\n' \
         "'FST_FAMILY_DROPPED logical-shadow'" \
@@ -2256,7 +2696,90 @@ execute_fixture() {
     if [[ ! -f "$FIXTURE_DIR/drop-process-exit-code" ]]; then
         printf '%s\n' "'FST_ALL_COMMITTED'" >> "$LOG_DIR/drop.log"
     fi
-    cp "$FIXTURE_DIR/post/"* "$POST_DIR/"
+    cp -R "$FIXTURE_DIR/post/." "$POST_DIR/"
+    python3 - \
+        "$PACKAGE_DIR/manifest.json" \
+        "$POST_DIR/startup-image-creation-attestation.json" \
+        "$POST_DIR/startup-image-prestart-attestation.json" \
+        "$POST_DIR/startup-image-attestation.csv" \
+        "$POST_DIR/startup-image-attested-before-start.sha256" \
+        "$POST_DIR/startup-database-routing/attestation.json" \
+        "$POST_DIR/startup-database-routing/production-target-attestation.csv" \
+        "$POST_DIR/startup-database-routing/status.csv" \
+        "$POST_DIR/startup-initializer-release.json" <<'PY'
+import csv
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+(
+    manifest_path,
+    creation_path,
+    prestart_path,
+    csv_path,
+    marker_path,
+    routing_path,
+    target_path,
+    routing_status_path,
+    release_path,
+) = map(Path, sys.argv[1:])
+manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+for path in [creation_path, prestart_path]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    value["expectedManifestSha256"] = manifest_sha256
+    path.write_text(
+        json.dumps(value, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+creation_sha256 = hashlib.sha256(creation_path.read_bytes()).hexdigest()
+prestart_sha256 = hashlib.sha256(prestart_path.read_bytes()).hexdigest()
+routing = json.loads(routing_path.read_text(encoding="utf-8"))
+routing["acceptedManifestSha256"] = manifest_sha256
+routing_path.write_text(
+    json.dumps(routing, sort_keys=True, indent=2) + "\n",
+    encoding="utf-8",
+)
+routing_sha256 = hashlib.sha256(routing_path.read_bytes()).hexdigest()
+target_sha256 = hashlib.sha256(target_path.read_bytes()).hexdigest()
+with routing_status_path.open(newline="", encoding="utf-8") as handle:
+    status_reader = csv.DictReader(handle)
+    status_fields = status_reader.fieldnames
+    status_rows = list(status_reader)
+status_rows[0]["manifest_sha256"] = manifest_sha256
+with routing_status_path.open("w", newline="", encoding="utf-8") as handle:
+    writer = csv.DictWriter(handle, fieldnames=status_fields)
+    writer.writeheader()
+    writer.writerows(status_rows)
+release = json.loads(release_path.read_text(encoding="utf-8"))
+release.update({
+    "acceptedManifestSha256": manifest_sha256,
+    "prestartAttestationSha256": prestart_sha256,
+    "databaseRoutingAttestationSha256": routing_sha256,
+    "databaseTargetAttestationSha256": target_sha256,
+})
+release_path.write_text(
+    json.dumps(release, sort_keys=True, indent=2) + "\n",
+    encoding="utf-8",
+)
+release_sha256 = hashlib.sha256(release_path.read_bytes()).hexdigest()
+with csv_path.open(newline="", encoding="utf-8") as handle:
+    reader = csv.DictReader(handle)
+    rows = list(reader)
+    fields = reader.fieldnames
+if len(rows) != 1 or not fields:
+    raise SystemExit("fixture startup image attestation is invalid")
+rows[0]["creation_attestation_sha256"] = creation_sha256
+rows[0]["prestart_attestation_sha256"] = prestart_sha256
+rows[0]["database_routing_attestation_sha256"] = routing_sha256
+rows[0]["database_target_attestation_sha256"] = target_sha256
+rows[0]["initializer_release_sha256"] = release_sha256
+with csv_path.open("w", newline="", encoding="utf-8") as handle:
+    writer = csv.DictWriter(handle, fieldnames=fields)
+    writer.writeheader()
+    writer.writerows(rows)
+marker_path.write_text(prestart_sha256 + "\n", encoding="utf-8")
+PY
     DROP_APP_NAME="fixture_drop_process"
     DROP_CONTROL_FILE="$POST_DIR/drop-process-control.csv"
     DROP_LOCAL_PID="2121"
@@ -2268,6 +2791,85 @@ execute_fixture() {
     DROP_CONTAINER_PSQL_PID="4242"
     DROP_BACKEND_PID="5252"
     DROP_PROCESS_IDENTITY_CONFIRMED=true
+    DROP_SQL_STREAMER_PID="6161"
+    DROP_SQL_STREAMER_START_TICKS="400"
+    DROP_SQL_STREAMER_CMD_SHA256="$(
+        printf streamer | sha256sum | awk '{print $1}'
+    )"
+    DROP_SQL_STREAMER_WAIT_COMPLETED=true
+    python3 - \
+        "$PACKAGE_DIR/manifest.json" \
+        "$PACKAGE_DIR/drop.sql" \
+        "$POST_DIR/drop-sql-stream-proof.json" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+manifest_path, drop_path, output_path = map(Path, sys.argv[1:])
+manifest_hash = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+drop_hash = hashlib.sha256(drop_path.read_bytes()).hexdigest()
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+service_rows = [
+    row
+    for row in manifest["containers"]
+    if row.get("service") == "fstservice"
+]
+if len(service_rows) != 1:
+    raise SystemExit("fixture manifest lacks fstservice")
+service = service_rows[0]
+proof = {
+    "schemaVersion": 1,
+    "manifest": {
+        "sha256": manifest_hash,
+        "bytes": manifest_path.stat().st_size,
+        "approvedFstserviceImageId": service["image_id"],
+        "approvedFstserviceContainerId": service["container_id"],
+        "approvedFstserviceImageReferenceSha256": (
+            manifest["productionComposeOwnership"][
+                "fstserviceImageReferenceSha256"
+            ]
+        ),
+        "approvedFstserviceNetworks": sorted(
+            manifest["containerConfigAttestation"]["services"][
+                "fstservice"
+            ]["networks"]
+        ),
+        "approvedPostgresContainerId": (
+            manifest["productionDatabaseTarget"]["runtime"]["container_id"]
+        ),
+        "approvedPostgresSystemIdentifier": (
+            manifest["productionDatabaseTarget"]["runtime"][
+                "system_identifier"
+            ]
+        ),
+        "approvedProductionDatabaseTarget": (
+            manifest["productionDatabaseTarget"]["runtime"]
+        ),
+        "sealedMemfd": {
+            "size": manifest_path.stat().st_size,
+            "seals": 15,
+            "requiredSeals": 15,
+        },
+    },
+    "dropSql": {
+        "sha256": drop_hash,
+        "manifestSha256": drop_hash,
+        "bytes": drop_path.stat().st_size,
+        "sealedMemfd": {
+            "size": drop_path.stat().st_size,
+            "seals": 15,
+            "requiredSeals": 15,
+        },
+    },
+}
+output_path.write_text(json.dumps(proof, sort_keys=True), encoding="utf-8")
+PY
+    load_approved_startup_identity_from_proof \
+        "$POST_DIR/drop-sql-stream-proof.json"
+    DROP_IMMUTABLE_BUNDLE_SHA256="$(
+        sha256sum "$POST_DIR/drop-sql-stream-proof.json" | awk '{print $1}'
+    )"
     write_drop_control completed fixture
     if [[ -f "$FIXTURE_DIR/drop-signal-at-launch" ]]; then
         DROP_APP_NAME="fixture_launch_barrier"
@@ -2282,6 +2884,11 @@ execute_fixture() {
         DROP_BACKEND_PID=""
         DROP_PROCESS_ACTIVE=true
         DROP_PROCESS_IDENTITY_CONFIRMED=true
+        DROP_SQL_STREAMER_PID=""
+        DROP_SQL_STREAMER_START_TICKS=""
+        DROP_SQL_STREAMER_CMD_SHA256=""
+        DROP_SQL_STREAMER_WAIT_COMPLETED=false
+        DROP_IMMUTABLE_BUNDLE_SHA256=""
         write_drop_control launch-barrier-ready fixture-launch
         : > "$POST_DIR/drop-launch-barrier-ready"
         while :; do
@@ -2303,6 +2910,11 @@ execute_fixture() {
         DROP_BACKEND_PID="5252"
         DROP_PROCESS_ACTIVE=true
         DROP_PROCESS_IDENTITY_CONFIRMED=true
+        DROP_SQL_STREAMER_PID=""
+        DROP_SQL_STREAMER_START_TICKS=""
+        DROP_SQL_STREAMER_CMD_SHA256=""
+        DROP_SQL_STREAMER_WAIT_COMPLETED=false
+        DROP_IMMUTABLE_BUNDLE_SHA256=""
         write_drop_control post-connect-barrier-ready fixture-post-connect
         : > "$POST_DIR/drop-post-connect-barrier-ready"
         while :; do
@@ -2376,15 +2988,20 @@ write_drop_control() {
     local state="$1"
     local reason="$2"
     [[ -n "$DROP_CONTROL_FILE" ]] || return 0
-    printf 'application_name,local_pid,local_start_ticks,local_cmd_sha256,local_wait_completed,connect_released,sql_released,container_psql_pid,backend_pid,state,reason\n' \
-        > "$DROP_CONTROL_FILE"
-    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+    printf 'application_name,local_pid,local_start_ticks,local_cmd_sha256,local_wait_completed,connect_released,sql_released,second_gate_sha256,immutable_bundle_sha256,sql_streamer_pid,sql_streamer_start_ticks,sql_streamer_cmd_sha256,sql_streamer_wait_completed,container_psql_pid,backend_pid,state,reason\n' \
+        > "$DROP_CONTROL_FILE" || return 3
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
         "$DROP_APP_NAME" "$DROP_LOCAL_PID" "$DROP_LOCAL_START_TICKS" \
         "$DROP_LOCAL_CMD_SHA256" "$DROP_LOCAL_WAIT_COMPLETED" \
         "$DROP_CONNECT_RELEASED" "$DROP_SQL_RELEASED" \
+        "$DROP_SECOND_GATE_SHA256" "$DROP_IMMUTABLE_BUNDLE_SHA256" \
+        "$DROP_SQL_STREAMER_PID" "$DROP_SQL_STREAMER_START_TICKS" \
+        "$DROP_SQL_STREAMER_CMD_SHA256" \
+        "$DROP_SQL_STREAMER_WAIT_COMPLETED" \
         "$DROP_CONTAINER_PSQL_PID" "$DROP_BACKEND_PID" "$state" "$reason" \
-        >> "$DROP_CONTROL_FILE"
-    sync -f "$DROP_CONTROL_FILE"
+        >> "$DROP_CONTROL_FILE" || return 3
+    sync -f "$DROP_CONTROL_FILE" || return 3
+    return 0
 }
 
 control_psql_scalar() {
@@ -2393,12 +3010,9 @@ control_psql_scalar() {
         docker exec \
         -e PGCONNECT_TIMEOUT=10 \
         -e PGOPTIONS="-c row_security=off" \
-        -e PGHOST= \
-        -e PGHOSTADDR= \
-        -e PGPORT= \
-        -e PGSERVICE= \
-        -e PGSERVICEFILE= \
         "$PG_CONTAINER" \
+        env -u PGHOST -u PGHOSTADDR -u PGPORT \
+        -u PGSERVICE -u PGSERVICEFILE \
         psql -X -qAt -v ON_ERROR_STOP=1 \
         "host=$PG_SOCKET_DIR port=$PG_PORT dbname=$PG_DB user=$PG_USER application_name=fst_cleanup_control connect_timeout=10" \
         -c "$sql"
@@ -2472,6 +3086,32 @@ terminate_recorded_local_child() {
     return 0
 }
 
+terminate_recorded_sql_streamer() {
+    local current_start current_cmd_sha
+    $DROP_SQL_STREAMER_WAIT_COMPLETED && return 0
+    [[ "$DROP_SQL_STREAMER_PID" =~ ^[0-9]+$ ]] || return 0
+    if ! kill -0 "$DROP_SQL_STREAMER_PID" 2>/dev/null; then
+        DROP_SQL_STREAMER_WAIT_COMPLETED=true
+        return 0
+    fi
+    current_start="$(
+        awk '{print $22}' "/proc/$DROP_SQL_STREAMER_PID/stat" 2>/dev/null
+    )"
+    current_cmd_sha="$(
+        sha256sum "/proc/$DROP_SQL_STREAMER_PID/cmdline" 2>/dev/null |
+            awk '{print $1}'
+    )"
+    if [[ "$current_start" != "$DROP_SQL_STREAMER_START_TICKS" ]]; then
+        DROP_SQL_STREAMER_WAIT_COMPLETED=true
+        return 0
+    fi
+    [[ "$current_cmd_sha" == "$DROP_SQL_STREAMER_CMD_SHA256" ]] || return 1
+    kill -TERM "$DROP_SQL_STREAMER_PID" 2>/dev/null || true
+    wait "$DROP_SQL_STREAMER_PID" 2>/dev/null || true
+    DROP_SQL_STREAMER_WAIT_COMPLETED=true
+    return 0
+}
+
 cleanup_active_drop() {
     local reason="${1:-cleanup}"
     local rows count attempt container_state backend_state
@@ -2479,6 +3119,7 @@ cleanup_active_drop() {
     local control_query_failed=false
     local discovery_ambiguous=false
     local local_cleanup_failed=false
+    local streamer_cleanup_failed=false
     [[ $- == *e* ]] && errexit_was_set=true
     $DROP_PROCESS_ACTIVE || return 0
     $DROP_CLEANUP_RUNNING && return 1
@@ -2489,26 +3130,42 @@ cleanup_active_drop() {
         if [[ -f "$FIXTURE_DIR/drop-control-query-failure" ]]; then
             : > "$POST_DIR/known-local-client-terminated"
             : > "$POST_DIR/known-container-client-terminated"
-            write_drop_control cleanup-incomplete "$reason"
+            write_drop_control cleanup-incomplete "$reason" || {
+                DROP_CLEANUP_RUNNING=false
+                $errexit_was_set && set -e || set +e
+                return 1
+            }
             DROP_CLEANUP_RUNNING=false
             $errexit_was_set && set -e || set +e
             return 1
         fi
         if [[ -f "$FIXTURE_DIR/drop-backend-stays-active" ]]; then
-            write_drop_control active "$reason"
+            write_drop_control active "$reason" || {
+                DROP_CLEANUP_RUNNING=false
+                $errexit_was_set && set -e || set +e
+                return 1
+            }
             DROP_CLEANUP_RUNNING=false
             $errexit_was_set && set -e || set +e
             return 1
         fi
         if [[ -f "$FIXTURE_DIR/drop-local-pid-reused" ]]; then
             DROP_PROCESS_ACTIVE=false
-            write_drop_control terminated-pid-reused "$reason"
+            write_drop_control terminated-pid-reused "$reason" || {
+                DROP_CLEANUP_RUNNING=false
+                $errexit_was_set && set -e || set +e
+                return 1
+            }
             DROP_CLEANUP_RUNNING=false
             $errexit_was_set && set -e || set +e
             return 0
         fi
         DROP_PROCESS_ACTIVE=false
-        write_drop_control terminated "$reason"
+        write_drop_control terminated "$reason" || {
+            DROP_CLEANUP_RUNNING=false
+            $errexit_was_set && set -e || set +e
+            return 1
+        }
         DROP_CLEANUP_RUNNING=false
         $errexit_was_set && set -e || set +e
         return 0
@@ -2525,6 +3182,7 @@ cleanup_active_drop() {
                 awk '{print $1}'
         )"
     fi
+    terminate_recorded_sql_streamer || streamer_cleanup_failed=true
     terminate_recorded_local_child || local_cleanup_failed=true
 
     if ! rows="$(backend_rows_for_drop_app 2>/dev/null)"; then
@@ -2549,7 +3207,7 @@ cleanup_active_drop() {
             discovery_ambiguous=true
         fi
     fi
-    write_drop_control cancelling "$reason"
+    write_drop_control cancelling "$reason" || control_query_failed=true
 
     if [[ -n "$DROP_BACKEND_PID" ]]; then
         control_psql_scalar \
@@ -2612,23 +3270,32 @@ cleanup_active_drop() {
         container_state=active
     fi
     if $control_query_failed || $discovery_ambiguous || $local_cleanup_failed \
+        || $streamer_cleanup_failed \
         || [[ "$backend_state" != "gone" || "$container_state" != "gone" ]]; then
-        write_drop_control cleanup-incomplete "$reason"
+        write_drop_control cleanup-incomplete "$reason" || {
+            DROP_CLEANUP_RUNNING=false
+            $errexit_was_set && set -e || set +e
+            return 1
+        }
         DROP_CLEANUP_RUNNING=false
         $errexit_was_set && set -e || set +e
         return 1
     fi
     DROP_PROCESS_ACTIVE=false
-    write_drop_control terminated "$reason"
+    write_drop_control terminated "$reason" || {
+        DROP_CLEANUP_RUNNING=false
+        $errexit_was_set && set -e || set +e
+        return 1
+    }
     DROP_CLEANUP_RUNNING=false
     $errexit_was_set && set -e || set +e
     return 0
 }
 
 run_live_atomic_drop() {
-    local runtime_sql="$POST_DIR/drop-runtime.sql"
     local status=0 attempt rows
     DROP_APP_NAME="fst_retired_cleanup_$$_$(date +%s)"
+    DROP_EXECUTION_STARTED=true
     DROP_RUN_STATUS=0
     [[ "$DROP_APP_NAME" =~ ^[a-z0-9_]+$ ]]
     DROP_CONTROL_FILE="$POST_DIR/drop-process-control.csv"
@@ -2640,7 +3307,11 @@ run_live_atomic_drop() {
     DROP_CONTAINER_PSQL_PID=""
     DROP_BACKEND_PID=""
     DROP_PROCESS_IDENTITY_CONFIRMED=false
-    cp "$PACKAGE_DIR/drop.sql" "$runtime_sql"
+    DROP_SQL_STREAMER_PID=""
+    DROP_SQL_STREAMER_START_TICKS=""
+    DROP_SQL_STREAMER_CMD_SHA256=""
+    DROP_SQL_STREAMER_WAIT_COMPLETED=false
+    DROP_IMMUTABLE_BUNDLE_SHA256=""
     : > "$LOG_DIR/drop.log"
     DROP_PROCESS_ACTIVE=true
     write_drop_control starting launch
@@ -2648,16 +3319,13 @@ run_live_atomic_drop() {
     coproc DROP_LAUNCHER {
         IFS= read -r launch_token
         [[ "$launch_token" == "LAUNCH" ]] || exit 125
-        exec timeout --signal=TERM --kill-after=30s 7m \
+        exec timeout --signal=TERM --kill-after=30s 25m \
             docker exec -i \
             -e PGCONNECT_TIMEOUT=10 \
             -e PGOPTIONS="-c row_security=off" \
-            -e PGHOST= \
-            -e PGHOSTADDR= \
-            -e PGPORT= \
-            -e PGSERVICE= \
-            -e PGSERVICEFILE= \
             "$PG_CONTAINER" \
+            env -u PGHOST -u PGHOSTADDR -u PGPORT \
+            -u PGSERVICE -u PGSERVICEFILE \
             sh -c '
 IFS= read -r connect_token
 [ "$connect_token" = "CONNECT" ] || exit 126
@@ -2755,7 +3423,80 @@ exec psql "$@"
     DROP_PROCESS_IDENTITY_CONFIRMED=true
     write_drop_control post-connect-barrier-ready launch
 
-    cat "$runtime_sql" >&"$launch_fd"
+    CURRENT_STAGE="complete post-scratch live safety gate"
+    capture_complete_post_scratch_gate
+    write_drop_control complete-live-gate-passed launch
+
+    local drop_sql_proof
+    drop_sql_proof="$POST_DIR/drop-sql-stream-proof.json"
+    rm -f "$drop_sql_proof"
+    coproc IMMUTABLE_SQL_STREAMER {
+        python3 "$HELPER" stream-verified-manifest-drop-sql \
+            --manifest "$PACKAGE_DIR/manifest.json" \
+            --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256" \
+            --drop-sql "$PACKAGE_DIR/drop.sql" \
+            --proof "$drop_sql_proof" \
+            --wait-for-release
+    } >&"$launch_fd"
+    DROP_SQL_STREAMER_PID="$IMMUTABLE_SQL_STREAMER_PID"
+    DROP_SQL_STREAMER_START_TICKS="$(
+        awk '{print $22}' "/proc/$DROP_SQL_STREAMER_PID/stat"
+    )"
+    DROP_SQL_STREAMER_CMD_SHA256="$(
+        sha256sum "/proc/$DROP_SQL_STREAMER_PID/cmdline" | awk '{print $1}'
+    )"
+    local streamer_ready=false
+    for attempt in {1..100}; do
+        if [[ -s "$drop_sql_proof" ]]; then
+            streamer_ready=true
+            break
+        fi
+        kill -0 "$DROP_SQL_STREAMER_PID" 2>/dev/null || break
+        sleep 0.05
+    done
+    $streamer_ready || {
+        cleanup_active_drop "immutable-drop-sql-proof-missing" || true
+        DROP_RUN_STATUS=3
+        exec {launch_fd}>&-
+        return 0
+    }
+    python3 - "$drop_sql_proof" "$EXPECTED_MANIFEST_SHA256" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+proof = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+manifest = proof.get("manifest", {})
+drop_sql = proof.get("dropSql", {})
+if manifest.get("sha256") != sys.argv[2]:
+    raise SystemExit("immutable manifest proof hash mismatch")
+if drop_sql.get("sha256") != drop_sql.get("manifestSha256"):
+    raise SystemExit("immutable drop SQL differs from sealed manifest")
+for label, value in [("manifest", manifest), ("dropSql", drop_sql)]:
+    sealed = value.get("sealedMemfd", {})
+    if sealed.get("seals") != sealed.get("requiredSeals"):
+        raise SystemExit(f"immutable {label} memfd is not fully sealed")
+    if sealed.get("size") != value.get("bytes"):
+        raise SystemExit(f"immutable {label} memfd size mismatch")
+PY
+    load_approved_startup_identity_from_proof "$drop_sql_proof"
+    DROP_IMMUTABLE_BUNDLE_SHA256="$(
+        sha256sum "$drop_sql_proof" | awk '{print $1}'
+    )"
+    write_drop_control immutable-drop-sql-ready launch
+    local streamer_fd="${IMMUTABLE_SQL_STREAMER[1]}"
+    printf 'RELEASE\n' >&"$streamer_fd"
+    exec {streamer_fd}>&-
+    if wait "$DROP_SQL_STREAMER_PID"; then
+        DROP_SQL_STREAMER_WAIT_COMPLETED=true
+    else
+        status=$?
+        DROP_SQL_STREAMER_WAIT_COMPLETED=true
+        cleanup_active_drop "immutable-drop-sql-stream-failed-$status" || true
+        DROP_RUN_STATUS=3
+        exec {launch_fd}>&-
+        return 0
+    fi
     exec {launch_fd}>&-
     DROP_SQL_RELEASED=true
     write_drop_control sql-released launch
@@ -2822,13 +3563,15 @@ reconcile_drop_process() {
     else
     if ! reverify_production_compose_project "$POST_DIR/reconcile-compose"; then
         printf 'process_status,reconciliation_state,attempts\n%s,unknown,0\n' \
-            "$process_status" > "$POST_DIR/drop-process-status.csv"
+            "$process_status" > "$POST_DIR/drop-process-status.csv" \
+            || return 3
         return 3
     fi
     if ! capture_target_attestation \
         "$POST_DIR/reconcile-production-target-attestation.csv"; then
         printf 'process_status,reconciliation_state,attempts\n%s,unknown,0\n' \
-            "$process_status" > "$POST_DIR/drop-process-status.csv"
+            "$process_status" > "$POST_DIR/drop-process-status.csv" \
+            || return 3
         return 3
     fi
     for attempt in 1 2 3; do
@@ -2842,7 +3585,7 @@ reconcile_drop_process() {
     fi
     printf 'process_status,reconciliation_state,attempts\n%s,%s,%s\n' \
         "$process_status" "$state" "$attempt" \
-        > "$POST_DIR/drop-process-status.csv"
+        > "$POST_DIR/drop-process-status.csv" || return 3
     case "$state" in
         committed)
             if $DROP_PROCESS_ACTIVE; then
@@ -2878,7 +3621,8 @@ reconcile_drop_process() {
 trap_cleanup_and_reconcile() {
     local reason="$1"
     local process_status="$2"
-    local cleanup_status=0 scratch_status=0 reconciliation_status=0
+    local cleanup_status=0 scratch_status=0 startup_status=0
+    local reconciliation_status=0
     $TRAP_RECONCILIATION_RUNNING && return 3
     TRAP_RECONCILIATION_RUNNING=true
     if $DROP_PROCESS_ACTIVE; then
@@ -2887,18 +3631,21 @@ trap_cleanup_and_reconcile() {
     if $SCRATCH_DB_ACTIVE; then
         drop_scratch_database || scratch_status=$?
     fi
+    if $STARTUP_CHECK_CONTAINER_ACTIVE; then
+        cleanup_startup_check_container || startup_status=$?
+    fi
     if $DROP_EXECUTION_STARTED; then
         reconcile_drop_process "$process_status" trap \
             || reconciliation_status=$?
     fi
     if $OUTPUT_READY; then
-        printf 'reason,cleanup_status,scratch_status,reconciliation_status,backend_active\n%s,%s,%s,%s,%s\n' \
-            "$reason" "$cleanup_status" "$scratch_status" \
+        printf 'reason,cleanup_status,scratch_status,startup_status,reconciliation_status,backend_active\n%s,%s,%s,%s,%s,%s\n' \
+            "$reason" "$cleanup_status" "$scratch_status" "$startup_status" \
             "$reconciliation_status" "$DROP_PROCESS_ACTIVE" \
-            > "$POST_DIR/trap-reconciliation.csv"
+            > "$POST_DIR/trap-reconciliation.csv" || return 3
     fi
     TRAP_RECONCILIATION_RUNNING=false
-    if (( cleanup_status != 0 || scratch_status != 0 \
+    if (( cleanup_status != 0 || scratch_status != 0 || startup_status != 0 \
         || reconciliation_status != 0 )); then
         return 3
     fi
@@ -2907,8 +3654,10 @@ trap_cleanup_and_reconcile() {
 
 perform_atomic_drop() {
     local status=0
-    DROP_EXECUTION_STARTED=true
     if $TEST_MODE; then
+        CURRENT_STAGE="complete post-scratch live safety gate"
+        capture_complete_post_scratch_gate
+        DROP_EXECUTION_STARTED=true
         if execute_fixture; then
             status=0
         else
@@ -2920,7 +3669,7 @@ perform_atomic_drop() {
     fi
     if (( status == 0 )); then
         printf 'process_status,reconciliation_state,attempts\n0,not-required,0\n' \
-            > "$POST_DIR/drop-process-status.csv"
+            > "$POST_DIR/drop-process-status.csv" || return 3
         return 0
     fi
     if $DROP_PROCESS_ACTIVE; then
@@ -2955,22 +3704,432 @@ if present:
 PY
 }
 
-run_startup_schema_check() {
-    local status
+cleanup_startup_check_container() {
+    local container_id
+    $STARTUP_CHECK_CONTAINER_ACTIVE || return 0
+    container_id="$(
+        docker ps -a -q \
+            --filter "name=^/${STARTUP_CHECK_CONTAINER_NAME}$"
+    )" || return 3
+    if [[ -n "$container_id" ]]; then
+        [[ "$container_id" != *$'\n'* ]] || return 3
+        docker rm -f "$container_id" >/dev/null 2>&1 || return 3
+    fi
+    STARTUP_CHECK_CONTAINER_ACTIVE=false
+    return 0
+}
+
+record_startup_database_routing_failure() {
+    local reason="$1"
+    local status="$2"
+    local failure_file="$POST_DIR/startup-database-routing-failure.csv"
+    printf 'reason,status,stage,initializer_started\n%s,%s,%s,false\n' \
+        "$reason" "$status" "$CURRENT_STAGE" > "$failure_file" || return 3
+    sync -f "$failure_file" || return 3
+    rm -f "$POST_DIR/startup-initializer-release.json" || return 3
+    return 0
+}
+
+capture_startup_database_routing_attestation() {
+    local startup_attestation="$1"
+    local output_dir="$2"
+    local target_file="$output_dir/production-target-attestation.csv"
+    local routing_file="$output_dir/attestation.json"
+    local ids_output status
+    local -a ids=()
+    mkdir -p "$output_dir" || return 3
+
     set +e
-    (
-        cd "$COMPOSE_DIR"
-        timeout 10m docker compose "${COMPOSE_FILE_ARGS[@]}" \
-            run --rm --no-deps --pull never fstservice \
-            --initialize-schema-only
-    ) > "$LOG_DIR/startup-schema.log" 2>&1
+    capture_target_attestation "$target_file"
     status=$?
     set -e
-    printf 'check,status\nstartup-schema,%s\n' "$status" \
-        > "$POST_DIR/startup-check.csv"
     if (( status != 0 )); then
-        return "$status"
+        record_startup_database_routing_failure \
+            target-attestation "$status" || return 3
+        return 3
     fi
+
+    ids_output="$(docker ps -a -q)" || {
+        record_startup_database_routing_failure \
+            container-inventory 3 || return 3
+        return 3
+    }
+    while IFS= read -r container_id; do
+        [[ -n "$container_id" ]] && ids+=("$container_id")
+    done <<< "$ids_output"
+    if (( ${#ids[@]} == 0 )); then
+        record_startup_database_routing_failure \
+            empty-container-inventory 3 || return 3
+        return 3
+    fi
+
+    set +e
+    docker inspect "${ids[@]}" \
+        | python3 "$HELPER" attest-startup-database-routing \
+            --startup-attestation "$startup_attestation" \
+            --target-attestation "$target_file" \
+            --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256" \
+            --expected-postgres-container-id \
+                "$APPROVED_POSTGRES_CONTAINER_ID" \
+            --expected-system-identifier \
+                "$APPROVED_POSTGRES_SYSTEM_IDENTIFIER" \
+            --expected-host "$APPROVED_DATABASE_HOST" \
+            --expected-port "$APPROVED_DATABASE_PORT" \
+            --expected-database "$APPROVED_DATABASE_NAME" \
+            --expected-user "$APPROVED_DATABASE_USER" \
+            --expected-networks-json \
+                "$APPROVED_FSTSERVICE_NETWORKS_JSON" \
+            --output "$routing_file" \
+        2> "$LOG_DIR/startup-database-routing.log"
+    status=$?
+    set -e
+    if (( status != 0 )); then
+        record_startup_database_routing_failure \
+            alias-or-target-drift "$status" || return 3
+        return 3
+    fi
+    [[ -s "$routing_file" && -s "$target_file" ]] || {
+        record_startup_database_routing_failure \
+            missing-routing-evidence 3 || return 3
+        return 3
+    }
+    set +e
+    python3 - "$routing_file" "$EXPECTED_MANIFEST_SHA256" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if (
+    value.get("success") is not True
+    or value.get("acceptedManifestSha256") != sys.argv[2]
+):
+    raise SystemExit("startup database routing evidence is not accepted")
+PY
+    status=$?
+    set -e
+    if (( status != 0 )); then
+        record_startup_database_routing_failure \
+            invalid-routing-evidence "$status" || return 3
+        return 3
+    fi
+    chmod 0400 "$routing_file" "$target_file" || return 3
+    sync -f "$routing_file" || return 3
+    sync -f "$target_file" || return 3
+    printf 'status,manifest_sha256\npassed,%s\n' \
+        "$EXPECTED_MANIFEST_SHA256" > "$output_dir/status.csv" || return 3
+    sync -f "$output_dir/status.csv" || return 3
+    return 0
+}
+
+run_startup_schema_check() {
+    local status=0 resolved_image_id compose_image_ref compose_ref_sha
+    local container_id creation_file prestart_file marker_file
+    local creation_sha prestart_sha prestart_values inspect_row
+    local prestart_actual_image prestart_config_image prestart_state
+    local prestart_running prestart_command_sha compose_image_before_create
+    local compose_image_before_start source_container_id
+    local pinned_database_host pinned_database_ip pinned_database_network
+    local pinned_postgres_container_id
+    local post_container_id post_actual_image post_config_image post_state
+    local post_running exit_code
+    local routing_dir routing_file routing_target_file routing_sha
+    local routing_target_sha release_file release_sha
+    [[ "$APPROVED_FSTSERVICE_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] \
+        || return 3
+    [[ "$APPROVED_FSTSERVICE_CONTAINER_ID" =~ ^[0-9a-f]{64}$ ]] \
+        || return 3
+    [[ "$APPROVED_FSTSERVICE_IMAGE_REFERENCE_SHA256" \
+        =~ ^[0-9a-f]{64}$ ]] || return 3
+    [[ "${PROJECT_SERVICE_CONTAINER_IDS[fstservice]}" \
+        == "$APPROVED_FSTSERVICE_CONTAINER_ID" ]] || return 3
+    resolved_image_id="$(
+        docker image inspect \
+            --format '{{.Id}}' \
+            "$APPROVED_FSTSERVICE_IMAGE_ID"
+    )" || return 3
+    [[ "$resolved_image_id" == "$APPROVED_FSTSERVICE_IMAGE_ID" ]] \
+        || return 3
+    compose_image_ref="$(
+        compose_command config --format json \
+            | python3 -c '
+import json
+import sys
+
+value = json.load(sys.stdin)
+image = str(
+    value.get("services", {}).get("fstservice", {}).get("image") or ""
+).strip()
+if not image:
+    raise SystemExit("resolved Compose fstservice image is empty")
+print(image)
+'
+    )" || return 3
+    compose_ref_sha="$(
+        printf '%s' "$compose_image_ref" | sha256sum | awk '{print $1}'
+    )" || return 3
+    [[ "$compose_ref_sha" \
+        == "$APPROVED_FSTSERVICE_IMAGE_REFERENCE_SHA256" ]] || return 3
+    STARTUP_CHECK_CONTAINER_NAME="fst-retired-schema-init-${EXPECTED_MANIFEST_SHA256:0:12}-$$"
+    [[ "$STARTUP_CHECK_CONTAINER_NAME" =~ ^[a-z0-9-]+$ ]] || return 3
+    if docker inspect "$STARTUP_CHECK_CONTAINER_NAME" >/dev/null 2>&1; then
+        return 3
+    fi
+    creation_file="$POST_DIR/startup-image-creation-attestation.json"
+    prestart_file="$POST_DIR/startup-image-prestart-attestation.json"
+    marker_file="$POST_DIR/startup-image-attested-before-start.sha256"
+    [[ ! -e "$creation_file" && ! -e "$prestart_file" \
+        && ! -e "$marker_file" ]] || return 3
+    STARTUP_CHECK_CONTAINER_ACTIVE=true
+    container_id="$(
+        python3 "$HELPER" create-immutable-startup-container \
+            --source-container-id "$APPROVED_FSTSERVICE_CONTAINER_ID" \
+            --expected-image-id "$APPROVED_FSTSERVICE_IMAGE_ID" \
+            --compose-image-reference "$compose_image_ref" \
+            --expected-image-reference-sha256 \
+                "$APPROVED_FSTSERVICE_IMAGE_REFERENCE_SHA256" \
+            --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256" \
+            --container-name "$STARTUP_CHECK_CONTAINER_NAME" \
+            --command-json '["--initialize-schema-only"]' \
+            --expected-networks-json \
+                "$APPROVED_FSTSERVICE_NETWORKS_JSON" \
+            --expected-postgres-container-id \
+                "$APPROVED_POSTGRES_CONTAINER_ID" \
+            --database-host "$APPROVED_DATABASE_HOST" \
+            --output "$creation_file"
+    )" || return 3
+    [[ "$container_id" =~ ^[0-9a-f]{64}$ ]] || return 3
+    chmod 0400 "$creation_file" || return 3
+    python3 "$HELPER" attest-immutable-startup-container \
+        --source-container-id "$APPROVED_FSTSERVICE_CONTAINER_ID" \
+        --expected-image-id "$APPROVED_FSTSERVICE_IMAGE_ID" \
+        --compose-image-reference "$compose_image_ref" \
+        --expected-image-reference-sha256 \
+            "$APPROVED_FSTSERVICE_IMAGE_REFERENCE_SHA256" \
+        --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256" \
+        --container-name "$STARTUP_CHECK_CONTAINER_NAME" \
+        --container-id "$container_id" \
+        --command-json '["--initialize-schema-only"]' \
+        --expected-networks-json "$APPROVED_FSTSERVICE_NETWORKS_JSON" \
+        --expected-postgres-container-id \
+            "$APPROVED_POSTGRES_CONTAINER_ID" \
+        --database-host "$APPROVED_DATABASE_HOST" \
+        --output "$prestart_file" || {
+            cleanup_startup_check_container || true
+            return 3
+        }
+    chmod 0400 "$prestart_file" || return 3
+    creation_sha="$(sha256sum "$creation_file" | awk '{print $1}')" \
+        || return 3
+    prestart_sha="$(sha256sum "$prestart_file" | awk '{print $1}')" \
+        || return 3
+    prestart_values="$(
+        python3 - "$prestart_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+state = value.get("state", {})
+print("|".join([
+    value.get("containerId", ""),
+    value.get("actualImageId", ""),
+    value.get("configuredImage", ""),
+    state.get("status", ""),
+    str(state.get("running", "")).lower(),
+    value.get("commandSha256", ""),
+    value.get("composeImageResolvedId", ""),
+    value.get("sourceContainerId", ""),
+    value.get("databaseHostPin", {}).get("host", ""),
+    value.get("databaseHostPin", {}).get("ipAddress", ""),
+    value.get("databaseHostPin", {}).get("network", ""),
+    value.get("databaseHostPin", {}).get("postgresContainerId", ""),
+]))
+PY
+    )" || return 3
+    IFS='|' read -r \
+        container_id \
+        prestart_actual_image \
+        prestart_config_image \
+        prestart_state \
+        prestart_running \
+        prestart_command_sha \
+        compose_image_before_start \
+        source_container_id \
+        pinned_database_host \
+        pinned_database_ip \
+        pinned_database_network \
+        pinned_postgres_container_id \
+        <<< "$prestart_values"
+    compose_image_before_create="$(
+        python3 - "$creation_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+print(
+    json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")).get(
+        "composeImageResolvedId",
+        "",
+    )
+)
+PY
+    )" || return 3
+    [[ "$source_container_id" == "$APPROVED_FSTSERVICE_CONTAINER_ID" \
+        && "$prestart_actual_image" == "$APPROVED_FSTSERVICE_IMAGE_ID" \
+        && "$prestart_config_image" == "$APPROVED_FSTSERVICE_IMAGE_ID" \
+        && "$compose_image_before_create" \
+            == "$APPROVED_FSTSERVICE_IMAGE_ID" \
+        && "$compose_image_before_start" \
+            == "$APPROVED_FSTSERVICE_IMAGE_ID" \
+        && "$prestart_state" == "created" \
+        && "$prestart_running" == "false" \
+        && "$prestart_command_sha" \
+            == "$(printf '%s' '["--initialize-schema-only"]' \
+                | sha256sum | awk '{print $1}')" \
+        && "$pinned_database_host" == "$APPROVED_DATABASE_HOST" \
+        && "$pinned_database_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ \
+        && "$pinned_postgres_container_id" \
+            == "$APPROVED_POSTGRES_CONTAINER_ID" \
+        && "$APPROVED_FSTSERVICE_NETWORKS_JSON" \
+            == *"\"$pinned_database_network\""* ]] || {
+            cleanup_startup_check_container || true
+            return 3
+        }
+    inspect_row="$(
+        docker inspect --format \
+            '{{.Id}}|{{.Image}}|{{.Config.Image}}|{{.State.Status}}|{{.State.Running}}|{{json .Config.Cmd}}' \
+            "$container_id"
+    )" || {
+        cleanup_startup_check_container || true
+        return 3
+    }
+    [[ "$inspect_row" \
+        == "$container_id|$APPROVED_FSTSERVICE_IMAGE_ID|$APPROVED_FSTSERVICE_IMAGE_ID|created|false|[\"--initialize-schema-only\"]" ]] \
+        || {
+            cleanup_startup_check_container || true
+            return 3
+        }
+    printf '%s\n' "$prestart_sha" > "$marker_file" || return 3
+    chmod 0400 "$marker_file" || return 3
+    sync -f "$creation_file" || return 3
+    sync -f "$prestart_file" || return 3
+    sync -f "$marker_file" || return 3
+
+    CURRENT_STAGE="post-drop initializer database routing attestation"
+    routing_dir="$POST_DIR/startup-database-routing"
+    routing_file="$routing_dir/attestation.json"
+    routing_target_file="$routing_dir/production-target-attestation.csv"
+    capture_startup_database_routing_attestation \
+        "$prestart_file" "$routing_dir"
+    routing_sha="$(sha256sum "$routing_file" | awk '{print $1}')" \
+        || return 3
+    routing_target_sha="$(
+        sha256sum "$routing_target_file" | awk '{print $1}'
+    )" || return 3
+    release_file="$POST_DIR/startup-initializer-release.json"
+    python3 - \
+        "$release_file" \
+        "$EXPECTED_MANIFEST_SHA256" \
+        "$container_id" \
+        "$prestart_sha" \
+        "$routing_sha" \
+        "$routing_target_sha" <<'PY' || return 3
+import json
+import os
+import sys
+from pathlib import Path
+
+output = Path(sys.argv[1])
+value = {
+    "schemaVersion": 1,
+    "acceptedManifestSha256": sys.argv[2],
+    "containerId": sys.argv[3],
+    "prestartAttestationSha256": sys.argv[4],
+    "databaseRoutingAttestationSha256": sys.argv[5],
+    "databaseTargetAttestationSha256": sys.argv[6],
+    "released": True,
+}
+with output.open("x", encoding="utf-8") as handle:
+    handle.write(json.dumps(value, sort_keys=True, indent=2) + "\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+directory_fd = os.open(output.parent, os.O_RDONLY | os.O_DIRECTORY)
+try:
+    os.fsync(directory_fd)
+finally:
+    os.close(directory_fd)
+PY
+    chmod 0400 "$release_file" || return 3
+    sync -f "$release_file" || return 3
+    release_sha="$(sha256sum "$release_file" | awk '{print $1}')" \
+        || return 3
+
+    CURRENT_STAGE="post-drop initializer execution"
+    set +e
+    timeout 10m docker start -a "$container_id" \
+        > "$LOG_DIR/startup-schema.log" 2>&1
+    status=$?
+    set -e
+    if ! inspect_row="$(
+        docker inspect --format \
+            '{{.Id}}|{{.Image}}|{{.Config.Image}}|{{.State.Status}}|{{.State.Running}}|{{.State.ExitCode}}' \
+            "$container_id"
+    )"; then
+        printf 'check,status\nstartup-schema,%s\n' "$status" \
+            > "$POST_DIR/startup-check.csv"
+        cleanup_startup_check_container || true
+        return 3
+    fi
+    IFS='|' read -r \
+        post_container_id \
+        post_actual_image \
+        post_config_image \
+        post_state \
+        post_running \
+        exit_code \
+        <<< "$inspect_row"
+    printf 'container_name,container_id,source_container_id,manifest_image_id,compose_image_reference_sha256,compose_image_id_before_create,compose_image_id_before_start,prestart_actual_image_id,prestart_config_image,prestart_state,prestart_running,prestart_command_sha256,pinned_database_host,pinned_database_ip,pinned_database_network,pinned_postgres_container_id,poststart_actual_image_id,poststart_config_image,exit_code,creation_attestation_sha256,prestart_attestation_sha256,database_routing_attestation_sha256,database_target_attestation_sha256,initializer_release_sha256\n' \
+        > "$POST_DIR/startup-image-attestation.csv" || return 3
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+        "$STARTUP_CHECK_CONTAINER_NAME" \
+        "$post_container_id" \
+        "$source_container_id" \
+        "$APPROVED_FSTSERVICE_IMAGE_ID" \
+        "$APPROVED_FSTSERVICE_IMAGE_REFERENCE_SHA256" \
+        "$compose_image_before_create" \
+        "$compose_image_before_start" \
+        "$prestart_actual_image" \
+        "$prestart_config_image" \
+        "$prestart_state" \
+        "$prestart_running" \
+        "$prestart_command_sha" \
+        "$pinned_database_host" \
+        "$pinned_database_ip" \
+        "$pinned_database_network" \
+        "$pinned_postgres_container_id" \
+        "$post_actual_image" \
+        "$post_config_image" \
+        "$exit_code" \
+        "$creation_sha" \
+        "$prestart_sha" \
+        "$routing_sha" \
+        "$routing_target_sha" \
+        "$release_sha" \
+        >> "$POST_DIR/startup-image-attestation.csv" || return 3
+    printf 'check,status\nstartup-schema,%s\n' "$status" \
+        > "$POST_DIR/startup-check.csv" || return 3
+    cleanup_startup_check_container || return 3
+    if (( status != 0 )) \
+        || [[ "$post_container_id" != "$container_id" \
+            || "$post_state" != "exited" \
+            || "$post_running" != "false" \
+            || "$exit_code" != "0" \
+            || "$post_actual_image" != "$APPROVED_FSTSERVICE_IMAGE_ID" \
+            || "$post_config_image" != "$APPROVED_FSTSERVICE_IMAGE_ID" ]]; then
+        return 3
+    fi
+    return 0
 }
 
 run_rollback_rehearsal() {
@@ -2996,7 +4155,7 @@ run_rollback_rehearsal() {
         cat "$PACKAGE_DIR/expected-objects.sql"
         cat "$PACKAGE_DIR/catalog-expected.sql"
         cat "$PACKAGE_DIR/retained-expected.sql"
-        cat "$ROLLBACK_DIR/rollback-all.sql"
+        cat "$ROLLBACK_EXECUTABLE_DIR/rollback-all.sql"
         cat "$PACKAGE_DIR/catalog-assert.sql"
         cat "$PACKAGE_DIR/retained-assert.sql"
         cat "$PACKAGE_DIR/rollback-rehearsal-check.sql"
@@ -3044,6 +4203,40 @@ fi
 CURRENT_STAGE="atomic all-family drop"
 perform_atomic_drop
 
+if $TEST_MODE \
+    && [[ -f "$FIXTURE_DIR/startup-alias-drift-before-start" ]]; then
+    CURRENT_STAGE="post-drop initializer database routing attestation"
+    python3 - \
+        "$POST_DIR/startup-database-routing/attestation.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+value = json.loads(path.read_text(encoding="utf-8"))
+network = value["attachedNetworks"][0]
+value["success"] = False
+value["failures"] = [
+    f"database alias ownership is not exclusive: {network}"
+]
+value["aliasOwners"][network].append({
+    "containerId": "9" * 64,
+    "containerName": "stale-postgres-alias",
+    "state": "running",
+    "running": True,
+    "networkId": "8" * 64,
+    "ipAddress": "172.31.0.99",
+})
+path.write_text(
+    json.dumps(value, sort_keys=True, indent=2) + "\n",
+    encoding="utf-8",
+)
+PY
+    rm -f "$POST_DIR/startup-database-routing/status.csv"
+    record_startup_database_routing_failure alias-or-target-drift 3
+    (exit 3)
+fi
+
 if ! $TEST_MODE; then
     CURRENT_STAGE="post-drop absence capture"
     capture_post_relations "$POST_DIR/relations.csv"
@@ -3069,6 +4262,8 @@ if ! $TEST_MODE; then
     run_plain_capture capture-preflight.sql "$POST_DIR/preflight.csv"
     capture_target_attestation "$POST_DIR/production-target-attestation.csv"
     capture_containers "$POST_DIR/containers.csv"
+    capture_container_config_attestation \
+        "$POST_DIR/container-config-attestation.json"
     capture_health "$POST_DIR/health.csv" "$POST_DIR/health-bodies"
     capture_capacity_guard \
         "$POST_DIR/capacity-guard.json" \

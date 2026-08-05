@@ -1,10 +1,5 @@
 \set ON_ERROR_STOP on
 
-BEGIN TRANSACTION READ ONLY;
-SET LOCAL lock_timeout = '2s';
-SET LOCAL statement_timeout = '15s';
-SET LOCAL row_security = off;
-
 CREATE TEMP TABLE retired_cleanup_relation_capture (
     family text NOT NULL,
     object_order integer NOT NULL,
@@ -20,7 +15,12 @@ CREATE TEMP TABLE retired_cleanup_relation_capture (
     sequence_owned_by text,
     sequence_last_value text,
     sequence_is_called text
-) ON COMMIT DROP;
+) ON COMMIT PRESERVE ROWS;
+
+BEGIN TRANSACTION READ ONLY;
+SET LOCAL lock_timeout = '2s';
+SET LOCAL statement_timeout = '15s';
+SET LOCAL row_security = off;
 
 DO $capture$
 DECLARE

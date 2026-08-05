@@ -172,6 +172,40 @@ rehearses
 rollback transactionally after cleanup and never restores automatically. See
 [`docs/database/RetiredPhysicalSchemaCleanupRunbook.md`](docs/database/RetiredPhysicalSchemaCleanupRunbook.md).
 
+Cleanup capacity checks also clear every inherited guard override and pass the
+accepted emergency-window policy explicitly; the full JSON report, effective
+parameters, and capacity-guard script SHA-256 are evidence/manifest-bound.
+Read-only catalog captures create any temporary staging relation before opening
+their single read-only snapshot; the package test suite verifies the exact path
+against an isolated PostgreSQL 17 container.
+Executable PostgreSQL 17 rollback dumps retain their original random
+`\restrict` boundaries. Only separate, parser-validated, never-executed
+canonical digest copies normalize the random key; unsafe psql meta-commands are
+rejected.
+Raw dumps remain unchanged evidence. Rehearsal/restore uses a parser-verified
+copy that changes only pg_dump's zero timeout preamble to bounded
+30s/5s/60s/5min values, preserving the random restriction key.
+After the pre-destructive scratch proof, a second complete live gate runs while
+the identified destructive client remains blocked before SQL. Its manifest
+comparison and evidence hash must pass before `drop.sql` is released.
+Every gate also secret-safely compares actual service/web/worker/Postgres
+commands, relevant environment, mounts, networks/aliases/IPs, and Compose
+labels against the resolved model, binding `fstservice`'s `postgres` alias to
+the exact container/system identifier being cleaned.
+Every shared network must have exactly one running owner of that database
+alias; stale/nonproject clones are rejected even without published ports.
+The final post-scratch gate is never called from a Bash conditional that
+suppresses `errexit`; each stage returns explicitly on failure and SQL release
+requires a re-read, hash-verified successful validation artifact.
+After that gate, the operator-approved manifest itself is captured once,
+hash-verified and sealed; its sealed `dropSqlSha256` controls a second sealed
+capture of `drop.sql`. Neither pathname is reopened, so simultaneous manifest
+and SQL replacement cannot affect execution.
+The post-drop schema initializer also uses the sealed manifest's immutable
+service image ID through a final Compose override. Its temporary container is
+retained for inspection, image/exit/override-attested, then explicitly removed;
+retagging the mutable service tag cannot change the initializer image.
+
 Worker correctness rollout uses three rollback-safe environment switches:
 
 - `Features__EnforceScopeCompletenessManifests=true`

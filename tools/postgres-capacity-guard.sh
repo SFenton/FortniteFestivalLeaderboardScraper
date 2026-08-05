@@ -31,6 +31,11 @@ Options:
   --required-scratch-bytes N    Additional rewrite/repack scratch bytes
   --expected-reclaim-bytes N    Explicit reclaim estimate used only to prove
                                 the action restores one emergency window
+  --estimated-full-scrape-growth-bytes N
+                                Pinned emergency full-scrape growth window
+  --expected-full-scrapes-per-day N
+                                Pinned expected full scrapes per day
+  --minimum-headroom-days N     Pinned alert/defer headroom days
   --minimum-headroom-bytes N    Explicit maintenance/rewrite floor replacing
                                 the default days-based alert threshold
   --output FILE                 Also persist the JSON report to FILE
@@ -67,6 +72,11 @@ while [[ $# -gt 0 ]]; do
         --transient-build-bytes) TRANSIENT_BUILD_BYTES="$2"; shift 2 ;;
         --required-scratch-bytes) REQUIRED_SCRATCH_BYTES="$2"; shift 2 ;;
         --expected-reclaim-bytes) EXPECTED_RECLAIM_BYTES="$2"; shift 2 ;;
+        --estimated-full-scrape-growth-bytes)
+            ESTIMATED_FULL_SCRAPE_GROWTH_BYTES="$2"; shift 2 ;;
+        --expected-full-scrapes-per-day)
+            EXPECTED_FULL_SCRAPES_PER_DAY="$2"; shift 2 ;;
+        --minimum-headroom-days) MINIMUM_HEADROOM_DAYS="$2"; shift 2 ;;
         --minimum-headroom-bytes) MINIMUM_HEADROOM_BYTES_OVERRIDE="$2"; shift 2 ;;
         --output) OUTPUT_FILE="$2"; shift 2 ;;
         --compose-dir) COMPOSE_DIR="$2"; shift 2 ;;
@@ -190,12 +200,10 @@ sql_result="$(
         docker exec \
         -e PGCONNECT_TIMEOUT=10 \
         -e PGOPTIONS="-c row_security=off" \
-        -e PGHOST= \
-        -e PGHOSTADDR= \
-        -e PGPORT= \
-        -e PGSERVICE= \
-        -e PGSERVICEFILE= \
-        "$PG_CONTAINER" psql \
+        "$PG_CONTAINER" \
+        env -u PGHOST -u PGHOSTADDR -u PGPORT \
+        -u PGSERVICE -u PGSERVICEFILE \
+        psql \
         -X -v ON_ERROR_STOP=1 -h /var/run/postgresql -p "$PG_PORT" \
         -U "$PG_USER" -d "$PG_DB" -AtF '|' \
         -c "

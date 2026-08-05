@@ -8,6 +8,7 @@ SET LOCAL row_security = off;
 COPY (
     WITH target AS (
         SELECT relation.oid,
+               schema_row.oid AS namespace_oid,
                schema_row.nspname AS schema_name,
                relation.relname AS object_name
         FROM retired_cleanup_expected expected
@@ -16,6 +17,37 @@ COPY (
         JOIN pg_catalog.pg_class relation
           ON relation.relnamespace = schema_row.oid
          AND relation.relname = expected.object_name
+    ),
+    effective_publication AS (
+        SELECT target.oid AS target_oid,
+                target.schema_name,
+                target.object_name,
+                publication.oid AS publication_oid,
+                publication.pubname,
+                publication.puballtables,
+                publication.pubviaroot,
+                publication_table.attnames,
+                publication_table.rowfilter,
+                EXISTS (
+                    SELECT 1
+                    FROM pg_catalog.pg_publication_namespace
+                         publication_namespace
+                    WHERE publication_namespace.pnpubid = publication.oid
+                      AND publication_namespace.pnnspid =
+                          target.namespace_oid
+                ) AS schema_member,
+                EXISTS (
+                    SELECT 1
+                    FROM pg_catalog.pg_publication_rel direct_relation
+                    WHERE direct_relation.prpubid = publication.oid
+                      AND direct_relation.prrelid = target.oid
+                ) AS explicit_member
+        FROM target
+        JOIN pg_catalog.pg_publication_tables publication_table
+           ON publication_table.schemaname = target.schema_name
+          AND publication_table.tablename = target.object_name
+        JOIN pg_catalog.pg_publication publication
+           ON publication.pubname = publication_table.pubname
     ),
     dependencies AS (
         SELECT 'view'::text AS dependency_kind,
@@ -148,14 +180,32 @@ COPY (
         UNION ALL
 
         SELECT 'publication',
-               publication.pubname,
-               target.schema_name || '.' || target.object_name,
-               ''
-        FROM target
-        JOIN pg_catalog.pg_publication_rel publication_relation
-          ON publication_relation.prrelid = target.oid
-        JOIN pg_catalog.pg_publication publication
-          ON publication.oid = publication_relation.prpubid
+               effective_publication.pubname,
+               effective_publication.schema_name || '.' ||
+                   effective_publication.object_name,
+               jsonb_build_object(
+                   'membershipMode', CASE
+                       WHEN effective_publication.puballtables
+                       THEN 'all-tables'
+                       WHEN effective_publication.schema_member
+                       THEN 'schema'
+                       WHEN effective_publication.explicit_member
+                       THEN 'explicit'
+                       ELSE 'effective'
+                   END,
+                   'allTables', effective_publication.puballtables,
+                   'schemaMember', effective_publication.schema_member,
+                   'explicitMember',
+                       effective_publication.explicit_member,
+                   'viaRoot', effective_publication.pubviaroot,
+                   'columns', COALESCE(
+                       to_jsonb(effective_publication.attnames),
+                       '[]'::jsonb),
+                   'rowFilter', COALESCE(
+                       effective_publication.rowfilter,
+                       '')
+               )::text
+        FROM effective_publication
     )
     SELECT dependency_kind,
            dependent_object,
