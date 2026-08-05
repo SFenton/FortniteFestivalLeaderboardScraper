@@ -86,7 +86,7 @@ signature AS (
                'dropped', attribute.attisdropped,
                'typeSchema', COALESCE(type_schema.nspname, ''),
                'typeName', COALESCE(type_row.typname, ''),
-               'typeOid', attribute.atttypid,
+               'typeOid', attribute.atttypid::bigint,
                'typmod', attribute.atttypmod,
                'formattedType', pg_catalog.format_type(
                    attribute.atttypid,

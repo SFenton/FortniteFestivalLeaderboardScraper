@@ -1244,6 +1244,14 @@ def bool_value(value):
     return str(value).strip().lower() in {"1", "t", "true", "yes", "ok"}
 
 
+def nullable_integer(value):
+    if value == "":
+        return None
+    if not re.fullmatch(r"-?\d+", value):
+        raise ValueError("value is neither empty nor an integer")
+    return int(value)
+
+
 def stable_rows(rows):
     return sorted(
         ({str(key): str(value) for key, value in row.items()} for row in rows),
@@ -1312,7 +1320,7 @@ def prepare_column_catalog(args):
             int(row["typmod"])
             int(row["type_oid"])
             int(row["inheritance_count"])
-            int(row["statistics_target"])
+            nullable_integer(row["statistics_target"])
         except ValueError as exc:
             raise ValueError(f"column catalog has invalid numeric data: {key}") from exc
         if attnum <= 0:
@@ -1405,7 +1413,7 @@ def column_signature_projection(row):
         "inheritanceCount": int(row["inheritance_count"]),
         "hasMissing": bool_value(row["has_missing"]),
         "missingValue": row["missing_value"],
-        "statisticsTarget": int(row["statistics_target"]),
+        "statisticsTarget": nullable_integer(row["statistics_target"]),
     }
 
 

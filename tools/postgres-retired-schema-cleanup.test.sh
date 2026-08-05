@@ -247,6 +247,11 @@ def column_row(item, attnum, name, formatted_type, *, not_null=True,
         formatted_type,
         ("text", "25"),
     )
+    inherited_partition_column = (
+        item["object_type"] == "table"
+        and bool(item["parent_name"])
+        and not item["owner_column"]
+    )
     return {
         "family": item["family"],
         "object_order": item["order"],
@@ -273,7 +278,9 @@ def column_row(item, attnum, name, formatted_type, *, not_null=True,
         "inheritance_count": "0",
         "has_missing": "false",
         "missing_value": "",
-        "statistics_target": "-1",
+        "statistics_target": (
+            "" if inherited_partition_column else "-1"
+        ),
         "options": "",
         "fdw_options": "",
         "acl": "",
@@ -369,7 +376,11 @@ for row in column_rows:
         "inheritanceCount": int(row["inheritance_count"]),
         "hasMissing": row["has_missing"] == "true",
         "missingValue": row["missing_value"],
-        "statisticsTarget": int(row["statistics_target"]),
+        "statisticsTarget": (
+            None
+            if row["statistics_target"] == ""
+            else int(row["statistics_target"])
+        ),
         "options": [],
         "fdwOptions": [],
         "acl": [],
@@ -1958,6 +1969,25 @@ assert next(
 assert next(
     row for row in band_columns if row["column_name"] == "band_type"
 )["collation_name"] == "default"
+inherited_partition_column = next(
+    row
+    for row in columns
+    if row["name"] == "leaderboard_current_entries_bass"
+    and row["column_name"] == "fixture_column"
+)
+assert inherited_partition_column["statistics_target"] == ""
+with (
+    root / "package" / "catalog" / "signature.csv"
+).open(newline="", encoding="utf-8") as handle:
+    signature_rows = list(csv.DictReader(handle))
+inherited_signature = next(
+    row
+    for row in signature_rows
+    if row["category"] == "column"
+    and row["object_identity"]
+    == "public.leaderboard_current_entries_bass#1"
+)
+assert json.loads(inherited_signature["detail"])["statisticsTarget"] is None
 assert manifest["catalogSignature"]["categoryCounts"]["relation"] == 61
 assert manifest["catalogSignature"]["categoryCounts"]["partition"] == 45
 assert (
@@ -2751,6 +2781,18 @@ run_status 2 complete-column-catalog-default-drift-gate \
     run_cleanup \
         "$column_default_drift_fixture" \
         "$WORK_ROOT/out-column-default-drift"
+
+invalid_statistics_target_fixture="$(
+    copy_fixture invalid-statistics-target
+)"
+mutate_csv \
+    "$invalid_statistics_target_fixture/pre/column-catalog.raw.csv" \
+    statistics_target \
+    not-an-integer
+run_status 2 invalid-column-statistics-target-gate \
+    run_cleanup \
+        "$invalid_statistics_target_fixture" \
+        "$WORK_ROOT/out-invalid-statistics-target"
 
 column_missing_value_fixture="$(copy_fixture column-missing-value)"
 mutate_csv \
@@ -4222,6 +4264,7 @@ for required in [
     "attidentity",
     "attgenerated",
     "attcollation",
+    "attstattarget",
     "pg_get_expr",
     "pg_get_constraintdef",
     "pg_get_indexdef",
@@ -4235,6 +4278,21 @@ for required in [
     "pg_shdepend",
 ]:
     assert required in catalog_query, required
+assert "'typeOid', attribute.atttypid::bigint" in catalog_query
+assert "'typeOid', attribute.atttypid," not in catalog_query
+for intentional_textual_oid in [
+    "dependency.classid::regclass::text",
+    "dependency.refclassid::regclass::text",
+    "shared_dependency.classid::regclass::text",
+    "shared_dependency.refclassid::regclass::text",
+    "pg_catalog.format_type(sequence.seqtypid, NULL)",
+]:
+    assert intentional_textual_oid in catalog_query
+column_capture = (sql_dir / "capture-column-catalog.sql").read_text(
+    encoding="utf-8"
+)
+assert "attribute.attstattarget::text AS statistics_target" in column_capture
+assert "COALESCE(attribute.attstattarget" not in column_capture
 for required in [
     "pg_catalog.pg_publication_tables",
     "pg_catalog.pg_publication_namespace",
@@ -4821,6 +4879,199 @@ assert row["row_count"] == "0"
 PY
 {
     cat <<'SQL'
+CREATE TABLE public.leaderboard_current_entries (
+    id bigint,
+    value text
+) PARTITION BY RANGE (id);
+CREATE TABLE public.leaderboard_current_entries_bass
+    PARTITION OF public.leaderboard_current_entries
+    FOR VALUES FROM (0) TO (10);
+CREATE SEQUENCE public.player_score_observations_id_seq;
+CREATE TEMP TABLE retired_cleanup_expected (
+    object_order integer NOT NULL,
+    family text NOT NULL,
+    object_type text NOT NULL,
+    expected_relkind "char" NOT NULL,
+    schema_name text NOT NULL,
+    object_name text NOT NULL,
+    parent_schema text,
+    parent_name text,
+    owner_column text,
+    row_policy text NOT NULL,
+    expected_rows bigint,
+    PRIMARY KEY (schema_name, object_name)
+) ON COMMIT PRESERVE ROWS;
+INSERT INTO retired_cleanup_expected VALUES (
+    1,
+    'logical-shadow',
+    'table',
+    'r'::"char",
+    'public',
+    'leaderboard_current_entries_bass',
+    'public',
+    'leaderboard_current_entries',
+    NULL,
+    'zero',
+    0
+);
+SQL
+    cat "$SCRIPT_DIR/sql/postgres-retired-schema-cleanup/capture-column-catalog.sql"
+} | docker exec -i "$PG_TEST_CONTAINER" \
+    env -u PGHOST -u PGHOSTADDR -u PGPORT \
+        -u PGSERVICE -u PGSERVICEFILE \
+        psql -X -q -v ON_ERROR_STOP=1 \
+        -h /var/run/postgresql -U postgres -d postgres -P pager=off \
+    > "$WORK_ROOT/real-postgres-null-statistics-target.csv"
+python3 - "$WORK_ROOT/real-postgres-null-statistics-target.csv" <<'PY'
+import csv
+import sys
+from pathlib import Path
+
+with Path(sys.argv[1]).open(newline="", encoding="utf-8") as handle:
+    rows = list(csv.DictReader(handle))
+assert [row["column_name"] for row in rows] == ["id", "value"]
+assert all(row["statistics_target"] == "" for row in rows)
+PY
+{
+    cat <<'SQL'
+CREATE TEMP TABLE retired_cleanup_expected (
+    object_order integer NOT NULL,
+    family text NOT NULL,
+    object_type text NOT NULL,
+    expected_relkind "char" NOT NULL,
+    schema_name text NOT NULL,
+    object_name text NOT NULL,
+    parent_schema text,
+    parent_name text,
+    owner_column text,
+    row_policy text NOT NULL,
+    expected_rows bigint,
+    PRIMARY KEY (schema_name, object_name)
+) ON COMMIT PRESERVE ROWS;
+INSERT INTO retired_cleanup_expected VALUES (
+    1,
+    'logical-shadow',
+    'table',
+    'r'::"char",
+    'public',
+    'leaderboard_current_entries_bass',
+    'public',
+    'leaderboard_current_entries',
+    NULL,
+    'zero',
+    0
+);
+\set ON_ERROR_STOP on
+COPY (
+SQL
+    cat "$SCRIPT_DIR/sql/postgres-retired-schema-cleanup/catalog-signature-query.sql"
+    printf '%s\n' ') TO STDOUT WITH (FORMAT CSV, HEADER TRUE);'
+} | docker exec -i "$PG_TEST_CONTAINER" \
+    env -u PGHOST -u PGHOSTADDR -u PGPORT \
+        -u PGSERVICE -u PGSERVICEFILE \
+        psql -X -q -v ON_ERROR_STOP=1 \
+        -h /var/run/postgresql -U postgres -d postgres -P pager=off \
+    > "$WORK_ROOT/real-postgres-null-statistics-signature.csv"
+python3 - \
+    "$READY_FIXTURE/pre/column-catalog.raw.csv" \
+    "$READY_FIXTURE/pre/catalog-signature.raw.csv" \
+    "$WORK_ROOT/real-postgres-null-statistics-target.csv" \
+    "$WORK_ROOT/real-postgres-null-statistics-signature.csv" \
+    "$WORK_ROOT/real-canonical-column-input.csv" \
+    "$WORK_ROOT/real-canonical-signature-input.csv" <<'PY'
+import csv
+import sys
+from pathlib import Path
+
+(
+    fixture_columns_path,
+    fixture_signature_path,
+    real_columns_path,
+    real_signature_path,
+    output_columns_path,
+    output_signature_path,
+) = map(Path, sys.argv[1:])
+
+with fixture_columns_path.open(newline="", encoding="utf-8") as handle:
+    reader = csv.DictReader(handle)
+    column_fields = reader.fieldnames
+    columns = [
+        row
+        for row in reader
+        if row["name"] != "leaderboard_current_entries_bass"
+    ]
+with real_columns_path.open(newline="", encoding="utf-8") as handle:
+    columns.extend(csv.DictReader(handle))
+with output_columns_path.open("w", newline="", encoding="utf-8") as handle:
+    writer = csv.DictWriter(handle, fieldnames=column_fields)
+    writer.writeheader()
+    writer.writerows(columns)
+
+with fixture_signature_path.open(newline="", encoding="utf-8") as handle:
+    reader = csv.DictReader(handle)
+    signature_fields = reader.fieldnames
+    signature = [
+        row
+        for row in reader
+        if not (
+            row["category"] == "column"
+            and row["object_identity"].startswith(
+                "public.leaderboard_current_entries_bass#"
+            )
+        )
+    ]
+with real_signature_path.open(newline="", encoding="utf-8") as handle:
+    signature.extend(
+        row
+        for row in csv.DictReader(handle)
+        if row["category"] == "column"
+    )
+with output_signature_path.open(
+    "w",
+    newline="",
+    encoding="utf-8",
+) as handle:
+    writer = csv.DictWriter(handle, fieldnames=signature_fields)
+    writer.writeheader()
+    writer.writerows(signature)
+PY
+python3 "$HELPER" prepare-column-catalog \
+    --objects "$OBJECTS" \
+    --input "$WORK_ROOT/real-canonical-column-input.csv" \
+    --output "$WORK_ROOT/real-canonical-columns.csv"
+python3 "$HELPER" prepare-catalog-signature \
+    --input "$WORK_ROOT/real-canonical-signature-input.csv" \
+    --query \
+        "$SCRIPT_DIR/sql/postgres-retired-schema-cleanup/catalog-signature-query.sql" \
+    --column-catalog "$WORK_ROOT/real-canonical-columns.csv" \
+    --output "$WORK_ROOT/real-canonical-signature.csv" \
+    --metadata-output "$WORK_ROOT/real-canonical-signature-metadata.json" \
+    --expected-sql-output "$WORK_ROOT/real-canonical-expected.sql" \
+    --assert-sql-output "$WORK_ROOT/real-canonical-assert.sql"
+python3 - "$WORK_ROOT/real-canonical-signature.csv" <<'PY'
+import csv
+import json
+import sys
+from pathlib import Path
+
+with Path(sys.argv[1]).open(newline="", encoding="utf-8") as handle:
+    rows = [
+        row
+        for row in csv.DictReader(handle)
+        if row["category"] == "column"
+        and row["object_identity"].startswith(
+            "public.leaderboard_current_entries_bass#"
+        )
+    ]
+assert len(rows) == 2
+for row in rows:
+    detail = json.loads(row["detail"])
+    assert isinstance(detail["typeOid"], int)
+    assert detail["statisticsTarget"] is None
+PY
+printf 'PASS: real PostgreSQL OID/null catalog canonicalization\n'
+{
+    cat <<'SQL'
 CREATE SEQUENCE public.fixture_expected_owned_seq
     OWNED BY public.fixture_capture_relation.id;
 CREATE SEQUENCE public.fixture_custom_owned_seq
@@ -5191,7 +5442,6 @@ printf 'PASS: guarded nextval/setval and locked restart/options preserve sequenc
 CREATE SCHEMA fixture_publication_schema;
 CREATE TABLE fixture_publication_schema.schema_member (id bigint);
 CREATE TABLE public.fixture_explicit_publication_member (id bigint);
-CREATE SEQUENCE public.player_score_observations_id_seq;
 CREATE PUBLICATION fixture_all_tables FOR ALL TABLES;
 CREATE PUBLICATION fixture_schema
     FOR TABLES IN SCHEMA fixture_publication_schema;
@@ -5339,6 +5589,7 @@ PY
 docker rm -f "$PG_TEST_CONTAINER" >/dev/null
 PG_TEST_CONTAINER=""
 printf 'PASS: real PostgreSQL read-only capture transaction\n'
+printf 'PASS: real inherited partition NULL statistics target capture\n'
 printf 'PASS: real PostgreSQL inverse owned-sequence capture\n'
 printf 'PASS: real PostgreSQL effective publication capture/signature\n'
 

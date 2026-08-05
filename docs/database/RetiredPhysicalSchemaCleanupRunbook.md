@@ -69,11 +69,20 @@ under-lock equality SQL, and rollback `COPY` payloads into the manifest. Export
 and restore columns are generated from a separately canonicalized complete
 column catalog: ordinal/name, type/type OID/typmod, default, nullability,
 identity/generated state, collation, storage/compression, inheritance/missing
-state, statistics target, options, FDW options, and ACL. Any extra, missing, or
+state, statistics target (integer or explicit JSON/CSV null for inherited
+partition columns), options, FDW options, and ACL. Any extra, missing, or
 drifted column blocks before data comparison. Every other allowlisted table or
 partition must be exactly empty. The retained rows are explicitly rebuildable
 state, but they are never silently truncated or dropped without an identical
 manifest-bound payload.
+
+Catalog JSON casts OID values that are contractually numeric—currently
+`pg_attribute.atttypid`—to `bigint` before `jsonb_build_object`, preserving the
+full OID while avoiding PostgreSQL's string JSON encoding for the `oid` alias
+type. Class identifiers intentionally represented by names remain explicit
+`regclass::text`; function, constraint, relation, and sequence type OIDs are
+resolved through `pg_describe_object`/`format_type` rather than serialized with
+an ambiguous JSON type.
 
 The package deliberately excludes all active current-state and physical-source
 families, including:
@@ -550,7 +559,9 @@ inside one consistent PostgreSQL snapshot.
 
 They cover argument parsing, deterministic manifests, arbitrary-named attached
 partitions, exact retained 108/3-row payloads and rollback hashes, retained-data
-and complete-column catalog drift, complete under-lock catalog signatures,
+and complete-column catalog drift including nullable inherited-column
+statistics targets and real PostgreSQL OID-typed JSON canonicalization,
+complete under-lock catalog signatures,
 atomic transaction/concurrency boundaries, sequence/routine drift, bounded
 rollback and psql process capture, post-timeout commit/rollback reconciliation,
 sanitized production compose/raw override/bind ownership, `rg`
