@@ -407,6 +407,28 @@ for row in partition_rows:
             "detachPending": False,
         }, sort_keys=True),
     })
+    catalog_rows.append({
+        "category": "constraint",
+        "object_identity": (
+            f"{row['child_schema']}.{row['child_name']}."
+            f"{row['child_name']}_pkey"
+        ),
+        "detail": json.dumps({
+            "type": "p",
+            "deferrable": False,
+            "deferred": False,
+            "validated": True,
+            "noInherit": False,
+            "definition": "PRIMARY KEY (fixture_column)",
+            "key": [1],
+            "foreignKey": [],
+            "referencedRelation": "",
+            "parentConstraint": (
+                f"constraint {row['parent_name']}_pkey "
+                f"on table {row['parent_name']}"
+            ),
+        }, sort_keys=True),
+    })
 for row in incoming_rows:
     catalog_rows.append({
         "category": "incoming-inheritance",
@@ -1994,6 +2016,29 @@ assert (
     manifest["catalogSignature"]["categoryCounts"]["incoming-inheritance"]
     == 45
 )
+roundtrip_catalog = manifest["rollbackCatalogSignature"]
+assert roundtrip_catalog["rule"] == "partition-primary-key-noinherit-v1"
+assert roundtrip_catalog["sentinel"] == "partition-attach-reconstructed"
+assert roundtrip_catalog["normalizedConstraintCount"] == 45
+assert len(roundtrip_catalog["normalizedConstraintIdentities"]) == 45
+rollback_signature_path = (
+    root / "package" / "catalog" / "rollback-signature.csv"
+)
+assert hashlib.sha256(rollback_signature_path.read_bytes()).hexdigest() == \
+    roundtrip_catalog["sha256"]
+with rollback_signature_path.open(newline="", encoding="utf-8") as handle:
+    rollback_signature_rows = list(csv.DictReader(handle))
+roundtrip_constraint = next(
+    row
+    for row in rollback_signature_rows
+    if row["object_identity"]
+    == (
+        "public.leaderboard_current_entries_bass."
+        "leaderboard_current_entries_bass_pkey"
+    )
+)
+assert json.loads(roundtrip_constraint["detail"])["noInherit"] == \
+    "partition-attach-reconstructed"
 assert [
     Path(row["path"]).name
     for row in manifest["productionComposeOwnership"]["files"]
@@ -2097,6 +2142,72 @@ for row in metric_columns:
     assert f'"{row["column_name"]}"' in metric_capture
 PY
 printf 'PASS: bound columns, retained payload, catalog, and rollback hashes\n'
+
+python3 - \
+    "$WORK_ROOT/check-one/package/catalog/signature.csv" \
+    "$WORK_ROOT/roundtrip-all-partitions.csv" <<'PY'
+import csv
+import json
+import sys
+from pathlib import Path
+
+source, output = map(Path, sys.argv[1:])
+with source.open(newline="", encoding="utf-8") as handle:
+    reader = csv.DictReader(handle)
+    fields = reader.fieldnames
+    rows = list(reader)
+changed = 0
+for row in rows:
+    if row["category"] != "constraint":
+        continue
+    detail = json.loads(row["detail"])
+    if detail.get("type") == "p" and detail.get("parentConstraint"):
+        assert detail["noInherit"] is False
+        detail["noInherit"] = True
+        row["detail"] = json.dumps(detail, sort_keys=True)
+        changed += 1
+assert changed == 45
+with output.open("w", newline="", encoding="utf-8") as handle:
+    writer = csv.DictWriter(handle, fieldnames=fields)
+    writer.writeheader()
+    writer.writerows(rows)
+PY
+python3 "$HELPER" diff-catalog-signatures \
+    --objects "$OBJECTS" \
+    --expected "$WORK_ROOT/check-one/package/catalog/signature.csv" \
+    --actual "$WORK_ROOT/roundtrip-all-partitions.csv" \
+    --output-json "$WORK_ROOT/roundtrip-all-partitions-diff.json" \
+    --output-csv "$WORK_ROOT/roundtrip-all-partitions-diff.csv" \
+    --output-report "$WORK_ROOT/roundtrip-all-partitions-diff.md"
+python3 - "$WORK_ROOT/roundtrip-all-partitions-diff.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert value["exactMatch"] is False
+assert value["rollbackCanonicalMatch"] is True
+assert value["exactMissingCount"] == 45
+assert value["exactExtraCount"] == 45
+assert len(value["fieldDifferences"]) == 45
+assert {
+    (
+        row["field"],
+        row["expected"],
+        row["actual"],
+        row["classification"],
+    )
+    for row in value["fieldDifferences"]
+} == {
+    (
+        "noInherit",
+        False,
+        True,
+        "allowed-roundtrip-normalization",
+    )
+}
+PY
+printf 'PASS: exact 45-object rollback catalog normalization fixture\n'
 
 unexpected_fixture="$(copy_fixture unexpected)"
 printf 'public,ranking_deltas_unexpected,r,fst\n' \
@@ -4097,6 +4208,8 @@ assert Counter(row["family"] for row in objects) == {
 assert not re.search(r"\bCASCADE\b", sql, re.IGNORECASE)
 assert "DROP INDEX" not in sql
 assert "TRUNCATE " not in sql
+assert "partition-attach-reconstructed" not in sql
+assert "retired_cleanup_expected_rollback_catalog" not in sql
 assert len(re.findall(r"^DROP (?:TABLE|VIEW|SEQUENCE) ", sql, re.MULTILINE)) == 61
 assert len(re.findall(r"^BEGIN;$", sql, re.MULTILINE)) == 1
 assert len(re.findall(r"^COMMIT;$", sql, re.MULTILINE)) == 1
@@ -4437,6 +4550,22 @@ assert "prepare-executable-pg-dump" in script
 assert 'cat "$ROLLBACK_EXECUTABLE_DIR/$family.sql"' in script
 assert '< "$ROLLBACK_EXECUTABLE_DIR/rollback-all.sql"' in script
 assert 'cat "$ROLLBACK_EXECUTABLE_DIR/rollback-all.sql"' in script
+scratch_proof = script[
+    script.index("run_scratch_roundtrip_proof()"):
+    script.index("load_approved_startup_identity_from_proof()")
+]
+assert "diff-catalog-signatures" in scratch_proof
+assert 'cat "$PACKAGE_DIR/catalog-rollback-expected.sql"' in scratch_proof
+assert 'cat "$PACKAGE_DIR/catalog-rollback-assert.sql"' in scratch_proof
+assert 'cat "$PACKAGE_DIR/catalog-expected.sql"' not in scratch_proof
+rehearsal = script[
+    script.index("run_rollback_rehearsal()"):
+    script.index("if ! $TEST_MODE; then", script.index(
+        "run_rollback_rehearsal()"
+    ))
+]
+assert 'cat "$PACKAGE_DIR/catalog-rollback-expected.sql"' in rehearsal
+assert 'cat "$PACKAGE_DIR/catalog-rollback-assert.sql"' in rehearsal
 launch = script[
     script.index("run_live_atomic_drop()"):
     script.index("reconcile_drop_process()")
@@ -5070,6 +5199,223 @@ for row in rows:
     assert detail["statisticsTarget"] is None
 PY
 printf 'PASS: real PostgreSQL OID/null catalog canonicalization\n'
+docker exec -i "$PG_TEST_CONTAINER" \
+    env -u PGHOST -u PGHOSTADDR -u PGPORT \
+        -u PGSERVICE -u PGSERVICEFILE \
+        psql -X -q -v ON_ERROR_STOP=1 \
+        -h /var/run/postgresql -U postgres -d postgres -P pager=off \
+        -c 'ALTER TABLE public.leaderboard_current_entries ADD PRIMARY KEY (id)'
+{
+    cat <<'SQL'
+CREATE TEMP TABLE retired_cleanup_expected (
+    object_order integer NOT NULL,
+    family text NOT NULL,
+    object_type text NOT NULL,
+    expected_relkind "char" NOT NULL,
+    schema_name text NOT NULL,
+    object_name text NOT NULL,
+    parent_schema text,
+    parent_name text,
+    owner_column text,
+    row_policy text NOT NULL,
+    expected_rows bigint,
+    PRIMARY KEY (schema_name, object_name)
+) ON COMMIT PRESERVE ROWS;
+INSERT INTO retired_cleanup_expected VALUES (
+    1, 'logical-shadow', 'table', 'r'::"char",
+    'public', 'leaderboard_current_entries_bass',
+    'public', 'leaderboard_current_entries',
+    NULL, 'zero', 0
+);
+\set ON_ERROR_STOP on
+COPY (
+SQL
+    cat "$SCRIPT_DIR/sql/postgres-retired-schema-cleanup/catalog-signature-query.sql"
+    printf '%s\n' ') TO STDOUT WITH (FORMAT CSV, HEADER TRUE);'
+} | docker exec -i "$PG_TEST_CONTAINER" \
+    env -u PGHOST -u PGHOSTADDR -u PGPORT \
+        -u PGSERVICE -u PGSERVICEFILE \
+        psql -X -q -v ON_ERROR_STOP=1 \
+        -h /var/run/postgresql -U postgres -d postgres -P pager=off \
+    > "$WORK_ROOT/partition-live-signature.csv"
+docker exec "$PG_TEST_CONTAINER" \
+    env -u PGHOST -u PGHOSTADDR -u PGPORT \
+        -u PGSERVICE -u PGSERVICEFILE \
+        pg_dump --schema-only --no-owner --no-privileges \
+        -h /var/run/postgresql -U postgres -d postgres \
+        --table=public.leaderboard_current_entries \
+        --table=public.leaderboard_current_entries_bass \
+    > "$WORK_ROOT/partition-roundtrip.sql"
+docker exec "$PG_TEST_CONTAINER" \
+    createdb -h /var/run/postgresql -U postgres \
+        --template=template0 partition_roundtrip
+docker exec -i "$PG_TEST_CONTAINER" \
+    env -u PGHOST -u PGHOSTADDR -u PGPORT \
+        -u PGSERVICE -u PGSERVICEFILE \
+        psql -X --single-transaction -v ON_ERROR_STOP=1 \
+        -h /var/run/postgresql -U postgres -d partition_roundtrip \
+        -P pager=off \
+    < "$WORK_ROOT/partition-roundtrip.sql" \
+    > "$WORK_ROOT/partition-roundtrip-restore.log" 2>&1
+docker exec "$PG_TEST_CONTAINER" \
+    psql -X -q -v ON_ERROR_STOP=1 \
+        -h /var/run/postgresql -U postgres -d partition_roundtrip \
+        -c 'CREATE SEQUENCE public.player_score_observations_id_seq'
+{
+    cat <<'SQL'
+CREATE TEMP TABLE retired_cleanup_expected (
+    object_order integer NOT NULL,
+    family text NOT NULL,
+    object_type text NOT NULL,
+    expected_relkind "char" NOT NULL,
+    schema_name text NOT NULL,
+    object_name text NOT NULL,
+    parent_schema text,
+    parent_name text,
+    owner_column text,
+    row_policy text NOT NULL,
+    expected_rows bigint,
+    PRIMARY KEY (schema_name, object_name)
+) ON COMMIT PRESERVE ROWS;
+INSERT INTO retired_cleanup_expected VALUES (
+    1, 'logical-shadow', 'table', 'r'::"char",
+    'public', 'leaderboard_current_entries_bass',
+    'public', 'leaderboard_current_entries',
+    NULL, 'zero', 0
+);
+\set ON_ERROR_STOP on
+COPY (
+SQL
+    cat "$SCRIPT_DIR/sql/postgres-retired-schema-cleanup/catalog-signature-query.sql"
+    printf '%s\n' ') TO STDOUT WITH (FORMAT CSV, HEADER TRUE);'
+} | docker exec -i "$PG_TEST_CONTAINER" \
+    env -u PGHOST -u PGHOSTADDR -u PGPORT \
+        -u PGSERVICE -u PGSERVICEFILE \
+        psql -X -q -v ON_ERROR_STOP=1 \
+        -h /var/run/postgresql -U postgres -d partition_roundtrip \
+        -P pager=off \
+    > "$WORK_ROOT/partition-restored-signature.csv"
+python3 - \
+    "$READY_FIXTURE/pre/catalog-signature.raw.csv" \
+    "$WORK_ROOT/partition-live-signature.csv" \
+    "$WORK_ROOT/partition-restored-signature.csv" \
+    "$WORK_ROOT/partition-expected-full.csv" \
+    "$WORK_ROOT/partition-actual-full.csv" <<'PY'
+import csv
+import sys
+from pathlib import Path
+
+(
+    fixture_path,
+    live_path,
+    restored_path,
+    expected_path,
+    actual_path,
+) = map(Path, sys.argv[1:])
+identity = (
+    "public.leaderboard_current_entries_bass."
+    "leaderboard_current_entries_bass_pkey"
+)
+
+def constraint(path):
+    with path.open(newline="", encoding="utf-8") as handle:
+        rows = [
+            row
+            for row in csv.DictReader(handle)
+            if row["category"] == "constraint"
+            and row["object_identity"] == identity
+        ]
+    assert len(rows) == 1
+    return rows[0]
+
+live = constraint(live_path)
+restored = constraint(restored_path)
+with fixture_path.open(newline="", encoding="utf-8") as handle:
+    reader = csv.DictReader(handle)
+    fields = reader.fieldnames
+    fixture = [
+        row
+        for row in reader
+        if not (
+            row["category"] == "constraint"
+            and row["object_identity"] == identity
+        )
+    ]
+for output, replacement in [
+    (expected_path, live),
+    (actual_path, restored),
+]:
+    with output.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(fixture + [replacement])
+PY
+python3 "$HELPER" diff-catalog-signatures \
+    --objects "$OBJECTS" \
+    --expected "$WORK_ROOT/partition-expected-full.csv" \
+    --actual "$WORK_ROOT/partition-actual-full.csv" \
+    --output-json "$WORK_ROOT/partition-roundtrip-diff.json" \
+    --output-csv "$WORK_ROOT/partition-roundtrip-diff.csv" \
+    --output-report "$WORK_ROOT/partition-roundtrip-diff.md"
+python3 - "$WORK_ROOT/partition-roundtrip-diff.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert value["exactMatch"] is False
+assert value["rollbackCanonicalMatch"] is True
+assert value["exactMissingCount"] == 1
+assert value["exactExtraCount"] == 1
+assert value["fieldDifferences"] == [{
+    "actual": True,
+    "category": "constraint",
+    "classification": "allowed-roundtrip-normalization",
+    "expected": False,
+    "field": "noInherit",
+    "kind": "changed",
+    "objectIdentity": (
+        "public.leaderboard_current_entries_bass."
+        "leaderboard_current_entries_bass_pkey"
+    ),
+}]
+PY
+python3 - \
+    "$WORK_ROOT/partition-actual-full.csv" \
+    "$WORK_ROOT/partition-actual-fatal.csv" <<'PY'
+import csv
+import json
+import sys
+from pathlib import Path
+
+source, output = map(Path, sys.argv[1:])
+with source.open(newline="", encoding="utf-8") as handle:
+    reader = csv.DictReader(handle)
+    fields = reader.fieldnames
+    rows = list(reader)
+for row in rows:
+    if row["object_identity"].endswith(
+        "leaderboard_current_entries_bass_pkey"
+    ):
+        detail = json.loads(row["detail"])
+        detail["definition"] = "PRIMARY KEY (id, value)"
+        row["detail"] = json.dumps(detail, sort_keys=True)
+with output.open("w", newline="", encoding="utf-8") as handle:
+    writer = csv.DictWriter(handle, fieldnames=fields)
+    writer.writeheader()
+    writer.writerows(rows)
+PY
+run_status 3 partition-roundtrip-noncanonical-drift \
+    python3 "$HELPER" diff-catalog-signatures \
+        --objects "$OBJECTS" \
+        --expected "$WORK_ROOT/partition-expected-full.csv" \
+        --actual "$WORK_ROOT/partition-actual-fatal.csv" \
+        --output-json "$WORK_ROOT/partition-fatal-diff.json" \
+        --output-csv "$WORK_ROOT/partition-fatal-diff.csv" \
+        --output-report "$WORK_ROOT/partition-fatal-diff.md"
+docker exec "$PG_TEST_CONTAINER" \
+    dropdb -h /var/run/postgresql -U postgres partition_roundtrip
+printf 'PASS: real pg_dump partition catalog normalization is narrowly modeled\n'
 {
     cat <<'SQL'
 CREATE SEQUENCE public.fixture_expected_owned_seq

@@ -1060,8 +1060,9 @@ capture_container_config_attestation() {
     [[ -s "$output_file" ]] || return 3
 }
 
-run_catalog_signature_capture() {
-    local output_file="$1"
+run_catalog_signature_capture_database() {
+    local database="$1"
+    local output_file="$2"
     {
         cat "$PACKAGE_DIR/expected-objects.sql"
         printf '%s\n' \
@@ -1075,7 +1076,11 @@ run_catalog_signature_capture() {
         printf '%s\n' \
             ') TO STDOUT WITH (FORMAT CSV, HEADER TRUE);' \
             'COMMIT;'
-    } | psql_stream > "$output_file" || return 3
+    } | psql_stream_database "$database" > "$output_file" || return 3
+}
+
+run_catalog_signature_capture() {
+    run_catalog_signature_capture_database "$PG_DB" "$1"
 }
 
 capture_containers() {
@@ -2037,7 +2042,16 @@ python3 "$HELPER" prepare-catalog-signature \
     --output "$CATALOG_DIR/signature.csv" \
     --metadata-output "$CATALOG_DIR/signature-metadata.json" \
     --expected-sql-output "$PACKAGE_DIR/catalog-expected.sql" \
-    --assert-sql-output "$PACKAGE_DIR/catalog-assert.sql"
+    --assert-sql-output "$PACKAGE_DIR/catalog-assert.sql" \
+    --objects "$PACKAGE_DIR/objects.tsv" \
+    --rollback-canonical-output \
+        "$CATALOG_DIR/rollback-signature.csv" \
+    --rollback-canonical-metadata-output \
+        "$CATALOG_DIR/rollback-signature-metadata.json" \
+    --rollback-canonical-expected-sql-output \
+        "$PACKAGE_DIR/catalog-rollback-expected.sql" \
+    --rollback-canonical-assert-sql-output \
+        "$PACKAGE_DIR/catalog-rollback-assert.sql"
 
 CURRENT_STAGE="retained capture generation"
 python3 "$HELPER" render-retained-capture-sql \
@@ -2094,6 +2108,14 @@ manifest_args=(
     --catalog-query "$CATALOG_DIR/query.sql"
     --catalog-expected-sql "$PACKAGE_DIR/catalog-expected.sql"
     --catalog-assert-sql "$PACKAGE_DIR/catalog-assert.sql"
+    --rollback-catalog-signature \
+        "$CATALOG_DIR/rollback-signature.csv"
+    --rollback-catalog-metadata \
+        "$CATALOG_DIR/rollback-signature-metadata.json"
+    --rollback-catalog-expected-sql \
+        "$PACKAGE_DIR/catalog-rollback-expected.sql"
+    --rollback-catalog-assert-sql \
+        "$PACKAGE_DIR/catalog-rollback-assert.sql"
     --retained-spec "$PACKAGE_DIR/retained-data.tsv"
     --retained-capture-dir "$RETAINED_CAPTURE_SQL_DIR"
     --retained-dir "$RETAINED_DIR"
@@ -2216,6 +2238,22 @@ for path, expected in [
     (
         package / "catalog-assert.sql",
         manifest["catalogAssertSqlSha256"],
+    ),
+    (
+        package / "catalog" / "rollback-signature.csv",
+        manifest["rollbackCatalogSignature"]["sha256"],
+    ),
+    (
+        package / "catalog" / "rollback-signature-metadata.json",
+        manifest["rollbackCatalogMetadataSha256"],
+    ),
+    (
+        package / "catalog-rollback-expected.sql",
+        manifest["rollbackCatalogExpectedSqlSha256"],
+    ),
+    (
+        package / "catalog-rollback-assert.sql",
+        manifest["rollbackCatalogAssertSqlSha256"],
     ),
     (
         package / "retained-data.tsv",
@@ -2594,6 +2632,21 @@ run_scratch_roundtrip_proof() {
         < "$ROLLBACK_EXECUTABLE_DIR/rollback-all.sql" \
         > "$proof_dir/restore.log" 2>&1
 
+    run_catalog_signature_capture_database \
+        "$SCRATCH_DB_NAME" \
+        "$proof_dir/actual-catalog-signature.csv"
+    python3 "$HELPER" diff-catalog-signatures \
+        --objects "$PACKAGE_DIR/objects.tsv" \
+        --expected "$CATALOG_DIR/signature.csv" \
+        --actual "$proof_dir/actual-catalog-signature.csv" \
+        --output-json "$proof_dir/catalog-signature-diff.json" \
+        --output-csv "$proof_dir/catalog-signature-diff.csv" \
+        --output-report "$proof_dir/catalog-signature-diff.md"
+    sync -f "$proof_dir/actual-catalog-signature.csv"
+    sync -f "$proof_dir/catalog-signature-diff.json"
+    sync -f "$proof_dir/catalog-signature-diff.csv"
+    sync -f "$proof_dir/catalog-signature-diff.md"
+
     {
         printf '%s\n' '\set ON_ERROR_STOP on' 'BEGIN;'
         printf '%s\n' \
@@ -2602,9 +2655,9 @@ run_scratch_roundtrip_proof() {
             "SET LOCAL transaction_timeout = '5min';" \
             'SET LOCAL row_security = off;'
         cat "$PACKAGE_DIR/expected-objects.sql"
-        cat "$PACKAGE_DIR/catalog-expected.sql"
+        cat "$PACKAGE_DIR/catalog-rollback-expected.sql"
         cat "$PACKAGE_DIR/retained-expected.sql"
-        cat "$PACKAGE_DIR/catalog-assert.sql"
+        cat "$PACKAGE_DIR/catalog-rollback-assert.sql"
         cat "$PACKAGE_DIR/retained-assert.sql"
         cat "$PACKAGE_DIR/rollback-rehearsal-check.sql"
         printf '%s\n' 'ROLLBACK;'
@@ -4160,10 +4213,10 @@ run_rollback_rehearsal() {
             'END' \
             '$guards$;'
         cat "$PACKAGE_DIR/expected-objects.sql"
-        cat "$PACKAGE_DIR/catalog-expected.sql"
+        cat "$PACKAGE_DIR/catalog-rollback-expected.sql"
         cat "$PACKAGE_DIR/retained-expected.sql"
         cat "$ROLLBACK_EXECUTABLE_DIR/rollback-all.sql"
-        cat "$PACKAGE_DIR/catalog-assert.sql"
+        cat "$PACKAGE_DIR/catalog-rollback-assert.sql"
         cat "$PACKAGE_DIR/retained-assert.sql"
         cat "$PACKAGE_DIR/rollback-rehearsal-check.sql"
         printf '%s\n' 'ROLLBACK;'

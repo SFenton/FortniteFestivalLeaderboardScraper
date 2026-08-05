@@ -15,7 +15,7 @@ import socket
 import stat
 import sys
 import zipfile
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from urllib.parse import quote, urlparse
@@ -26,6 +26,8 @@ CLEANUP_SCRAPE_ID = 1278
 PUBLICATION_LOCK_KEY = 5067481511116519500
 DDL_MAINTENANCE_LOCK_KEY = 5067481511116519501
 SEQUENCE_MAINTENANCE_LOCK_KEY = 5067481511116519502
+ROUNDTRIP_CATALOG_RULE = "partition-primary-key-noinherit-v1"
+ROUNDTRIP_CATALOG_SENTINEL = "partition-attach-reconstructed"
 CAPACITY_POLICY = {
     "estimatedFullScrapeGrowthBytes": 60392999803,
     "expectedFullScrapesPerDay": 2,
@@ -1755,6 +1757,207 @@ def validate_retained_recapture(args):
         writer.writerows(metadata)
 
 
+def _write_catalog_signature(path, rows):
+    with Path(path).open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=["category", "object_identity", "detail"],
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _roundtrip_constraint_identities(rows, objects):
+    partition_children = {
+        row.key
+        for row in objects
+        if (
+            row.object_type == "table"
+            and row.parent_name
+            and not row.owner_column
+        )
+    }
+    by_table = {}
+    for row in rows:
+        if row["category"] != "constraint":
+            continue
+        table_identity, separator, _constraint_name = (
+            row["object_identity"].rpartition(".")
+        )
+        if not separator or table_identity not in partition_children:
+            continue
+        detail = json.loads(row["detail"])
+        if (
+            detail.get("type") == "p"
+            and detail.get("parentConstraint")
+        ):
+            if detail.get("noInherit") is not False:
+                raise ValueError(
+                    "live partition primary-key constraint has unexpected "
+                    f"noInherit state: {row['object_identity']}"
+                )
+            if table_identity in by_table:
+                raise ValueError(
+                    "multiple partition primary-key constraints require "
+                    f"roundtrip normalization: {table_identity}"
+                )
+            by_table[table_identity] = row["object_identity"]
+    if set(by_table) != partition_children:
+        missing = sorted(partition_children - set(by_table))
+        raise ValueError(
+            "roundtrip catalog normalization lacks partition primary keys: "
+            + ", ".join(missing)
+        )
+    return sorted(by_table.values())
+
+
+def _normalize_roundtrip_catalog(rows, constraint_identities):
+    allowed = set(constraint_identities)
+    normalized = []
+    for row in rows:
+        detail = json.loads(row["detail"])
+        if row["object_identity"] in allowed:
+            if (
+                row["category"] != "constraint"
+                or detail.get("type") != "p"
+                or not detail.get("parentConstraint")
+                or not isinstance(detail.get("noInherit"), bool)
+            ):
+                raise ValueError(
+                    "roundtrip normalization target has unexpected shape: "
+                    f"{row['object_identity']}"
+                )
+            detail["noInherit"] = ROUNDTRIP_CATALOG_SENTINEL
+        normalized.append({
+            "category": row["category"],
+            "object_identity": row["object_identity"],
+            "detail": json.dumps(
+                detail,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ),
+        })
+    normalized.sort(
+        key=lambda row: (
+            row["category"],
+            row["object_identity"],
+            row["detail"],
+        )
+    )
+    return normalized
+
+
+def _render_catalog_expected_sql(table_name, comment, csv_text):
+    return "\n".join(
+        [
+            comment,
+            f"CREATE TEMP TABLE {table_name} (",
+            "    category text NOT NULL,",
+            "    object_identity text NOT NULL,",
+            "    detail jsonb NOT NULL",
+            ") ON COMMIT PRESERVE ROWS;",
+            _render_copy_payload(
+                f"pg_temp.{table_name}",
+                [
+                    {"column_name": "category"},
+                    {"column_name": "object_identity"},
+                    {"column_name": "detail"},
+                ],
+                csv_text,
+            ).rstrip(),
+            "",
+        ]
+    )
+
+
+def _render_catalog_assert_sql(
+    query_text,
+    expected_table,
+    dollar_tag,
+    error_message,
+    constraint_identities=None,
+):
+    indented_query = "\n".join(
+        "            " + line for line in query_text.splitlines()
+    )
+    lines = [
+        f"DO ${dollar_tag}$",
+        "BEGIN",
+        "    IF EXISTS (",
+        "        WITH current_signature_raw AS (",
+        indented_query,
+        "        ),",
+    ]
+    if constraint_identities:
+        identity_sql = ",\n".join(
+            "                    " + sql_literal(identity)
+            for identity in constraint_identities
+        )
+        lines.extend([
+            "        current_signature AS (",
+            "            SELECT category,",
+            "                   object_identity,",
+            "                   CASE",
+            "                       WHEN category = 'constraint'",
+            "                        AND object_identity IN (",
+            identity_sql,
+            "                        )",
+            "                        AND detail->>'type' = 'p'",
+            "                        AND COALESCE(",
+            "                            detail->>'parentConstraint',",
+            "                            '') <> ''",
+            "                        AND jsonb_typeof(",
+            "                            detail->'noInherit') = 'boolean'",
+            "                       THEN jsonb_set(",
+            "                           detail,",
+            "                           '{noInherit}',",
+            "                           to_jsonb(",
+            f"                               {sql_literal(ROUNDTRIP_CATALOG_SENTINEL)}::text),",
+            "                           false)",
+            "                       ELSE detail",
+            "                   END AS detail",
+            "            FROM current_signature_raw",
+            "        )",
+        ])
+    else:
+        lines.extend([
+            "        current_signature AS (",
+            "            SELECT category, object_identity, detail",
+            "            FROM current_signature_raw",
+            "        )",
+        ])
+    lines.extend([
+        "        SELECT 1",
+        "        FROM (",
+        "            (",
+        "                SELECT category, object_identity, detail",
+        "                FROM current_signature",
+        "                EXCEPT ALL",
+        "                SELECT category, object_identity, detail",
+        f"                FROM pg_temp.{expected_table}",
+        "            )",
+        "            UNION ALL",
+        "            (",
+        "                SELECT category, object_identity, detail",
+        f"                FROM pg_temp.{expected_table}",
+        "                EXCEPT ALL",
+        "                SELECT category, object_identity, detail",
+        "                FROM current_signature",
+        "            )",
+        "        ) mismatch",
+        "    ) THEN",
+        "        RAISE EXCEPTION",
+        f"            {sql_literal(error_message)};",
+        "    END IF;",
+        "END",
+        f"${dollar_tag}$;",
+        "",
+    ])
+    return "\n".join(lines)
+
+
 def prepare_catalog_signature(args):
     query_text = Path(args.query).read_text(encoding="utf-8").strip()
     if query_text.endswith(";"):
@@ -1941,6 +2144,350 @@ def prepare_catalog_signature(args):
         json.dumps(metadata, sort_keys=True, separators=(",", ":")) + "\n",
         encoding="utf-8",
     )
+
+    roundtrip_paths = [
+        args.objects,
+        args.rollback_canonical_output,
+        args.rollback_canonical_metadata_output,
+        args.rollback_canonical_expected_sql_output,
+        args.rollback_canonical_assert_sql_output,
+    ]
+    if any(roundtrip_paths) and not all(roundtrip_paths):
+        raise ValueError(
+            "roundtrip catalog outputs require objects, signature, metadata, "
+            "expected SQL, and assertion SQL"
+        )
+    if all(roundtrip_paths):
+        objects = read_objects(args.objects)
+        constraint_identities = _roundtrip_constraint_identities(
+            canonical_rows,
+            objects,
+        )
+        roundtrip_rows = _normalize_roundtrip_catalog(
+            canonical_rows,
+            constraint_identities,
+        )
+        _write_catalog_signature(
+            args.rollback_canonical_output,
+            roundtrip_rows,
+        )
+        roundtrip_csv = Path(
+            args.rollback_canonical_output
+        ).read_text(encoding="utf-8")
+        Path(args.rollback_canonical_expected_sql_output).write_text(
+            _render_catalog_expected_sql(
+                "retired_cleanup_expected_rollback_catalog",
+                "-- Manifest-bound rollback-canonical catalog signature.",
+                roundtrip_csv,
+            ),
+            encoding="utf-8",
+        )
+        Path(args.rollback_canonical_assert_sql_output).write_text(
+            _render_catalog_assert_sql(
+                query_text,
+                "retired_cleanup_expected_rollback_catalog",
+                "rollback_catalog_signature",
+                "Rollback-canonical cleanup catalog signature drifted",
+                constraint_identities,
+            ),
+            encoding="utf-8",
+        )
+        roundtrip_metadata = {
+            "schemaVersion": 1,
+            "rule": ROUNDTRIP_CATALOG_RULE,
+            "sentinel": ROUNDTRIP_CATALOG_SENTINEL,
+            "rowCount": len(roundtrip_rows),
+            "sha256": sha256_path(args.rollback_canonical_output),
+            "exactSignatureSha256": sha256_path(output),
+            "querySha256": sha256_path(args.query),
+            "columnCatalogSha256": sha256_path(args.column_catalog),
+            "normalizedConstraintCount": len(constraint_identities),
+            "normalizedConstraintIdentities": constraint_identities,
+        }
+        Path(args.rollback_canonical_metadata_output).write_text(
+            json.dumps(
+                roundtrip_metadata,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+
+def _read_catalog_signature(path):
+    with Path(path).open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames != ["category", "object_identity", "detail"]:
+            raise ValueError(f"catalog signature header is invalid: {path}")
+        rows = []
+        for row in reader:
+            detail = json.loads(row["detail"])
+            rows.append({
+                "category": row["category"],
+                "object_identity": row["object_identity"],
+                "detail": json.dumps(
+                    detail,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ),
+            })
+    rows.sort(
+        key=lambda row: (
+            row["category"],
+            row["object_identity"],
+            row["detail"],
+        )
+    )
+    return rows
+
+
+def _json_field_differences(expected, actual, path=""):
+    if isinstance(expected, dict) and isinstance(actual, dict):
+        differences = []
+        for key in sorted(set(expected) | set(actual)):
+            child_path = f"{path}.{key}" if path else key
+            if key not in expected:
+                differences.append({
+                    "field": child_path,
+                    "expected": None,
+                    "actual": actual[key],
+                    "kind": "added",
+                })
+            elif key not in actual:
+                differences.append({
+                    "field": child_path,
+                    "expected": expected[key],
+                    "actual": None,
+                    "kind": "removed",
+                })
+            else:
+                differences.extend(
+                    _json_field_differences(
+                        expected[key],
+                        actual[key],
+                        child_path,
+                    )
+                )
+        return differences
+    if expected != actual:
+        return [{
+            "field": path,
+            "expected": expected,
+            "actual": actual,
+            "kind": "changed",
+        }]
+    return []
+
+
+def diff_catalog_signatures(args):
+    objects = read_objects(args.objects)
+    expected_rows = _read_catalog_signature(args.expected)
+    actual_rows = _read_catalog_signature(args.actual)
+    constraint_identities = _roundtrip_constraint_identities(
+        expected_rows,
+        objects,
+    )
+    expected_counter = Counter(
+        (
+            row["category"],
+            row["object_identity"],
+            row["detail"],
+        )
+        for row in expected_rows
+    )
+    actual_counter = Counter(
+        (
+            row["category"],
+            row["object_identity"],
+            row["detail"],
+        )
+        for row in actual_rows
+    )
+    missing_counter = expected_counter - actual_counter
+    extra_counter = actual_counter - expected_counter
+
+    expected_by_identity = defaultdict(list)
+    actual_by_identity = defaultdict(list)
+    for row in expected_rows:
+        expected_by_identity[
+            (row["category"], row["object_identity"])
+        ].append(json.loads(row["detail"]))
+    for row in actual_rows:
+        actual_by_identity[
+            (row["category"], row["object_identity"])
+        ].append(json.loads(row["detail"]))
+
+    allowed = set(constraint_identities)
+    field_differences = []
+    for identity in sorted(
+        set(expected_by_identity) | set(actual_by_identity)
+    ):
+        expected_details = expected_by_identity.get(identity, [])
+        actual_details = actual_by_identity.get(identity, [])
+        expected_detail_counter = Counter(
+            json.dumps(detail, sort_keys=True, separators=(",", ":"))
+            for detail in expected_details
+        )
+        actual_detail_counter = Counter(
+            json.dumps(detail, sort_keys=True, separators=(",", ":"))
+            for detail in actual_details
+        )
+        remaining_expected = list(
+            (expected_detail_counter - actual_detail_counter).elements()
+        )
+        remaining_actual = list(
+            (actual_detail_counter - expected_detail_counter).elements()
+        )
+        if len(remaining_expected) == 1 and len(remaining_actual) == 1:
+            expected_detail = json.loads(remaining_expected[0])
+            actual_detail = json.loads(remaining_actual[0])
+            for difference in _json_field_differences(
+                expected_detail,
+                actual_detail,
+            ):
+                classification = "fatal"
+                if (
+                    identity[0] == "constraint"
+                    and identity[1] in allowed
+                    and difference["field"] == "noInherit"
+                    and difference["expected"] is False
+                    and difference["actual"] is True
+                ):
+                    classification = "allowed-roundtrip-normalization"
+                field_differences.append({
+                    "category": identity[0],
+                    "objectIdentity": identity[1],
+                    **difference,
+                    "classification": classification,
+                })
+
+    expected_roundtrip = _normalize_roundtrip_catalog(
+        expected_rows,
+        constraint_identities,
+    )
+    actual_roundtrip = _normalize_roundtrip_catalog(
+        actual_rows,
+        constraint_identities,
+    )
+    expected_roundtrip_counter = Counter(
+        (
+            row["category"],
+            row["object_identity"],
+            row["detail"],
+        )
+        for row in expected_roundtrip
+    )
+    actual_roundtrip_counter = Counter(
+        (
+            row["category"],
+            row["object_identity"],
+            row["detail"],
+        )
+        for row in actual_roundtrip
+    )
+    canonical_match = (
+        expected_roundtrip_counter == actual_roundtrip_counter
+    )
+    exact_match = expected_counter == actual_counter
+
+    def expanded_rows(counter):
+        rows = []
+        for (category, object_identity, detail), count in sorted(
+            counter.items()
+        ):
+            for _ in range(count):
+                rows.append({
+                    "category": category,
+                    "objectIdentity": object_identity,
+                    "detail": json.loads(detail),
+                })
+        return rows
+
+    result = {
+        "schemaVersion": 1,
+        "normalizationRule": ROUNDTRIP_CATALOG_RULE,
+        "normalizationSentinel": ROUNDTRIP_CATALOG_SENTINEL,
+        "exactMatch": exact_match,
+        "rollbackCanonicalMatch": canonical_match,
+        "expectedRowCount": len(expected_rows),
+        "actualRowCount": len(actual_rows),
+        "exactMissingCount": sum(missing_counter.values()),
+        "exactExtraCount": sum(extra_counter.values()),
+        "normalizedConstraintCount": len(constraint_identities),
+        "normalizedConstraintIdentities": constraint_identities,
+        "fieldDifferences": field_differences,
+        "exactMissingRows": expanded_rows(missing_counter),
+        "exactExtraRows": expanded_rows(extra_counter),
+    }
+    Path(args.output_json).write_text(
+        json.dumps(result, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    with Path(args.output_csv).open(
+        "w",
+        newline="",
+        encoding="utf-8",
+    ) as handle:
+        fields = [
+            "category",
+            "objectIdentity",
+            "field",
+            "kind",
+            "expected",
+            "actual",
+            "classification",
+        ]
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=fields,
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        for row in field_differences:
+            writer.writerow({
+                **row,
+                "expected": json.dumps(
+                    row["expected"],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                "actual": json.dumps(
+                    row["actual"],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            })
+    report_lines = [
+        "# Catalog signature round-trip diff",
+        "",
+        f"- Exact match: `{str(exact_match).lower()}`",
+        f"- Rollback-canonical match: `{str(canonical_match).lower()}`",
+        f"- Expected rows: `{len(expected_rows)}`",
+        f"- Actual rows: `{len(actual_rows)}`",
+        f"- Exact missing rows: `{sum(missing_counter.values())}`",
+        f"- Exact extra rows: `{sum(extra_counter.values())}`",
+        f"- Field differences: `{len(field_differences)}`",
+        f"- Normalization rule: `{ROUNDTRIP_CATALOG_RULE}`",
+        "",
+        "## Field differences",
+        "",
+    ]
+    for row in field_differences:
+        report_lines.append(
+            "- "
+            f"`{row['category']}:{row['objectIdentity']}` "
+            f"`{row['field']}`: "
+            f"`{json.dumps(row['expected'])}` → "
+            f"`{json.dumps(row['actual'])}` "
+            f"({row['classification']})"
+        )
+    Path(args.output_report).write_text(
+        "\n".join(report_lines) + "\n",
+        encoding="utf-8",
+    )
+    return 0 if canonical_match else 3
 
 
 def validate_pg_dump_source(source):
@@ -3848,6 +4395,71 @@ def build_manifest(args):
         if not path.is_file():
             failures.append(f"{label} is missing")
 
+    rollback_catalog_path = Path(args.rollback_catalog_signature)
+    rollback_catalog_metadata_path = Path(
+        args.rollback_catalog_metadata
+    )
+    rollback_catalog_expected_sql = Path(
+        args.rollback_catalog_expected_sql
+    )
+    rollback_catalog_assert_sql = Path(
+        args.rollback_catalog_assert_sql
+    )
+    rollback_catalog_metadata = {}
+    if not rollback_catalog_path.is_file():
+        failures.append("rollback-canonical catalog signature is missing")
+    if not rollback_catalog_metadata_path.is_file():
+        failures.append("rollback-canonical catalog metadata is missing")
+    else:
+        try:
+            rollback_catalog_metadata = json.loads(
+                rollback_catalog_metadata_path.read_text(encoding="utf-8")
+            )
+        except (json.JSONDecodeError, OSError) as exc:
+            failures.append(
+                f"rollback-canonical catalog metadata is invalid: {exc}"
+            )
+    if rollback_catalog_path.is_file() and (
+        rollback_catalog_metadata.get("sha256")
+        != sha256_path(rollback_catalog_path)
+    ):
+        failures.append("rollback-canonical catalog signature hash drift")
+    if (
+        rollback_catalog_metadata.get("schemaVersion") != 1
+        or rollback_catalog_metadata.get("rule")
+        != ROUNDTRIP_CATALOG_RULE
+        or rollback_catalog_metadata.get("sentinel")
+        != ROUNDTRIP_CATALOG_SENTINEL
+        or rollback_catalog_metadata.get("exactSignatureSha256")
+        != catalog_metadata.get("sha256")
+        or rollback_catalog_metadata.get("querySha256")
+        != catalog_metadata.get("querySha256")
+        or rollback_catalog_metadata.get("columnCatalogSha256")
+        != column_catalog_sha
+        or rollback_catalog_metadata.get("normalizedConstraintCount")
+        != 45
+        or len(
+            rollback_catalog_metadata.get(
+                "normalizedConstraintIdentities",
+                [],
+            )
+        )
+        != 45
+    ):
+        failures.append("rollback-canonical catalog policy drift")
+    for path, label in [
+        (
+            rollback_catalog_expected_sql,
+            "rollback-canonical catalog expected SQL",
+        ),
+        (
+            rollback_catalog_assert_sql,
+            "rollback-canonical catalog assertion SQL",
+        ),
+    ]:
+        if not path.is_file():
+            failures.append(f"{label} is missing")
+
     retained_specs = read_retained_specs(args.retained_spec)
     retained_capture_dir = Path(args.retained_capture_dir)
     retained_capture_hashes = []
@@ -4159,6 +4771,22 @@ def build_manifest(args):
         "catalogAssertSqlSha256": (
             sha256_path(catalog_assert_sql)
             if catalog_assert_sql.is_file()
+            else ""
+        ),
+        "rollbackCatalogSignature": rollback_catalog_metadata,
+        "rollbackCatalogMetadataSha256": (
+            sha256_path(rollback_catalog_metadata_path)
+            if rollback_catalog_metadata_path.is_file()
+            else ""
+        ),
+        "rollbackCatalogExpectedSqlSha256": (
+            sha256_path(rollback_catalog_expected_sql)
+            if rollback_catalog_expected_sql.is_file()
+            else ""
+        ),
+        "rollbackCatalogAssertSqlSha256": (
+            sha256_path(rollback_catalog_assert_sql)
+            if rollback_catalog_assert_sql.is_file()
             else ""
         ),
         "retainedDataSpecSha256": sha256_path(args.retained_spec),
@@ -6236,6 +6864,16 @@ def build_parser():
     manifest.add_argument("--catalog-query", required=True)
     manifest.add_argument("--catalog-expected-sql", required=True)
     manifest.add_argument("--catalog-assert-sql", required=True)
+    manifest.add_argument("--rollback-catalog-signature", required=True)
+    manifest.add_argument("--rollback-catalog-metadata", required=True)
+    manifest.add_argument(
+        "--rollback-catalog-expected-sql",
+        required=True,
+    )
+    manifest.add_argument(
+        "--rollback-catalog-assert-sql",
+        required=True,
+    )
     manifest.add_argument("--retained-spec", required=True)
     manifest.add_argument("--retained-capture-dir", required=True)
     manifest.add_argument("--retained-dir", required=True)
@@ -6326,6 +6964,19 @@ def build_parser():
     catalog.add_argument("--metadata-output", required=True)
     catalog.add_argument("--expected-sql-output", required=True)
     catalog.add_argument("--assert-sql-output", required=True)
+    catalog.add_argument("--objects")
+    catalog.add_argument("--rollback-canonical-output")
+    catalog.add_argument("--rollback-canonical-metadata-output")
+    catalog.add_argument("--rollback-canonical-expected-sql-output")
+    catalog.add_argument("--rollback-canonical-assert-sql-output")
+
+    catalog_diff = subparsers.add_parser("diff-catalog-signatures")
+    catalog_diff.add_argument("--objects", required=True)
+    catalog_diff.add_argument("--expected", required=True)
+    catalog_diff.add_argument("--actual", required=True)
+    catalog_diff.add_argument("--output-json", required=True)
+    catalog_diff.add_argument("--output-csv", required=True)
+    catalog_diff.add_argument("--output-report", required=True)
 
     compose = subparsers.add_parser("sanitize-compose-config")
     compose.add_argument("--output", required=True)
@@ -6517,6 +7168,8 @@ def main():
         if args.command == "prepare-catalog-signature":
             prepare_catalog_signature(args)
             return 0
+        if args.command == "diff-catalog-signatures":
+            return diff_catalog_signatures(args)
         if args.command == "sanitize-compose-config":
             sanitize_compose_config(args)
             return 0

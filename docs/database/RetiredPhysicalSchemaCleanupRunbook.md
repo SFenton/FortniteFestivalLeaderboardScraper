@@ -220,6 +220,10 @@ Check mode:
     all-table/schema membership), sequence definition/ownership/state,
     partition keys/bounds/attachments, direct dependencies, and matching
     routine definitions.
+    This remains the **live-exact** signature used by check, execute, and both
+    under-lock pre-drop rechecks. A separate manifest-bound
+    **rollback-canonical** signature is generated only for scratch restore and
+    rollback rehearsal.
 13. Searches each repository runtime source/config root and the actual
     production compose project separately for retired object names. Production
     ownership includes every discovered raw compose YAML/override, a
@@ -405,8 +409,9 @@ After the one all-family transaction commits, execute must pass every step:
 5. All 61 relations remain absent after startup initialization.
 6. The freshly captured original rollback DDL plus separately generated data
    SQL is executed inside one bounded transaction,
-   the complete catalog/column signature, all 61 relkinds, and the exact
-   108-row and 3-row retained payloads are verified before rollback.
+   the manifest-bound rollback-canonical catalog signature, all 61 relkinds,
+   and the exact 108-row and 3-row retained payloads are verified before
+   rollback. Live-exact gates remain unchanged.
 7. All 61 relations remain absent after the rollback rehearsal.
 8. Public/API HTTP statuses and canonical fingerprints exactly match the
    approved pre-action manifest.
@@ -511,6 +516,31 @@ retained-data, incoming-inheritance, and catalog-signature assertions. The
 scratch database is then dropped. This pre-destructive proof must pass; the
 post-drop rollback rehearsal remains an independent second proof.
 
+PostgreSQL 17 `pg_dump` reconstructs the 45 empty partitions as standalone
+tables, creates their primary keys, and then uses `ATTACH PARTITION`. Compared
+with the live `PARTITION OF` construction, this changes only
+`pg_constraint.connoinherit` on each linked child primary-key constraint from
+`false` to `true`. The package proves this rather than assuming it:
+
+- the live-exact signature must contain exactly one linked primary key with
+  `noInherit=false` for every allowlisted partition child;
+- scratch restore captures a fresh exact signature and writes
+  `actual-catalog-signature.csv`, `catalog-signature-diff.json`,
+  `catalog-signature-diff.csv`, and `catalog-signature-diff.md`;
+- the rollback-canonical rule
+  `partition-primary-key-noinherit-v1` normalizes only those exact 45 constraint
+  identities and only the boolean `noInherit` field;
+- constraint definition/key/validation/parent link, indexes, columns,
+  dependencies, ownership, effective publications, relation shape, partition
+  attachments, sequence state, and retained data remain exact;
+- any missing/extra row, different identity, or any other field difference
+  remains fatal.
+
+The manifest binds the rollback-canonical signature, its complete identity
+allowlist, normalization rule/sentinel, query/column/exact-signature hashes,
+and separate expected/assertion SQL. The destructive live gates never use this
+normalization.
+
 Because the scratch proof may run for an extended window, it is not the final
 operational gate. After `psql` connects and its container/backend identities
 are fsynced—but while it still waits behind the SQL-release barrier—the package
@@ -569,7 +599,9 @@ error/missing-root/render failures, ordered PIA override behavior,
 project-container disagreement, clone-target rejection, delayed backend
 `INT`/`TERM`/`HUP` commit-state classification, control-query failure,
 incoming external-parent edges, non-restorable catalog states, scratch
-round-trip failure, local-socket override/remote-target rejection, forced-RLS
+round-trip failure and exact field-level diagnostics, real pg_dump partition
+attachment normalization plus rejection of any noncanonical field drift,
+local-socket override/remote-target rejection, forced-RLS
 hidden rows, missing RLS-bypass privilege, and PID reuse,
 deterministic signal-at-launch barrier cleanup, unexpected/missing ownership
 evidence, scanner self-match/prefix/control-process regressions, and
