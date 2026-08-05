@@ -323,8 +323,10 @@ blocker and exact outbox artifact paths.
 - Registered-user/discovery/targeted budget changes share the Epic proxy pool
   with the network candidate, so they are not part of the independently scored
   data/query lane. The network lane owns their accepted bounded settings:
-  `00:10:00` solo refresh, `00:05:00` discovery/targeted timeouts, and `80`
-  lookups per discovery/targeted pass.
+  `00:10:00` solo refresh, `00:06:00` discovery timeout, `00:05:00` targeted
+  timeout, and `80` lookups per discovery/targeted pass. The discovery margin
+  reflects scrape `1277` completing 80 lookups in 291,752 ms and scrape `1278`
+  checkpointing 78 before the former five-minute cap.
 
 ## Cross-container publication rollout
 
@@ -412,7 +414,7 @@ worker hold, and explicit release of the paused storage owner.
 
 For attribution, score registered-user, band-discovery, and targeted-band
 request/time deltas in the network lane, not the data lane. The executable
-profile pins `00:10:00`, `00:05:00`, `00:05:00`, and `80`/`80` total lookup
+profile pins `00:10:00`, `00:06:00`, `00:05:00`, and `80`/`80` total lookup
 budgets.
 
 ## Current live baseline

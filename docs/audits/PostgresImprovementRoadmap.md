@@ -425,8 +425,10 @@ run by skipping that step.
 Registered-user/discovery/targeted processing shares the proxy pool and cannot
 be attributed to the DB-only lane while the network profile changes. The
 network lane therefore owns the accepted bounded settings: `00:10:00` solo
-refresh, `00:05:00` discovery/targeted timeouts, and `80` lookups per
-discovery/targeted pass. The paired network lane selects the highest
+refresh, `00:06:00` discovery timeout, `00:05:00` targeted timeout, and `80`
+lookups per discovery/targeted pass. The discovery margin reflects scrape
+`1277` completing all 80 lookups in 291,752 ms and scrape `1278` checkpointing
+78 before the former five-minute cap. The paired network lane selects the highest
 sequentially qualified named guard profile from `800/32/4`, `1600/64/8`, and
 `2880/128/16`.
 

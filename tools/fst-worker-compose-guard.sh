@@ -313,7 +313,7 @@ if data_profile == "notification-db-only":
         "ImprovementNotifications__RefreshAllSoloScopesWhenNoImpactedScopes",
         "false")
     exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
-    exact_value("Scraper__RegisteredPlayerBandDiscoveryTimeout", "00:05:00")
+    exact_value("Scraper__RegisteredPlayerBandDiscoveryTimeout", "00:06:00")
     exact_value("Scraper__RegisteredBandTargetedProcessingTimeout", "00:05:00")
     for name in (
         "Scraper__RegisteredPlayerBandDiscoveryMaxLookupsPerPass",
