@@ -1523,7 +1523,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                      AND candidate.projection_generation = player.projection_generation
                     WHERE player.threshold_max_score IS NOT NULL
                       AND candidate.score > player.threshold_max_score
-                      AND {SoloLeaderboardOrderingSql.Precedes("candidate", "player")}
+                      AND candidate.rank < player.rank
                     GROUP BY player.song_id
                 )
                 SELECT player.song_id,
