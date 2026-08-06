@@ -39,6 +39,7 @@ FINGERPRINT_SPEC="${FINGERPRINT_SPEC:-$SQL_DIR/public-fingerprints.tsv}"
 
 MODE="check"
 MODE_EXPLICIT=false
+COMMITTED_RECOVERY_MODE=false
 OUTPUT_DIR=""
 EXPECTED_MANIFEST_SHA256=""
 EXPECTED_RESUME_ORCHESTRATOR_SHA256=""
@@ -94,7 +95,7 @@ DROP_PROCESS_IDENTITY_CONFIRMED=false
 
 usage() {
     cat <<'EOF'
-Usage: tools/postgres-retired-schema-cleanup.sh [--check|--execute|--resume-committed DIR] --output DIR [options]
+Usage: tools/postgres-retired-schema-cleanup.sh [--check|--execute|--resume-committed DIR|--diagnose-committed-rehearsal DIR] --output DIR [options]
 
 Prepares or executes the exact parity-gated cleanup of 61 retired PostgreSQL
 relations. Check mode is the default and is read-only. Execute is blocked until
@@ -106,6 +107,9 @@ Options:
   --execute                       Revalidate and execute exact drops
   --resume-committed DIR          Resume only post-drop validation from one
                                   exact failed committed execute evidence root
+  --diagnose-committed-rehearsal DIR
+                                  Run only bounded transaction-local rehearsal
+                                  capture/diff against committed evidence
   --expected-manifest-sha256 SHA  Required with --execute/--resume-committed
   --expected-resume-orchestrator-sha256 SHA
                                   Operator-approved current resume script hash
@@ -164,6 +168,18 @@ while [[ $# -gt 0 ]]; do
                 exit 64
             fi
             MODE="resume-committed"
+            MODE_EXPLICIT=true
+            SOURCE_EVIDENCE="$2"
+            shift 2
+            ;;
+        --diagnose-committed-rehearsal)
+            require_option_value "$@"
+            if $MODE_EXPLICIT \
+                && [[ "$MODE" != "diagnose-committed-rehearsal" ]]; then
+                printf 'ERROR: cleanup modes are mutually exclusive\n' >&2
+                exit 64
+            fi
+            MODE="diagnose-committed-rehearsal"
             MODE_EXPLICIT=true
             SOURCE_EVIDENCE="$2"
             shift 2
@@ -244,6 +260,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ "$MODE" == "resume-committed" \
+    || "$MODE" == "diagnose-committed-rehearsal" ]]; then
+    COMMITTED_RECOVERY_MODE=true
+fi
+
 if [[ -z "$OUTPUT_DIR" ]]; then
     printf 'ERROR: --output is required\n' >&2
     exit 64
@@ -252,7 +273,7 @@ if [[ "$MODE" == "check" && -n "$EXPECTED_MANIFEST_SHA256" ]]; then
     printf 'ERROR: --expected-manifest-sha256 is valid only with execute/resume\n' >&2
     exit 64
 fi
-if [[ "$MODE" == "execute" || "$MODE" == "resume-committed" ]]; then
+if [[ "$MODE" == "execute" ]] || $COMMITTED_RECOVERY_MODE; then
     if [[ ! "$EXPECTED_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
         printf 'ERROR: execute/resume requires a lowercase 64-character manifest SHA-256\n' >&2
         exit 64
@@ -270,7 +291,7 @@ if [[ "$MODE" == "execute" || "$MODE" == "resume-committed" ]]; then
         printf 'ERROR: --execute requires --parity-evidence\n' >&2
         exit 64
     fi
-    if [[ "$MODE" == "resume-committed" ]]; then
+    if $COMMITTED_RECOVERY_MODE; then
         if [[ -z "$SOURCE_EVIDENCE" ]]; then
             printf 'ERROR: --resume-committed requires a source evidence root\n' >&2
             exit 64
@@ -299,7 +320,7 @@ require_command() {
 for command in awk cp find grep python3 realpath sed sha256sum sort sync xargs; do
     require_command "$command"
 done
-if [[ "$MODE" == "resume-committed" ]]; then
+if $COMMITTED_RECOVERY_MODE; then
     [[ "$(sha256sum "$ORCHESTRATOR" | awk '{print $1}')" \
         == "$EXPECTED_RESUME_ORCHESTRATOR_SHA256" ]] || {
         printf 'ERROR: current resume orchestrator hash differs from approval\n' >&2
@@ -365,7 +386,7 @@ if $TEST_MODE; then
         printf 'ERROR: fixture pre-capture directory is missing\n' >&2
         exit 1
     }
-    if [[ "$MODE" == "resume-committed" ]]; then
+    if $COMMITTED_RECOVERY_MODE; then
         realpath_under "$SOURCE_EVIDENCE" "$REPO_ROOT_REAL" || {
             printf 'ERROR: fixture resume source must remain in repository\n' >&2
             exit 64
@@ -418,7 +439,7 @@ else
             exit 64
         }
     fi
-    if [[ "$MODE" == "resume-committed" ]]; then
+    if $COMMITTED_RECOVERY_MODE; then
         realpath_under "$SOURCE_EVIDENCE" "$FST_EVIDENCE_ROOT" || {
             printf 'ERROR: resume source must remain under FST evidence root\n' >&2
             exit 64
@@ -491,7 +512,7 @@ OUTPUT_READY=true
 write_rollback_instructions() {
     local destination="$OUTPUT_DIR/ROLLBACK-INSTRUCTIONS.txt"
     local committed_file="$OUTPUT_DIR/committed-families.txt"
-    if [[ "$MODE" == "resume-committed" ]]; then
+    if $COMMITTED_RECOVERY_MODE; then
         if [[ -f "$SOURCE_EVIDENCE/committed-families.txt" ]]; then
             cp "$SOURCE_EVIDENCE/committed-families.txt" "$committed_file"
         fi
@@ -609,7 +630,7 @@ trap 'on_signal INT 130' INT
 trap 'on_signal TERM 143' TERM
 trap 'on_signal HUP 129' HUP
 
-if [[ "$MODE" != "resume-committed" ]]; then
+if ! $COMMITTED_RECOVERY_MODE; then
 cp "$OBJECTS_FILE" "$PACKAGE_DIR/objects.tsv"
 cp "$RETAINED_SPEC" "$PACKAGE_DIR/retained-data.tsv"
 cp "$CATALOG_QUERY" "$CATALOG_DIR/query.sql"
@@ -2120,7 +2141,7 @@ PY
     done
 }
 
-if [[ "$MODE" != "resume-committed" ]]; then
+if ! $COMMITTED_RECOVERY_MODE; then
 if ! $TEST_MODE; then
     CURRENT_STAGE="production compose and database target resolution"
     initialize_production_compose_project
@@ -4401,10 +4422,68 @@ PY
 }
 
 run_rollback_rehearsal() {
-    local rehearsal_sql="$POST_DIR/rollback-rehearsal.sql"
+    local rehearsal_dir="$POST_DIR/rollback-rehearsal"
+    local rehearsal_sql="$rehearsal_dir/rehearsal.sql"
+    local capture_sql="$rehearsal_dir/capture.sql"
+    local raw_capture="$rehearsal_dir/raw-capture.txt"
+    local parsed_capture="$rehearsal_dir/capture-metadata.json"
+    local expected_retained="$rehearsal_dir/expected-retained-data.csv"
     local rollback_all="${1:-$ROLLBACK_EXECUTABLE_DIR/rollback-all.sql}"
+    local psql_status=0 parse_status=0 diff_status=0 retained_status=0
+    mkdir -p "$rehearsal_dir" || return 3
+    if $TEST_MODE \
+        && [[ -d "$FIXTURE_DIR/diagnostic-rehearsal" ]]; then
+        cp -R "$FIXTURE_DIR/diagnostic-rehearsal/." "$rehearsal_dir/"
+        cp "$FIXTURE_DIR/post/relations.csv" \
+            "$rehearsal_dir/post-rollback-relations.csv"
+        local fixture_status
+        fixture_status="$(
+            cat "$FIXTURE_DIR/diagnostic-rehearsal-status"
+        )"
+        printf 'check,status,psql_status,parse_status,catalog_diff_status,retained_status\nrollback-rehearsal,%s,0,0,%s,0\n' \
+            "$fixture_status" "$fixture_status" \
+            > "$POST_DIR/rollback-rehearsal.csv"
+        return "$fixture_status"
+    fi
+    python3 "$HELPER" render-rehearsal-capture-sql \
+        --query "$CATALOG_DIR/query.sql" \
+        --spec "$PACKAGE_DIR/retained-data.tsv" \
+        --column-catalog "$CATALOG_DIR/columns.csv" \
+        --output "$capture_sql" || return 3
+    if ! python3 - \
+        "$PACKAGE_DIR/manifest.json" \
+        "$expected_retained" <<'PY'
+import csv
+import json
+import sys
+from pathlib import Path
+
+manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+fields = [
+    "family",
+    "schema",
+    "name",
+    "expected_rows",
+    "row_count",
+    "canonical_file",
+    "sha256",
+    "payload_bytes",
+    "column_count",
+    "column_catalog_sha256",
+]
+with Path(sys.argv[2]).open("w", newline="", encoding="utf-8") as handle:
+    writer = csv.DictWriter(handle, fieldnames=fields)
+    writer.writeheader()
+    writer.writerows(manifest["retainedData"])
+PY
+    then
+        return 3
+    fi
     {
         printf '%s\n' '\set ON_ERROR_STOP on'
+        printf '%s\n' \
+            "SELECT current_setting('search_path') AS startup_search_path" \
+            '\gset fst_'
         printf '%s\n' 'BEGIN;'
         printf '%s\n' "SET LOCAL lock_timeout = '5s';"
         printf '%s\n' "SET LOCAL statement_timeout = '30s';"
@@ -4421,28 +4500,85 @@ run_rollback_rehearsal() {
             '    END IF;' \
             'END' \
             '$guards$;'
-        cat "$PACKAGE_DIR/expected-objects.sql"
-        cat "$PACKAGE_DIR/catalog-rollback-expected.sql"
-        cat "$PACKAGE_DIR/retained-expected.sql"
+        printf '%s\n' '\o /dev/null'
         cat "$rollback_all"
-        cat "$PACKAGE_DIR/catalog-rollback-assert.sql"
-        cat "$PACKAGE_DIR/retained-assert.sql"
-        cat "$PACKAGE_DIR/rollback-rehearsal-check.sql"
+        printf '%s\n' \
+            "SELECT pg_catalog.set_config(" \
+            "    'search_path'," \
+            "    :'fst_startup_search_path'," \
+            "    true);" \
+            "SET LOCAL TIME ZONE 'UTC';" \
+            "SET LOCAL DateStyle = 'ISO, YMD';"
+        cat "$PACKAGE_DIR/expected-objects.sql"
+        cat "$capture_sql"
         printf '%s\n' 'ROLLBACK;'
+        printf '%s\n' '\echo FST_REHEARSAL_ROLLBACK_COMPLETE'
     } > "$rehearsal_sql"
 
-    local status
     if psql_stream < "$rehearsal_sql" \
-        > "$LOG_DIR/rollback-rehearsal.log" 2>&1; then
-        status=0
+        > "$raw_capture" \
+        2> "$LOG_DIR/rollback-rehearsal.log"; then
+        psql_status=0
     else
-        status=$?
+        psql_status=$?
     fi
-    printf 'check,status\nrollback-rehearsal,%s\n' "$status" \
-        > "$POST_DIR/rollback-rehearsal.csv"
-    if (( status != 0 )); then
-        return "$status"
+    capture_post_relations "$rehearsal_dir/post-rollback-relations.csv" \
+        || return 3
+    assert_absent_capture \
+        "$rehearsal_dir/post-rollback-relations.csv" \
+        "rollback rehearsal transaction cleanup" || return 3
+
+    if (( psql_status == 0 )); then
+        if python3 "$HELPER" parse-rehearsal-capture \
+            --input "$raw_capture" \
+            --output-dir "$rehearsal_dir" \
+            --output "$parsed_capture"; then
+            parse_status=0
+        else
+            parse_status=$?
+        fi
+    else
+        parse_status=3
     fi
+    if (( parse_status == 0 )); then
+        if python3 "$HELPER" diff-catalog-signatures \
+            --objects "$PACKAGE_DIR/objects.tsv" \
+            --expected "$CATALOG_DIR/signature.csv" \
+            --actual "$rehearsal_dir/actual-catalog-signature.csv" \
+            --output-json "$rehearsal_dir/catalog-signature-diff.json" \
+            --output-csv "$rehearsal_dir/catalog-signature-diff.csv" \
+            --output-report "$rehearsal_dir/catalog-signature-diff.md"; then
+            diff_status=0
+        else
+            diff_status=$?
+        fi
+        if python3 "$HELPER" validate-retained-recapture \
+            --spec "$PACKAGE_DIR/retained-data.tsv" \
+            --column-catalog "$CATALOG_DIR/columns.csv" \
+            --raw-dir "$rehearsal_dir/retained-data" \
+            --expected-metadata "$expected_retained" \
+            --output-dir "$rehearsal_dir/retained-data-canonical" \
+            --metadata-output \
+                "$rehearsal_dir/retained-data-metadata.csv"; then
+            retained_status=0
+        else
+            retained_status=$?
+        fi
+    else
+        diff_status=3
+        retained_status=3
+    fi
+    local status=0
+    if (( psql_status != 0 || parse_status != 0 \
+        || diff_status != 0 || retained_status != 0 )); then
+        status=3
+    fi
+    printf 'check,status,psql_status,parse_status,catalog_diff_status,retained_status\nrollback-rehearsal,%s,%s,%s,%s,%s\n' \
+        "$status" "$psql_status" "$parse_status" \
+        "$diff_status" "$retained_status" \
+        > "$POST_DIR/rollback-rehearsal.csv" || return 3
+    sync -f "$POST_DIR/rollback-rehearsal.csv" || return 3
+    return "$status"
 }
 
 initialize_resume_fixture_target() {
@@ -4701,6 +4837,72 @@ run_committed_resume() {
     CURRENT_STAGE="committed resume pre-start safety gate"
     capture_committed_resume_gate "$pre_gate" pre-start
 
+    if [[ "$MODE" == "diagnose-committed-rehearsal" ]]; then
+        CURRENT_STAGE="committed rollback rehearsal diagnostic"
+        local diagnostic_status=0
+        if run_rollback_rehearsal "$RESUME_ROLLBACK_EXECUTABLE"; then
+            diagnostic_status=0
+        else
+            diagnostic_status=$?
+        fi
+        if ! python3 - \
+            "$OUTPUT_DIR/DIAGNOSTIC-RESULT.json" \
+            "$SOURCE_EVIDENCE" \
+            "$EXPECTED_MANIFEST_SHA256" \
+            "$diagnostic_status" \
+            "$POST_DIR/rollback-rehearsal/capture-metadata.json" \
+            "$POST_DIR/rollback-rehearsal/catalog-signature-diff.json" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+output = Path(sys.argv[1])
+capture_path = Path(sys.argv[5])
+diff_path = Path(sys.argv[6])
+value = {
+    "schemaVersion": 1,
+    "mode": "diagnose-committed-rehearsal",
+    "sourceEvidence": sys.argv[2],
+    "acceptedManifestSha256": sys.argv[3],
+    "rehearsalStatus": int(sys.argv[4]),
+    "dropRerun": False,
+    "permanentRestore": False,
+    "captureMetadataSha256": (
+        hashlib.sha256(capture_path.read_bytes()).hexdigest()
+        if capture_path.is_file()
+        else ""
+    ),
+    "catalogDiffSha256": (
+        hashlib.sha256(diff_path.read_bytes()).hexdigest()
+        if diff_path.is_file()
+        else ""
+    ),
+}
+with output.open("x", encoding="utf-8") as handle:
+    handle.write(json.dumps(value, sort_keys=True, indent=2) + "\n")
+PY
+        then
+            return 3
+        fi
+        sync -f "$OUTPUT_DIR/DIAGNOSTIC-RESULT.json" || return 3
+        if (( diagnostic_status != 0 )); then
+            return "$diagnostic_status"
+        fi
+        write_rollback_instructions
+        (
+            cd "$OUTPUT_DIR"
+            find . -type f ! -name package-checksums.sha256 -print0 \
+                | sort -z \
+                | xargs -0 sha256sum > package-checksums.sha256
+        )
+        printf 'Mode: diagnose-committed-rehearsal\n'
+        printf 'Manifest SHA-256: %s\n' "$EXPECTED_MANIFEST_SHA256"
+        printf 'Evidence: %s\n' "$OUTPUT_DIR"
+        printf 'Decision: rollback rehearsal diagnostic passed\n'
+        return 0
+    fi
+
     CURRENT_STAGE="committed resume immutable initializer"
     if $TEST_MODE; then
         local filename
@@ -4826,7 +5028,7 @@ PY
     printf 'Decision: committed cleanup post-drop recovery completed\n'
 }
 
-if [[ "$MODE" == "resume-committed" ]]; then
+if $COMMITTED_RECOVERY_MODE; then
     run_committed_resume
     exit 0
 fi

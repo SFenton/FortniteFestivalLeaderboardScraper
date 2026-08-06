@@ -1458,6 +1458,109 @@ def render_retained_capture_sql(args):
         (output_dir / filename).write_text(sql, encoding="utf-8")
 
 
+def render_rehearsal_capture_sql(args):
+    query_text = Path(args.query).read_text(encoding="utf-8").strip()
+    if query_text.endswith(";"):
+        query_text = query_text[:-1].rstrip()
+    specs = read_retained_specs(args.spec)
+    columns = read_column_catalog(args.column_catalog)
+    lines = [
+        r"\o",
+        r"\echo FST_REHEARSAL_CATALOG_BEGIN",
+        "COPY (",
+        query_text,
+        ") TO STDOUT WITH (FORMAT CSV, HEADER TRUE);",
+        r"\echo FST_REHEARSAL_CATALOG_END",
+    ]
+    for spec in specs:
+        key = f"{spec['schema']}.{spec['name']}"
+        bound_columns = retained_columns(columns, key)
+        column_sql = ", ".join(
+            f'"{row["column_name"]}"' for row in bound_columns
+        )
+        order_sql = ", ".join(
+            f'"{name}"' for name in RETAINED_DATA[key]["key"]
+        )
+        marker_name = RETAINED_DATA[key]["canonical_file"]
+        relation = f'"{spec["schema"]}"."{spec["name"]}"'
+        lines.extend([
+            f"\\echo FST_REHEARSAL_RETAINED_BEGIN:{marker_name}",
+            "COPY (",
+            f"    SELECT {column_sql}",
+            f"    FROM {relation}",
+            f"    ORDER BY {order_sql}",
+            ") TO STDOUT WITH (FORMAT CSV, HEADER TRUE);",
+            f"\\echo FST_REHEARSAL_RETAINED_END:{marker_name}",
+        ])
+    Path(args.output).write_text(
+        "\n".join(lines) + "\n",
+        encoding="utf-8",
+    )
+
+
+def parse_rehearsal_capture(args):
+    lines = Path(args.input).read_text(encoding="utf-8").splitlines()
+    output_dir = Path(args.output_dir)
+    retained_dir = output_dir / "retained-data"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    retained_dir.mkdir(parents=True, exist_ok=True)
+
+    def extract(begin, end):
+        try:
+            start = lines.index(begin)
+            finish = lines.index(end, start + 1)
+        except ValueError as exc:
+            raise ValueError(
+                f"rehearsal capture marker is missing: {begin}/{end}"
+            ) from exc
+        if finish <= start + 1:
+            raise ValueError(f"rehearsal capture is empty: {begin}")
+        return lines[start + 1:finish]
+
+    catalog_lines = extract(
+        "FST_REHEARSAL_CATALOG_BEGIN",
+        "FST_REHEARSAL_CATALOG_END",
+    )
+    catalog_path = output_dir / "actual-catalog-signature.csv"
+    catalog_path.write_text(
+        "\n".join(catalog_lines) + "\n",
+        encoding="utf-8",
+    )
+    retained_files = []
+    for filename in [
+        definition["canonical_file"]
+        for definition in RETAINED_DATA.values()
+    ]:
+        retained_lines = extract(
+            f"FST_REHEARSAL_RETAINED_BEGIN:{filename}",
+            f"FST_REHEARSAL_RETAINED_END:{filename}",
+        )
+        path = retained_dir / filename
+        path.write_text(
+            "\n".join(retained_lines) + "\n",
+            encoding="utf-8",
+        )
+        retained_files.append({
+            "name": filename,
+            "sha256": sha256_path(path),
+        })
+    if "FST_REHEARSAL_ROLLBACK_COMPLETE" not in lines:
+        raise ValueError("rehearsal did not record explicit rollback completion")
+    result = {
+        "schemaVersion": 1,
+        "explicitRollbackComplete": True,
+        "catalogSignatureSha256": sha256_path(catalog_path),
+        "retainedFiles": sorted(
+            retained_files,
+            key=lambda row: row["name"],
+        ),
+    }
+    Path(args.output).write_text(
+        json.dumps(result, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _validate_retained_rows(key, rows, columns):
     expected = RETAINED_DATA[key]
     field_names = [row["column_name"] for row in columns]
@@ -7523,6 +7626,21 @@ def build_parser():
     retained_capture.add_argument("--column-catalog", required=True)
     retained_capture.add_argument("--output-dir", required=True)
 
+    rehearsal_capture = subparsers.add_parser(
+        "render-rehearsal-capture-sql"
+    )
+    rehearsal_capture.add_argument("--query", required=True)
+    rehearsal_capture.add_argument("--spec", required=True)
+    rehearsal_capture.add_argument("--column-catalog", required=True)
+    rehearsal_capture.add_argument("--output", required=True)
+
+    rehearsal_parse = subparsers.add_parser(
+        "parse-rehearsal-capture"
+    )
+    rehearsal_parse.add_argument("--input", required=True)
+    rehearsal_parse.add_argument("--output-dir", required=True)
+    rehearsal_parse.add_argument("--output", required=True)
+
     catalog = subparsers.add_parser("prepare-catalog-signature")
     catalog.add_argument("--input", required=True)
     catalog.add_argument("--query", required=True)
@@ -7739,6 +7857,12 @@ def main():
             return 0
         if args.command == "render-retained-capture-sql":
             render_retained_capture_sql(args)
+            return 0
+        if args.command == "render-rehearsal-capture-sql":
+            render_rehearsal_capture_sql(args)
+            return 0
+        if args.command == "parse-rehearsal-capture":
+            parse_rehearsal_capture(args)
             return 0
         if args.command == "prepare-catalog-signature":
             prepare_catalog_signature(args)

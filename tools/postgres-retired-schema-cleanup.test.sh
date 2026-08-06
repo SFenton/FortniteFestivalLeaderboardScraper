@@ -1607,6 +1607,24 @@ run_resume() {
         --expected-resume-helper-sha256 "$helper_sha"
 }
 
+run_diagnostic() {
+    local fixture="$1"
+    local source_evidence="$2"
+    local output="$3"
+    local expected_manifest="$4"
+    local orchestrator_sha helper_sha
+    orchestrator_sha="$(sha256sum "$SCRIPT" | awk '{print $1}')"
+    helper_sha="$(sha256sum "$HELPER" | awk '{print $1}')"
+    env FST_RETIRED_SCHEMA_TEST_MODE=1 \
+        "$SCRIPT" \
+        --fixture-dir "$fixture" \
+        --diagnose-committed-rehearsal "$source_evidence" \
+        --output "$output" \
+        --expected-manifest-sha256 "$expected_manifest" \
+        --expected-resume-orchestrator-sha256 "$orchestrator_sha" \
+        --expected-resume-helper-sha256 "$helper_sha"
+}
+
 run_status 64 parsing-unknown-option \
     "$SCRIPT" --output "$WORK_ROOT/parse-unknown" --unknown
 run_status 64 parsing-conflicting-modes \
@@ -3577,6 +3595,61 @@ run_status 3 committed-resume-capture-tooling-drift-block \
         --expected-helper-sha256 "$resume_helper_sha" \
         --output "$WORK_ROOT/resume-tooling-drift.json"
 
+diagnostic_fixture="$(copy_fixture committed-rehearsal-diagnostic)"
+mkdir -p "$diagnostic_fixture/diagnostic-rehearsal"
+cat > "$diagnostic_fixture/diagnostic-rehearsal/capture-metadata.json" <<'EOF'
+{
+  "schemaVersion": 1,
+  "explicitRollbackComplete": true,
+  "catalogSignatureSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "retainedFiles": []
+}
+EOF
+cat > "$diagnostic_fixture/diagnostic-rehearsal/catalog-signature-diff.json" <<'EOF'
+{
+  "schemaVersion": 1,
+  "exactMatch": false,
+  "rollbackCanonicalMatch": false,
+  "fieldDifferences": [
+    {
+      "category": "constraint",
+      "objectIdentity": "public.fixture.fixture_pkey",
+      "field": "definition",
+      "expected": "PRIMARY KEY (id)",
+      "actual": "PRIMARY KEY (id, value)",
+      "classification": "fatal"
+    }
+  ]
+}
+EOF
+printf '3\n' > "$diagnostic_fixture/diagnostic-rehearsal-status"
+run_status 3 committed-rehearsal-diagnostic-evidence \
+    run_diagnostic \
+        "$diagnostic_fixture" \
+        "$resume_source" \
+        "$WORK_ROOT/out-committed-rehearsal-diagnostic" \
+        "$sha_one"
+test -s \
+    "$WORK_ROOT/out-committed-rehearsal-diagnostic/post/rollback-rehearsal/catalog-signature-diff.json"
+test -s \
+    "$WORK_ROOT/out-committed-rehearsal-diagnostic/post/rollback-rehearsal/capture-metadata.json"
+python3 - \
+    "$WORK_ROOT/out-committed-rehearsal-diagnostic/DIAGNOSTIC-RESULT.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert value["mode"] == "diagnose-committed-rehearsal"
+assert value["rehearsalStatus"] == 3
+assert value["dropRerun"] is False
+assert value["permanentRestore"] is False
+assert value["captureMetadataSha256"]
+assert value["catalogDiffSha256"]
+PY
+test ! -e \
+    "$WORK_ROOT/out-committed-rehearsal-diagnostic/RECOVERY-SUCCESS.json"
+
 startup_recreate_fixture="$(copy_fixture startup-recreate)"
 mutate_csv \
     "$startup_recreate_fixture/post/startup-relations.csv" \
@@ -4824,7 +4897,7 @@ assert "finalize_drop_launcher_coproc" in script
 resume_start = script.index("run_committed_resume()")
 resume_flow = script[
     resume_start:
-    script.index('if [[ "$MODE" == "resume-committed" ]]', resume_start)
+    script.index("if $COMMITTED_RECOVERY_MODE; then", resume_start)
 ]
 assert "perform_atomic_drop" not in resume_flow
 assert "run_live_atomic_drop" not in resume_flow
@@ -4845,6 +4918,17 @@ for label in [
 assert "path.name" not in resume_flow
 assert "validate-committed-resume-copied-package" in resume_flow
 assert 'sha256sum "$PACKAGE_DIR/manifest.json"' in resume_flow
+diagnostic_branch = resume_flow[
+    resume_flow.index(
+        'if [[ "$MODE" == "diagnose-committed-rehearsal" ]]'
+    ):
+    resume_flow.index(
+        'CURRENT_STAGE="committed resume immutable initializer"'
+    )
+]
+assert 'if run_rollback_rehearsal "$RESUME_ROLLBACK_EXECUTABLE"; then' \
+    in diagnostic_branch
+assert "set +e" not in diagnostic_branch
 assert "drop-runtime.sql" not in script
 assert "immutable-drop-sql-ready" in script
 capacity_capture = script[
@@ -4894,8 +4978,19 @@ rehearsal = script[
         "run_rollback_rehearsal()"
     ))
 ]
-assert 'cat "$PACKAGE_DIR/catalog-rollback-expected.sql"' in rehearsal
-assert 'cat "$PACKAGE_DIR/catalog-rollback-assert.sql"' in rehearsal
+assert "render-rehearsal-capture-sql" in rehearsal
+assert "parse-rehearsal-capture" in rehearsal
+assert "diff-catalog-signatures" in rehearsal
+assert "validate-retained-recapture" in rehearsal
+assert "FST_REHEARSAL_ROLLBACK_COMPLETE" in rehearsal
+assert "current_setting('search_path')" in rehearsal
+assert "\\gset fst_" in rehearsal
+assert ":'fst_startup_search_path'" in rehearsal
+assert "SET LOCAL TIME ZONE 'UTC';" in rehearsal
+assert "SET LOCAL DateStyle = 'ISO, YMD';" in rehearsal
+assert 'SET LOCAL search_path = "$user", public;' not in rehearsal
+assert 'cat "$PACKAGE_DIR/catalog-rollback-assert.sql"' not in rehearsal
+assert 'cat "$PACKAGE_DIR/rollback-rehearsal-check.sql"' not in rehearsal
 launch = script[
     script.index("run_live_atomic_drop()"):
     script.index("reconcile_drop_process()")
@@ -5297,6 +5392,103 @@ done
 docker exec "$PG_TEST_CONTAINER" \
     pg_isready -h /var/run/postgresql -U postgres -d postgres \
     >/dev/null
+docker exec "$PG_TEST_CONTAINER" \
+    psql -X -q -v ON_ERROR_STOP=1 \
+        -h /var/run/postgresql -U postgres -d postgres \
+        -c "CREATE SCHEMA fixture_rehearsal_path; ALTER ROLE postgres IN DATABASE postgres SET search_path = fixture_rehearsal_path, public"
+cat <<'SQL' | docker exec -i "$PG_TEST_CONTAINER" \
+    psql -X -q -v ON_ERROR_STOP=1 \
+        -h /var/run/postgresql -U postgres -d postgres -P pager=off \
+    > "$WORK_ROOT/real-rehearsal-capture.txt"
+SET TIME ZONE 'America/Los_Angeles';
+SET DateStyle = 'SQL, DMY';
+SELECT current_setting('search_path') AS startup_search_path
+\gset fst_
+BEGIN;
+CREATE TABLE public.fixture_rehearsal_transaction (id bigint);
+CREATE VIEW public.fixture_rehearsal_view AS
+SELECT id FROM public.fixture_rehearsal_transaction;
+SELECT pg_catalog.set_config('search_path', '', false);
+SELECT pg_catalog.set_config(
+    'search_path',
+    :'fst_startup_search_path',
+    true
+);
+SET LOCAL TIME ZONE 'UTC';
+SET LOCAL DateStyle = 'ISO, YMD';
+\echo FST_REHEARSAL_CATALOG_BEGIN
+COPY (
+    SELECT 'view'::text AS category,
+           'public.fixture_rehearsal_view'::text AS object_identity,
+           jsonb_build_object(
+               'definition',
+               pg_catalog.pg_get_viewdef(
+                   'public.fixture_rehearsal_view'::regclass,
+                   true),
+               'searchPath', current_setting('search_path'),
+               'timeZone', current_setting('TimeZone'),
+               'dateStyle', current_setting('DateStyle')
+           ) AS detail
+) TO STDOUT WITH (FORMAT CSV, HEADER TRUE);
+\echo FST_REHEARSAL_CATALOG_END
+\echo FST_REHEARSAL_RETAINED_BEGIN:leaderboard_logical_write_metrics.csv
+COPY (
+    SELECT 1::bigint AS scrape_id,
+           'Vocals'::text AS instrument,
+           '2026-08-05 12:34:56+00'::timestamptz AS observed_at
+) TO STDOUT WITH (FORMAT CSV, HEADER TRUE);
+\echo FST_REHEARSAL_RETAINED_END:leaderboard_logical_write_metrics.csv
+\echo FST_REHEARSAL_RETAINED_BEGIN:band_song_team_ranking_state.csv
+COPY (
+    SELECT 'Band_Duets'::text AS band_type
+) TO STDOUT WITH (FORMAT CSV, HEADER TRUE);
+\echo FST_REHEARSAL_RETAINED_END:band_song_team_ranking_state.csv
+ROLLBACK;
+\echo FST_REHEARSAL_ROLLBACK_COMPLETE
+SQL
+python3 "$HELPER" parse-rehearsal-capture \
+    --input "$WORK_ROOT/real-rehearsal-capture.txt" \
+    --output-dir "$WORK_ROOT/real-rehearsal-capture" \
+    --output "$WORK_ROOT/real-rehearsal-capture/metadata.json"
+[[ "$(
+    docker exec "$PG_TEST_CONTAINER" \
+        psql -X -qAt -h /var/run/postgresql -U postgres -d postgres \
+        -c "SELECT to_regclass('public.fixture_rehearsal_transaction') IS NULL"
+)" == "t" ]]
+python3 - "$WORK_ROOT/real-rehearsal-capture/metadata.json" <<'PY'
+import csv
+import json
+import sys
+from pathlib import Path
+
+value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert value["explicitRollbackComplete"] is True
+assert len(value["retainedFiles"]) == 2
+with Path(
+    sys.argv[1]
+).with_name("actual-catalog-signature.csv").open(
+    newline="",
+    encoding="utf-8",
+) as handle:
+    row = next(csv.DictReader(handle))
+detail = json.loads(row["detail"])
+definition = detail["definition"]
+assert "FROM fixture_rehearsal_transaction" in definition
+assert "public.fixture_rehearsal_transaction" not in definition
+assert detail["searchPath"] == "fixture_rehearsal_path, public"
+assert detail["timeZone"] == "UTC"
+assert detail["dateStyle"] == "ISO, YMD"
+with Path(sys.argv[1]).parent.joinpath(
+    "retained-data/leaderboard_logical_write_metrics.csv"
+).open(newline="", encoding="utf-8") as handle:
+    retained = next(csv.DictReader(handle))
+assert retained["observed_at"] == "2026-08-05 12:34:56+00"
+PY
+docker exec "$PG_TEST_CONTAINER" \
+    psql -X -q -v ON_ERROR_STOP=1 \
+        -h /var/run/postgresql -U postgres -d postgres \
+        -c "ALTER ROLE postgres IN DATABASE postgres RESET search_path; DROP SCHEMA fixture_rehearsal_path"
+printf 'PASS: transaction-local rehearsal capture records explicit rollback\n'
 {
     cat <<'SQL'
 CREATE TABLE public.fixture_capture_relation (id bigint);

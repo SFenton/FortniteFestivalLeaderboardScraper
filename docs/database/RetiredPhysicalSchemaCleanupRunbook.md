@@ -472,6 +472,38 @@ transaction that is rolled back; verifies absence again; repeats all public and
 runtime gates; and writes `RECOVERY-SUCCESS.json` plus new checksums. The failed
 source evidence is never modified.
 
+Rollback rehearsal no longer raises its catalog assertion inside the restored
+transaction. It suppresses restore chatter, captures the exact transaction-
+local catalog signature and retained payloads with framed `COPY` output,
+executes `ROLLBACK`, records an explicit rollback-complete marker, and verifies
+all 61 relations remain absent. Only then does the helper parse captures,
+produce full catalog diff JSON/CSV/Markdown, apply the narrow
+rollback-canonical comparison, and compare retained payloads. Diff/assertion
+failure therefore occurs after rollback. Restore/capture errors terminate the
+connection (which rolls back) and still require an exact post-connection
+absence proof.
+
+The first production-context transaction capture identified the remaining
+difference exactly: pg_dump's `set_config('search_path', '', false)` persisted
+in the rehearsal connection. That caused schema qualification in 880 dependency
+rows, 17 dependent-view rows, 45 parent-constraint descriptions, one sequence
+default, and the observation view/rule definitions. Together with the already
+modeled 45 `noInherit` changes, this produced 945 missing/extra exact rows and
+93 paired field differences. Rehearsal now sets
+captures `current_setting('search_path')` at connection start and restores that
+exact value transaction-locally with quoted `set_config` after pg_dump restore.
+This preserves role/database-specific defaults rather than assuming
+`"$user", public`. It also sets transaction-local `TimeZone=UTC` and
+`DateStyle='ISO, YMD'` before retained-data capture, matching the manifest
+capture contract. Tests cover non-UTC sessions and an `ALTER ROLE ... IN
+DATABASE ... SET search_path` override. These are capture-context fixes, not an
+expanded canonical normalization policy.
+
+For diagnosis without rerunning the initializer or attempting final recovery,
+`--diagnose-committed-rehearsal` performs only source/package/tooling checks,
+the current all-absent safety gate, and this bounded transaction-local
+rehearsal. It never executes `drop.sql` or permanently restores objects.
+
 `RECOVERY-SUCCESS.json` binds five validations under explicit unique labels:
 source validation, tooling validation, pre-resume gate, post-resume gate, and
 final post-action validation. Copied-package validation is separately hashed;
@@ -485,6 +517,11 @@ tools/postgres-retired-schema-cleanup.sh \
   --expected-resume-helper-sha256 <approved-current-helper-sha256> \
   --output "/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/retired-schema-resume-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
+
+Use the same manifest/tooling arguments with
+`--diagnose-committed-rehearsal <failed-execute>` and a new
+`retired-schema-rehearsal-diagnostic-*` output path for rehearsal-only
+diagnostics.
 
 Before an explicit restore:
 
