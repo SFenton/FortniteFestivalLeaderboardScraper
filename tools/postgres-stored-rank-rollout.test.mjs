@@ -577,6 +577,7 @@ describe("stored-rank filtered-read rollout package", () => {
           '[{"exclusiveOwnerContainerId":"production-postgres",' +
             '"networkId":"network-id","networkName":"fst-network",' +
             '"serverAddresses":["172.20.0.2"],"serviceAlias":"postgres"}]',
+          "visibility=172.20.0.2|fst",
           "verify=0"
         ]
       );

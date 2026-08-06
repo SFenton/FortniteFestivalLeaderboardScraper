@@ -575,8 +575,6 @@ print("\t".join([host, port, database, username, encoded]))
         printf 'ERROR: unable to retain service PostgreSQL visibility probe target\n' >&2
         return 1
     fi
-    export FST_STORED_RANK_VISIBILITY_PROBE_CONNECTION_STRING="$SERVICE_DB_CONNECTION_STRING"
-
     compose_postgres_id="$(
         run_docker_query_bounded compose \
             --project-directory "$COMPOSE_DIR" \
@@ -777,6 +775,17 @@ print(json.dumps(binding, separators=(",", ":"), sort_keys=True))
         return 1
     fi
     PINNED_POSTGRES_NETWORK_BINDINGS_JSON="$binding_json"
+    local visibility_host_segment="Host=$SERVICE_DB_HOST;"
+    local visibility_address="${PINNED_POSTGRES_SERVER_ADDRESSES%%,*}"
+    if [[ -z "$visibility_address" \
+        || "$SERVICE_DB_CONNECTION_STRING" != *"$visibility_host_segment"* ]]; then
+        printf 'ERROR: unable to bind visibility probe to attested Postgres address\n' >&2
+        return 1
+    fi
+    FST_STORED_RANK_VISIBILITY_PROBE_CONNECTION_STRING="$(
+        printf '%s' "${SERVICE_DB_CONNECTION_STRING/"$visibility_host_segment"/"Host=$visibility_address;"}"
+    )"
+    export FST_STORED_RANK_VISIBILITY_PROBE_CONNECTION_STRING
 
     if [[ "$write_evidence" == "true" && -n "$EVIDENCE_DIR" ]]; then
         if ! python3 -c '
@@ -3129,6 +3138,17 @@ case "$ACTION" in
             "$PINNED_POSTGRES_CONTAINER_ID|$PINNED_POSTGRES_IMAGE_REFERENCE|$PINNED_POSTGRES_IMAGE_ID" \
             "$PINNED_POSTGRES_NETWORK_NAMES|$PINNED_POSTGRES_NETWORK_ALIASES|$PINNED_POSTGRES_SERVER_ADDRESSES" \
             "$PINNED_POSTGRES_NETWORK_BINDINGS_JSON" \
+            "visibility=$(
+                python3 -c '
+import sys
+pairs = {}
+for item in sys.argv[1].split(";"):
+    if "=" in item:
+        key, value = item.split("=", 1)
+        pairs[key.strip().lower()] = value.strip()
+print(pairs.get("host", "") + "|" + pairs.get("username", ""))
+' "$FST_STORED_RANK_VISIBILITY_PROBE_CONNECTION_STRING"
+            )" \
             >> "$test_log"
         test_phase=1
         set +e
