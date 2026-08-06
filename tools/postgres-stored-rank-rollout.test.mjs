@@ -23,6 +23,19 @@ async function read(relativePath) {
 }
 
 describe("stored-rank filtered-read rollout package", () => {
+  it("does not leak the rollout lock into persistent dotnet build servers", async () => {
+    const script = await read("tools/postgres-stored-rank-rollout.sh");
+
+    assert.match(
+      script,
+      /dotnet build "\$TOOL_PROJECT"[\s\S]*?9>&-/
+    );
+    assert.match(
+      script,
+      /dotnet "\$TOOL_DLL" "\$@" 9>&-/
+    );
+  });
+
   it("keeps service and worker roles split in both overlays", async () => {
     const [enabled, disabled, recovery] = await Promise.all([
       read("deploy/rollout/stored-rank-filtered-reads/compose.true.yml"),

@@ -259,11 +259,11 @@ validate_docker_timeouts() {
 }
 
 build_tool() {
-    dotnet build "$TOOL_PROJECT" -c Release --nologo --verbosity quiet
+    dotnet build "$TOOL_PROJECT" -c Release --nologo --verbosity quiet 9>&-
 }
 
 run_tool() {
-    dotnet "$TOOL_DLL" "$@"
+    dotnet "$TOOL_DLL" "$@" 9>&-
 }
 
 require_evidence_configuration() {
