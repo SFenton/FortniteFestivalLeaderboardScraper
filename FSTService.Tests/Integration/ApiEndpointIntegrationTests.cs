@@ -1838,6 +1838,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
             var pathStore = scope.ServiceProvider.GetRequiredService<PathDataStore>();
             var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+            var metaDb = scope.ServiceProvider.GetRequiredService<IMetaDatabase>();
+            var precomputer = scope.ServiceProvider.GetRequiredService<ScrapeTimePrecomputer>();
             Assert.True(persistence.UsePublishedScopeSources);
             EnsureSongRow(pathStore, songId);
             pathStore.UpdateMaxScores(songId, new SongMaxScores
@@ -1865,6 +1867,17 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                     """;
                 command.ExecuteNonQuery();
             }
+            var publishedProfile = Encoding.UTF8.GetBytes(
+                $$"""{"accountId":"{{selectedAccountId}}","scores":[]}""");
+            metaDb.BulkSetCachedResponses(
+            [
+                (
+                    $"player:{selectedAccountId}:::",
+                    publishedProfile,
+                    ResponseCacheService.ComputeETag(publishedProfile)
+                ),
+            ]);
+            Assert.NotNull(precomputer.TryGet($"player:{selectedAccountId}:::"));
 
             foreach (var instrument in GlobalLeaderboardScraper.AllInstruments)
             {

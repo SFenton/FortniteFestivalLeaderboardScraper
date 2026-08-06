@@ -55,7 +55,8 @@ public static partial class ApiEndpoints
             }
 
             if (publishedProfile is not null
-                && (songId is not null || instruments is not null || leeway is not null))
+                && (songId is not null || instruments is not null || leeway is not null)
+                && !persistence.UsePublishedScopeSources)
             {
                 return Results.Problem(
                     title: "Published filtered profile unavailable",
