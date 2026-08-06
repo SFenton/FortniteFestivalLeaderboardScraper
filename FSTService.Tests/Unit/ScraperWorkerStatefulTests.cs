@@ -1,8 +1,10 @@
 using System.Reflection;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Services;
+using FSTService.Api;
 using FSTService.Persistence;
 using FSTService.Scraping;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
 using Npgsql;
@@ -16,6 +18,883 @@ namespace FSTService.Tests.Unit;
 /// </summary>
 public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
 {
+    [Fact]
+    public void FailedIsolationRecordingMarksWorkerPassAsFailClosed()
+    {
+        var publishedScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaDb.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var candidateScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.SetPublicReadFreeze(
+            true,
+            candidateScrapeId,
+            "publish");
+        _metaDb.FailureIsolationTestHook =
+            () => throw new InvalidOperationException(
+                "injected durable-isolation failure");
+        var worker = CreateWorker();
+        var method = typeof(ScraperWorker)
+            .GetMethods(
+                BindingFlags.Instance
+                | BindingFlags.NonPublic)
+            .Single(candidate =>
+                candidate.Name ==
+                    "RecordFailedCandidateIsolation"
+                && candidate.GetParameters().Length == 5);
+        object?[] arguments =
+        [
+            candidateScrapeId,
+            "Publication",
+            "publication",
+            "injected",
+            true,
+        ];
+
+        var exception = Assert.Throws<TargetInvocationException>(
+            () => method.Invoke(worker, arguments));
+
+        Assert.IsType<InvalidOperationException>(
+            exception.InnerException);
+        Assert.True(
+            _metaDb.GetPublicReadFreezeState()
+                .PublicationFailureIsolationPending);
+        _metaDb.FailureIsolationTestHook = null;
+        _ = _metaDb.ReconcileStalePublicationCommitIntent(
+            TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
+    public async Task CommitContentionPreservesReadyGenerationForRetry()
+    {
+        var publishedScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaDb.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var candidateScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            candidateScrapeId,
+            1,
+            2,
+            2,
+            2);
+        var preparation = _metaDb.PrepareScrapePublication(
+            candidateScrapeId,
+            promoteCachedResponses: false);
+        _metaDb.SetPublicReadFreeze(
+            true,
+            candidateScrapeId,
+            PublicReadFreezeState
+                .PublicationCommitDeferredReason);
+        var worker = CreateWorker(
+            publicationCommitOptions:
+                new PublicationCommitOptions
+                {
+                    ContentionRetryAttempts = 2,
+                    ContentionRetryDelayMilliseconds = 10,
+                });
+        var blockingIntent =
+            _metaDb.BeginPublicationCommitIntent(
+                candidateScrapeId);
+        var method = typeof(ScraperWorker).GetMethod(
+            "CommitPreparedWithContentionRetriesAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var task = (Task<PublicationCommitResult>)method.Invoke(
+            worker,
+            [preparation, CancellationToken.None])!;
+
+        await Assert.ThrowsAsync<
+            PublicationCommitDeferredException>(
+            async () => await task);
+
+        Assert.Equal(
+            PublicationGenerationStatus.Ready,
+            _metaDb.GetPublicationGeneration(
+                preparation.PublicationId)?.Status);
+        Assert.Equal(
+            preparation.PublicationId,
+            _metaDb.GetPublicationPointerState()
+                .WorkingPublicationId);
+        _metaDb.RestorePublicationCommitIntent(
+            blockingIntent,
+            PublicReadFreezeState.NotFrozen);
+        _metaDb.SetPublicReadFreeze(
+            true,
+            candidateScrapeId,
+            PublicReadFreezeState
+                .PublicationCommitDeferredReason);
+        Assert.Throws<PublicationCommitBusyException>(
+            () => _metaDb.StartScrapeRun());
+
+        var retryIntent =
+            _metaDb.BeginPublicationCommitIntent(
+                candidateScrapeId);
+        var commit =
+            _metaDb.CommitPreparedScrapePublication(
+                preparation,
+                retryIntent);
+        _metaDb.CleanupPublishedScrapePublication(
+            preparation,
+            commit);
+        Assert.Equal(
+            preparation.PublicationId,
+            _metaDb.GetPublicationPointerState()
+                .CurrentPublicationId);
+    }
+
+    [Fact]
+    public async Task CommitContentionShutdownPreservesReadyCandidate()
+    {
+        var publishedScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaDb.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var candidateScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            candidateScrapeId,
+            1,
+            2,
+            2,
+            2);
+        var preparation = _metaDb.PrepareScrapePublication(
+            candidateScrapeId,
+            promoteCachedResponses: false);
+        var blockingIntent =
+            _metaDb.BeginPublicationCommitIntent(
+                candidateScrapeId);
+        var worker = CreateWorker(
+            publicationCommitOptions:
+                new PublicationCommitOptions
+                {
+                    ContentionRetryAttempts = 2,
+                    ContentionRetryDelayMilliseconds = 10,
+                });
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var method = typeof(ScraperWorker).GetMethod(
+            "CommitPreparedWithContentionRetriesAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var task = (Task<PublicationCommitResult>)method.Invoke(
+            worker,
+            [preparation, cancellation.Token])!;
+
+        await Assert.ThrowsAsync<
+            PublicationCommitShutdownDeferredException>(
+            async () => await task);
+
+        Assert.Equal(
+            PublicationGenerationStatus.Ready,
+            _metaDb.GetPublicationGeneration(
+                preparation.PublicationId)?.Status);
+        Assert.Equal(
+            preparation.PublicationId,
+            _metaDb.GetPublicationPointerState()
+                .WorkingPublicationId);
+        _metaDb.RestorePublicationCommitIntent(
+            blockingIntent,
+            PublicReadFreezeState.NotFrozen);
+        _metaDb.FailScrapeRun(
+            candidateScrapeId,
+            "test",
+            "cleanup");
+    }
+
+    [Fact]
+    public async Task WorkerPassResumesDeferredPublicationBeforeScrapeStartingOrAllocation()
+    {
+        var publishedScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaDb.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var deferredScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            deferredScrapeId,
+            1,
+            2,
+            2,
+            2);
+        var preparation = _metaDb.PrepareScrapePublication(
+            deferredScrapeId,
+            promoteCachedResponses: false);
+        _metaDb.SetPublicReadFreeze(
+            true,
+            deferredScrapeId,
+            PublicReadFreezeState
+                .PublicationCommitDeferredReason);
+        var preparedBandTable =
+            BandRankingStorageNames
+                .GetPreparedPublishedRankingTable(
+                    preparation.PublicationId,
+                    "Band_Duets");
+        Assert.True(
+            _metaDb.SweepPublicationBandTableOrphans()
+                .Completed);
+        Assert.True(RelationExists(preparedBandTable));
+        var scrapeCountBefore = CountScrapeRuns();
+
+        _metaDb.SetPublicReadFreeze(
+            true,
+            deferredScrapeId,
+            "scrape");
+        var contentionFreeze =
+            _metaDb.GetPublicReadFreezeState();
+        Assert.True(
+            contentionFreeze.PublicationCommitDeferred
+            || contentionFreeze.PublicationCommitPending);
+
+        var worker = CreateWorker();
+        var options = new ScraperOptions
+        {
+            DataDirectory = _tempDir,
+            EnabledPhases = ScrapePhase.SoloScrape,
+        };
+        await InvokePrivateAsync(
+            worker,
+            "RunScrapePassAsync",
+            _festivalService,
+            options,
+            CancellationToken.None);
+
+        Assert.Equal(scrapeCountBefore, CountScrapeRuns());
+        Assert.Equal(
+            preparation.PublicationId,
+            _metaDb.GetPublicationPointerState()
+                .CurrentPublicationId);
+        Assert.Null(
+            _metaDb.GetPublicationPointerState()
+                .WorkingPublicationId);
+        Assert.False(
+            _metaDb.GetPublicReadFreezeState().IsFrozen);
+    }
+
+    [Fact]
+    public async Task ExecuteAsyncResumesDeferredPublicationBeforeNotificationGateAndAuthentication()
+    {
+        var publishedScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaDb.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var deferredScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            deferredScrapeId,
+            1,
+            2,
+            2,
+            2);
+        var preparation = _metaDb.PrepareScrapePublication(
+            deferredScrapeId,
+            promoteCachedResponses: false);
+        _metaDb.SetPublicReadFreeze(
+            true,
+            deferredScrapeId,
+            PublicReadFreezeState
+                .PublicationCommitDeferredReason);
+        var scrapeCountBefore = CountScrapeRuns();
+        var authenticationReached =
+            new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+        _tokenManager.GetAccessTokenAsync(
+                Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                Assert.Equal(
+                    preparation.PublicationId,
+                    _metaDb.GetPublicationPointerState()
+                        .CurrentPublicationId);
+                authenticationReached.TrySetResult();
+                return Task.FromResult<string?>(null);
+            });
+        var worker = CreateWorker(new ScraperOptions
+        {
+            DataDirectory = _tempDir,
+            ScrapeInterval = TimeSpan.FromHours(1),
+        });
+
+        await worker.StartAsync(CancellationToken.None);
+        await authenticationReached.Task.WaitAsync(
+            TimeSpan.FromSeconds(15));
+        await worker.StopAsync(CancellationToken.None);
+
+        Assert.Equal(scrapeCountBefore, CountScrapeRuns());
+        Assert.Equal(
+            preparation.PublicationId,
+            _metaDb.GetPublicationPointerState()
+                .CurrentPublicationId);
+        Assert.False(
+            _metaDb.GetPublicReadFreezeState().IsFrozen);
+    }
+
+    [Fact]
+    public async Task ApiOnlyWorkerKeepsDeferredPublicationAliveAcrossContentionAndRetries()
+    {
+        var publishedScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaDb.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var deferredScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            deferredScrapeId,
+            1,
+            2,
+            2,
+            2);
+        var preparation = _metaDb.PrepareScrapePublication(
+            deferredScrapeId,
+            promoteCachedResponses: false);
+        _metaDb.SetPublicReadFreeze(
+            true,
+            deferredScrapeId,
+            PublicReadFreezeState
+                .PublicationCommitDeferredReason);
+        var worker = CreateWorker(
+            new ScraperOptions
+            {
+                ApiOnly = true,
+                DataDirectory = _tempDir,
+            },
+            new PublicationCommitOptions
+            {
+                ContentionRetryAttempts = 2,
+                ContentionRetryDelayMilliseconds = 10,
+            });
+        using var readConnection =
+            _metaFixture.DataSource.OpenConnection();
+        using var readTransaction =
+            readConnection.BeginTransaction();
+        using (var sharedLock = readConnection.CreateCommand())
+        {
+            sharedLock.Transaction = readTransaction;
+            sharedLock.CommandText =
+                "SELECT pg_advisory_xact_lock_shared(@lockKey)";
+            sharedLock.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+            sharedLock.ExecuteNonQuery();
+        }
+        await worker.StartAsync(CancellationToken.None);
+        await Task.Delay(TimeSpan.FromSeconds(1));
+        var firstOwner = GetPublicationCommitIntentOwner();
+        Assert.False(string.IsNullOrWhiteSpace(firstOwner));
+        for (var sample = 0; sample < 20; sample++)
+        {
+            var sampledState =
+                _metaDb.GetPublicReadFreezeState();
+            Assert.True(
+                sampledState.PublicationCommitPending
+                || sampledState.PublicationCommitDeferred);
+            if (sampledState.PublicationCommitPending)
+            {
+                Assert.Equal(
+                    firstOwner,
+                    GetPublicationCommitIntentOwner());
+            }
+            await Task.Delay(250);
+        }
+
+        Assert.Equal(
+            PublicationGenerationStatus.Ready,
+            _metaDb.GetPublicationGeneration(
+                preparation.PublicationId)?.Status);
+        var contentionFreeze =
+            _metaDb.GetPublicReadFreezeState();
+        Assert.True(
+            contentionFreeze.PublicationCommitPending
+            || contentionFreeze.PublicationCommitDeferred);
+        _lifetime.DidNotReceive().StopApplication();
+        await _tokenManager.DidNotReceive()
+            .GetAccessTokenAsync(Arg.Any<CancellationToken>());
+
+        readTransaction.Commit();
+        await WaitUntilAsync(
+            () => _metaDb.GetPublicationPointerState()
+                .CurrentPublicationId ==
+                preparation.PublicationId,
+            TimeSpan.FromSeconds(15));
+        await worker.StopAsync(CancellationToken.None);
+
+        Assert.False(
+            _metaDb.GetPublicReadFreezeState().IsFrozen);
+    }
+
+    [Fact]
+    public async Task DeferredPreparationTransientReadFailurePreservesReadyCandidate()
+    {
+        var publishedScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaDb.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var deferredScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            deferredScrapeId,
+            1,
+            2,
+            2,
+            2);
+        var preparation = _metaDb.PrepareScrapePublication(
+            deferredScrapeId,
+            promoteCachedResponses: false);
+        _metaDb.SetPublicReadFreeze(
+            true,
+            deferredScrapeId,
+            PublicReadFreezeState
+                .PublicationCommitDeferredReason);
+        _metaDb.DeferredPreparationReadTestHook =
+            () => new NpgsqlException(
+                "injected transient pool failure");
+        var worker = CreateWorker();
+        var method = typeof(ScraperWorker).GetMethod(
+            "TryResumeDeferredPublicationAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var task =
+            (Task<DeferredPublicationResumeOutcome>)method.Invoke(
+                worker,
+                [CancellationToken.None])!;
+
+        var outcome = await task;
+
+        Assert.True(outcome.Handled);
+        Assert.False(outcome.Published);
+        Assert.Equal(
+            PublicationGenerationStatus.Ready,
+            _metaDb.GetPublicationGeneration(
+                preparation.PublicationId)?.Status);
+        Assert.Equal(
+            preparation.PublicationId,
+            _metaDb.GetPublicationPointerState()
+                .WorkingPublicationId);
+        Assert.True(
+            _metaDb.GetPublicReadFreezeState()
+                .PublicationCommitDeferred);
+        _metaDb.DeferredPreparationReadTestHook = null;
+        _metaDb.FailScrapeRun(
+            deferredScrapeId,
+            "test",
+            "cleanup");
+    }
+
+    [Fact]
+    public async Task DeferredResumeShutdownPreservesReadyCandidate()
+    {
+        var publishedScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaDb.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var deferredScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            deferredScrapeId,
+            1,
+            2,
+            2,
+            2);
+        var preparation = _metaDb.PrepareScrapePublication(
+            deferredScrapeId,
+            promoteCachedResponses: false);
+        _metaDb.SetPublicReadFreeze(
+            true,
+            deferredScrapeId,
+            PublicReadFreezeState
+                .PublicationCommitDeferredReason);
+        var worker = CreateWorker(
+            publicationCommitOptions:
+                new PublicationCommitOptions
+                {
+                    ContentionRetryAttempts = 1,
+                    ContentionRetryDelayMilliseconds = 10,
+                });
+        using var readConnection =
+            _metaFixture.DataSource.OpenConnection();
+        using var readTransaction =
+            readConnection.BeginTransaction();
+        using (var sharedLock = readConnection.CreateCommand())
+        {
+            sharedLock.Transaction = readTransaction;
+            sharedLock.CommandText =
+                "SELECT pg_advisory_xact_lock_shared(@lockKey)";
+            sharedLock.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+            sharedLock.ExecuteNonQuery();
+        }
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var method = typeof(ScraperWorker).GetMethod(
+            "TryResumeDeferredPublicationAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var task =
+            (Task<DeferredPublicationResumeOutcome>)method.Invoke(
+                worker,
+                [cancellation.Token])!;
+
+        var outcome = await task;
+
+        Assert.True(outcome.Handled);
+        Assert.False(outcome.Published);
+        Assert.Equal(
+            PublicationGenerationStatus.Ready,
+            _metaDb.GetPublicationGeneration(
+                preparation.PublicationId)?.Status);
+        Assert.Equal(
+            preparation.PublicationId,
+            _metaDb.GetPublicationPointerState()
+                .WorkingPublicationId);
+        readTransaction.Commit();
+        _metaDb.FailScrapeRun(
+            deferredScrapeId,
+            "test",
+            "cleanup");
+    }
+
+    [Fact]
+    public async Task DeferredPreparationCorruptionIsIsolatedAndCleaned()
+    {
+        var publishedScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaDb.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var deferredScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            deferredScrapeId,
+            1,
+            2,
+            2,
+            2);
+        var preparation = _metaDb.PrepareScrapePublication(
+            deferredScrapeId,
+            promoteCachedResponses: false);
+        _metaDb.SetPublicReadFreeze(
+            true,
+            deferredScrapeId,
+            PublicReadFreezeState
+                .PublicationCommitDeferredReason);
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var corrupt = connection.CreateCommand())
+        {
+            corrupt.CommandText = """
+                UPDATE publication_generations
+                SET metadata = '{}'::jsonb
+                WHERE publication_id = @publicationId
+                """;
+            corrupt.Parameters.AddWithValue(
+                "publicationId",
+                preparation.PublicationId);
+            corrupt.ExecuteNonQuery();
+        }
+        var worker = CreateWorker();
+        var method = typeof(ScraperWorker).GetMethod(
+            "TryResumeDeferredPublicationAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var task =
+            (Task<DeferredPublicationResumeOutcome>)method.Invoke(
+                worker,
+                [CancellationToken.None])!;
+
+        var outcome = await task;
+
+        Assert.True(outcome.Handled);
+        Assert.False(outcome.Published);
+        Assert.Equal(
+            PublicationGenerationStatus.Failed,
+            _metaDb.GetPublicationGeneration(
+                preparation.PublicationId)?.Status);
+        Assert.Null(
+            _metaDb.GetPublicationPointerState()
+                .WorkingPublicationId);
+    }
+
+    [Fact]
+    public async Task DeferredPostCommitBroadcastFailureDoesNotIsolatePublishedScrape()
+    {
+        var publishedScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaDb.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var deferredScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            deferredScrapeId,
+            1,
+            2,
+            2,
+            2);
+        var preparation = _metaDb.PrepareScrapePublication(
+            deferredScrapeId,
+            promoteCachedResponses: false);
+        _metaDb.SetPublicReadFreeze(
+            true,
+            deferredScrapeId,
+            PublicReadFreezeState
+                .PublicationCommitDeferredReason);
+        var worker = CreateWorker();
+        worker.ScoresChangedNotificationTestHook =
+            _ => Task.FromException(
+                new NpgsqlException(
+                    "injected post-commit broadcast failure"));
+        var method = typeof(ScraperWorker).GetMethod(
+            "TryResumeDeferredPublicationAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var task =
+            (Task<DeferredPublicationResumeOutcome>)method.Invoke(
+                worker,
+                [CancellationToken.None])!;
+
+        var outcome = await task;
+
+        Assert.True(outcome.Published);
+        Assert.Equal(
+            preparation.PublicationId,
+            _metaDb.GetPublicationPointerState()
+                .CurrentPublicationId);
+        Assert.Null(
+            _metaDb.GetPublicationPointerState()
+                .WorkingPublicationId);
+        Assert.Equal(
+            PublicationGenerationStatus.Current,
+            _metaDb.GetPublicationGeneration(
+                preparation.PublicationId)?.Status);
+        Assert.Equal(
+            "completed",
+            _metaDb.GetScrapeResumeState(
+                deferredScrapeId)?.Status);
+        Assert.False(
+            _metaDb.GetFailedCandidateReadIsolationState()
+                .IsFrozen);
+        Assert.False(
+            _metaDb.GetPublicReadFreezeState().IsFrozen);
+    }
+
+    [Fact]
+    public async Task DeferredNonContentionCommitFailureUsesOwnedIntentForDurableIsolation()
+    {
+        var publishedScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaDb.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var deferredScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            deferredScrapeId,
+            1,
+            2,
+            2,
+            2);
+        var preparation = _metaDb.PrepareScrapePublication(
+            deferredScrapeId,
+            promoteCachedResponses: false);
+        _metaDb.SetPublicReadFreeze(
+            true,
+            deferredScrapeId,
+            PublicReadFreezeState
+                .PublicationCommitDeferredReason);
+        var worker = CreateWorker();
+        DropRelation(
+            BandRankingStorageNames
+                .GetPreparedPublishedRankingTable(
+                    preparation.PublicationId,
+                    "Band_Duets"));
+        var method = typeof(ScraperWorker).GetMethod(
+            "TryResumeDeferredPublicationAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var task =
+            (Task<DeferredPublicationResumeOutcome>)method.Invoke(
+                worker,
+                [CancellationToken.None])!;
+
+        var outcome = await task;
+
+        Assert.True(outcome.Handled);
+        Assert.False(outcome.Published);
+        Assert.Equal(
+            PublicationGenerationStatus.Failed,
+            _metaDb.GetPublicationGeneration(
+                preparation.PublicationId)?.Status);
+        Assert.Null(
+            _metaDb.GetPublicationPointerState()
+                .WorkingPublicationId);
+        Assert.False(
+            _metaDb.GetPublicReadFreezeState().IsFrozen);
+        Assert.True(
+            _metaDb.GetFailedCandidateReadIsolationState()
+                .IsFrozen);
+    }
+
+    [Fact]
+    public async Task DeferredNonContentionDualIsolationFailureKeepsOwnedLatchForApi()
+    {
+        var publishedScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaDb.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var deferredScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            deferredScrapeId,
+            1,
+            2,
+            2,
+            2);
+        var preparation = _metaDb.PrepareScrapePublication(
+            deferredScrapeId,
+            promoteCachedResponses: false);
+        _metaDb.SetPublicReadFreeze(
+            true,
+            deferredScrapeId,
+            PublicReadFreezeState
+                .PublicationCommitDeferredReason);
+        var worker = CreateWorker();
+        var apiGate = new PublicReadGateService(
+            _metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        _metaDb.FailureIsolationTestHook =
+            () => throw new NpgsqlException(
+                "injected durable isolation failure");
+        _metaDb.IsolationPendingTransitionTestHook =
+            () => throw new NpgsqlException(
+                "injected pending transition failure");
+        CreatePublicationCommitFailureTrigger(
+            "deferred_dual_failure");
+        try
+        {
+            var method = typeof(ScraperWorker).GetMethod(
+                "TryResumeDeferredPublicationAsync",
+                BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var task =
+                (Task<DeferredPublicationResumeOutcome>)method.Invoke(
+                    worker,
+                    [CancellationToken.None])!;
+
+            var outcome = await task;
+
+            Assert.True(outcome.Handled);
+            Assert.False(outcome.Published);
+            Assert.Equal(
+                PublicationGenerationStatus.Ready,
+                _metaDb.GetPublicationGeneration(
+                    preparation.PublicationId)?.Status);
+            Assert.True(
+                _metaDb.GetPublicReadFreezeState()
+                    .PublicationCommitPending);
+            Assert.True(apiGate.GetState().PublicationCommitPending);
+            Assert.True(apiGate.RequiresCachedReads);
+        }
+        finally
+        {
+            DropPublicationCommitFailureTrigger(
+                "deferred_dual_failure");
+            _metaDb.FailureIsolationTestHook = null;
+            _metaDb.IsolationPendingTransitionTestHook = null;
+            using var connection =
+                _metaFixture.DataSource.OpenConnection();
+            using var stale = connection.CreateCommand();
+            stale.CommandText = """
+                UPDATE scrape_publication_state
+                SET publication_commit_intent_heartbeat_at =
+                    now() - interval '5 minutes'
+                WHERE id = TRUE
+                """;
+            stale.ExecuteNonQuery();
+            _ = _metaDb.ReconcileStalePublicationCommitIntent(
+                TimeSpan.FromSeconds(1));
+        }
+    }
+
+    [Fact]
+    public async Task NotificationGateRetriesTransientFreezeProbeFailure()
+    {
+        var attempts = 0;
+        _metaDb.PublicReadFreezeReadTestHook = () =>
+            Interlocked.Increment(ref attempts) == 1
+                ? new NpgsqlException(
+                    "injected transient freeze probe failure")
+                : null;
+        var worker = CreateWorker(
+            publicationCommitOptions:
+                new PublicationCommitOptions
+                {
+                    NotificationRecoveryRetrySeconds = 1,
+                });
+        var method = typeof(ScraperWorker).GetMethod(
+            "EnsureImprovementNotificationsCompleteBeforeNextScrapeAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var task = (Task)method.Invoke(
+            worker,
+            [CancellationToken.None])!;
+
+        await task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(attempts >= 2);
+        _metaDb.PublicReadFreezeReadTestHook = null;
+    }
+
     [Fact]
     public async Task ExecuteAsync_RecoversPendingNotificationsBeforeAuthenticationFailure()
     {

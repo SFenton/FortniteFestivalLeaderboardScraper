@@ -6,7 +6,34 @@ public sealed record PublicReadFreezeState(
     long? ScrapeId,
     string? Reason)
 {
+    public const string PublicationCommitIntentReason = "publication-commit";
+    public const string PublicationFailureIsolationPendingReason =
+        "publication-isolation-pending";
+    public const string PublicationCommitDeferredReason =
+        "publication-commit-deferred";
+
     public static PublicReadFreezeState NotFrozen { get; } = new(false, null, null, null);
+
+    public bool PublicationCommitPending =>
+        IsFrozen
+        && string.Equals(
+            Reason,
+            PublicationCommitIntentReason,
+            StringComparison.Ordinal);
+
+    public bool PublicationFailureIsolationPending =>
+        IsFrozen
+        && string.Equals(
+            Reason,
+            PublicationFailureIsolationPendingReason,
+            StringComparison.Ordinal);
+
+    public bool PublicationCommitDeferred =>
+        IsFrozen
+        && string.Equals(
+            Reason,
+            PublicationCommitDeferredReason,
+            StringComparison.Ordinal);
 
     // Retain cache/client refresh compatibility for already-recorded maintenance freezes.
     public bool RequiresSamePublicationRefreshOnRelease =>

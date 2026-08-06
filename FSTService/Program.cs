@@ -165,6 +165,8 @@ builder.Services.Configure<ImprovementNotificationOptions>(
     builder.Configuration.GetSection(ImprovementNotificationOptions.Section));
 builder.Services.Configure<BandRankHistoryOptions>(
     builder.Configuration.GetSection(BandRankHistoryOptions.Section));
+builder.Services.Configure<PublicationCommitOptions>(
+    builder.Configuration.GetSection(PublicationCommitOptions.Section));
 builder.Services.Configure<BandTeamRankingRebuildOptions>(
     builder.Configuration.GetSection(BandTeamRankingRebuildOptions.Section));
 builder.Services.Configure<BackgroundJobOptions>(
@@ -395,7 +397,8 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddSingleton<IMetaDatabase>(sp =>
     new FSTService.Persistence.MetaDatabase(sp.GetRequiredService<NpgsqlDataSource>(),
         sp.GetRequiredService<ILogger<FSTService.Persistence.MetaDatabase>>(),
-        sp.GetRequiredService<IOptions<BandRankHistoryOptions>>()));
+        sp.GetRequiredService<IOptions<BandRankHistoryOptions>>(),
+        sp.GetRequiredService<IOptions<PublicationCommitOptions>>()));
 builder.Services.AddSingleton(sp => (FSTService.Persistence.MetaDatabase)sp.GetRequiredService<IMetaDatabase>());
 
 builder.Services.AddSingleton<IPathDataStore>(sp =>
@@ -455,6 +458,12 @@ builder.Services.AddSingleton(sp =>
             .GetPointers()
             .CurrentPublicationId));
 builder.Services.AddSingleton<FSTService.Api.ShopCacheService>();
+builder.Services.AddSingleton<
+    FSTService.Api.PublicationRecoveryCoordinator>();
+builder.Services.AddSingleton<
+    FSTService.Api.IPublicationRecoveryCoordinator>(
+    sp => sp.GetRequiredService<
+        FSTService.Api.PublicationRecoveryCoordinator>());
 builder.Services.AddSingleton<FSTService.Api.PublicReadGateService>();
 builder.Services.AddSingleton(sp =>
     new FSTService.Api.PublicationReadLockDataSource(
@@ -463,7 +472,8 @@ builder.Services.AddSingleton<FSTService.Api.PublicationReadContextService>(sp =
     new FSTService.Api.PublicationReadContextService(
         sp.GetRequiredService<IMetaDatabase>(),
         sp.GetRequiredService<FSTService.Api.PublicationReadLockDataSource>(),
-        sp.GetRequiredService<IOptions<FeatureOptions>>()));
+        sp.GetRequiredService<IOptions<FeatureOptions>>(),
+        sp.GetRequiredService<IOptions<PublicationCommitOptions>>()));
 builder.Services.AddSingleton<FSTService.Api.PublicApiCacheTelemetry>();
 builder.Services.AddSingleton<FSTService.Api.RolloutReadOnlyViolationMonitor>();
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("PlayerCache",
@@ -942,9 +952,9 @@ app.UseForwardedHeaders(new ForwardedHeadersOptions
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseMiddleware<FSTService.Api.PublicApiResponseCacheMiddleware>();
 app.UseMiddleware<FSTService.Api.PublicationReadContextMiddleware>();
 app.UseMiddleware<FSTService.Api.PublicationBoundaryReadLeaseMiddleware>();
-app.UseMiddleware<FSTService.Api.PublicApiResponseCacheMiddleware>();
 app.UseMiddleware<FSTService.Api.PublicReadGateMiddleware>();
 app.UseMiddleware<FSTService.Api.SelectedProfileActivityMiddleware>();
 

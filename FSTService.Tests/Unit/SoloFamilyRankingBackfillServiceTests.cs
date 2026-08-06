@@ -630,7 +630,7 @@ public sealed class SoloFamilyRankingBackfillServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ConcurrentPublicationCannotInterleave()
+    public async Task ConcurrentPublicationIsRejectedWithoutInterleaving()
     {
         await CreateStablePublicationAsync(CreateGuitarOnlySong());
         SeedAccountRanking(
@@ -669,15 +669,19 @@ public sealed class SoloFamilyRankingBackfillServiceTests : IDisposable
         var publicationTask = Task.Run(() =>
         {
             publicationStarted.Set();
-            _fixture.Db.PublishScrapeRun(
-                publishedScrapeId.Value,
-                promoteCachedResponses: false);
+            return Assert.Throws<PublicationCommitBusyException>(() =>
+                _fixture.Db.PublishScrapeRun(
+                    publishedScrapeId.Value,
+                    promoteCachedResponses: false));
         });
         try
         {
             Assert.True(publicationStarted.Wait(TimeSpan.FromSeconds(5)));
             await Task.Delay(TimeSpan.FromMilliseconds(250));
-            Assert.False(publicationTask.IsCompleted);
+            Assert.True(publicationTask.IsCompleted);
+            Assert.Equal(
+                1,
+                (await publicationTask).LockRejections);
         }
         finally
         {
@@ -689,6 +693,10 @@ public sealed class SoloFamilyRankingBackfillServiceTests : IDisposable
         await publicationTask.WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.True(report.Executed);
+        Assert.Equal(
+            publishedScrapeId,
+            _fixture.Db.GetPublicationPointerState()
+                .PublishedScrapeId);
         Assert.NotNull(_fixture.Db.GetSoloFamilyRanking(
             SoloFamilyRankingScopes.Pad,
             "publication-lock"));

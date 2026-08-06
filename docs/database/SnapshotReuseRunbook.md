@@ -5,6 +5,104 @@
 **Tier:** code/readiness accepted; capacity-ready retry rejected and reverted;
 the production flag remains off.
 
+Scrape `1278` subsequently published successfully with snapshot reuse still
+off, but its monolithic final publication transaction held the global
+exclusive advisory lock for about three minutes and repeatedly timed out
+publication-bound REST reads. `PUB-COMMIT-SPLIT` is now implemented in the
+repository, but it has not been deployed or live-validated. This availability
+gate is independent of snapshot-reuse data correctness and capacity:
+
+- no normal full scrape or snapshot-reuse retry is authorized on the old
+  publication path;
+- the next permitted full scrape is one controlled B run using the split
+  prepare/commit path with snapshot reuse and unrelated maintenance disabled;
+- candidate preparation must keep the old complete publication readable;
+- exact generation-cache hits must remain HTTP `200` through commit intent;
+  a forced miss may return only bounded `503 Retry-After: 1`, never a
+  30-second timeout;
+- pinning-disabled and pinning-enabled exact cache hits must both remain
+  generation-exact; an empty generation may not inherit a nonempty legacy
+  compatibility cache;
+- every commit intent must stamp a fresh dedicated started-at, heartbeat, and
+  owner token rather than inherit scrape-freeze age; the owner heartbeats
+  across try-lock retries and cannot be replaced while fresh;
+- every noncommitted path, including a commit-time same-scrape
+  `AlreadyPublished` race, must restore its pre-intent freeze state, and
+  restart/read-gate reconciliation may clear an abandoned intent only after
+  its dedicated heartbeat is stale and no active exclusive commit exists;
+- failed-candidate status must become durable before advisory drain; a hung
+  shared reader may force bounded shared-lock recovery, but must never leave a
+  failed working pointer that wedges the next scrape;
+- if durable failure recording itself fails, the worker must retain a
+  fail-closed `publication-isolation-pending` freeze and frozen process caches;
+  no generic failure-finally path may unfreeze before read-gate/startup
+  reconciliation establishes the failed-candidate marker;
+- startup, stale recovery, failed cleanup, post-commit cleanup, and the next
+  preparation must run the exact-name band artifact sweeper, preserving only
+  current/previous/active-working publication tables and retrying safely after
+  lock timeout;
+- post-commit cleanup must acquire the exact current publication cache-build
+  advisory key before deleting or truncating staging; an active rebuild causes
+  cleanup deferral, never an empty live-generation swap;
+- startup must fail and clean a prepared working generation abandoned before
+  commit intent unless a live scrape/publication heartbeat or explicit
+  deferred marker proves ownership;
+- pending isolation must target the frozen scrape ID exactly, confirm its
+  durable failed state before unfreezing, and never fail a newer mismatched
+  working generation;
+- advisory busy/deadline outcomes must retry the same preparation and preserve
+  a deferred ready generation rather than classify contention as data failure;
+- ordinary publication read leases must expire server-side within 30 seconds,
+  with an explicit 180-second export allowance; no shared lease is unbounded;
+- HTTP read-gate checks may trigger only TTL-limited single-flight background
+  recovery. Reconciliation, DDL, and sweeping must remain off the request
+  critical section;
+- preparation must enter its shared-lock phase with finite server lock,
+  statement, and transaction timeouts;
+- deferred/pending/commit recovery freeze reasons must reject generic
+  `ScrapeStarting` and unfreeze overwrites. Every worker pass must load and
+  retry a persisted deferred preparation before authentication, catalog work,
+  or new scrape allocation; no replacement scrape may orphan that ready
+  generation;
+- deferred publication recovery must run before improvement-notification
+  recovery, Epic authentication, API-only waiting, and every scrape-loop
+  allocation. Continued contention must back off and retry without escaping
+  the worker or stopping the host;
+- only proven deferred-preparation metadata corruption may fail the candidate;
+  transient database/pool/schema lookup errors must preserve the ready
+  generation and deferred freeze for retry;
+- shutdown cancellation during either normal or deferred contention retry must
+  preserve the ready generation and classify the outcome as deferral, never
+  failed-candidate isolation;
+- failure to persist `publication-commit-deferred` must remain nonfatal and
+  install an in-process fail-closed gate until durable recovery succeeds;
+- one owner/heartbeat commit-intent lease must span all contention attempts;
+  retry gaps may never restore permissive `publish` reads;
+- if owner-aware deferred transition fails, retain and heartbeat the durable
+  commit-pending latch for separate API processes while background recovery
+  retries; worker-local fail-closed state is additive only;
+- notification-gate DB probes and reconciliation must remain inside bounded
+  retry/backoff handling, with only host cancellation allowed to propagate;
+- isolation pending on a scrape that is already current/published, or safely
+  retained after a later publication, must clear only the stale latch and
+  never mark published history failed;
+- once atomic commit succeeds, cleanup, status, and WebSocket/broadcast
+  failures must be treated as post-commit operational degradation, never
+  failed-candidate isolation;
+- nonterminal commit failures must retain their owner lease through durable
+  isolation. Simultaneous failure-record and pending-transition failures may
+  add worker-local protection, but must never release the DB-visible
+  commit-pending latch seen by separate API processes;
+- deferred lookup handlers must not catch commit execution failures. The
+  owned lease must be handled at the commit boundary and transferred into
+  confirmed isolation or preserved pending-isolation recovery;
+- the cumulative final exclusive cutover must be `<=5s`, enforced by
+  PostgreSQL transaction timeout across all statements/attempts, with no ungranted
+  publication waiter older than one second and exact pointer/cache/source/
+  band/notification/WebSocket parity;
+- current plus previous cache, catalog, and band rollback objects remain
+  retained until the post-publication parity window passes.
+
 Scrape `1267` subsequently published successfully with snapshot reuse still
 off. It completed `8,232/8,232` manifests and all publication-critical phases,
 then atomically published/unfroze `1267` with exact public and logical-shadow
@@ -207,9 +305,10 @@ post-writer capacity gate can pass on the FST drive.
 
 ## Resume procedure
 
-1. Keep the worker held. The corrected capacity guard now passes, but this
-   recovery phase did not authorize another candidate. Require a new complete
-   preflight before any separately approved retry.
+1. Keep the worker held. The corrected capacity guard now passes, but neither
+   that recovery nor repository completion of `PUB-COMMIT-SPLIT` authorizes a
+   normal candidate. Require a new complete preflight and the controlled
+   bounded-publication B plan before any retry.
 2. Preserve all DB/storage work on `/mnt/docker-storage`; do not use alternate
    drive scratch or delete data to force a retry.
 3. Build current source with `docker build -f FSTService/Dockerfile ...`.
@@ -224,9 +323,12 @@ post-writer capacity gate can pass on the FST drive.
    explicit snapshot-reuse data profile to the dual-lane wrapper/guard, and do
    not start until that named profile validates the exact merged run-once
    config.
-6. Monitor every 60 seconds through one complete scrape, post-process,
-   publication, unfreeze, and parity window. Hold the worker before another
-   scrape.
+6. Retain the existing 60-second resource monitor, and add 1 Hz representative
+   cached plus forced-miss route probes from publication preparation through
+   unfreeze. Capture prepare/drain/exclusive durations, lock rejections,
+   relation retries, advisory waiters, pool pressure, pointer transitions,
+   WebSocket rotation, and exact rollback objects. Hold the worker before
+   another scrape.
 7. Accept only with complete manifests, zero writer/critical failures, exact
    source/count/content/coverage/public API/workbook parity, meaningful
    physical/WAL growth reduction, and no sustained regression above 10%.

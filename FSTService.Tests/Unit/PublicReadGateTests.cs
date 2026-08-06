@@ -1,5 +1,6 @@
 using FSTService.Api;
 using FSTService.Persistence;
+using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
@@ -8,7 +9,9 @@ using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using NSubstitute;
+using Npgsql;
 using System.Text;
 
 namespace FSTService.Tests.Unit;
@@ -781,6 +784,642 @@ public class PublicReadGateTests
     }
 
     [Fact]
+    public async Task PublicApiResponseCacheMiddleware_ExactGenerationHitSetsPublicationContext()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1278,
+                PublicReadFreezeState.PublicationCommitIntentReason));
+        var json = Encoding.UTF8.GetBytes("{\"publicationId\":19}");
+        metaDb.GetCurrentCacheLookup(Arg.Any<string>()).Returns(
+            new PublicationCacheLookup(
+                true,
+                new PublicationCachedResponse(
+                    19,
+                    1278,
+                    DateTime.UtcNow,
+                    json,
+                    ResponseCacheService.ComputeETag(json))));
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var middleware = new PublicApiResponseCacheMiddleware(
+            _ => throw new InvalidOperationException(
+                "Exact generation cache hit continued to the lock boundary."),
+            NullLogger<PublicApiResponseCacheMiddleware>.Instance);
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/rankings/Solo_Guitar";
+        SetPublicationEndpoint(
+            context,
+            "/api/rankings/{instrument}");
+        context.RequestServices = new ServiceCollection()
+            .AddLogging()
+            .BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(
+            context,
+            metaDb,
+            gate,
+            new PublicApiCacheTelemetry());
+
+        Assert.Equal(
+            19,
+            context.GetPublicationReadContext()?.PublicationId);
+        Assert.Equal(
+            "19",
+            context.Response.Headers[
+                PublicationReadContextMiddleware.PublicationHeader]);
+        Assert.Equal(
+            "hit",
+            context.Response.Headers["X-FST-Public-Cache"]);
+        metaDb.DidNotReceive().GetCachedResponse(
+            Arg.Any<string>());
+    }
+
+    [Fact]
+    public async Task PublicReadGate_TriggersSingleFlightRecoveryWithoutBlockingRequests()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow.AddMinutes(-5),
+                1278,
+                PublicReadFreezeState
+                    .PublicationCommitIntentReason),
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow.AddMinutes(-5),
+                1278,
+                PublicReadFreezeState
+                    .PublicationCommitIntentReason));
+        var recovery =
+            Substitute.For<IPublicationRecoveryCoordinator>();
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance,
+            Options.Create(new PublicationCommitOptions
+            {
+                StaleCommitIntentSeconds = 1,
+            }),
+            recovery);
+
+        var stopwatch =
+            System.Diagnostics.Stopwatch.StartNew();
+        var states = await Task.WhenAll(
+            Enumerable.Range(0, 100)
+                .Select(_ => Task.Run(gate.GetState)));
+        stopwatch.Stop();
+
+        Assert.All(states, state => Assert.True(state.IsFrozen));
+        recovery.Received(1).Trigger();
+        Assert.True(
+            stopwatch.Elapsed < TimeSpan.FromSeconds(1));
+        _ = metaDb.DidNotReceive()
+            .ReconcileStalePublicationCommitIntent(
+                Arg.Any<TimeSpan>());
+    }
+
+    [Fact]
+    public async Task PublicReadGateRecoveryClearsPendingIsolationForCurrentPublication()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var metaDb = fixture.Db;
+        var publishedScrapeId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            1,
+            1,
+            1);
+        metaDb.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var publicationId =
+            metaDb.GetPublicationPointerState()
+                .CurrentPublicationId;
+        metaDb.SetPublicReadFreeze(
+            true,
+            publishedScrapeId,
+            PublicReadFreezeState
+                .PublicationFailureIsolationPendingReason);
+        var options = Options.Create(
+            new PublicationCommitOptions
+            {
+                StaleCommitIntentSeconds = 1,
+            });
+        var coordinator =
+            new PublicationRecoveryCoordinator(
+                metaDb,
+                options,
+                Options.Create(new ScraperOptions()),
+                NullLogger<PublicationRecoveryCoordinator>.Instance);
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance,
+            options,
+            coordinator);
+
+        Assert.True(gate.GetState().IsFrozen);
+        await WaitUntilAsync(
+            () => !metaDb.GetPublicReadFreezeState().IsFrozen,
+            TimeSpan.FromSeconds(5));
+        gate.Invalidate();
+
+        Assert.False(gate.GetState().IsFrozen);
+        Assert.Equal(
+            publicationId,
+            metaDb.GetPublicationPointerState()
+                .CurrentPublicationId);
+        Assert.Equal(
+            PublicationGenerationStatus.Current,
+            metaDb.GetPublicationGeneration(
+                publicationId!.Value)?.Status);
+    }
+
+    [Fact]
+    public async Task PinnedCacheMissNeverFallsBackToLegacyCache()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1278,
+                "scrape"));
+        metaDb.GetCurrentCacheLookup(Arg.Any<string>())
+            .Returns(new PublicationCacheLookup(
+                HasCurrentPublication: false,
+                CachedResponse: null));
+        metaDb.GetCachedResponse(Arg.Any<string>())
+            .Returns((
+                Encoding.UTF8.GetBytes("{\"legacy\":true}"),
+                "\"legacy\""));
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var publicationService =
+            new PublicationReadContextService(
+                metaDb,
+                fixture.DataSource,
+                Options.Create(new FeatureOptions
+                {
+                    EnablePublicationReadContext = true,
+                }));
+        var nextCalled = false;
+        var middleware = new PublicApiResponseCacheMiddleware(
+            context =>
+            {
+                nextCalled = true;
+                context.Response.StatusCode =
+                    StatusCodes.Status204NoContent;
+                return Task.CompletedTask;
+            },
+            NullLogger<PublicApiResponseCacheMiddleware>.Instance);
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path =
+            "/api/rankings/Solo_Guitar";
+        context.RequestServices = new ServiceCollection()
+            .AddLogging()
+            .BuildServiceProvider();
+        SetPublicationEndpoint(
+            context,
+            "/api/rankings/{instrument}");
+
+        await middleware.InvokeAsync(
+            context,
+            metaDb,
+            gate,
+            new PublicApiCacheTelemetry(),
+            publicationService);
+
+        Assert.True(nextCalled);
+        Assert.Equal(
+            StatusCodes.Status204NoContent,
+            context.Response.StatusCode);
+        metaDb.DidNotReceive()
+            .GetCachedResponse(Arg.Any<string>());
+    }
+
+    [Fact]
+    public void PublicationCommitIntentLeaseRestoresPreviousState()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var metaDb = Substitute.For<IMetaDatabase>();
+        var previousState = new PublicReadFreezeState(
+            true,
+            DateTime.UtcNow.AddMinutes(-1),
+            1278,
+            "publish");
+        metaDb.GetPublicReadFreezeState()
+            .Returns(previousState);
+        var commitIntent = new PublicationCommitIntentHandle(
+            1278,
+            "test-owner",
+            DateTime.UtcNow);
+        metaDb.BeginPublicationCommitIntent(1278)
+            .Returns(commitIntent);
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var publicationService =
+            new PublicationReadContextService(
+                metaDb,
+                fixture.DataSource,
+                Options.Create(new FeatureOptions()));
+        using var cache = new ResponseCacheService(
+            TimeSpan.FromMinutes(1),
+            gate);
+        var lifecycle = new ScrapeLifecycleNotifier(
+            cache,
+            cache,
+            cache,
+            cache,
+            cache,
+            metaDb,
+            gate,
+            publicationService,
+            NullLogger<ScrapeLifecycleNotifier>.Instance);
+
+        using (lifecycle.PublicationCommitStarting(1278))
+        {
+            _ = metaDb.Received(1)
+                .BeginPublicationCommitIntent(1278);
+        }
+
+        metaDb.Received(1).RestorePublicationCommitIntent(
+            commitIntent,
+            previousState);
+    }
+
+    [Fact]
+    public void PublicationCommitDeferredWriteFailureKeepsLocalGateFailClosed()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.When(item => item.SetPublicReadFreeze(
+                true,
+                1278,
+                PublicReadFreezeState
+                    .PublicationCommitDeferredReason))
+            .Do(_ => throw new NpgsqlException(
+                "injected transient write failure"));
+        metaDb.GetPublicReadFreezeState()
+            .Returns(new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1278,
+                "publish"));
+        var recovery =
+            Substitute.For<IPublicationRecoveryCoordinator>();
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance,
+            Options.Create(new PublicationCommitOptions()),
+            recovery);
+        var publicationService =
+            new PublicationReadContextService(
+                metaDb,
+                fixture.DataSource,
+                Options.Create(new FeatureOptions()));
+        using var cache = new ResponseCacheService(
+            TimeSpan.FromMinutes(1),
+            gate);
+        var lifecycle = new ScrapeLifecycleNotifier(
+            cache,
+            cache,
+            cache,
+            cache,
+            cache,
+            metaDb,
+            gate,
+            publicationService,
+            NullLogger<ScrapeLifecycleNotifier>.Instance);
+
+        var exception = Record.Exception(() =>
+            lifecycle.PublicationCommitDeferred(1278));
+
+        Assert.Null(exception);
+        Assert.True(gate.RequiresCachedReads);
+        Assert.True(gate.GetState().IsFrozen);
+        Assert.Equal(
+            PublicReadFreezeState
+                .PublicationFailureIsolationPendingReason,
+            gate.GetState().Reason);
+        recovery.Received().Trigger();
+    }
+
+    [Fact]
+    public async Task DeferredTransitionFailureKeepsDurableCommitLatchVisibleToSeparateApi()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var metaDb = fixture.Db;
+        var publishedScrapeId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            1,
+            1,
+            1);
+        metaDb.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var candidateScrapeId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(
+            candidateScrapeId,
+            1,
+            2,
+            2,
+            2);
+        _ = metaDb.PrepareScrapePublication(
+            candidateScrapeId,
+            promoteCachedResponses: false);
+        var workerGate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var apiGate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var publicationService =
+            new PublicationReadContextService(
+                metaDb,
+                fixture.DataSource,
+                Options.Create(new FeatureOptions()));
+        using var cache = new ResponseCacheService(
+            TimeSpan.FromMinutes(1),
+            workerGate);
+        var lifecycle = new ScrapeLifecycleNotifier(
+            cache,
+            cache,
+            cache,
+            cache,
+            cache,
+            metaDb,
+            workerGate,
+            publicationService,
+            NullLogger<ScrapeLifecycleNotifier>.Instance);
+        var allowTransition = false;
+        metaDb.DeferredTransitionTestHook = () =>
+        {
+            if (!Volatile.Read(ref allowTransition))
+            {
+                throw new NpgsqlException(
+                    "injected deferred transition failure");
+            }
+        };
+
+        using (var intent =
+               lifecycle.PublicationCommitStarting(
+                   candidateScrapeId))
+        {
+            intent.Defer();
+        }
+
+        var durableState = metaDb.GetPublicReadFreezeState();
+        Assert.True(durableState.PublicationCommitPending);
+        Assert.True(apiGate.GetState().PublicationCommitPending);
+        Assert.True(apiGate.RequiresCachedReads);
+        Assert.True(workerGate.RequiresCachedReads);
+
+        Volatile.Write(ref allowTransition, true);
+        await WaitUntilAsync(
+            () => metaDb.GetPublicReadFreezeState()
+                .PublicationCommitDeferred,
+            TimeSpan.FromSeconds(5));
+        apiGate.Invalidate();
+        Assert.True(apiGate.GetState().PublicationCommitDeferred);
+
+        metaDb.DeferredTransitionTestHook = null;
+        metaDb.FailScrapeRun(
+            candidateScrapeId,
+            "test",
+            "cleanup");
+    }
+
+    [Fact]
+    public async Task IsolationRecordingAndPendingWriteFailuresKeepCrossProcessCommitLatch()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var metaDb = fixture.Db;
+        var publishedScrapeId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            1,
+            1,
+            1);
+        metaDb.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var candidateScrapeId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(
+            candidateScrapeId,
+            1,
+            2,
+            2,
+            2);
+        _ = metaDb.PrepareScrapePublication(
+            candidateScrapeId,
+            promoteCachedResponses: false);
+        metaDb.FailureIsolationTestHook =
+            () => throw new NpgsqlException(
+                "injected failure-record error");
+        metaDb.IsolationPendingTransitionTestHook =
+            () => throw new NpgsqlException(
+                "injected pending-transition error");
+
+        Assert.Throws<NpgsqlException>(() =>
+            metaDb.FailScrapeRun(
+                candidateScrapeId,
+                "publication",
+                "injected"));
+        Assert.True(
+            metaDb.GetPublicReadFreezeState()
+                .PublicationCommitPending);
+
+        var workerGate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var apiGate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var publicationService =
+            new PublicationReadContextService(
+                metaDb,
+                fixture.DataSource,
+                Options.Create(new FeatureOptions()));
+        using var cache = new ResponseCacheService(
+            TimeSpan.FromMinutes(1),
+            workerGate);
+        var lifecycle = new ScrapeLifecycleNotifier(
+            cache,
+            cache,
+            cache,
+            cache,
+            cache,
+            metaDb,
+            workerGate,
+            publicationService,
+            NullLogger<ScrapeLifecycleNotifier>.Instance);
+        metaDb.PublicReadFreezeWriteTestHook =
+            () => throw new NpgsqlException(
+                "injected pending-freeze write error");
+
+        lifecycle.ScrapeFailureIsolationPending(
+            candidateScrapeId);
+
+        Assert.True(workerGate.RequiresCachedReads);
+        Assert.True(
+            metaDb.GetPublicReadFreezeState()
+                .PublicationCommitPending);
+        Assert.True(apiGate.GetState().PublicationCommitPending);
+        Assert.True(apiGate.RequiresCachedReads);
+        var nextCalled = false;
+        var middleware =
+            new PublicationBoundaryReadLeaseMiddleware(
+                _ =>
+                {
+                    nextCalled = true;
+                    return Task.CompletedTask;
+                });
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path =
+            "/api/rankings/Solo_Guitar";
+        context.RequestServices = new ServiceCollection()
+            .AddLogging()
+            .BuildServiceProvider();
+        SetPublicationEndpoint(
+            context,
+            "/api/rankings/{instrument}");
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(
+            context,
+            publicationService,
+            apiGate);
+
+        Assert.False(nextCalled);
+        Assert.Equal(
+            StatusCodes.Status503ServiceUnavailable,
+            context.Response.StatusCode);
+
+        metaDb.FailureIsolationTestHook = null;
+        metaDb.IsolationPendingTransitionTestHook = null;
+        metaDb.PublicReadFreezeWriteTestHook = null;
+        using (var connection =
+               fixture.DataSource.OpenConnection())
+        using (var stale = connection.CreateCommand())
+        {
+            stale.CommandText = """
+                UPDATE scrape_publication_state
+                SET publication_commit_intent_heartbeat_at =
+                    now() - interval '5 minutes'
+                WHERE id = TRUE
+                """;
+            stale.ExecuteNonQuery();
+        }
+        _ = metaDb.ReconcileStalePublicationCommitIntent(
+            TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public void FailedIsolationRecordingFailureKeepsReadsClosedUntilReconciled()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var metaDb = fixture.Db;
+        var publishedScrapeId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            1,
+            1,
+            1);
+        metaDb.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var candidateScrapeId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(
+            candidateScrapeId,
+            1,
+            2,
+            2,
+            2);
+        metaDb.SetPublicReadFreeze(
+            true,
+            candidateScrapeId,
+            "publish");
+        metaDb.FailureIsolationTestHook =
+            () => throw new InvalidOperationException(
+                "injected isolation persistence failure");
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var publicationService =
+            new PublicationReadContextService(
+                metaDb,
+                fixture.DataSource,
+                Options.Create(new FeatureOptions()));
+        using var cache = new ResponseCacheService(
+            TimeSpan.FromMinutes(1),
+            gate);
+        var lifecycle = new ScrapeLifecycleNotifier(
+            cache,
+            cache,
+            cache,
+            cache,
+            cache,
+            metaDb,
+            gate,
+            publicationService,
+            NullLogger<ScrapeLifecycleNotifier>.Instance);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            metaDb.FailScrapeRun(
+                candidateScrapeId,
+                "publication",
+                "injected"));
+        lifecycle.ScrapeFailureIsolationPending(
+            candidateScrapeId);
+        lifecycle.ScrapeFailed(
+            durableIsolationConfirmed: false);
+
+        var pending = metaDb.GetPublicReadFreezeState();
+        Assert.True(pending.IsFrozen);
+        Assert.True(
+            pending.PublicationFailureIsolationPending);
+        Assert.NotNull(
+            metaDb.GetPublicationPointerState()
+                .WorkingPublicationId);
+
+        metaDb.FailureIsolationTestHook = null;
+        Assert.True(gate.RequiresCachedReads);
+        Assert.True(cache.IsFrozen);
+        Assert.NotNull(
+            metaDb.GetPublicationPointerState()
+                .WorkingPublicationId);
+
+        _ = metaDb.ReconcileStalePublicationCommitIntent(
+            TimeSpan.FromSeconds(30));
+
+        Assert.Null(
+            metaDb.GetPublicationPointerState()
+                .WorkingPublicationId);
+        Assert.False(
+            metaDb.GetPublicReadFreezeState().IsFrozen);
+        Assert.True(
+            metaDb.GetFailedCandidateReadIsolationState()
+                .IsFrozen);
+    }
+
+    [Fact]
     public async Task PublicApiResponseCacheMiddleware_UsesPinnedPublicationCache()
     {
         var metaDb = Substitute.For<IMetaDatabase>();
@@ -1023,6 +1662,22 @@ public class PublicReadGateTests
         await middleware.InvokeAsync(context, metaDb, gate, telemetry);
 
         Assert.Equal(0, telemetry.Snapshot().Total);
+    }
+
+    private static async Task WaitUntilAsync(
+        Func<bool> predicate,
+        TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (predicate())
+                return;
+            await Task.Delay(50);
+        }
+
+        throw new TimeoutException(
+            "Condition was not satisfied before timeout.");
     }
 
     private static void SetPublicationEndpoint(

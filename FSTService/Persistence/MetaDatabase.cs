@@ -12,17 +12,21 @@ namespace FSTService.Persistence;
 /// Central metadata database (<see cref="IMetaDatabase"/> implementation).
 /// Uses NpgsqlDataSource (connection pooling) — MVCC handles concurrent reads/writes natively.
 /// </summary>
-public sealed class MetaDatabase : IMetaDatabase
+public sealed partial class MetaDatabase : IMetaDatabase
 {
     private static readonly AsyncLocal<long?> PublicationCacheBuildTarget = new();
     private readonly NpgsqlDataSource _ds;
     private readonly ILogger<MetaDatabase> _log;
     private readonly BandRankHistoryOptions _bandRankHistoryOptions;
+    private readonly PublicationCommitOptions _publicationCommitOptions;
     private readonly object _bandRankHistoryPollingSchemaLock = new();
     private bool _bandRankHistoryPollingSchemaEnsured;
     private int _bandRankHistoryCompactV3DuetsReady;
     private int _bandRankHistoryCompactV3TriosReady;
     private int _bandRankHistoryCompactV3QuadReady;
+    internal Func<Exception?>?
+        PublicReadFreezeReadTestHook { get; set; }
+    internal Action? PublicReadFreezeWriteTestHook { get; set; }
 
     internal const int DataCollectionVersion = 3;
     internal const string WebTrackerDeviceId = "web-tracker";
@@ -33,6 +37,8 @@ public sealed class MetaDatabase : IMetaDatabase
     internal const string NoProgressReadIsolationFailurePhase = "post_process_no_progress_abandoned";
     internal const string PostProcessReadIsolationFailurePhase = "post_process";
     internal const string PublicationReadIsolationFailurePhase = "publication";
+    internal const string StalePublicationCommitIntentFailurePhase =
+        "stale_publication_commit_intent";
     internal const string FailedCandidateReadIsolationReason = "failed-candidate";
     private const string BandRankHistoryCompactV3StateTable = "band_rank_history_compact_v3_state";
     private const string BandRankHistoryCompactV3DuetsTable = "band_team_rank_history_points_v3_duets";
@@ -50,6 +56,7 @@ public sealed class MetaDatabase : IMetaDatabase
         NoProgressReadIsolationFailurePhase,
         PostProcessReadIsolationFailurePhase,
         PublicationReadIsolationFailurePhase,
+        StalePublicationCommitIntentFailurePhase,
     ];
     private const string LeaderboardStagingReadColumns = "scrape_id, song_id, instrument, page_num, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, staged_at";
     private const string SongInstrumentThresholdsCte = """
@@ -68,18 +75,26 @@ public sealed class MetaDatabase : IMetaDatabase
     public MetaDatabase(
         NpgsqlDataSource dataSource,
         ILogger<MetaDatabase> log,
-        BandRankHistoryOptions? bandRankHistoryOptions = null)
+        BandRankHistoryOptions? bandRankHistoryOptions = null,
+        PublicationCommitOptions? publicationCommitOptions = null)
     {
         _ds = dataSource;
         _log = log;
         _bandRankHistoryOptions = bandRankHistoryOptions ?? new BandRankHistoryOptions();
+        _publicationCommitOptions =
+            publicationCommitOptions ?? new PublicationCommitOptions();
     }
 
     public MetaDatabase(
         NpgsqlDataSource dataSource,
         ILogger<MetaDatabase> log,
-        IOptions<BandRankHistoryOptions> bandRankHistoryOptions)
-        : this(dataSource, log, bandRankHistoryOptions.Value)
+        IOptions<BandRankHistoryOptions> bandRankHistoryOptions,
+        IOptions<PublicationCommitOptions> publicationCommitOptions)
+        : this(
+            dataSource,
+            log,
+            bandRankHistoryOptions.Value,
+            publicationCommitOptions.Value)
     {
     }
 
@@ -132,6 +147,35 @@ public sealed class MetaDatabase : IMetaDatabase
                 "lockKey",
                 PublicationGenerationSchema.AdvisoryLockKey);
             publicationLock.ExecuteNonQuery();
+        }
+
+        using (var deferredPublication = conn.CreateCommand())
+        {
+            deferredPublication.Transaction = tx;
+            deferredPublication.CommandText = """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM scrape_publication_state publication
+                    JOIN publication_generations generation
+                      ON generation.publication_id =
+                            publication.working_publication_id
+                    WHERE publication.id = TRUE
+                      AND publication.public_reads_frozen_reason =
+                            @deferredReason
+                      AND generation.status = 'ready'
+                )
+                """;
+            deferredPublication.Parameters.AddWithValue(
+                "deferredReason",
+                PublicReadFreezeState.PublicationCommitDeferredReason);
+            if (deferredPublication.ExecuteScalar() is true)
+            {
+                throw new PublicationCommitBusyException(
+                    "A ready publication is deferred and must be retried before allocating another scrape.",
+                    TimeSpan.Zero,
+                    lockRejections: 1,
+                    relationLockRetries: 0);
+            }
         }
 
         SongCatalogPersistenceToken persistedCatalog;
@@ -377,7 +421,11 @@ public sealed class MetaDatabase : IMetaDatabase
                 $"Scrape run {scrapeId} cannot be completed after it has failed.");
     }
 
-    public void FailScrapeRun(long scrapeId, string phase, string message)
+#if false
+    private void FailScrapeRunMonolithic(
+        long scrapeId,
+        string phase,
+        string message)
     {
         if (scrapeId <= 0)
             return;
@@ -503,6 +551,8 @@ public sealed class MetaDatabase : IMetaDatabase
 
         tx.Commit();
     }
+
+#endif
 
     public void RecordScrapeWriterFailures(
         long scrapeId,
@@ -1151,7 +1201,8 @@ public sealed class MetaDatabase : IMetaDatabase
             reader.IsDBNull(3) ? null : reader.GetString(3));
     }
 
-    public void PublishScrapeRun(
+#if false
+    private void PublishScrapeRunMonolithic(
         long scrapeId,
         bool promoteCachedResponses = true,
         int? expectedPublishedScopeCount = null,
@@ -1878,8 +1929,11 @@ public sealed class MetaDatabase : IMetaDatabase
         tx.Commit();
     }
 
+#endif
+
     public void SetPublicReadFreeze(bool frozen, long? scrapeId = null, string? reason = null)
     {
+        PublicReadFreezeWriteTestHook?.Invoke();
         using var conn = _ds.OpenConnection();
         EnsureScrapePublicationStateTable(conn);
         using var tx = conn.BeginTransaction();
@@ -1895,6 +1949,9 @@ public sealed class MetaDatabase : IMetaDatabase
                 ON CONFLICT (id) DO UPDATE SET
                     public_reads_frozen = EXCLUDED.public_reads_frozen,
                     public_reads_frozen_at = CASE
+                        WHEN EXCLUDED.public_reads_frozen_reason =
+                                @commitIntentReason
+                            THEN EXCLUDED.public_reads_frozen_at
                         WHEN scrape_publication_state.public_reads_frozen
                          AND EXCLUDED.public_reads_frozen
                             THEN scrape_publication_state.public_reads_frozen_at
@@ -1908,12 +1965,43 @@ public sealed class MetaDatabase : IMetaDatabase
                         ELSE NULL
                     END,
                     public_reads_frozen_reason = EXCLUDED.public_reads_frozen_reason,
+                    publication_commit_intent_started_at = NULL,
+                    publication_commit_intent_heartbeat_at = NULL,
+                    publication_commit_intent_owner = NULL,
                     updated_at = EXCLUDED.updated_at
+                WHERE COALESCE(
+                          scrape_publication_state
+                              .public_reads_frozen_reason,
+                          '')
+                        NOT IN (
+                            @commitIntentReason,
+                            @failureIsolationPendingReason,
+                            @commitDeferredReason)
+                   OR scrape_publication_state.public_reads_frozen_reason
+                        IS NOT DISTINCT FROM
+                        EXCLUDED.public_reads_frozen_reason
+                   OR (
+                        scrape_publication_state
+                            .public_reads_frozen_reason =
+                            @commitIntentReason
+                        AND scrape_publication_state
+                            .publication_commit_intent_owner IS NULL
+                   )
                 """;
             cmd.Parameters.AddWithValue("frozen", frozen);
             cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
             cmd.Parameters.AddWithValue("scrapeId", scrapeId is null ? DBNull.Value : (int)scrapeId.Value);
             cmd.Parameters.AddWithValue("reason", string.IsNullOrWhiteSpace(reason) ? DBNull.Value : reason.Trim());
+            cmd.Parameters.AddWithValue(
+                "commitIntentReason",
+                PublicReadFreezeState.PublicationCommitIntentReason);
+            cmd.Parameters.AddWithValue(
+                "failureIsolationPendingReason",
+                PublicReadFreezeState
+                    .PublicationFailureIsolationPendingReason);
+            cmd.Parameters.AddWithValue(
+                "commitDeferredReason",
+                PublicReadFreezeState.PublicationCommitDeferredReason);
             cmd.ExecuteNonQuery();
         }
 
@@ -1922,6 +2010,11 @@ public sealed class MetaDatabase : IMetaDatabase
 
     public PublicReadFreezeState GetPublicReadFreezeState()
     {
+        var injectedFailure =
+            PublicReadFreezeReadTestHook?.Invoke();
+        if (injectedFailure is not null)
+            throw injectedFailure;
+
         try
         {
             using var conn = _ds.OpenConnection();
@@ -2052,7 +2145,7 @@ public sealed class MetaDatabase : IMetaDatabase
                              'is_exact')
                    )
                    AND (
-                       SELECT COUNT(*) = 17
+                       SELECT COUNT(*) = 20
                        FROM information_schema.columns
                        WHERE table_schema = 'public'
                          AND table_name = 'scrape_publication_state'
@@ -2061,6 +2154,9 @@ public sealed class MetaDatabase : IMetaDatabase
                              'public_reads_frozen_at',
                              'public_reads_frozen_scrape_id',
                              'public_reads_frozen_reason',
+                             'publication_commit_intent_started_at',
+                             'publication_commit_intent_heartbeat_at',
+                             'publication_commit_intent_owner',
                              'band_projection_generation',
                              'improvement_notifications_scrape_id',
                              'improvement_notifications_status',
@@ -2099,6 +2195,9 @@ public sealed class MetaDatabase : IMetaDatabase
                 public_reads_frozen_at TIMESTAMPTZ,
                 public_reads_frozen_scrape_id INTEGER REFERENCES scrape_log(id),
                 public_reads_frozen_reason TEXT,
+                publication_commit_intent_started_at TIMESTAMPTZ,
+                publication_commit_intent_heartbeat_at TIMESTAMPTZ,
+                publication_commit_intent_owner TEXT,
                 band_projection_generation BIGINT,
                 improvement_notifications_scrape_id INTEGER REFERENCES scrape_log(id),
                 improvement_notifications_status TEXT,
@@ -2121,6 +2220,9 @@ public sealed class MetaDatabase : IMetaDatabase
             ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS public_reads_frozen_at TIMESTAMPTZ;
             ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS public_reads_frozen_scrape_id INTEGER REFERENCES scrape_log(id);
             ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS public_reads_frozen_reason TEXT;
+            ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS publication_commit_intent_started_at TIMESTAMPTZ;
+            ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS publication_commit_intent_heartbeat_at TIMESTAMPTZ;
+            ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS publication_commit_intent_owner TEXT;
             ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS band_projection_generation BIGINT;
             ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS improvement_notifications_scrape_id INTEGER REFERENCES scrape_log(id);
             ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS improvement_notifications_status TEXT;
@@ -11217,35 +11319,76 @@ public sealed class MetaDatabase : IMetaDatabase
 
     // ── API response cache ───────────────────────────────────────────
 
-    public (byte[] Json, string ETag)? GetCachedResponse(string cacheKey)
+    public PublicationCacheLookup GetCurrentCacheLookup(
+        string cacheKey)
     {
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            WITH current_publication AS (
-                SELECT current_publication_id
-                FROM scrape_publication_state
-                WHERE id = TRUE
-            ), generation_cache AS (
-                SELECT cache.json_data, cache.etag
-                FROM publication_api_response_cache cache
-                JOIN current_publication publication
-                  ON publication.current_publication_id = cache.publication_id
-                WHERE cache.cache_key = @key
-            )
-            SELECT json_data, etag
-            FROM generation_cache
-            UNION ALL
+            SELECT publication.current_publication_id,
+                   publication.published_scrape_id,
+                   publication.published_at,
+                   cache.json_data,
+                   cache.etag
+            FROM scrape_publication_state publication
+            LEFT JOIN publication_api_response_cache cache
+              ON cache.publication_id =
+                    publication.current_publication_id
+             AND cache.cache_key = @key
+            WHERE publication.id = TRUE
+              AND publication.current_publication_id IS NOT NULL
+              AND publication.published_scrape_id IS NOT NULL
+            """;
+        cmd.Parameters.AddWithValue("key", cacheKey);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return new PublicationCacheLookup(false, null);
+
+        var cachedResponse = reader.IsDBNull(3)
+            ? null
+            : new PublicationCachedResponse(
+                reader.GetInt64(0),
+                Convert.ToInt64(reader.GetValue(1)),
+                reader.IsDBNull(2) ? null : reader.GetDateTime(2),
+                (byte[])reader[3],
+                reader.GetString(4));
+        return new PublicationCacheLookup(true, cachedResponse);
+    }
+
+    public PublicationCachedResponse? GetCurrentCachedResponse(
+        string cacheKey) =>
+        GetCurrentCacheLookup(cacheKey).CachedResponse;
+
+    public (byte[] Json, string ETag)? GetCachedResponse(string cacheKey)
+    {
+        var lookup = GetCurrentCacheLookup(cacheKey);
+        if (lookup.CachedResponse is not null)
+        {
+            return (
+                lookup.CachedResponse.Json,
+                lookup.CachedResponse.ETag);
+        }
+        if (lookup.HasCurrentPublication)
+            return null;
+
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
             SELECT legacy.json_data, legacy.etag
             FROM api_response_cache legacy
             WHERE legacy.cache_key = @key
-              AND NOT EXISTS (SELECT 1 FROM generation_cache)
-            LIMIT 1
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM scrape_publication_state publication
+                  WHERE publication.id = TRUE
+                    AND publication.current_publication_id IS NOT NULL
+              )
             """;
         cmd.Parameters.AddWithValue("key", cacheKey);
-        using var r = cmd.ExecuteReader();
-        if (!r.Read()) return null;
-        return ((byte[])r[0], r.GetString(1));
+        using var reader = cmd.ExecuteReader();
+        return reader.Read()
+            ? ((byte[])reader[0], reader.GetString(1))
+            : null;
     }
 
     public (byte[] Json, string ETag)? GetCachedResponse(

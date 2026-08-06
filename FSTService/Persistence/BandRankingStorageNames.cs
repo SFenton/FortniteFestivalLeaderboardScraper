@@ -20,6 +20,26 @@ internal static class BandRankingStorageNames
 
     internal static string GetPublishedStatsTable(string bandType) => $"band_team_ranking_stats_published_{GetBandTypeSlug(bandType)}";
 
+    internal static string GetPreparedPublishedRankingTable(
+        long publicationId,
+        string bandType) =>
+        $"btr_pubprep_{publicationId}_{GetBandTypeSlug(bandType)}";
+
+    internal static string GetPreparedPublishedStatsTable(
+        long publicationId,
+        string bandType) =>
+        $"btrs_pubprep_{publicationId}_{GetBandTypeSlug(bandType)}";
+
+    internal static string GetRetainedPublishedRankingTable(
+        long publicationId,
+        string bandType) =>
+        $"btr_retained_{publicationId}_{GetBandTypeSlug(bandType)}";
+
+    internal static string GetRetainedPublishedStatsTable(
+        long publicationId,
+        string bandType) =>
+        $"btrs_retained_{publicationId}_{GetBandTypeSlug(bandType)}";
+
     internal static string GetCreateRankingTableSql(string tableName, bool includePrimaryKey, bool temporary = false, bool ifNotExists = false, bool onCommitDrop = false)
     {
         var createPrefix = temporary ? "CREATE TEMP TABLE" : "CREATE TABLE";

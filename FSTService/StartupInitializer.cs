@@ -21,6 +21,10 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
     private readonly ItemShopService _shopService;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ScraperOptions _scraperOptions;
+    private readonly PublicationCommitOptions
+        _publicationCommitOptions;
+    private readonly IPublicationRecoveryCoordinator?
+        _publicationRecovery;
     private readonly RolloutReadOnlyViolationMonitor? _readOnlyViolations;
     private readonly ILogger<StartupInitializer> _log;
     private readonly TaskCompletionSource _readySignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -41,7 +45,11 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
         IHostApplicationLifetime lifetime,
         IOptions<ScraperOptions> scraperOptions,
         ILogger<StartupInitializer> log,
-        RolloutReadOnlyViolationMonitor? readOnlyViolations = null)
+        RolloutReadOnlyViolationMonitor? readOnlyViolations = null,
+        IOptions<PublicationCommitOptions>?
+            publicationCommitOptions = null,
+        IPublicationRecoveryCoordinator?
+            publicationRecovery = null)
     {
         _persistence = persistence;
         _dataSource = dataSource;
@@ -49,6 +57,10 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
         _shopService = shopService;
         _lifetime = lifetime;
         _scraperOptions = scraperOptions.Value;
+        _publicationCommitOptions =
+            publicationCommitOptions?.Value
+            ?? new PublicationCommitOptions();
+        _publicationRecovery = publicationRecovery;
         _log = log;
         _readOnlyViolations = readOnlyViolations;
     }
@@ -104,6 +116,53 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
             var songTask = _festivalService.InitializeAsync();
 
             await Task.WhenAll(dbTask, songTask);
+
+            var recovery = _publicationRecovery?.RunOnce();
+            var commitIntentReconciliation =
+                recovery?.CommitIntent
+                ?? _persistence.Meta
+                    .ReconcileStalePublicationCommitIntent(
+                        TimeSpan.FromSeconds(
+                            Math.Max(
+                                1,
+                                _publicationCommitOptions
+                                    .StaleCommitIntentSeconds)));
+            if (commitIntentReconciliation.Status is not (
+                PublicationCommitIntentReconciliationStatus.NotPresent
+                or PublicationCommitIntentReconciliationStatus.Fresh))
+            {
+                _log.LogWarning(
+                    "Startup publication commit-intent reconciliation result: {Status}; scrape={ScrapeId}; age={Age}.",
+                    commitIntentReconciliation.Status,
+                    commitIntentReconciliation.ScrapeId,
+                    commitIntentReconciliation.Age);
+            }
+            if (recovery is null)
+            {
+                _ = _persistence.Meta
+                    .ReconcileAbandonedWorkingPublication(
+                        TimeSpan.FromSeconds(
+                            Math.Max(
+                                1,
+                                _publicationCommitOptions
+                                    .AbandonedReadyGraceSeconds)),
+                        TimeSpan.FromSeconds(
+                            Math.Max(
+                                1,
+                                _publicationCommitOptions
+                                    .WorkerHeartbeatFreshSeconds)));
+            }
+            var bandOrphanSweep =
+                recovery?.BandSweep
+                ?? _persistence.Meta
+                    .SweepPublicationBandTableOrphans();
+            if (!bandOrphanSweep.Completed)
+            {
+                _log.LogWarning(
+                    "Startup publication band orphan sweep deferred. LockAcquired={LockAcquired}, Examined={Examined}.",
+                    bandOrphanSweep.LockAcquired,
+                    bandOrphanSweep.ExaminedTableCount);
+            }
 
             // Initialize Item Shop service (loads from DB + first scrape)
             await _shopService.InitializeAsync(ct);

@@ -1264,6 +1264,10 @@ public sealed class MetaDatabaseTests : IDisposable
             Db.GetCachedResponse(
                 secondGeneration.PublicationId,
                 "player:acct_1:::")?.Json);
+        Assert.True(RelationExists(
+            BandRankingStorageNames.GetRetainedPublishedRankingTable(
+                firstGeneration.PublicationId,
+                "Band_Duets")));
 
         var thirdScrapeId = Db.StartScrapeRun();
         Db.CompleteScrapeRun(thirdScrapeId, 1, 30, 3, 300);
@@ -1282,6 +1286,14 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.NotNull(Db.GetCachedResponse(
             thirdGeneration.PublicationId,
             "player:acct_1:::"));
+        Assert.False(RelationExists(
+            BandRankingStorageNames.GetRetainedPublishedRankingTable(
+                firstGeneration.PublicationId,
+                "Band_Duets")));
+        Assert.True(RelationExists(
+            BandRankingStorageNames.GetRetainedPublishedRankingTable(
+                secondGeneration.PublicationId,
+                "Band_Duets")));
         Assert.False(HasPublicationSongCatalog(
             firstGeneration.PublicationId));
         Assert.True(HasPublicationSongCatalog(
@@ -1516,6 +1528,60 @@ public sealed class MetaDatabaseTests : IDisposable
                 .Single(binding =>
                     binding.SurfaceName == "api_response_cache")
                 .BindingKind);
+    }
+
+    [Fact]
+    public async Task SchemaUpgrade_PreservesAuthoritativeGenerationBeforeCompatibilityCleanup()
+    {
+        var oldScrapeId = Db.StartScrapeRun();
+        Db.BulkSetCachedResponses(
+        [
+                (Key: "cutover-key", Json: new byte[] { 1 }, ETag: "\"old\""),
+        ]);
+        Db.CompleteScrapeRun(oldScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+                oldScrapeId,
+                promoteCachedResponses: false);
+
+        var candidateScrapeId = Db.StartScrapeRun();
+        Db.BulkSetCachedResponsesStaging(
+        [
+                (Key: "cutover-key", Json: new byte[] { 2 }, ETag: "\"new\""),
+        ]);
+        Db.CompleteScrapeRun(candidateScrapeId, 1, 20, 2, 200);
+        var preparation =
+                Db.PrepareScrapePublication(candidateScrapeId);
+        Db.SetPublicReadFreeze(
+                true,
+                candidateScrapeId,
+                PublicReadFreezeState.PublicationCommitIntentReason);
+        var commit =
+                Db.CommitPreparedScrapePublication(preparation);
+
+        using (var conn = DataSource.OpenConnection())
+        using (var legacy = conn.CreateCommand())
+        {
+                legacy.CommandText = """
+                    SELECT json_data
+                    FROM api_response_cache
+                    WHERE cache_key = 'cutover-key'
+                    """;
+                Assert.Equal(
+                    new byte[] { 1 },
+                    (byte[]?)legacy.ExecuteScalar());
+        }
+        Assert.Equal(
+                new byte[] { 2 },
+                Db.GetCachedResponse("cutover-key")?.Json);
+
+        await DatabaseInitializer.EnsureSchemaAsync(DataSource);
+
+        Assert.Equal(
+                new byte[] { 2 },
+                Db.GetCachedResponse("cutover-key")?.Json);
+        Db.CleanupPublishedScrapePublication(
+                preparation,
+                commit);
     }
 
     [Fact]
@@ -1863,6 +1929,1550 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public async Task PrepareScrapePublication_KeepsOldPublicationReadableWithoutExclusiveLock()
+    {
+        var oldScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(oldScrapeId, 1, 10, 1, 100);
+        Db.BulkSetCachedResponses(
+        [
+            (Key: "publication-split", Json: new byte[] { 1 }, ETag: "\"old\""),
+        ]);
+        Db.PublishScrapeRun(
+            oldScrapeId,
+            promoteCachedResponses: false);
+        var oldPublicationId =
+            Db.GetPublicationPointerState().CurrentPublicationId;
+
+        var candidateScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(candidateScrapeId, 2, 20, 2, 200);
+        Db.BulkSetCachedResponsesStaging(
+        [
+            (Key: "publication-split", Json: new byte[] { 2 }, ETag: "\"new\""),
+        ]);
+
+        var bandRankingTable =
+            BandRankingStorageNames.GetCurrentRankingTable("Band_Duets");
+        using var blocker = DataSource.OpenConnection();
+        using var blockerTx = await blocker.BeginTransactionAsync();
+        using (var lockCommand = blocker.CreateCommand())
+        {
+            lockCommand.Transaction = blockerTx;
+            lockCommand.CommandText =
+                $"LOCK TABLE {BandRankingStorageNames.QuoteIdentifier(bandRankingTable)} " +
+                "IN ACCESS EXCLUSIVE MODE";
+            await lockCommand.ExecuteNonQueryAsync();
+        }
+
+        var prepareTask = Task.Run(() =>
+            Db.PrepareScrapePublication(candidateScrapeId));
+        await WaitForBlockedRelationLockAsync(bandRankingTable);
+
+        try
+        {
+            using var readConnection = DataSource.OpenConnection();
+            using var readTx = readConnection.BeginTransaction();
+            using var sharedLock = readConnection.CreateCommand();
+            sharedLock.Transaction = readTx;
+            sharedLock.CommandText =
+                "SELECT pg_try_advisory_xact_lock_shared(@lockKey)";
+            sharedLock.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+            Assert.True(sharedLock.ExecuteScalar() is true);
+            Assert.Equal(
+                oldPublicationId,
+                Db.GetPublicationPointerState().CurrentPublicationId);
+            Assert.Equal(
+                new byte[] { 1 },
+                Db.GetCachedResponse("publication-split")?.Json);
+            readTx.Commit();
+        }
+        finally
+        {
+            await blockerTx.RollbackAsync();
+        }
+
+        var preparation =
+            await prepareTask.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(
+            PublicationGenerationStatus.Ready,
+            Db.GetPublicationGeneration(preparation.PublicationId)?.Status);
+        Assert.Equal(
+            oldPublicationId,
+            Db.GetPublicationPointerState().CurrentPublicationId);
+        Assert.True(RelationExists(
+            BandRankingStorageNames.GetPreparedPublishedRankingTable(
+                preparation.PublicationId,
+                "Band_Duets")));
+
+        Db.SetPublicReadFreeze(
+            true,
+            candidateScrapeId,
+            PublicReadFreezeState.PublicationCommitIntentReason);
+        var commit = Db.CommitPreparedScrapePublication(preparation);
+        Db.CleanupPublishedScrapePublication(preparation, commit);
+        Assert.Equal(
+            preparation.PublicationId,
+            Db.GetPublicationPointerState().CurrentPublicationId);
+        Assert.Equal(
+            new byte[] { 2 },
+            Db.GetCachedResponse("publication-split")?.Json);
+    }
+
+    [Fact]
+    public void PrepareScrapePublication_UsesBoundedServerLockTimeout()
+    {
+        var publishedScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            10,
+            1,
+            100);
+        Db.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var candidateScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(
+            candidateScrapeId,
+            1,
+            20,
+            2,
+            200);
+        var currentBandTable =
+            BandRankingStorageNames.GetCurrentRankingTable(
+                "Band_Duets");
+        using var blocker = DataSource.OpenConnection();
+        using var blockerTx = blocker.BeginTransaction();
+        using (var lockTable = blocker.CreateCommand())
+        {
+            lockTable.Transaction = blockerTx;
+            lockTable.CommandText =
+                $"LOCK TABLE {BandRankingStorageNames.QuoteIdentifier(currentBandTable)} " +
+                "IN ACCESS EXCLUSIVE MODE";
+            lockTable.ExecuteNonQuery();
+        }
+        using var boundedDb = new MetaDatabase(
+            DataSource,
+            Substitute.For<ILogger<MetaDatabase>>(),
+            publicationCommitOptions:
+                new PublicationCommitOptions
+                {
+                    PreparationLockTimeoutMilliseconds = 50,
+                    PreparationStatementTimeoutMilliseconds = 1_000,
+                    PreparationTransactionTimeoutMilliseconds = 1_000,
+                });
+
+        var exception = Assert.Throws<PostgresException>(() =>
+            boundedDb.PrepareScrapePublication(
+                candidateScrapeId,
+                promoteCachedResponses: false));
+
+        Assert.Equal(
+            PostgresErrorCodes.LockNotAvailable,
+            exception.SqlState);
+        Assert.Equal(
+            PublicationGenerationStatus.Building,
+            Db.GetPublicationGenerationForScrape(
+                candidateScrapeId)?.Status);
+        blockerTx.Commit();
+        Db.FailScrapeRun(
+            candidateScrapeId,
+            "test",
+            "cleanup");
+    }
+
+    [Fact]
+    public async Task CommitPreparedScrapePublication_DoesNotQueueExclusiveWaiter()
+    {
+        var oldScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(oldScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            oldScrapeId,
+            promoteCachedResponses: false);
+        var oldPublicationId =
+            Db.GetPublicationPointerState().CurrentPublicationId;
+
+        var candidateScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(candidateScrapeId, 1, 20, 2, 200);
+        var preparation = Db.PrepareScrapePublication(
+            candidateScrapeId,
+            promoteCachedResponses: false);
+        Db.SetPublicReadFreeze(
+            true,
+            candidateScrapeId,
+            PublicReadFreezeState.PublicationCommitIntentReason);
+
+        using var readConnection = DataSource.OpenConnection();
+        using var readTx = readConnection.BeginTransaction();
+        using (var sharedLock = readConnection.CreateCommand())
+        {
+            sharedLock.Transaction = readTx;
+            sharedLock.CommandText =
+                "SELECT pg_advisory_xact_lock_shared(@lockKey)";
+            sharedLock.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+            sharedLock.ExecuteNonQuery();
+        }
+
+        using var boundedDb = new MetaDatabase(
+            DataSource,
+            Substitute.For<ILogger<MetaDatabase>>(),
+            publicationCommitOptions: new PublicationCommitOptions
+            {
+                DrainTimeoutMilliseconds = 250,
+                RetryDelayMilliseconds = 20,
+                RelationLockTimeoutMilliseconds = 50,
+                StatementTimeoutMilliseconds = 500,
+                MaxExclusiveLockDurationMilliseconds = 500,
+            });
+        var commitTask = Task.Run(() =>
+            boundedDb.CommitPreparedScrapePublication(preparation));
+        await Task.Delay(100);
+        Assert.Equal(0L, CountUngrantedPublicationAdvisoryLocks());
+        var exception = await Assert.ThrowsAsync<PublicationCommitBusyException>(
+            async () => await commitTask);
+        Assert.True(exception.LockRejections > 0);
+        Assert.Equal(
+            oldPublicationId,
+            Db.GetPublicationPointerState().CurrentPublicationId);
+        Assert.Equal(
+            PublicationGenerationStatus.Ready,
+            Db.GetPublicationGeneration(preparation.PublicationId)?.Status);
+
+        readTx.Commit();
+        var commit = Db.CommitPreparedScrapePublication(preparation);
+        Assert.True(
+            commit.ExclusiveLockDuration
+            <= TimeSpan.FromMilliseconds(5_000));
+        Db.CleanupPublishedScrapePublication(preparation, commit);
+    }
+
+    [Fact]
+    public async Task CommitPreparedScrapePublication_RollsBackBoundedRelationLockFailure()
+    {
+        var oldScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(oldScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            oldScrapeId,
+            promoteCachedResponses: false);
+        var oldPublicationId =
+            Db.GetPublicationPointerState().CurrentPublicationId;
+
+        var candidateScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(candidateScrapeId, 1, 20, 2, 200);
+        var preparation = Db.PrepareScrapePublication(
+            candidateScrapeId,
+            promoteCachedResponses: false);
+        Db.SetPublicReadFreeze(
+            true,
+            candidateScrapeId,
+            PublicReadFreezeState.PublicationCommitIntentReason);
+
+        var publishedBandTable =
+            BandRankingStorageNames.GetPublishedRankingTable(
+                "Band_Duets");
+        using var blocker = DataSource.OpenConnection();
+        using var blockerTx = blocker.BeginTransaction();
+        using (var relationLock = blocker.CreateCommand())
+        {
+            relationLock.Transaction = blockerTx;
+            relationLock.CommandText =
+                $"LOCK TABLE {BandRankingStorageNames.QuoteIdentifier(publishedBandTable)} " +
+                "IN ACCESS SHARE MODE";
+            relationLock.ExecuteNonQuery();
+        }
+
+        using var boundedDb = new MetaDatabase(
+            DataSource,
+            Substitute.For<ILogger<MetaDatabase>>(),
+            publicationCommitOptions: new PublicationCommitOptions
+            {
+                DrainTimeoutMilliseconds = 1_000,
+                RetryDelayMilliseconds = 10,
+                RelationLockTimeoutMilliseconds = 70,
+                StatementTimeoutMilliseconds = 1_000,
+                MaxExclusiveLockDurationMilliseconds = 150,
+            });
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var exception =
+            Assert.Throws<PublicationCommitDeadlineExceededException>(
+            () => boundedDb.CommitPreparedScrapePublication(
+                preparation));
+        stopwatch.Stop();
+        Assert.True(exception.RelationLockRetries > 0);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromMilliseconds(500));
+        Assert.Equal(
+            oldPublicationId,
+            Db.GetPublicationPointerState().CurrentPublicationId);
+        Assert.True(RelationExists(publishedBandTable));
+        Assert.True(RelationExists(
+            BandRankingStorageNames.GetPreparedPublishedRankingTable(
+                preparation.PublicationId,
+                "Band_Duets")));
+
+        blockerTx.Commit();
+        var commit = Db.CommitPreparedScrapePublication(preparation);
+        Db.CleanupPublishedScrapePublication(preparation, commit);
+    }
+
+    [Fact]
+    public void PublishScrapeRun_DrainTimeoutRestoresPreviousFreeze()
+    {
+        var oldScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(oldScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            oldScrapeId,
+            promoteCachedResponses: false);
+
+        var candidateScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(candidateScrapeId, 1, 20, 2, 200);
+        Db.SetPublicReadFreeze(
+            true,
+            candidateScrapeId,
+            "publish");
+
+        using var readConnection = DataSource.OpenConnection();
+        using var readTx = readConnection.BeginTransaction();
+        using (var sharedLock = readConnection.CreateCommand())
+        {
+            sharedLock.Transaction = readTx;
+            sharedLock.CommandText =
+                "SELECT pg_advisory_xact_lock_shared(@lockKey)";
+            sharedLock.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+            sharedLock.ExecuteNonQuery();
+        }
+
+        using var boundedDb = new MetaDatabase(
+            DataSource,
+            Substitute.For<ILogger<MetaDatabase>>(),
+            publicationCommitOptions: new PublicationCommitOptions
+            {
+                DrainTimeoutMilliseconds = 150,
+                RetryDelayMilliseconds = 20,
+                RelationLockTimeoutMilliseconds = 50,
+                StatementTimeoutMilliseconds = 500,
+                MaxExclusiveLockDurationMilliseconds = 500,
+            });
+
+        Assert.Throws<PublicationCommitBusyException>(() =>
+            boundedDb.PublishScrapeRun(
+                candidateScrapeId,
+                promoteCachedResponses: false));
+
+        var freeze = Db.GetPublicReadFreezeState();
+        Assert.True(freeze.IsFrozen);
+        Assert.Equal("publish", freeze.Reason);
+        Assert.False(freeze.PublicationCommitPending);
+
+        readTx.Commit();
+        Db.FailScrapeRun(
+            candidateScrapeId,
+            "test",
+            "cleanup");
+    }
+
+    [Fact]
+    public void CommitBusyThenDegradedFailureIsolationAllowsNextPublication()
+    {
+        var oldScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(oldScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            oldScrapeId,
+            promoteCachedResponses: false);
+        var candidateScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(
+            candidateScrapeId,
+            1,
+            20,
+            2,
+            200);
+        Db.SetPublicReadFreeze(
+            true,
+            candidateScrapeId,
+            "publish");
+
+        using var readConnection = DataSource.OpenConnection();
+        using var readTx = readConnection.BeginTransaction();
+        using (var sharedLock = readConnection.CreateCommand())
+        {
+            sharedLock.Transaction = readTx;
+            sharedLock.CommandText =
+                "SELECT pg_advisory_xact_lock_shared(@lockKey)";
+            sharedLock.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+            sharedLock.ExecuteNonQuery();
+        }
+
+        using var boundedDb = new MetaDatabase(
+            DataSource,
+            Substitute.For<ILogger<MetaDatabase>>(),
+            publicationCommitOptions: new PublicationCommitOptions
+            {
+                DrainTimeoutMilliseconds = 150,
+                RetryDelayMilliseconds = 20,
+                RelationLockTimeoutMilliseconds = 50,
+                StatementTimeoutMilliseconds = 500,
+                MaxExclusiveLockDurationMilliseconds = 500,
+            });
+        Assert.Throws<PublicationCommitBusyException>(() =>
+            boundedDb.PublishScrapeRun(
+                candidateScrapeId,
+                promoteCachedResponses: false));
+
+        boundedDb.FailScrapeRun(
+                candidateScrapeId,
+                "test",
+                "injected");
+
+        var freeze = Db.GetPublicReadFreezeState();
+        Assert.True(freeze.IsFrozen);
+        Assert.Equal("publish", freeze.Reason);
+        Assert.False(freeze.PublicationCommitPending);
+        Assert.Null(
+            Db.GetPublicationPointerState()
+                .WorkingPublicationId);
+        Assert.Equal(
+            PublicationGenerationStatus.Failed,
+            Db.GetPublicationGenerationForScrape(
+                candidateScrapeId)?.Status);
+
+        readTx.Commit();
+        var nextScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(
+            nextScrapeId,
+            1,
+            30,
+            3,
+            300);
+        Db.PublishScrapeRun(
+            nextScrapeId,
+            promoteCachedResponses: false);
+        Assert.Equal(
+            nextScrapeId,
+            Db.GetPublicationPointerState()
+                .PublishedScrapeId);
+    }
+
+    [Fact]
+    public void PublishScrapeRun_LockNotAvailableRestoresPreviousFreeze()
+    {
+        var oldScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(oldScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            oldScrapeId,
+            promoteCachedResponses: false);
+
+        var candidateScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(candidateScrapeId, 1, 20, 2, 200);
+        Db.SetPublicReadFreeze(
+            true,
+            candidateScrapeId,
+            "publish");
+        CreatePublicationStateFailureTrigger(
+            "publication_lock_not_available",
+            PostgresErrorCodes.LockNotAvailable);
+        try
+        {
+            using var boundedDb = new MetaDatabase(
+                DataSource,
+                Substitute.For<ILogger<MetaDatabase>>(),
+                publicationCommitOptions: new PublicationCommitOptions
+                {
+                    DrainTimeoutMilliseconds = 1_000,
+                    RetryDelayMilliseconds = 10,
+                    RelationLockTimeoutMilliseconds = 50,
+                    StatementTimeoutMilliseconds = 1_000,
+                    MaxExclusiveLockDurationMilliseconds = 150,
+                });
+
+            Assert.Throws<PublicationCommitDeadlineExceededException>(
+                () => boundedDb.PublishScrapeRun(
+                    candidateScrapeId,
+                    promoteCachedResponses: false));
+        }
+        finally
+        {
+            DropPublicationStateFailureTrigger(
+                "publication_lock_not_available");
+        }
+
+        var freeze = Db.GetPublicReadFreezeState();
+        Assert.True(freeze.IsFrozen);
+        Assert.Equal("publish", freeze.Reason);
+        Assert.False(freeze.PublicationCommitPending);
+        Db.FailScrapeRun(
+            candidateScrapeId,
+            "test",
+            "cleanup");
+    }
+
+    [Fact]
+    public void PublishScrapeRun_NonLockExceptionRestoresPreviousFreeze()
+    {
+        var oldScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(oldScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            oldScrapeId,
+            promoteCachedResponses: false);
+
+        var candidateScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(candidateScrapeId, 1, 20, 2, 200);
+        Db.SetPublicReadFreeze(
+            true,
+            candidateScrapeId,
+            "publish");
+        CreatePublicationStateFailureTrigger(
+            "publication_non_lock_failure",
+            PostgresErrorCodes.RaiseException);
+        try
+        {
+            var exception = Assert.Throws<PostgresException>(() =>
+                Db.PublishScrapeRun(
+                    candidateScrapeId,
+                    promoteCachedResponses: false));
+            Assert.Equal(
+                PostgresErrorCodes.RaiseException,
+                exception.SqlState);
+        }
+        finally
+        {
+            DropPublicationStateFailureTrigger(
+                "publication_non_lock_failure");
+        }
+
+        var freeze = Db.GetPublicReadFreezeState();
+        Assert.True(freeze.IsFrozen);
+        Assert.Equal("publish", freeze.Reason);
+        Assert.False(freeze.PublicationCommitPending);
+        Db.FailScrapeRun(
+            candidateScrapeId,
+            "test",
+            "cleanup");
+    }
+
+    [Fact]
+    public void PublishScrapeRun_AlreadyPublishedClearsCommitIntent()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(scrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        Db.SetPublicReadFreeze(
+            true,
+            scrapeId,
+            PublicReadFreezeState.PublicationCommitIntentReason);
+
+        Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+
+        Assert.False(Db.GetPublicReadFreezeState().IsFrozen);
+    }
+
+    [Fact]
+    public async Task CommitIntent_RefreshesOldFreezeTimestampAndStaysActiveBetweenRetries()
+    {
+        var oldScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(oldScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            oldScrapeId,
+            promoteCachedResponses: false);
+        var candidateScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(candidateScrapeId, 1, 20, 2, 200);
+        var preparation = Db.PrepareScrapePublication(
+            candidateScrapeId,
+            promoteCachedResponses: false);
+        Db.SetPublicReadFreeze(
+            true,
+            candidateScrapeId,
+            "scrape");
+        using (var conn = DataSource.OpenConnection())
+        using (var ageFreeze = conn.CreateCommand())
+        {
+            ageFreeze.CommandText = """
+                UPDATE scrape_publication_state
+                SET public_reads_frozen_at =
+                    now() - interval '2 hours'
+                WHERE id = TRUE
+                """;
+            ageFreeze.ExecuteNonQuery();
+        }
+
+        var commitIntent =
+            Db.BeginPublicationCommitIntent(candidateScrapeId);
+        Assert.Throws<PublicationCommitBusyException>(() =>
+            Db.BeginPublicationCommitIntent(
+                candidateScrapeId));
+        var initialLease = ReadPublicationCommitIntentLease();
+        Assert.Equal(
+            commitIntent.OwnerToken,
+            initialLease.OwnerToken);
+        Assert.True(
+            initialLease.FrozenAtUtc
+            > DateTime.UtcNow.AddSeconds(-5));
+        Assert.True(
+            initialLease.StartedAtUtc
+            > DateTime.UtcNow.AddSeconds(-5));
+        Assert.True(
+            initialLease.HeartbeatAtUtc
+            > DateTime.UtcNow.AddSeconds(-5));
+        Assert.Equal(
+            PublicationCommitIntentReconciliationStatus.Fresh,
+            Db.ReconcileStalePublicationCommitIntent(
+                    TimeSpan.FromSeconds(30))
+                .Status);
+
+        using var readConnection = DataSource.OpenConnection();
+        using var readTx = readConnection.BeginTransaction();
+        using (var sharedLock = readConnection.CreateCommand())
+        {
+            sharedLock.Transaction = readTx;
+            sharedLock.CommandText =
+                "SELECT pg_advisory_xact_lock_shared(@lockKey)";
+            sharedLock.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+            sharedLock.ExecuteNonQuery();
+        }
+
+        using var boundedDb = new MetaDatabase(
+            DataSource,
+            Substitute.For<ILogger<MetaDatabase>>(),
+            publicationCommitOptions: new PublicationCommitOptions
+            {
+                DrainTimeoutMilliseconds = 2_000,
+                RetryDelayMilliseconds = 20,
+                RelationLockTimeoutMilliseconds = 100,
+                StatementTimeoutMilliseconds = 1_000,
+                MaxExclusiveLockDurationMilliseconds = 1_000,
+                StaleCommitIntentSeconds = 30,
+            });
+        var commitTask = Task.Run(() =>
+            boundedDb.CommitPreparedScrapePublication(
+                preparation,
+                commitIntent));
+        await WaitForPublicationCommitHeartbeatAfterAsync(
+            initialLease.HeartbeatAtUtc);
+
+        for (var sample = 0; sample < 3; sample++)
+        {
+            var reconciliation =
+                Db.ReconcileStalePublicationCommitIntent(
+                    TimeSpan.FromSeconds(30));
+            Assert.Equal(
+                PublicationCommitIntentReconciliationStatus.Fresh,
+                reconciliation.Status);
+            Assert.Equal(
+                PublicationGenerationStatus.Ready,
+                Db.GetPublicationGeneration(
+                    preparation.PublicationId)?.Status);
+            Assert.Equal(
+                preparation.PublicationId,
+                Db.GetPublicationPointerState()
+                    .WorkingPublicationId);
+            await Task.Delay(30);
+        }
+
+        readTx.Commit();
+        var commit =
+            await commitTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Db.CleanupPublishedScrapePublication(
+            preparation,
+            commit);
+        Assert.Equal(
+            preparation.PublicationId,
+            Db.GetPublicationPointerState()
+                .CurrentPublicationId);
+        Assert.False(
+            Db.GetPublicReadFreezeState().IsFrozen);
+    }
+
+    [Fact]
+    public void BeginPublicationCommitIntent_UpsertsMissingSingletonAndReconstructsPointers()
+    {
+        var publishedScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            10,
+            1,
+            100);
+        Db.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var publishedPublicationId =
+            Db.GetPublicationPointerState()
+                .CurrentPublicationId;
+        var candidateScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(
+            candidateScrapeId,
+            1,
+            20,
+            2,
+            200);
+        var preparation = Db.PrepareScrapePublication(
+            candidateScrapeId,
+            promoteCachedResponses: false);
+        var candidatePublicationId =
+            preparation.PublicationId;
+        var activePreparedTable =
+            BandRankingStorageNames
+                .GetPreparedPublishedRankingTable(
+                    candidatePublicationId,
+                    "Band_Duets");
+        using (var conn = DataSource.OpenConnection())
+        using (var deleteState = conn.CreateCommand())
+        {
+            deleteState.CommandText =
+                "DELETE FROM scrape_publication_state WHERE id = TRUE";
+            deleteState.ExecuteNonQuery();
+        }
+        var sweep = Db.SweepPublicationBandTableOrphans();
+        Assert.True(sweep.Completed);
+        Assert.True(RelationExists(activePreparedTable));
+
+        var commitIntent =
+            Db.BeginPublicationCommitIntent(candidateScrapeId);
+
+        var pointers = Db.GetPublicationPointerState();
+        Assert.Equal(
+            publishedPublicationId,
+            pointers.CurrentPublicationId);
+        Assert.Equal(
+            candidatePublicationId,
+            pointers.WorkingPublicationId);
+        Assert.Equal(
+            publishedScrapeId,
+            pointers.PublishedScrapeId);
+        Assert.True(
+            Db.GetPublicReadFreezeState()
+                .PublicationCommitPending);
+
+        Db.RestorePublicationCommitIntent(
+            commitIntent,
+            PublicReadFreezeState.NotFrozen);
+        Db.FailScrapeRun(
+            candidateScrapeId,
+            "test",
+            "cleanup");
+    }
+
+    [Fact]
+    public async Task PublishScrapeRun_ConcurrentSameScrapeWinnerRestoresLoserIntent()
+    {
+        var oldScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(oldScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            oldScrapeId,
+            promoteCachedResponses: false);
+        var candidateScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(candidateScrapeId, 1, 20, 2, 200);
+
+        using var preparedSignal = new ManualResetEventSlim();
+        using var releaseLoser = new ManualResetEventSlim();
+        PublicationPreparationResult? loserPreparation = null;
+        using var losingPublisher = new MetaDatabase(
+            DataSource,
+            Substitute.For<ILogger<MetaDatabase>>());
+        losingPublisher.PublicationPreparedTestHook =
+            preparation =>
+            {
+                loserPreparation = preparation;
+                preparedSignal.Set();
+                if (!releaseLoser.Wait(TimeSpan.FromSeconds(10)))
+                {
+                    throw new TimeoutException(
+                        "Timed out waiting to release losing publisher.");
+                }
+            };
+
+        var losingTask = Task.Run(() =>
+            losingPublisher.PublishScrapeRun(
+                candidateScrapeId,
+                promoteCachedResponses: false));
+        Assert.True(
+            preparedSignal.Wait(TimeSpan.FromSeconds(10)));
+        Assert.NotNull(loserPreparation);
+
+        var winningIntent =
+            Db.BeginPublicationCommitIntent(candidateScrapeId);
+        var winningCommit =
+            Db.CommitPreparedScrapePublication(
+                loserPreparation!,
+                winningIntent);
+        Assert.False(winningCommit.AlreadyPublished);
+        Db.CleanupPublishedScrapePublication(
+            loserPreparation!,
+            winningCommit);
+
+        releaseLoser.Set();
+        await losingTask.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(
+            loserPreparation!.PublicationId,
+            Db.GetPublicationPointerState()
+                .CurrentPublicationId);
+        Assert.False(
+            Db.GetPublicReadFreezeState().IsFrozen);
+        var finalLease = ReadPublicationCommitIntentLease();
+        Assert.Null(finalLease.OwnerToken);
+        Assert.Null(finalLease.StartedAtUtc);
+        Assert.Null(finalLease.HeartbeatAtUtc);
+    }
+
+    [Fact]
+    public void ReconcileStalePublicationCommitIntent_FailsWorkingCandidateAndClearsLatch()
+    {
+        var oldScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(oldScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            oldScrapeId,
+            promoteCachedResponses: false);
+        var oldPublicationId =
+            Db.GetPublicationPointerState().CurrentPublicationId;
+
+        var candidateScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(candidateScrapeId, 1, 20, 2, 200);
+        var preparation = Db.PrepareScrapePublication(
+            candidateScrapeId,
+            promoteCachedResponses: false);
+        var candidatePublicationId =
+            preparation.PublicationId;
+        var preparedBandTable =
+            BandRankingStorageNames
+                .GetPreparedPublishedRankingTable(
+                    candidatePublicationId,
+                    "Band_Duets");
+        Assert.True(RelationExists(preparedBandTable));
+        SetStalePublicationCommitIntent(candidateScrapeId);
+
+        var result =
+            Db.ReconcileStalePublicationCommitIntent(
+                TimeSpan.FromSeconds(1));
+
+        Assert.Equal(
+            PublicationCommitIntentReconciliationStatus
+                .FailedCandidateIsolated,
+            result.Status);
+        Assert.False(Db.GetPublicReadFreezeState().IsFrozen);
+        Assert.Equal(
+            oldPublicationId,
+            Db.GetPublicationPointerState().CurrentPublicationId);
+        Assert.Null(
+            Db.GetPublicationPointerState().WorkingPublicationId);
+        Assert.Equal(
+            PublicationGenerationStatus.Failed,
+            Db.GetPublicationGeneration(
+                candidatePublicationId)?.Status);
+        Assert.True(
+            Db.GetFailedCandidateReadIsolationState().IsFrozen);
+        Assert.False(RelationExists(preparedBandTable));
+    }
+
+    [Fact]
+    public void ReconcileAbandonedReadyGeneration_AllowsNextPublicationAfterRestart()
+    {
+        var publishedScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            10,
+            1,
+            100);
+        Db.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var abandonedScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(
+            abandonedScrapeId,
+            1,
+            20,
+            2,
+            200);
+        var abandoned = Db.PrepareScrapePublication(
+            abandonedScrapeId,
+            promoteCachedResponses: false);
+        var preparedBandTable =
+            BandRankingStorageNames
+                .GetPreparedPublishedRankingTable(
+                    abandoned.PublicationId,
+                    "Band_Duets");
+        Assert.True(RelationExists(preparedBandTable));
+
+        var reconciliation =
+            Db.ReconcileAbandonedWorkingPublication(
+                TimeSpan.FromSeconds(30),
+                TimeSpan.FromSeconds(30));
+
+        Assert.Equal(
+            PublicationCommitIntentReconciliationStatus
+                .AbandonedWorkingIsolated,
+            reconciliation.Status);
+        Assert.Null(
+            Db.GetPublicationPointerState()
+                .WorkingPublicationId);
+        Assert.Equal(
+            PublicationGenerationStatus.Failed,
+            Db.GetPublicationGeneration(
+                abandoned.PublicationId)?.Status);
+        Assert.False(RelationExists(preparedBandTable));
+
+        var nextScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(
+            nextScrapeId,
+            1,
+            30,
+            3,
+            300);
+        Db.PublishScrapeRun(
+            nextScrapeId,
+            promoteCachedResponses: false);
+        Assert.Equal(
+            nextScrapeId,
+            Db.GetPublicationPointerState()
+                .PublishedScrapeId);
+    }
+
+    [Fact]
+    public void ReconcileStalePublicationCommitIntent_DoesNotMaskActiveCommit()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        SetStalePublicationCommitIntent(scrapeId);
+
+        using var lockConnection = DataSource.OpenConnection();
+        using var lockTransaction =
+            lockConnection.BeginTransaction();
+        using (var publicationLock =
+               lockConnection.CreateCommand())
+        {
+            publicationLock.Transaction = lockTransaction;
+            publicationLock.CommandText =
+                "SELECT pg_advisory_xact_lock(@lockKey)";
+            publicationLock.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+            publicationLock.ExecuteNonQuery();
+        }
+
+        var result =
+            Db.ReconcileStalePublicationCommitIntent(
+                TimeSpan.FromSeconds(1));
+
+        Assert.Equal(
+            PublicationCommitIntentReconciliationStatus.Active,
+            result.Status);
+        Assert.True(
+            Db.GetPublicReadFreezeState()
+                .PublicationCommitPending);
+        lockTransaction.Commit();
+
+        _ = Db.ReconcileStalePublicationCommitIntent(
+            TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public void PendingIsolationWithoutWorkingPointerFailsFrozenScrapeBeforeUnfreeze()
+    {
+        var publishedScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            10,
+            1,
+            100);
+        Db.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var failedScrapeId = Db.StartScrapeRun();
+        using (var conn = DataSource.OpenConnection())
+        using (var state = conn.CreateCommand())
+        {
+            state.CommandText = """
+                UPDATE scrape_publication_state
+                SET working_publication_id = NULL,
+                    public_reads_frozen = TRUE,
+                    public_reads_frozen_at = now(),
+                    public_reads_frozen_scrape_id = @scrapeId,
+                    public_reads_frozen_reason = @reason,
+                    updated_at = now()
+                WHERE id = TRUE
+                """;
+            state.Parameters.AddWithValue(
+                "scrapeId",
+                checked((int)failedScrapeId));
+            state.Parameters.AddWithValue(
+                "reason",
+                PublicReadFreezeState
+                    .PublicationFailureIsolationPendingReason);
+            state.ExecuteNonQuery();
+        }
+
+        var result =
+            Db.ReconcileStalePublicationCommitIntent(
+                TimeSpan.FromSeconds(30));
+
+        Assert.Equal(
+            PublicationCommitIntentReconciliationStatus
+                .FailedCandidateIsolated,
+            result.Status);
+        Assert.Equal(
+            "failed",
+            Db.GetScrapeResumeState(failedScrapeId)?.Status);
+        Assert.False(
+            Db.GetPublicReadFreezeState().IsFrozen);
+    }
+
+    [Fact]
+    public void PendingIsolationForCurrentPublishedScrapeClearsWithoutFailingPublication()
+    {
+        var publishedScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            10,
+            1,
+            100);
+        Db.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var publicationId =
+            Db.GetPublicationPointerState()
+                .CurrentPublicationId!.Value;
+        using (var conn = DataSource.OpenConnection())
+        using (var state = conn.CreateCommand())
+        {
+            state.CommandText = """
+                UPDATE scrape_publication_state
+                SET public_reads_frozen = TRUE,
+                    public_reads_frozen_at = now(),
+                    public_reads_frozen_scrape_id = @scrapeId,
+                    public_reads_frozen_reason = @reason,
+                    updated_at = now()
+                WHERE id = TRUE
+                """;
+            state.Parameters.AddWithValue(
+                "scrapeId",
+                checked((int)publishedScrapeId));
+            state.Parameters.AddWithValue(
+                "reason",
+                PublicReadFreezeState
+                    .PublicationFailureIsolationPendingReason);
+            state.ExecuteNonQuery();
+        }
+
+        var reconciliation =
+            Db.ReconcileStalePublicationCommitIntent(
+                TimeSpan.FromSeconds(30));
+
+        Assert.Equal(
+            PublicationCommitIntentReconciliationStatus.Cleared,
+            reconciliation.Status);
+        Assert.False(
+            Db.GetPublicReadFreezeState().IsFrozen);
+        Assert.Equal(
+            publicationId,
+            Db.GetPublicationPointerState()
+                .CurrentPublicationId);
+        Assert.Equal(
+            PublicationGenerationStatus.Current,
+            Db.GetPublicationGeneration(publicationId)?.Status);
+        Assert.Equal(
+            "completed",
+            Db.GetScrapeResumeState(publishedScrapeId)?.Status);
+        Assert.False(
+            Db.GetFailedCandidateReadIsolationState().IsFrozen);
+    }
+
+    [Fact]
+    public void PendingIsolationUpdateFailureRemainsFailClosedUntilRetry()
+    {
+        var publishedScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            10,
+            1,
+            100);
+        Db.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var failedScrapeId = Db.StartScrapeRun();
+        using (var conn = DataSource.OpenConnection())
+        using (var state = conn.CreateCommand())
+        {
+            state.CommandText = """
+                UPDATE scrape_publication_state
+                SET working_publication_id = NULL,
+                    public_reads_frozen = TRUE,
+                    public_reads_frozen_at = now(),
+                    public_reads_frozen_scrape_id = @scrapeId,
+                    public_reads_frozen_reason = @reason,
+                    updated_at = now()
+                WHERE id = TRUE
+                """;
+            state.Parameters.AddWithValue(
+                "scrapeId",
+                checked((int)failedScrapeId));
+            state.Parameters.AddWithValue(
+                "reason",
+                PublicReadFreezeState
+                    .PublicationFailureIsolationPendingReason);
+            state.ExecuteNonQuery();
+        }
+        CreateScrapeFailureTrigger(
+            "pending_isolation_failure");
+        try
+        {
+            Assert.Throws<PostgresException>(() =>
+                Db.ReconcileStalePublicationCommitIntent(
+                    TimeSpan.FromSeconds(30)));
+        }
+        finally
+        {
+            DropScrapeFailureTrigger(
+                "pending_isolation_failure");
+        }
+
+        Assert.True(
+            Db.GetPublicReadFreezeState()
+                .PublicationFailureIsolationPending);
+        Assert.NotEqual(
+            "failed",
+            Db.GetScrapeResumeState(failedScrapeId)?.Status);
+
+        _ = Db.ReconcileStalePublicationCommitIntent(
+            TimeSpan.FromSeconds(30));
+        Assert.False(
+            Db.GetPublicReadFreezeState().IsFrozen);
+        Assert.Equal(
+            "failed",
+            Db.GetScrapeResumeState(failedScrapeId)?.Status);
+    }
+
+    [Fact]
+    public void PendingIsolationDoesNotFailNewMismatchedWorkingGeneration()
+    {
+        var publishedScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            10,
+            1,
+            100);
+        Db.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var failedScrapeId = Db.StartScrapeRun();
+        var newerScrapeId = Db.StartScrapeRun();
+        var newerPublicationId =
+            Db.GetPublicationPointerState()
+                .WorkingPublicationId;
+        using (var conn = DataSource.OpenConnection())
+        using (var state = conn.CreateCommand())
+        {
+            state.CommandText = """
+                UPDATE scrape_publication_state
+                SET public_reads_frozen = TRUE,
+                    public_reads_frozen_at = now(),
+                    public_reads_frozen_scrape_id = @scrapeId,
+                    public_reads_frozen_reason = @reason,
+                    updated_at = now()
+                WHERE id = TRUE
+                """;
+            state.Parameters.AddWithValue(
+                "scrapeId",
+                checked((int)failedScrapeId));
+            state.Parameters.AddWithValue(
+                "reason",
+                PublicReadFreezeState
+                    .PublicationFailureIsolationPendingReason);
+            state.ExecuteNonQuery();
+        }
+
+        _ = Db.ReconcileStalePublicationCommitIntent(
+            TimeSpan.FromSeconds(30));
+
+        Assert.Equal(
+            "failed",
+            Db.GetScrapeResumeState(failedScrapeId)?.Status);
+        Assert.Equal(
+            "running",
+            Db.GetScrapeResumeState(newerScrapeId)?.Status);
+        Assert.Equal(
+            newerPublicationId,
+            Db.GetPublicationPointerState()
+                .WorkingPublicationId);
+        Assert.Equal(
+            PublicationGenerationStatus.Building,
+            Db.GetPublicationGeneration(
+                newerPublicationId!.Value)?.Status);
+        Db.FailScrapeRun(
+            newerScrapeId,
+            "test",
+            "cleanup");
+    }
+
+    [Fact]
+    public void PublicationBandOrphanSweep_DropsOnlyUnreferencedExactArtifacts()
+    {
+        var firstScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(firstScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            firstScrapeId,
+            promoteCachedResponses: false);
+        var firstPublicationId =
+            Db.GetPublicationPointerState()
+                .CurrentPublicationId!.Value;
+
+        var secondScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(secondScrapeId, 1, 20, 2, 200);
+        Db.PublishScrapeRun(
+            secondScrapeId,
+            promoteCachedResponses: false);
+        var retainedTable =
+            BandRankingStorageNames
+                .GetRetainedPublishedRankingTable(
+                    firstPublicationId,
+                    "Band_Duets");
+        Assert.True(RelationExists(retainedTable));
+
+        var workingScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(workingScrapeId, 1, 30, 3, 300);
+        var preparation = Db.PrepareScrapePublication(
+            workingScrapeId,
+            promoteCachedResponses: false);
+        var activePreparedTable =
+            BandRankingStorageNames
+                .GetPreparedPublishedRankingTable(
+                    preparation.PublicationId,
+                    "Band_Duets");
+        var orphanPreparedTable =
+            BandRankingStorageNames
+                .GetPreparedPublishedRankingTable(
+                    999_991,
+                    "Band_Duets");
+        var orphanRetainedTable =
+            BandRankingStorageNames
+                .GetRetainedPublishedRankingTable(
+                    999_992,
+                    "Band_Duets");
+        CreateSimpleTable(orphanPreparedTable);
+        CreateSimpleTable(orphanRetainedTable);
+
+        var result = Db.SweepPublicationBandTableOrphans();
+
+        Assert.True(result.LockAcquired);
+        Assert.True(result.Completed);
+        Assert.True(RelationExists(activePreparedTable));
+        Assert.True(RelationExists(retainedTable));
+        Assert.False(RelationExists(orphanPreparedTable));
+        Assert.False(RelationExists(orphanRetainedTable));
+        Assert.Contains(
+            orphanPreparedTable,
+            result.DroppedTables);
+        Assert.Contains(
+            orphanRetainedTable,
+            result.DroppedTables);
+        Db.FailScrapeRun(
+            workingScrapeId,
+            "test",
+            "cleanup");
+    }
+
+    [Fact]
+    public void PublicationBandOrphanSweep_DefersLockedTableAndNextPrepareRetries()
+    {
+        var publishedScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            10,
+            1,
+            100);
+        Db.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var orphanTable =
+            BandRankingStorageNames
+                .GetPreparedPublishedRankingTable(
+                    999_993,
+                    "Band_Duets");
+        CreateSimpleTable(orphanTable);
+
+        using var blocker = DataSource.OpenConnection();
+        using var blockerTx = blocker.BeginTransaction();
+        using (var lockTable = blocker.CreateCommand())
+        {
+            lockTable.Transaction = blockerTx;
+            lockTable.CommandText =
+                $"LOCK TABLE {BandRankingStorageNames.QuoteIdentifier(orphanTable)} " +
+                "IN ACCESS SHARE MODE";
+            lockTable.ExecuteNonQuery();
+        }
+
+        var deferred = Db.SweepPublicationBandTableOrphans();
+        Assert.True(deferred.LockAcquired);
+        Assert.False(deferred.Completed);
+        Assert.True(RelationExists(orphanTable));
+        blockerTx.Commit();
+
+        var nextScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(nextScrapeId, 1, 20, 2, 200);
+        _ = Db.PrepareScrapePublication(
+            nextScrapeId,
+            promoteCachedResponses: false);
+
+        Assert.False(RelationExists(orphanTable));
+        Db.FailScrapeRun(
+            nextScrapeId,
+            "test",
+            "cleanup");
+    }
+
+    [Fact]
+    public async Task PostCommitCleanup_DefersWhileCurrentCacheRebuildLeaseIsActive()
+    {
+        var oldScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(oldScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            oldScrapeId,
+            promoteCachedResponses: false);
+
+        var candidateScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(candidateScrapeId, 1, 20, 2, 200);
+        var preparation = Db.PrepareScrapePublication(
+            candidateScrapeId,
+            promoteCachedResponses: false);
+        var commitIntent =
+            Db.BeginPublicationCommitIntent(candidateScrapeId);
+        var commit = Db.CommitPreparedScrapePublication(
+            preparation,
+            commitIntent);
+        var publicationId = commit.PublicationId;
+        var rebuiltJson = new byte[] { 7, 8, 9 };
+
+        using (Db.AcquirePublicationCacheBuildLease(
+                   publicationId,
+                   requireCurrentPublication: true))
+        {
+            Db.BulkSetCachedResponsesStaging(
+            [
+                (
+                    Key: "concurrent-rebuild",
+                    Json: rebuiltJson,
+                    ETag: "\"rebuilt\""),
+            ],
+            publicationId);
+
+            await Task.Run(() =>
+                Db.CleanupPublishedScrapePublication(
+                    preparation,
+                    commit));
+
+            using (var conn = DataSource.OpenConnection())
+            using (var countStaging = conn.CreateCommand())
+            {
+                countStaging.CommandText = """
+                    SELECT COUNT(*)
+                    FROM publication_api_response_cache_staging
+                    WHERE publication_id = @publicationId
+                    """;
+                countStaging.Parameters.AddWithValue(
+                    "publicationId",
+                    publicationId);
+                Assert.Equal(
+                    1L,
+                    (long)countStaging.ExecuteScalar()!);
+            }
+
+            Db.SwapCachedResponsesFromStaging(publicationId);
+        }
+
+        Assert.Equal(
+            rebuiltJson,
+            Db.GetCachedResponse(
+                publicationId,
+                "concurrent-rebuild")?.Json);
+        Db.CleanupPublishedScrapePublication(
+            preparation,
+            commit);
+        Assert.Equal(
+            rebuiltJson,
+            Db.GetCachedResponse(
+                publicationId,
+                "concurrent-rebuild")?.Json);
+    }
+
+    [Fact]
+    public void PrepareScrapePublication_BlocksUnsafeEmptyGenerationCacheInheritance()
+    {
+        var oldScrapeId = Db.StartScrapeRun();
+        Db.BulkSetCachedResponses(
+        [
+            (
+                Key: "legacy-only-cache",
+                Json: new byte[] { 1 },
+                ETag: "\"legacy\""),
+        ]);
+        Db.CompleteScrapeRun(oldScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            oldScrapeId,
+            promoteCachedResponses: false);
+        var oldPublicationId =
+            Db.GetPublicationPointerState()
+                .CurrentPublicationId!.Value;
+        using (var conn = DataSource.OpenConnection())
+        using (var removeGeneration = conn.CreateCommand())
+        {
+            removeGeneration.CommandText = """
+                DELETE FROM publication_api_response_cache
+                WHERE publication_id = @publicationId
+                """;
+            removeGeneration.Parameters.AddWithValue(
+                "publicationId",
+                oldPublicationId);
+            removeGeneration.ExecuteNonQuery();
+        }
+
+        var candidateScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(candidateScrapeId, 1, 20, 2, 200);
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            Db.PrepareScrapePublication(
+                candidateScrapeId,
+                promoteCachedResponses: false));
+
+        Assert.Contains(
+            "current generation",
+            exception.Message);
+        Assert.Contains(
+            "legacy compatibility cache",
+            exception.Message);
+        Assert.Equal(
+            oldPublicationId,
+            Db.GetPublicationPointerState()
+                .CurrentPublicationId);
+        using (var conn = DataSource.OpenConnection())
+        using (var countLegacy = conn.CreateCommand())
+        {
+            countLegacy.CommandText =
+                "SELECT COUNT(*) FROM api_response_cache";
+            Assert.Equal(
+                1L,
+                (long)countLegacy.ExecuteScalar()!);
+        }
+        Db.FailScrapeRun(
+            candidateScrapeId,
+            "test",
+            "cleanup");
+    }
+
+    [Fact]
+    public void PublishScrapeRun_QueryCanceledIsNotRetriedAndRestoresFreeze()
+    {
+        var oldScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(oldScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            oldScrapeId,
+            promoteCachedResponses: false);
+
+        var candidateScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(candidateScrapeId, 1, 20, 2, 200);
+        Db.SetPublicReadFreeze(
+            true,
+            candidateScrapeId,
+            "publish");
+        CreateSlowPublicationStateTrigger(
+            "publication_slow_non_lock",
+            delaySeconds: 0.2);
+        try
+        {
+            using var boundedDb = new MetaDatabase(
+                DataSource,
+                Substitute.For<ILogger<MetaDatabase>>(),
+                publicationCommitOptions: new PublicationCommitOptions
+                {
+                    DrainTimeoutMilliseconds = 1_000,
+                    RetryDelayMilliseconds = 10,
+                    RelationLockTimeoutMilliseconds = 200,
+                    StatementTimeoutMilliseconds = 50,
+                    MaxExclusiveLockDurationMilliseconds = 500,
+                });
+            var stopwatch =
+                System.Diagnostics.Stopwatch.StartNew();
+            var exception = Assert.Throws<PostgresException>(() =>
+                boundedDb.PublishScrapeRun(
+                    candidateScrapeId,
+                    promoteCachedResponses: false));
+            stopwatch.Stop();
+
+            Assert.Equal(
+                PostgresErrorCodes.QueryCanceled,
+                exception.SqlState);
+            Assert.True(
+                stopwatch.Elapsed < TimeSpan.FromMilliseconds(400));
+        }
+        finally
+        {
+            DropPublicationStateFailureTrigger(
+                "publication_slow_non_lock");
+        }
+
+        var freeze = Db.GetPublicReadFreezeState();
+        Assert.True(freeze.IsFrozen);
+        Assert.Equal("publish", freeze.Reason);
+        Assert.False(freeze.PublicationCommitPending);
+        Db.FailScrapeRun(
+            candidateScrapeId,
+            "test",
+            "cleanup");
+    }
+
+    [Fact]
+    public void FailScrapeRun_CleansPreparedCandidateAndKeepsPreviousPublication()
+    {
+        var oldScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(oldScrapeId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(
+            oldScrapeId,
+            promoteCachedResponses: false);
+        var oldPublicationId =
+            Db.GetPublicationPointerState().CurrentPublicationId;
+
+        var candidateScrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(candidateScrapeId, 1, 20, 2, 200);
+        var preparation = Db.PrepareScrapePublication(
+            candidateScrapeId,
+            promoteCachedResponses: false);
+        var preparedBandTable =
+            BandRankingStorageNames.GetPreparedPublishedRankingTable(
+                preparation.PublicationId,
+                "Band_Duets");
+        Assert.True(RelationExists(preparedBandTable));
+
+        Db.FailScrapeRun(
+            candidateScrapeId,
+            MetaDatabase.PublicationReadIsolationFailurePhase,
+            "injected");
+
+        Assert.Equal(
+            oldPublicationId,
+            Db.GetPublicationPointerState().CurrentPublicationId);
+        Assert.Null(
+            Db.GetPublicationPointerState().WorkingPublicationId);
+        Assert.Equal(
+            PublicationGenerationStatus.Failed,
+            Db.GetPublicationGeneration(preparation.PublicationId)?.Status);
+        Assert.False(RelationExists(preparedBandTable));
+    }
+
+    [Fact]
     public void PublishScrapeRun_rejects_missing_scope_mapping_and_retains_previous_publication()
     {
         var oldId = Db.StartScrapeRun();
@@ -1904,6 +3514,238 @@ public sealed class MetaDatabaseTests : IDisposable
         }
         throw new TimeoutException(
             $"Publication did not block on relation {relationName}.");
+    }
+
+    private bool RelationExists(string relationName)
+    {
+        using var conn = DataSource.OpenConnection();
+        using var command = conn.CreateCommand();
+        command.CommandText =
+            "SELECT to_regclass(@relationName) IS NOT NULL";
+        command.Parameters.AddWithValue("relationName", relationName);
+        return command.ExecuteScalar() is true;
+    }
+
+    private void CreateSimpleTable(string relationName)
+    {
+        using var conn = DataSource.OpenConnection();
+        using var command = conn.CreateCommand();
+        command.CommandText =
+            $"CREATE TABLE {BandRankingStorageNames.QuoteIdentifier(relationName)} (id INTEGER)";
+        command.ExecuteNonQuery();
+    }
+
+    private long CountUngrantedPublicationAdvisoryLocks()
+    {
+        using var conn = DataSource.OpenConnection();
+        using var command = conn.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(*)
+            FROM pg_locks
+            WHERE locktype = 'advisory'
+              AND NOT granted
+              AND (
+                  (classid::bigint << 32)
+                  | objid::bigint
+              ) = @lockKey
+            """;
+        command.Parameters.AddWithValue(
+            "lockKey",
+            PublicationGenerationSchema.AdvisoryLockKey);
+        return (long)command.ExecuteScalar()!;
+    }
+
+    private void SetStalePublicationCommitIntent(long scrapeId)
+    {
+        using var conn = DataSource.OpenConnection();
+        using var command = conn.CreateCommand();
+        command.CommandText = """
+            UPDATE scrape_publication_state
+            SET public_reads_frozen = TRUE,
+                public_reads_frozen_at =
+                    now() - interval '5 minutes',
+                public_reads_frozen_scrape_id = @scrapeId,
+                public_reads_frozen_reason =
+                    @commitIntentReason,
+                updated_at = now()
+            WHERE id = TRUE
+            """;
+        command.Parameters.AddWithValue(
+            "scrapeId",
+            checked((int)scrapeId));
+        command.Parameters.AddWithValue(
+            "commitIntentReason",
+            PublicReadFreezeState.PublicationCommitIntentReason);
+        command.ExecuteNonQuery();
+    }
+
+    private (
+        DateTime? FrozenAtUtc,
+        DateTime? StartedAtUtc,
+        DateTime? HeartbeatAtUtc,
+        string? OwnerToken)
+        ReadPublicationCommitIntentLease()
+    {
+        using var conn = DataSource.OpenConnection();
+        using var command = conn.CreateCommand();
+        command.CommandText = """
+            SELECT
+                public_reads_frozen_at,
+                publication_commit_intent_started_at,
+                publication_commit_intent_heartbeat_at,
+                publication_commit_intent_owner
+            FROM scrape_publication_state
+            WHERE id = TRUE
+            """;
+        using var reader = command.ExecuteReader();
+        Assert.True(reader.Read());
+        return (
+            reader.IsDBNull(0)
+                ? null
+                : reader.GetDateTime(0),
+            reader.IsDBNull(1)
+                ? null
+                : reader.GetDateTime(1),
+            reader.IsDBNull(2)
+                ? null
+                : reader.GetDateTime(2),
+            reader.IsDBNull(3)
+                ? null
+                : reader.GetString(3));
+    }
+
+    private async Task WaitForPublicationCommitHeartbeatAfterAsync(
+        DateTime? previousHeartbeat)
+    {
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            var current =
+                ReadPublicationCommitIntentLease()
+                    .HeartbeatAtUtc;
+            if (current.HasValue
+                && (!previousHeartbeat.HasValue
+                    || current.Value
+                        > previousHeartbeat.Value))
+            {
+                return;
+            }
+
+            await Task.Delay(20);
+        }
+
+        throw new TimeoutException(
+            "Publication commit heartbeat did not advance.");
+    }
+
+    private void CreatePublicationStateFailureTrigger(
+        string name,
+        string sqlState)
+    {
+        using var conn = DataSource.OpenConnection();
+        using var command = conn.CreateCommand();
+        command.CommandText = $"""
+            CREATE OR REPLACE FUNCTION "{name}_fn"()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                IF OLD.public_reads_frozen_reason =
+                        '{PublicReadFreezeState.PublicationCommitIntentReason}'
+                   AND NOT NEW.public_reads_frozen
+                THEN
+                    RAISE EXCEPTION 'injected publication failure'
+                        USING ERRCODE = '{sqlState}';
+                END IF;
+                RETURN NEW;
+            END
+            $$;
+
+            CREATE TRIGGER "{name}"
+            BEFORE UPDATE ON scrape_publication_state
+            FOR EACH ROW
+            EXECUTE FUNCTION "{name}_fn"();
+            """;
+        command.ExecuteNonQuery();
+    }
+
+    private void CreateSlowPublicationStateTrigger(
+        string name,
+        double delaySeconds)
+    {
+        using var conn = DataSource.OpenConnection();
+        using var command = conn.CreateCommand();
+        command.CommandText = $"""
+            CREATE OR REPLACE FUNCTION "{name}_fn"()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                IF OLD.public_reads_frozen_reason =
+                        '{PublicReadFreezeState.PublicationCommitIntentReason}'
+                   AND NOT NEW.public_reads_frozen
+                THEN
+                    PERFORM pg_sleep({delaySeconds.ToString(
+                        System.Globalization.CultureInfo.InvariantCulture)});
+                END IF;
+                RETURN NEW;
+            END
+            $$;
+
+            CREATE TRIGGER "{name}"
+            BEFORE UPDATE ON scrape_publication_state
+            FOR EACH ROW
+            EXECUTE FUNCTION "{name}_fn"();
+            """;
+        command.ExecuteNonQuery();
+    }
+
+    private void DropPublicationStateFailureTrigger(string name)
+    {
+        using var conn = DataSource.OpenConnection();
+        using var command = conn.CreateCommand();
+        command.CommandText = $"""
+            DROP TRIGGER IF EXISTS "{name}"
+                ON scrape_publication_state;
+            DROP FUNCTION IF EXISTS "{name}_fn"();
+            """;
+        command.ExecuteNonQuery();
+    }
+
+    private void CreateScrapeFailureTrigger(string name)
+    {
+        using var conn = DataSource.OpenConnection();
+        using var command = conn.CreateCommand();
+        command.CommandText = $"""
+            CREATE OR REPLACE FUNCTION "{name}_fn"()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                IF NEW.status = 'failed' THEN
+                    RAISE EXCEPTION 'injected scrape failure update'
+                        USING ERRCODE = 'P0001';
+                END IF;
+                RETURN NEW;
+            END
+            $$;
+
+            CREATE TRIGGER "{name}"
+            BEFORE UPDATE ON scrape_log
+            FOR EACH ROW
+            EXECUTE FUNCTION "{name}_fn"();
+            """;
+        command.ExecuteNonQuery();
+    }
+
+    private void DropScrapeFailureTrigger(string name)
+    {
+        using var conn = DataSource.OpenConnection();
+        using var command = conn.CreateCommand();
+        command.CommandText = $"""
+            DROP TRIGGER IF EXISTS "{name}" ON scrape_log;
+            DROP FUNCTION IF EXISTS "{name}_fn"();
+            """;
+        command.ExecuteNonQuery();
     }
 
     [Fact]

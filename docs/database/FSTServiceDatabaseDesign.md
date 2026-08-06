@@ -1399,11 +1399,204 @@ The first completed source cut is the API response cache:
 - publication retains exact current and previous cache generations only;
   failed/retired staging is deleted immediately and older cache bindings are
   marked retired;
-- legacy rollback writers remain supported: startup compares row count plus a
-  cache-key/ETag fingerprint and authoritatively reconciles changed or removed
-  rows into the current generation;
+- a prepared generation cache is authoritative across the final pointer
+  commit even if the process stops before the legacy compatibility mirror is
+  refreshed. Startup may reconcile an authoritative generation from the
+  legacy table only when the legacy rows are newer than the generation
+  binding, preserving explicit rollback-writer compatibility without
+  replacing a newly committed generation with the prior publication;
 - watchdog recovery marks the generation failed, clears the working pointer,
   and deletes its keyed staging.
+
+### Bounded publication prepare/commit protocol
+
+`PUB-COMMIT-SPLIT` replaces the transaction-wide exclusive publication
+section that caused the scrape `1278` REST outage:
+
+1. `PrepareScrapePublication` takes only a nonqueueing shared advisory lock.
+   It validates the completed scrape, catalog and scope-source cut; copies and
+   indexes deterministic publication-ID band candidate tables; populates the
+   immutable generation cache; calculates cache count/hash bindings; and
+   marks the generation `ready`. The current pointer, canonical published band
+   aliases, unfreeze state, and published fingerprint ownership are unchanged.
+2. The worker records durable freeze reason `publication-commit`. Cacheable
+   requests execute an exact current-generation cache lookup before either
+   publication read-lock middleware. Exact hits remain HTTP `200` without a
+   shared advisory lease with publication pinning either disabled or enabled;
+   pinned hits still validate the requested publication ID and complete
+   readiness contract. Uncached publication-bound requests return
+   `503 Retry-After: 1` during this drain instead of entering PostgreSQL's
+   advisory-lock wait queue. Health, shell, operational routes, and existing
+   WebSockets remain outside that boundary.
+3. Commit intent is an exception-safe owned lease. Its dedicated
+   `publication_commit_intent_started_at`,
+   `publication_commit_intent_heartbeat_at`, and
+   `publication_commit_intent_owner` fields are stamped on every transition;
+   they never inherit the hours-old scrape-freeze timestamp. The active owner
+   refreshes its heartbeat before each nonqueueing lock attempt, and a second
+   fresh owner cannot overwrite it. Every noncommitted return,
+   advisory drain timeout, relation-lock `55P03`, cancellation, and arbitrary
+   finalization exception conditionally restores the exact pre-intent freeze
+   state. An already-published retry clears a matching obsolete intent.
+   Startup and the read gate reconcile intents only when the dedicated
+   heartbeat is genuinely older than the configured threshold and after a
+   nonqueueing exclusive-lock proof; retry gaps retain a fresh heartbeat and
+   an active commit is never cleared. A stale working candidate is marked
+   failed, its pointer is cleared, and normal failed-candidate isolation takes
+   ownership.
+4. `CommitPreparedScrapePublication` opens a fresh short transaction for each
+   attempt and uses `pg_try_advisory_xact_lock`. A rejected attempt rolls back
+   immediately and retries outside the transaction. Once acquired, finite
+   relation and statement timeouts plus PostgreSQL 17
+   `transaction_timeout` enforce one cumulative remaining cutover budget
+   across all statements and retry attempts. Only `55P03` lock rejection and
+   `40P01` deadlock are retryable; statement cancellation `57014` fails the
+   candidate immediately. The transaction revalidates the
+   pointer/generation/source cut, renames prebuilt band tables, stamps
+   published fingerprints, rotates current/previous/working pointers, queues
+   the persisted notification plan, and unfreezes atomically.
+5. The old canonical band tables are renamed to deterministic retained names
+   owned by the previous publication. Exact previous generation cache rows
+   and catalog payloads remain retained. Post-commit cleanup refreshes the
+   legacy cache mirror and retires only objects older than current plus
+   previous, outside the exclusive lock.
+6. Cache inheritance never substitutes a nonempty legacy compatibility table
+   for an empty current generation. That inconsistent state blocks
+   preparation and requires explicit reconciliation, preventing post-commit
+   cleanup from truncating the only remaining cache rows.
+7. Preparation or final-transaction failure leaves the old publication
+   authoritative. `FailScrapeRun` first durably marks the scrape and
+   generation failed without waiting on advisory readers. It then prefers the
+   nonqueueing exclusive lock, but after the normal short drain budget may
+   take a compatible shared recovery lock to clear the failed working pointer.
+   A hung reader therefore cannot wedge future publication, while the normal
+   successful commit path never queues an exclusive waiter. If pointer cleanup
+   is interrupted, startup/next-prepare sweeping clears any working pointer
+   whose generation is already failed. If even durable failure recording
+   throws, the worker persists `publication-isolation-pending` when possible,
+   keeps process caches and public reads frozen, and explicitly suppresses the
+   normal `ScrapeFailed` unfreeze. The read gate treats that state as
+   cached-read-only and reconciliation completes failure isolation before
+   clearing it.
+8. Prepared and retained band artifacts use only the validated
+   `btr[s]_(pubprep|retained)_<publicationId>_<bandType>` naming contract. An
+   idempotent sweeper holds a shared publication lock, derives exact
+   current/previous/active-working publication IDs, preserves those tables,
+   and drops only unreferenced exact matches. It runs after publication and
+   failure cleanup, stale-intent recovery, startup, and before each new
+   preparation. Lock-timeout deferral is safe because the next invocation
+   retries; active working and rollback tables are never dropped.
+9. Post-commit cache compatibility cleanup also takes the exact
+   per-publication cache-build advisory key transactionally. If a current
+   generation rebuild owns its session build lease, cleanup defers without
+   truncating legacy staging or deleting generation staging. The rebuild can
+   complete its live swap, and a later cleanup retry mirrors the resulting
+   generation safely.
+10. A prepared `building`/`ready` working generation with no commit intent,
+    live scrape, recent scrape-worker publication heartbeat, or durable
+    deferred marker is treated as an abandoned crash artifact. Startup
+    recovery marks it failed, clears the exact working pointer, removes its
+    prepared artifacts, and permits the next scrape.
+11. Pending failure isolation is correlated to
+    `public_reads_frozen_scrape_id`, not whichever generation happens to own
+    the working pointer later. Recovery marks and confirms that exact scrape
+    failed before clearing the fail-closed freeze; a mismatched newer working
+    generation remains untouched. Failed updates leave the pending freeze in
+    place.
+12. Advisory contention and cutover deadline exhaustion are not data
+    failures. The worker retries the same prepared generation under a bounded
+    policy. Exhaustion records `publication-commit-deferred`, preserves the
+    ready working generation, blocks allocation of a replacement scrape, and
+    keeps reads cached/fail-closed until the same generation is retried.
+13. Publication read leases have server-enforced transaction lifetimes:
+    ordinary publication-bound routes use 30 seconds and export routes use
+    180 seconds by default. Both
+    `idle_in_transaction_session_timeout` and PostgreSQL 17
+    `transaction_timeout` prevent abandoned shared leases from blocking
+    publication indefinitely.
+14. HTTP requests never execute reconciliation, DDL, or orphan cleanup while
+    holding the public-read gate monitor. Stale/pending detection triggers a
+    TTL-limited single-flight background recovery coordinator; startup runs
+    the same coordinator synchronously before readiness.
+15. Candidate preparation sets bounded server `lock_timeout`,
+    `statement_timeout`, and `transaction_timeout` values before acquiring
+    the shared publication lock, preventing an unbounded preparation
+    transaction while retaining the measured multi-minute build budget.
+16. Recovery freeze reasons (`publication-commit`,
+     `publication-commit-deferred`, and
+     `publication-isolation-pending`) cannot be overwritten by generic
+     scrape-start, publish, failure, or unfreeze transitions. Only owned commit
+     leases, confirmed failure reconciliation, or successful pointer commit
+     may replace them.
+17. Preparation persists its complete final-commit contract in generation
+     metadata. Before authentication, catalog refresh, `ScrapeStarting`, or new
+     scrape allocation, every worker pass loads a deferred ready generation and
+     retries that exact preparation under the bounded contention policy.
+     Success performs normal cutover/unfreeze; continued contention keeps the
+     deferred fail-closed state; invalid metadata/candidate state is failed and
+     cleaned safely. New scrape allocation is rejected while a deferred ready
+     generation remains.
+18. Deferred recovery executes before improvement-notification recovery,
+     Epic authentication, API-only waiting, and the normal scrape loop.
+     Notification recovery explicitly yields while a deferred publication owns
+     the fail-closed state, then runs after successful cutover. Contention
+     exhaustion is converted into a deferred pass outcome rather than escaping
+     `ExecuteAsync`; bounded retries use a five-second outer backoff and never
+     stop the host. API-only workers follow the same recovery path without Epic
+     credentials.
+19. Deferred metadata handling distinguishes proven corruption from transient
+     storage failures. Only `DeferredPublicationMetadataException` causes
+     candidate isolation. Npgsql, pool, schema-query, and other transient
+     lookup failures retain the ready generation and retry without clearing its
+     working pointer or deferred freeze.
+20. Worker-shutdown cancellation during contention retry is classified as
+     deferral, not publication failure. Normal and deferred callers preserve
+     the ready generation/artifacts, restore or reassert fail-closed state, and
+     exit cleanly without failed-candidate isolation.
+21. `PublicationCommitDeferred` is nonthrowing. If its durable freeze write
+     fails transiently, the service installs an in-process fail-closed gate
+     override, triggers background recovery, and does not claim durable
+     deferral. The override is retained until a durable commit/deferred/pending
+     or failed-candidate state is observed.
+22. One owned commit-intent lease spans the entire contention retry policy.
+     The owner heartbeat is refreshed before each try-lock, and retry delays
+     never restore the permissive `publish` freeze. Exhaustion or shutdown
+     atomically transitions that same owner to deferred; terminal success
+     clears it in the pointer transaction.
+23. If owner-aware deferred transition fails, lease disposal does not restore
+     the prior freeze. The durable cross-process `publication-commit` latch
+     remains visible to `fstservice`, an additive worker-local fail-closed
+     override is installed, and a heartbeat-backed background task retries the
+     deferred transition.
+24. Notification-gate freeze probes and pending-isolation reconciliation are
+     inside the gate's retry/backoff try/catch. Transient Npgsql, pool, or
+     schema failures hold the next scrape and retry; only host cancellation
+     propagates.
+25. Pending isolation has a terminal-success branch. If the frozen target
+     scrape is already the current published generation, or is a safely
+     retained predecessor after a later atomic publication, reconciliation
+     clears only the stale commit/isolation latch. It never marks that
+     published scrape or generation failed.
+26. Deferred-resume exception handling ends at the atomic commit boundary.
+     Cleanup, lifecycle/status updates, notification detection, and
+     scores-changed broadcast failures after commit are logged/retried
+     separately and cannot call `FailScrapeRun` for the already-current scrape.
+27. Nonterminal commit failures transfer the still-owned commit-intent lease
+     into failure isolation. If failure recording and owner-aware pending
+     transition both fail, lease disposal is suppressed: the durable
+     cross-process `publication-commit` latch remains heartbeated and visible to
+     `fstservice`, while worker-local fail-closed state is additive.
+28. Deferred-resume lookup error handling contains only metadata lookup and
+     parsing. `PublicationCommitExecutionException` is handled exclusively at
+     the commit boundary, where its owned lease is passed into `FailScrapeRun`;
+     confirmed isolation clears the owner safely, while dual-write failure
+     preserves/heartbeats the latch and local gate until reconciliation.
+
+Structured logs and worker suboperations report preparation, reader-drain,
+exclusive-lock, lock-rejection, relation-lock-retry, and post-commit cleanup
+durations. Defaults are configured under `PublicationCommit`; the exclusive
+hold budget is 5 seconds and is enforced by the database transaction, not
+merely logged.
 
 Failed-candidate isolation distinguishes two cache layers. The outer
 route-shaped cache may serve an exact persisted hit, but it has no producer
@@ -1419,11 +1612,12 @@ endpoint. Legacy in-process response caches are cleared and bypassed during
 failed-candidate isolation so late in-flight writes cannot repopulate
 candidate data. Process and songs-cache entries carry the current publication
 ID and are discarded after a pointer change; neither cache accepts writes
-while public reads are frozen. Every publication-bound read holds the shared
-publication advisory lease during a frozen transition even while full client
-pinning remains disabled. `FailScrapeRun` takes the matching exclusive lock
-before activating isolation, so an in-flight response cannot cross the
-failure boundary. The dedicated read-lock pool disables
+while public reads are frozen. Frozen exact generation-cache hits are served
+before the shared advisory boundary; cache misses and noncacheable
+publication-bound reads still require the shared lease outside the bounded
+commit-intent interval. `FailScrapeRun` takes the matching nonqueueing
+exclusive lock before activating isolation, so an in-flight response cannot
+cross the failure boundary. The dedicated read-lock pool disables
 `idle_in_transaction_session_timeout` for these request-lifetime leases so the
 production 60-second general timeout cannot silently drop the barrier. The
 service also clears process and songs caches when the durable publication

@@ -2,8 +2,10 @@ using System.Text.Json;
 using FSTService.Api;
 using FSTService.Persistence;
 using FSTService.Tests.Helpers;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
 using NSubstitute;
+using Npgsql;
 
 namespace FSTService.Tests.Unit;
 
@@ -12,6 +14,67 @@ public sealed class PublicationReadinessTests
     private const long PublicationId = 42;
     private const long ScrapeId = 1277;
     private const long BandGeneration = 9;
+
+    [Fact]
+    public void PublicationReadLeasePolicy_AllowsLongerExports()
+    {
+        var options = new PublicationCommitOptions
+        {
+            DefaultReadLeaseSeconds = 30,
+            ExportReadLeaseSeconds = 180,
+        };
+        var ordinary = new DefaultHttpContext();
+        ordinary.Request.Path = "/api/rankings/Solo_Guitar";
+        var export = new DefaultHttpContext();
+        export.Request.Path = "/api/player/account/export";
+
+        Assert.Equal(
+            TimeSpan.FromSeconds(30),
+            PublicationReadLeasePolicy.Resolve(
+                ordinary.Request,
+                options));
+        Assert.Equal(
+            TimeSpan.FromSeconds(180),
+            PublicationReadLeasePolicy.Resolve(
+                export.Request,
+                options));
+    }
+
+    [Fact]
+    public async Task PublicationReadLease_ServerLifetimeEventuallyReleasesSharedLock()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var scrapeId = fixture.Db.StartScrapeRun();
+        fixture.Db.CompleteScrapeRun(
+            scrapeId,
+            1,
+            1,
+            1,
+            1);
+        fixture.Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var service = new PublicationReadContextService(
+            fixture.Db,
+            fixture.DataSource,
+            Options.Create(new FeatureOptions()));
+        await using var lease = await service.AcquireAsync(
+            TimeSpan.FromMilliseconds(200),
+            CancellationToken.None);
+        await Task.Delay(500);
+
+        using var connection = fixture.DataSource.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            "SELECT pg_try_advisory_xact_lock(@lockKey)";
+        command.Parameters.AddWithValue(
+            "lockKey",
+            PublicationGenerationSchema.AdvisoryLockKey);
+        Assert.True(command.ExecuteScalar() is true);
+        transaction.Commit();
+    }
 
     [Fact]
     public void ReadyExactBindingsPassAllContractRules()

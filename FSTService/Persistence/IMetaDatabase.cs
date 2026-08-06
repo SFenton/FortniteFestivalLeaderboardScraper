@@ -15,7 +15,11 @@ public interface IMetaDatabase : IDisposable
     long StartScrapeRun();
     long StartScrapeRun(SongCatalogPersistenceToken expectedCatalog);
     void CompleteScrapeRun(long scrapeId, int songsScraped, long totalEntries, int totalRequests, long totalBytes, bool epicReportedOver100Pages = false);
-    void FailScrapeRun(long scrapeId, string phase, string message);
+    void FailScrapeRun(
+        long scrapeId,
+        string phase,
+        string message,
+        PublicationCommitIntentHandle? existingCommitIntent = null);
     void RecordScrapeWriterFailures(long scrapeId, IReadOnlyList<WriterDrainResult> results);
     void RecordScrapePhaseOutcome(ScrapePhaseOutcomeRecord outcome);
     ScrapeResumeState? GetScrapeResumeState(long scrapeId);
@@ -27,6 +31,41 @@ public interface IMetaDatabase : IDisposable
         int? expectedPublishedScopeCount = null,
         bool queueImprovementNotifications = false,
         IReadOnlyCollection<SoloCurrentProjectionScopeKey>? improvementNotificationProjectionScopes = null);
+    PublicationPreparationResult PrepareScrapePublication(
+        long scrapeId,
+        bool promoteCachedResponses = true,
+        int? expectedPublishedScopeCount = null,
+        bool queueImprovementNotifications = false,
+        IReadOnlyCollection<SoloCurrentProjectionScopeKey>? improvementNotificationProjectionScopes = null);
+    PublicationPreparationResult?
+        GetDeferredPublicationPreparation();
+    PublicationCommitResult CommitPreparedScrapePublication(
+        PublicationPreparationResult preparation,
+        PublicationCommitIntentHandle? commitIntent = null);
+    void CleanupPublishedScrapePublication(
+        PublicationPreparationResult preparation,
+        PublicationCommitResult commit);
+    PublicationCommitIntentHandle BeginPublicationCommitIntent(
+        long scrapeId);
+    void HeartbeatPublicationCommitIntent(
+        PublicationCommitIntentHandle commitIntent);
+    void TransitionPublicationCommitIntentToDeferred(
+        PublicationCommitIntentHandle commitIntent);
+    void TransitionPublicationCommitIntentToIsolationPending(
+        PublicationCommitIntentHandle commitIntent);
+    void ClearPublicationCommitIntentAfterIsolation(
+        PublicationCommitIntentHandle commitIntent);
+    void RestorePublicationCommitIntent(
+        PublicationCommitIntentHandle commitIntent,
+        PublicReadFreezeState previousState);
+    PublicationCommitIntentReconciliationResult
+        ReconcileStalePublicationCommitIntent(TimeSpan staleAfter);
+    PublicationCommitIntentReconciliationResult
+        ReconcileAbandonedWorkingPublication(
+            TimeSpan readyGrace,
+            TimeSpan workerHeartbeatFreshness);
+    PublicationBandOrphanSweepResult
+        SweepPublicationBandTableOrphans();
     void SetPublicReadFreeze(bool frozen, long? scrapeId = null, string? reason = null);
     PublicReadFreezeState GetPublicReadFreezeState();
     PublicReadFreezeState GetFailedCandidateReadIsolationState();
@@ -307,6 +346,8 @@ public interface IMetaDatabase : IDisposable
     List<BandComboCatalogEntry> GetBandRankingCombos(string bandType, bool usePublishedSnapshot = false);
 
     // ── API response cache ───────────────────────────────────────────
+    PublicationCacheLookup GetCurrentCacheLookup(string cacheKey);
+    PublicationCachedResponse? GetCurrentCachedResponse(string cacheKey);
     (byte[] Json, string ETag)? GetCachedResponse(string cacheKey);
     (byte[] Json, string ETag)? GetCachedResponse(long publicationId, string cacheKey);
     IDisposable AcquirePublicationCacheBuildLease(

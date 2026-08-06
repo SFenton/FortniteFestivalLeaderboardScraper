@@ -44,23 +44,33 @@ public sealed class PublicationReadContextService
     private readonly NpgsqlDataSource _dataSource;
     private readonly IOptions<FeatureOptions> _features;
     private readonly PublicationReadinessEvaluator _readinessEvaluator;
+    private readonly PublicationCommitOptions _commitOptions;
 
     public PublicationReadContextService(
         IMetaDatabase metaDb,
         NpgsqlDataSource dataSource,
-        IOptions<FeatureOptions> features)
+        IOptions<FeatureOptions> features,
+        IOptions<PublicationCommitOptions>? commitOptions = null)
     {
         _metaDb = metaDb;
         _dataSource = dataSource;
         _features = features;
+        _commitOptions =
+            commitOptions?.Value
+            ?? new PublicationCommitOptions();
         _readinessEvaluator = new PublicationReadinessEvaluator(metaDb);
     }
 
     public PublicationReadContextService(
         IMetaDatabase metaDb,
         PublicationReadLockDataSource lockDataSource,
-        IOptions<FeatureOptions> features)
-        : this(metaDb, lockDataSource.DataSource, features)
+        IOptions<FeatureOptions> features,
+        IOptions<PublicationCommitOptions>? commitOptions = null)
+        : this(
+            metaDb,
+            lockDataSource.DataSource,
+            features,
+            commitOptions)
     {
     }
 
@@ -83,6 +93,11 @@ public sealed class PublicationReadContextService
 
     public PublicationPointerState GetPointers() =>
         _metaDb.GetPublicationPointerState();
+
+    public TimeSpan GetLeaseLifetime(HttpRequest request) =>
+        PublicationReadLeasePolicy.Resolve(
+            request,
+            _commitOptions);
 
     public PublicationReadinessResult EvaluateReadiness(
         PublicationPointerState pointers)
@@ -115,25 +130,57 @@ public sealed class PublicationReadContextService
     }
 
     public async Task<PublicationReadLease> AcquireAsync(
+        CancellationToken ct) =>
+        await AcquireAsync(
+            TimeSpan.FromSeconds(
+                Math.Max(
+                    1,
+                    _commitOptions.DefaultReadLeaseSeconds)),
+            ct);
+
+    public async Task<PublicationReadLease> AcquireAsync(
+        TimeSpan maxLifetime,
         CancellationToken ct)
     {
+        if (maxLifetime <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(maxLifetime));
+
         var conn = await _dataSource.OpenConnectionAsync(ct);
         NpgsqlTransaction? tx = null;
         try
         {
-            await using (var leaseTimeout = conn.CreateCommand())
-            {
-                // The dedicated lock pool intentionally holds an idle transaction
-                // for the HTTP request lifetime. Production's general 60-second
-                // timeout must not silently terminate that publication barrier.
-                leaseTimeout.CommandText =
-                    "SET idle_in_transaction_session_timeout = 0";
-                await leaseTimeout.ExecuteNonQueryAsync(ct);
-            }
-
             tx = await conn.BeginTransactionAsync(
                 System.Data.IsolationLevel.ReadCommitted,
                 ct);
+            await using (var leaseTimeout = conn.CreateCommand())
+            {
+                var lifetimeMilliseconds = Math.Max(
+                    1,
+                    (int)Math.Ceiling(
+                        maxLifetime.TotalMilliseconds));
+                leaseTimeout.Transaction = tx;
+                leaseTimeout.CommandText = """
+                    SELECT set_config(
+                        'idle_in_transaction_session_timeout',
+                        @leaseTimeout,
+                        true);
+                    SELECT set_config(
+                        'transaction_timeout',
+                        @leaseTimeout,
+                        true);
+                    SELECT set_config(
+                        'statement_timeout',
+                        @statementTimeout,
+                        true);
+                    """;
+                leaseTimeout.Parameters.AddWithValue(
+                    "leaseTimeout",
+                    $"{lifetimeMilliseconds}ms");
+                leaseTimeout.Parameters.AddWithValue(
+                    "statementTimeout",
+                    $"{Math.Min(lifetimeMilliseconds, 5_000)}ms");
+                await leaseTimeout.ExecuteNonQueryAsync(ct);
+            }
             await using (var advisoryLock = conn.CreateCommand())
             {
                 advisoryLock.Transaction = tx;
@@ -200,8 +247,32 @@ public sealed class PublicationReadLease : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        await _transaction.DisposeAsync();
-        await _connection.DisposeAsync();
+        try
+        {
+            await _transaction.DisposeAsync();
+        }
+        catch (NpgsqlException)
+        {
+        }
+        finally
+        {
+            await _connection.DisposeAsync();
+        }
+    }
+}
+
+internal static class PublicationReadLeasePolicy
+{
+    internal static TimeSpan Resolve(
+        HttpRequest request,
+        PublicationCommitOptions options)
+    {
+        var seconds = request.Path.Value?.EndsWith(
+                "/export",
+                StringComparison.OrdinalIgnoreCase) == true
+            ? options.ExportReadLeaseSeconds
+            : options.DefaultReadLeaseSeconds;
+        return TimeSpan.FromSeconds(Math.Max(1, seconds));
     }
 }
 
@@ -248,7 +319,14 @@ public sealed class PublicationBoundaryReadLeaseMiddleware
             return;
         }
 
+        if (publicReadGate.GetState().PublicationCommitPending)
+        {
+            await PublicationCommitHttpResults.Unavailable(context);
+            return;
+        }
+
         await using var lease = await publicationService.AcquireAsync(
+            publicationService.GetLeaseLifetime(context.Request),
             context.RequestAborted);
         if (!lease.Pointers.CurrentPublicationId.HasValue
             || !lease.Pointers.PublishedScrapeId.HasValue)
@@ -299,7 +377,8 @@ public sealed class PublicationReadContextMiddleware
 
     public async Task InvokeAsync(
         HttpContext context,
-        PublicationReadContextService publicationService)
+        PublicationReadContextService publicationService,
+        PublicReadGateService publicReadGate)
     {
         if (!publicationService.PinningConfigured)
         {
@@ -310,6 +389,12 @@ public sealed class PublicationReadContextMiddleware
         if (context.GetEndpoint()?.Metadata.GetMetadata<PublicationBound>() is null)
         {
             await _next(context);
+            return;
+        }
+
+        if (publicReadGate.GetState().PublicationCommitPending)
+        {
+            await PublicationCommitHttpResults.Unavailable(context);
             return;
         }
 
@@ -326,7 +411,9 @@ public sealed class PublicationReadContextMiddleware
         }
 
         PublicationReadLease? publicationLease =
-            await publicationService.AcquireAsync(context.RequestAborted);
+            await publicationService.AcquireAsync(
+                publicationService.GetLeaseLifetime(context.Request),
+                context.RequestAborted);
         try
         {
             var pointers = publicationLease.Pointers;
@@ -393,7 +480,7 @@ public sealed class PublicationReadContextMiddleware
         }
     }
 
-    private static bool TryReadRequestedPublicationId(
+    internal static bool TryReadRequestedPublicationId(
         HttpRequest request,
         out long? requestedPublicationId,
         out string? error)
@@ -440,5 +527,20 @@ public sealed class PublicationReadContextMiddleware
 
         publicationId = parsed;
         return true;
+    }
+}
+
+internal static class PublicationCommitHttpResults
+{
+    internal static async Task Unavailable(HttpContext context)
+    {
+        context.Response.Headers.CacheControl = "no-store";
+        context.Response.Headers["Retry-After"] = "1";
+        await Results.Problem(
+                title: "Publication commit in progress",
+                detail:
+                    "The current publication is being atomically advanced. Retry this uncached request.",
+                statusCode: StatusCodes.Status503ServiceUnavailable)
+            .ExecuteAsync(context);
     }
 }

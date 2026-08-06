@@ -119,6 +119,241 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public async Task StartAsync_ReconcilesStalePublicationCommitIntent()
+    {
+        var publishedScrapeId =
+            _metaFixture.Db.StartScrapeRun();
+        _metaFixture.Db.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaFixture.Db.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var candidateScrapeId =
+            _metaFixture.Db.StartScrapeRun();
+        var candidatePublicationId =
+            _metaFixture.Db.GetPublicationPointerState()
+                .WorkingPublicationId!.Value;
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var stale = connection.CreateCommand())
+        {
+            stale.CommandText = """
+                UPDATE scrape_publication_state
+                SET public_reads_frozen = TRUE,
+                    public_reads_frozen_at =
+                        now() - interval '5 minutes',
+                    public_reads_frozen_scrape_id =
+                        @scrapeId,
+                    public_reads_frozen_reason =
+                        @commitIntentReason,
+                    updated_at = now()
+                WHERE id = TRUE
+                """;
+            stale.Parameters.AddWithValue(
+                "scrapeId",
+                checked((int)candidateScrapeId));
+            stale.Parameters.AddWithValue(
+                "commitIntentReason",
+                PublicReadFreezeState
+                    .PublicationCommitIntentReason);
+            stale.ExecuteNonQuery();
+        }
+        var orphanBandTable =
+            BandRankingStorageNames
+                .GetPreparedPublishedRankingTable(
+                    999_994,
+                    "Band_Duets");
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var orphan = connection.CreateCommand())
+        {
+            orphan.CommandText =
+                $"CREATE TABLE {BandRankingStorageNames.QuoteIdentifier(orphanBandTable)} (id INTEGER)";
+            orphan.ExecuteNonQuery();
+        }
+
+        var festivalService =
+            new FestivalService((IFestivalPersistence?)null);
+        var shopService = new ItemShopService(
+            new HttpClient(new NoOpHandler()),
+            festivalService,
+            _metaFixture.Db,
+            Substitute.For<ILogger<ItemShopService>>());
+        var initializer = new StartupInitializer(
+            _persistence,
+            _metaFixture.DataSource,
+            festivalService,
+            shopService,
+            Substitute.For<IHostApplicationLifetime>(),
+            Options.Create(new ScraperOptions
+            {
+                DataDirectory = _tempDir,
+            }),
+            Substitute.For<ILogger<StartupInitializer>>(),
+            publicationCommitOptions:
+                Options.Create(new PublicationCommitOptions
+                {
+                    StaleCommitIntentSeconds = 1,
+                }));
+
+        await initializer.StartAsync(CancellationToken.None);
+        using var cts =
+            new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await initializer.WaitForReadyAsync(cts.Token);
+
+        Assert.False(
+            _metaFixture.Db.GetPublicReadFreezeState()
+                .IsFrozen);
+        Assert.Null(
+            _metaFixture.Db.GetPublicationPointerState()
+                .WorkingPublicationId);
+        Assert.Equal(
+            PublicationGenerationStatus.Failed,
+            _metaFixture.Db.GetPublicationGeneration(
+                candidatePublicationId)?.Status);
+        using (var connection =
+               _metaFixture.DataSource.OpenConnection())
+        using (var exists = connection.CreateCommand())
+        {
+            exists.CommandText =
+                "SELECT to_regclass(@tableName) IS NOT NULL";
+            exists.Parameters.AddWithValue(
+                "tableName",
+                orphanBandTable);
+            Assert.False(exists.ExecuteScalar() is true);
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_ReconcilesAbandonedReadyWorkingGeneration()
+    {
+        var publishedScrapeId =
+            _metaFixture.Db.StartScrapeRun();
+        _metaFixture.Db.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaFixture.Db.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var abandonedScrapeId =
+            _metaFixture.Db.StartScrapeRun();
+        _metaFixture.Db.CompleteScrapeRun(
+            abandonedScrapeId,
+            1,
+            2,
+            2,
+            2);
+        var abandoned =
+            _metaFixture.Db.PrepareScrapePublication(
+                abandonedScrapeId,
+                promoteCachedResponses: false);
+
+        var festivalService =
+            new FestivalService((IFestivalPersistence?)null);
+        var shopService = new ItemShopService(
+            new HttpClient(new NoOpHandler()),
+            festivalService,
+            _metaFixture.Db,
+            Substitute.For<ILogger<ItemShopService>>());
+        var initializer = new StartupInitializer(
+            _persistence,
+            _metaFixture.DataSource,
+            festivalService,
+            shopService,
+            Substitute.For<IHostApplicationLifetime>(),
+            Options.Create(new ScraperOptions
+            {
+                DataDirectory = _tempDir,
+            }),
+            Substitute.For<ILogger<StartupInitializer>>(),
+            publicationCommitOptions:
+                Options.Create(new PublicationCommitOptions
+                {
+                    AbandonedReadyGraceSeconds = 1,
+                    WorkerHeartbeatFreshSeconds = 1,
+                }));
+
+        await initializer.StartAsync(CancellationToken.None);
+        using var cts =
+            new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await initializer.WaitForReadyAsync(cts.Token);
+
+        Assert.Null(
+            _metaFixture.Db.GetPublicationPointerState()
+                .WorkingPublicationId);
+        Assert.Equal(
+            PublicationGenerationStatus.Failed,
+            _metaFixture.Db.GetPublicationGeneration(
+                abandoned.PublicationId)?.Status);
+    }
+
+    [Fact]
+    public async Task StartAsync_ClearsPendingIsolationForCurrentPublishedScrape()
+    {
+        var publishedScrapeId =
+                _metaFixture.Db.StartScrapeRun();
+        _metaFixture.Db.CompleteScrapeRun(
+                publishedScrapeId,
+                1,
+                1,
+                1,
+                1);
+        _metaFixture.Db.PublishScrapeRun(
+                publishedScrapeId,
+                promoteCachedResponses: false);
+        var publicationId =
+                _metaFixture.Db.GetPublicationPointerState()
+                    .CurrentPublicationId!.Value;
+        _metaFixture.Db.SetPublicReadFreeze(
+                true,
+                publishedScrapeId,
+                PublicReadFreezeState
+                    .PublicationFailureIsolationPendingReason);
+
+        var festivalService =
+                new FestivalService((IFestivalPersistence?)null);
+        var shopService = new ItemShopService(
+                new HttpClient(new NoOpHandler()),
+                festivalService,
+                _metaFixture.Db,
+                Substitute.For<ILogger<ItemShopService>>());
+        var initializer = new StartupInitializer(
+                _persistence,
+                _metaFixture.DataSource,
+                festivalService,
+                shopService,
+                Substitute.For<IHostApplicationLifetime>(),
+                Options.Create(new ScraperOptions
+                {
+                    DataDirectory = _tempDir,
+                }),
+                Substitute.For<ILogger<StartupInitializer>>());
+
+        await initializer.StartAsync(CancellationToken.None);
+        using var cts =
+                new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await initializer.WaitForReadyAsync(cts.Token);
+
+        Assert.False(
+                _metaFixture.Db.GetPublicReadFreezeState().IsFrozen);
+        Assert.Equal(
+                publicationId,
+                _metaFixture.Db.GetPublicationPointerState()
+                    .CurrentPublicationId);
+        Assert.Equal(
+                PublicationGenerationStatus.Current,
+                _metaFixture.Db.GetPublicationGeneration(
+                    publicationId)?.Status);
+    }
+
+    [Fact]
     public async Task StartAsync_RolloutReadOnlyStartup_PerformsNoDatabaseOrFilesystemWrites()
     {
         var song = new Song

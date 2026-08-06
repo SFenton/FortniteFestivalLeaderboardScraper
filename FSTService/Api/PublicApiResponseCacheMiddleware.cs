@@ -16,7 +16,8 @@ public sealed class PublicApiResponseCacheMiddleware
         HttpContext context,
         IMetaDatabase metaDb,
         PublicReadGateService gate,
-        PublicApiCacheTelemetry telemetry)
+        PublicApiCacheTelemetry telemetry,
+        PublicationReadContextService? publicationService = null)
     {
         if (context.WebSockets.IsWebSocketRequest)
         {
@@ -51,14 +52,59 @@ public sealed class PublicApiResponseCacheMiddleware
         if (gate.IsFrozen)
         {
             var publicationContext = context.GetPublicationReadContext();
-            var cached = publicationContext is null
-                ? metaDb.GetCachedResponse(cacheKey)
-                : metaDb.GetCachedResponse(
+            PublicationCachedResponse? currentCached = null;
+            (byte[] Json, string ETag)? cached;
+            if (publicationContext is not null)
+            {
+                cached = metaDb.GetCachedResponse(
                     publicationContext.PublicationId,
                     cacheKey);
+            }
+            else
+            {
+                var lookup =
+                    metaDb.GetCurrentCacheLookup(cacheKey);
+                currentCached = lookup?.CachedResponse;
+                cached = currentCached is null
+                    ? lookup?.HasCurrentPublication == true
+                        || publicationService?.PinningConfigured
+                            == true
+                        ? null
+                        : metaDb.GetCachedResponse(cacheKey)
+                    : (currentCached.Json, currentCached.ETag);
+
+                if (currentCached is not null
+                    && publicationService?.PinningConfigured == true
+                    && !CanServePinnedCacheHit(
+                        context,
+                        publicationService,
+                        currentCached))
+                {
+                    await _next(context);
+                    return;
+                }
+            }
             var cachedResult = CacheHelper.ServeIfCached(context, cached);
             if (cachedResult is not null)
             {
+                if (currentCached is not null)
+                {
+                    context.Response.Headers[
+                        PublicationReadContextMiddleware
+                            .PublicationHeader] =
+                        currentCached.PublicationId.ToString(
+                            System.Globalization.CultureInfo
+                                .InvariantCulture);
+                    context.Response.Headers.Append(
+                        "Vary",
+                        PublicationReadContextMiddleware
+                            .PublicationHeader);
+                    context.SetPublicationReadContext(
+                        new PublicationReadContext(
+                            currentCached.PublicationId,
+                            currentCached.PublishedScrapeId,
+                            currentCached.PublishedAtUtc));
+                }
                 if (publicationBound)
                     telemetry.Record(context, PublicApiCacheOutcome.Hit);
                 context.Response.Headers["X-FST-Public-Cache"] = "hit";
@@ -69,6 +115,7 @@ public sealed class PublicApiResponseCacheMiddleware
             context.Response.Headers["X-FST-Public-Cache"] = "miss";
             if (publicationBound &&
                 gate.RequiresCachedReads &&
+                !gate.GetState().PublicationCommitPending &&
                 PublicReadGateMiddleware.RequiresPublishedData(context.Request))
             {
                 if (publicationBound)
@@ -89,6 +136,41 @@ public sealed class PublicApiResponseCacheMiddleware
         }
 
         await _next(context);
+    }
+
+    private static bool CanServePinnedCacheHit(
+        HttpContext context,
+        PublicationReadContextService publicationService,
+        PublicationCachedResponse cached)
+    {
+        if (!PublicationReadContextMiddleware
+                .TryReadRequestedPublicationId(
+                    context.Request,
+                    out var requestedPublicationId,
+                    out _)
+            || requestedPublicationId.HasValue
+            && requestedPublicationId.Value
+                != cached.PublicationId)
+        {
+            return false;
+        }
+
+        try
+        {
+            var readiness =
+                publicationService.EvaluateReadiness(
+                    new PublicationPointerState(
+                        cached.PublicationId,
+                        PreviousPublicationId: null,
+                        WorkingPublicationId: null,
+                        cached.PublishedScrapeId,
+                        cached.PublishedAtUtc));
+            return readiness.ReadyForPinning;
+        }
+        catch
+        {
+            return false;
+        }
     }
 }
 

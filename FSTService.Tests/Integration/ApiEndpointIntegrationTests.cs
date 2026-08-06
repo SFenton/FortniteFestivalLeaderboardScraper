@@ -13,6 +13,7 @@ using FSTService.Auth;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -233,6 +234,240 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             $"/api/songs?publicationId={pointers.CurrentPublicationId + 1}");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PublicationCommitIntent_ServesExactCacheHitAndFailsMissFast()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var pointers = metaDb.GetPublicationPointerState();
+        if (!pointers.CurrentPublicationId.HasValue)
+        {
+            var scrapeId = metaDb.StartScrapeRun();
+            metaDb.CompleteScrapeRun(scrapeId, 1, 1, 1, 1);
+            metaDb.PublishScrapeRun(
+                scrapeId,
+                promoteCachedResponses: false);
+            pointers = metaDb.GetPublicationPointerState();
+        }
+
+        Assert.Null(pointers.WorkingPublicationId);
+        var requestContext = new DefaultHttpContext();
+        requestContext.Request.Method = HttpMethods.Get;
+        requestContext.Request.Path = "/api/rankings/Solo_Guitar";
+        requestContext.Request.QueryString =
+            new QueryString("?page=1&pageSize=50");
+        var cacheKey =
+            PublicApiResponseCachePolicy.BuildCacheKey(
+                requestContext.Request);
+        var cachedJson =
+            Encoding.UTF8.GetBytes(
+                "{\"source\":\"old-complete-publication\"}");
+        metaDb.BulkSetCachedResponses(
+        [
+            (
+                Key: cacheKey,
+                Json: cachedJson,
+                ETag: ResponseCacheService.ComputeETag(cachedJson)),
+        ]);
+        metaDb.SetPublicReadFreeze(
+            true,
+            pointers.PublishedScrapeId,
+            PublicReadFreezeState.PublicationCommitIntentReason);
+        var gate =
+            _factory.Services.GetRequiredService<PublicReadGateService>();
+        gate.Invalidate();
+
+        using var lockConnection =
+            _factory.Services
+                .GetRequiredService<NpgsqlDataSource>()
+                .OpenConnection();
+        using var lockTransaction =
+            lockConnection.BeginTransaction();
+        using (var publicationLock =
+               lockConnection.CreateCommand())
+        {
+            publicationLock.Transaction = lockTransaction;
+            publicationLock.CommandText =
+                "SELECT pg_advisory_xact_lock(@lockKey)";
+            publicationLock.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+            publicationLock.ExecuteNonQuery();
+        }
+
+        try
+        {
+            var hitStopwatch =
+                System.Diagnostics.Stopwatch.StartNew();
+            var hit = await _client.GetAsync(
+                "/api/rankings/Solo_Guitar?page=1&pageSize=50");
+            hitStopwatch.Stop();
+            Assert.Equal(HttpStatusCode.OK, hit.StatusCode);
+            Assert.Equal(
+                "old-complete-publication",
+                (await hit.Content.ReadFromJsonAsync<JsonElement>())
+                    .GetProperty("source")
+                    .GetString());
+            Assert.Equal(
+                "hit",
+                hit.Headers.GetValues("X-FST-Public-Cache").Single());
+            Assert.True(
+                hitStopwatch.Elapsed < TimeSpan.FromSeconds(2));
+
+            var missStopwatch =
+                System.Diagnostics.Stopwatch.StartNew();
+            var miss = await _client.GetAsync(
+                "/api/rankings/Solo_Guitar?page=2&pageSize=50");
+            missStopwatch.Stop();
+            Assert.Equal(
+                HttpStatusCode.ServiceUnavailable,
+                miss.StatusCode);
+            Assert.Equal(
+                TimeSpan.FromSeconds(1),
+                miss.Headers.RetryAfter?.Delta);
+            Assert.True(
+                missStopwatch.Elapsed < TimeSpan.FromSeconds(2));
+
+            var ready = await _client.GetAsync("/readyz");
+            Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
+        }
+        finally
+        {
+            lockTransaction.Rollback();
+            metaDb.SetPublicReadFreeze(false);
+            gate.Invalidate();
+        }
+    }
+
+    [Fact]
+    public async Task PublicationPinning_OrdinaryFreezeServesExactGenerationCacheHit()
+    {
+        var readinessMeta = Substitute.For<IMetaDatabase>();
+        using var factory = CreatePinnedCacheFactory(
+            readinessMeta);
+        using var client = factory.CreateClient();
+        var metaDb =
+            factory.Services.GetRequiredService<MetaDatabase>();
+        var pointers = EnsureCurrentPublication(metaDb);
+        ConfigureReadyPublicationMeta(
+            readinessMeta,
+            pointers.CurrentPublicationId!.Value,
+            pointers.PublishedScrapeId!.Value);
+        const string requestPath =
+            "/api/rankings/Solo_Guitar?page=1&pageSize=50";
+        SeedRouteCache(
+            metaDb,
+            requestPath,
+            "{\"mode\":\"pinned-ordinary\"}");
+        metaDb.SetPublicReadFreeze(
+            true,
+            pointers.PublishedScrapeId,
+            "scrape");
+        var gate =
+            factory.Services
+                .GetRequiredService<PublicReadGateService>();
+        gate.Invalidate();
+
+        try
+        {
+            var response = await client.GetAsync(
+                $"{requestPath}&publicationId={pointers.CurrentPublicationId}");
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(
+                "hit",
+                response.Headers
+                    .GetValues("X-FST-Public-Cache")
+                    .Single());
+            Assert.Equal(
+                pointers.CurrentPublicationId.Value.ToString(
+                    System.Globalization.CultureInfo.InvariantCulture),
+                response.Headers
+                    .GetValues(
+                        PublicationReadContextMiddleware
+                            .PublicationHeader)
+                    .Single());
+            Assert.Equal(
+                "pinned-ordinary",
+                (await response.Content
+                    .ReadFromJsonAsync<JsonElement>())
+                    .GetProperty("mode")
+                    .GetString());
+        }
+        finally
+        {
+            metaDb.SetPublicReadFreeze(false);
+            gate.Invalidate();
+        }
+    }
+
+    [Fact]
+    public async Task PublicationPinning_CommitIntentServesHitAndFailsMissFast()
+    {
+        var readinessMeta = Substitute.For<IMetaDatabase>();
+        using var factory = CreatePinnedCacheFactory(
+            readinessMeta);
+        using var client = factory.CreateClient();
+        var metaDb =
+            factory.Services.GetRequiredService<MetaDatabase>();
+        var pointers = EnsureCurrentPublication(metaDb);
+        ConfigureReadyPublicationMeta(
+            readinessMeta,
+            pointers.CurrentPublicationId!.Value,
+            pointers.PublishedScrapeId!.Value);
+        const string hitPath =
+            "/api/rankings/Solo_Guitar?page=1&pageSize=50";
+        SeedRouteCache(
+            metaDb,
+            hitPath,
+            "{\"mode\":\"pinned-commit\"}");
+        metaDb.SetPublicReadFreeze(
+            true,
+            pointers.PublishedScrapeId,
+            PublicReadFreezeState.PublicationCommitIntentReason);
+        var gate =
+            factory.Services
+                .GetRequiredService<PublicReadGateService>();
+        gate.Invalidate();
+
+        try
+        {
+            var hit = await client.GetAsync(
+                $"{hitPath}&publicationId={pointers.CurrentPublicationId}");
+            Assert.Equal(HttpStatusCode.OK, hit.StatusCode);
+            Assert.Equal(
+                "hit",
+                hit.Headers
+                    .GetValues("X-FST-Public-Cache")
+                    .Single());
+            Assert.Equal(
+                "pinned-commit",
+                (await hit.Content
+                    .ReadFromJsonAsync<JsonElement>())
+                    .GetProperty("mode")
+                    .GetString());
+
+            var missStopwatch =
+                System.Diagnostics.Stopwatch.StartNew();
+            var miss = await client.GetAsync(
+                "/api/rankings/Solo_Guitar?page=2&pageSize=50" +
+                $"&publicationId={pointers.CurrentPublicationId}");
+            missStopwatch.Stop();
+            Assert.Equal(
+                HttpStatusCode.ServiceUnavailable,
+                miss.StatusCode);
+            Assert.Equal(
+                TimeSpan.FromSeconds(1),
+                miss.Headers.RetryAfter?.Delta);
+            Assert.True(
+                missStopwatch.Elapsed < TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            metaDb.SetPublicReadFreeze(false);
+            gate.Invalidate();
+        }
     }
 
     // ─── Client telemetry ───────────────────────────────────────
@@ -7156,6 +7391,218 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             Assert.False(firstSong.TryGetProperty("leavingTomorrow", out _),
                 "leavingTomorrow should not be present in /api/songs response");
         }
+    }
+
+    private WebApplicationFactory<Program> CreatePinnedCacheFactory(
+        IMetaDatabase readinessMeta) =>
+        _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                services.RemoveAll<PublicationReadContextService>();
+                services.AddSingleton(sp =>
+                    new PublicationReadContextService(
+                        readinessMeta,
+                        sp.GetRequiredService<
+                            PublicationReadLockDataSource>(),
+                        Options.Create(new FeatureOptions
+                        {
+                            EnablePublicationReadContext = true,
+                        })));
+            });
+        });
+
+    private static PublicationPointerState EnsureCurrentPublication(
+        MetaDatabase metaDb)
+    {
+        var pointers = metaDb.GetPublicationPointerState();
+        if (!pointers.CurrentPublicationId.HasValue)
+        {
+            var scrapeId = metaDb.StartScrapeRun();
+            metaDb.CompleteScrapeRun(
+                scrapeId,
+                1,
+                1,
+                1,
+                1);
+            metaDb.PublishScrapeRun(
+                scrapeId,
+                promoteCachedResponses: false);
+            pointers = metaDb.GetPublicationPointerState();
+        }
+
+        Assert.Null(pointers.WorkingPublicationId);
+        return pointers;
+    }
+
+    private static void SeedRouteCache(
+        MetaDatabase metaDb,
+        string requestPath,
+        string json)
+    {
+        var uri = new Uri(
+            $"http://localhost{requestPath}",
+            UriKind.Absolute);
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = uri.AbsolutePath;
+        context.Request.QueryString =
+            new QueryString(uri.Query);
+        var cacheKey =
+            PublicApiResponseCachePolicy.BuildCacheKey(
+                context.Request);
+        var jsonBytes = Encoding.UTF8.GetBytes(json);
+        metaDb.BulkSetCachedResponses(
+        [
+            (
+                Key: cacheKey,
+                Json: jsonBytes,
+                ETag: ResponseCacheService.ComputeETag(
+                    jsonBytes)),
+        ]);
+    }
+
+    private static void ConfigureReadyPublicationMeta(
+        IMetaDatabase metaDb,
+        long publicationId,
+        long scrapeId)
+    {
+        const long bandGeneration = 1;
+        var now = DateTime.UtcNow;
+        var bindings =
+            PublicationSurfaceContractCatalog.Surfaces
+                .Select(descriptor =>
+                    CreateReadyPublicationBinding(
+                        descriptor,
+                        publicationId,
+                        scrapeId,
+                        bandGeneration))
+                .ToArray();
+        metaDb.GetPublicationPointerState().Returns(
+            new PublicationPointerState(
+                publicationId,
+                PreviousPublicationId: null,
+                WorkingPublicationId: null,
+                scrapeId,
+                now));
+        metaDb.GetPublicationGeneration(publicationId)
+            .Returns(new PublicationGenerationInfo(
+                publicationId,
+                scrapeId,
+                PublicationGenerationStatus.Current,
+                PreviousPublicationId: null,
+                now.AddMinutes(-5),
+                now.AddMinutes(-4),
+                now.AddMinutes(-2),
+                now.AddMinutes(-1),
+                FailedAtUtc: null,
+                FailurePhase: null,
+                FailureMessage: null));
+        metaDb.GetPublicationSurfaceBindings(publicationId)
+            .Returns(bindings);
+        metaDb.GetPublicationSurfaceSourceEvidence(
+                publicationId,
+                Arg.Any<string>())
+            .Returns(call =>
+            {
+                var surfaceName = call.ArgAt<string>(1);
+                var binding = bindings.Single(item =>
+                    item.SurfaceName == surfaceName);
+                return surfaceName switch
+                {
+                    PublicationSurfaceNames.ApiResponseCache =>
+                        new PublicationSurfaceSourceEvidence(
+                            surfaceName,
+                            true,
+                            publicationId,
+                            scrapeId,
+                            binding.RowCount,
+                            binding.ContentHash),
+                    PublicationSurfaceNames.BandRankings =>
+                        new PublicationSurfaceSourceEvidence(
+                            surfaceName,
+                            true,
+                            publicationId,
+                            scrapeId,
+                            RowCount: null,
+                            ContentHash: null,
+                            SourceGeneration: bandGeneration),
+                    PublicationSurfaceNames.SoloScopeSources =>
+                        new PublicationSurfaceSourceEvidence(
+                            surfaceName,
+                            true,
+                            publicationId,
+                            scrapeId,
+                            binding.RowCount,
+                            ContentHash: null),
+                    PublicationSurfaceNames.SongCatalog =>
+                        new PublicationSurfaceSourceEvidence(
+                            surfaceName,
+                            true,
+                            publicationId,
+                            scrapeId,
+                            binding.RowCount,
+                            binding.ContentHash),
+                    _ => null,
+                };
+            });
+    }
+
+    private static PublicationSurfaceBinding
+        CreateReadyPublicationBinding(
+            PublicationSurfaceContractDescriptor descriptor,
+            long publicationId,
+            long scrapeId,
+            long bandGeneration)
+    {
+        var rowCount = descriptor.RequiresRowCount
+            ? Math.Max(1, descriptor.MinimumRowCount)
+            : (long?)null;
+        var bindingJson = new Dictionary<string, object?>
+        {
+            ["contractVersion"] =
+                PublicationRouteSurfaceContractCatalog
+                    .ContractVersion,
+        };
+        if (descriptor.PublicationIdProperty is not null)
+        {
+            bindingJson[descriptor.PublicationIdProperty] =
+                publicationId;
+        }
+        if (descriptor.ScrapeIdProperty is not null)
+            bindingJson[descriptor.ScrapeIdProperty] = scrapeId;
+        if (descriptor.SourceGenerationProperty is not null)
+        {
+            bindingJson[descriptor.SourceGenerationProperty] =
+                bandGeneration;
+        }
+        if (descriptor.RequiredSourceKind is not null)
+            bindingJson["sourceKind"] = descriptor.RequiredSourceKind;
+        if (descriptor.RequiresExactSource)
+            bindingJson["isExact"] = true;
+        if (descriptor.JsonRowCountProperty is not null)
+        {
+            bindingJson[descriptor.JsonRowCountProperty] =
+                rowCount;
+        }
+
+        return new PublicationSurfaceBinding(
+            publicationId,
+            descriptor.SurfaceName,
+            descriptor.AllowedBindingKinds[0],
+            JsonSerializer.Serialize(bindingJson),
+            rowCount,
+            descriptor.ContentHashRequirement switch
+            {
+                PublicationContentHashRequirement.None => null,
+                PublicationContentHashRequirement.Md5OrSha256 =>
+                    new string('a', 32),
+                PublicationContentHashRequirement.Sha256 =>
+                    new string('a', 64),
+                _ => throw new ArgumentOutOfRangeException(),
+            },
+            PublicationGenerationStatus.Ready,
+            DateTime.UtcNow);
     }
 
     // ═══════════════════════════════════════════════════════════════

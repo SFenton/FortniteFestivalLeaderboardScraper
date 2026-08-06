@@ -135,10 +135,19 @@ public abstract class ScraperWorkerTestBase : IDisposable
         try { Directory.Delete(_tempDir, true); } catch { }
     }
 
-    protected ScraperWorker CreateWorker(ScraperOptions? opts = null)
-        => CreateWorkerWithHttp(opts, null);
+    protected ScraperWorker CreateWorker(
+        ScraperOptions? opts = null,
+        PublicationCommitOptions? publicationCommitOptions = null)
+        => CreateWorkerWithHttp(
+            opts,
+            null,
+            publicationCommitOptions);
 
-    protected ScraperWorker CreateWorkerWithHttp(ScraperOptions? opts, HttpMessageHandler? httpHandler)
+    protected ScraperWorker CreateWorkerWithHttp(
+        ScraperOptions? opts,
+        HttpMessageHandler? httpHandler,
+        PublicationCommitOptions?
+            publicationCommitOptions = null)
     {
         opts ??= new ScraperOptions
         {
@@ -292,7 +301,12 @@ public abstract class ScraperWorkerTestBase : IDisposable
             notifications,
             options,
             Options.Create(new Microsoft.AspNetCore.Http.Json.JsonOptions()),
-            _lifetime, _log);
+            _lifetime,
+            _log,
+            publicationCommitOptions:
+                Options.Create(
+                    publicationCommitOptions
+                    ?? new PublicationCommitOptions()));
     }
 
     protected BackfillOrchestrator CreateBackfillOrchestrator(ScraperOptions? opts = null)
@@ -400,6 +414,103 @@ public abstract class ScraperWorkerTestBase : IDisposable
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT COUNT(*) FROM scrape_log";
         return (long)cmd.ExecuteScalar()!;
+    }
+
+    protected bool RelationExists(string relationName)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText =
+            "SELECT to_regclass(@relationName) IS NOT NULL";
+        cmd.Parameters.AddWithValue(
+            "relationName",
+            relationName);
+        return cmd.ExecuteScalar() is true;
+    }
+
+    protected void DropRelation(string relationName)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText =
+            $"DROP TABLE IF EXISTS {BandRankingStorageNames.QuoteIdentifier(relationName)}";
+        cmd.ExecuteNonQuery();
+    }
+
+    protected static async Task WaitUntilAsync(
+        Func<bool> predicate,
+        TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (predicate())
+                return;
+            await Task.Delay(50);
+        }
+
+        throw new TimeoutException(
+            "Condition was not satisfied before timeout.");
+    }
+
+    protected string? GetPublicationCommitIntentOwner()
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT publication_commit_intent_owner
+            FROM scrape_publication_state
+            WHERE id = TRUE
+            """;
+        var value = cmd.ExecuteScalar();
+        return value is null or DBNull
+            ? null
+            : Convert.ToString(
+                value,
+                System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    protected void CreatePublicationCommitFailureTrigger(
+        string name)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            CREATE OR REPLACE FUNCTION "{name}_fn"()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                IF OLD.public_reads_frozen_reason =
+                        '{PublicReadFreezeState.PublicationCommitIntentReason}'
+                   AND NOT NEW.public_reads_frozen
+                THEN
+                    RAISE EXCEPTION 'injected commit failure'
+                        USING ERRCODE = 'P0001';
+                END IF;
+                RETURN NEW;
+            END
+            $$;
+
+            CREATE TRIGGER "{name}"
+            BEFORE UPDATE ON scrape_publication_state
+            FOR EACH ROW
+            EXECUTE FUNCTION "{name}_fn"();
+            """;
+        cmd.ExecuteNonQuery();
+    }
+
+    protected void DropPublicationCommitFailureTrigger(
+        string name)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            DROP TRIGGER IF EXISTS "{name}"
+                ON scrape_publication_state;
+            DROP FUNCTION IF EXISTS "{name}_fn"();
+            """;
+        cmd.ExecuteNonQuery();
     }
 
     protected FestivalService CreateServiceWithSongs(

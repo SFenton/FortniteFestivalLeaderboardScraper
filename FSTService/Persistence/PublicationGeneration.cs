@@ -1,5 +1,131 @@
 namespace FSTService.Persistence;
 
+public sealed class PublicationCommitOptions
+{
+    public const string Section = "PublicationCommit";
+
+    public int DrainTimeoutMilliseconds { get; set; } = 5_000;
+    public int RetryDelayMilliseconds { get; set; } = 50;
+    public int RelationLockTimeoutMilliseconds { get; set; } = 500;
+    public int StatementTimeoutMilliseconds { get; set; } = 5_000;
+    public int MaxExclusiveLockDurationMilliseconds { get; set; } = 5_000;
+    public int StaleCommitIntentSeconds { get; set; } = 30;
+    public int ContentionRetryAttempts { get; set; } = 24;
+    public int ContentionRetryDelayMilliseconds { get; set; } = 250;
+    public int DefaultReadLeaseSeconds { get; set; } = 30;
+    public int ExportReadLeaseSeconds { get; set; } = 180;
+    public int AbandonedReadyGraceSeconds { get; set; } = 30;
+    public int WorkerHeartbeatFreshSeconds { get; set; } = 30;
+    public int PreparationLockTimeoutMilliseconds { get; set; } = 5_000;
+    public int PreparationStatementTimeoutMilliseconds { get; set; } =
+        900_000;
+    public int PreparationTransactionTimeoutMilliseconds { get; set; } =
+        1_800_000;
+    public int NotificationRecoveryRetrySeconds { get; set; } = 60;
+}
+
+public sealed record PublicationPreparationResult(
+    long ScrapeId,
+    long PublicationId,
+    long? CurrentPublicationId,
+    long? PreviousPublicationId,
+    bool PromoteCachedResponses,
+    int? ExpectedPublishedScopeCount,
+    bool QueueImprovementNotifications,
+    string ImprovementNotificationProjectionScopesJson,
+    int ImprovementNotificationProjectionScopeCount,
+    long? BandProjectionGeneration,
+    DateTime PreparedAtUtc,
+    TimeSpan PrepareDuration,
+    bool AlreadyPublished = false);
+
+public sealed record PublicationCommitResult(
+    long ScrapeId,
+    long PublicationId,
+    long? PreviousPublicationId,
+    TimeSpan DrainDuration,
+    TimeSpan ExclusiveLockDuration,
+    int LockRejections,
+    int RelationLockRetries,
+    bool AlreadyPublished = false);
+
+public sealed record PublicationCommitIntentHandle(
+    long ScrapeId,
+    string OwnerToken,
+    DateTime StartedAtUtc);
+
+public sealed record PublicationBandOrphanSweepResult(
+    bool LockAcquired,
+    bool Completed,
+    int ExaminedTableCount,
+    IReadOnlyList<string> DroppedTables);
+
+public sealed class DeferredPublicationMetadataException
+    : InvalidOperationException
+{
+    public DeferredPublicationMetadataException(
+        string message,
+        Exception? innerException = null)
+        : base(message, innerException)
+    {
+    }
+}
+
+public sealed class PublicationCommitBusyException : InvalidOperationException
+{
+    public PublicationCommitBusyException(
+        string message,
+        TimeSpan drainDuration,
+        int lockRejections,
+        int relationLockRetries)
+        : base(message)
+    {
+        DrainDuration = drainDuration;
+        LockRejections = lockRejections;
+        RelationLockRetries = relationLockRetries;
+    }
+
+    public TimeSpan DrainDuration { get; }
+    public int LockRejections { get; }
+    public int RelationLockRetries { get; }
+}
+
+public sealed class PublicationCommitDeadlineExceededException
+    : TimeoutException
+{
+    public PublicationCommitDeadlineExceededException(
+        string message,
+        TimeSpan elapsed,
+        TimeSpan budget,
+        int relationLockRetries,
+        Exception? innerException = null)
+        : base(message, innerException)
+    {
+        Elapsed = elapsed;
+        Budget = budget;
+        RelationLockRetries = relationLockRetries;
+    }
+
+    public TimeSpan Elapsed { get; }
+    public TimeSpan Budget { get; }
+    public int RelationLockRetries { get; }
+}
+
+public enum PublicationCommitIntentReconciliationStatus
+{
+    NotPresent,
+    Fresh,
+    Active,
+    Cleared,
+    FailedCandidateIsolated,
+    AbandonedWorkingIsolated,
+}
+
+public sealed record PublicationCommitIntentReconciliationResult(
+    PublicationCommitIntentReconciliationStatus Status,
+    long? ScrapeId,
+    TimeSpan? Age);
+
 public static class PublicationGenerationStatus
 {
     public const string Building = "building";
@@ -48,6 +174,17 @@ public sealed record PublicationSurfaceSourceEvidence(
     long? RowCount,
     string? ContentHash,
     long? SourceGeneration = null);
+
+public sealed record PublicationCachedResponse(
+    long PublicationId,
+    long PublishedScrapeId,
+    DateTime? PublishedAtUtc,
+    byte[] Json,
+    string ETag);
+
+public sealed record PublicationCacheLookup(
+    bool HasCurrentPublication,
+    PublicationCachedResponse? CachedResponse);
 
 public static class PublicationSurfaceNames
 {
@@ -363,6 +500,15 @@ public static class PublicationGenerationSchema
         ALTER TABLE scrape_publication_state
             ADD COLUMN IF NOT EXISTS working_publication_id BIGINT
                 REFERENCES publication_generations(publication_id);
+        ALTER TABLE scrape_publication_state
+            ADD COLUMN IF NOT EXISTS publication_commit_intent_started_at
+                TIMESTAMPTZ;
+        ALTER TABLE scrape_publication_state
+            ADD COLUMN IF NOT EXISTS publication_commit_intent_heartbeat_at
+                TIMESTAMPTZ;
+        ALTER TABLE scrape_publication_state
+            ADD COLUMN IF NOT EXISTS publication_commit_intent_owner
+                TEXT;
 
         DO $$
         BEGIN
@@ -593,6 +739,7 @@ public static class PublicationGenerationSchema
             current_id BIGINT;
             binding_built_at TIMESTAMPTZ;
             existing_binding_kind TEXT;
+            generation_authoritative BOOLEAN;
             legacy_cached_at TIMESTAMPTZ;
             legacy_row_count BIGINT;
             legacy_content_hash TEXT;
@@ -608,8 +755,16 @@ public static class PublicationGenerationSchema
                 RETURN;
             END IF;
 
-            SELECT binding.built_at, binding.binding_kind
-            INTO binding_built_at, existing_binding_kind
+            SELECT
+                binding.built_at,
+                binding.binding_kind,
+                COALESCE(
+                    (binding.binding_json ->> 'authoritative')::boolean,
+                    FALSE)
+            INTO
+                binding_built_at,
+                existing_binding_kind,
+                generation_authoritative
             FROM publication_surface_bindings binding
             WHERE binding.publication_id = current_id
               AND binding.surface_name = 'api_response_cache';
@@ -636,14 +791,26 @@ public static class PublicationGenerationSchema
             FROM publication_api_response_cache
             WHERE publication_id = current_id;
 
-            IF binding_built_at IS NULL
-               OR existing_binding_kind IN (
-                    'inherited_previous_publication',
-                    'inherited_generation_cache')
-               OR generation_row_count IS DISTINCT FROM legacy_row_count
-               OR generation_content_hash IS DISTINCT FROM legacy_content_hash
-               OR legacy_cached_at IS NOT NULL
-                  AND legacy_cached_at > binding_built_at
+            IF (
+                   NOT COALESCE(generation_authoritative, FALSE)
+                   AND (
+                       binding_built_at IS NULL
+                       OR existing_binding_kind IN (
+                            'inherited_previous_publication',
+                            'inherited_generation_cache')
+                       OR generation_row_count
+                            IS DISTINCT FROM legacy_row_count
+                       OR generation_content_hash
+                            IS DISTINCT FROM legacy_content_hash
+                       OR legacy_cached_at IS NOT NULL
+                          AND legacy_cached_at > binding_built_at
+                   )
+               )
+               OR (
+                   COALESCE(generation_authoritative, FALSE)
+                   AND legacy_cached_at IS NOT NULL
+                   AND legacy_cached_at > binding_built_at
+               )
             THEN
                 DELETE FROM publication_api_response_cache
                 WHERE publication_id = current_id;

@@ -29,6 +29,64 @@ internal sealed class SongCatalogCaptureException : InvalidOperationException
     }
 }
 
+internal sealed class PublicationCommitDeferredException
+    : InvalidOperationException
+{
+    public PublicationCommitDeferredException(
+        long scrapeId,
+        Exception innerException)
+        : base(
+            $"Publication for scrape {scrapeId} remains ready but was deferred by contention.",
+            innerException)
+    {
+        ScrapeId = scrapeId;
+    }
+
+    public long ScrapeId { get; }
+}
+
+internal sealed class PublicationCommitShutdownDeferredException
+    : OperationCanceledException
+{
+    public PublicationCommitShutdownDeferredException(
+        long scrapeId,
+        OperationCanceledException innerException)
+        : base(
+            $"Publication for scrape {scrapeId} remains ready because worker shutdown interrupted contention retry.",
+            innerException)
+    {
+        ScrapeId = scrapeId;
+    }
+
+    public long ScrapeId { get; }
+}
+
+internal sealed class PublicationCommitExecutionException
+    : InvalidOperationException
+{
+    public PublicationCommitExecutionException(
+        long scrapeId,
+        Exception innerException,
+        ScrapeLifecycleNotifier.PublicationCommitIntentLease
+            commitIntent)
+        : base(
+            $"Publication for scrape {scrapeId} failed while its durable commit intent remained owned.",
+            innerException)
+    {
+        ScrapeId = scrapeId;
+        CommitIntent = commitIntent;
+    }
+
+    public long ScrapeId { get; }
+    public ScrapeLifecycleNotifier.PublicationCommitIntentLease
+        CommitIntent { get; }
+}
+
+internal sealed record DeferredPublicationResumeOutcome(
+    bool Handled,
+    bool Published,
+    string? Detail);
+
 /// <summary>
 /// Background worker that continuously scrapes Fortnite Festival leaderboard scores.
 ///
@@ -65,14 +123,19 @@ public sealed class ScraperWorker : BackgroundService
     private readonly DeferredRetentionMaintenanceRunner? _deferredRetentionMaintenance;
     private readonly WorkerStatusPublisher? _workerStatus;
     private readonly IOptions<ScraperOptions> _options;
+    private readonly PublicationCommitOptions
+        _publicationCommitOptions;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<ScraperWorker> _log;
     private readonly System.Text.Json.JsonSerializerOptions _jsonOpts;
     private DateTime _serviceStartedAtUtc = DateTime.UtcNow;
+    internal Func<long?, Task>?
+        ScoresChangedNotificationTestHook { get; set; }
 
     private static readonly TimeSpan WebRegistrationStartupProtection = TimeSpan.FromHours(4);
     private static readonly TimeSpan BestEffortCleanupTimeout = TimeSpan.FromSeconds(30);
-    private static readonly TimeSpan NotificationRecoveryRetryDelay = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan DeferredPublicationRetryDelay =
+        TimeSpan.FromSeconds(5);
 
     public ScraperWorker(
         TokenManager tokenManager,
@@ -100,7 +163,9 @@ public sealed class ScraperWorker : BackgroundService
         IHostApplicationLifetime lifetime,
         ILogger<ScraperWorker> log,
         DeferredRetentionMaintenanceRunner? deferredRetentionMaintenance = null,
-        WorkerStatusPublisher? workerStatus = null)
+        WorkerStatusPublisher? workerStatus = null,
+        IOptions<PublicationCommitOptions>?
+            publicationCommitOptions = null)
     {
         _tokenManager = tokenManager;
         _globalScraper = globalScraper;
@@ -125,6 +190,9 @@ public sealed class ScraperWorker : BackgroundService
         _deferredRetentionMaintenance = deferredRetentionMaintenance;
         _workerStatus = workerStatus;
         _options = options;
+        _publicationCommitOptions =
+            publicationCommitOptions?.Value
+            ?? new PublicationCommitOptions();
         _jsonOpts = jsonOptions.Value.SerializerOptions;
         _lifetime = lifetime;
         _log = log;
@@ -193,6 +261,9 @@ public sealed class ScraperWorker : BackgroundService
                 _log.LogInformation("No precomputed responses in RAM buffer (served from PostgreSQL).");
             PrimeSongsCache(); // Rebuild with population tiers
         }
+
+        await ResumeDeferredPublicationBeforeGatesAsync(
+            stoppingToken);
 
         // --api-only mode: skip scrape work. Song catalog freshness is owned by
         // SongCatalogRefreshWorker, which is registered directly by Program.cs.
@@ -288,6 +359,8 @@ public sealed class ScraperWorker : BackgroundService
             var publishedBeforePass =
                 _persistence.Meta.GetPublishedScrapeRun()?.Id;
             await RunScrapePassAsync(_festivalService, opts, stoppingToken);
+            await ResumeDeferredPublicationBeforeGatesAsync(
+                stoppingToken);
             await EnsureImprovementNotificationsCompleteBeforeNextScrapeAsync(stoppingToken);
             lastScrapeEndUtc = DateTime.UtcNow;
 
@@ -425,6 +498,33 @@ public sealed class ScraperWorker : BackgroundService
         {
             try
             {
+                var freezeState =
+                    _persistence.Meta.GetPublicReadFreezeState();
+                if (freezeState.PublicationCommitDeferred)
+                {
+                    _log.LogWarning(
+                        "Notification recovery gate yielded to deferred publication recovery for scrape {ScrapeId}.",
+                        freezeState.ScrapeId);
+                    return;
+                }
+                if (freezeState.PublicationFailureIsolationPending)
+                {
+                    _log.LogWarning(
+                        "Notification recovery gate is waiting for pending publication isolation on scrape {ScrapeId}.",
+                        freezeState.ScrapeId);
+                    _ = _persistence.Meta
+                        .ReconcileStalePublicationCommitIntent(
+                            TimeSpan.FromSeconds(
+                                Math.Max(
+                                    1,
+                                    _publicationCommitOptions
+                                        .StaleCommitIntentSeconds)));
+                    await Task.Delay(
+                        DeferredPublicationRetryDelay,
+                        stoppingToken);
+                    continue;
+                }
+
                 _workerStatus?.BeginOperation(
                     "notifications.recovery",
                     "Recovering pending improvement notifications before the next scrape",
@@ -445,8 +545,18 @@ public sealed class ScraperWorker : BackgroundService
                 _log.LogError(
                     ex,
                     "Pending improvement notification recovery failed. The next scrape is held and recovery will retry in {RetryDelay}.",
-                    NotificationRecoveryRetryDelay);
-                await Task.Delay(NotificationRecoveryRetryDelay, stoppingToken);
+                    TimeSpan.FromSeconds(
+                        Math.Max(
+                            1,
+                            _publicationCommitOptions
+                                .NotificationRecoveryRetrySeconds)));
+                await Task.Delay(
+                    TimeSpan.FromSeconds(
+                        Math.Max(
+                            1,
+                            _publicationCommitOptions
+                                .NotificationRecoveryRetrySeconds)),
+                    stoppingToken);
             }
         }
     }
@@ -619,10 +729,24 @@ public sealed class ScraperWorker : BackgroundService
         string? passDetail = "Scrape pass exited before a publication decision.";
         var publicReadsFrozen = false;
         var publicReadsReleased = false;
+        var durableFailureIsolationConfirmed = true;
         _backgroundWork.RequestPauseForScrape();
         try
         {
             await _backgroundWork.WaitForBackgroundQuiescenceAsync(ct);
+
+            var deferredResume =
+                await TryResumeDeferredPublicationAsync(ct);
+            if (deferredResume.Handled)
+            {
+                passStatus = deferredResume.Published
+                    ? "completed"
+                    : "failed";
+                passDetail = deferredResume.Detail;
+                publicReadsFrozen = true;
+                publicReadsReleased = true;
+                return;
+            }
 
             var resolvedPhases = opts.ResolvedPhases;
             if (resolvedPhases != ScrapePhase.All)
@@ -867,7 +991,7 @@ public sealed class ScraperWorker : BackgroundService
                         ctx.ScrapeId,
                         "Post-processing cancellation",
                         ex.Message,
-                        ref publicReadsReleased);
+                        ref durableFailureIsolationConfirmed);
                     throw;
                 }
                 catch (Exception ex)
@@ -879,7 +1003,7 @@ public sealed class ScraperWorker : BackgroundService
                         ctx.ScrapeId,
                         "Post-processing",
                         ex.Message,
-                        ref publicReadsReleased);
+                        ref durableFailureIsolationConfirmed);
                     _log.LogError(ex, "Post-scrape orchestration failed. Finalizing pass with stale data.");
                 }
             }
@@ -898,7 +1022,7 @@ public sealed class ScraperWorker : BackgroundService
                         ctx.ScrapeId,
                         "Publication cleanup cancellation",
                         ex.Message,
-                        ref publicReadsReleased);
+                        ref durableFailureIsolationConfirmed);
                     throw;
                 }
                 catch (Exception ex)
@@ -910,7 +1034,7 @@ public sealed class ScraperWorker : BackgroundService
                         ctx.ScrapeId,
                         "Publication cleanup",
                         ex.Message,
-                        ref publicReadsReleased);
+                        ref durableFailureIsolationConfirmed);
                 }
 
                 postProcessCompleted = publicationCleanupCompleted;
@@ -934,7 +1058,7 @@ public sealed class ScraperWorker : BackgroundService
                         ctx.ScrapeId,
                         "Post-scrape cleanup cancellation",
                         ex.Message,
-                        ref publicReadsReleased);
+                        ref durableFailureIsolationConfirmed);
                     throw;
                 }
                 catch (Exception ex)
@@ -964,6 +1088,7 @@ public sealed class ScraperWorker : BackgroundService
 
             long? publishedScrapeId = null;
             var publishedNewState = false;
+            var publicationDurablyCommitted = false;
 
             if (result is not null)
             {
@@ -1050,7 +1175,11 @@ public sealed class ScraperWorker : BackgroundService
                             result.TotalRequests,
                             result.TotalBytes,
                             result.EpicReportedOver100Pages);
-                        _persistence.Meta.PublishScrapeRun(
+                        _workerStatus?.UpdateOperation(
+                            "scrape.publication",
+                            subOperation: "preparing_publication_candidate");
+                        var publicationPreparation =
+                            _persistence.Meta.PrepareScrapePublication(
                             result.ScrapeId,
                             promoteCachedResponses:
                                 postScrapePhases.HasFlag(ScrapePhase.SoloPrecompute),
@@ -1058,15 +1187,121 @@ public sealed class ScraperWorker : BackgroundService
                             queueImprovementNotifications: queueImprovementNotifications,
                             improvementNotificationProjectionScopes:
                                 improvementNotificationProjectionScopes);
+                        _workerStatus?.UpdateOperation(
+                            "scrape.publication",
+                            subOperation: "draining_publication_readers");
+                        var publicationCommit =
+                            await CommitPreparedWithContentionRetriesAsync(
+                                publicationPreparation,
+                                ct);
+                        publicationDurablyCommitted = true;
                         publishedScrapeId = result.ScrapeId;
                         publishedNewState = true;
                         passStatus = "completed";
                         passDetail = null;
+                        _log.LogInformation(
+                            "Publication {PublicationId} committed for scrape {ScrapeId}: prepare={PrepareElapsedMs:N3}ms, drain={DrainElapsedMs:N3}ms, exclusive={ExclusiveElapsedMs:N3}ms, lockRejections={LockRejections}, relationLockRetries={RelationLockRetries}.",
+                            publicationCommit.PublicationId,
+                            result.ScrapeId,
+                            publicationPreparation.PrepareDuration
+                                .TotalMilliseconds,
+                            publicationCommit.DrainDuration
+                                .TotalMilliseconds,
+                            publicationCommit.ExclusiveLockDuration
+                                .TotalMilliseconds,
+                            publicationCommit.LockRejections,
+                            publicationCommit.RelationLockRetries);
+                        _workerStatus?.UpdateOperation(
+                            "scrape.publication",
+                            subOperation:
+                                "cleaning_publication_artifacts");
+                        try
+                        {
+                            _persistence.Meta
+                                .CleanupPublishedScrapePublication(
+                                    publicationPreparation,
+                                    publicationCommit);
+                        }
+                        catch (Exception cleanupEx)
+                        {
+                            _log.LogWarning(
+                                cleanupEx,
+                                "Publication {PublicationId} succeeded, but post-commit artifact cleanup will need a later retry.",
+                                publicationCommit.PublicationId);
+                        }
                         _workerStatus?.CompleteOperation("scrape.publication");
                         _workerStatus?.UpdateOperation(
                             "scrape.pass",
                             phase: "Finalizing",
                             subOperation: "post_publication");
+                    }
+                    catch (OperationCanceledException ex)
+                        when (publicationDurablyCommitted)
+                    {
+                        _log.LogWarning(
+                            ex,
+                            "Scrape {ScrapeId} committed successfully, but post-commit finalization was canceled; publication remains current.",
+                            result.ScrapeId);
+                    }
+                    catch (Exception ex)
+                        when (publicationDurablyCommitted)
+                    {
+                        _log.LogWarning(
+                            ex,
+                            "Scrape {ScrapeId} committed successfully, but post-commit status/cleanup work failed; publication remains current.",
+                            result.ScrapeId);
+                    }
+                    catch (PublicationCommitShutdownDeferredException ex)
+                    {
+                        _workerStatus?.CompleteOperation(
+                            "scrape.publication",
+                            "deferred",
+                            "worker shutdown");
+                        passDetail = ex.Message;
+                        durableFailureIsolationConfirmed = false;
+                        return;
+                    }
+                    catch (PublicationCommitDeferredException ex)
+                    {
+                        _workerStatus?.FailOperation(
+                            "scrape.publication",
+                            ex,
+                            "ready publication deferred");
+                        passDetail = ex.Message;
+                        durableFailureIsolationConfirmed = false;
+                        return;
+                    }
+                    catch (PublicationCommitExecutionException ex)
+                    {
+                        passDetail =
+                            $"Publication failed: {ex.InnerException?.Message ?? ex.Message}";
+                        try
+                        {
+                            _persistence.Meta.FailScrapeRun(
+                                ex.ScrapeId,
+                                MetaDatabase
+                                    .PublicationReadIsolationFailurePhase,
+                                passDetail,
+                                ex.CommitIntent.CommitIntent);
+                            ex.CommitIntent.CompleteIsolation();
+                            ex.CommitIntent.Dispose();
+                        }
+                        catch (Exception isolationEx)
+                        {
+                            durableFailureIsolationConfirmed = false;
+                            ex.CommitIntent
+                                .PreserveForIsolationPending();
+                            ex.CommitIntent.Dispose();
+                            _lifecycle.ScrapeFailureIsolationPending(
+                                ex.ScrapeId);
+                            throw new InvalidOperationException(
+                                "Publication failed and durable read isolation remains pending.",
+                                isolationEx);
+                        }
+
+                        throw new InvalidOperationException(
+                            passDetail,
+                            ex.InnerException ?? ex);
                     }
                     catch (OperationCanceledException)
                     {
@@ -1077,7 +1312,7 @@ public sealed class ScraperWorker : BackgroundService
                             "Publication cancellation",
                             "publication",
                             passDetail,
-                            ref publicReadsReleased);
+                            ref durableFailureIsolationConfirmed);
                         throw;
                     }
                     catch (Exception ex)
@@ -1089,7 +1324,7 @@ public sealed class ScraperWorker : BackgroundService
                             "Publication",
                             "publication",
                             ex.Message,
-                            ref publicReadsReleased);
+                            ref durableFailureIsolationConfirmed);
                         throw;
                     }
                 }
@@ -1136,7 +1371,8 @@ public sealed class ScraperWorker : BackgroundService
                 if (passStatus == "completed")
                     _lifecycle.ScrapeCompleted();
                 else
-                    _lifecycle.ScrapeFailed();
+                    _lifecycle.ScrapeFailed(
+                        durableFailureIsolationConfirmed);
                 publicReadsReleased = true;
             }
 
@@ -1152,8 +1388,19 @@ public sealed class ScraperWorker : BackgroundService
                     _log.LogWarning(ex, "Post-publication improvement notification detection failed. Published scrape remains available; notifications will retry next pass.");
                 }
 
-                // Notify connected clients only after the server can serve the published scrape.
-                await _notifications.NotifyScoresChangedAsync(publishedScrapeId);
+                try
+                {
+                    // Notify connected clients only after the server can serve the published scrape.
+                    await NotifyScoresChangedAfterPublicationAsync(
+                        publishedScrapeId);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(
+                        ex,
+                        "Published scrape {ScrapeId} remains current, but scores-changed broadcast failed; clients will recover through publication polling.",
+                        publishedScrapeId);
+                }
 
                 _deferredRetentionMaintenance?.ScheduleAfterPublication(
                     $"scrape {publishedScrapeId} published",
@@ -1167,7 +1414,8 @@ public sealed class ScraperWorker : BackgroundService
                 if (passStatus == "completed")
                     _lifecycle.ScrapeCompleted();
                 else
-                    _lifecycle.ScrapeFailed();
+                    _lifecycle.ScrapeFailed(
+                        durableFailureIsolationConfirmed);
                 publicReadsReleased = true;
             }
 
@@ -1177,24 +1425,424 @@ public sealed class ScraperWorker : BackgroundService
         }
     }
 
+    private async Task ResumeDeferredPublicationBeforeGatesAsync(
+        CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            var outcome =
+                await TryResumeDeferredPublicationAsync(ct);
+            if (!outcome.Handled || outcome.Published)
+                return;
+
+            _log.LogWarning(
+                "Deferred publication remains unresolved; retrying in {Delay}.",
+                DeferredPublicationRetryDelay);
+            await Task.Delay(
+                DeferredPublicationRetryDelay,
+                ct);
+        }
+    }
+
+    private Task NotifyScoresChangedAfterPublicationAsync(
+        long? scrapeId) =>
+        ScoresChangedNotificationTestHook?.Invoke(scrapeId)
+        ?? _notifications.NotifyScoresChangedAsync(scrapeId);
+
+    private async Task<DeferredPublicationResumeOutcome>
+        TryResumeDeferredPublicationAsync(CancellationToken ct)
+    {
+        PublicationPreparationResult? preparation;
+        try
+        {
+            preparation =
+                _persistence.Meta
+                    .GetDeferredPublicationPreparation();
+        }
+        catch (DeferredPublicationMetadataException ex)
+        {
+            _log.LogError(
+                ex,
+                "Deferred publication metadata is invalid; isolating the working candidate.");
+            var pointers =
+                _persistence.Meta.GetPublicationPointerState();
+            if (pointers.WorkingPublicationId.HasValue)
+            {
+                var generation =
+                    _persistence.Meta.GetPublicationGeneration(
+                        pointers.WorkingPublicationId.Value);
+                if (generation?.ScrapeId is long scrapeId)
+                {
+                    var isolationConfirmed = true;
+                    try
+                    {
+                        _persistence.Meta.FailScrapeRun(
+                            scrapeId,
+                            MetaDatabase.PublicationReadIsolationFailurePhase,
+                            ex.Message);
+                    }
+                    catch
+                    {
+                        isolationConfirmed = false;
+                        _lifecycle.ScrapeFailureIsolationPending(
+                            scrapeId);
+                    }
+                    _lifecycle.ScrapeFailed(isolationConfirmed);
+                }
+            }
+            return new DeferredPublicationResumeOutcome(
+                Handled: true,
+                Published: false,
+                Detail: ex.Message);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(
+                ex,
+                "Deferred publication lookup failed transiently; preserving the ready candidate for retry.");
+            return new DeferredPublicationResumeOutcome(
+                Handled: true,
+                Published: false,
+                Detail:
+                    "Deferred publication lookup failed transiently; retry scheduled.");
+        }
+
+        if (preparation is null)
+        {
+            return new DeferredPublicationResumeOutcome(
+                Handled: false,
+                Published: false,
+                Detail: null);
+        }
+
+        _log.LogWarning(
+            "Resuming deferred ready publication {PublicationId} for scrape {ScrapeId} before any new scrape allocation.",
+            preparation.PublicationId,
+            preparation.ScrapeId);
+        _workerStatus?.BeginOperation(
+            "scrape.publication",
+            "Resuming deferred leaderboard publication",
+            phase: "Publishing",
+            subOperation: "resuming_deferred_publication");
+        PublicationCommitResult commit;
+        try
+        {
+            commit =
+                await CommitPreparedWithContentionRetriesAsync(
+                    preparation,
+                    ct);
+        }
+        catch (PublicationCommitShutdownDeferredException ex)
+        {
+            _workerStatus?.CompleteOperation(
+                "scrape.publication",
+                "deferred",
+                "worker shutdown");
+            return new DeferredPublicationResumeOutcome(
+                Handled: true,
+                Published: false,
+                Detail: ex.Message);
+        }
+        catch (PublicationCommitDeferredException ex)
+        {
+            _workerStatus?.FailOperation(
+                "scrape.publication",
+                ex,
+                "deferred publication remains ready");
+            return new DeferredPublicationResumeOutcome(
+                Handled: true,
+                Published: false,
+                Detail: ex.Message);
+        }
+        catch (PublicationCommitExecutionException ex)
+        {
+            var isolationConfirmed = true;
+            try
+            {
+                _persistence.Meta.FailScrapeRun(
+                    ex.ScrapeId,
+                    MetaDatabase.PublicationReadIsolationFailurePhase,
+                    ex.InnerException?.Message ?? ex.Message,
+                    ex.CommitIntent.CommitIntent);
+                ex.CommitIntent.CompleteIsolation();
+                ex.CommitIntent.Dispose();
+            }
+            catch (Exception isolationEx)
+            {
+                isolationConfirmed = false;
+                ex.CommitIntent.PreserveForIsolationPending();
+                ex.CommitIntent.Dispose();
+                _lifecycle.ScrapeFailureIsolationPending(
+                    ex.ScrapeId);
+                _log.LogError(
+                    isolationEx,
+                    "Deferred publication for scrape {ScrapeId} failed and durable isolation remains pending.",
+                    ex.ScrapeId);
+            }
+            _lifecycle.ScrapeFailed(isolationConfirmed);
+            _workerStatus?.FailOperation(
+                "scrape.publication",
+                ex.InnerException ?? ex);
+            return new DeferredPublicationResumeOutcome(
+                Handled: true,
+                Published: false,
+                Detail: ex.InnerException?.Message ?? ex.Message);
+        }
+        catch (Exception ex)
+        {
+            var isolationConfirmed = true;
+            try
+            {
+                _persistence.Meta.FailScrapeRun(
+                    preparation.ScrapeId,
+                    MetaDatabase.PublicationReadIsolationFailurePhase,
+                    ex.Message);
+            }
+            catch (Exception isolationEx)
+            {
+                isolationConfirmed = false;
+                _lifecycle.ScrapeFailureIsolationPending(
+                    preparation.ScrapeId);
+                _log.LogError(
+                    isolationEx,
+                    "Deferred publication {PublicationId} failed and durable isolation remains pending.",
+                    preparation.PublicationId);
+            }
+            _lifecycle.ScrapeFailed(isolationConfirmed);
+            _workerStatus?.FailOperation(
+                "scrape.publication",
+                ex);
+            return new DeferredPublicationResumeOutcome(
+                Handled: true,
+                Published: false,
+                Detail: ex.Message);
+        }
+
+        try
+        {
+            _persistence.Meta
+                .CleanupPublishedScrapePublication(
+                    preparation,
+                    commit);
+        }
+        catch (Exception cleanupEx)
+        {
+            _log.LogWarning(
+                cleanupEx,
+                "Deferred publication {PublicationId} committed, but cleanup deferred.",
+                preparation.PublicationId);
+        }
+
+        try
+        {
+            _lifecycle.ScrapeCompleted();
+        }
+        catch (Exception lifecycleEx)
+        {
+            _log.LogWarning(
+                lifecycleEx,
+                "Deferred publication {PublicationId} committed, but local lifecycle completion failed.",
+                preparation.PublicationId);
+        }
+
+        try
+        {
+            _workerStatus?.CompleteOperation(
+                "scrape.publication");
+        }
+        catch (Exception statusEx)
+        {
+            _log.LogWarning(
+                statusEx,
+                "Deferred publication {PublicationId} committed, but worker status completion failed.",
+                preparation.PublicationId);
+        }
+
+        try
+        {
+            await NotifyScoresChangedAfterPublicationAsync(
+                preparation.ScrapeId);
+        }
+        catch (Exception notificationEx)
+        {
+            _log.LogWarning(
+                notificationEx,
+                "Deferred publication {PublicationId} committed, but scores-changed broadcast failed.",
+                preparation.PublicationId);
+        }
+
+        return new DeferredPublicationResumeOutcome(
+            Handled: true,
+            Published: true,
+            Detail: null);
+    }
+
+    private async Task<PublicationCommitResult>
+        CommitPreparedWithContentionRetriesAsync(
+            PublicationPreparationResult preparation,
+            CancellationToken ct)
+    {
+        Exception? lastContention = null;
+        var attempts = Math.Max(
+            1,
+            _publicationCommitOptions
+                .ContentionRetryAttempts);
+        ScrapeLifecycleNotifier.PublicationCommitIntentLease?
+            commitIntent = null;
+        for (var attempt = 1;
+             attempt <= attempts && commitIntent is null;
+             attempt++)
+        {
+            try
+            {
+                commitIntent =
+                    _lifecycle.PublicationCommitStarting(
+                        preparation.ScrapeId);
+            }
+            catch (PublicationCommitBusyException ex)
+            {
+                lastContention = ex;
+                if (attempt >= attempts)
+                {
+                    throw new PublicationCommitDeferredException(
+                        preparation.ScrapeId,
+                        ex);
+                }
+
+                _log.LogWarning(
+                    ex,
+                    "Publication {PublicationId} could not acquire commit-intent ownership on attempt {Attempt}/{Attempts}; retrying.",
+                    preparation.PublicationId,
+                    attempt,
+                    attempts);
+                try
+                {
+                    await Task.Delay(
+                        TimeSpan.FromMilliseconds(
+                            Math.Max(
+                                1,
+                                _publicationCommitOptions
+                                    .ContentionRetryDelayMilliseconds)),
+                        ct);
+                }
+                catch (OperationCanceledException cancellationEx)
+                    when (ct.IsCancellationRequested)
+                {
+                    throw new PublicationCommitShutdownDeferredException(
+                        preparation.ScrapeId,
+                        cancellationEx);
+                }
+            }
+        }
+
+        if (commitIntent is null)
+        {
+            throw new PublicationCommitDeferredException(
+                preparation.ScrapeId,
+                lastContention
+                ?? new InvalidOperationException(
+                    "Publication commit-intent acquisition exhausted."));
+        }
+
+        var transferCommitIntent = false;
+        try
+        {
+            for (var attempt = 1; attempt <= attempts; attempt++)
+            {
+                try
+                {
+                    return _persistence.Meta
+                        .CommitPreparedScrapePublication(
+                            preparation,
+                            commitIntent.CommitIntent);
+                }
+                catch (OperationCanceledException cancellationEx)
+                    when (ct.IsCancellationRequested)
+                {
+                    commitIntent.Defer();
+                    throw new PublicationCommitShutdownDeferredException(
+                        preparation.ScrapeId,
+                        cancellationEx);
+                }
+                catch (Exception ex)
+                    when (ex is PublicationCommitBusyException
+                        or PublicationCommitDeadlineExceededException)
+                {
+                    lastContention = ex;
+                    if (attempt >= attempts)
+                    {
+                        commitIntent.Defer();
+                        throw new PublicationCommitDeferredException(
+                            preparation.ScrapeId,
+                            ex);
+                    }
+
+                    _log.LogWarning(
+                        ex,
+                        "Publication {PublicationId} contention attempt {Attempt}/{Attempts} failed while retaining one durable commit intent; retrying.",
+                        preparation.PublicationId,
+                        attempt,
+                        attempts);
+                    try
+                    {
+                        await Task.Delay(
+                            TimeSpan.FromMilliseconds(
+                                Math.Max(
+                                    1,
+                                    _publicationCommitOptions
+                                        .ContentionRetryDelayMilliseconds)),
+                            ct);
+                    }
+                    catch (OperationCanceledException cancellationEx)
+                        when (ct.IsCancellationRequested)
+                    {
+                        commitIntent.Defer();
+                        throw new PublicationCommitShutdownDeferredException(
+                            preparation.ScrapeId,
+                            cancellationEx);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    transferCommitIntent = true;
+                    throw new PublicationCommitExecutionException(
+                        preparation.ScrapeId,
+                        ex,
+                        commitIntent);
+                }
+            }
+        }
+        finally
+        {
+            if (!transferCommitIntent)
+                commitIntent.Dispose();
+        }
+
+        throw new PublicationCommitDeferredException(
+            preparation.ScrapeId,
+            lastContention
+            ?? new InvalidOperationException(
+                "Publication contention retry policy exhausted."));
+    }
+
     private void RecordFailedCandidateIsolation(
         long scrapeId,
         string operation,
         string failureMessage,
-        ref bool publicReadsReleased) =>
+        ref bool durableFailureIsolationConfirmed) =>
         RecordFailedCandidateIsolation(
             scrapeId,
             operation,
             MetaDatabase.PostProcessReadIsolationFailurePhase,
             failureMessage,
-            ref publicReadsReleased);
+            ref durableFailureIsolationConfirmed);
 
     private void RecordFailedCandidateIsolation(
         long scrapeId,
         string operation,
         string failurePhase,
         string failureMessage,
-        ref bool publicReadsReleased)
+        ref bool durableFailureIsolationConfirmed)
     {
         if (scrapeId <= 0)
             return;
@@ -1208,9 +1856,10 @@ public sealed class ScraperWorker : BackgroundService
         }
         catch (Exception isolationEx)
         {
-            publicReadsReleased = true;
+            durableFailureIsolationConfirmed = false;
+            _lifecycle.ScrapeFailureIsolationPending(scrapeId);
             throw new InvalidOperationException(
-                $"{operation} failed and durable read isolation could not be recorded; public reads remain frozen.",
+                $"{operation} failed and durable read isolation could not be recorded.",
                 isolationEx);
         }
     }

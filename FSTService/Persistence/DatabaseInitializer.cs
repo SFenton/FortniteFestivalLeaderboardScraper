@@ -33,6 +33,9 @@ public static class DatabaseInitializer
             public_reads_frozen_at TIMESTAMPTZ,
             public_reads_frozen_scrape_id INTEGER REFERENCES scrape_log(id),
             public_reads_frozen_reason TEXT,
+            publication_commit_intent_started_at TIMESTAMPTZ,
+            publication_commit_intent_heartbeat_at TIMESTAMPTZ,
+            publication_commit_intent_owner TEXT,
             band_projection_generation BIGINT,
             updated_at          TIMESTAMPTZ NOT NULL
         );
@@ -818,6 +821,9 @@ public static class DatabaseInitializer
             public_reads_frozen_at TIMESTAMPTZ,
             public_reads_frozen_scrape_id INTEGER REFERENCES scrape_log(id),
             public_reads_frozen_reason TEXT,
+            publication_commit_intent_started_at TIMESTAMPTZ,
+            publication_commit_intent_heartbeat_at TIMESTAMPTZ,
+            publication_commit_intent_owner TEXT,
             band_projection_generation BIGINT,
             updated_at          TIMESTAMPTZ NOT NULL
         );
@@ -826,6 +832,9 @@ public static class DatabaseInitializer
         ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS public_reads_frozen_at TIMESTAMPTZ;
         ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS public_reads_frozen_scrape_id INTEGER REFERENCES scrape_log(id);
         ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS public_reads_frozen_reason TEXT;
+        ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS publication_commit_intent_started_at TIMESTAMPTZ;
+        ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS publication_commit_intent_heartbeat_at TIMESTAMPTZ;
+        ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS publication_commit_intent_owner TEXT;
         ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS band_projection_generation BIGINT;
 
         CREATE TABLE IF NOT EXISTS leaderboard_published_scope_source (
