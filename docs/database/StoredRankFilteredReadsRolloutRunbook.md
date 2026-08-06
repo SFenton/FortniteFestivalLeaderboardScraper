@@ -51,7 +51,11 @@ the API, not a copied query or a potentially stale `song_stats` value.
 The deterministic manifest records its seed and fingerprint and must cover:
 
 - all nine solo instruments;
-- current, reused, explicit-empty, and projection-source-mismatch scopes;
+- every source class present in the sealed publication; structurally absent
+  reused or source-mismatch cases are not fabricated as live promotion gates
+  and remain covered by PostgreSQL/unit fixtures;
+- explicit-empty mappings before projection-readiness classification, because
+  an empty scope intentionally has no projection generation;
 - a source-matched ready current/reused projection whose candidate path returns
   and compares at least one overlay-derived row; source-mismatch fallback does
   not satisfy this gate;

@@ -165,8 +165,14 @@ public static class DeterministicRollout
         IReadOnlyList<ScopeEvidence> scopes,
         IReadOnlyList<RowParityCase> rowCases,
         IReadOnlyList<ApiWorkload> apiWorkloads,
-        IReadOnlyList<string> requiredInstruments)
+        IReadOnlyList<string> requiredInstruments,
+        IReadOnlyCollection<ScopeSourceClass>? availableSourceClasses = null)
     {
+        var requiredSourceClasses = availableSourceClasses is null
+            ? RequiredSourceClasses
+            : RequiredSourceClasses
+                .Where(availableSourceClasses.Contains)
+                .ToArray();
         var nonEmptyScopeIds = scopes
             .Where(static scope => scope.PublishedRowCount > 0 && scope.SampleAccounts.Count > 0)
             .Select(static scope => scope.Id)
@@ -186,7 +192,7 @@ public static class DeterministicRollout
             .Distinct(StringComparer.Ordinal)
             .Order(StringComparer.Ordinal)
             .ToArray();
-        var missingSourceClasses = RequiredSourceClasses
+        var missingSourceClasses = requiredSourceClasses
             .Select(static value => value.ToString())
             .Except(coveredSourceClasses, StringComparer.Ordinal)
             .Order(StringComparer.Ordinal)

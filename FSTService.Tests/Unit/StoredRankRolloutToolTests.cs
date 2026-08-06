@@ -12,6 +12,38 @@ public sealed class StoredRankRolloutToolTests
         "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
     [Fact]
+    public void Empty_source_mapping_does_not_require_a_projection()
+    {
+        var sourceClass = ManifestGenerator.Classify(
+            publishedScrapeId: 1278,
+            sourceKind: "empty",
+            sourceScrapeId: 1276,
+            projectionSourceSnapshotId: 0,
+            projectionGeneration: null,
+            projectionScopeSourceSnapshotId: null,
+            projectionStatus: null);
+
+        Assert.Equal(ScopeSourceClass.Empty, sourceClass);
+    }
+
+    [Fact]
+    public void Coverage_requires_only_source_classes_present_in_publication()
+    {
+        var coverage = DeterministicRollout.BuildCoverage(
+            [
+                Scope("current", "Solo_Guitar", ScopeSourceClass.Current),
+                Scope("empty", "Solo_Guitar", ScopeSourceClass.Empty),
+            ],
+            [],
+            [],
+            [],
+            [ScopeSourceClass.Current, ScopeSourceClass.Empty]);
+
+        Assert.DoesNotContain("Reused", coverage.MissingSourceClasses);
+        Assert.DoesNotContain("SourceMismatch", coverage.MissingSourceClasses);
+    }
+
+    [Fact]
     public void Threshold_uses_exact_CSharp_truncation_instead_of_Postgres_rounding()
     {
         const int rawMaxScore = 99_999;

@@ -226,7 +226,11 @@ public sealed class ManifestGenerator
             enrichedScopes,
             rowCases,
             apiWorkloads,
-            GlobalLeaderboardScraper.AllInstruments);
+            GlobalLeaderboardScraper.AllInstruments,
+            candidates
+                .Select(static scope => scope.SourceClass)
+                .Distinct()
+                .ToArray());
         var manifest = new RolloutManifest
         {
             Seed = seed,
@@ -1205,7 +1209,7 @@ public sealed class ManifestGenerator
             .ToArray();
     }
 
-    private static ScopeSourceClass Classify(
+    public static ScopeSourceClass Classify(
         long publishedScrapeId,
         string sourceKind,
         long sourceScrapeId,
@@ -1214,6 +1218,8 @@ public sealed class ManifestGenerator
         long? projectionScopeSourceSnapshotId,
         string? projectionStatus)
     {
+        if (string.Equals(sourceKind, "empty", StringComparison.Ordinal))
+            return ScopeSourceClass.Empty;
         if (!projectionGeneration.HasValue
             || !string.Equals(projectionStatus, "ready", StringComparison.Ordinal))
         {
@@ -1221,8 +1227,6 @@ public sealed class ManifestGenerator
         }
         if (projectionScopeSourceSnapshotId != projectionSourceSnapshotId)
             return ScopeSourceClass.SourceMismatch;
-        if (string.Equals(sourceKind, "empty", StringComparison.Ordinal))
-            return ScopeSourceClass.Empty;
         return sourceScrapeId < publishedScrapeId
             ? ScopeSourceClass.Reused
             : ScopeSourceClass.Current;
