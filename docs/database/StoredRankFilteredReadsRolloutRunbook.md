@@ -6,6 +6,33 @@ finishes, publishes, and leaves public reads unfrozen. It does not authorize a
 worker rollout, production default change, database mutation, or compose-file
 edit in `/home/sfenton/Docker/FestivalServiceTracker`.
 
+## 2026-08-06 live decision
+
+**Decision:** rejected for promotion; keep the service and worker flags false.
+
+Evidence:
+
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/stored-rank-filtered-reads-20260806T154419Z`
+
+The service-only A/B completed all 110 API workloads and 264 matched benchmark
+blocks. Correctness passed: the 99 manifest row-parity cases had zero
+differences, API statuses and bodies matched, sample counts passed, and the
+worker remained stopped. Automatic rollback and normal-mode recovery passed.
+
+Promotion failed eight workload p95 gates and the cold PostgreSQL read-resource
+gate. The largest candidate outlier was a filtered single-member rank query
+that read `242,340` blocks versus `10,957` for baseline. Commit `e080e4fb`
+replaced its full ordering predicate with the indexed stored-rank comparison
+and a bounded live probe then read zero physical blocks, but the endpoint still
+took `13.352493s` against the prior matched baseline p95 of `12.9209083s`.
+Unchanged endpoint work dominates, so the required warm-core improvement is
+not available. A second four-hour matrix was not justified.
+
+The exact 157-row durable-job backlog was restored after the A/B. Production
+returned to normal read-write service mode on the candidate image, public
+scrape `1278` remained unfrozen, and `fstworker` remained stopped with restart
+policy `no`.
+
 ## What the package proves
 
 The row harness references `FSTService` and invokes
