@@ -9,6 +9,15 @@ import {
 } from '../../src/api/publication';
 
 function jsonResponse(data: unknown, status = 200): Response {
+  if (data && typeof data === 'object' && 'publicationId' in data
+      && !('contractVersion' in data)) {
+    data = {
+      contractVersion: 1,
+      readyForPinning: false,
+      unreadySurfaces: [],
+      ...data,
+    };
+  }
   return new Response(JSON.stringify(data), {
     status,
     headers: { 'Content-Type': 'application/json' },

@@ -561,11 +561,17 @@ export type BandSyncStatusResponse = {
 };
 
 export type PublicationResponse = {
+  contractVersion: number;
   publicationId: number;
   previousPublicationId: number | null;
   publishedScrapeId: number;
   publishedAt: string | null;
+  readyForPinning: boolean;
   pinningEnabled: boolean;
+  unreadySurfaces: Array<{
+    surface: string;
+    reasons: string[];
+  }>;
 };
 
 export type ServiceInfoResponse = {

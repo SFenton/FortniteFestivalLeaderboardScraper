@@ -315,11 +315,14 @@ describe('api/client', () => {
           currentPublicationId: 43,
         }, 409))
         .mockResolvedValueOnce(jsonResponse({
+          contractVersion: 1,
           publicationId: 43,
           previousPublicationId: 42,
           publishedScrapeId: 1277,
           publishedAt: '2026-08-03T02:00:00Z',
+          readyForPinning: false,
           pinningEnabled: false,
+          unreadySurfaces: [],
         }))
         .mockResolvedValueOnce(new Response(null, {
           status: 304,

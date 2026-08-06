@@ -4020,6 +4020,71 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal(42, history[0].AllTimeRank);  // merged from batch
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(21)]
+    public void ScoreHistory_conflicts_only_enrich_null_season_and_difficulty(
+        int batchSize)
+    {
+        const string timestamp = "2025-01-01T00:00:00Z";
+        Db.InsertScoreChange(
+            "song_target",
+            "Solo_Guitar",
+            "acct_target",
+            null,
+            100_000,
+            null,
+            1,
+            scoreAchievedAt: timestamp);
+
+        Db.InsertScoreChanges(BuildBatch(batchSize, season: 7, difficulty: 3));
+        var enriched = Assert.Single(Db.GetScoreHistory("acct_target"));
+        Assert.Equal(7, enriched.Season);
+        Assert.Equal(3, enriched.Difficulty);
+
+        Db.InsertScoreChanges(BuildBatch(batchSize, season: 8, difficulty: 4));
+        var preserved = Assert.Single(Db.GetScoreHistory("acct_target"));
+        Assert.Equal(7, preserved.Season);
+        Assert.Equal(3, preserved.Difficulty);
+
+        List<ScoreChangeRecord> BuildBatch(
+            int count,
+            int season,
+            int difficulty)
+        {
+            var rows = new List<ScoreChangeRecord>
+            {
+                new()
+                {
+                    SongId = "song_target",
+                    Instrument = "Solo_Guitar",
+                    AccountId = "acct_target",
+                    NewScore = 100_000,
+                    NewRank = 1,
+                    ScoreAchievedAt = timestamp,
+                    Season = season,
+                    Difficulty = difficulty,
+                },
+            };
+            for (var index = 1; index < count; index++)
+            {
+                rows.Add(new ScoreChangeRecord
+                {
+                    SongId = $"song_filler_{season}_{index}",
+                    Instrument = "Solo_Guitar",
+                    AccountId = $"acct_filler_{season}_{index}",
+                    NewScore = 100_000 + index,
+                    NewRank = index + 1,
+                    ScoreAchievedAt = timestamp,
+                    Season = season,
+                    Difficulty = difficulty,
+                });
+            }
+
+            return rows;
+        }
+    }
+
     [Fact]
     public void InsertScoreChanges_large_batch_collapses_duplicate_source_keys()
     {

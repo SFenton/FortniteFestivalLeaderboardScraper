@@ -939,7 +939,8 @@ public static class DatabaseInitializer
             ON score_history (account_id, song_id, instrument, new_score DESC)
             INCLUDE (accuracy, is_full_combo, stars);
         CREATE UNIQUE INDEX IF NOT EXISTS ix_sh_dedup
-            ON score_history (account_id, song_id, instrument, new_score, score_achieved_at);
+            ON score_history (account_id, song_id, instrument, new_score, score_achieved_at)
+            NULLS NOT DISTINCT;
 
         -- =====================================================================
         -- ACCOUNT NAMES (from fst-meta.db)

@@ -8,9 +8,10 @@ the production flag remains off.
 Scrape `1278` subsequently published successfully with snapshot reuse still
 off, but its monolithic final publication transaction held the global
 exclusive advisory lock for about three minutes and repeatedly timed out
-publication-bound REST reads. `PUB-COMMIT-SPLIT` is now implemented in the
-repository, but it has not been deployed or live-validated. This availability
-gate is independent of snapshot-reuse data correctness and capacity:
+publication-bound REST reads. `PUB-COMMIT-SPLIT` is deployed on
+`fstservice:pubsplit-e080e4fb`; controlled run-once scrape `1279` is the live B
+validation. Snapshot reuse remains off. This availability gate is independent
+of snapshot-reuse data correctness and capacity:
 
 - no normal full scrape or snapshot-reuse retry is authorized on the old
   publication path;

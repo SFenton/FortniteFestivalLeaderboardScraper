@@ -342,7 +342,7 @@ if data_profile == "publication-cache-generation":
             raise SystemExit(
                 f"ERROR: data profile publication-cache-generation requires {name}=true")
     for name in (
-        "Features__WriteLogicalLeaderboardVersions",
+        "Features__UseStoredSoloProjectionRanksForFilteredReads",
         "Features__SkipUnchangedPhysicalLeaderboardSnapshots",
     ):
         if boolean(name):
@@ -361,7 +361,7 @@ if data_profile == "registered-refresh-repair":
             raise SystemExit(
                 f"ERROR: data profile registered-refresh-repair requires {name}=true")
     for name in (
-        "Features__WriteLogicalLeaderboardVersions",
+        "Features__UseStoredSoloProjectionRanksForFilteredReads",
         "Features__SkipUnchangedPhysicalLeaderboardSnapshots",
     ):
         if boolean(name):
@@ -387,7 +387,7 @@ if data_profile == "catalog-path-notification-source-cut":
                 "ERROR: data profile catalog-path-notification-source-cut "
                 f"requires {name}=true")
     for name in (
-        "Features__WriteLogicalLeaderboardVersions",
+        "Features__UseStoredSoloProjectionRanksForFilteredReads",
         "Features__SkipUnchangedPhysicalLeaderboardSnapshots",
     ):
         if boolean(name):

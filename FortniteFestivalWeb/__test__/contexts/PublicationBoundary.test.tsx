@@ -18,11 +18,14 @@ describe('PublicationBoundary', () => {
     global.fetch = vi.fn()
       .mockRejectedValueOnce(new Error('temporary outage'))
       .mockResolvedValueOnce(new Response(JSON.stringify({
+        contractVersion: 1,
         publicationId: 42,
         previousPublicationId: null,
         publishedScrapeId: 1271,
         publishedAt: '2026-07-30T19:35:02Z',
+        readyForPinning: false,
         pinningEnabled: false,
+        unreadySurfaces: [],
       }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },

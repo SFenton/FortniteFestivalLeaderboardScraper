@@ -135,11 +135,14 @@ describe('useAppWebSocket lifecycle', () => {
     setPublicationPinning(true);
     (global.fetch as ReturnType<typeof vi.fn>) = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({
+        contractVersion: 1,
         publicationId: 43,
         previousPublicationId: 42,
         publishedScrapeId: 1272,
         publishedAt: '2026-07-31T00:00:00Z',
+        readyForPinning: true,
         pinningEnabled: true,
+        unreadySurfaces: [],
       }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -175,11 +178,14 @@ describe('useAppWebSocket lifecycle', () => {
       .mockRejectedValueOnce(new Error('temporary publication failure'))
       .mockResolvedValueOnce(
         new Response(JSON.stringify({
+          contractVersion: 1,
           publicationId: 43,
           previousPublicationId: 42,
           publishedScrapeId: 1272,
           publishedAt: '2026-07-31T00:00:00Z',
+          readyForPinning: true,
           pinningEnabled: true,
+          unreadySurfaces: [],
         }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },

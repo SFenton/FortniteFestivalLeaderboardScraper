@@ -2,13 +2,19 @@
 
 ## Decision
 
-**Tier:** package prepared; execution blocked.
+**Tier:** executed and validated.
 
 This repository contains the exact cleanup package for four retired physical
-schema families. It has **not** been run against PostgreSQL. It is eligible
-only after cleanup scrape `1278` completes, publishes, unfreezes public reads,
-passes exact public/API fingerprint parity, and that parity is explicitly
-accepted in the attestation consumed by the tool.
+schema families. The 61-object atomic cleanup completed under manifest
+`082605943dfaac67f5724df5ca15b898bb793bb55a7acfb566fbed8af1479688`.
+Final recovery evidence is:
+
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/retired-schema-resume-20260806T023140Z`
+
+It records all 61 relations absent, startup validation successful, rollback
+rehearsal explicitly rolled back, retained payload hashes exact, 13/13 gated
+public fingerprints unchanged, scrape `1278` still published and unfrozen, and
+no permanent restore or duplicate drop.
 
 The package is:
 
@@ -733,9 +739,11 @@ child-before-parent order, and
 exclusion of active relations. Crafted extra `\unrestrict`, `\!`, and
 `\connect` dumps must fail before any executable rollback package is accepted.
 
-## Current limitation
+## Completed execution
 
-This package is prepared evidence, not clearance. It cannot certify that
-scrape `1278` succeeded or that parity was accepted until the real attestation
-and live check package exist. No production, Docker, PostgreSQL, API, or scrape
-operation was run while preparing this repository change.
+The live check, atomic drop, committed-state reconciliation, immutable
+initializer, rollback rehearsal, all-absent verification, and post-action
+public parity are complete. The authoritative final record is
+`retired-schema-resume-20260806T023140Z/RECOVERY-SUCCESS.json`. Future use of
+this package is limited to audit, disaster-recovery rehearsal, and explicit
+operator-approved restore; it must not be used to repeat the completed drop.

@@ -6,10 +6,10 @@ This plan records the approved direction for improving FST Postgres persistence 
 
 - Production compose ownership: `/home/sfenton/Docker/FestivalServiceTracker`.
 - `fstservice`, `festivalweb`, and `fst-postgres` are healthy.
-  `fstservice` runs `fstservice:band-history-trios-ad015ca7` with compact
-  Duets and Trios reads enabled. Production worker compose selects the same
-  contract-bearing image, and `fstworker` exited cleanly after scrape `1271`
-  with restart `no`; it is held before another scrape.
+  `fstservice` runs `fstservice:pubsplit-e080e4fb`. The matching run-once
+  `fstworker` is executing controlled publication B scrape `1279` with restart
+  policy `no`; published scrape `1278` remains authoritative until every
+  prepare/commit/parity gate passes.
 - Freshness is now a hard scheduling constraint: long storage/reclaim work
   finishes only its current bounded chunk, checkpoints, and yields before the
   next continuity scrape. A stale publication must not wait for repeated
@@ -255,11 +255,11 @@ for cleanup by generic `Delta` or `RankDelta` name matching.
 No live DDL belongs to this repository change. The catalog baseline, rollback
 DDL, and checksums for all 32 empty physical relations remain at
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/branch-cleanup-20260803/ranking-deltas/`.
-Physical cleanup is blocked until a cleanup image completes one full scrape,
-publication, and public-fingerprint parity. Cleanup then runs as a separate
-explicit object list using `DROP` without `CASCADE`.
+Physical cleanup completed after scrape `1278` publication and exact
+public-fingerprint parity. The separate explicit object list used `DROP`
+without `CASCADE`.
 
-The repository-only cleanup package is now prepared:
+The retained cleanup/recovery package is:
 
 - `tools/postgres-retired-schema-cleanup.sh`
 - `tools/sql/postgres-retired-schema-cleanup/objects.tsv`
@@ -286,11 +286,11 @@ force `row_security=off`, and the pinned role must attest superuser or
 `BYPASSRLS`. Fsynced launch/connect/post-connect barriers prevent signals from
 racing identity capture or SQL release. Exact executable/argv matching
 prevents scanner/control self-matches, and ambiguous discovery still terminates
-recorded clients before failing. It remains hard-blocked until cleanup scrape
-`1278` is
-successfully published and unfrozen, exact public/API parity is explicitly
-accepted, and the regenerated manifest matches the supplied SHA-256. This
-preparation ran no live DDL and does not mark the parity gate clear.
+recorded clients before failing. Execution completed under manifest
+`082605943dfaac67f5724df5ca15b898bb793bb55a7acfb566fbed8af1479688`;
+final recovery evidence at
+`retired-schema-resume-20260806T023140Z` records all 61 objects absent,
+rollback rehearsal rolled back, and exact public/API parity accepted.
 The cleanup invocation clears inherited capacity variables and explicitly pins
 expected reclaim/transient/scratch to zero plus the accepted
 `60,392,999,803`-byte, two-runs/day, seven-day policy. Full guard JSON is
@@ -515,7 +515,7 @@ path, and post-action validation are documented.
 | Publication cache source cut | Code complete / deployment pending | Added generation-keyed live/staging cache tables, explicit build targeting, deadlock-safe cross-process locks, current+previous retention, exact pinned reads, rollback reconciliation, failed-generation cleanup, and watchdog lifecycle parity. |
 | CATALOG-1 immutable song catalog | Code complete / publication-lock convoy repair validated / deployment and reader cutover pending | Preserves known and unknown Epic fields through sync/restart, persists only complete non-merged responses, pins resume phases to the allocation-time catalog without provider refresh, replaces untrusted legacy baselines wholesale, rejects failed refreshes and token races before new allocation, retains exact current/previous/working snapshots, and never queues a refresh writer behind a shared publication lease. No endpoint reader changed and `EnablePublicationReadContext` remains false. |
 | PUB-CONTRACT + PUB-READINESS | Code complete / continuous-safe / default-off | Contract version `1` maps all 55 publication-bound route definitions to required surfaces. Current-generation readiness now validates binding kind/status/version/source identity, promised count/hash, and supported retained-source evidence. `/api/publication` reports effective readiness, while configured unready pinning fails `503` after stale-ID `409` ordering. No schema, deployment, restart, live probe, source cut, or flag enablement occurred. |
-| PUB-COMMIT-SPLIT | Code complete / independent review repaired / live A/B blocked | Moves band copies/indexes and generation-cache hash/copy work outside the exclusive lock, uses an exception-safe and stale-reconciled commit-intent lease, serves exact frozen generation-cache hits with pinning off or on, blocks unsafe empty-generation/legacy-cache inheritance, enforces a cumulative PostgreSQL transaction cutover budget, retains previous rollback objects, and cleans failed/retired candidates outside the exclusive section. Scrape `1278` is the unsafe baseline; no normal full scrape or snapshot-reuse run is authorized until the controlled B gate passes. |
+| PUB-COMMIT-SPLIT | Deployed / controlled B scrape `1279` running | Moves band copies/indexes and generation-cache hash/copy work outside the exclusive lock, uses an exception-safe and stale-reconciled commit-intent lease, serves exact frozen generation-cache hits with pinning off or on, blocks unsafe empty-generation/legacy-cache inheritance, enforces a cumulative PostgreSQL transaction cutover budget, retains previous rollback objects, and cleans failed/retired candidates outside the exclusive section. Scrape `1278` is the unsafe baseline; normal scheduling remains blocked until scrape `1279` reaches terminal publication/parity evidence. |
 | Next implementation phase | Controlled PUB-COMMIT-SPLIT B, then remaining immutable source cuts | First prove bounded publication and uninterrupted old-generation reads on one controlled full scrape. Then version shop, path, overlay, history, and names before enabling request pinning. |
 
 ## PUB-COMMIT-SPLIT bounded publication repair (2026-08-05)
@@ -2184,15 +2184,18 @@ This command does not alter
 `fst_account_rankings_denominator_guard_1100` or weaken publication. Because
 the family table is unversioned, live execute requires a stopped worker plus a
 quiesced service or separate atomic table-lock proof and retained same-drive
-rollback evidence. Scrape `1277` remains failed and is not republished; the
-next full scrape must pass normal publication. Operational detail is in
+rollback evidence. Scrape `1277` remains failed and was not republished. Scrape `1278`
+independently published with zero invalid family rows. Operational detail is in
 `docs/database/SoloFamilyRankingBackfillRunbook.md`.
 
 ## Nullable score-history uniqueness maintenance
 
 The repository now contains an explicit audited implementation for the known
 nullable `score_history` duplicate set. It is not a startup cleanup and this
-contract-v2 repair was not executed live. Normal release schema initialization
+contract-v2 repair executed successfully as maintenance run `1`: `1,398`
+original rows were audited, `324` survivors retained/enriched, `1,074` excess
+rows deleted, and `ix_sh_dedup` promoted to a valid unique `NULLS NOT
+DISTINCT` index. Normal release schema initialization
 owns the immutable, retention-independent run/original-row audit tables and
 the one-time constraint widening that preserves v1 runs while accepting v2;
 the maintenance workflow must not invoke the unbounded
@@ -2226,10 +2229,11 @@ accepted `122` rank-only groups (`250` rows / `128` excess) and blocked `202`
 only for safe null enrichment (`1,148` rows / `946` excess): `151`
 difficulty-only, `46` season-only, and `5` both. Every group is
 zero-score/null-timestamp, each field has at most one distinct non-null value,
-and no other invariant varies. Execution remains gated on two matching
-accepted contract-v2 dry runs with exactly `["difficulty","season"]` allowed,
-zero blocked/conflicting groups, the normal live health/quiescence checks, and
-retained rollback evidence.
+and no other invariant varies. The completed execution was gated on two matching accepted contract-v2 dry
+runs with exactly `["difficulty","season"]` allowed, zero blocked/conflicting
+groups, normal live health/quiescence checks, and retained rollback evidence.
+The active scrape `1279` is the first normal writer observation after
+promotion.
 
 Schedule the estimated 15-150 second write-blocking transaction only at a
 clean parity-gated boundary. Preserve the stored rollback SQL, which validates

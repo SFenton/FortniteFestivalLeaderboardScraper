@@ -1779,9 +1779,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             JOIN selected_sources source
               ON source.song_id = scope.song_id
              AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
-            LEFT JOIN max_thresholds mt ON mt.song_id = projection.song_id
+            JOIN max_thresholds mt ON mt.song_id = projection.song_id
             WHERE projection.instrument = @instrument
-              AND projection.score <= COALESCE(mt.max_score, projection.score + 1)
+              AND projection.score <= mt.max_score
             GROUP BY projection.song_id
             """;
         AddMaxThresholdParameters(cmd, maxScores);

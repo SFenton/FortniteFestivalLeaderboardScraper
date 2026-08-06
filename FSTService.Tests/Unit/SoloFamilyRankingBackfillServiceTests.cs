@@ -121,6 +121,28 @@ public sealed class SoloFamilyRankingBackfillServiceTests : IDisposable
     }
 
     [Fact]
+    public void ReplacementRejectsEmptyOrMissingPreviouslyPopulatedScope()
+    {
+        var pad = CreateRanking(SoloFamilyRankingScopes.Pad, "pad-account");
+        var vocals = CreateRanking(
+            SoloFamilyRankingScopes.ProVocals,
+            "vocals-account");
+        _fixture.Db.ReplaceSoloFamilyRankings([pad, vocals]);
+
+        Assert.Throws<InvalidOperationException>(
+            () => _fixture.Db.ReplaceSoloFamilyRankings([]));
+        Assert.Throws<InvalidOperationException>(
+            () => _fixture.Db.ReplaceSoloFamilyRankings([pad]));
+
+        Assert.NotNull(_fixture.Db.GetSoloFamilyRanking(
+            SoloFamilyRankingScopes.Pad,
+            "pad-account"));
+        Assert.NotNull(_fixture.Db.GetSoloFamilyRanking(
+            SoloFamilyRankingScopes.ProVocals,
+            "vocals-account"));
+    }
+
+    [Fact]
     public async Task MaintenanceFailsClosedDuringActiveScrape()
     {
         var token = await CreateStablePublicationAsync(
@@ -839,6 +861,32 @@ public sealed class SoloFamilyRankingBackfillServiceTests : IDisposable
             },
         ]);
     }
+
+    private static SoloFamilyRankingDto CreateRanking(
+        string scopeId,
+        string accountId) =>
+        new()
+        {
+            ScopeId = scopeId,
+            AccountId = accountId,
+            SongsPlayed = 1,
+            TotalChartedSongs = 1,
+            Coverage = 1,
+            RawSkillRating = 0.2,
+            AdjustedSkillRating = 0.2,
+            AdjustedSkillRank = 1,
+            WeightedRating = 0.3,
+            WeightedRank = 1,
+            FcRate = 1,
+            FcRateRank = 1,
+            TotalScore = 100,
+            TotalScoreRank = 1,
+            MaxScorePercent = 0.9,
+            MaxScorePercentRank = 1,
+            FullComboCount = 1,
+            RawMaxScorePercent = 0.9,
+            RawWeightedRating = 0.3,
+        };
 
     private void InstallSlowSoloFamilyInsertTrigger()
     {

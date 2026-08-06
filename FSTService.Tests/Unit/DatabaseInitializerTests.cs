@@ -796,6 +796,20 @@ public class DatabaseInitializerTests : IDisposable
             Assert.True(reader.GetBoolean(4));
         }
 
+        using (var index = conn.CreateCommand())
+        {
+            index.CommandText = """
+                SELECT indisunique, indisvalid, indnullsnotdistinct
+                FROM pg_index
+                WHERE indexrelid = 'public.ix_sh_dedup'::regclass;
+                """;
+            using var reader = index.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.True(reader.GetBoolean(0));
+            Assert.True(reader.GetBoolean(1));
+            Assert.True(reader.GetBoolean(2));
+        }
+
         using (var insert = conn.CreateCommand())
         {
             insert.CommandText = """

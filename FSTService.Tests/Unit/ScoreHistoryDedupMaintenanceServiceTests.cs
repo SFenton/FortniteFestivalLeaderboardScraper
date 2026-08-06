@@ -15,6 +15,15 @@ public sealed class ScoreHistoryDedupMaintenanceServiceTests : IDisposable
 
     public ScoreHistoryDedupMaintenanceServiceTests()
     {
+        using (var connection = _fixture.DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText =
+                "DROP INDEX public.ix_sh_dedup; " +
+                ScoreHistoryDedupMaintenanceSchema.LegacyIndexDdl;
+            command.ExecuteNonQuery();
+        }
+
         _maintenance = new ScoreHistoryDedupMaintenanceService(
             _fixture.DataSource,
             NullLogger<ScoreHistoryDedupMaintenanceService>.Instance);

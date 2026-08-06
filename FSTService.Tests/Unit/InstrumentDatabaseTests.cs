@@ -460,6 +460,25 @@ public sealed class InstrumentDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void Filtered_projection_population_reads_only_requested_threshold_songs()
+    {
+        InsertProjectionScope("song_requested", sourceSnapshotId: null, rowCount: 2);
+        InsertProjectionEntry("song_requested", "acct-a", 90_000, "projection", rank: 1);
+        InsertProjectionEntry("song_requested", "acct-b", 80_000, "projection", rank: 2);
+        InsertProjectionScope("song_unrequested", sourceSnapshotId: null, rowCount: 1);
+        InsertProjectionEntry("song_unrequested", "acct-c", 70_000, "projection", rank: 1);
+
+        var counts = Db.GetCurrentStateFilteredEntryCounts(
+            new Dictionary<string, int>
+            {
+                ["song_requested"] = 85_000,
+            });
+
+        Assert.Equal(1, counts["song_requested"]);
+        Assert.DoesNotContain("song_unrequested", counts);
+    }
+
+    [Fact]
     public void Filtered_projection_flag_paths_match_exact_ties_threshold_edges_and_rank_100_pages()
     {
         const string songId = "song_filtered_projection_exact_ties";

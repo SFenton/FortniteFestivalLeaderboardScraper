@@ -42,11 +42,14 @@ export async function ensurePublication(
 ): Promise<PublicationResponse> {
   if (import.meta.env.MODE === 'e2e') {
     currentPublication ??= {
+      contractVersion: 1,
       publicationId: 1,
       previousPublicationId: null,
       publishedScrapeId: 1,
       publishedAt: null,
+      readyForPinning: false,
       pinningEnabled: false,
+      unreadySurfaces: [],
     };
     return currentPublication;
   }
@@ -62,8 +65,14 @@ export async function ensurePublication(
     }
 
     const publication = await response.json() as PublicationResponse;
-    if (!Number.isSafeInteger(publication.publicationId)
+    if (!Number.isSafeInteger(publication.contractVersion)
+        || publication.contractVersion <= 0
+        || !Number.isSafeInteger(publication.publicationId)
         || publication.publicationId <= 0
+        || !Number.isSafeInteger(publication.publishedScrapeId)
+        || publication.publishedScrapeId <= 0
+        || typeof publication.readyForPinning !== 'boolean'
+        || !Array.isArray(publication.unreadySurfaces)
         || typeof publication.pinningEnabled !== 'boolean') {
       throw new Error('Invalid publication response');
     }
@@ -127,11 +136,14 @@ export function setPublicationForTests(
   pinPublicationRequests = true,
 ): void {
   currentPublication = {
+    contractVersion: 1,
     publicationId,
     previousPublicationId: null,
     publishedScrapeId: publicationId,
     publishedAt: null,
+    readyForPinning: pinPublicationRequests,
     pinningEnabled: pinPublicationRequests,
+    unreadySurfaces: [],
   };
   publicationRequest = null;
   pinRequests = pinPublicationRequests;

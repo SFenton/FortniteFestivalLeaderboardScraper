@@ -32,8 +32,17 @@ It established:
   distinct non-null `season`; there are zero conflicting non-null values and
   zero other invariant differences.
 
-This evidence is classification input, not execution authorization. The
-contract-v2 implementation and tests did not query or mutate production.
+Contract v2 executed successfully on 2026-08-04. Run `1` audited `1,398`
+original rows, enriched `156` difficulty and `51` season values, retained `324`
+survivors, deleted `1,074` excess rows, and replaced `ix_sh_dedup` with a
+unique valid `NULLS NOT DISTINCT` index. Final duplicate groups were zero.
+Evidence remains under:
+
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/score-history-dedup-20260804T204520Z`
+
+The immutable writer-observation baseline for the next live scrape is:
+
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/score-history-writer-observation-20260806T072020Z`
 
 ## Safety contract
 

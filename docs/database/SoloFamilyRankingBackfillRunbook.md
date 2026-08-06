@@ -35,9 +35,10 @@ For the incident PAD data, Guitar is overridden from `695` to `697`, so every
 PAD family row uses `2,788`. Scores, songs played, full combos, and total score
 are not capped or dropped.
 
-Scrape `1277` is **not** republished by this command. Published scrape `1276`
-remains authoritative. The next full scrape must independently complete all
-publication gates and prove a successful publication.
+The command did not republish failed scrape `1277`; published scrape `1276`
+remained authoritative during maintenance. The subsequent full scrape `1278`
+independently completed every publication gate and supplied the required live
+proof.
 
 Two live dry runs on 2026-08-04 matched exactly. The first execute attempt then
 proved that the former shared 30-second statement timeout was too small for the
@@ -49,6 +50,12 @@ matched byte-for-byte after the API restart. Evidence is retained at:
 ```text
 /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/solo-family-backfill-20260804T075218Z/execute.log
 ```
+
+The bounded retry then completed successfully: all `5,245,924` rows were
+rebuilt, PAD used denominator `2,788`, invalid rows were zero, and exact public
+HTTP parity passed. Runtime and standalone replacement now also reject an
+empty candidate or omission of any previously populated family scope before
+`TRUNCATE`.
 
 ## Fail-closed contract
 
