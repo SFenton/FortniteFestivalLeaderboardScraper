@@ -1558,7 +1558,11 @@ section that caused the scrape `1278` REST outage:
      Success performs normal cutover/unfreeze; continued contention keeps the
      deferred fail-closed state; invalid metadata/candidate state is failed and
      cleaned safely. New scrape allocation is rejected while a deferred ready
-     generation remains.
+     generation remains. The metadata also persists the exact rankings-input
+     cutoff. A commit completed by deferred recovery clears only registered
+     `rankings_pending` rows completed at or before that cutoff; later backfill
+     or history-reconstruction completions remain pending for the next
+     publication. History completion advances the pending timestamp.
 18. Deferred recovery executes before improvement-notification recovery,
      Epic authentication, API-only waiting, and the normal scrape loop.
      Notification recovery explicitly yields while a deferred publication owns

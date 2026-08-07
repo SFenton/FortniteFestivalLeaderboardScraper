@@ -6,14 +6,14 @@ This plan records the approved direction for improving FST Postgres persistence 
 
 - Production compose ownership: `/home/sfenton/Docker/FestivalServiceTracker`.
 - `fstservice`, `festivalweb`, and `fst-postgres` are healthy.
-  `fstservice` runs `fstservice:postb-8de069d6`. Controlled publication B
-  scrape `1279` completed and published as publication `25`, retaining
-  publication `19`; public reads are unfrozen. The matching run-once
+  `fstservice` runs `fstservice:postb-838928c1`. Controlled publication B2
+  scrape `1280` completed and published as publication `30`, retaining
+  publication `25`; public reads are unfrozen. The matching run-once
   `fstworker` is recreated in `created` state with restart policy `no`.
-  SFentonX now serves the existing publication-25 profile and history while
-  its completed backfill still has a pending rank refresh. Pending filtered
-  profile reads fail closed until that refresh is published, preventing newer
-  overlay/history state from escaping the immutable full profile.
+  SFentonX serves 3,049 scores across all nine instruments plus published
+  history, with no pending-rank banner. Pending filtered profile reads fail
+  closed until their refresh is published, preventing newer overlay/history
+  state from escaping the immutable full profile.
 - Freshness is now a hard scheduling constraint: long storage/reclaim work
   finishes only its current bounded chunk, checkpoints, and yields before the
   next continuity scrape. A stale publication must not wait for repeated
@@ -519,13 +519,12 @@ path, and post-action validation are documented.
 | Publication cache source cut | Code complete / deployment pending | Added generation-keyed live/staging cache tables, explicit build targeting, deadlock-safe cross-process locks, current+previous retention, exact pinned reads, rollback reconciliation, failed-generation cleanup, and watchdog lifecycle parity. |
 | CATALOG-1 immutable song catalog | Deployed / unchanged fast path under observation / reader cutover pending | Preserves known and unknown Epic fields through sync/restart, persists only complete non-merged responses, pins resume phases to the allocation-time catalog without provider refresh, replaces untrusted legacy baselines wholesale, rejects failed refreshes and token races before new allocation, retains exact current/previous/working snapshots, and never queues a refresh writer behind a shared publication lease. The `4f0934e6` repair checks an exact match under a shared try-lock before attempting any exclusive mutation, preventing the scrape-1279 catalog-refresh convoy. No endpoint reader changed and `EnablePublicationReadContext` remains false. |
 | PUB-CONTRACT + PUB-READINESS | Code complete / continuous-safe / default-off | Contract version `1` maps all 55 publication-bound route definitions to required surfaces. Current-generation readiness now validates binding kind/status/version/source identity, promised count/hash, and supported retained-source evidence. `/api/publication` reports effective readiness, while configured unready pinning fails `503` after stale-ID `409` ordering. No schema, deployment, restart, live probe, source cut, or flag enablement occurred. |
-| PUB-COMMIT-SPLIT | Mechanics accepted; real-client cached-hit availability B must iterate | Scrape `1279` published `6,291/6,291` complete solo sources and all 12 publication-critical phases. Preparation took `237,336.859ms` outside the exclusive lock; final drain was `11.284ms`, exclusive hold `2,886.231ms`, and pointers atomically advanced `19 -> 25` with healthy unfreeze/recovery. The live probe exposed zero production `public-route:` aliases, so its assumed cached route and forced miss both returned bounded `503 Retry-After: 1` during commit intent. The repaired precompute now emits correctly projected page-one aliases for web page sizes `10` and `25`, canonical size `50`, rankBy-omitted adjusted probes, and selected-profile browser headers; another controlled publication must prove exact-hit `200` plus cold-miss `503`. |
-| Next implementation phase | Seed current aliases, re-run real-client PUB-COMMIT-SPLIT B, then snapshot reuse | Before starting the next scrape, run the guarded standalone `--precompute` against current publication `25` while no working generation exists, then verify the expected real-client `public-route:` aliases are present in publication `25`. Probe `/api/rankings/Solo_Guitar?rankBy=adjusted&page=1&pageSize=25` with selected-player headers as the exact hit and page `2`/size `50` as the legitimate cold miss. On pass, proceed to the independently reversible snapshot-reuse A/B before remaining immutable source cuts. |
+| PUB-COMMIT-SPLIT | **Accepted / deployed** | B2 scrape `1280` published `6,291/6,291` complete solo sources, all 12 publication-critical phases, and publication `30` with previous `25`. Heavy preparation stayed outside the exclusive lock. During real commit intent, selected-profile page-one/25 hits stayed `200 X-FST-Public-Cache: hit`; page-two/50 misses returned `503 Retry-After: 1`; readiness stayed 200. Two deadline-bounded attempts deferred with new intent ownership before the successful `3,648.707ms` exclusive transaction. Final pointers, aliases, notifications, score-history integrity, unfreeze, and worker exit all passed. |
+| Next implementation phase | Snapshot reuse estimate/canary, then one strict A/B | Refresh the exact reusable-scope estimate against publication `30`, qualify the selected bounded network candidate, and use the guarded `snapshot-reuse` data profile. Keep retention rewriting off and accept only with >=1 GiB measured physical savings, exact parity, and <=10% resource/latency regression. |
 
 ## PUB-COMMIT-SPLIT bounded publication repair (2026-08-05)
 
-Decision: split publication mechanics accepted from scrape `1279`; the
-cached-hit availability gate must iterate once on the repaired route aliases.
+Decision: accepted and deployed after controlled B2 scrape `1280`.
 
 Scrape `1278` published correctly as publication `19`, but the monolithic
 `MetaDatabase.PublishScrapeRun` held the global exclusive advisory lock for
@@ -619,6 +618,40 @@ Evidence:
 
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/publication-split-b-20260806T202045Z`.
+
+Controlled B2 scrape `1280` closed the remaining gate:
+
+- network/writer work completed in `12,828.603s` (3h33m49s) with `609,337`
+  limiter requests, `2%` final failure rate, `2,097/2,097` complete band
+  manifests, `192,782` band pages, and `19,248,390` band entries;
+- all 12 publication-critical phases completed. BandMaintenance improved from
+  `11,855,137ms` to `9,024,949ms`; ComputeRankings improved from
+  `4,296,024ms` to `3,627,324ms`;
+- publication `30` prepared outside the exclusive lock in `242,353.327ms`;
+  exact selected-profile ranking hits remained HTTP 200 during every sampled
+  commit/deferred state, cold misses returned HTTP 503 with `Retry-After: 1`,
+  and readiness remained HTTP 200;
+- the successful final commit used a `4.091ms` drain and `3,648.707ms`
+  exclusive transaction with zero lock rejections/relation retries. Two prior
+  deadline-bounded attempts transitioned to deferred recovery rather than
+  retrying inside one intent;
+- publication `30` and retained publication `25` each contain exactly `216`
+  real-client ranking aliases and `7,171` total cache rows;
+- source mapping is `6,291/6,291` complete / `40,279,712` rows;
+  improvement notifications completed on player run `182` and band run `183`;
+  score-history duplicate groups remain zero and `ix_sh_dedup` retains
+  relfilenode `316128094`;
+- 5,506 robust samples recorded zero readiness failures, zero exact-hit
+  failures, and zero player failures outside commit intent. The intentional
+  uncached page-two diagnostic timed out 16 times during intensive ranking
+  work; that separate load-latency issue is tracked without blocking the
+  exact-cache publication decision;
+- SFentonX is HTTP 200 in backend, web proxy, and browser validation with
+  3,049 scores / nine instruments, 1,000 published history rows, 19/19 rival
+  groups complete, `pendingRankUpdate=false`, no banner, and no browser errors.
+
+Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/publication-split-b2-20260807T105325Z`.
 
 Hard gate before any normal full scrape or snapshot-reuse retry:
 

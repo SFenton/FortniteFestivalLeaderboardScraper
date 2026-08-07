@@ -2,8 +2,8 @@
 
 ## Current decision
 
-**Tier:** code/readiness accepted; capacity-ready retry rejected and reverted;
-the production flag remains off.
+**Tier:** publication prerequisite cleared; snapshot-reuse code remains
+default-off and requires the prepared estimate/canary/full-scrape A/B.
 
 Scrape `1278` subsequently published successfully with snapshot reuse still
 off, but its monolithic final publication transaction held the global
@@ -12,22 +12,25 @@ publication-bound REST reads. Controlled split-publication scrape `1279`
 published successfully as publication `25`: preparation stayed outside the
 exclusive lock and final exclusive hold was `2.886s`. The live probe exposed
 missing production `public-route:` aliases, so the assumed cached hit returned
-the same bounded `503 Retry-After: 1` as the forced miss. The repaired alias set now contains the web client's projected page sizes
-`10` and `25`, the canonical size `50`, the rankBy-omitted adjusted diagnostic
-shape, and profile-invariant keys for browser selected-player headers. Because
-scrape precompute writes the working generation while commit intent still
-serves the prior current generation, run standalone `--precompute` first to
-seed these aliases into current publication `25`. Then one controlled
-publication must prove real-client cached `200` continuity before snapshot
-reuse runs. Snapshot reuse remains off. This availability gate is independent
-of snapshot-reuse data correctness and capacity:
+the same bounded `503 Retry-After: 1` as the forced miss. The publication gate is now cleared. Publication `25` was seeded with the web
+client's projected page sizes `10` and `25`, canonical size `50`,
+rankBy-omitted adjusted shape, and profile-invariant selected-player keys.
+Controlled B2 scrape `1280` then proved those old-generation aliases remained
+HTTP 200 through commit intent while the cold page-two diagnostic returned
+bounded HTTP 503 with `Retry-After: 1`. Publication `30` is current, `25` is
+retained, reads are unfrozen, and the successful exclusive hold was
+`3.649s`. Snapshot reuse remains off pending its own correctness/performance
+A/B:
 
-The seed completed on `fstservice:postb-8de069d6`: publication `25` now has
+The seed completed on `fstservice:postb-8de069d6`: publication `25` has
 `216` real-client ranking aliases. A live synthetic commit-intent probe with
 selected-player headers returned exact-hit `200`, page-two miss
 `503 Retry-After: 1`, and readiness `200`, then restored unfrozen state.
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/current-publication-alias-seed-20260807T1047Z`.
+
+The full B2 evidence is:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/publication-split-b2-20260807T105325Z`.
 
 ## Next dual-lane A/B card
 
