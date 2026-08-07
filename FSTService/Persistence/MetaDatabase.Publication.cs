@@ -19,6 +19,8 @@ public sealed partial class MetaDatabase
     internal Action? FailureIsolationTestHook { get; set; }
     internal Func<Exception?>?
         DeferredPreparationReadTestHook { get; set; }
+    internal Func<Exception?>?
+        PublicationCommitTestHook { get; set; }
     internal Action? DeferredTransitionTestHook { get; set; }
     internal Action? IsolationPendingTransitionTestHook { get; set; }
 
@@ -619,6 +621,10 @@ public sealed partial class MetaDatabase
                 0,
                 AlreadyPublished: true);
         }
+
+        var injectedFailure = PublicationCommitTestHook?.Invoke();
+        if (injectedFailure is not null)
+            throw injectedFailure;
 
         using (var schemaConnection = _ds.OpenConnection())
             EnsureScrapePublicationStateTable(schemaConnection);

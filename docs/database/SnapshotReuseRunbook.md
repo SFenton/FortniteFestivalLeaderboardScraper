@@ -58,8 +58,10 @@ capacity:
 - pending isolation must target the frozen scrape ID exactly, confirm its
   durable failed state before unfreezing, and never fail a newer mismatched
   working generation;
-- advisory busy/deadline outcomes must retry the same preparation and preserve
-  a deferred ready generation rather than classify contention as data failure;
+- advisory-busy outcomes may retry the same preparation before cutover starts.
+  A final-cutover deadline must immediately preserve a deferred ready
+  generation rather than reset another exclusive budget or classify
+  contention as data failure;
 - ordinary publication read leases must expire server-side within 30 seconds,
   with an explicit 180-second export allowance; no shared lease is unbounded;
 - HTTP read-gate checks may trigger only TTL-limited single-flight background

@@ -1764,9 +1764,15 @@ public sealed class ScraperWorker : BackgroundService
                         preparation.ScrapeId,
                         cancellationEx);
                 }
-                catch (Exception ex)
-                    when (ex is PublicationCommitBusyException
-                        or PublicationCommitDeadlineExceededException)
+                catch (PublicationCommitDeadlineExceededException ex)
+                {
+                    lastContention = ex;
+                    commitIntent.Defer();
+                    throw new PublicationCommitDeferredException(
+                        preparation.ScrapeId,
+                        ex);
+                }
+                catch (PublicationCommitBusyException ex)
                 {
                     lastContention = ex;
                     if (attempt >= attempts)

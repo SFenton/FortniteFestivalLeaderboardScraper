@@ -155,6 +155,97 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
     }
 
     [Fact]
+    public async Task CommitDeadlineDefersWithoutResettingCutoverBudget()
+    {
+        var publishedScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            publishedScrapeId,
+            1,
+            1,
+            1,
+            1);
+        _metaDb.PublishScrapeRun(
+            publishedScrapeId,
+            promoteCachedResponses: false);
+        var candidateScrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            candidateScrapeId,
+            1,
+            2,
+            2,
+            2);
+        var preparation = _metaDb.PrepareScrapePublication(
+            candidateScrapeId,
+            promoteCachedResponses: false);
+        _metaDb.SetPublicReadFreeze(
+            true,
+            candidateScrapeId,
+            PublicReadFreezeState
+                .PublicationCommitDeferredReason);
+        var commitAttempts = 0;
+        _metaDb.PublicationCommitTestHook = () =>
+        {
+            commitAttempts++;
+            var budget = TimeSpan.FromMilliseconds(150);
+            return new PublicationCommitDeadlineExceededException(
+                "Injected cutover deadline.",
+                budget,
+                budget,
+                relationLockRetries: 1);
+        };
+
+        var worker = CreateWorker(
+            publicationCommitOptions:
+                new PublicationCommitOptions
+                {
+                    ContentionRetryAttempts = 3,
+                    ContentionRetryDelayMilliseconds = 500,
+                    MaxExclusiveLockDurationMilliseconds = 150,
+                });
+        var method = typeof(ScraperWorker).GetMethod(
+            "CommitPreparedWithContentionRetriesAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var task = (Task<PublicationCommitResult>)method.Invoke(
+            worker,
+            [preparation, CancellationToken.None])!;
+
+        var exception =
+            await Assert.ThrowsAsync<
+                PublicationCommitDeferredException>(
+                async () => await task);
+        stopwatch.Stop();
+
+        Assert.IsType<
+            PublicationCommitDeadlineExceededException>(
+            exception.InnerException);
+        Assert.Equal(1, commitAttempts);
+        Assert.True(
+            stopwatch.Elapsed
+            < TimeSpan.FromMilliseconds(500),
+            $"Deadline deferral retried after resetting the cutover budget: {stopwatch.Elapsed}.");
+        var generation = _metaDb.GetPublicationGeneration(
+            preparation.PublicationId);
+        Assert.True(
+            generation?.Status
+                == PublicationGenerationStatus.Ready,
+            $"Generation status={generation?.Status}, phase={generation?.FailurePhase}, message={generation?.FailureMessage}");
+        Assert.Equal(
+            preparation.PublicationId,
+            _metaDb.GetPublicationPointerState()
+                .WorkingPublicationId);
+        Assert.True(
+            _metaDb.GetPublicReadFreezeState()
+                .PublicationCommitDeferred);
+
+        _metaDb.PublicationCommitTestHook = null;
+        _metaDb.FailScrapeRun(
+            candidateScrapeId,
+            "test",
+            "cleanup");
+    }
+
+    [Fact]
     public async Task CommitContentionShutdownPreservesReadyCandidate()
     {
         var publishedScrapeId = _metaDb.StartScrapeRun();
