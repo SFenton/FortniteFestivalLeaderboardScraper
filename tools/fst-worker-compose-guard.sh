@@ -30,6 +30,7 @@ Options:
                              baseline-up-to-800-32-4 (default)
                              candidate-800-32-4
                              candidate-1600-64-8
+                             candidate-1800-72-9
                              candidate-2000-80-10
                              candidate-2880-128-16
                            Candidate profiles require --recreate-runonce for startup.
@@ -86,6 +87,12 @@ case "$THROUGHPUT_PROFILE" in
         PROFILE_MAX_AGGREGATE_RPS=1600
         PROFILE_MAX_PER_ENDPOINT_RPS=64
         PROFILE_MAX_PER_ENDPOINT_CONCURRENCY=8
+        PROFILE_EXACT=true
+        ;;
+    candidate-1800-72-9)
+        PROFILE_MAX_AGGREGATE_RPS=1800
+        PROFILE_MAX_PER_ENDPOINT_RPS=72
+        PROFILE_MAX_PER_ENDPOINT_CONCURRENCY=9
         PROFILE_EXACT=true
         ;;
     candidate-2000-80-10)
@@ -293,6 +300,7 @@ if require_run_once and not run_once:
     raise SystemExit("ERROR: merged run-once config must set Scraper__RunOnce=true")
 if profile_name in {
     "candidate-1600-64-8",
+    "candidate-1800-72-9",
     "candidate-2000-80-10",
 }:
     if initial_dop != 50:

@@ -40,7 +40,7 @@ matched baseline.
 
 | Lane | Candidate | Hypothesis and target | Correctness/resource gate | Rollback |
 |---|---|---|---|---|
-| Network | `candidate-2000-80-10`, only after a bounded no-publication canary | A stepped-down increase from the accepted 1600/64/8 baseline can reduce network/writer wall clock by at least 10% without retry amplification above `1.50` or combined `429+503` above 5% | Exact completed scope/manifests; at least 80% of preflight-healthy exits remain usable; no public-path regression. The prior 2880/128/16 canary was rejected for unrecovered/payload-control failures and 970 MB / 447 PID peaks. Matched payload controls run after one proxy-cooldown interval so they test payload parity rather than immediate post-burst tarpitting | Restore the accepted `candidate-1600-64-8` values and recreate the stopped worker |
+| Network | `candidate-1800-72-9`, only after a bounded no-publication canary | A minimal step above the accepted 1600/64/8 baseline can reduce network/writer wall clock by at least 10% without retry amplification above `1.50` or combined `429+503` above 5% | Exact completed scope/manifests; at least 80% of preflight-healthy exits remain usable; no public-path regression. 2880/128/16 exceeded correctness/resources; cooled 2000/80/10 passed payload/resources but retained two unrecovered requests. Matched payload controls run after one proxy-cooldown interval | Restore the accepted `candidate-1600-64-8` values and recreate the stopped worker |
 | Data | `--data-profile snapshot-reuse` | Reuse only exact unchanged published physical scopes. The historical 1273-to-1276 upper-bound calibration was `1,727/6,273` scopes and `5,686,749/40,233,969` rows (`14.13%`), projecting about `2.05 GB` physical and `4.32 GB` WAL savings. Accept only with at least `1 GiB` measured physical savings | Exact row/count/content/coverage/public API/workbook parity; complete manifests; zero writer/critical failures; no sustained >10% phase latency, CPU, memory, WAL, temp, or I/O regression; retention rewriting remains off | Set `Features__SkipUnchangedPhysicalLeaderboardSnapshots=false`; retain manifests/source maps for diagnosis; if the threshold is missed, revert and remove the dormant skip path |
 
 Before arming the card:
@@ -49,8 +49,9 @@ Before arming the card:
    publication timings as the matched baseline.
 2. Refresh the exact reusable-scope estimate against publication `1280`; the
    `14.13%` value is a ceiling from older publications, not a promotion claim.
-3. Run the 2000/80/10 bounded canary with the active-canary sentinel. The
-   2880/128/16 attempt is rejected; do not use it for the full scrape.
+3. Run the 1800/72/9 bounded canary with the active-canary sentinel. The
+   2880/128/16 and 2000/80/10 attempts are rejected; do not use either for the
+   full scrape.
 4. Validate the merged worker config with
    `tools/fst-worker-dual-lane-runonce.sh --data-profile snapshot-reuse`.
 5. Keep `DatabaseMaintenance__SnapshotRetentionRewriteEnabled=false` and all
