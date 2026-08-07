@@ -69,6 +69,12 @@ def parse_args():
         default=250,
     )
     parser.add_argument(
+        "--payload-control-delay-seconds",
+        type=float,
+        default=0,
+        help="Wait after the primary/recovery stages before matched payload controls.",
+    )
+    parser.add_argument(
         "--maximum-peak-memory-bytes",
         type=int,
         default=805306368,
@@ -366,6 +372,7 @@ def main():
         or args.recovery_delay_seconds < 0
         or args.payload_control_scope_count <= 0
         or args.payload_control_max_start_skew_ms <= 0
+        or args.payload_control_delay_seconds < 0
         or args.maximum_peak_memory_bytes <= 0
         or args.maximum_peak_pids <= 0
     ):
@@ -673,6 +680,9 @@ def main():
             time.sleep(args.recovery_delay_seconds)
             recovery_delay_seconds += args.recovery_delay_seconds
 
+    if args.payload_control_delay_seconds > 0:
+        time.sleep(args.payload_control_delay_seconds)
+
     payload_control_workload = build_payload_control_workload(
         workload,
         args.payload_control_scope_count,
@@ -863,6 +873,7 @@ def main():
         "observedLiveScopeVariantCount": aggregate["multiVariantScopeCount"],
         "observedLiveScopeVariantsAreGating": False,
         "payloadControl": payload_control,
+        "payloadControlDelaySeconds": args.payload_control_delay_seconds,
         "recoveryAttempted": bool(recovery_reports),
         "recoveryRounds": len(
             {item["round"] for item in recovery_attempts if item["round"] > 0}
