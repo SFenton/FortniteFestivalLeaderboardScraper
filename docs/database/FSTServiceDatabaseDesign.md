@@ -675,6 +675,11 @@ Once a complete profile/history payload is published, pending refresh work
 does not hide it. Filtered profile requests fail closed with no-store `503`
 while backfill or ranking publication is pending because their dynamic
 published-scope fallback can include newer overlays or score-history metadata.
+Leeway-only requests still receive the full immutable profile because leeway
+filtering is client-side for that request shape. Completing history
+reconstruction marks the account publication-pending through the existing
+durable `rankings_pending` latch so later filtered reads remain closed until a
+scrape republishes the profile/history generation.
 The solo refresh has no absolute wall-clock timeout; the progress-aware worker
 watchdog owns true hangs without cancelling a phase that is still advancing.
 Continuous workers drain pending/deferred backfills before history-only work.
@@ -1412,6 +1417,8 @@ The first completed source cut is the API response cache:
   for this profile-invariant route. These aliases make real client
   commit-intent hits bypass both publication lock middlewares, while page-two
   and other uncached requests still receive bounded `503` responses;
+- outer-cache hits still record selected-player/band activity even though they
+  bypass downstream middleware, preserving registration retention semantics;
 - publication retains exact current and previous cache generations only;
   failed/retired staging is deleted immediately and older cache bindings are
   marked retired;

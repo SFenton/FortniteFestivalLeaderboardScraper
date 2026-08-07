@@ -4375,6 +4375,9 @@ public sealed class MetaDatabaseTests : IDisposable
     [Fact]
     public void HistoryRecon_lifecycle_pending_to_complete()
     {
+        Db.EnqueueBackfill("acct_1", 500);
+        Db.StartBackfill("acct_1");
+        Db.CompleteBackfill("acct_1");
         Db.EnqueueHistoryRecon("acct_1", 500);
         var status = Db.GetHistoryReconStatus("acct_1");
         Assert.NotNull(status);
@@ -4394,6 +4397,9 @@ public sealed class MetaDatabaseTests : IDisposable
         Db.CompleteHistoryRecon("acct_1");
         status = Db.GetHistoryReconStatus("acct_1");
         Assert.Equal("complete", status!.Status);
+        Assert.True(
+            Db.GetBackfillStatus("acct_1")
+                ?.RankingsPending);
     }
 
     [Fact]

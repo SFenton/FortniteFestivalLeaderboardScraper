@@ -19,7 +19,21 @@ public sealed class SelectedProfileActivityMiddleware
     public async Task InvokeAsync(HttpContext context)
     {
         await _next(context);
-        if (_rolloutReadOnly
+        var metaDatabase =
+            context.RequestServices
+                .GetRequiredService<IMetaDatabase>();
+        RecordActivityIfNeeded(
+            context,
+            metaDatabase,
+            _rolloutReadOnly);
+    }
+
+    internal static void RecordActivityIfNeeded(
+        HttpContext context,
+        IMetaDatabase metaDatabase,
+        bool rolloutReadOnly)
+    {
+        if (rolloutReadOnly
             || context.WebSockets.IsWebSocketRequest
             || !context.Request.Path.StartsWithSegments("/api")
             || context.Response.StatusCode >=
@@ -36,8 +50,6 @@ public sealed class SelectedProfileActivityMiddleware
             return;
         }
 
-        var metaDatabase =
-            context.RequestServices.GetRequiredService<IMetaDatabase>();
         switch (selection)
         {
             case SelectedPlayerSelection player:

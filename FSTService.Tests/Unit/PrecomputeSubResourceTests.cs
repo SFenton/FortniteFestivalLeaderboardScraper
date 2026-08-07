@@ -493,6 +493,13 @@ public sealed class PrecomputeSubResourceTests : IDisposable
         Assert.Equal(1, json.RootElement.GetProperty("page").GetInt32());
         Assert.True(json.RootElement.GetProperty("totalAccounts").GetInt32() >= 2);
         Assert.True(json.RootElement.GetProperty("entries").GetArrayLength() >= 2);
+        Assert.All(
+            json.RootElement.GetProperty("entries")
+                .EnumerateArray(),
+            entry => Assert.True(
+                entry.TryGetProperty(
+                    "rawMaxScorePercent",
+                    out _)));
 
         var publicRouteKey =
             PublicApiResponseCachePolicy.BuildCacheKeyForRequestTarget(

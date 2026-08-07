@@ -2651,12 +2651,17 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
         var unfiltered = await client.GetAsync(
             $"/api/player/{accountId}");
+        var leewayOnly = await client.GetAsync(
+            $"/api/player/{accountId}?leeway=1");
         var filtered = await client.GetAsync(
             $"/api/player/{accountId}?songId=published-song");
 
         Assert.Equal(
             HttpStatusCode.OK,
             unfiltered.StatusCode);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            leewayOnly.StatusCode);
         Assert.Equal(
             HttpStatusCode.ServiceUnavailable,
             filtered.StatusCode);

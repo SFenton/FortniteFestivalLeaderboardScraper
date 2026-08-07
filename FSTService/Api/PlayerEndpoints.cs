@@ -53,8 +53,7 @@ public static partial class ApiEndpoints
             if (publishedProfile is not null
                 && publicationPending
                 && (songId is not null
-                    || instruments is not null
-                    || leeway is not null))
+                    || instruments is not null))
             {
                 httpContext.Response.Headers.CacheControl = "no-store";
                 return Results.Problem(

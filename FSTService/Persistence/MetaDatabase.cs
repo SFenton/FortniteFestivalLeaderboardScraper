@@ -3705,13 +3705,32 @@ public sealed partial class MetaDatabase : IMetaDatabase
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         cmd.ExecuteNonQuery();
     }
-    public void CompleteHistoryRecon(string accountId) { SimpleUpdate("UPDATE history_recon_status SET status = 'complete', completed_at = @now WHERE account_id = @id", accountId); }
+    public void CompleteHistoryRecon(string accountId)
+    {
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            UPDATE history_recon_status
+            SET status = 'complete',
+                completed_at = @now
+            WHERE account_id = @id
+            """;
+        cmd.Parameters.AddWithValue("id", accountId);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        if (cmd.ExecuteNonQuery() == 1)
+            MarkBackfillPublicationPending(conn, tx, accountId);
+        tx.Commit();
+    }
     public void CompleteHistoryRecon(string accountId, int reconstructionVersion, string windowFingerprint)
         => CompleteHistoryRecon(accountId, reconstructionVersion, windowFingerprint, admissionRevision: 0);
     public void CompleteHistoryRecon(string accountId, int reconstructionVersion, string windowFingerprint, long admissionRevision)
     {
         using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
         using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
         cmd.CommandText = """
             UPDATE history_recon_status
             SET status = 'complete',
@@ -3727,7 +3746,25 @@ public sealed partial class MetaDatabase : IMetaDatabase
         cmd.Parameters.AddWithValue("fingerprint", windowFingerprint);
         cmd.Parameters.AddWithValue("revision", admissionRevision);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
-        cmd.ExecuteNonQuery();
+        if (cmd.ExecuteNonQuery() == 1)
+            MarkBackfillPublicationPending(conn, tx, accountId);
+        tx.Commit();
+    }
+    private static void MarkBackfillPublicationPending(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        string accountId)
+    {
+        using var pending = conn.CreateCommand();
+        pending.Transaction = tx;
+        pending.CommandText = """
+            UPDATE backfill_status
+            SET rankings_pending = TRUE
+            WHERE account_id = @id
+              AND status = 'complete'
+            """;
+        pending.Parameters.AddWithValue("id", accountId);
+        pending.ExecuteNonQuery();
     }
     public void FailHistoryRecon(string accountId, string errorMessage) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE history_recon_status SET status = 'error', error_message = @err WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("err", errorMessage); cmd.ExecuteNonQuery(); }
     public void FailHistoryRecon(string accountId, string errorMessage, int reconstructionVersion, string windowFingerprint)

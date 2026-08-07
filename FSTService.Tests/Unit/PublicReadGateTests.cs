@@ -868,6 +868,15 @@ public class PublicReadGateTests
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Get;
         context.Request.Path = "/api/rankings/Solo_Guitar";
+        context.Request.Headers[
+            SelectedProfileHeaders.SelectedProfileTypeHeader] =
+            "player";
+        context.Request.Headers[
+            SelectedProfileHeaders.SelectedProfileIdHeader] =
+            "account-1";
+        context.Request.Headers[
+            SelectedProfileHeaders.LegacySelectedPlayerHeader] =
+            "account-1";
         SetPublicationEndpoint(
             context,
             "/api/rankings/{instrument}");
@@ -894,6 +903,8 @@ public class PublicReadGateTests
             context.Response.Headers["X-FST-Public-Cache"]);
         metaDb.DidNotReceive().GetCachedResponse(
             Arg.Any<string>());
+        metaDb.Received(1)
+            .TouchWebRegistrationActivity("account-1");
     }
 
     [Fact]
