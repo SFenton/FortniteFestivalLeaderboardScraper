@@ -1,4 +1,5 @@
 using System.Text.Json;
+using FSTService.Api;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
@@ -492,6 +493,13 @@ public sealed class PrecomputeSubResourceTests : IDisposable
         Assert.Equal(1, json.RootElement.GetProperty("page").GetInt32());
         Assert.True(json.RootElement.GetProperty("totalAccounts").GetInt32() >= 2);
         Assert.True(json.RootElement.GetProperty("entries").GetArrayLength() >= 2);
+
+        var publicRouteKey =
+            PublicApiResponseCachePolicy.BuildCacheKeyForRequestTarget(
+                "/api/rankings/Solo_Guitar?pageSize=50&page=1&rankBy=totalscore");
+        var publicRoute = _sut.TryGet(publicRouteKey);
+        Assert.NotNull(publicRoute);
+        Assert.Equal(result.Value.Json, publicRoute.Value.Json);
     }
 
     [Fact]

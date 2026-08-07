@@ -722,6 +722,30 @@ public class PublicReadGateTests
     }
 
     [Fact]
+    public void PublicApiResponseCachePolicy_KeyCanonicalizesQueryOrder()
+    {
+        var first = new DefaultHttpContext();
+        first.Request.Method = HttpMethods.Get;
+        first.Request.Path = "/api/rankings/Solo_Guitar";
+        first.Request.QueryString =
+            new QueryString(
+                "?rankBy=totalscore&page=1&pageSize=50");
+
+        var second = new DefaultHttpContext();
+        second.Request.Method = HttpMethods.Get;
+        second.Request.Path = "/api/rankings/Solo_Guitar";
+        second.Request.QueryString =
+            new QueryString(
+                "?pageSize=50&page=1&rankBy=totalscore");
+
+        Assert.Equal(
+            PublicApiResponseCachePolicy.BuildCacheKey(
+                first.Request),
+            PublicApiResponseCachePolicy.BuildCacheKey(
+                second.Request));
+    }
+
+    [Fact]
     public async Task PublicApiResponseCacheMiddleware_DoesNotStoreSuccessfulJsonResponseWhenNotFrozen()
     {
         var metaDb = Substitute.For<IMetaDatabase>();

@@ -252,6 +252,25 @@ internal static class PublicApiResponseCachePolicy
             "|teamKey=", selectedBandTeamKey);
     }
 
+    internal static string BuildCacheKeyForRequestTarget(
+        string requestTarget)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestTarget);
+        var queryIndex = requestTarget.IndexOf('?', StringComparison.Ordinal);
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = queryIndex < 0
+            ? requestTarget
+            : requestTarget[..queryIndex];
+        if (queryIndex >= 0)
+        {
+            context.Request.QueryString =
+                new QueryString(requestTarget[queryIndex..]);
+        }
+
+        return BuildCacheKey(context.Request);
+    }
+
     private static string BuildCanonicalQueryString(HttpRequest request)
     {
         var values = request.Query
@@ -260,7 +279,13 @@ internal static class PublicApiResponseCachePolicy
                 PublicationReadContextMiddleware.PublicationQueryParameter,
                 StringComparison.OrdinalIgnoreCase))
             .SelectMany(pair => pair.Value.Select(value =>
-                new KeyValuePair<string, string?>(pair.Key, value)));
+                new KeyValuePair<string, string?>(pair.Key, value)))
+            .OrderBy(
+                static pair => pair.Key,
+                StringComparer.OrdinalIgnoreCase)
+            .ThenBy(
+                static pair => pair.Value,
+                StringComparer.Ordinal);
         return QueryString.Create(values).Value ?? string.Empty;
     }
 

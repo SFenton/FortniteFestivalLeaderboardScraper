@@ -1396,6 +1396,11 @@ The first completed source cut is the API response cache:
   generation or failed-candidate isolation exists;
 - candidate staging, flush, and swap validate the same target and cannot
   retarget after a concurrent pointer change;
+- controlled precompute stores canonical `public-route:` aliases for
+  per-instrument ranking page-one payloads. Query parameters are sorted before
+  keying, so equivalent request orderings share one exact generation entry.
+  These aliases make commit-intent hits bypass both publication lock
+  middlewares, while uncached pages still receive bounded `503` responses;
 - publication retains exact current and previous cache generations only;
   failed/retired staging is deleted immediately and older cache bindings are
   marked retired;

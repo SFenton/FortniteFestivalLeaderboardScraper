@@ -928,28 +928,45 @@ public sealed class ScrapeTimePrecomputer
     /// list for the single-user PrecomputeUser() path. As a fallback (e.g. when
     /// called outside of bulk precomputation), writes directly to PostgreSQL.
     /// </summary>
-    private void Store(string cacheKey, byte[] json,
-        List<(string Key, byte[] Json, string ETag)>? storeOverride = null)
+    private void Store(
+        string cacheKey,
+        byte[] json,
+        List<(string Key, byte[] Json, string ETag)>? storeOverride = null,
+        IReadOnlyList<string>? publicRequestTargets = null)
     {
         var hash = SHA256.HashData(json);
         var etag = $"\"{Convert.ToBase64String(hash, 0, 16)}\"";
 
-        if (storeOverride is not null)
+        StoreEntry(cacheKey);
+        if (publicRequestTargets is not null)
         {
-            storeOverride.Add((cacheKey, json, etag));
-            return;
+            foreach (var requestTarget in publicRequestTargets)
+            {
+                StoreEntry(
+                    PublicApiResponseCachePolicy
+                        .BuildCacheKeyForRequestTarget(requestTarget));
+            }
         }
 
-        if (_staging is not null)
+        void StoreEntry(string key)
         {
-            _staging.Write(cacheKey, json, etag);
-            return;
-        }
+            if (storeOverride is not null)
+            {
+                storeOverride.Add((key, json, etag));
+                return;
+            }
 
-        _log.LogDebug(
-            "Skipped direct precomputed cache write for {CacheKey}; " +
-            "a complete publication rebuild owns cache promotion.",
-            cacheKey);
+            if (_staging is not null)
+            {
+                _staging.Write(key, json, etag);
+                return;
+            }
+
+            _log.LogDebug(
+                "Skipped direct precomputed cache write for {CacheKey}; " +
+                "a complete publication rebuild owns cache promotion.",
+                key);
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1464,7 +1481,24 @@ public sealed class ScrapeTimePrecomputer
                     entries = enriched,
                 };
                 var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
-                Store($"rankings:{instrument}:{metric}:1:50", jsonBytes);
+                var escapedInstrument =
+                    Uri.EscapeDataString(instrument);
+                var escapedMetric = Uri.EscapeDataString(metric);
+                var publicRequestTargets = new List<string>
+                {
+                    $"/api/rankings/{escapedInstrument}?rankBy={escapedMetric}&page=1&pageSize=50",
+                    $"/api/rankings/{escapedInstrument}?rankBy={escapedMetric}",
+                };
+                if (metric == "adjusted")
+                {
+                    publicRequestTargets.Add(
+                        $"/api/rankings/{escapedInstrument}");
+                }
+
+                Store(
+                    $"rankings:{instrument}:{metric}:1:50",
+                    jsonBytes,
+                    publicRequestTargets: publicRequestTargets);
             }
         }
 
