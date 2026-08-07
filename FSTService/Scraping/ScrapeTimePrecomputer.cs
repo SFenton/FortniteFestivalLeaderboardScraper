@@ -931,8 +931,28 @@ public sealed class ScrapeTimePrecomputer
     private void Store(
         string cacheKey,
         byte[] json,
-        List<(string Key, byte[] Json, string ETag)>? storeOverride = null,
-        IReadOnlyList<string>? publicRequestTargets = null)
+        List<(string Key, byte[] Json, string ETag)>? storeOverride = null)
+        => StoreEntries(
+            cacheKey,
+            json,
+            storeOverride,
+            publicRequestTargets: null);
+
+    private void StoreWithPublicRequestTargets(
+        string cacheKey,
+        byte[] json,
+        IReadOnlyList<string> publicRequestTargets)
+        => StoreEntries(
+            cacheKey,
+            json,
+            storeOverride: null,
+            publicRequestTargets);
+
+    private void StoreEntries(
+        string cacheKey,
+        byte[] json,
+        List<(string Key, byte[] Json, string ETag)>? storeOverride,
+        IReadOnlyList<string>? publicRequestTargets)
     {
         var hash = SHA256.HashData(json);
         var etag = $"\"{Convert.ToBase64String(hash, 0, 16)}\"";
@@ -1495,10 +1515,10 @@ public sealed class ScrapeTimePrecomputer
                         $"/api/rankings/{escapedInstrument}");
                 }
 
-                Store(
+                StoreWithPublicRequestTargets(
                     $"rankings:{instrument}:{metric}:1:50",
                     jsonBytes,
-                    publicRequestTargets: publicRequestTargets);
+                    publicRequestTargets);
             }
         }
 
