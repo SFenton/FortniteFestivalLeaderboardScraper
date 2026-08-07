@@ -35,6 +35,10 @@ class FstNetworkBoundedCanaryTests(unittest.TestCase):
         self.assertEqual((800, 32, 5), runner.PROFILES["candidate-800-32-5"])
         self.assertEqual((800, 32, 6), runner.PROFILES["candidate-800-32-6"])
         self.assertEqual((800, 32, 4), runner.PROFILES["candidate-800-32-4"])
+        self.assertEqual(
+            (2000, 80, 10),
+            runner.PROFILES["candidate-2000-80-10"],
+        )
 
     def test_coordination_sentinel_is_exclusive_and_owner_released(self):
         runner = load_runner()

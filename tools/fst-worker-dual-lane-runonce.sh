@@ -17,7 +17,7 @@ then optionally starts exactly one worker pass.
 
 Options:
   --network-profile P   candidate-800-32-4, candidate-1600-64-8,
-                        or candidate-2880-128-16
+                        candidate-2000-80-10, or candidate-2880-128-16
   --data-profile P      publication-cache-generation,
                         catalog-path-notification-source-cut, or
                         snapshot-reuse
@@ -80,6 +80,12 @@ case "$NETWORK_PROFILE" in
         MAX_RPS=1600
         PER_ENDPOINT_RPS=64
         PER_ENDPOINT_CONCURRENCY=8
+        INITIAL_DOP=50
+        ;;
+    candidate-2000-80-10)
+        MAX_RPS=2000
+        PER_ENDPOINT_RPS=80
+        PER_ENDPOINT_CONCURRENCY=10
         INITIAL_DOP=50
         ;;
     candidate-2880-128-16)

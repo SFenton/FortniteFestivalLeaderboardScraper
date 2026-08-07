@@ -28,6 +28,7 @@ PROFILES = {
     "candidate-800-32-5": (800, 32, 5),
     "candidate-800-32-6": (800, 32, 6),
     "candidate-1600-64-8": (1600, 64, 8),
+    "candidate-2000-80-10": (2000, 80, 10),
     "candidate-2880-128-16": (2880, 128, 16),
 }
 TOOLS_DIR = pathlib.Path(__file__).resolve().parent
