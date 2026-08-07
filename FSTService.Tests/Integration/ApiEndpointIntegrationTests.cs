@@ -2418,14 +2418,12 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
-    public async Task PlayerAndHistory_PendingPublicationOverrideCachedPayloads()
+    public async Task PlayerAndHistory_DeferredBackfillServePublishedPayloads()
     {
         const string accountId = "pendingCachedPlayer";
         var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
         metaDb.RegisterUser("pending-cached-device", accountId);
-        metaDb.EnqueueBackfill(accountId, 100);
-        metaDb.StartBackfill(accountId);
-        metaDb.CompleteBackfill(accountId, rankingsPending: true);
+        metaDb.DeferBackfill(accountId, 100, "worker_backfill_queue");
 
         var profileJson = JsonSerializer.SerializeToUtf8Bytes(new
         {
@@ -2456,10 +2454,16 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var profileResponse = await _client.GetAsync($"/api/player/{accountId}");
         var historyResponse = await _client.GetAsync($"/api/player/{accountId}/history");
 
-        Assert.Equal(HttpStatusCode.Accepted, profileResponse.StatusCode);
-        Assert.Equal(HttpStatusCode.Accepted, historyResponse.StatusCode);
-        Assert.Contains("no-store", profileResponse.Headers.CacheControl?.ToString());
-        Assert.Contains("no-store", historyResponse.Headers.CacheControl?.ToString());
+        Assert.Equal(HttpStatusCode.OK, profileResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, historyResponse.StatusCode);
+
+        var profile = await profileResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(1, profile.GetProperty("totalScores").GetInt32());
+        Assert.Equal(123, profile.GetProperty("scores")[0].GetProperty("sc").GetInt32());
+
+        var history = await historyResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(1, history.GetProperty("count").GetInt32());
+        Assert.Equal("cached-song", history.GetProperty("history")[0].GetProperty("songId").GetString());
     }
 
     // ─── Backfill status ────────────────────────────────────────

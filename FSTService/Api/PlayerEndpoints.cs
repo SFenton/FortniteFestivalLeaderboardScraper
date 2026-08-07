@@ -29,11 +29,8 @@ public static partial class ApiEndpoints
             var cacheKey = $"player:{accountId}:{songId}:{instruments}:{leeway}";
             var publishedProfile = precomputer.TryGet($"player:{accountId}:::");
             var isRegistered = metaDb.IsAccountRegistered(accountId);
-            var backfill = isRegistered ? metaDb.GetBackfillStatus(accountId) : null;
-            var publicationPending = backfill is not null
-                && (backfill.Status != "complete" || backfill.RankingsPending);
 
-            if (isRegistered && (publicationPending || publishedProfile is null))
+            if (isRegistered && publishedProfile is null)
             {
                 httpContext.Response.Headers.CacheControl = "no-store";
                 return Results.Json(new
@@ -663,10 +660,7 @@ public static partial class ApiEndpoints
             }
 
             var published = precomputer.TryGet(ScrapeTimePrecomputer.PlayerHistoryCacheKey(accountId));
-            var backfill = metaDb.GetBackfillStatus(accountId);
-            var publicationPending = backfill is not null
-                && (backfill.Status != "complete" || backfill.RankingsPending);
-            if (published is null || publicationPending)
+            if (published is null)
             {
                 httpContext.Response.Headers.CacheControl = "no-store";
                 return Results.Json(new
