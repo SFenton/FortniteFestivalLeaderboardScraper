@@ -3,6 +3,7 @@ set -euo pipefail
 
 COMPOSE_DIR="${COMPOSE_DIR:-/home/sfenton/Docker/FestivalServiceTracker}"
 NETWORK_PROFILE=""
+DATA_PROFILE="catalog-path-notification-source-cut"
 EXPECTED_WORKER_IMAGE="${EXPECTED_WORKER_IMAGE:-}"
 ACTION="check"
 CONFIG_ONLY=false
@@ -11,12 +12,15 @@ usage() {
     cat <<'EOF'
 Usage: tools/fst-worker-dual-lane-runonce.sh --network-profile PROFILE [options]
 
-Selects and validates the complete two-candidate scrape card for the current
-notification DB-only data lane, then optionally starts exactly one worker pass.
+Selects and validates one network candidate plus one named data candidate,
+then optionally starts exactly one worker pass.
 
 Options:
   --network-profile P   candidate-800-32-4, candidate-1600-64-8,
                         or candidate-2880-128-16
+  --data-profile P      publication-cache-generation,
+                        catalog-path-notification-source-cut, or
+                        snapshot-reuse
   --expected-worker-image I
                         Exact fstworker image required by the data lane
   --check               Validate only (default)
@@ -30,6 +34,7 @@ EOF
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --network-profile) NETWORK_PROFILE="$2"; shift 2 ;;
+        --data-profile) DATA_PROFILE="$2"; shift 2 ;;
         --expected-worker-image) EXPECTED_WORKER_IMAGE="$2"; shift 2 ;;
         --check) ACTION="check"; shift ;;
         --recreate) ACTION="recreate"; shift ;;
@@ -45,6 +50,15 @@ if [[ -z "$NETWORK_PROFILE" ]]; then
     usage >&2
     exit 64
 fi
+case "$DATA_PROFILE" in
+    publication-cache-generation|catalog-path-notification-source-cut|snapshot-reuse)
+        ;;
+    *)
+        printf 'ERROR: unsupported data profile: %s\n' "$DATA_PROFILE" >&2
+        usage >&2
+        exit 64
+        ;;
+esac
 if [[ -z "$EXPECTED_WORKER_IMAGE" ]]; then
     printf 'ERROR: --expected-worker-image is required\n' >&2
     usage >&2
@@ -89,12 +103,19 @@ fi
 guard_args=(
     --compose-dir "$COMPOSE_DIR"
     --throughput-profile "$NETWORK_PROFILE"
-    --data-profile catalog-path-notification-source-cut
+    --data-profile "$DATA_PROFILE"
     --expected-worker-image "$EXPECTED_WORKER_IMAGE"
     "$guard_action"
 )
 if $CONFIG_ONLY; then
     guard_args+=(--config-only)
+fi
+
+SKIP_UNCHANGED_PHYSICAL_LEADERBOARD_SNAPSHOTS=false
+USE_LEADERBOARD_SCOPE_FINGERPRINTS=false
+if [[ "$DATA_PROFILE" == "snapshot-reuse" ]]; then
+    SKIP_UNCHANGED_PHYSICAL_LEADERBOARD_SNAPSHOTS=true
+    USE_LEADERBOARD_SCOPE_FINGERPRINTS=true
 fi
 
 RUN_ONCE=true \
@@ -119,4 +140,6 @@ IMPROVEMENT_NOTIFICATIONS_INCLUDE_SONG_EVENTS=true \
 IMPROVEMENT_NOTIFICATIONS_INCLUDE_RANKINGS=true \
 IMPROVEMENT_NOTIFICATIONS_REFRESH_SOLO_PROJECTION=true \
 IMPROVEMENT_NOTIFICATIONS_REFRESH_ALL_SOLO_SCOPES_WHEN_NO_IMPACTED_SCOPES=false \
+SKIP_UNCHANGED_PHYSICAL_LEADERBOARD_SNAPSHOTS="$SKIP_UNCHANGED_PHYSICAL_LEADERBOARD_SNAPSHOTS" \
+USE_LEADERBOARD_SCOPE_FINGERPRINTS="$USE_LEADERBOARD_SCOPE_FINGERPRINTS" \
 "$(dirname "$0")/fst-worker-compose-guard.sh" "${guard_args[@]}"

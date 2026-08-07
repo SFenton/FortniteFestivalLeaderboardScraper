@@ -37,6 +37,7 @@ Options:
                              publication-cache-generation
                              registered-refresh-repair
                              catalog-path-notification-source-cut
+                             snapshot-reuse
                            Every run-once config requires a data profile.
   --expected-worker-image I
                            Require the resolved fstworker image to match I.
@@ -100,7 +101,7 @@ case "$THROUGHPUT_PROFILE" in
 esac
 
 case "$DATA_PROFILE" in
-    none|notification-db-only|publication-cache-generation|registered-refresh-repair|catalog-path-notification-source-cut)
+    none|notification-db-only|publication-cache-generation|registered-refresh-repair|catalog-path-notification-source-cut|snapshot-reuse)
         ;;
     *)
         printf 'ERROR: unknown data profile: %s\n' "$DATA_PROFILE" >&2
@@ -394,6 +395,28 @@ if data_profile == "catalog-path-notification-source-cut":
             raise SystemExit(
                 "ERROR: data profile catalog-path-notification-source-cut "
                 f"requires {name}=false")
+if data_profile == "snapshot-reuse":
+    exact_value("Scraper__EnabledPhases", "All")
+    exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
+    for name in (
+        "Features__EnforcePublicationCriticalPhases",
+        "Features__EnforceScopeCompletenessManifests",
+        "Features__RequireSuccessfulScrapeWriters",
+        "Features__UseLeaderboardScopeFingerprints",
+        "Features__WritePublishedScopeSources",
+        "Features__SkipUnchangedPhysicalLeaderboardSnapshots",
+    ):
+        if not boolean(name):
+            raise SystemExit(
+                f"ERROR: data profile snapshot-reuse requires {name}=true")
+    for name in (
+        "Features__UseStoredSoloProjectionRanksForFilteredReads",
+        "Features__WriteLogicalLeaderboardVersions",
+        "DatabaseMaintenance__SnapshotRetentionRewriteEnabled",
+    ):
+        if boolean(name):
+            raise SystemExit(
+                f"ERROR: data profile snapshot-reuse requires {name}=false")
 if canonical != 30:
     raise SystemExit(f"ERROR: canonical PIA service count must be 30, found {canonical}")
 if expected > canonical:

@@ -339,10 +339,10 @@ post-writer capacity gate can pass on the FST drive.
    direct/PIA JSON parity, the `25/25` compose guard, public health, locks, and
    both start and post-writer capacity gates.
 5. Deploy only the snapshot-reuse flag while preserving all other writer
-   behavior. Pair it with exactly one qualified network candidate, add an
-   explicit snapshot-reuse data profile to the dual-lane wrapper/guard, and do
-   not start until that named profile validates the exact merged run-once
-   config.
+   behavior. Pair it with exactly one qualified network candidate and require
+   `--data-profile snapshot-reuse` through
+   `tools/fst-worker-dual-lane-runonce.sh`; do not start until the guard
+   validates the exact merged run-once config.
 6. Retain the existing 60-second resource monitor, and add 1 Hz representative
    cached plus forced-miss route probes from publication preparation through
    unfreeze. Capture prepare/drain/exclusive durations, lock rejections,
