@@ -57,6 +57,19 @@ Before arming the card:
 5. Keep `DatabaseMaintenance__SnapshotRetentionRewriteEnabled=false` and all
    FST scratch/evidence on the 4 TB drive.
 
+The publication-25 to publication-30 refresh is complete:
+
+- `6,291/6,291` scopes paired;
+- `2,423` non-empty scopes plus `46` empty scopes are exact reusable matches;
+- `9,657,258/40,279,712` rows are reusable (`23.98%`);
+- the historical physical/WAL calibration projects about
+  `3,481,317,516` physical bytes and `7,336,239,838` WAL bytes avoided.
+
+This clears the card's `1 GiB` projected-benefit threshold but remains an
+estimate; only actual relation/WAL deltas from the full A/B can promote the
+candidate. Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-estimate-20260807T1930Z`.
+
 - no normal full scrape or snapshot-reuse retry is authorized on the old
   publication path;
 - the next permitted full scrape is the repaired cached-hit B run using the
