@@ -6,7 +6,7 @@ This plan records the approved direction for improving FST Postgres persistence 
 
 - Production compose ownership: `/home/sfenton/Docker/FestivalServiceTracker`.
 - `fstservice`, `festivalweb`, and `fst-postgres` are healthy.
-  `fstservice` runs `fstservice:postb-4cab6c08`. Controlled publication B
+  `fstservice` runs `fstservice:postb-8de069d6`. Controlled publication B
   scrape `1279` completed and published as publication `25`, retaining
   publication `19`; public reads are unfrozen. The matching run-once
   `fstworker` is recreated in `created` state with restart policy `no`.
@@ -573,7 +573,7 @@ transaction.
 
 Repository validation passed the independent-review regressions,
 publication/persistence/gate/pinning/maintenance groups, worker/startup
-groups, and the complete `2,697/2,697` service suite. The Release service
+groups, and the complete `2,701/2,701` service suite. The Release service
 build passed.
 
 Controlled B scrape `1279` completed with:
@@ -594,7 +594,7 @@ Controlled B scrape `1279` completed with:
 - one earlier two-second monitor timeout at `05:15Z`, isolated to an unchanged
   catalog refresh taking the exclusive publication lock. `4f0934e6` moves the
   exact-match check before exclusive mutation and is deployed in
-  `fstservice:postb-4cab6c08`;
+  `fstservice:postb-8de069d6`;
 - a rejected cached-hit probe assumption: publication `19` and `25` had zero
   `public-route:` rows, so the route was not an outer-cache hit. The repaired
   alias set uses real web request shapes and projected 10/25-row payloads,
@@ -602,6 +602,20 @@ Controlled B scrape `1279` completed with:
   profile headers as irrelevant only for per-instrument ranking lists. The
   exact-hit/cold-miss live gate remains the only PUB-COMMIT-SPLIT acceptance
   item requiring another publication.
+
+Current-generation readiness is now complete before that run:
+
+- standalone `--precompute` rebuilt publication `25` from `6,955` to `7,171`
+  cache rows, including exactly `216` per-instrument `public-route:` aliases;
+- a live synthetic `publication-commit` interval with selected-player headers
+  served page one/size 25 as `200 X-FST-Public-Cache: hit`, returned page
+  two/size 50 as `503 Retry-After: 1`, kept `/readyz` at `200`, and restored
+  `1279 / publication 25 / unfrozen / no intent`;
+- two consecutive periodic unchanged catalog refreshes preserved both the
+  `live_song_catalog` xmin and the hash of all 699 `songs` row xmins.
+
+Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/current-publication-alias-seed-20260807T1047Z`.
 
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/publication-split-b-20260806T202045Z`.

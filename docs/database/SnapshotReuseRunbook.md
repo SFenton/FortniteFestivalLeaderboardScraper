@@ -22,6 +22,13 @@ publication must prove real-client cached `200` continuity before snapshot
 reuse runs. Snapshot reuse remains off. This availability gate is independent
 of snapshot-reuse data correctness and capacity:
 
+The seed completed on `fstservice:postb-8de069d6`: publication `25` now has
+`216` real-client ranking aliases. A live synthetic commit-intent probe with
+selected-player headers returned exact-hit `200`, page-two miss
+`503 Retry-After: 1`, and readiness `200`, then restored unfrozen state.
+Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/current-publication-alias-seed-20260807T1047Z`.
+
 - no normal full scrape or snapshot-reuse retry is authorized on the old
   publication path;
 - the next permitted full scrape is the repaired cached-hit B run using the
