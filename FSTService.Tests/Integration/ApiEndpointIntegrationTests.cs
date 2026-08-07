@@ -343,13 +343,16 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     [Fact]
     public async Task PublicationCommitIntent_ServesPrecomputedClientRankingAliases()
     {
+        using var factory =
+            new FstWebApplicationFactory();
+        using var client = factory.CreateClient();
         var metaDb =
-            _factory.Services.GetRequiredService<MetaDatabase>();
+            factory.Services.GetRequiredService<MetaDatabase>();
         var pointers = EnsureCurrentPublication(metaDb);
         Assert.Null(pointers.WorkingPublicationId);
 
         var persistence =
-            _factory.Services
+            factory.Services
                 .GetRequiredService<GlobalLeaderboardPersistence>();
         var db = persistence.GetOrCreateInstrumentDb(
             "Solo_Guitar");
@@ -372,7 +375,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             credibilityThreshold: 0);
 
         var precomputer =
-            _factory.Services
+            factory.Services
                 .GetRequiredService<ScrapeTimePrecomputer>();
         await precomputer.PrecomputeAllAsync(
             CancellationToken.None);
@@ -383,12 +386,12 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             PublicReadFreezeState
                 .PublicationCommitIntentReason);
         var gate =
-            _factory.Services
+            factory.Services
                 .GetRequiredService<PublicReadGateService>();
         gate.Invalidate();
 
         using var lockConnection =
-            _factory.Services
+            factory.Services
                 .GetRequiredService<NpgsqlDataSource>()
                 .OpenConnection();
         using var lockTransaction =
@@ -425,7 +428,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                         .LegacySelectedPlayerHeader,
                     "commit-alias-account-01");
 
-                var hit = await _client.SendAsync(request);
+                var hit = await client.SendAsync(request);
 
                 Assert.Equal(
                     HttpStatusCode.OK,
@@ -447,7 +450,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                         .GetArrayLength());
             }
 
-            var defaultMetricHit = await _client.GetAsync(
+            var defaultMetricHit = await client.GetAsync(
                 "/api/rankings/Solo_Guitar?page=1&pageSize=50");
             Assert.Equal(
                 HttpStatusCode.OK,
@@ -458,7 +461,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                     .GetValues("X-FST-Public-Cache")
                     .Single());
 
-            var miss = await _client.GetAsync(
+            var miss = await client.GetAsync(
                 "/api/rankings/Solo_Guitar?rankBy=totalscore&page=2&pageSize=50");
             Assert.Equal(
                 HttpStatusCode.ServiceUnavailable,
