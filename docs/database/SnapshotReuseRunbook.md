@@ -70,6 +70,34 @@ estimate; only actual relation/WAL deltas from the full A/B can promote the
 candidate. Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-reuse-estimate-20260807T1930Z`.
 
+### Network-lane bounded decision
+
+The data lane is ready, but the required network lane is currently blocked by
+provider behavior under the absolute zero-unrecovered gate:
+
+| Profile | Useful pages/s | Correctness | Resources | Decision |
+|---|---:|---|---|---|
+| 2880/128/16 | 117.09 | 2 unrecovered; 24/25 immediate payload controls invalid | 970 MB / 447 PIDs, both over limit | Rejected |
+| 2000/80/10 | 83.69 | Immediate controls tarpitted; cooled controls later passed, but 2 requests remained unrecovered | 771 MB / 289 PIDs | Rejected |
+| 1800/72/9 | 54.20 | Payload controls exact; 1 request unrecovered | 698 MB / 260 PIDs | Rejected; <10% improvement |
+| 1600/64/8 current baseline | 69.21 calibration | Payload controls exact; 2 requests unrecovered | 633 MB / 226 PIDs | Current provider baseline also fails the absolute gate |
+
+The failing primary scopes changed between matched runs and returned
+cross-exit CDN 403s during bounded recovery; payload fingerprints were exact
+after one 45-second proxy-cooldown interval. Additional recovery rounds and
+longer pacing did not clear the global blocks and reduced useful throughput.
+Do not cherry-pick a passing sample or weaken the gate. The snapshot full
+scrape remains blocked until a fresh bounded window yields zero unrecovered
+responses, or a separately reviewed matched-baseline gate redesign is
+implemented.
+
+Evidence:
+
+- `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-network-canary-2880-20260807T1940Z`
+- `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-network-canary-2000-cooldown-20260807T1955Z`
+- `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-network-canary-1800-20260807T2000Z`
+- `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-network-canary-baseline-1600-20260807T2000Z`
+
 - no normal full scrape or snapshot-reuse retry is authorized on the old
   publication path;
 - the next permitted full scrape is the repaired cached-hit B run using the
