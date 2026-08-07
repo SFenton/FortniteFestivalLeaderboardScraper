@@ -11,7 +11,9 @@ This plan records the approved direction for improving FST Postgres persistence 
   publication `19`; public reads are unfrozen. The matching run-once
   `fstworker` is recreated in `created` state with restart policy `no`.
   SFentonX now serves the existing publication-25 profile and history while
-  its completed backfill still has a pending rank refresh.
+  its completed backfill still has a pending rank refresh. Pending filtered
+  profile reads fail closed until that refresh is published, preventing newer
+  overlay/history state from escaping the immutable full profile.
 - Freshness is now a hard scheduling constraint: long storage/reclaim work
   finishes only its current bounded chunk, checkpoints, and yields before the
   next continuity scrape. A stale publication must not wait for repeated

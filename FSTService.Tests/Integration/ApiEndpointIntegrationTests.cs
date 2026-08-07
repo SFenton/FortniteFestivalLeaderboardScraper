@@ -2601,6 +2601,73 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal("cached-song", history.GetProperty("history")[0].GetProperty("songId").GetString());
     }
 
+    [Fact]
+    public async Task Player_DeferredBackfillFilteredReadFailsClosedWhilePublishedProfileRemainsAvailable()
+    {
+        const string accountId = "pendingFilteredPlayer";
+        using var factory =
+            new FstWebApplicationFactory(
+                useStoredProjectionRanks: false,
+                usePublishedScopeSources: true);
+        using var client = factory.CreateClient();
+        var metaDb =
+            factory.Services.GetRequiredService<MetaDatabase>();
+        _ = EnsureCurrentPublication(metaDb);
+        metaDb.RegisterUser(
+            "pending-filtered-device",
+            accountId);
+        metaDb.DeferBackfill(
+            accountId,
+            100,
+            "worker_backfill_queue");
+        var profileJson =
+            JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                accountId,
+                displayName = "Pending Filtered",
+                totalScores = 1,
+                scores = new[]
+                {
+                    new
+                    {
+                        si = "published-song",
+                        ins = "01",
+                        sc = 123,
+                    },
+                },
+            });
+        metaDb.BulkSetCachedResponses(
+        [
+            (
+                $"player:{accountId}:::",
+                profileJson,
+                ResponseCacheService.ComputeETag(
+                    profileJson)
+            ),
+        ]);
+
+        var unfiltered = await client.GetAsync(
+            $"/api/player/{accountId}");
+        var filtered = await client.GetAsync(
+            $"/api/player/{accountId}?songId=published-song");
+
+        Assert.Equal(
+            HttpStatusCode.OK,
+            unfiltered.StatusCode);
+        Assert.Equal(
+            HttpStatusCode.ServiceUnavailable,
+            filtered.StatusCode);
+        Assert.Equal(
+            "no-store",
+            filtered.Headers.CacheControl?.ToString());
+        var problem =
+            await filtered.Content
+                .ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(
+            "Published filtered profile refresh pending",
+            problem.GetProperty("title").GetString());
+    }
+
     // ─── Backfill status ────────────────────────────────────────
 
     [Fact]

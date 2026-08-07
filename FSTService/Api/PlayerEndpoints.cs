@@ -29,6 +29,12 @@ public static partial class ApiEndpoints
             var cacheKey = $"player:{accountId}:{songId}:{instruments}:{leeway}";
             var publishedProfile = precomputer.TryGet($"player:{accountId}:::");
             var isRegistered = metaDb.IsAccountRegistered(accountId);
+            var backfill = isRegistered
+                ? metaDb.GetBackfillStatus(accountId)
+                : null;
+            var publicationPending = backfill is not null
+                && (backfill.Status != "complete"
+                    || backfill.RankingsPending);
 
             if (isRegistered && publishedProfile is null)
             {
@@ -42,6 +48,22 @@ public static partial class ApiEndpoints
                     totalScores = 0,
                     scores = Array.Empty<object>(),
                 }, statusCode: StatusCodes.Status202Accepted);
+            }
+
+            if (publishedProfile is not null
+                && publicationPending
+                && (songId is not null
+                    || instruments is not null
+                    || leeway is not null))
+            {
+                httpContext.Response.Headers.CacheControl = "no-store";
+                return Results.Problem(
+                    title:
+                        "Published filtered profile refresh pending",
+                    detail:
+                        "The stable published profile remains available without filters. Filtered profile reads will resume after the queued refresh is published.",
+                    statusCode:
+                        StatusCodes.Status503ServiceUnavailable);
             }
 
             // ── Check precomputed store (covers all leeway values in one response) ──

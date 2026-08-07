@@ -670,8 +670,12 @@ stable-cache/published resolver or HTTP `503` behavior.
 The publication-critical registered-user refresh contains only recurring
 all-time/current-season `PostScrape` work. Registration backfill and history
 reconstruction remain on the resumable registration/deferred workers and keep
-their profiles in no-store `202` state until a later ranked publication. The
-solo refresh has no absolute wall-clock timeout; the progress-aware worker
+first-time profiles in no-store `202` state until a ranked publication exists.
+Once a complete profile/history payload is published, pending refresh work
+does not hide it. Filtered profile requests fail closed with no-store `503`
+while backfill or ranking publication is pending because their dynamic
+published-scope fallback can include newer overlays or score-history metadata.
+The solo refresh has no absolute wall-clock timeout; the progress-aware worker
 watchdog owns true hangs without cancelling a phase that is still advancing.
 Continuous workers drain pending/deferred backfills before history-only work.
 A successful run-once scrape performs the same durable drain only after the
@@ -1280,8 +1284,11 @@ generation ledger is still being built:
 - single-user precompute no longer mutates the live or shared staging cache;
 - registered users without a published full-profile/history payload receive a
   no-store `202 syncing/notYetPublished` response;
+- registered users with an existing publication continue receiving that
+  immutable full profile/history while a later refresh is queued;
 - filtered history is derived only from the published full-history payload,
-  and filtered registered profiles fail closed rather than reading live rows;
+  and filtered registered profiles fail closed during pending refresh rather
+  than reading newer overlay/history state;
 - the worker quiesces background backfill/history operations before the scrape,
   waits for admitted cyclical-song work to drain, and discards cancelled
   in-memory staging before candidate work begins;
