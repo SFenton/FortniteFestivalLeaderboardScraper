@@ -1640,13 +1640,16 @@ endpoint reader:
   singleton under the publication advisory lock. The singleton records a
   monotonic catalog version, schema version, SHA-256, count, source kind,
   exactness, and capture time;
-- catalog refresh never queues for that lock. It first uses
-  `pg_try_advisory_xact_lock`; when a long publication read/precompute lease
-  already owns a shared lock, the writer takes only a non-queueing shared try
-  lease and performs a command-timeout-bounded singleton lookup. The
-  no-mutation shortcut returns the existing token only when positive catalog
-  version, schema version, SHA-256, song count, `provider_exact` source,
-  exactness, and the JSONB catalog all match the incoming canonical snapshot;
+- catalog refresh never queues for that lock. It first takes a non-queueing
+  shared try lease and performs a command-timeout-bounded singleton lookup.
+  An exact match returns the existing token without taking the exclusive lock
+  or rewriting either `songs` or `live_song_catalog`. The no-mutation shortcut
+  requires a positive catalog version plus matching schema version, SHA-256,
+  song count, `provider_exact` source, exactness, and JSONB catalog. A mismatch
+  releases the read transaction before the writer attempts the non-queueing
+  exclusive lease. If that lease is busy, a second shared exact-match check
+  safely recognizes a concurrent identical writer before reporting
+  contention;
 - any contended mismatch, invalid singleton, or inability to take the shared
   try lease throws `SongCatalogPersistenceBusyException`. Periodic catalog
   refresh logs the retryable deferral and retries at its next interval;

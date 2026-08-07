@@ -108,6 +108,8 @@ public sealed class FestivalPersistenceTests : IDisposable
             Assert.Equal(8, track.GetProperty("in").GetProperty("bd").GetInt32());
         }
 
+        var beforeUnchangedSave =
+            await ReadCatalogMutationStateAsync();
         await persistence.SaveSongsAsync([first, second]);
 
         await using var verifyConn = await _dataSource.OpenConnectionAsync();
@@ -122,6 +124,9 @@ public sealed class FestivalPersistenceTests : IDisposable
         Assert.Equal(catalogVersion, verifyReader.GetInt64(0));
         Assert.Equal(contentHash, verifyReader.GetString(1));
         Assert.Equal(capturedAt, verifyReader.GetDateTime(2));
+        Assert.Equal(
+            beforeUnchangedSave,
+            await ReadCatalogMutationStateAsync());
     }
 
     [Fact]

@@ -128,6 +128,22 @@ public sealed class FestivalPersistence :
         var catalogSnapshot = SongCatalogSnapshotBuilder.Create(songList);
 
         await using var conn = await _ds.OpenConnectionAsync();
+        await using (var readTx = await conn.BeginTransactionAsync())
+        {
+            var currentToken =
+                await TryReadMatchingCatalogUnderSharedLockAsync(
+                    conn,
+                    readTx,
+                    catalogSnapshot);
+            if (currentToken is not null)
+            {
+                await readTx.CommitAsync();
+                return currentToken;
+            }
+
+            await readTx.RollbackAsync();
+        }
+
         await using var tx = await conn.BeginTransactionAsync();
 
         if (!await TryAcquirePublicationLockAsync(
