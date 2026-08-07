@@ -6,10 +6,12 @@ This plan records the approved direction for improving FST Postgres persistence 
 
 - Production compose ownership: `/home/sfenton/Docker/FestivalServiceTracker`.
 - `fstservice`, `festivalweb`, and `fst-postgres` are healthy.
-  `fstservice` runs `fstservice:pubsplit-e080e4fb`. The matching run-once
-  `fstworker` is executing controlled publication B scrape `1279` with restart
-  policy `no`; published scrape `1278` remains authoritative until every
-  prepare/commit/parity gate passes.
+  `fstservice` runs `fstservice:postb-4cab6c08`. Controlled publication B
+  scrape `1279` completed and published as publication `25`, retaining
+  publication `19`; public reads are unfrozen. The matching run-once
+  `fstworker` is recreated in `created` state with restart policy `no`.
+  SFentonX now serves the existing publication-25 profile and history while
+  its completed backfill still has a pending rank refresh.
 - Freshness is now a hard scheduling constraint: long storage/reclaim work
   finishes only its current bounded chunk, checkpoints, and yields before the
   next continuity scrape. A stale publication must not wait for repeated
@@ -513,15 +515,15 @@ path, and post-action validation are documented.
 | Atomic publication Phase 1 | Code complete / deployment and live A/B pending | Removed direct single-user cache publication; added no-store `202` unpublished-user behavior, full-history-only filtering, durable failed-candidate isolation, monotonic pending state, ranked input/projection cuts, background-writer quiescence and drain, queued deferred rivals, empty-staging rejection, and published-only band-history processing. |
 | Atomic publication Phase 2 foundation | Code complete / default-off cutover | Added durable generation lifecycle, current/previous/working pointers, typed surface bindings, cross-process publication locks, `/api/publication`, pinned HTTP/path/WebSocket client support, API-side socket rotation monitoring, and retention-safe predecessor links. `EnablePublicationReadContext` remains off while source cuts proceed. |
 | Publication cache source cut | Code complete / deployment pending | Added generation-keyed live/staging cache tables, explicit build targeting, deadlock-safe cross-process locks, current+previous retention, exact pinned reads, rollback reconciliation, failed-generation cleanup, and watchdog lifecycle parity. |
-| CATALOG-1 immutable song catalog | Code complete / publication-lock convoy repair validated / deployment and reader cutover pending | Preserves known and unknown Epic fields through sync/restart, persists only complete non-merged responses, pins resume phases to the allocation-time catalog without provider refresh, replaces untrusted legacy baselines wholesale, rejects failed refreshes and token races before new allocation, retains exact current/previous/working snapshots, and never queues a refresh writer behind a shared publication lease. No endpoint reader changed and `EnablePublicationReadContext` remains false. |
+| CATALOG-1 immutable song catalog | Deployed / unchanged fast path under observation / reader cutover pending | Preserves known and unknown Epic fields through sync/restart, persists only complete non-merged responses, pins resume phases to the allocation-time catalog without provider refresh, replaces untrusted legacy baselines wholesale, rejects failed refreshes and token races before new allocation, retains exact current/previous/working snapshots, and never queues a refresh writer behind a shared publication lease. The `4f0934e6` repair checks an exact match under a shared try-lock before attempting any exclusive mutation, preventing the scrape-1279 catalog-refresh convoy. No endpoint reader changed and `EnablePublicationReadContext` remains false. |
 | PUB-CONTRACT + PUB-READINESS | Code complete / continuous-safe / default-off | Contract version `1` maps all 55 publication-bound route definitions to required surfaces. Current-generation readiness now validates binding kind/status/version/source identity, promised count/hash, and supported retained-source evidence. `/api/publication` reports effective readiness, while configured unready pinning fails `503` after stale-ID `409` ordering. No schema, deployment, restart, live probe, source cut, or flag enablement occurred. |
-| PUB-COMMIT-SPLIT | Deployed / controlled B scrape `1279` running | Moves band copies/indexes and generation-cache hash/copy work outside the exclusive lock, uses an exception-safe and stale-reconciled commit-intent lease, serves exact frozen generation-cache hits with pinning off or on, blocks unsafe empty-generation/legacy-cache inheritance, enforces a cumulative PostgreSQL transaction cutover budget, retains previous rollback objects, and cleans failed/retired candidates outside the exclusive section. Scrape `1278` is the unsafe baseline; normal scheduling remains blocked until scrape `1279` reaches terminal publication/parity evidence. |
-| Next implementation phase | Controlled PUB-COMMIT-SPLIT B, then remaining immutable source cuts | First prove bounded publication and uninterrupted old-generation reads on one controlled full scrape. Then version shop, path, overlay, history, and names before enabling request pinning. |
+| PUB-COMMIT-SPLIT | Mechanics accepted; cached-hit availability B must iterate | Scrape `1279` published `6,291/6,291` complete solo sources and all 12 publication-critical phases. Preparation took `237,336.859ms` outside the exclusive lock; final drain was `11.284ms`, exclusive hold `2,886.231ms`, and pointers atomically advanced `19 -> 25` with healthy unfreeze/recovery. The live probe exposed zero production `public-route:` aliases, so its assumed cached route and forced miss both returned bounded `503 Retry-After: 1` during commit intent. Commits `11bfdcee` and `4cab6c08` now precompute canonical ranking route aliases while preserving the private precompute contract; another controlled publication must prove exact-hit `200` plus cold-miss `503`. |
+| Next implementation phase | Re-run cached-hit PUB-COMMIT-SPLIT B, then snapshot reuse | Use the deployed post-B image and a canonical precomputed ranking route for the exact-hit probe, with page 2 as the legitimate cold miss. On pass, proceed to the independently reversible snapshot-reuse A/B before remaining immutable source cuts. |
 
 ## PUB-COMMIT-SPLIT bounded publication repair (2026-08-05)
 
-Decision: repository implementation accepted for testing; production
-promotion remains blocked.
+Decision: split publication mechanics accepted from scrape `1279`; the
+cached-hit availability gate must iterate once on the repaired route aliases.
 
 Scrape `1278` published correctly as publication `19`, but the monolithic
 `MetaDatabase.PublishScrapeRun` held the global exclusive advisory lock for
@@ -569,8 +571,32 @@ transaction.
 
 Repository validation passed the independent-review regressions,
 publication/persistence/gate/pinning/maintenance groups, worker/startup
-groups, and the complete `2,690/2,690` service suite. The Release service
-build passed with zero warnings and zero errors.
+groups, and the complete `2,697/2,697` service suite. The Release service
+build passed.
+
+Controlled B scrape `1279` completed with:
+
+- publication `25` current, publication `19` retained, no working generation,
+  no commit intent, and public reads unfrozen;
+- `6,291/6,291` complete solo source mappings / `40,227,898` mapped rows;
+- all `12/12` publication-critical phases complete and zero failed phases;
+- `237,336.859ms` heavy preparation outside the exclusive lock,
+  `11.284ms` drain, and `2,886.231ms` exclusive hold;
+- commit intent from `06:15:57.194Z` until publication at `06:16:08.167Z`,
+  with only bounded `503 Retry-After: 1` responses and immediate `200`
+  recovery;
+- one earlier two-second monitor timeout at `05:15Z`, isolated to an unchanged
+  catalog refresh taking the exclusive publication lock. `4f0934e6` moves the
+  exact-match check before exclusive mutation and is deployed in
+  `fstservice:postb-4cab6c08`;
+- a rejected cached-hit probe assumption: publication `19` and `25` had zero
+  `public-route:` rows, so the route was not an outer-cache hit.
+  `11bfdcee`/`4cab6c08` add canonical, query-order-independent page-one
+  per-instrument ranking aliases. The exact-hit/cold-miss live gate remains
+  the only PUB-COMMIT-SPLIT acceptance item requiring another publication.
+
+Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/publication-split-b-20260806T202045Z`.
 
 Hard gate before any normal full scrape or snapshot-reuse retry:
 
@@ -2232,8 +2258,12 @@ zero-score/null-timestamp, each field has at most one distinct non-null value,
 and no other invariant varies. The completed execution was gated on two matching accepted contract-v2 dry
 runs with exactly `["difficulty","season"]` allowed, zero blocked/conflicting
 groups, normal live health/quiescence checks, and retained rollback evidence.
-The active scrape `1279` is the first normal writer observation after
-promotion.
+Scrape `1279` completed the first normal writer observation after promotion:
+`2,649` new writer rows all carried known season and difficulty, duplicate
+groups remained zero, `ix_sh_dedup` retained relfilenode `316128094` and stayed
+unique/valid/ready/`NULLS NOT DISTINCT`, the immutable run-1 audit remained
+exact, and no `23505`/dedup-writer errors were logged. Evidence:
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/score-history-writer-observation-20260806T072020Z/post-1279`.
 
 Schedule the estimated 15-150 second write-blocking transaction only at a
 clean parity-gated boundary. Preserve the stored rollback SQL, which validates
