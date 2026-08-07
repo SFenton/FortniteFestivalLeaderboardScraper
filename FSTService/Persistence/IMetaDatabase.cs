@@ -36,7 +36,8 @@ public interface IMetaDatabase : IDisposable
         bool promoteCachedResponses = true,
         int? expectedPublishedScopeCount = null,
         bool queueImprovementNotifications = false,
-        IReadOnlyCollection<SoloCurrentProjectionScopeKey>? improvementNotificationProjectionScopes = null);
+        IReadOnlyCollection<SoloCurrentProjectionScopeKey>? improvementNotificationProjectionScopes = null,
+        DateTime? rankingsInputCutoffUtc = null);
     PublicationPreparationResult?
         GetDeferredPublicationPreparation();
     PublicationCommitResult CommitPreparedScrapePublication(

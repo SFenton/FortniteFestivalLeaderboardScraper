@@ -448,6 +448,8 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
     [Fact]
     public async Task ApiOnlyWorkerKeepsDeferredPublicationAliveAcrossContentionAndRetries()
     {
+        const string accountId =
+            "deferred-publication-pending-rank";
         var publishedScrapeId = _metaDb.StartScrapeRun();
         _metaDb.CompleteScrapeRun(
             publishedScrapeId,
@@ -458,6 +460,16 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         _metaDb.PublishScrapeRun(
             publishedScrapeId,
             promoteCachedResponses: false);
+        _metaDb.RegisterUser(
+            "deferred-publication-device",
+            accountId);
+        _metaDb.EnqueueBackfill(accountId, 1);
+        _metaDb.StartBackfill(accountId);
+        _metaDb.CompleteBackfill(
+            accountId,
+            rankingsPending: true);
+        var rankingsInputCutoffUtc =
+            DateTime.UtcNow.AddSeconds(1);
         var deferredScrapeId = _metaDb.StartScrapeRun();
         _metaDb.CompleteScrapeRun(
             deferredScrapeId,
@@ -467,7 +479,9 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             2);
         var preparation = _metaDb.PrepareScrapePublication(
             deferredScrapeId,
-            promoteCachedResponses: false);
+            promoteCachedResponses: false,
+            rankingsInputCutoffUtc:
+                rankingsInputCutoffUtc);
         _metaDb.SetPublicReadFreeze(
             true,
             deferredScrapeId,
@@ -541,6 +555,9 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
 
         Assert.False(
             _metaDb.GetPublicReadFreezeState().IsFrozen);
+        Assert.False(
+            _metaDb.GetBackfillStatus(accountId)
+                ?.RankingsPending);
     }
 
     [Fact]

@@ -37,7 +37,10 @@ public sealed record PublicationPreparationResult(
     long? BandProjectionGeneration,
     DateTime PreparedAtUtc,
     TimeSpan PrepareDuration,
-    bool AlreadyPublished = false);
+    bool AlreadyPublished = false)
+{
+    public DateTime? RankingsInputCutoffUtc { get; init; }
+}
 
 public sealed record PublicationCommitResult(
     long ScrapeId,

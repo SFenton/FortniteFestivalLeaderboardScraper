@@ -291,7 +291,8 @@ public sealed partial class MetaDatabase
         int? expectedPublishedScopeCount = null,
         bool queueImprovementNotifications = false,
         IReadOnlyCollection<SoloCurrentProjectionScopeKey>?
-            improvementNotificationProjectionScopes = null)
+            improvementNotificationProjectionScopes = null,
+        DateTime? rankingsInputCutoffUtc = null)
     {
         ValidatePublicationCommitOptions();
         if (queueImprovementNotifications
@@ -350,7 +351,11 @@ public sealed partial class MetaDatabase
                 currentBandProjectionGeneration,
                 preparedAt,
                 prepareStopwatch.Elapsed,
-                AlreadyPublished: true);
+                AlreadyPublished: true)
+            {
+                RankingsInputCutoffUtc =
+                    rankingsInputCutoffUtc,
+            };
         }
 
         ValidateNotificationGate(
@@ -431,6 +436,7 @@ public sealed partial class MetaDatabase
                 notificationProjectionScopes.Length,
             bandProjectionGeneration,
             preparedAtUtc = preparedAt,
+            rankingsInputCutoffUtc,
         });
 
         using (var ready = conn.CreateCommand())
@@ -485,7 +491,11 @@ public sealed partial class MetaDatabase
             notificationProjectionScopes.Length,
             bandProjectionGeneration,
             preparedAt,
-            prepareStopwatch.Elapsed);
+            prepareStopwatch.Elapsed)
+        {
+            RankingsInputCutoffUtc =
+                rankingsInputCutoffUtc,
+        };
     }
 
     public PublicationPreparationResult?
@@ -568,7 +578,7 @@ public sealed partial class MetaDatabase
                 root.GetProperty(
                         "improvementNotificationProjectionScopes")
                     .GetRawText();
-            return new PublicationPreparationResult(
+            var preparation = new PublicationPreparationResult(
                 scrapeId,
                 publicationId,
                 currentPublicationId,
@@ -586,7 +596,18 @@ public sealed partial class MetaDatabase
                     .GetInt32(),
                 bandProjectionGeneration,
                 root.GetProperty("preparedAtUtc").GetDateTime(),
-                PrepareDuration: TimeSpan.Zero);
+                PrepareDuration: TimeSpan.Zero)
+            {
+                RankingsInputCutoffUtc =
+                    root.TryGetProperty(
+                            "rankingsInputCutoffUtc",
+                            out var rankingsCutoff)
+                        && rankingsCutoff.ValueKind
+                            != JsonValueKind.Null
+                    ? rankingsCutoff.GetDateTime()
+                    : null,
+            };
+            return preparation;
         }
         catch (DeferredPublicationMetadataException)
         {

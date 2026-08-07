@@ -1186,7 +1186,9 @@ public sealed class ScraperWorker : BackgroundService
                             expectedPublishedScopeCount: expectedPublishedScopeCount,
                             queueImprovementNotifications: queueImprovementNotifications,
                             improvementNotificationProjectionScopes:
-                                improvementNotificationProjectionScopes);
+                                improvementNotificationProjectionScopes,
+                            rankingsInputCutoffUtc:
+                                ctx.RankingsInputCutoffUtc);
                         _workerStatus?.UpdateOperation(
                             "scrape.publication",
                             subOperation: "draining_publication_readers");
@@ -1616,6 +1618,26 @@ public sealed class ScraperWorker : BackgroundService
                 Handled: true,
                 Published: false,
                 Detail: ex.Message);
+        }
+
+        if (preparation.RankingsInputCutoffUtc.HasValue)
+        {
+            try
+            {
+                _persistence.Meta
+                    .ClearBackfillRankingsPending(
+                        _persistence.Meta
+                            .GetRegisteredAccountIds(),
+                        preparation
+                            .RankingsInputCutoffUtc.Value);
+            }
+            catch (Exception pendingStateEx)
+            {
+                _log.LogWarning(
+                    pendingStateEx,
+                    "Deferred publication {PublicationId} committed, but clearing pending-rank sync state failed and will retry later.",
+                    preparation.PublicationId);
+            }
         }
 
         try

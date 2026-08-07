@@ -3759,7 +3759,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
         pending.Transaction = tx;
         pending.CommandText = """
             UPDATE backfill_status
-            SET rankings_pending = TRUE
+            SET rankings_pending = TRUE,
+                completed_at = now()
             WHERE account_id = @id
               AND status = 'complete'
             """;
