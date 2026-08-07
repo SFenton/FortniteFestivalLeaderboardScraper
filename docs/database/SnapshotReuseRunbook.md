@@ -29,6 +29,31 @@ selected-player headers returned exact-hit `200`, page-two miss
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/current-publication-alias-seed-20260807T1047Z`.
 
+## Next dual-lane A/B card
+
+This card is readiness-only while controlled publication B2 scrape `1280`
+runs. Do not deploy or start it until B2 publishes, unfreezes, and supplies the
+matched baseline.
+
+| Lane | Candidate | Hypothesis and target | Correctness/resource gate | Rollback |
+|---|---|---|---|---|
+| Network | `candidate-2880-128-16`, only after a bounded no-publication canary | Higher per-exit pacing can reduce network/writer wall clock by at least 10% versus B2 without retry amplification above `1.50` or combined `429+503` above 5% | Exact completed scope/manifests; at least 80% of preflight-healthy exits remain usable; no public-path regression. A rejected canary replaces this lane before any full scrape | Restore the accepted `candidate-1600-64-8` values and recreate the stopped worker |
+| Data | `--data-profile snapshot-reuse` | Reuse only exact unchanged published physical scopes. The historical 1273-to-1276 upper-bound calibration was `1,727/6,273` scopes and `5,686,749/40,233,969` rows (`14.13%`), projecting about `2.05 GB` physical and `4.32 GB` WAL savings. Accept only with at least `1 GiB` measured physical savings | Exact row/count/content/coverage/public API/workbook parity; complete manifests; zero writer/critical failures; no sustained >10% phase latency, CPU, memory, WAL, temp, or I/O regression; retention rewriting remains off | Set `Features__SkipUnchangedPhysicalLeaderboardSnapshots=false`; retain manifests/source maps for diagnosis; if the threshold is missed, revert and remove the dormant skip path |
+
+Before arming the card:
+
+1. Capture scrape `1280` network, relation-growth, WAL/temp, CPU/memory, and
+   publication timings as the matched baseline.
+2. Refresh the exact reusable-scope estimate against publication `1280`; the
+   `14.13%` value is a ceiling from older publications, not a promotion claim.
+3. Run the 2880/128/16 bounded canary with the active-canary sentinel. If it
+   fails, insert a smaller independently reversible network hypothesis rather
+   than contaminating the snapshot-reuse scrape.
+4. Validate the merged worker config with
+   `tools/fst-worker-dual-lane-runonce.sh --data-profile snapshot-reuse`.
+5. Keep `DatabaseMaintenance__SnapshotRetentionRewriteEnabled=false` and all
+   FST scratch/evidence on the 4 TB drive.
+
 - no normal full scrape or snapshot-reuse retry is authorized on the old
   publication path;
 - the next permitted full scrape is the repaired cached-hit B run using the
