@@ -1397,10 +1397,14 @@ The first completed source cut is the API response cache:
 - candidate staging, flush, and swap validate the same target and cannot
   retarget after a concurrent pointer change;
 - controlled precompute stores canonical `public-route:` aliases for
-  per-instrument ranking page-one payloads. Query parameters are sorted before
-  keying, so equivalent request orderings share one exact generation entry.
-  These aliases make commit-intent hits bypass both publication lock
-  middlewares, while uncached pages still receive bounded `503` responses;
+  per-instrument ranking page-one payloads at the web client's 10- and
+  25-entry sizes plus the canonical 50-entry source page. Smaller aliases
+  contain projected bytes rather than the unsliced 50-row payload. Query
+  parameters are sorted before keying, rankBy-omitted adjusted requests share
+  the same effective payload, and selected-profile headers are ignored only
+  for this profile-invariant route. These aliases make real client
+  commit-intent hits bypass both publication lock middlewares, while page-two
+  and other uncached requests still receive bounded `503` responses;
 - publication retains exact current and previous cache generations only;
   failed/retired staging is deleted immediately and older cache bindings are
   marked retired;

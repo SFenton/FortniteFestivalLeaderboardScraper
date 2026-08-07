@@ -12,12 +12,12 @@ publication-bound REST reads. Controlled split-publication scrape `1279`
 published successfully as publication `25`: preparation stayed outside the
 exclusive lock and final exclusive hold was `2.886s`. The live probe exposed
 missing production `public-route:` aliases, so the assumed cached hit returned
-the same bounded `503 Retry-After: 1` as the forced miss. Canonical ranking
-aliases and the unchanged-catalog lock repair are deployed on
-`fstservice:postb-4cab6c08`; one more controlled publication must prove cached
-`200` continuity before snapshot reuse runs. Snapshot reuse remains off. This
-availability gate is independent of snapshot-reuse data correctness and
-capacity:
+the same bounded `503 Retry-After: 1` as the forced miss. The repaired alias set now contains the web client's projected page sizes
+`10` and `25`, the canonical size `50`, the rankBy-omitted adjusted diagnostic
+shape, and profile-invariant keys for browser selected-player headers. One
+more controlled publication must prove real-client cached `200` continuity
+before snapshot reuse runs. Snapshot reuse remains off. This availability gate
+is independent of snapshot-reuse data correctness and capacity:
 
 - no normal full scrape or snapshot-reuse retry is authorized on the old
   publication path;

@@ -229,12 +229,38 @@ internal static class PublicApiResponseCachePolicy
 
     internal static string BuildCacheKey(HttpRequest request)
     {
-        var selectedProfileType = HeaderValue(request, SelectedProfileHeaders.SelectedProfileTypeHeader);
-        var selectedProfileId = HeaderValue(request, SelectedProfileHeaders.SelectedProfileIdHeader);
-        var legacySelectedPlayer = HeaderValue(request, SelectedProfileHeaders.LegacySelectedPlayerHeader);
-        var selectedBandId = HeaderValue(request, SelectedProfileHeaders.SelectedBandIdHeader);
-        var selectedBandType = HeaderValue(request, SelectedProfileHeaders.SelectedBandTypeHeader);
-        var selectedBandTeamKey = HeaderValue(request, SelectedProfileHeaders.SelectedBandTeamKeyHeader);
+        var profileInvariant =
+            IsProfileInvariantPerInstrumentRanking(request.Path);
+        var selectedProfileType = profileInvariant
+            ? string.Empty
+            : HeaderValue(
+                request,
+                SelectedProfileHeaders.SelectedProfileTypeHeader);
+        var selectedProfileId = profileInvariant
+            ? string.Empty
+            : HeaderValue(
+                request,
+                SelectedProfileHeaders.SelectedProfileIdHeader);
+        var legacySelectedPlayer = profileInvariant
+            ? string.Empty
+            : HeaderValue(
+                request,
+                SelectedProfileHeaders.LegacySelectedPlayerHeader);
+        var selectedBandId = profileInvariant
+            ? string.Empty
+            : HeaderValue(
+                request,
+                SelectedProfileHeaders.SelectedBandIdHeader);
+        var selectedBandType = profileInvariant
+            ? string.Empty
+            : HeaderValue(
+                request,
+                SelectedProfileHeaders.SelectedBandTypeHeader);
+        var selectedBandTeamKey = profileInvariant
+            ? string.Empty
+            : HeaderValue(
+                request,
+                SelectedProfileHeaders.SelectedBandTeamKeyHeader);
         var routeCacheVersion = request.Path.StartsWithSegments(new PathString("/api/leaderboard"), StringComparison.OrdinalIgnoreCase)
             ? "|routeVersion=rank-offsets-v1"
             : string.Empty;
@@ -269,6 +295,25 @@ internal static class PublicApiResponseCachePolicy
         }
 
         return BuildCacheKey(context.Request);
+    }
+
+    private static bool IsProfileInvariantPerInstrumentRanking(
+        PathString path)
+    {
+        var segments = path.Value?.Split(
+            '/',
+            StringSplitOptions.RemoveEmptyEntries);
+        return segments is { Length: 3 }
+            && string.Equals(
+                segments[0],
+                "api",
+                StringComparison.OrdinalIgnoreCase)
+            && string.Equals(
+                segments[1],
+                "rankings",
+                StringComparison.OrdinalIgnoreCase)
+            && GlobalLeaderboardPersistence.IsValidInstrument(
+                segments[2]);
     }
 
     private static string BuildCanonicalQueryString(HttpRequest request)

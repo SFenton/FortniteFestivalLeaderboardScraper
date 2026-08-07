@@ -704,6 +704,37 @@ public class PublicReadGateTests
     }
 
     [Fact]
+    public void PublicApiResponseCachePolicy_PerInstrumentRankingIgnoresSelectedProfileHeaders()
+    {
+        var plain = new DefaultHttpContext();
+        plain.Request.Method = HttpMethods.Get;
+        plain.Request.Path = "/api/rankings/Solo_Guitar";
+        plain.Request.QueryString =
+            new QueryString(
+                "?rankBy=totalscore&page=1&pageSize=25");
+
+        var selected = new DefaultHttpContext();
+        selected.Request.Method = HttpMethods.Get;
+        selected.Request.Path = plain.Request.Path;
+        selected.Request.QueryString = plain.Request.QueryString;
+        selected.Request.Headers[
+            SelectedProfileHeaders.SelectedProfileTypeHeader] =
+            "player";
+        selected.Request.Headers[
+            SelectedProfileHeaders.SelectedProfileIdHeader] =
+            "account-1";
+        selected.Request.Headers[
+            SelectedProfileHeaders.LegacySelectedPlayerHeader] =
+            "account-1";
+
+        Assert.Equal(
+            PublicApiResponseCachePolicy.BuildCacheKey(
+                plain.Request),
+            PublicApiResponseCachePolicy.BuildCacheKey(
+                selected.Request));
+    }
+
+    [Fact]
     public void PublicApiResponseCachePolicy_KeyIgnoresPublicationPin()
     {
         var unpinned = new DefaultHttpContext();

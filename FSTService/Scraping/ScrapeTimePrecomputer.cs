@@ -948,6 +948,19 @@ public sealed class ScrapeTimePrecomputer
             storeOverride: null,
             publicRequestTargets);
 
+    private void StorePublicRequestTargets(
+        byte[] json,
+        IReadOnlyList<string> publicRequestTargets)
+    {
+        foreach (var requestTarget in publicRequestTargets)
+        {
+            Store(
+                PublicApiResponseCachePolicy
+                    .BuildCacheKeyForRequestTarget(requestTarget),
+                json);
+        }
+    }
+
     private void StoreEntries(
         string cacheKey,
         byte[] json,
@@ -1504,21 +1517,48 @@ public sealed class ScrapeTimePrecomputer
                 var escapedInstrument =
                     Uri.EscapeDataString(instrument);
                 var escapedMetric = Uri.EscapeDataString(metric);
-                var publicRequestTargets = new List<string>
+                var page50Targets = new List<string>
                 {
                     $"/api/rankings/{escapedInstrument}?rankBy={escapedMetric}&page=1&pageSize=50",
                     $"/api/rankings/{escapedInstrument}?rankBy={escapedMetric}",
                 };
                 if (metric == "adjusted")
                 {
-                    publicRequestTargets.Add(
-                        $"/api/rankings/{escapedInstrument}");
+                    page50Targets.AddRange(
+                    [
+                        $"/api/rankings/{escapedInstrument}?page=1&pageSize=50",
+                        $"/api/rankings/{escapedInstrument}",
+                    ]);
                 }
 
                 StoreWithPublicRequestTargets(
                     $"rankings:{instrument}:{metric}:1:50",
                     jsonBytes,
-                    publicRequestTargets);
+                    page50Targets);
+
+                foreach (var pageSize in new[] { 10, 25 })
+                {
+                    var projected =
+                        CacheHelper.ProjectFirstPageSubset(
+                            jsonBytes,
+                            requestedPage: 1,
+                            requestedPageSize: pageSize)
+                        ?? throw new InvalidOperationException(
+                            $"Could not project {instrument}/{metric} rankings to page size {pageSize}.");
+                    var projectedTargets = new List<string>
+                    {
+                        $"/api/rankings/{escapedInstrument}?rankBy={escapedMetric}&page=1&pageSize={pageSize}",
+                    };
+                    if (metric == "adjusted")
+                    {
+                        projectedTargets.Add(
+                            $"/api/rankings/{escapedInstrument}?page=1&pageSize={pageSize}");
+                    }
+
+                    StorePublicRequestTargets(
+                        projected,
+                        projectedTargets);
+                }
             }
         }
 

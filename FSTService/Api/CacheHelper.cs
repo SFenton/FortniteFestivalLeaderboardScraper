@@ -55,7 +55,10 @@ internal static class CacheHelper
         return Results.Bytes(json, "application/json");
     }
 
-    private static byte[]? ProjectFirstPageSubset(byte[] json, int requestedPage, int requestedPageSize)
+    internal static byte[]? ProjectFirstPageSubset(
+        byte[] json,
+        int requestedPage,
+        int requestedPageSize)
     {
         if (requestedPage < 1 || requestedPageSize < 1) return null;
         var offset = (requestedPage - 1) * requestedPageSize;

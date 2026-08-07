@@ -341,6 +341,141 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task PublicationCommitIntent_ServesPrecomputedClientRankingAliases()
+    {
+        var metaDb =
+            _factory.Services.GetRequiredService<MetaDatabase>();
+        var pointers = EnsureCurrentPublication(metaDb);
+        Assert.Null(pointers.WorkingPublicationId);
+
+        var persistence =
+            _factory.Services
+                .GetRequiredService<GlobalLeaderboardPersistence>();
+        var db = persistence.GetOrCreateInstrumentDb(
+            "Solo_Guitar");
+        db.UpsertEntries(
+            "commit-alias-song",
+            Enumerable.Range(1, 30)
+                .Select(index => new LeaderboardEntry
+                {
+                    AccountId =
+                        $"commit-alias-account-{index:D2}",
+                    Score = 100_000 - index,
+                    Accuracy = 100,
+                    Stars = 6,
+                })
+                .ToArray());
+        db.RecomputeAllRanks();
+        db.ComputeSongStats();
+        db.ComputeAccountRankings(
+            totalChartedSongs: 1,
+            credibilityThreshold: 0);
+
+        var precomputer =
+            _factory.Services
+                .GetRequiredService<ScrapeTimePrecomputer>();
+        await precomputer.PrecomputeAllAsync(
+            CancellationToken.None);
+
+        metaDb.SetPublicReadFreeze(
+            true,
+            pointers.PublishedScrapeId,
+            PublicReadFreezeState
+                .PublicationCommitIntentReason);
+        var gate =
+            _factory.Services
+                .GetRequiredService<PublicReadGateService>();
+        gate.Invalidate();
+
+        using var lockConnection =
+            _factory.Services
+                .GetRequiredService<NpgsqlDataSource>()
+                .OpenConnection();
+        using var lockTransaction =
+            lockConnection.BeginTransaction();
+        using (var publicationLock =
+               lockConnection.CreateCommand())
+        {
+            publicationLock.Transaction = lockTransaction;
+            publicationLock.CommandText =
+                "SELECT pg_advisory_xact_lock(@lockKey)";
+            publicationLock.Parameters.AddWithValue(
+                "lockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+            publicationLock.ExecuteNonQuery();
+        }
+
+        try
+        {
+            foreach (var pageSize in new[] { 10, 25 })
+            {
+                using var request = new HttpRequestMessage(
+                    HttpMethod.Get,
+                    $"/api/rankings/Solo_Guitar?rankBy=totalscore&page=1&pageSize={pageSize}");
+                request.Headers.Add(
+                    SelectedProfileHeaders
+                        .SelectedProfileTypeHeader,
+                    "player");
+                request.Headers.Add(
+                    SelectedProfileHeaders
+                        .SelectedProfileIdHeader,
+                    "commit-alias-account-01");
+                request.Headers.Add(
+                    SelectedProfileHeaders
+                        .LegacySelectedPlayerHeader,
+                    "commit-alias-account-01");
+
+                var hit = await _client.SendAsync(request);
+
+                Assert.Equal(
+                    HttpStatusCode.OK,
+                    hit.StatusCode);
+                Assert.Equal(
+                    "hit",
+                    hit.Headers
+                        .GetValues("X-FST-Public-Cache")
+                        .Single());
+                var body =
+                    await hit.Content
+                        .ReadFromJsonAsync<JsonElement>();
+                Assert.Equal(
+                    pageSize,
+                    body.GetProperty("pageSize").GetInt32());
+                Assert.Equal(
+                    pageSize,
+                    body.GetProperty("entries")
+                        .GetArrayLength());
+            }
+
+            var defaultMetricHit = await _client.GetAsync(
+                "/api/rankings/Solo_Guitar?page=1&pageSize=50");
+            Assert.Equal(
+                HttpStatusCode.OK,
+                defaultMetricHit.StatusCode);
+            Assert.Equal(
+                "hit",
+                defaultMetricHit.Headers
+                    .GetValues("X-FST-Public-Cache")
+                    .Single());
+
+            var miss = await _client.GetAsync(
+                "/api/rankings/Solo_Guitar?rankBy=totalscore&page=2&pageSize=50");
+            Assert.Equal(
+                HttpStatusCode.ServiceUnavailable,
+                miss.StatusCode);
+            Assert.Equal(
+                TimeSpan.FromSeconds(1),
+                miss.Headers.RetryAfter?.Delta);
+        }
+        finally
+        {
+            lockTransaction.Rollback();
+            metaDb.SetPublicReadFreeze(false);
+            gate.Invalidate();
+        }
+    }
+
+    [Fact]
     public async Task PublicationPinning_OrdinaryFreezeServesExactGenerationCacheHit()
     {
         var readinessMeta = Substitute.For<IMetaDatabase>();

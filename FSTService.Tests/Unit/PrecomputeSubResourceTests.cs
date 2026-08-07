@@ -496,10 +496,21 @@ public sealed class PrecomputeSubResourceTests : IDisposable
 
         var publicRouteKey =
             PublicApiResponseCachePolicy.BuildCacheKeyForRequestTarget(
-                "/api/rankings/Solo_Guitar?pageSize=50&page=1&rankBy=totalscore");
+                "/api/rankings/Solo_Guitar?pageSize=25&page=1&rankBy=totalscore");
         var publicRoute = _sut.TryGet(publicRouteKey);
         Assert.NotNull(publicRoute);
-        Assert.Equal(result.Value.Json, publicRoute.Value.Json);
+        var publicJson =
+            JsonDocument.Parse(publicRoute.Value.Json);
+        Assert.Equal(
+            25,
+            publicJson.RootElement
+                .GetProperty("pageSize")
+                .GetInt32());
+        Assert.True(
+            publicJson.RootElement
+                .GetProperty("entries")
+                .GetArrayLength()
+            <= 25);
     }
 
     [Fact]

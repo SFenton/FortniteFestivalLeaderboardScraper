@@ -517,8 +517,8 @@ path, and post-action validation are documented.
 | Publication cache source cut | Code complete / deployment pending | Added generation-keyed live/staging cache tables, explicit build targeting, deadlock-safe cross-process locks, current+previous retention, exact pinned reads, rollback reconciliation, failed-generation cleanup, and watchdog lifecycle parity. |
 | CATALOG-1 immutable song catalog | Deployed / unchanged fast path under observation / reader cutover pending | Preserves known and unknown Epic fields through sync/restart, persists only complete non-merged responses, pins resume phases to the allocation-time catalog without provider refresh, replaces untrusted legacy baselines wholesale, rejects failed refreshes and token races before new allocation, retains exact current/previous/working snapshots, and never queues a refresh writer behind a shared publication lease. The `4f0934e6` repair checks an exact match under a shared try-lock before attempting any exclusive mutation, preventing the scrape-1279 catalog-refresh convoy. No endpoint reader changed and `EnablePublicationReadContext` remains false. |
 | PUB-CONTRACT + PUB-READINESS | Code complete / continuous-safe / default-off | Contract version `1` maps all 55 publication-bound route definitions to required surfaces. Current-generation readiness now validates binding kind/status/version/source identity, promised count/hash, and supported retained-source evidence. `/api/publication` reports effective readiness, while configured unready pinning fails `503` after stale-ID `409` ordering. No schema, deployment, restart, live probe, source cut, or flag enablement occurred. |
-| PUB-COMMIT-SPLIT | Mechanics accepted; cached-hit availability B must iterate | Scrape `1279` published `6,291/6,291` complete solo sources and all 12 publication-critical phases. Preparation took `237,336.859ms` outside the exclusive lock; final drain was `11.284ms`, exclusive hold `2,886.231ms`, and pointers atomically advanced `19 -> 25` with healthy unfreeze/recovery. The live probe exposed zero production `public-route:` aliases, so its assumed cached route and forced miss both returned bounded `503 Retry-After: 1` during commit intent. Commits `11bfdcee` and `4cab6c08` now precompute canonical ranking route aliases while preserving the private precompute contract; another controlled publication must prove exact-hit `200` plus cold-miss `503`. |
-| Next implementation phase | Re-run cached-hit PUB-COMMIT-SPLIT B, then snapshot reuse | Use the deployed post-B image and a canonical precomputed ranking route for the exact-hit probe, with page 2 as the legitimate cold miss. On pass, proceed to the independently reversible snapshot-reuse A/B before remaining immutable source cuts. |
+| PUB-COMMIT-SPLIT | Mechanics accepted; real-client cached-hit availability B must iterate | Scrape `1279` published `6,291/6,291` complete solo sources and all 12 publication-critical phases. Preparation took `237,336.859ms` outside the exclusive lock; final drain was `11.284ms`, exclusive hold `2,886.231ms`, and pointers atomically advanced `19 -> 25` with healthy unfreeze/recovery. The live probe exposed zero production `public-route:` aliases, so its assumed cached route and forced miss both returned bounded `503 Retry-After: 1` during commit intent. The repaired precompute now emits correctly projected page-one aliases for web page sizes `10` and `25`, canonical size `50`, rankBy-omitted adjusted probes, and selected-profile browser headers; another controlled publication must prove exact-hit `200` plus cold-miss `503`. |
+| Next implementation phase | Re-run real-client PUB-COMMIT-SPLIT B, then snapshot reuse | Probe `/api/rankings/Solo_Guitar?rankBy=adjusted&page=1&pageSize=25` with selected-player headers as the exact hit and page `2`/size `50` as the legitimate cold miss. On pass, proceed to the independently reversible snapshot-reuse A/B before remaining immutable source cuts. |
 
 ## PUB-COMMIT-SPLIT bounded publication repair (2026-08-05)
 
@@ -594,10 +594,12 @@ Controlled B scrape `1279` completed with:
   exact-match check before exclusive mutation and is deployed in
   `fstservice:postb-4cab6c08`;
 - a rejected cached-hit probe assumption: publication `19` and `25` had zero
-  `public-route:` rows, so the route was not an outer-cache hit.
-  `11bfdcee`/`4cab6c08` add canonical, query-order-independent page-one
-  per-instrument ranking aliases. The exact-hit/cold-miss live gate remains
-  the only PUB-COMMIT-SPLIT acceptance item requiring another publication.
+  `public-route:` rows, so the route was not an outer-cache hit. The repaired
+  alias set uses real web request shapes and projected 10/25-row payloads,
+  includes the rankBy-omitted size-50 diagnostic shape, and treats selected
+  profile headers as irrelevant only for per-instrument ranking lists. The
+  exact-hit/cold-miss live gate remains the only PUB-COMMIT-SPLIT acceptance
+  item requiring another publication.
 
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/publication-split-b-20260806T202045Z`.
