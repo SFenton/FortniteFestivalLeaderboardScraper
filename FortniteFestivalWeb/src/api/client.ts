@@ -54,6 +54,7 @@ import type {
   LeaderboardRivalsListResponse,
   RankHistoryResponse,
   PublicationResponse,
+  FeatureFlagsResponse,
 } from '@festival/core/api';
 import { expandWirePlayerResponse, expandWireSongsResponse, expandWireStatsResponse } from '@festival/core/api';
 import { readSelectedProfile } from '../state/selectedProfile';
@@ -212,6 +213,8 @@ function getResponsePublicationId(response: Response): number | null {
 
 export const api = {
   getPublication: (): Promise<PublicationResponse> => ensurePublication(),
+  getFeatures: (options?: ApiRequestOptions) =>
+    get<FeatureFlagsResponse>('/api/features', options),
 
   getSongs: async (options?: ApiRequestOptions): Promise<SongsResponse> => {
     const cached = readSongsCache();

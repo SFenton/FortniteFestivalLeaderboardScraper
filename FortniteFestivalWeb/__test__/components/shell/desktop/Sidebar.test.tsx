@@ -2,6 +2,11 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vite
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
+let mockAppManual = false;
+vi.mock('../../../../src/contexts/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ appManual: mockAppManual }),
+}));
+
 import Sidebar from '../../../../src/components/shell/desktop/Sidebar';
 import { SettingsProvider } from '../../../../src/contexts/SettingsContext';
 
@@ -19,6 +24,7 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+  mockAppManual = false;
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => { cb(0); return 0; });
   vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {});
 });
@@ -322,12 +328,19 @@ describe('Sidebar', () => {
   });
 
   it('renders Manual link between profile selection and Settings', () => {
+    mockAppManual = true;
     const { container } = renderSidebar({ player: null });
     const text = container.textContent ?? '';
 
     expect(screen.getByText('App Manual').closest('a')?.getAttribute('href')).toBe('/manual');
     expect(text.indexOf('Select Profile')).toBeLessThan(text.indexOf('App Manual'));
     expect(text.indexOf('App Manual')).toBeLessThan(text.indexOf('Settings'));
+  });
+
+  it('hides Manual link when the feature is disabled', () => {
+    renderSidebar({ player: null });
+
+    expect(screen.queryByText('App Manual')).toBeNull();
   });
 
 });

@@ -8,6 +8,9 @@ public sealed class FeatureOptions
 {
     public const string Section = "Features";
 
+    /// <summary>App Manual page and navigation entry points.</summary>
+    public bool AppManual { get; set; }
+
     /// <summary>
     /// When true, scrape spool flushes continue to maintain the legacy mutable
     /// leaderboard_entries table. When false, scrape flushes write snapshot

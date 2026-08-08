@@ -77,7 +77,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
-    public async Task EmbeddedManualRoute_ReturnsCurrentSpaWithoutRetiredFeatureBootstrap()
+    public async Task EmbeddedManualRoute_ReturnsCurrentSpaWithAppManualFeatureBootstrap()
     {
         var response = await _client.GetAsync("/manual");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -94,8 +94,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var scriptResponse = await _client.GetAsync(scriptMatch.Groups["src"].Value);
         Assert.Equal(HttpStatusCode.OK, scriptResponse.StatusCode);
         var script = await scriptResponse.Content.ReadAsStringAsync();
-        Assert.DoesNotContain("/api/features", script, StringComparison.Ordinal);
-        Assert.DoesNotContain("FeatureFlagsContext", script, StringComparison.Ordinal);
+        Assert.Contains("/api/features", script, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -115,6 +114,36 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(
             await canonicalResponse.Content.ReadAsByteArrayAsync(),
             await legacyResponse.Content.ReadAsByteArrayAsync());
+    }
+
+    [Fact]
+    public async Task ApiFeatures_DefaultsAppManualOff()
+    {
+        var response = await _client.GetAsync("/api/features");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(json.GetProperty("appManual").GetBoolean());
+    }
+
+    [Fact]
+    public async Task ApiFeatures_ReturnsAppManualWhenEnabled()
+    {
+        using var factory = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                services.PostConfigure<FeatureOptions>(
+                    options => options.AppManual = true);
+            });
+        });
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync("/api/features");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.GetProperty("appManual").GetBoolean());
     }
 
     [Fact]

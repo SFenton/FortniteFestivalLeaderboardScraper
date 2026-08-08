@@ -574,6 +574,10 @@ export type PublicationResponse = {
   }>;
 };
 
+export type FeatureFlagsResponse = {
+  appManual: boolean;
+};
+
 export type ServiceInfoResponse = {
   lastCompletedUpdate: {
     scrapeId?: number;

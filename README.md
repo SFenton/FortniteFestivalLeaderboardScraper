@@ -217,6 +217,10 @@ initialized. Rollback sets them to `false`; failed candidates and replay
 artifacts remain diagnostic-only, and public reads stay on the prior mapped
 published scrape.
 
+The App Manual is independently default-off. Production Compose maps
+`FEATURE_APP_MANUAL` to `Features__AppManual`; its web route and navigation
+remain hidden unless `/api/features` returns `appManual: true`.
+
 Registration/backfill results are publication-pending until a successful
 ranking pass and cache cut include them. New users therefore receive a
 no-store `202 syncing/notYetPublished` profile/history response instead of

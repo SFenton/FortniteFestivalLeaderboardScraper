@@ -3,8 +3,12 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 const mockScrollRef = { current: null as HTMLDivElement | null };
+let mockAppManual = false;
 vi.mock('../../../../src/contexts/ScrollContainerContext', () => ({
   useScrollContainer: () => mockScrollRef,
+}));
+vi.mock('../../../../src/contexts/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ appManual: mockAppManual }),
 }));
 
 import PinnedSidebar from '../../../../src/components/shell/desktop/PinnedSidebar';
@@ -56,6 +60,7 @@ function expectPinnedLinkInactive(link: HTMLAnchorElement | null) {
 describe('PinnedSidebar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockAppManual = false;
   });
 
   it('always renders (no open/close state)', () => {
@@ -163,12 +168,19 @@ describe('PinnedSidebar', () => {
   });
 
   it('renders Manual link between profile selection and Settings', () => {
+    mockAppManual = true;
     const { container } = renderPinned({ player: null });
     const text = container.textContent ?? '';
 
     expect(screen.getByText('App Manual').closest('a')?.getAttribute('href')).toBe('/manual');
     expect(text.indexOf('Select Profile')).toBeLessThan(text.indexOf('App Manual'));
     expect(text.indexOf('App Manual')).toBeLessThan(text.indexOf('Settings'));
+  });
+
+  it('hides Manual link when the feature is disabled', () => {
+    renderPinned({ player: null });
+
+    expect(screen.queryByText('App Manual')).toBeNull();
   });
 
   it('renders no overlay', () => {

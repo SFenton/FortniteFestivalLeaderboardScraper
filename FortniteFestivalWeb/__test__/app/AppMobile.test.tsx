@@ -26,6 +26,7 @@ function render(ui: ReactElement) {
 const mockApi = vi.hoisted(() => {
   const fn = vi.fn;
   return {
+    getFeatures: fn().mockResolvedValue({ appManual: false }),
     getSongs: fn().mockResolvedValue({ songs: [
       { songId: 's1', title: 'Test Song', artist: 'Artist A', year: 2024, albumArt: 'https://example.com/a.jpg', difficulty: { guitar: 3 } },
     ], count: 1, currentSeason: 5 }),
@@ -1716,6 +1717,7 @@ describe('App — mobile FAB branches', () => {
 
   it('opens Manual quick links directly from the mobile FAB without the fallback Actions FAB', async () => {
     setMobile();
+    mockApi.getFeatures.mockResolvedValueOnce({ appManual: true });
     window.location.hash = '#/manual';
     render(<App />);
 
@@ -1734,13 +1736,14 @@ describe('App — mobile FAB branches', () => {
     window.location.hash = '';
   });
 
-  it('keeps direct Manual visits available without a feature fetch', async () => {
+  it('redirects direct Manual visits when the feature fetch fails', async () => {
     setMobile();
+    mockApi.getFeatures.mockRejectedValueOnce(new Error('unavailable'));
     window.location.hash = '#/manual';
     render(<App />);
 
-    await screen.findByText('App Manual', undefined, { timeout: 5000 });
-    expect(window.location.hash).toBe('#/manual');
+    await waitFor(() => expect(window.location.hash).toBe('#/songs'));
+    await waitFor(() => expect(screen.queryByText('App Manual')).toBeNull());
     window.location.hash = '';
   });
 

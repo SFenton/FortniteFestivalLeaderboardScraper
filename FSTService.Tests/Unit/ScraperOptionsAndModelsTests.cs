@@ -112,6 +112,7 @@ public class ScraperOptionsAndModelsTests
     {
         var opts = new FeatureOptions();
 
+        Assert.False(opts.AppManual);
         Assert.True(opts.WriteLegacyLiveLeaderboardDuringScrape);
         Assert.True(opts.WriteLegacyLiveLeaderboardSupplementalRows);
         Assert.False(opts.UseSnapshotOverlayWorkerReaders);
@@ -148,7 +149,7 @@ public class ScraperOptionsAndModelsTests
         Assert.All(new[]
             {
                 "Shop", "Rivals", "FirstRun", "Leaderboards", "Difficulty",
-                "PlayerBands", "ExperimentalRanks", "AppManual", "Compete"
+                "PlayerBands", "ExperimentalRanks", "Compete"
             },
             name => Assert.Null(typeof(FeatureOptions).GetProperty(name)));
         var opts = new ImprovementNotificationOptions();
@@ -174,8 +175,9 @@ public class ScraperOptionsAndModelsTests
 
         using var document = JsonDocument.Parse(contents);
         var features = document.RootElement.GetProperty(FeatureOptions.Section);
-        Assert.All(new[] { "Leaderboards", "Difficulty", "PlayerBands", "ExperimentalRanks", "AppManual", "Compete" },
+        Assert.All(new[] { "Leaderboards", "Difficulty", "PlayerBands", "ExperimentalRanks", "Compete" },
             key => Assert.False(features.TryGetProperty(key, out _), $"{key} is still present in {fileName}"));
+        Assert.False(features.GetProperty("AppManual").GetBoolean());
         var notifications = document.RootElement.GetProperty(ImprovementNotificationOptions.Section);
         var activeKeys = new[] { "Enabled", "Scope", "IncludePlayers", "IncludeBands",
             "IncludeSongEvents", "IncludeRankings", "RefreshSoloProjection",

@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { FestivalProvider, useFestival } from './contexts/FestivalContext';
 import { SettingsProvider } from './contexts/SettingsContext';
+import { FeatureFlagsProvider, useFeatureFlagsState } from './contexts/FeatureFlagsContext';
 import { ShopProvider } from './contexts/ShopContext';
 import { AnimatedBackground } from './components/shell/AnimatedBackground';
 import { useTrackedPlayer, type TrackedPlayer } from './hooks/data/useTrackedPlayer';
@@ -185,6 +186,9 @@ const PROFILE_SEARCH_TARGETS: readonly SearchTarget[] = ['players', 'bands'];
 const PLAYER_BANDS_ACTIVE_FILTER_GROUPS = new Set(['duos', 'trios', 'quads']);
 
 function ManualRouteElement() {
+  const { flags, resolved } = useFeatureFlagsState();
+  if (!resolved) return <SuspenseFallback />;
+  if (!flags.appManual) return <Navigate to={AppRoutes.songs} replace />;
   return <ErrorBoundary fallback={<RouteErrorFallback />}><ManualPage /></ErrorBoundary>;
 }
 
@@ -209,6 +213,7 @@ export { getProfileClickDestination, getStatisticsNavigationPath } from './utils
 
 export default function App() {
   return (
+    <FeatureFlagsProvider>
     <SettingsProvider>
       <FestivalProvider>
         <ShopProvider>
@@ -230,6 +235,7 @@ export default function App() {
         </ShopProvider>
       </FestivalProvider>
     </SettingsProvider>
+    </FeatureFlagsProvider>
   );
 }
 

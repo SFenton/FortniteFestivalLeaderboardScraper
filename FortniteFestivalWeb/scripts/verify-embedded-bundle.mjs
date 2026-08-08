@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = resolve(webRoot, '..');
 const outputRoot = resolve(repoRoot, 'FSTService/wwwroot');
-const retiredReferences = ['/api/features', 'FeatureFlagsContext'];
 const aliases = [
   ['icons/fst-icon-512.png', 'icons/fst-icon-maskable-512.png'],
   ['manual/screenshots/song-detail-overview-mobile.png', 'manual/screenshots/song-detail-cards-mobile.png'],
@@ -16,7 +15,6 @@ const aliases = [
 
 verifyIndexAssets();
 verifyCompatibilityAliases();
-verifyRetiredReferences();
 verifyGitClean();
 
 console.log('[embedded] Committed bundle is current, self-contained, and compatibility-safe.');
@@ -42,18 +40,6 @@ function verifyCompatibilityAliases() {
   }
 }
 
-function verifyRetiredReferences() {
-  const matches = [];
-  for (const file of listFiles(outputRoot)) {
-    if (!/\.(?:html|js|json|map)$/.test(file)) continue;
-    const contents = readFileSync(file, 'utf8');
-    for (const reference of retiredReferences) {
-      if (contents.includes(reference)) matches.push(`${file}: ${reference}`);
-    }
-  }
-  if (matches.length > 0) fail(`retired references remain:\n${matches.join('\n')}`);
-}
-
 function verifyGitClean() {
   if (process.env.FST_EMBEDDED_COMPARE_INDEX_ONLY === '1') {
     const unstaged = execFileSync(
@@ -77,11 +63,6 @@ function verifyGitClean() {
     { cwd: repoRoot, encoding: 'utf8' },
   ).trim();
   if (status) fail(`FSTService/wwwroot differs from the checked-out commit:\n${status}`);
-}
-
-function listFiles(root) {
-  const output = execFileSync('find', [root, '-type', 'f', '-print'], { encoding: 'utf8' });
-  return output.trim() ? output.trim().split('\n') : [];
 }
 
 function fail(message) {

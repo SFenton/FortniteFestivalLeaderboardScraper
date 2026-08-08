@@ -13,6 +13,15 @@ test('direct Manual URL migrates to the hash route and renders the Manual', asyn
   await expect(page.getByRole('heading', { name: 'Navigation Basics' })).toBeVisible();
 });
 
+test('disabled Manual redirects to Songs', async ({ page }) => {
+  await page.route('**/api/features', route => json(route, { appManual: false }));
+
+  await page.goto('/#/manual', { waitUntil: 'load' });
+
+  await expect(page).toHaveURL(/\/#\/songs$/);
+  await expect(page.getByRole('heading', { name: 'Navigation Basics' })).toHaveCount(0);
+});
+
 test('desktop Manual loads only near responsive images and preserves carousel state while scrolling', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-wide', 'desktop Manual waterfall is covered at its production capture width');
   const manualRequests: string[] = [];
@@ -202,6 +211,7 @@ async function installApiMocks(page: Page) {
         workerStatus: { status: 'offline', rawStatus: 'offline' },
       });
     }
+    if (path === '/api/features') return json(route, { appManual: true });
     if (path === '/api/songs') {
       return json(route, {
         count: 1,

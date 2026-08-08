@@ -5,6 +5,7 @@ import { IoCompass, IoPerson, IoMusicalNotes, IoSparkles, IoStatsChart, IoSettin
 import type { TrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
 import type { SelectedBandProfile, SelectedProfile } from '../../../hooks/data/useSelectedProfile';
 import { useSettings } from '../../../contexts/SettingsContext';
+import { useFeatureFlags } from '../../../contexts/FeatureFlagsContext';
 import MarqueeText from '../../common/MarqueeText';
 import PressableButton from '../../common/PressableButton';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
@@ -27,6 +28,7 @@ interface PinnedSidebarProps {
 export default function PinnedSidebar({ player, selectedProfile, onDeselect, onSelectPlayer }: PinnedSidebarProps) {
   const { t } = useTranslation();
   const { settings } = useSettings();
+  const { appManual } = useFeatureFlags();
   const scrollRef = useScrollContainer();
   const s = useStyles();
   const selectedBand = selectedProfile?.type === 'band' ? selectedProfile : null;
@@ -93,10 +95,12 @@ export default function PinnedSidebar({ player, selectedProfile, onDeselect, onS
             {t('common.selectProfile')}
           </PressableButton>
         )}
-        <NavLink to={Routes.manual} style={({ isActive }) => linkClass(isActive)}>
-          <span style={s.linkIcon}><IoCompass size={20} /></span>
-          {t('nav.manual')}
-        </NavLink>
+        {appManual && (
+          <NavLink to={Routes.manual} style={({ isActive }) => linkClass(isActive)}>
+            <span style={s.linkIcon}><IoCompass size={20} /></span>
+            {t('nav.manual')}
+          </NavLink>
+        )}
         <NavLink to="/settings" style={({ isActive }) => linkClass(isActive)}>
           <span style={s.linkIcon}><IoSettings size={20} /></span>
           {t('nav.settings')}

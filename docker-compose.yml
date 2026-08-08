@@ -115,6 +115,7 @@ services:
       # Combo-batched band-ranking writes reduce one-shot build-table pressure on tight disks.
       - BandTeamRankings__WriteMode=${BAND_TEAM_RANKINGS_WRITE_MODE:-ComboBatched}
       # ── Persistence/publication feature flags ──
+      - Features__AppManual=${FEATURE_APP_MANUAL:-false}
       - Features__WriteLegacyLiveLeaderboardSupplementalRows=${WRITE_LEGACY_LIVE_LEADERBOARD_SUPPLEMENTAL_ROWS:-true}
       - Features__UseSnapshotOverlayWorkerReaders=${USE_SNAPSHOT_OVERLAY_WORKER_READERS:-false}
       - Features__UseStoredSoloProjectionRanksForFilteredReads=${USE_STORED_SOLO_PROJECTION_RANKS_FOR_FILTERED_READS:-false}

@@ -5,6 +5,7 @@ import { IoCompass, IoPerson, IoMusicalNotes, IoSparkles, IoStatsChart, IoSettin
 import type { TrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
 import type { SelectedBandProfile, SelectedProfile } from '../../../hooks/data/useSelectedProfile';
 import { useSettings } from '../../../contexts/SettingsContext';
+import { useFeatureFlags } from '../../../contexts/FeatureFlagsContext';
 import MarqueeText from '../../common/MarqueeText';
 import PressableButton from '../../common/PressableButton';
 import { sidebarStyles as s } from './sidebarStyles';
@@ -37,6 +38,7 @@ interface SidebarProps {
 export default function Sidebar({ player, selectedProfile, open, onClose, onDeselect, onSelectPlayer }: SidebarProps) {
   const { t } = useTranslation();
   const { settings } = useSettings();
+  const { appManual } = useFeatureFlags();
   const navigate = useNavigate();
   const sidebarRef = useRef<HTMLDivElement>(null);
   const pendingTouchNavRef = useRef<{ pointerId: number; label: string; to: string; clientX: number; clientY: number } | null>(null);
@@ -191,10 +193,12 @@ export default function Sidebar({ player, selectedProfile, open, onClose, onDese
               {t('common.selectProfile')}
             </PressableButton>
           )}
-          <NavLink to={Routes.manual} {...getNavigationHandlers(t('nav.manual'), Routes.manual)} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
-            <span style={s.sidebarLinkIcon}><IoCompass size={20} /></span>
-            {t('nav.manual')}
-          </NavLink>
+          {appManual && (
+            <NavLink to={Routes.manual} {...getNavigationHandlers(t('nav.manual'), Routes.manual)} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
+              <span style={s.sidebarLinkIcon}><IoCompass size={20} /></span>
+              {t('nav.manual')}
+            </NavLink>
+          )}
           <NavLink to="/settings" {...getNavigationHandlers(t('nav.settings'), '/settings')} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
             <span style={s.sidebarLinkIcon}><IoSettings size={20} /></span>
             {t('nav.settings')}

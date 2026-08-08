@@ -9,6 +9,7 @@ public static partial class ApiEndpoints
     public static void MapApiEndpoints(this WebApplication app)
     {
         app.MapHealthEndpoints();
+        app.MapFeatureEndpoints();
         app.MapAccountEndpoints();
         app.MapSongEndpoints();
         app.MapLeaderboardEndpoints();
