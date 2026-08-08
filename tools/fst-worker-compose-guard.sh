@@ -40,6 +40,7 @@ Options:
                              registered-refresh-repair
                              catalog-path-notification-source-cut
                              snapshot-reuse
+                             legacy-reader-migration
                            Every run-once config requires a data profile.
   --expected-worker-image I
                            Require the resolved fstworker image to match I.
@@ -115,7 +116,7 @@ case "$THROUGHPUT_PROFILE" in
 esac
 
 case "$DATA_PROFILE" in
-    none|notification-db-only|publication-cache-generation|registered-refresh-repair|catalog-path-notification-source-cut|snapshot-reuse)
+    none|notification-db-only|publication-cache-generation|registered-refresh-repair|catalog-path-notification-source-cut|snapshot-reuse|legacy-reader-migration)
         ;;
     *)
         printf 'ERROR: unknown data profile: %s\n' "$DATA_PROFILE" >&2
@@ -435,6 +436,35 @@ if data_profile == "snapshot-reuse":
         if boolean(name):
             raise SystemExit(
                 f"ERROR: data profile snapshot-reuse requires {name}=false")
+if data_profile == "legacy-reader-migration":
+    exact_value("Scraper__EnabledPhases", "All")
+    exact_value("Scraper__RegisteredUserRefreshTimeout", "00:00:00")
+    for name in (
+        "Features__EnforcePublicationCriticalPhases",
+        "Features__EnforceScopeCompletenessManifests",
+        "Features__RequireSuccessfulScrapeWriters",
+        "Features__WritePublishedScopeSources",
+        "Features__UseSnapshotOverlayWorkerReaders",
+        "Features__WriteLegacyLiveLeaderboardSupplementalRows",
+        "ImprovementNotifications__Enabled",
+        "ImprovementNotifications__IncludePlayers",
+        "ImprovementNotifications__IncludeBands",
+        "ImprovementNotifications__IncludeSongEvents",
+        "ImprovementNotifications__IncludeRankings",
+    ):
+        if not boolean(name):
+            raise SystemExit(
+                f"ERROR: data profile legacy-reader-migration requires {name}=true")
+    for name in (
+        "Features__WriteLegacyLiveLeaderboardDuringScrape",
+        "Features__UseStoredSoloProjectionRanksForFilteredReads",
+        "Features__SkipUnchangedPhysicalLeaderboardSnapshots",
+        "Features__WriteLogicalLeaderboardVersions",
+        "DatabaseMaintenance__SnapshotRetentionRewriteEnabled",
+    ):
+        if boolean(name):
+            raise SystemExit(
+                f"ERROR: data profile legacy-reader-migration requires {name}=false")
 if canonical != 30:
     raise SystemExit(f"ERROR: canonical PIA service count must be 30, found {canonical}")
 if expected > canonical:

@@ -227,6 +227,7 @@ evidence package.
 | Current supplemental writers | `InstrumentDatabase.UpsertEntries` writes backfill, refresh, and neighbor rows to both legacy and `leaderboard_entries_overlay` |
 | New rollback switch | `Features:WriteLegacyLiveLeaderboardSupplementalRows`; remains `true` until legacy readers migrate |
 | Reader migration switch | `Features:UseSnapshotOverlayWorkerReaders`; default `false`, worker-only even when the shared compose environment also reaches `fstservice` |
+| Guarded run-once card | `tools/fst-worker-dual-lane-runonce.sh --data-profile legacy-reader-migration`; requires supplemental rollback writes on, main legacy scrape writes off, snapshot reuse off, all publication gates on, and the exact candidate image |
 | Current public read | Active `fstservice` has `UsePublishedScopeSources=true`; a mapped leaderboard HTTP 200 probe changed zero legacy partition scan counters |
 | Current worker read | `PostScrapeBandExtractor` reads legacy rows directly and `BandExtraction` is publication-critical; production `EnabledPhases=All` |
 | Other code ownership | Direct legacy helper reads/rank updates/prunes remain. Scrape rank/index/prune work is gated by the main legacy-writer flag, but caller removal is not complete |

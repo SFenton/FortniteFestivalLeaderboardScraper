@@ -232,6 +232,10 @@ This plan records the approved direction for improving FST Postgres persistence 
   with the exact legacy merge gate. Read-only live simulation matched all
   `83,801` source rows with zero missing/value mismatches and reduced the
   derived comparison from 134.96 seconds to 2.44 seconds.
+  The production A/B is fail-closed through the named
+  `legacy-reader-migration` dual-lane data profile; it requires the reader
+  candidate on, supplemental rollback writes on, main legacy scrape writes
+  off, snapshot reuse off, publication gates on, and an exact worker image.
 - The earlier STORAGE-OWNERSHIP phase completed continuous-safe P6/P8/P9 owner cards and exact
   manifests for `player_score_observations`, `scrape_dirty_*`, and legacy
   `leaderboard_entries_*`: `61,217,292,288` bytes total. Observation dual

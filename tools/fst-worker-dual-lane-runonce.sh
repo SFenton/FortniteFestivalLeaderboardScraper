@@ -21,7 +21,7 @@ Options:
                         or candidate-2880-128-16
   --data-profile P      publication-cache-generation,
                         catalog-path-notification-source-cut, or
-                        snapshot-reuse
+                        snapshot-reuse, or legacy-reader-migration
   --expected-worker-image I
                         Exact fstworker image required by the data lane
   --check               Validate only (default)
@@ -52,7 +52,7 @@ if [[ -z "$NETWORK_PROFILE" ]]; then
     exit 64
 fi
 case "$DATA_PROFILE" in
-    publication-cache-generation|catalog-path-notification-source-cut|snapshot-reuse)
+    publication-cache-generation|catalog-path-notification-source-cut|snapshot-reuse|legacy-reader-migration)
         ;;
     *)
         printf 'ERROR: unsupported data profile: %s\n' "$DATA_PROFILE" >&2
@@ -130,6 +130,10 @@ if [[ "$DATA_PROFILE" == "snapshot-reuse" ]]; then
     SKIP_UNCHANGED_PHYSICAL_LEADERBOARD_SNAPSHOTS=true
     USE_LEADERBOARD_SCOPE_FINGERPRINTS=true
 fi
+USE_SNAPSHOT_OVERLAY_WORKER_READERS=false
+if [[ "$DATA_PROFILE" == "legacy-reader-migration" ]]; then
+    USE_SNAPSHOT_OVERLAY_WORKER_READERS=true
+fi
 
 RUN_ONCE=true \
 ENABLED_PHASES=All \
@@ -155,4 +159,5 @@ IMPROVEMENT_NOTIFICATIONS_REFRESH_SOLO_PROJECTION=true \
 IMPROVEMENT_NOTIFICATIONS_REFRESH_ALL_SOLO_SCOPES_WHEN_NO_IMPACTED_SCOPES=false \
 SKIP_UNCHANGED_PHYSICAL_LEADERBOARD_SNAPSHOTS="$SKIP_UNCHANGED_PHYSICAL_LEADERBOARD_SNAPSHOTS" \
 USE_LEADERBOARD_SCOPE_FINGERPRINTS="$USE_LEADERBOARD_SCOPE_FINGERPRINTS" \
+USE_SNAPSHOT_OVERLAY_WORKER_READERS="$USE_SNAPSHOT_OVERLAY_WORKER_READERS" \
 "$(dirname "$0")/fst-worker-compose-guard.sh" "${guard_args[@]}"
