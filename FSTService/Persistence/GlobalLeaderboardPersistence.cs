@@ -79,6 +79,13 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// </summary>
     public bool UsePublishedScopeSources => _features.UsePublishedScopeSources;
 
+    /// <summary>
+    /// True only for the worker-side snapshot/overlay reader rollout. Published
+    /// API processes continue to use their mapped publication source.
+    /// </summary>
+    public bool UseSnapshotOverlayWorkerReaders =>
+        !UsePublishedScopeSources && _features.UseSnapshotOverlayWorkerReaders;
+
     public void RegisterSnapshotReuseManifest(
         long scrapeId,
         string songId,
@@ -153,6 +160,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 _loggerFactory.CreateLogger<InstrumentDatabase>())
             {
                 UsePublishedScopeSources = UsePublishedScopeSources,
+                UseSnapshotOverlayWorkerReaders = UseSnapshotOverlayWorkerReaders,
                 UseStoredProjectionRanksForFilteredReads = _features.UseStoredSoloProjectionRanksForFilteredReads,
                 WriteLegacyLiveLeaderboardSupplementalRows = _features.WriteLegacyLiveLeaderboardSupplementalRows,
             };
@@ -252,6 +260,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             _loggerFactory.CreateLogger<InstrumentDatabase>())
         {
             UsePublishedScopeSources = UsePublishedScopeSources,
+            UseSnapshotOverlayWorkerReaders = UseSnapshotOverlayWorkerReaders,
             UseStoredProjectionRanksForFilteredReads = _features.UseStoredSoloProjectionRanksForFilteredReads,
             WriteLegacyLiveLeaderboardSupplementalRows = _features.WriteLegacyLiveLeaderboardSupplementalRows,
         };
@@ -3339,7 +3348,8 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     public Dictionary<string, List<PlayerScoreDto>> GetCurrentStatePlayerProfiles(
         IReadOnlyCollection<string> accountIds,
         string? songId = null,
-        HashSet<string>? instruments = null)
+        HashSet<string>? instruments = null,
+        bool preferValidatedProjection = false)
     {
         var normalizedAccountIds = accountIds
             .Where(static id => !string.IsNullOrWhiteSpace(id))
@@ -3351,17 +3361,103 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         if (UsePublishedScopeSources)
             return GetPublishedScopePlayerProfiles(normalizedAccountIds, songId, instruments);
 
+        if (UseSnapshotOverlayWorkerReaders && !preferValidatedProjection)
+        {
+            var dbs = instruments is null
+                ? _instrumentDbs.ToArray()
+                : _instrumentDbs.Where(pair => instruments.Contains(pair.Key)).ToArray();
+            var profilesByInstrument =
+                new Dictionary<string, List<PlayerScoreDto>>[dbs.Length];
+
+            Parallel.For(0, dbs.Length, index =>
+            {
+                profilesByInstrument[index] =
+                    ((InstrumentDatabase)dbs[index].Value)
+                    .GetCurrentStatePlayerScoresForAccounts(normalizedAccountIds, songId);
+            });
+
+            var resolvedProfiles =
+                new Dictionary<string, List<PlayerScoreDto>>(StringComparer.OrdinalIgnoreCase);
+            for (var index = 0; index < dbs.Length; index++)
+            {
+                foreach (var (accountId, instrumentScores) in profilesByInstrument[index])
+                {
+                    if (!resolvedProfiles.TryGetValue(accountId, out var scores))
+                    {
+                        scores = [];
+                        resolvedProfiles[accountId] = scores;
+                    }
+                    scores.AddRange(instrumentScores);
+                }
+            }
+
+            foreach (var scores in resolvedProfiles.Values)
+            {
+                scores.Sort(static (left, right) =>
+                {
+                    var instrumentOrder = string.Compare(
+                        left.Instrument,
+                        right.Instrument,
+                        StringComparison.Ordinal);
+                    return instrumentOrder != 0
+                        ? instrumentOrder
+                        : string.Compare(left.SongId, right.SongId, StringComparison.Ordinal);
+                });
+            }
+
+            return resolvedProfiles;
+        }
+
         using var conn = _pgDataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
         var songFilter = songId is not null ? "\n  AND projection.song_id = @songId" : string.Empty;
         var instrumentFilter = instruments is { Count: > 0 } ? "\n  AND projection.instrument = ANY(@instruments)" : string.Empty;
+        var projectionSourceJoin = UseSnapshotOverlayWorkerReaders
+            ? """
+              JOIN solo_current_projection_scope scope
+                ON scope.song_id = projection.song_id
+               AND scope.instrument = projection.instrument
+               AND scope.projection_generation = projection.projection_generation
+               AND scope.status = 'ready'
+              """
+            : string.Empty;
+        var projectionSourceFilter = UseSnapshotOverlayWorkerReaders
+            ? """
+                AND (
+                        (
+                            scope.source_kind = 'snapshot'
+                            AND EXISTS (
+                                SELECT 1
+                                FROM leaderboard_snapshot_state state
+                                WHERE state.song_id = scope.song_id
+                                  AND state.instrument = scope.instrument
+                                  AND state.is_finalized = TRUE
+                                  AND state.active_snapshot_id IS NOT NULL
+                                  AND state.active_snapshot_id IS NOT DISTINCT FROM scope.source_snapshot_id
+                            )
+                        )
+                        OR (
+                            scope.source_kind = 'overlay'
+                            AND scope.source_snapshot_id IS NULL
+                            AND EXISTS (
+                                SELECT 1
+                                FROM leaderboard_entries_overlay overlay
+                                WHERE overlay.song_id = scope.song_id
+                                  AND overlay.instrument = scope.instrument
+                            )
+                        )
+                    )
+              """
+            : string.Empty;
         cmd.CommandText = $"""
             SELECT projection.account_id, projection.song_id, projection.instrument, projection.score,
                    projection.accuracy, projection.is_full_combo, projection.stars, projection.season,
                    projection.difficulty, projection.percentile, projection.end_time, projection.rank,
                    projection.api_rank
             FROM current_leaderboard_entries projection
+            {projectionSourceJoin}
             WHERE projection.account_id = ANY(@accountIds){songFilter}{instrumentFilter}
+              {projectionSourceFilter}
             ORDER BY projection.account_id, projection.instrument, projection.song_id
             """;
         cmd.CommandTimeout = 0;

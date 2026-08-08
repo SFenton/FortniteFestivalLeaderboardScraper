@@ -489,6 +489,50 @@ public static class DatabaseInitializer
         CREATE INDEX IF NOT EXISTS ix_leo_song_priority_score
             ON leaderboard_entries_overlay (song_id, instrument, source_priority DESC, score DESC);
 
+        -- Narrow accumulated band-context source. Snapshot pages update scalar
+        -- fields for known contexts and insert newly observed band payloads, so
+        -- full snapshots no longer depend on legacy live-row COALESCE behavior.
+        CREATE TABLE IF NOT EXISTS leaderboard_band_context (
+            song_id             TEXT        NOT NULL,
+            instrument          TEXT        NOT NULL,
+            account_id          TEXT        NOT NULL,
+            score               INTEGER     NOT NULL,
+            accuracy            INTEGER,
+            is_full_combo       BOOLEAN,
+            stars               INTEGER,
+            season              INTEGER,
+            percentile          REAL,
+            source              TEXT        NOT NULL DEFAULT 'scrape',
+            difficulty          INTEGER     DEFAULT -1,
+            end_time            TEXT,
+            band_members_json   JSONB       NOT NULL,
+            band_score          INTEGER,
+            base_score          INTEGER,
+            instrument_bonus    INTEGER,
+            overdrive_bonus     INTEGER,
+            instrument_combo    TEXT,
+            first_seen_at       TIMESTAMPTZ NOT NULL,
+            last_updated_at     TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (song_id, instrument, account_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_lbc_song
+            ON leaderboard_band_context (song_id);
+
+        ALTER TABLE leaderboard_band_context
+            ADD COLUMN IF NOT EXISTS percentile REAL;
+        ALTER TABLE leaderboard_band_context
+            ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'scrape';
+
+        CREATE TABLE IF NOT EXISTS leaderboard_band_context_state (
+            id                   BOOLEAN     PRIMARY KEY DEFAULT TRUE CHECK (id),
+            seeded_at            TIMESTAMPTZ,
+            legacy_source_rows   BIGINT      NOT NULL DEFAULT 0,
+            overlay_source_rows  BIGINT      NOT NULL DEFAULT 0,
+            context_rows         BIGINT      NOT NULL DEFAULT 0,
+            updated_at           TIMESTAMPTZ NOT NULL
+        );
+
         -- =====================================================================
         -- SOLO CURRENT PROJECTION (incremental snapshot + overlay read model)
         -- =====================================================================
@@ -553,12 +597,20 @@ public static class DatabaseInitializer
             projection_generation BIGINT      NOT NULL DEFAULT 0,
             row_count             BIGINT      NOT NULL DEFAULT 0,
             source_snapshot_id    BIGINT,
+            source_kind           TEXT        NOT NULL DEFAULT 'legacy-compatible',
             status                TEXT        NOT NULL DEFAULT 'ready',
             error_message         TEXT,
             last_rebuilt_at       TIMESTAMPTZ,
             updated_at            TIMESTAMPTZ NOT NULL,
             PRIMARY KEY (song_id, instrument)
         );
+
+        ALTER TABLE solo_current_projection_scope
+            ADD COLUMN IF NOT EXISTS source_kind TEXT NOT NULL DEFAULT 'legacy-compatible';
+        UPDATE solo_current_projection_scope
+        SET source_kind = 'snapshot'
+        WHERE source_kind = 'legacy-compatible'
+          AND source_snapshot_id IS NOT NULL;
 
         CREATE INDEX IF NOT EXISTS ix_scps_status_updated
             ON solo_current_projection_scope (status, updated_at DESC);

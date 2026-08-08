@@ -1,6 +1,7 @@
 using FSTService.Persistence;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace FSTService.Tests.Unit;
 
@@ -40,6 +41,93 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
 
         Assert.Equal(0, report.PlayerSongEventsInserted);
         Assert.DoesNotContain(notifications.Items, item => item.EventKind == "player_song_rank_improved");
+    }
+
+    [Fact]
+    public void SnapshotOverlayWorkerReaders_ExcludeProjectionRowsWithoutCurrentSources()
+    {
+        InsertCurrentEntry(score: 100000, rank: 100);
+        var sut = new ImprovementNotificationService(
+            _metaFixture.DataSource,
+            NullLogger<ImprovementNotificationService>.Instance,
+            Options.Create(new FeatureOptions { UseSnapshotOverlayWorkerReaders = true }));
+        var options = new ImprovementNotificationPrecomputeOptions(
+            Execute: true,
+            BaselineOnly: true,
+            Scope: "all",
+            IncludePlayers: true,
+            IncludeBands: false,
+            IncludeSongEvents: true,
+            IncludeRankings: false,
+            PruneExpired: false);
+
+        var withoutSource = sut.Precompute(options);
+
+        Assert.Equal(0, withoutSource.PlayerSongRowsScanned);
+        Assert.Equal(0, withoutSource.PlayerSongStateUpserts);
+
+        using (var connection = _metaFixture.DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                INSERT INTO leaderboard_entries_overlay (
+                    song_id, instrument, account_id, score, rank, source,
+                    first_seen_at, last_updated_at, source_priority, overlay_reason)
+                VALUES (
+                    @songId, @instrument, @accountId, 100000, 100, 'backfill',
+                    now(), now(), 200, 'test');
+
+                INSERT INTO solo_current_projection_scope (
+                    song_id, instrument, projection_generation, row_count,
+                    source_snapshot_id, source_kind, status, updated_at)
+                VALUES (@songId, @instrument, 0, 1, NULL, 'overlay', 'ready', now());
+                """;
+            command.Parameters.AddWithValue("songId", SongId);
+            command.Parameters.AddWithValue("instrument", Instrument);
+            command.Parameters.AddWithValue("accountId", AccountId);
+            command.ExecuteNonQuery();
+        }
+
+        var withOverlaySource = sut.Precompute(options);
+
+        Assert.Equal(1, withOverlaySource.PlayerSongRowsScanned);
+        Assert.Equal(1, withOverlaySource.PlayerSongStateUpserts);
+    }
+
+    [Fact]
+    public void SnapshotOverlayWorkerReaders_FailClosedForUnresolvedProjectionProvenance()
+    {
+        InsertCurrentEntry(score: 100000, rank: 100);
+        using (var connection = _metaFixture.DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                INSERT INTO solo_current_projection_scope (
+                    song_id, instrument, projection_generation, row_count,
+                    source_snapshot_id, source_kind, status, updated_at)
+                VALUES (@songId, @instrument, 0, 1, NULL, 'legacy-compatible', 'ready', now());
+                """;
+            command.Parameters.AddWithValue("songId", SongId);
+            command.Parameters.AddWithValue("instrument", Instrument);
+            command.ExecuteNonQuery();
+        }
+        var sut = new ImprovementNotificationService(
+            _metaFixture.DataSource,
+            NullLogger<ImprovementNotificationService>.Instance,
+            Options.Create(new FeatureOptions { UseSnapshotOverlayWorkerReaders = true }));
+
+        var exception = Assert.Throws<InvalidOperationException>(() => sut.Precompute(
+            new ImprovementNotificationPrecomputeOptions(
+                Execute: true,
+                BaselineOnly: true,
+                Scope: "all",
+                IncludePlayers: true,
+                IncludeBands: false,
+                IncludeSongEvents: true,
+                IncludeRankings: false,
+                PruneExpired: false)));
+
+        Assert.Contains("projection provenance", exception.Message);
     }
 
     [Fact]

@@ -1543,6 +1543,19 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public void BandExtraction_DoesNotActivateSoloSnapshots()
+    {
+        var ctx = CreateContext(scrapeId: 42);
+
+        Assert.False(PostScrapeOrchestrator.ShouldActivateShadowSnapshotsBeforeDerived(
+            ctx,
+            ScrapePhase.BandExtraction));
+        Assert.False(PostScrapeOrchestrator.ShouldActivateShadowSnapshotsBeforeDerived(
+            ctx,
+            ScrapePhase.SoloScrape | ScrapePhase.BandExtraction));
+    }
+
+    [Fact]
     public async Task RunImprovementNotificationsAfterPublicationAsync_RunsAfterDerivedSoloPhases()
     {
         var sut = CreateOrchestratorWithImprovementNotifications();

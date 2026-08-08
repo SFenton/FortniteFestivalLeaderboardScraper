@@ -226,6 +226,7 @@ evidence package.
 | Current main scrape writer | `Features:WriteLegacyLiveLeaderboardDuringScrape=false` in tracked and active production config |
 | Current supplemental writers | `InstrumentDatabase.UpsertEntries` writes backfill, refresh, and neighbor rows to both legacy and `leaderboard_entries_overlay` |
 | New rollback switch | `Features:WriteLegacyLiveLeaderboardSupplementalRows`; remains `true` until legacy readers migrate |
+| Reader migration switch | `Features:UseSnapshotOverlayWorkerReaders`; default `false`, worker-only even when the shared compose environment also reaches `fstservice` |
 | Current public read | Active `fstservice` has `UsePublishedScopeSources=true`; a mapped leaderboard HTTP 200 probe changed zero legacy partition scan counters |
 | Current worker read | `PostScrapeBandExtractor` reads legacy rows directly and `BandExtraction` is publication-critical; production `EnabledPhases=All` |
 | Other code ownership | Direct legacy helper reads/rank updates/prunes remain. Scrape rank/index/prune work is gated by the main legacy-writer flag, but caller removal is not complete |
@@ -250,10 +251,15 @@ complete writer-off candidate scrape pass.
 ### Exact future sequence
 
 1. Keep `WriteLegacyLiveLeaderboardDuringScrape=false`.
-2. Implement a default-off band-extraction/read migration to active candidate
-   physical snapshots plus overlays.
-3. Prove fixture parity for extracted bands, member facts, ranks, and affected
-   scope tracking.
+2. Enable the implemented default-off band-extraction/read migration only in a
+   guarded worker run. It resolves current-state helpers from finalized active
+   snapshots plus overlays, seeds a narrow accumulated band-context source
+   once under an advisory lock, keeps that source current from both spool and
+   supplemental writes, bypasses projection fast paths during candidate
+   calculations, and prunes legacy-only projection scopes before notification
+   processing.
+3. Re-run fixture parity for extracted bands, member facts, ranks, affected
+   scope tracking, overlay-only scopes, and legacy-only projection rejection.
 4. Run one complete live scrape with old-vs-new extraction parity.
 5. Set `WriteLegacyLiveLeaderboardSupplementalRows=false`; prove backfill,
    refresh, and neighbor overlay parity in the same complete candidate window.
@@ -262,11 +268,44 @@ complete writer-off candidate scrape pass.
 7. Run `legacy-leaderboard-truncate.sql`.
 8. Keep the empty schema for a rollback window. Rehydrate from the published
    map with `legacy-leaderboard-rebuild.sql` if rollback requires it.
-9. Only after code/schema creation and every direct caller are removed, use
-   `legacy-leaderboard-drop.sql`.
+9. Remove the now-completed legacy seed SQL from the band-context migration;
+   the durable seed state prevents re-execution, but final drop must remove the
+   textual/runtime fallback dependency.
+10. Only after code/schema creation and every direct caller are removed, use
+    `legacy-leaderboard-drop.sql`.
 
 No package uses `CASCADE`. The rebuild intentionally reconstructs the
 published physical baseline, not the divergent current legacy contents.
+
+### 2026-08-07 reader candidate
+
+| Change | Files | Invariant/test | Migration safety | Runtime impact | Rollback | Decision |
+|---|---|---|---|---|---|---|
+| Snapshot/overlay worker readers | `FeatureOptions`, `InstrumentDatabase`, `GlobalLeaderboardPersistence` | Direct point/batch/profile/count/rank helpers reject legacy-only rows and include overlay-only rows | Default-off; published API role is forced onto mapped publication sources | Candidate helpers bypass potentially stale projection fast paths | Set `USE_SNAPSHOT_OVERLAY_WORKER_READERS=false` while legacy remains | Full-scrape A/B required |
+| Band extraction source | `PostScrapeBandExtractor`, `LeaderboardSpoolWriterFactory`, `InstrumentDatabase` | Accumulated context preserves score-only updates, rejects same-score band-only changes, repairs concurrent snapshot ordering, and preserves later supplemental writes | Default-off; one-time advisory-lock seed has a 300-second command bound and durable completion state | Read-only seeded simulation matched `83,801/83,801` raw rows with zero missing/value mismatches and completed derived comparison in 2.44 s | Disable reader flag; retained legacy/context rows remain intact | Full-scrape A/B required |
+| Projection/notification cleanup | `SoloCurrentProjectionBuilder`, `ImprovementNotificationService` | Legacy-only projection rows are pruned and excluded from notification scans | Metadata-only `source_kind` column; projection rows are rebuildable after rollback | Low bounded delete plus normal scope refresh | Disable flag and rebuild missing legacy fallback scopes if rollback needs them | Full-scrape A/B required |
+
+The projection migration adds the metadata-only
+`solo_current_projection_scope.source_kind` column. Existing scopes with a
+non-null source snapshot are backfilled to `snapshot`; null-source scopes stay
+`legacy-compatible` and are forced through candidate rebuild or orphan
+pruning. Cleanup first probes the small scope table and issues projection
+deletes only for named orphan keys, avoiding an unconditional full projection
+scan. Startup notification recovery performs the same provenance repair and
+notification precompute fails closed if any unresolved provenance remains.
+
+Player stats calculate ranks from the fully resolved snapshot/overlay source
+in bounded account batches. API-cache player precompute bulk-loads registered
+profiles in 512-account chunks and uses the account-indexed projection only
+after stale- and orphan-scope checks prove that projection current.
+
+The candidate deliberately avoids a snapshot band-context index. Live probes
+showed direct active-snapshot reconstruction took 134.96 seconds and omitted
+32,403 derived entries because snapshots do not accumulate historical band
+JSON. The narrow seeded context preserved all 78,789 derived keys, while its
+raw merge matched all 83,801 legacy rows exactly. Promotion still requires
+complete-scrape writer/context fingerprints, measured context-sync overhead,
+zero publication-critical failures, and public band parity.
 
 Every maintenance file fails closed unless its named session GUC is supplied,
 for example:

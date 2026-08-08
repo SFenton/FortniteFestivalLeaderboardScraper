@@ -2,6 +2,7 @@ using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 
 namespace FSTService.Tests.Unit;
@@ -66,6 +67,148 @@ public sealed class SoloCurrentProjectionBuilderTests : IDisposable
         SetPublicationState(publishedScrapeId: 815, publicReadsFrozen: true);
 
         Assert.True(builder.AreActiveScopesFreshForInstruments([_fixture.Db.Instrument]));
+    }
+
+    [Fact]
+    public async Task SnapshotOverlayWorkerReaders_ExcludeLegacyOnlyScopesAndRebuildOverlayOnlyScopes()
+    {
+        _fixture.Db.UpsertEntries("song-legacy-only",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct-legacy",
+                Score = 999_000,
+                Accuracy = 100,
+                Stars = 6,
+                Season = 3,
+                Source = "scrape",
+                EndTime = "2025-01-15T12:00:00Z",
+            },
+        ]);
+        var legacyBuilder = new SoloCurrentProjectionBuilder(
+            _fixture.DataSource,
+            Substitute.For<ILogger<SoloCurrentProjectionBuilder>>());
+        await legacyBuilder.EnsureSchemaAsync();
+        await legacyBuilder.RebuildScopeAsync(new SoloCurrentProjectionScopeKey(
+            "song-legacy-only",
+            _fixture.Db.Instrument));
+        _fixture.Db.WriteLegacyLiveLeaderboardSupplementalRows = false;
+        _fixture.Db.UpsertEntries("song-overlay-only",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct-overlay",
+                Score = 100_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Source = "backfill",
+                EndTime = "2025-01-15T12:00:00Z",
+            },
+        ]);
+
+        var builder = new SoloCurrentProjectionBuilder(
+            _fixture.DataSource,
+            Substitute.For<ILogger<SoloCurrentProjectionBuilder>>(),
+            Options.Create(new FeatureOptions { UseSnapshotOverlayWorkerReaders = true }));
+        await builder.EnsureSchemaAsync();
+
+        var scopes = await builder.LoadCurrentScopesAsync();
+        var prunedRows = await builder.PruneOrphanedScopesAsync();
+        await builder.RebuildScopeAsync(new SoloCurrentProjectionScopeKey(
+            "song-overlay-only",
+            _fixture.Db.Instrument));
+
+        Assert.Equal(1, prunedRows);
+        Assert.Contains(scopes, scope => scope.SongId == "song-overlay-only");
+        Assert.DoesNotContain(scopes, scope => scope.SongId == "song-legacy-only");
+        using var connection = _fixture.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT song_id, account_id, score
+            FROM current_leaderboard_entries
+            ORDER BY song_id, account_id
+            """;
+        using var reader = command.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal("song-overlay-only", reader.GetString(0));
+        Assert.Equal("acct-overlay", reader.GetString(1));
+        Assert.Equal(100_000, reader.GetInt32(2));
+        Assert.False(reader.Read());
+    }
+
+    [Fact]
+    public async Task SnapshotOverlayWorkerReaders_RebuildMixedScopesCreatedFromLegacyRows()
+    {
+        const string songId = "song-mixed-source";
+        _fixture.Db.UpsertEntries(songId,
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct-legacy",
+                Score = 999_000,
+                Accuracy = 100,
+                Stars = 6,
+                Season = 3,
+                Source = "scrape",
+                EndTime = "2025-01-15T12:00:00Z",
+            },
+        ]);
+        var legacyBuilder = new SoloCurrentProjectionBuilder(
+            _fixture.DataSource,
+            Substitute.For<ILogger<SoloCurrentProjectionBuilder>>());
+        await legacyBuilder.EnsureSchemaAsync();
+        await legacyBuilder.RebuildScopeAsync(new SoloCurrentProjectionScopeKey(
+            songId,
+            _fixture.Db.Instrument));
+
+        _fixture.Db.WriteLegacyLiveLeaderboardSupplementalRows = false;
+        _fixture.Db.UpsertEntries(songId,
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct-overlay",
+                Score = 100_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Source = "backfill",
+                EndTime = "2025-01-15T12:00:00Z",
+            },
+        ]);
+        await legacyBuilder.RebuildScopeAsync(new SoloCurrentProjectionScopeKey(
+            songId,
+            _fixture.Db.Instrument));
+        var candidateBuilder = new SoloCurrentProjectionBuilder(
+            _fixture.DataSource,
+            Substitute.For<ILogger<SoloCurrentProjectionBuilder>>(),
+            Options.Create(new FeatureOptions { UseSnapshotOverlayWorkerReaders = true }));
+        await candidateBuilder.EnsureSchemaAsync();
+
+        var staleScopes = await candidateBuilder.LoadStaleScopesAsync();
+        var result = await candidateBuilder.RefreshScopesAsync(staleScopes);
+
+        Assert.Contains(staleScopes, scope => scope.SongId == songId);
+        Assert.Equal(1, result.SucceededScopeCount);
+        using var connection = _fixture.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT projection.account_id, scope.source_kind
+            FROM current_leaderboard_entries projection
+            JOIN solo_current_projection_scope scope
+              ON scope.song_id = projection.song_id
+             AND scope.instrument = projection.instrument
+             AND scope.projection_generation = projection.projection_generation
+            WHERE projection.song_id = @songId
+              AND projection.instrument = @instrument
+            """;
+        command.Parameters.AddWithValue("songId", songId);
+        command.Parameters.AddWithValue("instrument", _fixture.Db.Instrument);
+        using var reader = command.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal("acct-overlay", reader.GetString(0));
+        Assert.Equal("overlay", reader.GetString(1));
+        Assert.False(reader.Read());
     }
 
     [Fact]
@@ -259,12 +402,14 @@ public sealed class SoloCurrentProjectionBuilderTests : IDisposable
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             INSERT INTO solo_current_projection_scope
-            (song_id, instrument, projection_generation, row_count, source_snapshot_id, status, error_message, last_rebuilt_at, updated_at)
-            VALUES (@songId, @instrument, 1, 1, @sourceSnapshotId, @status, NULL, @now, @now)
+            (song_id, instrument, projection_generation, row_count, source_snapshot_id, source_kind,
+             status, error_message, last_rebuilt_at, updated_at)
+            VALUES (@songId, @instrument, 1, 1, @sourceSnapshotId, @sourceKind, @status, NULL, @now, @now)
             """;
         cmd.Parameters.AddWithValue("songId", songId);
         cmd.Parameters.AddWithValue("instrument", _fixture.Db.Instrument);
         cmd.Parameters.AddWithValue("sourceSnapshotId", sourceSnapshotId.HasValue ? sourceSnapshotId.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue("sourceKind", sourceSnapshotId.HasValue ? "snapshot" : "legacy-compatible");
         cmd.Parameters.AddWithValue("status", status);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         cmd.ExecuteNonQuery();

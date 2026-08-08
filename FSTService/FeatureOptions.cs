@@ -24,6 +24,13 @@ public sealed class FeatureOptions
     public bool WriteLegacyLiveLeaderboardSupplementalRows { get; set; } = true;
 
     /// <summary>
+    /// When true, worker-side current-state readers resolve finalized physical
+    /// snapshots plus overlays without falling back to leaderboard_entries.
+    /// Keep disabled until the reader migration passes a complete scrape A/B.
+    /// </summary>
+    public bool UseSnapshotOverlayWorkerReaders { get; set; }
+
+    /// <summary>
     /// When true, scrape flushes compute observe-only per-song/instrument content
     /// fingerprints so future work can skip unchanged physical snapshot writes.
     /// Existing snapshot/current-state behavior remains authoritative.

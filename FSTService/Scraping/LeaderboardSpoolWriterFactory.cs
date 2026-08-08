@@ -112,6 +112,15 @@ public static class LeaderboardSpoolWriterFactory
                 writer.Complete();
             }
 
+            using (var bandContextCmd = conn.CreateCommand())
+            {
+                bandContextCmd.Transaction = tx;
+                bandContextCmd.CommandTimeout = 0;
+                bandContextCmd.CommandText = BuildBandContextSyncSql();
+                bandContextCmd.Parameters.AddWithValue("instrument", activeInstrument);
+                bandContextCmd.ExecuteNonQuery();
+            }
+
             persistence.ObserveLeaderboardScopeFingerprints(
                 conn,
                 tx,
@@ -281,6 +290,126 @@ public static class LeaderboardSpoolWriterFactory
             overdrive_bonus = EXCLUDED.overdrive_bonus,
             instrument_combo = EXCLUDED.instrument_combo,
             last_updated_at = EXCLUDED.last_updated_at
+        """;
+
+    internal static string BuildBandContextSyncSql() =>
+        """
+        WITH snapshot_rows AS MATERIALIZED (
+            SELECT DISTINCT ON (song_id, instrument, account_id)
+                song_id, instrument, account_id, score, accuracy, is_full_combo,
+                stars, season, percentile, source, difficulty, end_time,
+                band_members_json, band_score, base_score, instrument_bonus,
+                overdrive_bonus, instrument_combo, ts
+            FROM _le_staging
+            WHERE instrument = @instrument
+            ORDER BY song_id, instrument, account_id, score DESC, ts DESC
+        )
+        INSERT INTO leaderboard_band_context (
+            song_id, instrument, account_id, score, accuracy, is_full_combo,
+            stars, season, percentile, source, difficulty, end_time,
+            band_members_json, band_score, base_score, instrument_bonus,
+            overdrive_bonus, instrument_combo, first_seen_at, last_updated_at)
+        SELECT song_id, instrument, account_id, score, accuracy, is_full_combo,
+               stars, season, percentile, source, difficulty, end_time,
+               band_members_json, band_score, base_score, instrument_bonus,
+               overdrive_bonus, instrument_combo, ts, ts
+        FROM snapshot_rows
+        WHERE band_members_json IS NOT NULL
+        ON CONFLICT (song_id, instrument, account_id) DO UPDATE SET
+            score = CASE WHEN EXCLUDED.score != leaderboard_band_context.score THEN EXCLUDED.score ELSE leaderboard_band_context.score END,
+            accuracy = CASE WHEN EXCLUDED.score != leaderboard_band_context.score THEN EXCLUDED.accuracy ELSE leaderboard_band_context.accuracy END,
+            is_full_combo = CASE WHEN EXCLUDED.score != leaderboard_band_context.score THEN EXCLUDED.is_full_combo ELSE leaderboard_band_context.is_full_combo END,
+            stars = CASE WHEN EXCLUDED.score != leaderboard_band_context.score THEN EXCLUDED.stars ELSE leaderboard_band_context.stars END,
+            season = CASE WHEN EXCLUDED.score != leaderboard_band_context.score THEN EXCLUDED.season ELSE leaderboard_band_context.season END,
+            difficulty = CASE
+                WHEN EXCLUDED.difficulty >= 0 AND leaderboard_band_context.difficulty < 0 THEN EXCLUDED.difficulty
+                WHEN EXCLUDED.score != leaderboard_band_context.score THEN EXCLUDED.difficulty
+                ELSE leaderboard_band_context.difficulty
+            END,
+            percentile = CASE
+                WHEN EXCLUDED.score != leaderboard_band_context.score THEN EXCLUDED.percentile
+                WHEN EXCLUDED.percentile > 0 AND leaderboard_band_context.percentile <= 0 THEN EXCLUDED.percentile
+                ELSE leaderboard_band_context.percentile
+            END,
+            source = CASE
+                WHEN leaderboard_band_context.source = 'scrape' THEN 'scrape'
+                WHEN EXCLUDED.source = 'scrape' THEN 'scrape'
+                WHEN leaderboard_band_context.source = 'backfill' THEN 'backfill'
+                WHEN EXCLUDED.source = 'backfill' THEN 'backfill'
+                ELSE EXCLUDED.source
+            END,
+            end_time = CASE WHEN EXCLUDED.score != leaderboard_band_context.score THEN EXCLUDED.end_time ELSE leaderboard_band_context.end_time END,
+            band_members_json = COALESCE(EXCLUDED.band_members_json, leaderboard_band_context.band_members_json),
+            band_score = COALESCE(EXCLUDED.band_score, leaderboard_band_context.band_score),
+            base_score = COALESCE(EXCLUDED.base_score, leaderboard_band_context.base_score),
+            instrument_bonus = COALESCE(EXCLUDED.instrument_bonus, leaderboard_band_context.instrument_bonus),
+            overdrive_bonus = COALESCE(EXCLUDED.overdrive_bonus, leaderboard_band_context.overdrive_bonus),
+            instrument_combo = COALESCE(EXCLUDED.instrument_combo, leaderboard_band_context.instrument_combo),
+            first_seen_at = LEAST(leaderboard_band_context.first_seen_at, EXCLUDED.first_seen_at),
+            last_updated_at = EXCLUDED.last_updated_at
+        WHERE EXCLUDED.score != leaderboard_band_context.score
+           OR (EXCLUDED.source = 'scrape' AND leaderboard_band_context.source != 'scrape')
+           OR (EXCLUDED.difficulty >= 0 AND leaderboard_band_context.difficulty < 0)
+           OR (EXCLUDED.percentile > 0 AND leaderboard_band_context.percentile <= 0)
+           OR (EXCLUDED.band_members_json IS NOT NULL AND leaderboard_band_context.band_members_json IS NULL)
+           OR COALESCE(EXCLUDED.base_score, -1) != COALESCE(leaderboard_band_context.base_score, -1)
+           OR COALESCE(EXCLUDED.overdrive_bonus, -1) != COALESCE(leaderboard_band_context.overdrive_bonus, -1);
+
+        WITH snapshot_rows AS MATERIALIZED (
+            SELECT DISTINCT ON (song_id, instrument, account_id)
+                song_id, instrument, account_id, score, accuracy, is_full_combo,
+                stars, season, percentile, source, difficulty, end_time,
+                band_members_json, band_score, base_score, instrument_bonus,
+                overdrive_bonus, instrument_combo, ts
+            FROM _le_staging
+            WHERE instrument = @instrument
+            ORDER BY song_id, instrument, account_id, score DESC, ts DESC
+        )
+        UPDATE leaderboard_band_context context
+        SET score = CASE WHEN source.score != context.score THEN source.score ELSE context.score END,
+            accuracy = CASE WHEN source.score != context.score THEN source.accuracy ELSE context.accuracy END,
+            is_full_combo = CASE WHEN source.score != context.score THEN source.is_full_combo ELSE context.is_full_combo END,
+            stars = CASE WHEN source.score != context.score THEN source.stars ELSE context.stars END,
+            season = CASE WHEN source.score != context.score THEN source.season ELSE context.season END,
+            difficulty = CASE
+                WHEN source.difficulty >= 0 AND context.difficulty < 0 THEN source.difficulty
+                WHEN source.score != context.score THEN source.difficulty
+                ELSE context.difficulty
+            END,
+            percentile = CASE
+                WHEN source.score != context.score THEN source.percentile
+                WHEN source.percentile > 0 AND context.percentile <= 0 THEN source.percentile
+                ELSE context.percentile
+            END,
+            source = CASE
+                WHEN context.source = 'scrape' THEN 'scrape'
+                WHEN source.source = 'scrape' THEN 'scrape'
+                WHEN context.source = 'backfill' THEN 'backfill'
+                WHEN source.source = 'backfill' THEN 'backfill'
+                ELSE source.source
+            END,
+            end_time = CASE WHEN source.score != context.score THEN source.end_time ELSE context.end_time END,
+            band_members_json = COALESCE(source.band_members_json, context.band_members_json),
+            band_score = COALESCE(source.band_score, context.band_score),
+            base_score = COALESCE(source.base_score, context.base_score),
+            instrument_bonus = COALESCE(source.instrument_bonus, context.instrument_bonus),
+            overdrive_bonus = COALESCE(source.overdrive_bonus, context.overdrive_bonus),
+            instrument_combo = COALESCE(source.instrument_combo, context.instrument_combo),
+            first_seen_at = LEAST(context.first_seen_at, source.ts),
+            last_updated_at = source.ts
+        FROM snapshot_rows source
+        WHERE context.song_id = source.song_id
+          AND context.instrument = source.instrument
+          AND context.account_id = source.account_id
+          AND (
+              source.score != context.score
+              OR (source.source = 'scrape' AND context.source != 'scrape')
+              OR (source.difficulty >= 0 AND context.difficulty < 0)
+              OR (source.percentile > 0 AND context.percentile <= 0)
+              OR (source.band_members_json IS NOT NULL AND context.band_members_json IS NULL)
+              OR COALESCE(source.base_score, -1) != COALESCE(context.base_score, -1)
+              OR COALESCE(source.overdrive_bonus, -1) != COALESCE(context.overdrive_bonus, -1)
+          )
         """;
 
     internal static string BuildScoreMergeSql() =>

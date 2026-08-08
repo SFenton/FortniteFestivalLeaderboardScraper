@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Collections.Concurrent;
 using System.Threading;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Npgsql;
 
 namespace FSTService.Persistence;
@@ -44,11 +45,20 @@ public sealed class SoloCurrentProjectionBuilder
 
     private readonly NpgsqlDataSource _dataSource;
     private readonly ILogger<SoloCurrentProjectionBuilder> _log;
+    private readonly bool _useSnapshotOverlayWorkerReaders;
 
-    public SoloCurrentProjectionBuilder(NpgsqlDataSource dataSource, ILogger<SoloCurrentProjectionBuilder> log)
+    public SoloCurrentProjectionBuilder(
+        NpgsqlDataSource dataSource,
+        ILogger<SoloCurrentProjectionBuilder> log,
+        IOptions<FeatureOptions>? featureOptions = null)
     {
         _dataSource = dataSource;
         _log = log;
+        _useSnapshotOverlayWorkerReaders = featureOptions?.Value is
+        {
+            UseSnapshotOverlayWorkerReaders: true,
+            UsePublishedScopeSources: false,
+        };
     }
 
     public async Task EnsureSchemaAsync(CancellationToken ct = default)
@@ -178,7 +188,37 @@ public sealed class SoloCurrentProjectionBuilder
             WITH current_pairs AS ({CurrentScopeSql}), desired AS (
                 SELECT pair.song_id,
                        pair.instrument,
-                       state.active_snapshot_id
+                       state.active_snapshot_id,
+                       CASE
+                           WHEN state.active_snapshot_id IS NOT NULL THEN 'snapshot'
+                           WHEN @allowLegacyRows
+                            AND EXISTS (
+                                SELECT 1
+                                FROM leaderboard_entries live
+                                WHERE live.song_id = pair.song_id
+                                  AND live.instrument = pair.instrument
+                            )
+                            AND EXISTS (
+                                SELECT 1
+                                FROM leaderboard_entries_overlay overlay
+                                WHERE overlay.song_id = pair.song_id
+                                  AND overlay.instrument = pair.instrument
+                            ) THEN 'legacy-overlay'
+                           WHEN @allowLegacyRows
+                            AND EXISTS (
+                                SELECT 1
+                                FROM leaderboard_entries live
+                                WHERE live.song_id = pair.song_id
+                                  AND live.instrument = pair.instrument
+                            ) THEN 'legacy'
+                           WHEN EXISTS (
+                               SELECT 1
+                               FROM leaderboard_entries_overlay overlay
+                               WHERE overlay.song_id = pair.song_id
+                                 AND overlay.instrument = pair.instrument
+                           ) THEN 'overlay'
+                           ELSE 'legacy'
+                       END AS source_kind
                 FROM current_pairs pair
                 LEFT JOIN leaderboard_snapshot_state state
                   ON state.song_id = pair.song_id
@@ -194,8 +234,10 @@ public sealed class SoloCurrentProjectionBuilder
             WHERE scope.song_id IS NULL
                OR scope.status <> 'ready'
                OR scope.source_snapshot_id IS DISTINCT FROM desired.active_snapshot_id
+               OR scope.source_kind IS DISTINCT FROM desired.source_kind
             ORDER BY desired.instrument, desired.song_id
             """;
+        cmd.Parameters.AddWithValue("allowLegacyRows", !_useSnapshotOverlayWorkerReaders);
 
         var scopes = new List<SoloCurrentProjectionScopeKey>();
         await using var reader = await cmd.ExecuteReaderAsync(ct);
@@ -318,6 +360,23 @@ public sealed class SoloCurrentProjectionBuilder
         return await RebuildScopeAsync(scope, options, generation, updateGlobalState: true, ct);
     }
 
+    public async Task<long> PruneOrphanedScopesAsync(
+        SoloCurrentProjectionRebuildOptions? options = null,
+        CancellationToken ct = default)
+    {
+        if (!_useSnapshotOverlayWorkerReaders)
+            return 0;
+
+        options ??= new SoloCurrentProjectionRebuildOptions();
+        if (!await HasOrphanedProjectionScopesAsync(ct))
+            return 0;
+
+        var deletedRows = await DeleteOrphanedProjectionRowsAsync(options, ct);
+        var generation = await NextGenerationAsync(ct);
+        await RefreshGlobalStateFromScopesAsync(generation, fullRebuiltAt: null, ct);
+        return deletedRows;
+    }
+
     public async Task<SoloCurrentProjectionIncrementalRefreshResult> RefreshScopesAsync(
         IReadOnlyCollection<SoloCurrentProjectionScopeKey> scopes,
         SoloCurrentProjectionRebuildOptions? options = null,
@@ -413,6 +472,7 @@ public sealed class SoloCurrentProjectionBuilder
             cmd.Parameters.AddWithValue("instrument", scope.Instrument);
             cmd.Parameters.AddWithValue("generation", generation);
             cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+            cmd.Parameters.AddWithValue("allowLegacyRows", !_useSnapshotOverlayWorkerReaders);
 
             long insertedRows = 0;
             long deletedRows = 0;
@@ -499,28 +559,51 @@ public sealed class SoloCurrentProjectionBuilder
         await using var cmd = conn.CreateCommand();
         ApplyCommandOptions(cmd, options);
         cmd.CommandText = $"""
-            WITH current_pairs AS ({CurrentScopeSql}), deleted_entries AS (
-                DELETE FROM {ProjectionTable} projection
-                WHERE NOT EXISTS (
-                    SELECT 1
-                    FROM current_pairs pair
-                    WHERE pair.song_id = projection.song_id
-                      AND pair.instrument = projection.instrument
-                )
-                RETURNING 1
-            ), deleted_scopes AS (
-                DELETE FROM {ScopeTable} scope
+            WITH current_pairs AS ({CurrentScopeSql}), orphan_scopes AS MATERIALIZED (
+                SELECT scope.song_id, scope.instrument
+                FROM {ScopeTable} scope
                 WHERE NOT EXISTS (
                     SELECT 1
                     FROM current_pairs pair
                     WHERE pair.song_id = scope.song_id
                       AND pair.instrument = scope.instrument
                 )
+            ), deleted_entries AS (
+                DELETE FROM {ProjectionTable} projection
+                USING orphan_scopes orphan
+                WHERE projection.song_id = orphan.song_id
+                  AND projection.instrument = orphan.instrument
+                RETURNING 1
+            ), deleted_scopes AS (
+                DELETE FROM {ScopeTable} scope
+                USING orphan_scopes orphan
+                WHERE scope.song_id = orphan.song_id
+                  AND scope.instrument = orphan.instrument
                 RETURNING 1
             )
             SELECT COUNT(*)::BIGINT FROM deleted_entries
             """;
         return Convert.ToInt64(await cmd.ExecuteScalarAsync(ct));
+    }
+
+    public async Task<bool> HasOrphanedProjectionScopesAsync(CancellationToken ct = default)
+    {
+        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            WITH current_pairs AS ({CurrentScopeSql})
+            SELECT EXISTS (
+                SELECT 1
+                FROM {ScopeTable} scope
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM current_pairs pair
+                    WHERE pair.song_id = scope.song_id
+                      AND pair.instrument = scope.instrument
+                )
+            )
+            """;
+        return Convert.ToBoolean(await cmd.ExecuteScalarAsync(ct));
     }
 
     private async Task RefreshGlobalStateFromScopesAsync(long generation, DateTime? fullRebuiltAt, CancellationToken ct)
@@ -597,7 +680,25 @@ public sealed class SoloCurrentProjectionBuilder
         cmd.CommandTimeout = options.CommandTimeoutSeconds <= 0 ? 0 : options.CommandTimeoutSeconds;
     }
 
-    private const string CurrentScopeSql = """
+    private string CurrentScopeSql => _useSnapshotOverlayWorkerReaders
+        ? SnapshotOverlayCurrentScopeSql
+        : LegacyCompatibleCurrentScopeSql;
+
+    private const string SnapshotOverlayCurrentScopeSql = """
+        SELECT song_id, instrument
+        FROM (
+            SELECT state.song_id, state.instrument
+            FROM leaderboard_snapshot_state state
+            WHERE state.is_finalized = TRUE
+              AND state.active_snapshot_id IS NOT NULL
+            UNION
+            SELECT overlay.song_id, overlay.instrument
+            FROM leaderboard_entries_overlay overlay
+        ) pairs
+        ORDER BY instrument, song_id
+        """;
+
+    private const string LegacyCompatibleCurrentScopeSql = """
         SELECT song_id, instrument
         FROM (
             SELECT state.song_id, state.instrument
@@ -689,6 +790,7 @@ public sealed class SoloCurrentProjectionBuilder
             would_update_count    BIGINT      NOT NULL DEFAULT 0,
             would_delete_count    BIGINT      NOT NULL DEFAULT 0,
             source_snapshot_id    BIGINT,
+            source_kind           TEXT        NOT NULL DEFAULT 'legacy-compatible',
             status                TEXT        NOT NULL DEFAULT 'ready',
             error_message         TEXT,
             last_rebuilt_at       TIMESTAMPTZ,
@@ -702,6 +804,11 @@ public sealed class SoloCurrentProjectionBuilder
         ALTER TABLE solo_current_projection_scope ADD COLUMN IF NOT EXISTS would_insert_count BIGINT NOT NULL DEFAULT 0;
         ALTER TABLE solo_current_projection_scope ADD COLUMN IF NOT EXISTS would_update_count BIGINT NOT NULL DEFAULT 0;
         ALTER TABLE solo_current_projection_scope ADD COLUMN IF NOT EXISTS would_delete_count BIGINT NOT NULL DEFAULT 0;
+        ALTER TABLE solo_current_projection_scope ADD COLUMN IF NOT EXISTS source_kind TEXT NOT NULL DEFAULT 'legacy-compatible';
+        UPDATE solo_current_projection_scope
+        SET source_kind = 'snapshot'
+        WHERE source_kind = 'legacy-compatible'
+          AND source_snapshot_id IS NOT NULL;
 
         CREATE INDEX IF NOT EXISTS ix_scps_status_updated
             ON solo_current_projection_scope (status, updated_at DESC);
@@ -717,22 +824,56 @@ public sealed class SoloCurrentProjectionBuilder
               AND active_snapshot_id IS NOT NULL
             LIMIT 1
         ), source_scope AS (
-            SELECT (
-                EXISTS (SELECT 1 FROM active_snapshot)
-                OR EXISTS (
-                    SELECT 1
-                    FROM leaderboard_entries live
-                    WHERE live.song_id = @songId
-                      AND live.instrument = @instrument
-                      AND NOT EXISTS (SELECT 1 FROM active_snapshot)
-                )
-                OR EXISTS (
-                    SELECT 1
-                    FROM leaderboard_entries_overlay overlay
-                    WHERE overlay.song_id = @songId
-                      AND overlay.instrument = @instrument
-                )
-            ) AS exists
+            SELECT
+                (
+                    EXISTS (SELECT 1 FROM active_snapshot)
+                    OR (
+                        @allowLegacyRows
+                        AND EXISTS (
+                            SELECT 1
+                            FROM leaderboard_entries live
+                            WHERE live.song_id = @songId
+                              AND live.instrument = @instrument
+                              AND NOT EXISTS (SELECT 1 FROM active_snapshot)
+                        )
+                    )
+                    OR EXISTS (
+                        SELECT 1
+                        FROM leaderboard_entries_overlay overlay
+                        WHERE overlay.song_id = @songId
+                          AND overlay.instrument = @instrument
+                    )
+                ) AS exists,
+                CASE
+                    WHEN EXISTS (SELECT 1 FROM active_snapshot) THEN 'snapshot'
+                    WHEN @allowLegacyRows
+                     AND EXISTS (
+                         SELECT 1
+                         FROM leaderboard_entries live
+                         WHERE live.song_id = @songId
+                           AND live.instrument = @instrument
+                     )
+                     AND EXISTS (
+                         SELECT 1
+                         FROM leaderboard_entries_overlay overlay
+                         WHERE overlay.song_id = @songId
+                           AND overlay.instrument = @instrument
+                     ) THEN 'legacy-overlay'
+                    WHEN @allowLegacyRows
+                     AND EXISTS (
+                         SELECT 1
+                         FROM leaderboard_entries live
+                         WHERE live.song_id = @songId
+                           AND live.instrument = @instrument
+                     ) THEN 'legacy'
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM leaderboard_entries_overlay overlay
+                        WHERE overlay.song_id = @songId
+                          AND overlay.instrument = @instrument
+                    ) THEN 'overlay'
+                    ELSE 'legacy'
+                END AS source_kind
         ), base_rows AS (
             SELECT live.account_id, live.score, live.accuracy, live.is_full_combo, live.stars,
                    live.season, live.difficulty, live.percentile, live.end_time, live.rank,
@@ -742,6 +883,7 @@ public sealed class SoloCurrentProjectionBuilder
             FROM leaderboard_entries live
             WHERE live.song_id = @songId
               AND live.instrument = @instrument
+              AND @allowLegacyRows
               AND NOT EXISTS (SELECT 1 FROM active_snapshot)
             UNION ALL
             SELECT snapshot.account_id, snapshot.score, snapshot.accuracy, snapshot.is_full_combo, snapshot.stars,
@@ -836,7 +978,7 @@ public sealed class SoloCurrentProjectionBuilder
             INSERT INTO solo_current_projection_scope
             (song_id, instrument, projection_generation, row_count, existing_row_count, desired_row_count,
              unchanged_row_count, would_insert_count, would_update_count, would_delete_count,
-             source_snapshot_id, status, error_message, last_rebuilt_at, updated_at)
+             source_snapshot_id, source_kind, status, error_message, last_rebuilt_at, updated_at)
             SELECT @songId,
                    @instrument,
                    @generation,
@@ -848,6 +990,7 @@ public sealed class SoloCurrentProjectionBuilder
                    diff_metrics.would_update_count,
                    diff_metrics.would_delete_count,
                    (SELECT active_snapshot_id FROM active_snapshot),
+                   (SELECT source_kind FROM source_scope),
                    'ready',
                    NULL,
                    @now,
@@ -864,6 +1007,7 @@ public sealed class SoloCurrentProjectionBuilder
                 would_update_count = EXCLUDED.would_update_count,
                 would_delete_count = EXCLUDED.would_delete_count,
                 source_snapshot_id = EXCLUDED.source_snapshot_id,
+                source_kind = EXCLUDED.source_kind,
                 status = EXCLUDED.status,
                 error_message = EXCLUDED.error_message,
                 last_rebuilt_at = EXCLUDED.last_rebuilt_at,

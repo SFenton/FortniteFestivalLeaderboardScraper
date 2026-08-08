@@ -284,6 +284,127 @@ public sealed class InstrumentDatabaseTests : IDisposable
         Assert.Null(Db.GetEntry("song-unsupported", "acct-unsupported"));
     }
 
+    [Fact]
+    public void SupplementalBandContext_RejectsSameScoreBandChangesBeforeLaterScoreUpdates()
+    {
+        Db.WriteLegacyLiveLeaderboardSupplementalRows = false;
+        var withBandContext = MakeEntry("acct-band", 100_000);
+        withBandContext.Source = "backfill";
+        withBandContext.BandMembers =
+        [
+            new BandMemberStats { MemberIndex = 0, AccountId = "acct-band", InstrumentId = 0, Score = 60_000 },
+            new BandMemberStats { MemberIndex = 1, AccountId = "acct-bandmate", InstrumentId = 1, Score = 40_000 },
+        ];
+        withBandContext.BandScore = 150_000;
+        withBandContext.BaseScore = 100_000;
+        withBandContext.InstrumentBonus = 30_000;
+        withBandContext.OverdriveBonus = 20_000;
+        withBandContext.InstrumentCombo = "0:1";
+        Db.UpsertEntries("song-band-context", [withBandContext]);
+
+        var rejectedBandUpdate = MakeEntry("acct-band", 100_000);
+        rejectedBandUpdate.Source = "backfill";
+        rejectedBandUpdate.BandMembers =
+        [
+            new BandMemberStats { MemberIndex = 0, AccountId = "acct-other", InstrumentId = 0, Score = 60_000 },
+            new BandMemberStats { MemberIndex = 1, AccountId = "acct-bandmate", InstrumentId = 1, Score = 40_000 },
+        ];
+        rejectedBandUpdate.BandScore = 999_000;
+        rejectedBandUpdate.BaseScore = 100_000;
+        rejectedBandUpdate.InstrumentBonus = 999_999;
+        rejectedBandUpdate.OverdriveBonus = 20_000;
+        rejectedBandUpdate.InstrumentCombo = "9:9";
+        Db.UpsertEntries("song-band-context", [rejectedBandUpdate]);
+
+        var scoreOnlyUpdate = MakeEntry("acct-band", 110_000);
+        scoreOnlyUpdate.Source = "backfill";
+        Db.UpsertEntries("song-band-context", [scoreOnlyUpdate]);
+
+        using var connection = _fixture.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT score,
+                   band_members_json::text,
+                   band_score,
+                   base_score,
+                   instrument_bonus,
+                   overdrive_bonus,
+                   instrument_combo
+            FROM leaderboard_band_context
+            WHERE song_id = 'song-band-context'
+              AND instrument = 'Solo_Guitar'
+              AND account_id = 'acct-band'
+            """;
+        using var reader = command.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(110_000, reader.GetInt32(0));
+        Assert.Contains("acct-band", reader.GetString(1));
+        Assert.DoesNotContain("acct-other", reader.GetString(1));
+        Assert.Equal(150_000, reader.GetInt32(2));
+        Assert.Equal(100_000, reader.GetInt32(3));
+        Assert.Equal(30_000, reader.GetInt32(4));
+        Assert.Equal(20_000, reader.GetInt32(5));
+        Assert.Equal("0:1", reader.GetString(6));
+    }
+
+    [Fact]
+    public void SnapshotOverlayWorkerReaders_IgnoreLegacyRowsAndResolveOverlays()
+    {
+        InsertScrape(42);
+        InsertSnapshotEntry(42, "song-current", "acct-current", 100_000, "scrape");
+        InsertSnapshotState("song-current", 42, isFinalized: true);
+        InsertOverlayEntry("song-current", "acct-current", 120_000, "backfill", 200, "test");
+        InsertOverlayEntry("song-overlay-only", "acct-overlay", 90_000, "backfill", 200, "test");
+        Db.UpsertEntries("song-current", [MakeEntry("acct-legacy-conflict", 999_000)]);
+        Db.UpsertEntries("song-legacy-only", [MakeEntry("acct-legacy-only", 888_000)]);
+        InsertProjectionScope("song-legacy-only", sourceSnapshotId: null, rowCount: 1);
+        InsertProjectionEntry("song-legacy-only", "acct-legacy-only", 888_000, "legacy-projection");
+        Db.UseSnapshotOverlayWorkerReaders = true;
+
+        var current = Db.GetEntry("song-current", "acct-current");
+        var batch = Db.GetEntriesForAccounts("song-current", ["acct-current", "acct-legacy-conflict"]);
+        var all = Db.GetAllEntriesForAccounts(["acct-current", "acct-overlay", "acct-legacy-only"]);
+        var scores = Db.GetPlayerScores("acct-current");
+        var counts = Db.GetAllSongCounts();
+
+        Assert.NotNull(current);
+        Assert.Equal(120_000, current.Score);
+        Assert.Equal("backfill", current.Source);
+        Assert.Single(batch);
+        Assert.DoesNotContain("acct-legacy-conflict", batch.Keys);
+        Assert.Equal(2, all.Count);
+        Assert.Contains(("song-current", "acct-current"), all.Keys);
+        Assert.Contains(("song-overlay-only", "acct-overlay"), all.Keys);
+        Assert.DoesNotContain(("song-legacy-only", "acct-legacy-only"), all.Keys);
+        Assert.Equal(120_000, Assert.Single(scores).Score);
+        Assert.Equal(1, counts["song-current"]);
+        Assert.Equal(1, counts["song-overlay-only"]);
+        Assert.DoesNotContain("song-legacy-only", counts.Keys);
+        Assert.Equal(2, Db.GetTotalEntryCount());
+        Assert.Null(Db.GetEntry("song-legacy-only", "acct-legacy-only"));
+        Assert.Empty(Db.GetCurrentStateScoresInBand("song-legacy-only", 0, 1_000_000));
+        Assert.Equal(0, Db.GetCurrentStatePopulationAtOrBelow("song-legacy-only", 1_000_000));
+        Assert.Equal(0, Db.GetCurrentStateRankOffsetCoverage("song-legacy-only").TotalCount);
+    }
+
+    [Fact]
+    public void SnapshotOverlayWorkerReaders_BulkProfilesRecomputeRanksAfterOverlayResolution()
+    {
+        InsertScrape(42);
+        InsertSnapshotEntry(42, "song-ranked", "acct-first", 100_000, "scrape");
+        InsertSnapshotEntry(42, "song-ranked", "acct-second", 90_000, "scrape");
+        InsertSnapshotState("song-ranked", 42, isFinalized: true);
+        InsertOverlayEntry("song-ranked", "acct-second", 110_000, "backfill", 200, "test");
+        Db.UseSnapshotOverlayWorkerReaders = true;
+
+        var profiles = Db.GetCurrentStatePlayerScoresForAccounts(
+            ["acct-first", "acct-second"]);
+
+        Assert.Equal(2, profiles.Count);
+        Assert.Equal(2, Assert.Single(profiles["acct-first"]).Rank);
+        Assert.Equal(1, Assert.Single(profiles["acct-second"]).Rank);
+    }
+
     // ═══ GetLeaderboard ═════════════════════════════════════════
 
     [Fact]

@@ -807,13 +807,15 @@ All instrument-partitioned families use these nine keys:
 | Tables | Class | Write path | Read path / semantics |
 |---|---|---|---|
 | `leaderboard_staging`, `leaderboard_staging_meta`, `leaderboard_staging_v2` | Work state | Bounded/COPY writer | Never public; truncate/replay only after operation proof |
-| `leaderboard_entries` | Legacy mutable rollback/fallback source | Main scrape dual-write is disabled; backfill/refresh/neighbor writes still dual-write with overlays. The refreshed owner card has `36,769,051` rows after `970` new backfill rows | Public mapped reads bypass it, but publication-critical `PostScrapeBandExtractor`, conditional projection fallback, direct legacy helpers, diagnostics, and restore tooling still own it |
+| `leaderboard_entries` | Legacy mutable rollback/fallback source | Main scrape dual-write is disabled; backfill/refresh/neighbor writes still dual-write with overlays. `Features:UseSnapshotOverlayWorkerReaders` is a default-off worker-only migration switch | Public mapped reads bypass it. The migration switch moves active helpers to finalized snapshots/overlays and band extraction to the narrow accumulated context source; production keeps it off until full-scrape parity |
 | `leaderboard_entries_snapshot` partitions | Durable physical source | Worker snapshot writer | Worker candidate reads use active state; service/exports use the mapped published snapshot after PG-1 cutover |
 | `leaderboard_snapshot_state` | Source-selection metadata | Worker finalization | Active source, not automatically a published source |
 | `leaderboard_scope_fingerprints` | Correctness/audit metadata | Worker observe/coverage dual-write | Content, reported entries/pages, completeness, source scrape, and published scrape must validate before publication |
 | `leaderboard_published_scope_source` | Durable published source selection | Worker candidate build and publication transaction | Service and export resolver when `Features:UsePublishedScopeSources=true`; supports physical snapshot and explicit empty sources |
 | `leaderboard_population`, `song_stats` | Durable derived metadata | Worker/post-process | Ranking totals/statistics; generation must match source |
-| `leaderboard_entries_overlay` | Durable corrective overlay | Controlled writes | Merged with selected base source; precedence is explicit |
+| `leaderboard_entries_overlay` | Durable corrective overlay | Controlled writes | Merged with selected base source; precedence is explicit. Equal/higher-priority score-only updates preserve existing non-null band JSON, band totals, bonuses, and instrument combo |
+| `leaderboard_band_context` | Narrow accumulated solo-to-band extraction source | Solo spool writer and supplemental `InstrumentDatabase` writes | Seeded once, only when the reader candidate is enabled, from legacy band rows plus overlay-only band rows. Subsequent writes mirror the legacy conflict gate exactly; pre-extraction snapshot reconciliation repairs writer ordering without overwriting later supplemental updates |
+| `leaderboard_band_context_state` | Band-context seed ledger | `PostScrapeBandExtractor` | Advisory-lock protected one-time source counts and completion timestamp; prevents startup or repeated broad seed scans |
 | `leaderboard_current_entries` | Empty retired logical current schema | None; writer and startup creation removed | Never authoritative; rows truncated 2026-07-28, primary-key family retained, dormant rank/change secondary trees retired; rebuild semantic current from the published physical map only after an explicit future migration/promotion |
 | `leaderboard_entry_versions` | Empty retired logical chronology schema | None; writer and startup creation removed | Non-authoritative scrape `1223`-`1237` chronology intentionally discarded 2026-07-28; primary-key family retained and dormant open/from-scrape secondary trees retired |
 | `leaderboard_logical_write_metrics` | Retained audit artifact | None; metrics writer and startup creation removed | Historical 108-row evidence remains until cleanup-image full-scrape parity permits physical cleanup |
@@ -1103,6 +1105,24 @@ partial result.
 | `service_notifications` | Durable notification outbox/read model | `ImprovementNotificationService` | Existing and item-shop rows default to visible routine metadata. Public reads and expiry cleanup require `delivery_state='visible'`; future process split must preserve replay. |
 | `improvement_notification_maintenance_runs`, `improvement_notification_maintenance_candidates` | Immutable historical audit/quarantine compatibility | No executable writer; schema retained by `ImprovementNotificationSchema` | The completed purpose `maintenance_pro_lead_max_score_repair_v1` run stores its exact manifest, total-charted count, canonical classification, and `26` quarantined candidates with `0` visible deliveries. `published_scrape_id` is a non-null immutable integer with no retention-coupled `scrape_log` FK. Rows have no expiry column and never participate in public reads, routine supersession, source cursors, or WebSocket invalidation. |
 | `api_response_cache`, `api_response_cache_staging` | Cache | Precompute/publication path | Staging swaps atomically after long band snapshot work; keep its exclusive lock at transaction end; safe to clear and regenerate from published source |
+
+`solo_current_projection_scope.source_kind` records whether each projection
+scope was rebuilt from an active snapshot, overlay-only state, legacy rows, or
+mixed legacy/overlay state. Existing non-null snapshot scopes migrate
+metadata-only to `snapshot`; null-source scopes remain
+`legacy-compatible` until a candidate rebuild proves their source. Candidate
+notification scans accept only `snapshot` and `overlay`, startup recovery
+prunes/rebuilds unresolved scopes first, and precompute fails closed rather
+than completing a partial notification run.
+
+Band context is intentionally separate from full physical snapshots. A fresh
+snapshot can omit previously observed band JSON, while the legacy mutable row
+used `COALESCE` to retain it across scrapes. `leaderboard_band_context`
+preserves only the approximately 84k rows that have band payloads, updates
+their scalar fields with the same legacy conflict predicates, and remains
+transactionally aligned with snapshot and supplemental writes. Extraction
+therefore avoids both the legacy 40 GB heap and a scan of roughly 40 million
+active snapshot rows.
 
 Notification recovery and registered-phase budget operations are documented in
 `docs/database/ImprovementNotificationRecoveryRunbook.md`. The protected

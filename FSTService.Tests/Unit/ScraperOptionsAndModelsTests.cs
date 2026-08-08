@@ -114,6 +114,7 @@ public class ScraperOptionsAndModelsTests
 
         Assert.True(opts.WriteLegacyLiveLeaderboardDuringScrape);
         Assert.True(opts.WriteLegacyLiveLeaderboardSupplementalRows);
+        Assert.False(opts.UseSnapshotOverlayWorkerReaders);
         Assert.False(opts.SkipUnchangedPhysicalLeaderboardSnapshots);
         Assert.False(opts.WritePublishedScopeSources);
         Assert.False(opts.UsePublishedScopeSources);

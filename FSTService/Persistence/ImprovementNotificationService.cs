@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using NpgsqlTypes;
 
@@ -13,11 +14,20 @@ public sealed class ImprovementNotificationService
 
     private readonly NpgsqlDataSource _dataSource;
     private readonly ILogger<ImprovementNotificationService> _log;
+    private readonly bool _useSnapshotOverlayWorkerReaders;
 
-    public ImprovementNotificationService(NpgsqlDataSource dataSource, ILogger<ImprovementNotificationService> log)
+    public ImprovementNotificationService(
+        NpgsqlDataSource dataSource,
+        ILogger<ImprovementNotificationService> log,
+        IOptions<FeatureOptions>? featureOptions = null)
     {
         _dataSource = dataSource;
         _log = log;
+        _useSnapshotOverlayWorkerReaders = featureOptions?.Value is
+        {
+            UseSnapshotOverlayWorkerReaders: true,
+            UsePublishedScopeSources: false,
+        };
     }
 
     public ImprovementNotificationPublicationStatus GetPublicationStatus()
@@ -633,6 +643,14 @@ public sealed class ImprovementNotificationService
         long? runId = null;
 
         using var conn = _dataSource.OpenConnection();
+        if (_useSnapshotOverlayWorkerReaders
+            && options.IncludePlayers
+            && options.IncludeSongEvents
+            && HasUnresolvedPlayerProjectionProvenance(conn))
+        {
+            throw new InvalidOperationException(
+                "Improvement notification detection requires snapshot/overlay projection provenance; rebuild unresolved solo projection scopes first.");
+        }
         var previousPlayerSongCompletedAt = options.IncludePlayers && options.IncludeSongEvents
             ? ReadLatestCompletedRunAt(conn, includePlayers: true, includeSongEvents: true)
             : null;
@@ -710,21 +728,40 @@ public sealed class ImprovementNotificationService
 
             if (options.IncludePlayers && options.IncludeSongEvents)
             {
-                var rows = ExecuteScalarLong(conn, tx, CountPlayerSongRowsSql(registeredOnly), options.CommandTimeoutSeconds);
+                var rows = ExecuteScalarLong(
+                    conn,
+                    tx,
+                    CountPlayerSongRowsSql(registeredOnly, _useSnapshotOverlayWorkerReaders),
+                    options.CommandTimeoutSeconds);
                 var baselineRows = execute && !options.BaselineOnly && registeredOnly
                     ? ExecuteScalarLong(
                         conn,
                         tx,
-                        BaselineNewPlayerSongSubjectsSql(),
+                        BaselineNewPlayerSongSubjectsSql(_useSnapshotOverlayWorkerReaders),
                         options.CommandTimeoutSeconds,
                         detectedAt: detectedAt,
                         previousCompletedAt: previousPlayerSongCompletedAt)
                     : 0;
                 var events = options.BaselineOnly
                     ? 0
-                    : ExecuteScalarLong(conn, tx, PlayerSongEventsSql(registeredOnly, execute), options.CommandTimeoutSeconds, runId, detectedAt, expiresAt, source);
+                    : ExecuteScalarLong(
+                        conn,
+                        tx,
+                        PlayerSongEventsSql(registeredOnly, execute, _useSnapshotOverlayWorkerReaders),
+                        options.CommandTimeoutSeconds,
+                        runId,
+                        detectedAt,
+                        expiresAt,
+                        source);
                 var stateRows = execute
-                    ? ExecuteScalarLong(conn, tx, PlayerSongStateUpsertSql(registeredOnly), options.CommandTimeoutSeconds, null, detectedAt, expiresAt)
+                    ? ExecuteScalarLong(
+                        conn,
+                        tx,
+                        PlayerSongStateUpsertSql(registeredOnly, _useSnapshotOverlayWorkerReaders),
+                        options.CommandTimeoutSeconds,
+                        null,
+                        detectedAt,
+                        expiresAt)
                     : rows;
 
                 report = report with
@@ -1296,6 +1333,76 @@ public sealed class ImprovementNotificationService
         ? $"WHERE EXISTS (SELECT 1 FROM (SELECT DISTINCT account_id FROM registered_users) ru WHERE ru.account_id = {alias}.account_id)"
         : string.Empty;
 
+    private static string PlayerCurrentProjectionRowsFromSql(
+        bool registeredOnly,
+        bool useSnapshotOverlayWorkerReaders)
+    {
+        if (!useSnapshotOverlayWorkerReaders)
+        {
+            return $"""
+                FROM current_leaderboard_entries c
+                {RegisteredPlayerFilter(registeredOnly)}
+                """;
+        }
+
+        var registeredPredicate = registeredOnly
+            ? """
+              AND EXISTS (
+                  SELECT 1
+                  FROM (SELECT DISTINCT account_id FROM registered_users) ru
+                  WHERE ru.account_id = c.account_id
+              )
+              """
+            : string.Empty;
+        return $"""
+            FROM current_leaderboard_entries c
+            JOIN solo_current_projection_scope scope
+              ON scope.song_id = c.song_id
+             AND scope.instrument = c.instrument
+             AND scope.projection_generation = c.projection_generation
+             AND scope.status = 'ready'
+            WHERE (
+                    (
+                        scope.source_kind = 'snapshot'
+                        AND EXISTS (
+                        SELECT 1
+                        FROM leaderboard_snapshot_state state
+                        WHERE state.song_id = scope.song_id
+                          AND state.instrument = scope.instrument
+                          AND state.is_finalized = TRUE
+                          AND state.active_snapshot_id IS NOT NULL
+                          AND state.active_snapshot_id IS NOT DISTINCT FROM scope.source_snapshot_id
+                        )
+                    )
+                    OR (
+                        scope.source_kind = 'overlay'
+                        AND
+                        scope.source_snapshot_id IS NULL
+                        AND EXISTS (
+                            SELECT 1
+                            FROM leaderboard_entries_overlay overlay
+                            WHERE overlay.song_id = scope.song_id
+                              AND overlay.instrument = scope.instrument
+                        )
+                    )
+                  )
+              {registeredPredicate}
+            """;
+    }
+
+    private static bool HasUnresolvedPlayerProjectionProvenance(NpgsqlConnection conn)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM solo_current_projection_scope scope
+                WHERE scope.source_kind NOT IN ('snapshot', 'overlay')
+            )
+            """;
+        return Convert.ToBoolean(cmd.ExecuteScalar());
+    }
+
     private static string PublishedBandCurrentJoin(string alias = "c") => $"""
         JOIN band_current_projection_scope {alias}_published_scope
           ON {alias}_published_scope.song_id = {alias}.song_id
@@ -1355,10 +1462,11 @@ public sealed class ImprovementNotificationService
         """;
     }
 
-    private static string CountPlayerSongRowsSql(bool registeredOnly) => $"""
+    private static string CountPlayerSongRowsSql(
+        bool registeredOnly,
+        bool useSnapshotOverlayWorkerReaders) => $"""
         SELECT COUNT(*)
-        FROM current_leaderboard_entries c
-        {RegisteredPlayerFilter(registeredOnly)};
+        {PlayerCurrentProjectionRowsFromSql(registeredOnly, useSnapshotOverlayWorkerReaders)};
         """;
 
     private static string CountPlayerRankRowsSql(bool registeredOnly) => $"""
@@ -1390,7 +1498,48 @@ public sealed class ImprovementNotificationService
         SELECT COUNT(*) FROM subject_rows;
         """;
 
-    private static string BaselineNewPlayerSongSubjectsSql() => """
+    private static string BaselineNewPlayerSongSubjectsSql(bool useSnapshotOverlayWorkerReaders)
+    {
+        var sourceJoin = useSnapshotOverlayWorkerReaders
+            ? """
+              JOIN solo_current_projection_scope scope
+                ON scope.song_id = c.song_id
+               AND scope.instrument = c.instrument
+               AND scope.projection_generation = c.projection_generation
+               AND scope.status = 'ready'
+              """
+            : string.Empty;
+        var sourcePredicate = useSnapshotOverlayWorkerReaders
+            ? """
+              WHERE (
+                      (
+                          scope.source_kind = 'snapshot'
+                          AND EXISTS (
+                          SELECT 1
+                          FROM leaderboard_snapshot_state state
+                          WHERE state.song_id = scope.song_id
+                            AND state.instrument = scope.instrument
+                            AND state.is_finalized = TRUE
+                            AND state.active_snapshot_id IS NOT NULL
+                            AND state.active_snapshot_id IS NOT DISTINCT FROM scope.source_snapshot_id
+                          )
+                      )
+                      OR (
+                          scope.source_kind = 'overlay'
+                          AND
+                          scope.source_snapshot_id IS NULL
+                          AND EXISTS (
+                              SELECT 1
+                              FROM leaderboard_entries_overlay overlay
+                              WHERE overlay.song_id = scope.song_id
+                                AND overlay.instrument = scope.instrument
+                          )
+                      )
+                    )
+              """
+            : string.Empty;
+
+        return $"""
         WITH new_subjects AS (
             SELECT ru.account_id
             FROM (
@@ -1411,12 +1560,15 @@ public sealed class ImprovementNotificationService
             SELECT c.account_id, c.song_id, c.instrument, c.score, c.rank, c.stars, c.is_full_combo,
                    c.difficulty, c.percentile, c.season, c.first_seen_at, c.last_updated_at, @detectedAt, now()
             FROM current_leaderboard_entries c
+            {sourceJoin}
             JOIN new_subjects subject ON subject.account_id = c.account_id
+            {sourcePredicate}
             ON CONFLICT (account_id, song_id, instrument) DO NOTHING
             RETURNING 1
         )
         SELECT COUNT(*) FROM inserted;
         """;
+    }
 
     private static string BaselineNewPlayerRankSubjectsSql() => """
         WITH new_subjects AS (
@@ -1522,11 +1674,13 @@ public sealed class ImprovementNotificationService
         SELECT COUNT(*) FROM inserted;
         """;
 
-    private static string PlayerSongEventsSql(bool registeredOnly, bool execute) => $"""
+    private static string PlayerSongEventsSql(
+        bool registeredOnly,
+        bool execute,
+        bool useSnapshotOverlayWorkerReaders) => $"""
         WITH current_rows AS (
             SELECT c.*
-            FROM current_leaderboard_entries c
-            {RegisteredPlayerFilter(registeredOnly)}
+            {PlayerCurrentProjectionRowsFromSql(registeredOnly, useSnapshotOverlayWorkerReaders)}
         ), event_rows AS (
             SELECT c.account_id,
                    v.event_kind,
@@ -1879,11 +2033,12 @@ public sealed class ImprovementNotificationService
             """;
     }
 
-    private static string PlayerSongStateUpsertSql(bool registeredOnly) => $"""
+    private static string PlayerSongStateUpsertSql(
+        bool registeredOnly,
+        bool useSnapshotOverlayWorkerReaders) => $"""
         WITH current_rows AS (
             SELECT c.*
-            FROM current_leaderboard_entries c
-            {RegisteredPlayerFilter(registeredOnly)}
+            {PlayerCurrentProjectionRowsFromSql(registeredOnly, useSnapshotOverlayWorkerReaders)}
         ), upserted AS (
             INSERT INTO player_improvement_state (
                 account_id, song_id, instrument, score, rank, stars, is_full_combo,

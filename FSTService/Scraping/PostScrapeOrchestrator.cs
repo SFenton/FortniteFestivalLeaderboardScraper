@@ -213,7 +213,11 @@ public sealed class PostScrapeOrchestrator
         {
             _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.BandScraping);
             _progress.SetSubOperation("extracting_band_context");
-            bandExtractionResult = await RunPhaseAsync(ctx, "BandExtraction", () => _bandExtractor.RunAsync(ct), BandExtractionResult.Empty);
+            bandExtractionResult = await RunPhaseAsync(
+                ctx,
+                "BandExtraction",
+                () => _bandExtractor.RunAsync(ctx.ScrapeId > 0 ? ctx.ScrapeId : null, ct),
+                BandExtractionResult.Empty);
         }
 
         if (bandScrapeTask is not null)
@@ -875,6 +879,46 @@ public sealed class PostScrapeOrchestrator
             "Published scrape {ScrapeId} has incomplete improvement notification detection; running startup recovery before the next scrape.",
             publishedScrapeId);
 
+        if (_persistence.UseSnapshotOverlayWorkerReaders)
+        {
+            var builder = _soloCurrentProjectionBuilder
+                ?? throw new InvalidOperationException(
+                    "Snapshot/overlay notification recovery requires a configured solo projection builder.");
+            await builder.EnsureSchemaAsync(ct);
+            await builder.PruneOrphanedScopesAsync(
+                new SoloCurrentProjectionRebuildOptions
+                {
+                    CommandTimeoutSeconds = Math.Max(
+                        0,
+                        _options.Value.SoloProjectionCleanupCommandTimeoutSeconds),
+                    MaxDegreeOfParallelism = Math.Max(
+                        1,
+                        _options.Value.SoloProjectionCleanupMaxDegreeOfParallelism),
+                },
+                ct);
+            var staleScopes = await builder.LoadStaleScopesAsync(ct);
+            if (staleScopes.Count > 0)
+            {
+                var refresh = await builder.RefreshScopesAsync(
+                    staleScopes,
+                    new SoloCurrentProjectionRebuildOptions
+                    {
+                        CommandTimeoutSeconds = Math.Max(
+                            0,
+                            _options.Value.SoloProjectionCleanupCommandTimeoutSeconds),
+                        MaxDegreeOfParallelism = Math.Max(
+                            1,
+                            _options.Value.SoloProjectionCleanupMaxDegreeOfParallelism),
+                    },
+                    ct);
+                if (refresh.FailedScopeCount > 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Snapshot/overlay startup recovery failed to refresh {refresh.FailedScopeCount} solo projection scope(s).");
+                }
+            }
+        }
+
         await _improvementNotificationRecovery.RunPublishedScrapeAsync(
             expectedPublishedScrapeId: publishedScrapeId,
             execute: true,
@@ -1100,11 +1144,6 @@ public sealed class PostScrapeOrchestrator
                 .OrderBy(static scope => scope.Instrument, StringComparer.Ordinal)
                 .ThenBy(static scope => scope.SongId, StringComparer.Ordinal)
                 .ToArray();
-            if (scopes.Length == 0)
-            {
-                _log.LogInformation("Cleanup solo current projection refresh skipped; no stale scopes found.");
-                return;
-            }
 
             var options = _options.Value;
             var refreshOptions = new SoloCurrentProjectionRebuildOptions
@@ -1112,6 +1151,19 @@ public sealed class PostScrapeOrchestrator
                 CommandTimeoutSeconds = Math.Max(0, options.SoloProjectionCleanupCommandTimeoutSeconds),
                 MaxDegreeOfParallelism = Math.Max(1, options.SoloProjectionCleanupMaxDegreeOfParallelism),
             };
+            var orphanedRows = await builder.PruneOrphanedScopesAsync(refreshOptions, ct);
+            if (orphanedRows > 0)
+            {
+                _log.LogInformation(
+                    "Cleanup removed {OrphanedRows:N0} solo projection row(s) with no snapshot/overlay source.",
+                    orphanedRows);
+            }
+
+            if (scopes.Length == 0)
+            {
+                _log.LogInformation("Cleanup solo current projection refresh skipped; no stale scopes found.");
+                return;
+            }
 
             _log.LogInformation(
                 "Cleanup refreshing {ScopeCount:N0} stale or deferred-write solo current projection scope(s) with maxDegree={MaxDegree}.",
@@ -1611,7 +1663,9 @@ public sealed class PostScrapeOrchestrator
         });
     }
 
-    private static bool ShouldActivateShadowSnapshotsBeforeDerived(ScrapePassContext ctx, ScrapePhase resolvedPhases)
+    internal static bool ShouldActivateShadowSnapshotsBeforeDerived(
+        ScrapePassContext ctx,
+        ScrapePhase resolvedPhases)
     {
         if (ctx.ScrapeId <= 0)
             return false;

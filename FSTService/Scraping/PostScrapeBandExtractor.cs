@@ -10,7 +10,7 @@ namespace FSTService.Scraping;
 
 /// <summary>
 /// Post-scrape phase that extracts band leaderboard data from solo
-/// <c>leaderboard_entries</c> rows where <c>band_members_json IS NOT NULL</c>.
+/// leaderboard rows where <c>band_members_json IS NOT NULL</c>.
 ///
 /// Runs entirely in SQL — reads the JSONB column, groups by team key,
 /// and upserts into <c>band_entries</c>, <c>band_member_stats</c>, and
@@ -19,9 +19,13 @@ namespace FSTService.Scraping;
 /// </summary>
 public sealed class PostScrapeBandExtractor
 {
+    private const int BandContextSeedLockNamespace = 1179866191;
+    private const int BandContextSeedLockKey = 1;
+
     private readonly NpgsqlDataSource _dataSource;
     private readonly IPathDataStore _pathDataStore;
     private readonly ScraperOptions _options;
+    private readonly bool _useSnapshotOverlayWorkerReaders;
     private readonly ScrapeProgressTracker? _progress;
     private readonly ILogger<PostScrapeBandExtractor> _log;
 
@@ -30,21 +34,31 @@ public sealed class PostScrapeBandExtractor
         IPathDataStore pathDataStore,
         ILogger<PostScrapeBandExtractor> log,
         ScrapeProgressTracker? progress = null,
-        IOptions<ScraperOptions>? options = null)
+        IOptions<ScraperOptions>? options = null,
+        IOptions<FeatureOptions>? featureOptions = null)
     {
         _dataSource = dataSource;
         _pathDataStore = pathDataStore;
         _options = options?.Value ?? new ScraperOptions();
+        _useSnapshotOverlayWorkerReaders = featureOptions?.Value is
+        {
+            UseSnapshotOverlayWorkerReaders: true,
+            UsePublishedScopeSources: false,
+        };
         _progress = progress;
         _log = log;
     }
 
     /// <summary>
     /// Extract band entries from solo leaderboard data and upsert into band tables.
-    /// Processes all instruments in a single pass using the partial index on
-    /// <c>band_members_json IS NOT NULL</c>.
+    /// Processes all instruments in a single pass. The rollout candidate reads
+    /// finalized snapshots plus overlays; the rollback path reads the legacy
+    /// mutable table.
     /// </summary>
-    public async Task<BandExtractionResult> RunAsync(CancellationToken ct)
+    public Task<BandExtractionResult> RunAsync(CancellationToken ct) =>
+        RunAsync(snapshotId: null, ct);
+
+    public async Task<BandExtractionResult> RunAsync(long? snapshotId, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
         _log.LogInformation("Post-scrape band extraction starting...");
@@ -56,31 +70,48 @@ public sealed class PostScrapeBandExtractor
             ? Math.Clamp(_options.BandExtractionParallelism, 1, 64)
             : Math.Clamp(Environment.ProcessorCount, 1, 8);
 
-        long bandContextRowCount;
-        await using (var conn = await _dataSource.OpenConnectionAsync(ct))
+        if (_useSnapshotOverlayWorkerReaders)
         {
-            // Count rows with band data to estimate work
-            await using (var countCmd = conn.CreateCommand())
-            {
-                countCmd.CommandText = "SELECT COUNT(*) FROM leaderboard_entries WHERE band_members_json IS NOT NULL";
-                bandContextRowCount = (long)(await countCmd.ExecuteScalarAsync(ct))!;
-            }
+            await EnsureBandContextSeededAsync(ct);
+            if (snapshotId is > 0)
+                await ReconcileBandContextFromSnapshotAsync(snapshotId.Value, ct);
         }
 
-        _log.LogInformation("Found {Count:N0} solo entries with band context to extract.", bandContextRowCount);
-        if (bandContextRowCount == 0) return BandExtractionResult.Empty;
-
-        // Process in batches by song_id to limit transaction size
+        long bandContextRowCount = 0;
         var songIds = new List<string>();
         await using (var conn = await _dataSource.OpenConnectionAsync(ct))
         {
             await using var songCmd = conn.CreateCommand();
-            songCmd.CommandText = "SELECT DISTINCT song_id FROM leaderboard_entries WHERE band_members_json IS NOT NULL";
+            songCmd.CommandText = _useSnapshotOverlayWorkerReaders
+                ? """
+                    SELECT song_id, COUNT(*)::BIGINT
+                    FROM leaderboard_band_context
+                    GROUP BY song_id
+                    ORDER BY song_id
+                    """
+                : """
+                    SELECT song_id, COUNT(*)::BIGINT
+                    FROM leaderboard_entries
+                    WHERE band_members_json IS NOT NULL
+                    GROUP BY song_id
+                    ORDER BY song_id
+                    """;
             await using var reader = await songCmd.ExecuteReaderAsync(ct);
             while (await reader.ReadAsync(ct))
+            {
                 songIds.Add(reader.GetString(0));
+                bandContextRowCount += reader.GetInt64(1);
+            }
         }
 
+        _log.LogInformation(
+            "Found {Count:N0} solo entries with band context across {SongCount:N0} song(s) from {Source}.",
+            bandContextRowCount,
+            songIds.Count,
+            _useSnapshotOverlayWorkerReaders ? "snapshot-derived band context" : "legacy leaderboard rows");
+        if (bandContextRowCount == 0) return BandExtractionResult.Empty;
+
+        // Process in batches by song_id to limit transaction size
         _log.LogInformation("Extracting band data from {SongCount} songs with up to {Parallelism} concurrent workers.",
             songIds.Count, maxDegreeOfParallelism);
         _progress?.SetSubOperation("extracting_band_context");
@@ -155,13 +186,21 @@ public sealed class PostScrapeBandExtractor
         var entries = new List<BandExtractRow>();
         await using (var cmd = conn.CreateCommand())
         {
-            cmd.CommandText = """
-                SELECT account_id, instrument, score, accuracy, is_full_combo, stars, difficulty,
-                       season, end_time, band_members_json, band_score, base_score,
-                       instrument_bonus, overdrive_bonus, instrument_combo
-                FROM leaderboard_entries
-                WHERE song_id = @songId AND band_members_json IS NOT NULL
-                """;
+            cmd.CommandText = _useSnapshotOverlayWorkerReaders
+                ? """
+                    SELECT account_id, instrument, score, accuracy, is_full_combo, stars, difficulty,
+                           season, end_time, band_members_json, band_score, base_score,
+                           instrument_bonus, overdrive_bonus, instrument_combo
+                    FROM leaderboard_band_context
+                    WHERE song_id = @songId
+                    """
+                : """
+                    SELECT account_id, instrument, score, accuracy, is_full_combo, stars, difficulty,
+                           season, end_time, band_members_json, band_score, base_score,
+                           instrument_bonus, overdrive_bonus, instrument_combo
+                    FROM leaderboard_entries
+                    WHERE song_id = @songId AND band_members_json IS NOT NULL
+                    """;
             cmd.Parameters.AddWithValue("songId", songId);
 
             await using var reader = await cmd.ExecuteReaderAsync(ct);
@@ -300,6 +339,216 @@ public sealed class PostScrapeBandExtractor
         }
 
         return (totalBands, totalMembers, totalLookups, impactedTeams, BandCurrentProjectionScopeTracker.OrderedDistinct(impactedCurrentProjectionScopes).ToList());
+    }
+
+    private async Task EnsureBandContextSeededAsync(CancellationToken ct)
+    {
+        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+        await using (var lockCmd = conn.CreateCommand())
+        {
+            lockCmd.Transaction = tx;
+            lockCmd.CommandText = "SELECT pg_advisory_xact_lock(@namespace, @key)";
+            lockCmd.Parameters.AddWithValue("namespace", BandContextSeedLockNamespace);
+            lockCmd.Parameters.AddWithValue("key", BandContextSeedLockKey);
+            await lockCmd.ExecuteNonQueryAsync(ct);
+        }
+
+        await using (var stateCmd = conn.CreateCommand())
+        {
+            stateCmd.Transaction = tx;
+            stateCmd.CommandText = """
+                SELECT seeded_at IS NOT NULL
+                FROM leaderboard_band_context_state
+                WHERE id = TRUE
+                """;
+            if (await stateCmd.ExecuteScalarAsync(ct) is true)
+            {
+                await tx.CommitAsync(ct);
+                return;
+            }
+        }
+
+        long legacySourceRows;
+        await using (var legacyCmd = conn.CreateCommand())
+        {
+            legacyCmd.Transaction = tx;
+            legacyCmd.CommandTimeout = 300;
+            legacyCmd.CommandText = """
+                WITH source_rows AS MATERIALIZED (
+                    SELECT legacy.song_id, legacy.instrument, legacy.account_id, legacy.score,
+                           legacy.accuracy, legacy.is_full_combo, legacy.stars, legacy.season,
+                           legacy.percentile, legacy.source, legacy.difficulty, legacy.end_time,
+                           legacy.band_members_json, legacy.band_score, legacy.base_score,
+                           legacy.instrument_bonus, legacy.overdrive_bonus, legacy.instrument_combo,
+                           legacy.first_seen_at, legacy.last_updated_at
+                    FROM leaderboard_entries legacy
+                    WHERE legacy.band_members_json IS NOT NULL
+                ), inserted AS (
+                    INSERT INTO leaderboard_band_context (
+                        song_id, instrument, account_id, score, accuracy, is_full_combo,
+                        stars, season, percentile, source, difficulty, end_time,
+                        band_members_json, band_score, base_score, instrument_bonus,
+                        overdrive_bonus, instrument_combo, first_seen_at, last_updated_at)
+                    SELECT song_id, instrument, account_id, score, accuracy, is_full_combo,
+                           stars, season, percentile, source, difficulty, end_time,
+                           band_members_json, band_score, base_score, instrument_bonus,
+                           overdrive_bonus, instrument_combo, first_seen_at, last_updated_at
+                    FROM source_rows
+                    ON CONFLICT (song_id, instrument, account_id) DO NOTHING
+                    RETURNING 1
+                )
+                SELECT COUNT(*)::BIGINT FROM source_rows
+                """;
+            legacySourceRows = Convert.ToInt64(await legacyCmd.ExecuteScalarAsync(ct));
+        }
+
+        long overlaySourceRows;
+        await using (var overlayCmd = conn.CreateCommand())
+        {
+            overlayCmd.Transaction = tx;
+            overlayCmd.CommandTimeout = 300;
+            overlayCmd.CommandText = """
+                WITH source_rows AS MATERIALIZED (
+                    SELECT overlay.song_id, overlay.instrument, overlay.account_id, overlay.score,
+                           overlay.accuracy, overlay.is_full_combo, overlay.stars, overlay.season,
+                           overlay.percentile, overlay.source, overlay.difficulty, overlay.end_time,
+                           overlay.band_members_json, overlay.band_score, overlay.base_score,
+                           overlay.instrument_bonus, overlay.overdrive_bonus, overlay.instrument_combo,
+                           overlay.first_seen_at, overlay.last_updated_at
+                    FROM leaderboard_entries_overlay overlay
+                    WHERE overlay.band_members_json IS NOT NULL
+                ), inserted AS (
+                    INSERT INTO leaderboard_band_context (
+                        song_id, instrument, account_id, score, accuracy, is_full_combo,
+                        stars, season, percentile, source, difficulty, end_time,
+                        band_members_json, band_score, base_score, instrument_bonus,
+                        overdrive_bonus, instrument_combo, first_seen_at, last_updated_at)
+                    SELECT song_id, instrument, account_id, score, accuracy, is_full_combo,
+                           stars, season, percentile, source, difficulty, end_time,
+                           band_members_json, band_score, base_score, instrument_bonus,
+                           overdrive_bonus, instrument_combo, first_seen_at, last_updated_at
+                    FROM source_rows
+                    ON CONFLICT (song_id, instrument, account_id) DO NOTHING
+                    RETURNING 1
+                )
+                SELECT COUNT(*)::BIGINT FROM source_rows
+                """;
+            overlaySourceRows = Convert.ToInt64(await overlayCmd.ExecuteScalarAsync(ct));
+        }
+
+        long contextRows;
+        await using (var countCmd = conn.CreateCommand())
+        {
+            countCmd.Transaction = tx;
+            countCmd.CommandText = "SELECT COUNT(*)::BIGINT FROM leaderboard_band_context";
+            contextRows = Convert.ToInt64(await countCmd.ExecuteScalarAsync(ct));
+        }
+
+        await using (var persistCmd = conn.CreateCommand())
+        {
+            persistCmd.Transaction = tx;
+            persistCmd.CommandText = """
+                INSERT INTO leaderboard_band_context_state (
+                    id, seeded_at, legacy_source_rows, overlay_source_rows,
+                    context_rows, updated_at)
+                VALUES (TRUE, @now, @legacySourceRows, @overlaySourceRows, @contextRows, @now)
+                ON CONFLICT (id) DO UPDATE SET
+                    seeded_at = EXCLUDED.seeded_at,
+                    legacy_source_rows = EXCLUDED.legacy_source_rows,
+                    overlay_source_rows = EXCLUDED.overlay_source_rows,
+                    context_rows = EXCLUDED.context_rows,
+                    updated_at = EXCLUDED.updated_at
+                """;
+            persistCmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+            persistCmd.Parameters.AddWithValue("legacySourceRows", legacySourceRows);
+            persistCmd.Parameters.AddWithValue("overlaySourceRows", overlaySourceRows);
+            persistCmd.Parameters.AddWithValue("contextRows", contextRows);
+            await persistCmd.ExecuteNonQueryAsync(ct);
+        }
+
+        await tx.CommitAsync(ct);
+        _log.LogInformation(
+            "Seeded accumulated band context: legacy source {LegacyRows:N0}, overlay source {OverlayRows:N0}, context {ContextRows:N0}.",
+            legacySourceRows,
+            overlaySourceRows,
+            contextRows);
+    }
+
+    private async Task ReconcileBandContextFromSnapshotAsync(long snapshotId, CancellationToken ct)
+    {
+        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandTimeout = 0;
+        cmd.CommandText = """
+            WITH source_rows AS MATERIALIZED (
+                SELECT snapshot.song_id, snapshot.instrument, snapshot.account_id,
+                       snapshot.score, snapshot.accuracy, snapshot.is_full_combo,
+                       snapshot.stars, snapshot.season, snapshot.percentile,
+                       snapshot.source, snapshot.difficulty, snapshot.end_time,
+                       snapshot.band_members_json, snapshot.band_score,
+                       snapshot.base_score, snapshot.instrument_bonus,
+                       snapshot.overdrive_bonus, snapshot.instrument_combo,
+                       snapshot.last_updated_at
+                FROM leaderboard_band_context context
+                JOIN leaderboard_entries_snapshot snapshot
+                  ON snapshot.snapshot_id = @snapshotId
+                 AND snapshot.song_id = context.song_id
+                 AND snapshot.instrument = context.instrument
+                 AND snapshot.account_id = context.account_id
+            )
+            UPDATE leaderboard_band_context context
+            SET score = CASE WHEN source.score != context.score THEN source.score ELSE context.score END,
+                accuracy = CASE WHEN source.score != context.score THEN source.accuracy ELSE context.accuracy END,
+                is_full_combo = CASE WHEN source.score != context.score THEN source.is_full_combo ELSE context.is_full_combo END,
+                stars = CASE WHEN source.score != context.score THEN source.stars ELSE context.stars END,
+                season = CASE WHEN source.score != context.score THEN source.season ELSE context.season END,
+                difficulty = CASE
+                    WHEN source.difficulty >= 0 AND context.difficulty < 0 THEN source.difficulty
+                    WHEN source.score != context.score THEN source.difficulty
+                    ELSE context.difficulty
+                END,
+                percentile = CASE
+                    WHEN source.score != context.score THEN source.percentile
+                    WHEN source.percentile > 0 AND context.percentile <= 0 THEN source.percentile
+                    ELSE context.percentile
+                END,
+                source = CASE
+                    WHEN context.source = 'scrape' THEN 'scrape'
+                    WHEN source.source = 'scrape' THEN 'scrape'
+                    WHEN context.source = 'backfill' THEN 'backfill'
+                    WHEN source.source = 'backfill' THEN 'backfill'
+                    ELSE source.source
+                END,
+                end_time = CASE WHEN source.score != context.score THEN source.end_time ELSE context.end_time END,
+                band_members_json = COALESCE(source.band_members_json, context.band_members_json),
+                band_score = COALESCE(source.band_score, context.band_score),
+                base_score = COALESCE(source.base_score, context.base_score),
+                instrument_bonus = COALESCE(source.instrument_bonus, context.instrument_bonus),
+                overdrive_bonus = COALESCE(source.overdrive_bonus, context.overdrive_bonus),
+                instrument_combo = COALESCE(source.instrument_combo, context.instrument_combo),
+                last_updated_at = source.last_updated_at
+            FROM source_rows source
+            WHERE context.song_id = source.song_id
+              AND context.instrument = source.instrument
+              AND context.account_id = source.account_id
+              AND source.last_updated_at >= context.last_updated_at
+              AND (
+                  source.score != context.score
+                  OR (source.source = 'scrape' AND context.source != 'scrape')
+                  OR (source.difficulty >= 0 AND context.difficulty < 0)
+                  OR (source.percentile > 0 AND context.percentile <= 0)
+                  OR (source.band_members_json IS NOT NULL AND context.band_members_json IS NULL)
+                  OR COALESCE(source.base_score, -1) != COALESCE(context.base_score, -1)
+                  OR COALESCE(source.overdrive_bonus, -1) != COALESCE(context.overdrive_bonus, -1)
+              )
+            """;
+        cmd.Parameters.AddWithValue("snapshotId", snapshotId);
+        var updated = await cmd.ExecuteNonQueryAsync(ct);
+        _log.LogInformation(
+            "Reconciled {Updated:N0} accumulated band-context row(s) from snapshot {SnapshotId}.",
+            updated,
+            snapshotId);
     }
 
     private void RebuildImpactedMembershipSummaries(

@@ -19,6 +19,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     private const string LeaderboardEntriesSnapshotTable = "leaderboard_entries_snapshot";
     private const string LeaderboardSnapshotStateTable = "leaderboard_snapshot_state";
     private const string LeaderboardEntriesOverlayTable = "leaderboard_entries_overlay";
+    private const string LeaderboardBandContextTable = "leaderboard_band_context";
     private const string SoloCurrentProjectionTable = "current_leaderboard_entries";
     private const string SoloCurrentProjectionScopeTable = "solo_current_projection_scope";
     private const int OverlayPriorityNeighbor = 100;
@@ -42,6 +43,12 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     /// scrape_publication_state instead of the worker's active snapshot state.
     /// </summary>
     public bool UsePublishedScopeSources { get; set; }
+
+    /// <summary>
+    /// When true, worker-side current-state reads resolve finalized snapshots
+    /// plus overlays and never fall back to leaderboard_entries.
+    /// </summary>
+    public bool UseSnapshotOverlayWorkerReaders { get; set; }
 
     /// <summary>
     /// When true, filtered projection reads preserve projection order by using
@@ -193,6 +200,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     private Dictionary<string, int>? TryGetCurrentProjectionSongCounts(NpgsqlConnection conn)
     {
+        if (UseSnapshotOverlayWorkerReaders)
+            return null;
+
         try
         {
             if (!HasAnyReadyCurrentProjectionScope(conn))
@@ -225,6 +235,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     private long? TryGetReadyCurrentProjectionRowCount(NpgsqlConnection conn, string songId)
     {
+        if (UseSnapshotOverlayWorkerReaders)
+            return null;
+
         try
         {
             using var cmd = conn.CreateCommand();
@@ -269,6 +282,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     private bool HasAnyReadyCurrentProjectionScope(NpgsqlConnection conn)
     {
+        if (UseSnapshotOverlayWorkerReaders)
+            return false;
+
         try
         {
             using var cmd = conn.CreateCommand();
@@ -317,6 +333,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     private bool AllRequestedScopesReady(NpgsqlConnection conn, IReadOnlyCollection<string> songIds)
     {
+        if (UseSnapshotOverlayWorkerReaders)
+            return false;
+
         var distinctSongIds = songIds
             .Where(static songId => !string.IsNullOrWhiteSpace(songId))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -508,6 +527,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     {
         var now = DateTime.UtcNow;
         var affected = SyncOverlayEntries(songId, entries, now, conn, tx);
+        SyncBandContextEntries(songId, entries, now, conn, tx);
         var maxObservedSeason = GetMaxObservedSeason(entries);
         if (maxObservedSeason.HasValue)
             UpsertInstrumentScrapeState(conn, tx, maxObservedSeason.Value);
@@ -624,6 +644,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             UpsertInstrumentScrapeState(conn, tx, maxObservedSeason.Value);
 
         SyncOverlayEntries(songId, entries, now, conn, tx);
+        SyncBandContextEntries(songId, entries, now, conn, tx);
 
         tx.Commit();
         return affected;
@@ -739,6 +760,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             UpsertInstrumentScrapeState(conn, tx, maxObservedSeason.Value);
 
         SyncOverlayEntries(songId, entries, now, conn, tx);
+        SyncBandContextEntries(songId, entries, now, conn, tx);
 
         return affected;
     }
@@ -820,6 +842,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             UpsertInstrumentScrapeState(conn, tx, maxObservedSeason.Value);
 
         SyncOverlayEntries(songId, entries, now, conn, tx);
+        SyncBandContextEntries(songId, entries, now, conn, tx);
 
         return affected;
     }
@@ -906,6 +929,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             UpsertInstrumentScrapeState(conn, tx, maxObservedSeason.Value);
 
         SyncOverlayEntries(songId, entries, now, conn, tx);
+        SyncBandContextEntries(songId, entries, now, conn, tx);
 
         tx.Commit();
         return affected;
@@ -913,6 +937,24 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     public LeaderboardEntry? GetEntry(string songId, string accountId)
     {
+        if (UseSnapshotOverlayWorkerReaders)
+        {
+            using var currentConn = _ds.OpenConnection();
+            using var currentCmd = currentConn.CreateCommand();
+            currentCmd.CommandText = $"""
+                SELECT song_id, account_id, score, accuracy, is_full_combo, stars, season,
+                       difficulty, percentile, end_time, rank, api_rank, source
+                FROM ({BuildCurrentStateRawEntryRowsSql(filterSong: true, filterAccounts: true)}) current_rows
+                WHERE account_id = @accountId
+                """;
+            currentCmd.Parameters.AddWithValue("songId", songId);
+            currentCmd.Parameters.AddWithValue("instrument", Instrument);
+            currentCmd.Parameters.AddWithValue("accountId", accountId);
+            currentCmd.Parameters.AddWithValue("accountIds", new[] { accountId });
+            using var currentReader = currentCmd.ExecuteReader();
+            return currentReader.Read() ? ReadCurrentStateEntry(currentReader) : null;
+        }
+
         using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time, rank, api_rank, source FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument AND account_id = @accountId";
         cmd.Parameters.AddWithValue("songId", songId); cmd.Parameters.AddWithValue("instrument", Instrument); cmd.Parameters.AddWithValue("accountId", accountId);
@@ -923,6 +965,26 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public Dictionary<string, LeaderboardEntry> GetEntriesForAccounts(string songId, IReadOnlyCollection<string> accountIds)
     {
         if (accountIds.Count == 0) return new();
+        if (UseSnapshotOverlayWorkerReaders)
+        {
+            using var currentConn = _ds.OpenConnection();
+            using var currentCmd = currentConn.CreateCommand();
+            currentCmd.CommandText = $"""
+                SELECT song_id, account_id, score, accuracy, is_full_combo, stars, season,
+                       difficulty, percentile, end_time, rank, api_rank, source
+                FROM ({BuildCurrentStateRawEntryRowsSql(filterSong: true, filterAccounts: true)}) current_rows
+                WHERE account_id = ANY(@accountIds)
+                """;
+            currentCmd.Parameters.AddWithValue("songId", songId);
+            currentCmd.Parameters.AddWithValue("instrument", Instrument);
+            currentCmd.Parameters.AddWithValue("accountIds", accountIds.Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+            var currentEntries = new Dictionary<string, LeaderboardEntry>(StringComparer.OrdinalIgnoreCase);
+            using var currentReader = currentCmd.ExecuteReader();
+            while (currentReader.Read())
+                currentEntries[currentReader.GetString(1)] = ReadCurrentStateEntry(currentReader);
+            return currentEntries;
+        }
+
         using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand();
         var pNames = new string[accountIds.Count]; int i = 0;
         foreach (var id in accountIds) { pNames[i] = $"@a{i}"; cmd.Parameters.AddWithValue($"a{i}", id); i++; }
@@ -941,6 +1003,28 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public Dictionary<(string SongId, string AccountId), LeaderboardEntry> GetAllEntriesForAccounts(IReadOnlyCollection<string> accountIds)
     {
         if (accountIds.Count == 0) return new();
+        if (UseSnapshotOverlayWorkerReaders)
+        {
+            using var currentConn = _ds.OpenConnection();
+            using var currentCmd = currentConn.CreateCommand();
+            currentCmd.CommandText = $"""
+                SELECT song_id, account_id, score, accuracy, is_full_combo, stars, season,
+                       difficulty, percentile, end_time, rank, api_rank, source
+                FROM ({BuildCurrentStateRawEntryRowsSql(filterSong: false, filterAccounts: true)}) current_rows
+                WHERE account_id = ANY(@accountIds)
+                """;
+            currentCmd.Parameters.AddWithValue("instrument", Instrument);
+            currentCmd.Parameters.AddWithValue("accountIds", accountIds.Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+            var currentEntries = new Dictionary<(string, string), LeaderboardEntry>();
+            using var currentReader = currentCmd.ExecuteReader();
+            while (currentReader.Read())
+            {
+                currentEntries[(currentReader.GetString(0), currentReader.GetString(1))] =
+                    ReadCurrentStateEntry(currentReader);
+            }
+            return currentEntries;
+        }
+
         using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand();
         var pNames = new string[accountIds.Count]; int i = 0;
         foreach (var id in accountIds) { pNames[i] = $"@a{i}"; cmd.Parameters.AddWithValue($"a{i}", id); i++; }
@@ -952,7 +1036,19 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return dict;
     }
 
-    public int? GetMinSeason(string songId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT MIN(season) FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument AND season > 0"; cmd.Parameters.AddWithValue("songId", songId); cmd.Parameters.AddWithValue("instrument", Instrument); var r = cmd.ExecuteScalar(); return r is DBNull or null ? null : Convert.ToInt32(r); }
+    public int? GetMinSeason(string songId)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = UseSnapshotOverlayWorkerReaders
+            ? $"SELECT MIN(season) FROM ({BuildCurrentStateRawEntryRowsSql(filterSong: true)}) current_rows WHERE season > 0"
+            : "SELECT MIN(season) FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument AND season > 0";
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        var result = cmd.ExecuteScalar();
+        return result is DBNull or null ? null : Convert.ToInt32(result);
+    }
+
     public int? GetMaxSeason()
     {
         using var conn = _ds.OpenConnection();
@@ -962,7 +1058,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             return cached.Value;
 
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT MAX(season) FROM leaderboard_entries WHERE instrument = @instrument AND season > 0";
+        cmd.CommandText = UseSnapshotOverlayWorkerReaders
+            ? $"SELECT MAX(season) FROM ({BuildCurrentStateRawEntryRowsSql(filterSong: false)}) current_rows WHERE season > 0"
+            : "SELECT MAX(season) FROM leaderboard_entries WHERE instrument = @instrument AND season > 0";
         cmd.Parameters.AddWithValue("instrument", Instrument);
         var result = cmd.ExecuteScalar();
         if (result is DBNull or null)
@@ -972,13 +1070,38 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         UpsertInstrumentScrapeState(conn, tx: null, maxSeason);
         return maxSeason;
     }
-    public long GetTotalEntryCount() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT COUNT(*) FROM leaderboard_entries WHERE instrument = @instrument"; cmd.Parameters.AddWithValue("instrument", Instrument); return (long)cmd.ExecuteScalar()!; }
-    public string? GetAnySongId() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT song_id FROM leaderboard_entries WHERE instrument = @instrument LIMIT 1"; cmd.Parameters.AddWithValue("instrument", Instrument); var r = cmd.ExecuteScalar(); return r is DBNull or null ? null : (string)r; }
+    public long GetTotalEntryCount()
+    {
+        if (UseSnapshotOverlayWorkerReaders)
+            return GetCurrentStateAllSongCounts().Values.Sum(static count => (long)count);
+
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM leaderboard_entries WHERE instrument = @instrument";
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        return (long)cmd.ExecuteScalar()!;
+    }
+
+    public string? GetAnySongId()
+    {
+        if (UseSnapshotOverlayWorkerReaders)
+            return GetCurrentStateAllSongCounts().Keys.FirstOrDefault();
+
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT song_id FROM leaderboard_entries WHERE instrument = @instrument LIMIT 1";
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        var result = cmd.ExecuteScalar();
+        return result is DBNull or null ? null : (string)result;
+    }
 
     // ── Leaderboard reads ────────────────────────────────────────────
 
     public List<LeaderboardEntryDto> GetLeaderboard(string songId, int? top = null, int offset = 0)
     {
+        if (UseSnapshotOverlayWorkerReaders)
+            return GetCurrentStateLeaderboard(songId, top, offset);
+
         using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand();
         var limit = top.HasValue ? $"LIMIT {top.Value} OFFSET {offset}" : "";
         cmd.CommandText = $"SELECT account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time, ROW_NUMBER() OVER (ORDER BY {SoloLeaderboardOrderingSql.OrderBy()}) AS rank, 0, api_rank, source FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument ORDER BY {SoloLeaderboardOrderingSql.OrderBy()} {limit}";
@@ -988,9 +1111,24 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return list;
     }
 
-    public int GetLeaderboardCount(string songId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT COUNT(*) FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument"; cmd.Parameters.AddWithValue("songId", songId); cmd.Parameters.AddWithValue("instrument", Instrument); return Convert.ToInt32(cmd.ExecuteScalar()); }
+    public int GetLeaderboardCount(string songId)
+    {
+        if (UseSnapshotOverlayWorkerReaders)
+            return GetCurrentStateLeaderboardWithCount(songId).TotalCount;
+
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument";
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
     public Dictionary<string, int> GetAllSongCounts()
     {
+        if (UseSnapshotOverlayWorkerReaders)
+            return GetCurrentStateAllSongCounts();
+
         using var conn = _ds.OpenConnection();
         var counts = GetSongCountsFromSongStats(conn);
         return counts.Count > 0 ? counts : GetSongCountsFromLeaderboardEntries(conn);
@@ -1015,6 +1153,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     public (List<LeaderboardEntryDto> Entries, int TotalCount) GetLeaderboardWithCount(string songId, int? top = null, int offset = 0, int? maxScore = null)
     {
+        if (UseSnapshotOverlayWorkerReaders)
+            return GetCurrentStateLeaderboardWithCount(songId, top, offset, maxScore);
+
         using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand();
         var scoreFilter = maxScore.HasValue ? $"AND score <= {maxScore.Value}" : "";
         var limit = top.HasValue ? $"LIMIT {top.Value} OFFSET {offset}" : "";
@@ -1037,6 +1178,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     public List<(string AccountId, int Rank, int Score)> GetNeighborhood(string songId, int centerRank, int rankRadius, string excludeAccountId)
     {
+        if (UseSnapshotOverlayWorkerReaders)
+            return GetCurrentStateNeighborhood(songId, centerRank, rankRadius, excludeAccountId);
+
         using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT account_id, rank, score FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument AND rank BETWEEN @lo AND @hi AND account_id != @exclude ORDER BY rank ASC, account_id ASC";
         cmd.CommandTimeout = 0;
@@ -1122,6 +1266,27 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         if (minRank > maxRank)
             (minRank, maxRank) = (maxRank, minRank);
 
+        if (UseSnapshotOverlayWorkerReaders)
+        {
+            using var currentConn = _ds.OpenConnection();
+            using var currentCmd = currentConn.CreateCommand();
+            currentCmd.CommandText = $"""
+                SELECT account_id
+                FROM ({BuildCurrentStateLeaderboardSql(includeTotalCount: false, hasMaxScore: false, limitClause: string.Empty)}) current_rows
+                WHERE rank BETWEEN @lo AND @hi
+                ORDER BY rank, account_id
+                """;
+            currentCmd.Parameters.AddWithValue("songId", songId);
+            currentCmd.Parameters.AddWithValue("instrument", Instrument);
+            currentCmd.Parameters.AddWithValue("lo", Math.Max(1, minRank));
+            currentCmd.Parameters.AddWithValue("hi", Math.Max(1, maxRank));
+            var currentAccounts = new List<string>();
+            using var currentReader = currentCmd.ExecuteReader();
+            while (currentReader.Read())
+                currentAccounts.Add(currentReader.GetString(0));
+            return currentAccounts;
+        }
+
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT account_id FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument AND rank BETWEEN @lo AND @hi ORDER BY rank ASC, account_id ASC";
@@ -1138,7 +1303,22 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     // ── Player queries ───────────────────────────────────────────────
 
-    public HashSet<string> GetSongIdsForAccount(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT song_id FROM leaderboard_entries WHERE account_id = @accountId AND instrument = @instrument"; cmd.Parameters.AddWithValue("accountId", accountId); cmd.Parameters.AddWithValue("instrument", Instrument); var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase); using var r = cmd.ExecuteReader(); while (r.Read()) set.Add(r.GetString(0)); return set; }
+    public HashSet<string> GetSongIdsForAccount(string accountId)
+    {
+        if (UseSnapshotOverlayWorkerReaders)
+            return GetCurrentStateSongIdsForAccount(accountId);
+
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT song_id FROM leaderboard_entries WHERE account_id = @accountId AND instrument = @instrument";
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            set.Add(reader.GetString(0));
+        return set;
+    }
 
     public HashSet<string> GetCurrentStateSongIdsForAccount(string accountId)
     {
@@ -1186,6 +1366,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public List<PlayerScoreDto> GetPlayerScoresForSongs(string accountId, IReadOnlyCollection<string> songIds)
     {
         if (songIds.Count == 0) return new();
+        if (UseSnapshotOverlayWorkerReaders)
+            return GetCurrentStatePlayerScoresForSongs(accountId, songIds);
+
         using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand();
         var pNames = new string[songIds.Count]; int i = 0;
         foreach (var sid in songIds) { pNames[i] = $"@s{i}"; cmd.Parameters.AddWithValue($"s{i}", sid); i++; }
@@ -1229,6 +1412,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     public List<PlayerScoreDto> GetPlayerScores(string accountId, string? songId = null)
     {
+        if (UseSnapshotOverlayWorkerReaders)
+            return GetCurrentStatePlayerScores(accountId, songId);
+
         using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand();
         var filter = songId is not null ? "AND song_id = @songId" : "";
         cmd.CommandText = $"SELECT song_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time, rank, api_rank FROM leaderboard_entries WHERE account_id = @accountId AND instrument = @instrument {filter} ORDER BY song_id";
@@ -1258,6 +1444,59 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         while (reader.Read())
             list.Add(ReadPlayerScore(reader));
         return list;
+    }
+
+    public Dictionary<string, List<PlayerScoreDto>> GetCurrentStatePlayerScoresForAccounts(
+        IReadOnlyCollection<string> accountIds,
+        string? songId = null)
+    {
+        var normalizedAccountIds = accountIds
+            .Where(static accountId => !string.IsNullOrWhiteSpace(accountId))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (normalizedAccountIds.Length == 0)
+            return new Dictionary<string, List<PlayerScoreDto>>(StringComparer.OrdinalIgnoreCase);
+
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = BuildCurrentStatePlayerScoresSql(
+            hasSongIdFilter: songId is not null,
+            includeAccountId: true);
+        cmd.CommandTimeout = 0;
+        cmd.Parameters.AddWithValue("accountIds", normalizedAccountIds);
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        if (songId is not null)
+            cmd.Parameters.AddWithValue("songId", songId);
+
+        var profiles = new Dictionary<string, List<PlayerScoreDto>>(StringComparer.OrdinalIgnoreCase);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var accountId = reader.GetString(0);
+            if (!profiles.TryGetValue(accountId, out var scores))
+            {
+                scores = [];
+                profiles[accountId] = scores;
+            }
+
+            scores.Add(new PlayerScoreDto
+            {
+                SongId = reader.GetString(1),
+                Instrument = Instrument,
+                Score = reader.GetInt32(2),
+                Accuracy = reader.IsDBNull(3) ? 0 : reader.GetInt32(3),
+                IsFullCombo = !reader.IsDBNull(4) && reader.GetBoolean(4),
+                Stars = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
+                Season = reader.IsDBNull(6) ? 0 : reader.GetInt32(6),
+                Difficulty = reader.IsDBNull(7) ? 0 : reader.GetInt32(7),
+                Percentile = reader.IsDBNull(8) ? 0 : reader.GetDouble(8),
+                EndTime = reader.IsDBNull(9) ? null : reader.GetString(9),
+                Rank = reader.IsDBNull(10) ? 0 : reader.GetInt32(10),
+                ApiRank = reader.IsDBNull(11) ? 0 : reader.GetInt32(11),
+            });
+        }
+
+        return profiles;
     }
 
     private List<PlayerScoreDto> GetProjectedCurrentStatePlayerScores(
@@ -1301,6 +1540,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     public Dictionary<string, int> GetPlayerRankings(string accountId, string? songId = null)
     {
+        if (UseSnapshotOverlayWorkerReaders)
+            return GetCurrentStatePlayerRankings(accountId, songId);
+
         using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand();
         var songFilter = songId is not null ? "AND song_id = @songId" : "";
         cmd.CommandText = $"WITH player_songs AS (SELECT song_id FROM leaderboard_entries WHERE account_id = @accountId AND instrument = @instrument {songFilter}), ranked AS (SELECT le.account_id, le.song_id, ROW_NUMBER() OVER (PARTITION BY le.song_id ORDER BY {SoloLeaderboardOrderingSql.OrderBy("le")}) AS rank FROM leaderboard_entries le WHERE le.instrument = @instrument AND le.song_id IN (SELECT song_id FROM player_songs)) SELECT song_id, rank FROM ranked WHERE account_id = @accountId";
@@ -1397,6 +1639,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     public Dictionary<string, int> GetPlayerRankingsFiltered(string accountId, Dictionary<string, int> maxScores, string? songId = null)
     {
+        if (UseSnapshotOverlayWorkerReaders)
+            return GetCurrentStatePlayerRankingsFiltered(accountId, maxScores, songId);
+
         if (maxScores.Count == 0) return GetPlayerRankings(accountId, songId);
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -1587,12 +1832,26 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return dict;
     }
 
-    public int GetRankForScore(string songId, int score, int? maxScore = null) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); var scoreFilter = maxScore.HasValue ? $"AND score <= {maxScore.Value}" : ""; cmd.CommandText = $"SELECT COUNT(*) + 1 FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument AND score > @score {scoreFilter}"; cmd.Parameters.AddWithValue("songId", songId); cmd.Parameters.AddWithValue("instrument", Instrument); cmd.Parameters.AddWithValue("score", score); return Convert.ToInt32(cmd.ExecuteScalar()); }
+    public int GetRankForScore(string songId, int score, int? maxScore = null)
+    {
+        if (UseSnapshotOverlayWorkerReaders)
+            return GetCurrentStateRankForScore(songId, score, maxScore);
+
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        var scoreFilter = maxScore.HasValue ? $"AND score <= {maxScore.Value}" : "";
+        cmd.CommandText = $"SELECT COUNT(*) + 1 FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument AND score > @score {scoreFilter}";
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        cmd.Parameters.AddWithValue("score", score);
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
     public int GetCurrentStateRankForScore(string songId, int score, int? maxScore = null)
     {
         using var conn = _ds.OpenConnection();
-        using (var projectedCmd = conn.CreateCommand())
+        if (!UseSnapshotOverlayWorkerReaders)
         {
+            using var projectedCmd = conn.CreateCommand();
             var projectedScoreFilter = maxScore.HasValue ? "AND score <= @maxScore" : string.Empty;
             projectedCmd.CommandText = $"""
                 WITH {BuildProjectionSourceCtes(filterSong: true)},
@@ -1655,8 +1914,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public (int TotalCount, int? MaxScore, int? MinScrapeScore) GetCurrentStateRankOffsetCoverage(string songId)
     {
         using var conn = _ds.OpenConnection();
-        using (var projectedCmd = conn.CreateCommand())
+        if (!UseSnapshotOverlayWorkerReaders)
         {
+            using var projectedCmd = conn.CreateCommand();
             projectedCmd.CommandText = $"""
                 WITH {BuildProjectionSourceCtes(filterSong: true)},
                 ready_scope AS (
@@ -1712,6 +1972,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     public Dictionary<string, int> GetFilteredEntryCounts(Dictionary<string, int> maxScores)
     {
+        if (UseSnapshotOverlayWorkerReaders)
+            return GetCurrentStateFilteredEntryCounts(maxScores);
+
         if (maxScores.Count == 0) return GetAllSongCounts();
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -1890,6 +2153,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     public List<int> GetScoresInBand(string songId, int lowerBound, int upperBound)
     {
+        if (UseSnapshotOverlayWorkerReaders)
+            return GetCurrentStateScoresInBand(songId, lowerBound, upperBound);
+
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT score FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument AND score > @lo AND score <= @hi ORDER BY score ASC";
@@ -1906,8 +2172,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public List<int> GetCurrentStateScoresInBand(string songId, int lowerBound, int upperBound)
     {
         using var conn = _ds.OpenConnection();
-        using (var projectedCmd = conn.CreateCommand())
+        if (!UseSnapshotOverlayWorkerReaders)
         {
+            using var projectedCmd = conn.CreateCommand();
             projectedCmd.CommandText = $"""
                 WITH {BuildProjectionSourceCtes(filterSong: true)},
                 ready_scope AS (
@@ -1976,6 +2243,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     public int GetPopulationAtOrBelow(string songId, int threshold)
     {
+        if (UseSnapshotOverlayWorkerReaders)
+            return GetCurrentStatePopulationAtOrBelow(songId, threshold);
+
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT COUNT(*) FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument AND score <= @threshold";
@@ -1988,8 +2258,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public int GetCurrentStatePopulationAtOrBelow(string songId, int threshold)
     {
         using var conn = _ds.OpenConnection();
-        using (var projectedCmd = conn.CreateCommand())
+        if (!UseSnapshotOverlayWorkerReaders)
         {
+            using var projectedCmd = conn.CreateCommand();
             projectedCmd.CommandText = $"""
                 WITH {BuildProjectionSourceCtes(filterSong: true)},
                 ready_scope AS (
@@ -2045,6 +2316,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     public int ComputeSongStats(Dictionary<string, int?>? maxScoresByInstrument = null, Dictionary<string, long>? realPopulation = null)
     {
+        if (UseSnapshotOverlayWorkerReaders)
+            return ComputeCurrentStateSongStats(maxScoresByInstrument, realPopulation);
+
         using var conn = _ds.OpenConnection();
         var prevCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         using (var c = conn.CreateCommand()) { c.CommandText = "SELECT song_id, entry_count FROM song_stats WHERE instrument = @instrument"; c.Parameters.AddWithValue("instrument", Instrument); using var r = c.ExecuteReader(); while (r.Read()) prevCounts[r.GetString(0)] = r.GetInt32(1); }
@@ -2106,6 +2380,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     public List<(string AccountId, string SongId)> GetOverThresholdEntries()
     {
+        if (UseSnapshotOverlayWorkerReaders)
+            return GetCurrentStateOverThresholdEntries();
+
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $@"
@@ -2588,6 +2865,133 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     // ── Private helpers ──────────────────────────────────────────────
 
+    private void SyncBandContextEntries(
+        string songId,
+        IReadOnlyList<LeaderboardEntry> entries,
+        DateTime now,
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx)
+    {
+        foreach (var entry in entries)
+        {
+            var bandMembersJson = SerializeBandMembers(entry);
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = bandMembersJson is not null
+                ? $"""
+                    INSERT INTO {LeaderboardBandContextTable} (
+                        song_id, instrument, account_id, score, accuracy, is_full_combo,
+                        stars, season, percentile, source, difficulty, end_time,
+                        band_members_json, band_score, base_score, instrument_bonus,
+                        overdrive_bonus, instrument_combo, first_seen_at, last_updated_at)
+                    VALUES (
+                        @songId, @instrument, @accountId, @score, @accuracy, @isFullCombo,
+                        @stars, @season, @percentile, @source, @difficulty, @endTime,
+                        @bandMembersJson, @bandScore, @baseScore, @instrumentBonus,
+                        @overdriveBonus, @instrumentCombo, @now, @now)
+                    ON CONFLICT (song_id, instrument, account_id) DO UPDATE SET
+                        score = CASE WHEN EXCLUDED.score != {LeaderboardBandContextTable}.score THEN EXCLUDED.score ELSE {LeaderboardBandContextTable}.score END,
+                        accuracy = CASE WHEN EXCLUDED.score != {LeaderboardBandContextTable}.score THEN EXCLUDED.accuracy ELSE {LeaderboardBandContextTable}.accuracy END,
+                        is_full_combo = CASE WHEN EXCLUDED.score != {LeaderboardBandContextTable}.score THEN EXCLUDED.is_full_combo ELSE {LeaderboardBandContextTable}.is_full_combo END,
+                        stars = CASE WHEN EXCLUDED.score != {LeaderboardBandContextTable}.score THEN EXCLUDED.stars ELSE {LeaderboardBandContextTable}.stars END,
+                        season = CASE WHEN EXCLUDED.score != {LeaderboardBandContextTable}.score THEN EXCLUDED.season ELSE {LeaderboardBandContextTable}.season END,
+                        difficulty = CASE
+                            WHEN EXCLUDED.difficulty >= 0 AND {LeaderboardBandContextTable}.difficulty < 0 THEN EXCLUDED.difficulty
+                            WHEN EXCLUDED.score != {LeaderboardBandContextTable}.score THEN EXCLUDED.difficulty
+                            ELSE {LeaderboardBandContextTable}.difficulty
+                        END,
+                        percentile = CASE
+                            WHEN EXCLUDED.score != {LeaderboardBandContextTable}.score THEN EXCLUDED.percentile
+                            WHEN EXCLUDED.percentile > 0 AND {LeaderboardBandContextTable}.percentile <= 0 THEN EXCLUDED.percentile
+                            ELSE {LeaderboardBandContextTable}.percentile
+                        END,
+                        source = CASE
+                            WHEN {LeaderboardBandContextTable}.source = 'scrape' THEN 'scrape'
+                            WHEN EXCLUDED.source = 'scrape' THEN 'scrape'
+                            WHEN {LeaderboardBandContextTable}.source = 'backfill' THEN 'backfill'
+                            WHEN EXCLUDED.source = 'backfill' THEN 'backfill'
+                            ELSE EXCLUDED.source
+                        END,
+                        end_time = CASE WHEN EXCLUDED.score != {LeaderboardBandContextTable}.score THEN EXCLUDED.end_time ELSE {LeaderboardBandContextTable}.end_time END,
+                        band_members_json = COALESCE(EXCLUDED.band_members_json, {LeaderboardBandContextTable}.band_members_json),
+                        band_score = COALESCE(EXCLUDED.band_score, {LeaderboardBandContextTable}.band_score),
+                        base_score = COALESCE(EXCLUDED.base_score, {LeaderboardBandContextTable}.base_score),
+                        instrument_bonus = COALESCE(EXCLUDED.instrument_bonus, {LeaderboardBandContextTable}.instrument_bonus),
+                        overdrive_bonus = COALESCE(EXCLUDED.overdrive_bonus, {LeaderboardBandContextTable}.overdrive_bonus),
+                        instrument_combo = COALESCE(EXCLUDED.instrument_combo, {LeaderboardBandContextTable}.instrument_combo),
+                        first_seen_at = LEAST({LeaderboardBandContextTable}.first_seen_at, EXCLUDED.first_seen_at),
+                        last_updated_at = EXCLUDED.last_updated_at
+                    WHERE EXCLUDED.score != {LeaderboardBandContextTable}.score
+                       OR (EXCLUDED.source = 'scrape' AND {LeaderboardBandContextTable}.source != 'scrape')
+                       OR (EXCLUDED.difficulty >= 0 AND {LeaderboardBandContextTable}.difficulty < 0)
+                       OR (EXCLUDED.percentile > 0 AND {LeaderboardBandContextTable}.percentile <= 0)
+                       OR (EXCLUDED.band_members_json IS NOT NULL AND {LeaderboardBandContextTable}.band_members_json IS NULL)
+                       OR COALESCE(EXCLUDED.base_score, -1) != COALESCE({LeaderboardBandContextTable}.base_score, -1)
+                       OR COALESCE(EXCLUDED.overdrive_bonus, -1) != COALESCE({LeaderboardBandContextTable}.overdrive_bonus, -1)
+                    """
+                : $"""
+                    UPDATE {LeaderboardBandContextTable} context
+                    SET score = CASE WHEN @score != context.score THEN @score ELSE context.score END,
+                        accuracy = CASE WHEN @score != context.score THEN @accuracy ELSE context.accuracy END,
+                        is_full_combo = CASE WHEN @score != context.score THEN @isFullCombo ELSE context.is_full_combo END,
+                        stars = CASE WHEN @score != context.score THEN @stars ELSE context.stars END,
+                        season = CASE WHEN @score != context.score THEN @season ELSE context.season END,
+                        difficulty = CASE
+                            WHEN @difficulty >= 0 AND context.difficulty < 0 THEN @difficulty
+                            WHEN @score != context.score THEN @difficulty
+                            ELSE context.difficulty
+                        END,
+                        percentile = CASE
+                            WHEN @score != context.score THEN @percentile
+                            WHEN @percentile > 0 AND context.percentile <= 0 THEN @percentile
+                            ELSE context.percentile
+                        END,
+                        source = CASE
+                            WHEN context.source = 'scrape' THEN 'scrape'
+                            WHEN @source = 'scrape' THEN 'scrape'
+                            WHEN context.source = 'backfill' THEN 'backfill'
+                            WHEN @source = 'backfill' THEN 'backfill'
+                            ELSE @source
+                        END,
+                        end_time = CASE WHEN @score != context.score THEN @endTime ELSE context.end_time END,
+                        last_updated_at = @now
+                    WHERE context.song_id = @songId
+                      AND context.instrument = @instrument
+                      AND context.account_id = @accountId
+                      AND (
+                          @score != context.score
+                          OR (@source = 'scrape' AND context.source != 'scrape')
+                          OR (@difficulty >= 0 AND context.difficulty < 0)
+                          OR (@percentile > 0 AND context.percentile <= 0)
+                      )
+                    """;
+
+            cmd.Parameters.AddWithValue("songId", songId);
+            cmd.Parameters.AddWithValue("instrument", Instrument);
+            cmd.Parameters.AddWithValue("accountId", entry.AccountId);
+            cmd.Parameters.AddWithValue("score", entry.Score);
+            cmd.Parameters.AddWithValue("accuracy", entry.Accuracy);
+            cmd.Parameters.AddWithValue("isFullCombo", entry.IsFullCombo);
+            cmd.Parameters.AddWithValue("stars", entry.Stars);
+            cmd.Parameters.AddWithValue("season", entry.Season);
+            cmd.Parameters.AddWithValue("percentile", entry.Percentile);
+            cmd.Parameters.AddWithValue("source", entry.Source ?? "scrape");
+            cmd.Parameters.AddWithValue("difficulty", entry.Difficulty);
+            cmd.Parameters.AddWithValue("endTime", (object?)entry.EndTime ?? DBNull.Value);
+            if (bandMembersJson is not null)
+            {
+                cmd.Parameters.AddWithValue("bandMembersJson", NpgsqlDbType.Jsonb, bandMembersJson);
+                cmd.Parameters.AddWithValue("bandScore", entry.BandScore.HasValue ? entry.BandScore.Value : DBNull.Value);
+                cmd.Parameters.AddWithValue("baseScore", entry.BaseScore.HasValue ? entry.BaseScore.Value : DBNull.Value);
+                cmd.Parameters.AddWithValue("instrumentBonus", entry.InstrumentBonus.HasValue ? entry.InstrumentBonus.Value : DBNull.Value);
+                cmd.Parameters.AddWithValue("overdriveBonus", entry.OverdriveBonus.HasValue ? entry.OverdriveBonus.Value : DBNull.Value);
+                cmd.Parameters.AddWithValue("instrumentCombo", (object?)entry.InstrumentCombo ?? DBNull.Value);
+            }
+            cmd.Parameters.AddWithValue("now", now);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
     private int SyncOverlayEntries(
         string songId,
         IReadOnlyList<LeaderboardEntry> entries,
@@ -2732,12 +3136,12 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 difficulty = CASE WHEN EXCLUDED.source_priority >= {LeaderboardEntriesOverlayTable}.source_priority THEN EXCLUDED.difficulty ELSE {LeaderboardEntriesOverlayTable}.difficulty END,
                 api_rank = CASE WHEN EXCLUDED.source_priority >= {LeaderboardEntriesOverlayTable}.source_priority THEN EXCLUDED.api_rank ELSE {LeaderboardEntriesOverlayTable}.api_rank END,
                 end_time = CASE WHEN EXCLUDED.source_priority >= {LeaderboardEntriesOverlayTable}.source_priority THEN EXCLUDED.end_time ELSE {LeaderboardEntriesOverlayTable}.end_time END,
-                band_members_json = CASE WHEN EXCLUDED.source_priority >= {LeaderboardEntriesOverlayTable}.source_priority THEN EXCLUDED.band_members_json ELSE {LeaderboardEntriesOverlayTable}.band_members_json END,
-                band_score = CASE WHEN EXCLUDED.source_priority >= {LeaderboardEntriesOverlayTable}.source_priority THEN EXCLUDED.band_score ELSE {LeaderboardEntriesOverlayTable}.band_score END,
-                base_score = CASE WHEN EXCLUDED.source_priority >= {LeaderboardEntriesOverlayTable}.source_priority THEN EXCLUDED.base_score ELSE {LeaderboardEntriesOverlayTable}.base_score END,
-                instrument_bonus = CASE WHEN EXCLUDED.source_priority >= {LeaderboardEntriesOverlayTable}.source_priority THEN EXCLUDED.instrument_bonus ELSE {LeaderboardEntriesOverlayTable}.instrument_bonus END,
-                overdrive_bonus = CASE WHEN EXCLUDED.source_priority >= {LeaderboardEntriesOverlayTable}.source_priority THEN EXCLUDED.overdrive_bonus ELSE {LeaderboardEntriesOverlayTable}.overdrive_bonus END,
-                instrument_combo = CASE WHEN EXCLUDED.source_priority >= {LeaderboardEntriesOverlayTable}.source_priority THEN EXCLUDED.instrument_combo ELSE {LeaderboardEntriesOverlayTable}.instrument_combo END,
+                band_members_json = CASE WHEN EXCLUDED.source_priority >= {LeaderboardEntriesOverlayTable}.source_priority THEN COALESCE(EXCLUDED.band_members_json, {LeaderboardEntriesOverlayTable}.band_members_json) ELSE {LeaderboardEntriesOverlayTable}.band_members_json END,
+                band_score = CASE WHEN EXCLUDED.source_priority >= {LeaderboardEntriesOverlayTable}.source_priority THEN COALESCE(EXCLUDED.band_score, {LeaderboardEntriesOverlayTable}.band_score) ELSE {LeaderboardEntriesOverlayTable}.band_score END,
+                base_score = CASE WHEN EXCLUDED.source_priority >= {LeaderboardEntriesOverlayTable}.source_priority THEN COALESCE(EXCLUDED.base_score, {LeaderboardEntriesOverlayTable}.base_score) ELSE {LeaderboardEntriesOverlayTable}.base_score END,
+                instrument_bonus = CASE WHEN EXCLUDED.source_priority >= {LeaderboardEntriesOverlayTable}.source_priority THEN COALESCE(EXCLUDED.instrument_bonus, {LeaderboardEntriesOverlayTable}.instrument_bonus) ELSE {LeaderboardEntriesOverlayTable}.instrument_bonus END,
+                overdrive_bonus = CASE WHEN EXCLUDED.source_priority >= {LeaderboardEntriesOverlayTable}.source_priority THEN COALESCE(EXCLUDED.overdrive_bonus, {LeaderboardEntriesOverlayTable}.overdrive_bonus) ELSE {LeaderboardEntriesOverlayTable}.overdrive_bonus END,
+                instrument_combo = CASE WHEN EXCLUDED.source_priority >= {LeaderboardEntriesOverlayTable}.source_priority THEN COALESCE(EXCLUDED.instrument_combo, {LeaderboardEntriesOverlayTable}.instrument_combo) ELSE {LeaderboardEntriesOverlayTable}.instrument_combo END,
                 first_seen_at = LEAST({LeaderboardEntriesOverlayTable}.first_seen_at, EXCLUDED.first_seen_at),
                 last_updated_at = CASE WHEN EXCLUDED.source_priority >= {LeaderboardEntriesOverlayTable}.source_priority THEN EXCLUDED.last_updated_at ELSE {LeaderboardEntriesOverlayTable}.last_updated_at END,
                 source_priority = GREATEST({LeaderboardEntriesOverlayTable}.source_priority, EXCLUDED.source_priority),
@@ -2981,6 +3385,85 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return (list, total);
     }
 
+    private string BuildCurrentStateRawEntryRowsSql(bool filterSong, bool filterAccounts = false)
+    {
+        var liveSongFilter = filterSong ? "AND live.song_id = @songId" : string.Empty;
+        var snapshotSongFilter = filterSong ? "AND snapshot.song_id = @songId" : string.Empty;
+        var overlaySongFilter = filterSong ? "AND overlay.song_id = @songId" : string.Empty;
+        var liveAccountFilter = filterAccounts ? "AND live.account_id = ANY(@accountIds)" : string.Empty;
+        var snapshotAccountFilter = filterAccounts ? "AND snapshot.account_id = ANY(@accountIds)" : string.Empty;
+        var overlayAccountFilter = filterAccounts ? "AND overlay.account_id = ANY(@accountIds)" : string.Empty;
+        var allowLegacyRows = !UsePublishedScopeSources && !UseSnapshotOverlayWorkerReaders
+            ? "TRUE"
+            : "FALSE";
+        var allowUnmappedOverlayRows = UsePublishedScopeSources ? "FALSE" : "TRUE";
+
+        return $"""
+            WITH {BuildSelectedSourceCtes(filterSong)},
+            candidate_rows AS (
+                SELECT live.song_id, live.account_id, live.score, live.accuracy, live.is_full_combo,
+                       live.stars, live.season, live.difficulty, live.percentile, live.end_time,
+                       live.rank, live.api_rank, live.source,
+                       1 AS origin_precedence,
+                       0 AS source_priority
+                FROM leaderboard_entries live
+                WHERE live.instrument = @instrument
+                  AND {allowLegacyRows}
+                  {liveSongFilter}
+                  {liveAccountFilter}
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM selected_sources selected
+                      WHERE selected.song_id = live.song_id
+                  )
+                UNION ALL
+                SELECT snapshot.song_id, snapshot.account_id, snapshot.score, snapshot.accuracy,
+                       snapshot.is_full_combo, snapshot.stars, snapshot.season, snapshot.difficulty,
+                       snapshot.percentile, snapshot.end_time, snapshot.rank, snapshot.api_rank,
+                       snapshot.source,
+                       1 AS origin_precedence,
+                       0 AS source_priority
+                FROM {LeaderboardEntriesSnapshotTable} snapshot
+                JOIN selected_sources selected
+                  ON selected.song_id = snapshot.song_id
+                 AND selected.source_kind = 'snapshot'
+                 AND selected.source_snapshot_id = snapshot.snapshot_id
+                WHERE snapshot.instrument = @instrument
+                  {snapshotSongFilter}
+                  {snapshotAccountFilter}
+                UNION ALL
+                SELECT overlay.song_id, overlay.account_id, overlay.score, overlay.accuracy,
+                       overlay.is_full_combo, overlay.stars, overlay.season, overlay.difficulty,
+                       overlay.percentile, overlay.end_time, overlay.rank, overlay.api_rank,
+                       overlay.source,
+                       0 AS origin_precedence,
+                       overlay.source_priority
+                FROM {LeaderboardEntriesOverlayTable} overlay
+                WHERE overlay.instrument = @instrument
+                  {overlaySongFilter}
+                  {overlayAccountFilter}
+                  AND (
+                      {allowUnmappedOverlayRows}
+                      OR EXISTS (
+                          SELECT 1
+                          FROM selected_sources selected
+                          WHERE selected.song_id = overlay.song_id
+                      )
+                  )
+            ),
+            resolved_rows AS (
+                SELECT DISTINCT ON (song_id, account_id)
+                       song_id, account_id, score, accuracy, is_full_combo, stars, season,
+                       difficulty, percentile, end_time, rank, api_rank, source
+                FROM candidate_rows
+                ORDER BY song_id, account_id, origin_precedence ASC, source_priority DESC
+            )
+            SELECT song_id, account_id, score, accuracy, is_full_combo, stars, season,
+                   difficulty, percentile, end_time, rank, api_rank, source
+            FROM resolved_rows
+            """;
+    }
+
     private string BuildSelectedSourceCtes(bool filterSong)
     {
         if (UsePublishedScopeSources)
@@ -3077,7 +3560,8 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         var totalProjection = includeTotalCount ? "total_count" : "0";
         var totalComputation = includeTotalCount ? ", COUNT(*) OVER ()::INT AS total_count" : string.Empty;
         var scoreFilter = hasMaxScore ? "WHERE score <= @maxScore" : string.Empty;
-        var allowLegacyRows = UsePublishedScopeSources ? "FALSE" : "TRUE";
+        var allowLegacyRows = !UsePublishedScopeSources && !UseSnapshotOverlayWorkerReaders ? "TRUE" : "FALSE";
+        var allowUnmappedOverlayRows = UsePublishedScopeSources ? "FALSE" : "TRUE";
 
         return $"""
             WITH {BuildSelectedSourceCtes(filterSong: true)},
@@ -3112,7 +3596,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 FROM {LeaderboardEntriesOverlayTable}
                 WHERE song_id = @songId
                   AND instrument = @instrument
-                  AND ({allowLegacyRows} OR EXISTS (SELECT 1 FROM selected_sources))
+                  AND ({allowUnmappedOverlayRows} OR EXISTS (SELECT 1 FROM selected_sources))
             ),
             resolved_rows AS (
                 SELECT DISTINCT ON (account_id)
@@ -3154,7 +3638,8 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     private string BuildCurrentStateSongIdsForAccountSql()
     {
-        var allowLegacyRows = UsePublishedScopeSources ? "FALSE" : "TRUE";
+        var allowLegacyRows = !UsePublishedScopeSources && !UseSnapshotOverlayWorkerReaders ? "TRUE" : "FALSE";
+        var allowUnmappedOverlayRows = UsePublishedScopeSources ? "FALSE" : "TRUE";
         return
         $"""
             WITH {BuildSelectedSourceCtes(filterSong: false)},
@@ -3187,7 +3672,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 FROM {LeaderboardEntriesOverlayTable} overlay
                 WHERE overlay.instrument = @instrument
                   AND (
-                      {allowLegacyRows}
+                      {allowUnmappedOverlayRows}
                       OR EXISTS (
                           SELECT 1 FROM selected_sources selected
                           WHERE selected.song_id = overlay.song_id
@@ -3234,7 +3719,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 """;
         }
 
-        var allowLegacyRows = UsePublishedScopeSources ? "FALSE" : "TRUE";
+        var allowLegacyRows = UseSnapshotOverlayWorkerReaders ? "FALSE" : "TRUE";
         return
         $"""
             WITH {BuildSelectedSourceCtes(filterSong: false)},
@@ -3270,7 +3755,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 FROM {LeaderboardEntriesOverlayTable} overlay
                 WHERE overlay.instrument = @instrument
                   AND (
-                      {allowLegacyRows}
+                      TRUE
                       OR EXISTS (
                           SELECT 1 FROM selected_sources selected
                           WHERE selected.song_id = overlay.song_id
@@ -3288,10 +3773,17 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             """;
     }
 
-    private string BuildCurrentStatePlayerScoresSql(bool hasSongIdFilter)
+    private string BuildCurrentStatePlayerScoresSql(
+        bool hasSongIdFilter,
+        bool includeAccountId = false)
     {
         var songFilter = hasSongIdFilter ? "AND song_id = @songId" : string.Empty;
-        var allowLegacyRows = UsePublishedScopeSources ? "FALSE" : "TRUE";
+        var accountFilter = includeAccountId
+            ? "account_id = ANY(@accountIds)"
+            : "account_id = @accountId";
+        var accountProjection = includeAccountId ? "account_id, " : string.Empty;
+        var allowLegacyRows = !UsePublishedScopeSources && !UseSnapshotOverlayWorkerReaders ? "TRUE" : "FALSE";
+        var allowUnmappedOverlayRows = UsePublishedScopeSources ? "FALSE" : "TRUE";
         return $"""
             WITH {BuildSelectedSourceCtes(filterSong: false)},
             base_rows AS (
@@ -3323,7 +3815,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 FROM {LeaderboardEntriesOverlayTable} overlay
                 WHERE overlay.instrument = @instrument
                   AND (
-                      {allowLegacyRows}
+                      {allowUnmappedOverlayRows}
                       OR EXISTS (
                           SELECT 1 FROM selected_sources selected
                           WHERE selected.song_id = overlay.song_id
@@ -3342,10 +3834,10 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                        api_rank
                 FROM resolved_rows
             )
-            SELECT song_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time, rank, api_rank
+            SELECT {accountProjection}song_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time, rank, api_rank
             FROM ranked_rows
-            WHERE account_id = @accountId {songFilter}
-            ORDER BY song_id
+            WHERE {accountFilter} {songFilter}
+            ORDER BY {accountProjection}song_id
             """;
     }
 
@@ -3383,6 +3875,21 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         string OverlayReason);
 
     private LeaderboardEntryDto ReadEntryDto(NpgsqlDataReader r) => new() { AccountId = r.GetString(0), Score = r.GetInt32(1), Accuracy = r.IsDBNull(2) ? 0 : r.GetInt32(2), IsFullCombo = !r.IsDBNull(3) && r.GetBoolean(3), Stars = r.IsDBNull(4) ? 0 : r.GetInt32(4), Season = r.IsDBNull(5) ? 0 : r.GetInt32(5), Difficulty = r.IsDBNull(6) ? 0 : r.GetInt32(6), Percentile = r.IsDBNull(7) ? 0 : r.GetDouble(7), EndTime = r.IsDBNull(8) ? null : r.GetString(8), Rank = r.FieldCount > 9 && !r.IsDBNull(9) ? (int)r.GetInt64(9) : 0, ApiRank = r.FieldCount > 11 && !r.IsDBNull(11) ? r.GetInt32(11) : 0, Source = r.FieldCount > 12 && !r.IsDBNull(12) ? r.GetString(12) : "scrape" };
+    private static LeaderboardEntry ReadCurrentStateEntry(NpgsqlDataReader r) => new()
+    {
+        AccountId = r.GetString(1),
+        Score = r.GetInt32(2),
+        Accuracy = r.IsDBNull(3) ? 0 : r.GetInt32(3),
+        IsFullCombo = !r.IsDBNull(4) && r.GetBoolean(4),
+        Stars = r.IsDBNull(5) ? 0 : r.GetInt32(5),
+        Season = r.IsDBNull(6) ? 0 : r.GetInt32(6),
+        Difficulty = r.IsDBNull(7) ? 0 : r.GetInt32(7),
+        Percentile = r.IsDBNull(8) ? 0 : r.GetDouble(8),
+        EndTime = r.IsDBNull(9) ? null : r.GetString(9),
+        Rank = r.IsDBNull(10) ? 0 : r.GetInt32(10),
+        ApiRank = r.IsDBNull(11) ? 0 : r.GetInt32(11),
+        Source = r.IsDBNull(12) ? "scrape" : r.GetString(12),
+    };
     private PlayerScoreDto ReadPlayerScore(NpgsqlDataReader r) => new() { SongId = r.GetString(0), Instrument = Instrument, Score = r.GetInt32(1), Accuracy = r.IsDBNull(2) ? 0 : r.GetInt32(2), IsFullCombo = !r.IsDBNull(3) && r.GetBoolean(3), Stars = r.IsDBNull(4) ? 0 : r.GetInt32(4), Season = r.IsDBNull(5) ? 0 : r.GetInt32(5), Difficulty = r.IsDBNull(6) ? 0 : r.GetInt32(6), Percentile = r.IsDBNull(7) ? 0 : r.GetDouble(7), EndTime = r.IsDBNull(8) ? null : r.GetString(8), Rank = r.IsDBNull(9) ? 0 : r.GetInt32(9), ApiRank = r.IsDBNull(10) ? 0 : r.GetInt32(10) };
     private static AccountRankingDto ReadAccountRanking(NpgsqlDataReader r) => new() { AccountId = r.GetString(0), SongsPlayed = r.GetInt32(1), TotalChartedSongs = r.GetInt32(2), Coverage = r.GetDouble(3), RawSkillRating = r.GetDouble(4), AdjustedSkillRating = r.GetDouble(5), AdjustedSkillRank = r.GetInt32(6), WeightedRating = r.GetDouble(7), WeightedRank = r.GetInt32(8), FcRate = r.GetDouble(9), FcRateRank = r.GetInt32(10), TotalScore = r.GetInt64(11), TotalScoreRank = r.GetInt32(12), MaxScorePercent = r.GetDouble(13), MaxScorePercentRank = r.GetInt32(14), AvgAccuracy = r.GetDouble(15), FullComboCount = r.GetInt32(16), AvgStars = r.GetDouble(17), BestRank = r.GetInt32(18), AvgRank = r.GetDouble(19), ComputedAt = r.GetDateTime(20).ToString("o"), RawMaxScorePercent = r.IsDBNull(21) ? null : r.GetDouble(21), RawWeightedRating = r.IsDBNull(22) ? null : r.GetDouble(22) };
     private static (string Column, string Direction) RankByColumn(string rankBy) => rankBy switch { "weighted" => ("weighted_rank", "ASC"), "fcrate" => ("fc_rate_rank", "ASC"), "totalscore" => ("total_score_rank", "ASC"), "maxscore" => ("max_score_percent_rank", "ASC"), _ => ("adjusted_skill_rank", "ASC") };
@@ -3433,6 +3940,12 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     /// </summary>
     public void MaterializeValidEntries(NpgsqlConnection conn, double baseThreshold)
     {
+        if (UseSnapshotOverlayWorkerReaders)
+        {
+            MaterializeCurrentStateValidEntries(conn, baseThreshold);
+            return;
+        }
+
         // Drop any leftover tables from a previous call on this connection
         using (var c = conn.CreateCommand())
         {

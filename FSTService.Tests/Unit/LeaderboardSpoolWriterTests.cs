@@ -1,6 +1,8 @@
 using FSTService.Scraping;
+using FSTService.Tests.Helpers;
 using NSubstitute;
 using Microsoft.Extensions.Logging;
+using NpgsqlTypes;
 
 namespace FSTService.Tests.Unit;
 
@@ -214,13 +216,161 @@ public class LeaderboardSpoolWriterTests
     public void SoloFlushSql_UsesConstantInstrumentPredicates_ForPartitionPruning()
     {
         var snapshotSql = LeaderboardSpoolWriterFactory.BuildSnapshotInsertSql();
+        var bandContextSql = LeaderboardSpoolWriterFactory.BuildBandContextSyncSql();
         var scoreMergeSql = LeaderboardSpoolWriterFactory.BuildScoreMergeSql();
         var rankUpdateSql = LeaderboardSpoolWriterFactory.BuildRankUpdateSql();
 
         Assert.Contains("FROM _le_staging WHERE instrument = @instrument", snapshotSql);
+        Assert.Contains("WHERE instrument = @instrument", bandContextSql);
         Assert.Contains("FROM _le_staging WHERE instrument = @instrument", scoreMergeSql);
         Assert.Contains("WHERE leaderboard_entries.instrument = @instrument", scoreMergeSql);
         Assert.Contains("FROM _le_staging WHERE instrument = @instrument", rankUpdateSql);
         Assert.Contains("WHERE le.instrument = @instrument", rankUpdateSql);
+    }
+
+    [Fact]
+    public void BandContextSync_PreservesBandPayloadAcrossScoreOnlySnapshots()
+    {
+        using var fixture = new TempInstrumentDatabase();
+        using var connection = fixture.DataSource.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        using (var create = connection.CreateCommand())
+        {
+            create.Transaction = transaction;
+            create.CommandText = """
+                CREATE TEMP TABLE _le_staging (
+                    song_id TEXT,
+                    instrument TEXT,
+                    account_id TEXT,
+                    score INTEGER,
+                    accuracy INTEGER,
+                    is_full_combo BOOLEAN,
+                    stars INTEGER,
+                    season INTEGER,
+                    percentile DOUBLE PRECISION,
+                    source TEXT,
+                    difficulty INTEGER,
+                    end_time TEXT,
+                    band_members_json JSONB,
+                    band_score INTEGER,
+                    base_score INTEGER,
+                    instrument_bonus INTEGER,
+                    overdrive_bonus INTEGER,
+                    instrument_combo TEXT,
+                    ts TIMESTAMPTZ
+                )
+                """;
+            create.ExecuteNonQuery();
+        }
+
+        ExecuteStageInsert(
+            connection,
+            transaction,
+            accountId: "acct-band",
+            score: 100_000,
+            bandMembersJson: """
+                [{"MemberIndex":0,"AccountId":"acct-band"},{"MemberIndex":1,"AccountId":"acct-mate"}]
+                """,
+            bandScore: 150_000);
+        ExecuteBandContextSync(connection, transaction);
+
+        using (var clear = connection.CreateCommand())
+        {
+            clear.Transaction = transaction;
+            clear.CommandText = "TRUNCATE TABLE _le_staging";
+            clear.ExecuteNonQuery();
+        }
+        ExecuteStageInsert(
+            connection,
+            transaction,
+            accountId: "acct-band",
+            score: 100_000,
+            bandMembersJson: """
+                [{"MemberIndex":0,"AccountId":"acct-other"},{"MemberIndex":1,"AccountId":"acct-mate"}]
+                """,
+            bandScore: 999_000);
+        ExecuteBandContextSync(connection, transaction);
+
+        using (var clear = connection.CreateCommand())
+        {
+            clear.Transaction = transaction;
+            clear.CommandText = "TRUNCATE TABLE _le_staging";
+            clear.ExecuteNonQuery();
+        }
+        ExecuteStageInsert(
+            connection,
+            transaction,
+            accountId: "acct-band",
+            score: 110_000,
+            bandMembersJson: null,
+            bandScore: null);
+        ExecuteStageInsert(
+            connection,
+            transaction,
+            accountId: "acct-no-band",
+            score: 90_000,
+            bandMembersJson: null,
+            bandScore: null);
+        ExecuteBandContextSync(connection, transaction);
+
+        using var read = connection.CreateCommand();
+        read.Transaction = transaction;
+        read.CommandText = """
+            SELECT account_id, score, band_members_json::text, band_score
+            FROM leaderboard_band_context
+            ORDER BY account_id
+            """;
+        using var reader = read.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal("acct-band", reader.GetString(0));
+        Assert.Equal(110_000, reader.GetInt32(1));
+        Assert.Contains("acct-band", reader.GetString(2));
+        Assert.DoesNotContain("acct-other", reader.GetString(2));
+        Assert.Equal(150_000, reader.GetInt32(3));
+        Assert.False(reader.Read());
+    }
+
+    private static void ExecuteStageInsert(
+        Npgsql.NpgsqlConnection connection,
+        Npgsql.NpgsqlTransaction transaction,
+        string accountId,
+        int score,
+        string? bandMembersJson,
+        int? bandScore)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO _le_staging (
+                song_id, instrument, account_id, score, accuracy, is_full_combo,
+                stars, season, percentile, source, difficulty, end_time, band_members_json, band_score,
+                base_score, instrument_bonus, overdrive_bonus, instrument_combo, ts)
+            VALUES (
+                'song-band', 'Solo_Guitar', @accountId, @score, 98, TRUE,
+                6, 3, 99.0, 'scrape', 3, '2026-01-01T00:00:00Z', @bandMembersJson, @bandScore,
+                100000, 30000, 20000, '0:1', now())
+            """;
+        command.Parameters.AddWithValue("accountId", accountId);
+        command.Parameters.AddWithValue("score", score);
+        command.Parameters.AddWithValue(
+            "bandMembersJson",
+            NpgsqlDbType.Jsonb,
+            bandMembersJson is null ? DBNull.Value : bandMembersJson);
+        command.Parameters.AddWithValue(
+            "bandScore",
+            NpgsqlDbType.Integer,
+            bandScore.HasValue ? bandScore.Value : DBNull.Value);
+        command.ExecuteNonQuery();
+    }
+
+    private static void ExecuteBandContextSync(
+        Npgsql.NpgsqlConnection connection,
+        Npgsql.NpgsqlTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = LeaderboardSpoolWriterFactory.BuildBandContextSyncSql();
+        command.Parameters.AddWithValue("instrument", "Solo_Guitar");
+        command.ExecuteNonQuery();
     }
 }

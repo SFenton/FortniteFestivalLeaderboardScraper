@@ -215,6 +215,23 @@ This plan records the approved direction for improving FST Postgres persistence 
   remains publication-critical, direct legacy helpers/tooling remain, and all
   27 bounded comparisons against published `1267` differ in count and
   checksum.
+- P9 now has a default-off worker reader candidate. When enabled, active
+  current-state helpers, projection rebuilds, band extraction, precompute
+  probes, and improvement-notification projection scans resolve finalized
+  snapshots plus overlays and reject legacy-only scopes. Supplemental writes
+  remain enabled and no production flag changed; complete scrape parity and
+  performance are still required before writer-off or reclaim.
+  Projection provenance is explicit through
+  `solo_current_projection_scope.source_kind`; startup recovery rebuilds or
+  prunes unresolved scopes before notifications, while player-profile
+  precompute uses bounded bulk reads and only trusts a provenance-validated
+  projection.
+  Band extraction no longer depends on full snapshots retaining sparse band
+  JSON: a narrow `leaderboard_band_context` accumulator is seeded once behind
+  the candidate flag and maintained by both scrape and supplemental writers
+  with the exact legacy merge gate. Read-only live simulation matched all
+  `83,801` source rows with zero missing/value mismatches and reduced the
+  derived comparison from 134.96 seconds to 2.44 seconds.
 - The earlier STORAGE-OWNERSHIP phase completed continuous-safe P6/P8/P9 owner cards and exact
   manifests for `player_score_observations`, `scrape_dirty_*`, and legacy
   `leaderboard_entries_*`: `61,217,292,288` bytes total. Observation dual
@@ -499,7 +516,7 @@ path, and post-action validation are documented.
 | Phase 8 physical snapshot write skipping | Code/readiness accepted / two live A/Bs capacity-blocked and reverted | Scrape `1264` failed the post-writer guard. Capacity-ready scrape `1265` passed that guard, completed `8,232/8,232` manifests and band maintenance, and proved `273` scopes / `218,892` rows reusable with zero unexpected physical rows. Ranking snapshots crossed the `14,571,150,203` safety floor at `13,144,125,440` free before publication. Production was reverted, `1236` remains published, and the flag remains off. |
 | P6 player-score observation ownership | Accepted and executed | Scrape `1267` proved both writers off with zero touches. A rollback rehearsal and no-`CASCADE` truncate reclaimed `12,682,330,112` database bytes; zero rows remain, schema/view/indexes/sequence are intact, and immediate plus 60-second public fingerprints were `13/13` exact. |
 | P8 stale dirty-work ownership | Accepted and executed | ORPHAN-RECLAIM truncated all four tables without `CASCADE`, preserving empty schemas and primary keys. Their `19,836,661` rows from scrapes `926`-`1146` were non-authoritative work state; the family contributed `8,706,752,512` pre-action bytes. |
-| P9 legacy mutable leaderboard ownership | Retained / reader migration and parity blocked | Nine partitions total `40,825,225,216` bytes and `36,769,051` rows. Main scrape writer is off, but supplemental writes added `970` backfill rows; publication-critical band extraction, conditional projection fallback, direct helpers, diagnostics, and restore tooling remain owners. All 27 published-`1267` samples mismatch. |
+| P9 legacy mutable leaderboard ownership | Reader candidate implemented / live parity pending | The default-off worker candidate migrates publication-critical band extraction, active helper reads, projection fallback, precompute probes, and notification scans to finalized snapshots plus overlays. Supplemental writes remain on and the legacy family remains intact until a complete candidate scrape proves exact derived/public parity, acceptable band-extraction I/O, and zero legacy access. |
 | Rank/temp spill write-mode reduction | Accepted config/code default | Switched band team ranking rebuild default from `Monolithic` to `ComboBatched` to reduce one-shot build-table insert pressure; all write modes already have parity coverage. |
 | Optional band-song projection pressure gate | Complete | Defaulted optional rebuilds to disabled, made published reads reject stale/missing rows, and retired `36,747,099` stale rows for `28,315,533,312` database bytes while retaining schema/state and an exact restore archive. |
 | BAND-SONG-PROJECTION retirement | Accepted | Truncated only `band_song_team_rankings` and the three `band_song_team_rankings_current_band_*` tables without `CASCADE`; 24/24 public route fingerprints remained exact, all nine indexes stayed valid, and both scrape guards now pass. Evidence: `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-song-projection-retirement-20260726T103231Z`. |

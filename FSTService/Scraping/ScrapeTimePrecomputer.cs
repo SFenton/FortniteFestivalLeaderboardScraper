@@ -140,18 +140,34 @@ public sealed class ScrapeTimePrecomputer
         _metaDb.BulkSetCachedResponsesStaging(
             [],
             persistenceTargetPublicationId);
+        var instrumentKeys = _persistence.GetInstrumentKeys();
         var projectionStats = _soloCurrentProjectionBuilder?.Inspect();
+        var candidateProjectionReady = true;
+        if (_features.UseSnapshotOverlayWorkerReaders)
+        {
+            if (_soloCurrentProjectionBuilder is null)
+            {
+                candidateProjectionReady = false;
+            }
+            else
+            {
+                await _soloCurrentProjectionBuilder.EnsureSchemaAsync(ct);
+                candidateProjectionReady =
+                    (await _soloCurrentProjectionBuilder.LoadStaleScopesAsync(ct)).Count == 0
+                    && !await _soloCurrentProjectionBuilder.HasOrphanedProjectionScopesAsync(ct);
+            }
+        }
         _currentProjectionAuthoritativeForPrecompute =
             projectionStats is
             {
                 ProjectionExists: true,
                 ScopeCount: > 0,
                 FailedScopeCount: 0,
-            };
+            }
+            && candidateProjectionReady;
         var allMaxScores = _pathStore.GetAllMaxScores();
         var unfilteredPopulation = _metaDb.GetAllLeaderboardPopulation();
         var registeredIds = _metaDb.GetRegisteredAccountIds();
-        var instrumentKeys = _persistence.GetInstrumentKeys();
 
         // ── Set up disk staging (shared across phases 2-7) ──────
         await using var staging = new DiskStagingWriter(
@@ -464,6 +480,16 @@ public sealed class ScrapeTimePrecomputer
 
         // Bulk-resolve display names for all registered users
         var displayNames = _metaDb.GetDisplayNames(registeredIds);
+        var profilesByAccount =
+            new Dictionary<string, List<PlayerScoreDto>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var accountChunk in registeredIds.Chunk(512))
+        {
+            ct.ThrowIfCancellationRequested();
+            foreach (var (accountId, scores) in _persistence.GetCurrentStatePlayerProfiles(
+                         accountChunk,
+                         preferValidatedProjection: _currentProjectionAuthoritativeForPrecompute))
+                profilesByAccount[accountId] = scores;
+        }
         var failures = new ConcurrentBag<Exception>();
 
         await Parallel.ForEachAsync(registeredIds, new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = ct },
@@ -471,8 +497,10 @@ public sealed class ScrapeTimePrecomputer
             {
                 try
                 {
+                    var scores = profilesByAccount.GetValueOrDefault(accountId) ?? [];
                     PrecomputeSinglePlayer(accountId, allMaxScores, unfilteredPopulation,
-                        populationTiers, bandScoresCache, displayNames);
+                        populationTiers, bandScoresCache, displayNames,
+                        scoresOverride: scores);
                 }
                 catch (Exception ex)
                 {
@@ -493,11 +521,17 @@ public sealed class ScrapeTimePrecomputer
         IReadOnlyDictionary<(string, string), PopulationTierData> populationTiers,
         Dictionary<(string, string), int[]> bandScoresCache,
         Dictionary<string, string>? displayNames = null,
-        List<(string Key, byte[] Json, string ETag)>? storeOverride = null)
+        List<(string Key, byte[] Json, string ETag)>? storeOverride = null,
+        IReadOnlyList<PlayerScoreDto>? scoresOverride = null)
     {
-        var scores = _persistence.GetCurrentStatePlayerProfile(accountId);
-        if (scores.Count == 0 && !_currentProjectionAuthoritativeForPrecompute)
+        var scores = scoresOverride?.ToList()
+            ?? _persistence.GetCurrentStatePlayerProfile(accountId);
+        if (scores.Count == 0
+            && !_currentProjectionAuthoritativeForPrecompute
+            && !_features.UseSnapshotOverlayWorkerReaders)
+        {
             scores = _persistence.GetPlayerProfile(accountId);
+        }
 
         displayNames ??= _metaDb.GetDisplayNames(new[] { accountId });
         var displayName = displayNames.GetValueOrDefault(accountId);
@@ -713,12 +747,9 @@ public sealed class ScrapeTimePrecomputer
         foreach (var inst in instrumentKeys)
         {
             var db = _persistence.GetOrCreateInstrumentDb(inst);
-            var songId = db.GetAnySongId();
-            if (songId is not null)
-            {
-                var counts = db.GetAllSongCounts();
-                foreach (var sid in counts.Keys) allSongIds.Add(sid);
-            }
+            var counts = db.GetAllSongCounts();
+            foreach (var songId in counts.Keys)
+                allSongIds.Add(songId);
         }
 
         var songParallelism = Math.Max(1, _scraperOptions.PrecomputeLeaderboardSongParallelism);
