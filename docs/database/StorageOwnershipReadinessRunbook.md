@@ -268,7 +268,8 @@ complete writer-off candidate scrape pass.
    exact API/export/ranking/history parity, and rebuild capacity.
 7. Run `legacy-leaderboard-truncate.sql`.
 8. Keep the empty schema for a rollback window. Rehydrate from the published
-   map with `legacy-leaderboard-rebuild.sql` if rollback requires it.
+   map, overlays, and accumulated band context with
+   `legacy-leaderboard-rebuild.sql` if rollback requires it.
 9. Remove the now-completed legacy seed SQL from the band-context migration;
    the durable seed state prevents re-execution, but final drop must remove the
    textual/runtime fallback dependency.
@@ -276,7 +277,8 @@ complete writer-off candidate scrape pass.
     `legacy-leaderboard-drop.sql`.
 
 No package uses `CASCADE`. The rebuild intentionally reconstructs the
-published physical baseline, not the divergent current legacy contents.
+published physical baseline plus current overlays and exact accumulated band
+context, not the divergent pre-migration legacy heap.
 
 ### 2026-08-07 reader candidate
 
