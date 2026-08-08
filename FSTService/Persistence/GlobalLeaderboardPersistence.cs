@@ -26,6 +26,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     private const int MaxBandSearchInterpretations = 12;
     private const int MaxBandSearchCandidateAccounts = 32;
     private readonly Dictionary<string, IInstrumentDatabase> _instrumentDbs = new(StringComparer.OrdinalIgnoreCase);
+    private volatile bool _useValidatedCurrentProjectionForWorkerReaders;
     private readonly IMetaDatabase _metaDb;
     private readonly ILogger<GlobalLeaderboardPersistence> _log;
     private readonly ILoggerFactory _loggerFactory;
@@ -85,6 +86,43 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// </summary>
     public bool UseSnapshotOverlayWorkerReaders =>
         !UsePublishedScopeSources && _features.UseSnapshotOverlayWorkerReaders;
+
+    public bool UseValidatedCurrentProjectionForWorkerReaders =>
+        UseSnapshotOverlayWorkerReaders
+        && _useValidatedCurrentProjectionForWorkerReaders;
+
+    public void SetValidatedCurrentProjectionForWorkerReaders(bool enabled)
+    {
+        if (enabled && !UseSnapshotOverlayWorkerReaders)
+        {
+            throw new InvalidOperationException(
+                "Validated worker projection reads require snapshot/overlay worker readers.");
+        }
+
+        _useValidatedCurrentProjectionForWorkerReaders = enabled;
+        foreach (var database in _instrumentDbs.Values.Cast<InstrumentDatabase>())
+        {
+            database.UseValidatedCurrentProjectionForWorkerReaders = enabled;
+        }
+    }
+
+    internal IDisposable BeginValidatedCurrentProjectionReadPass()
+    {
+        SetValidatedCurrentProjectionForWorkerReaders(false);
+        return new ValidatedCurrentProjectionReadPass(this);
+    }
+
+    private sealed class ValidatedCurrentProjectionReadPass(
+        GlobalLeaderboardPersistence owner) : IDisposable
+    {
+        private GlobalLeaderboardPersistence? _owner = owner;
+
+        public void Dispose()
+        {
+            Interlocked.Exchange(ref _owner, null)
+                ?.SetValidatedCurrentProjectionForWorkerReaders(false);
+        }
+    }
 
     public void RegisterSnapshotReuseManifest(
         long scrapeId,
@@ -161,6 +199,8 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             {
                 UsePublishedScopeSources = UsePublishedScopeSources,
                 UseSnapshotOverlayWorkerReaders = UseSnapshotOverlayWorkerReaders,
+                UseValidatedCurrentProjectionForWorkerReaders =
+                    UseValidatedCurrentProjectionForWorkerReaders,
                 UseStoredProjectionRanksForFilteredReads = _features.UseStoredSoloProjectionRanksForFilteredReads,
                 WriteLegacyLiveLeaderboardSupplementalRows = _features.WriteLegacyLiveLeaderboardSupplementalRows,
             };
@@ -261,6 +301,8 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         {
             UsePublishedScopeSources = UsePublishedScopeSources,
             UseSnapshotOverlayWorkerReaders = UseSnapshotOverlayWorkerReaders,
+            UseValidatedCurrentProjectionForWorkerReaders =
+                UseValidatedCurrentProjectionForWorkerReaders,
             UseStoredProjectionRanksForFilteredReads = _features.UseStoredSoloProjectionRanksForFilteredReads,
             WriteLegacyLiveLeaderboardSupplementalRows = _features.WriteLegacyLiveLeaderboardSupplementalRows,
         };
@@ -3361,7 +3403,9 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         if (UsePublishedScopeSources)
             return GetPublishedScopePlayerProfiles(normalizedAccountIds, songId, instruments);
 
-        if (UseSnapshotOverlayWorkerReaders && !preferValidatedProjection)
+        if (UseSnapshotOverlayWorkerReaders
+            && !UseValidatedCurrentProjectionForWorkerReaders
+            && !preferValidatedProjection)
         {
             var dbs = instruments is null
                 ? _instrumentDbs.ToArray()

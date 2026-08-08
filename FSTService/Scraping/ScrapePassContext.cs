@@ -23,5 +23,12 @@ public sealed class ScrapePassContext
     public bool SoloCurrentProjectionScopesSealedForPublication { get; set; }
     public bool NotificationProjectionRequiresFullRefresh { get; set; }
     public HashSet<SoloCurrentProjectionScopeKey> NotificationProjectionScopes { get; } = [];
+    public HashSet<SoloCurrentProjectionScopeKey> RefreshedProjectionScopes { get; } = [];
     public PostScrapeExecutionLedger PostScrapeOutcomes { get; } = new();
+
+    public void AddNotificationProjectionScope(SoloCurrentProjectionScopeKey scope)
+    {
+        NotificationProjectionScopes.Add(scope);
+        RefreshedProjectionScopes.Remove(scope);
+    }
 }

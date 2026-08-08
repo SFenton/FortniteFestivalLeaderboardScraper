@@ -298,8 +298,12 @@ public class PostScrapeOrchestratorTests : IDisposable
     private PostScrapeOrchestrator CreateOrchestrator(
         CyclicalSongMachine cyclicalMachine,
         HistoryReconstructor historyReconstructor,
-        ScraperOptions? options = null)
+        ScraperOptions? options = null,
+        GlobalLeaderboardPersistence? persistence = null,
+        SoloCurrentProjectionBuilder? soloCurrentProjectionBuilder = null,
+        IPostScrapePhaseFaultInjector? phaseFaultInjector = null)
     {
+        var activePersistence = persistence ?? _persistence;
         var scraper = Substitute.For<GlobalLeaderboardScraper>(
             new HttpClient(),
             new ScrapeProgressTracker(),
@@ -308,11 +312,11 @@ public class PostScrapeOrchestratorTests : IDisposable
             null);
         var scraperOptions = options ?? new ScraperOptions();
         var rivalsCalculator = new RivalsCalculator(
-            _persistence,
+            activePersistence,
             Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(
             rivalsCalculator,
-            _persistence,
+            activePersistence,
             new NotificationService(Substitute.For<ILogger<NotificationService>>()),
             _progress,
             new UserSyncProgressTracker(
@@ -321,19 +325,19 @@ public class PostScrapeOrchestratorTests : IDisposable
             new ResponseCacheService(TimeSpan.FromMinutes(5)),
             Substitute.For<ILogger<RivalsOrchestrator>>());
         var rankingsCalculator = new RankingsCalculator(
-            _persistence,
+            activePersistence,
             _metaDb,
             _pathDataStore,
             _progress,
             Substitute.For<ILogger<RankingsCalculator>>());
         var leaderboardRivalsCalculator = new LeaderboardRivalsCalculator(
-            _persistence,
+            activePersistence,
             _metaDb,
             Options.Create(scraperOptions),
             Substitute.For<ILogger<LeaderboardRivalsCalculator>>());
 
         return new PostScrapeOrchestrator(
-            _persistence,
+            activePersistence,
             _firstSeenCalculator,
             _nameResolver,
             _refresher,
@@ -352,7 +356,7 @@ public class PostScrapeOrchestratorTests : IDisposable
                 Substitute.For<ILogger<UserSyncProgressTracker>>()),
             _pathDataStore,
             new ScrapeTimePrecomputer(
-                _persistence,
+                activePersistence,
                 _metaDb,
                 _pathDataStore,
                 _progress,
@@ -379,7 +383,12 @@ public class PostScrapeOrchestratorTests : IDisposable
                 Substitute.For<ILogger<BandLeaderboardPersistence>>()),
             Options.Create(scraperOptions),
             _log,
-            null);
+            null,
+            soloCurrentProjectionBuilder:
+                soloCurrentProjectionBuilder ?? _soloCurrentProjectionBuilder,
+            databasePressureMonitor: _databasePressureMonitor,
+            phaseFaultInjector: phaseFaultInjector,
+            workerStatus: _workerStatus);
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -1543,6 +1552,143 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_ValidatedProjectionPrecedesRivalsAndCleanupRefreshesOnlyLaterScopes()
+    {
+        const string earlySongId = "song_projection_early";
+        const string redirtySongId = "song_projection_redirty";
+        const string lateSongId = "song_projection_late";
+        const string instrument = "Solo_Guitar";
+        const string accountId = "acct_projection";
+
+        using var candidateMeta = new MetaDatabase(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<MetaDatabase>>());
+        using var candidatePersistence = new GlobalLeaderboardPersistence(
+            candidateMeta,
+            NullLoggerFactory.Instance,
+            NullLogger<GlobalLeaderboardPersistence>.Instance,
+            _metaFixture.DataSource,
+            Options.Create(new FeatureOptions
+            {
+                EnforcePublicationCriticalPhases = true,
+                UseSnapshotOverlayWorkerReaders = true,
+            }));
+        candidatePersistence.Initialize();
+        var candidateBuilder = new SoloCurrentProjectionBuilder(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<SoloCurrentProjectionBuilder>>(),
+            Options.Create(new FeatureOptions
+            {
+                UseSnapshotOverlayWorkerReaders = true,
+            }));
+        await candidateBuilder.EnsureSchemaAsync();
+
+        InsertSnapshotState(earlySongId, instrument, 42);
+        InsertSnapshotEntry(42, earlySongId, instrument, accountId, 120_000);
+        InsertProjectionScope(earlySongId, instrument, sourceSnapshotId: 41);
+        InsertSnapshotState(redirtySongId, instrument, 44);
+        InsertSnapshotEntry(44, redirtySongId, instrument, accountId, 110_000);
+        InsertProjectionScope(redirtySongId, instrument, sourceSnapshotId: 43);
+
+        var sut = CreateOrchestrator(
+            _cyclicalMachine,
+            _historyReconstructor,
+            persistence: candidatePersistence,
+            soloCurrentProjectionBuilder: candidateBuilder);
+        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
+        var ctx = CreateContext();
+
+        await sut.RunAsync(
+            ctx,
+            service,
+            ScrapePhase.SoloRankings | ScrapePhase.SoloRivals,
+            CancellationToken.None);
+
+        Assert.False(candidatePersistence.UseValidatedCurrentProjectionForWorkerReaders);
+        Assert.True(ctx.SoloCurrentProjectionRefreshedForPublication);
+        Assert.Contains(
+            new SoloCurrentProjectionScopeKey(earlySongId, instrument),
+            ctx.RefreshedProjectionScopes);
+        Assert.Equal(42, GetProjectionScopeSourceSnapshot(earlySongId, instrument));
+        Assert.Equal(120_000, GetProjectedScore(earlySongId, instrument, accountId));
+        Assert.Equal(110_000, GetProjectedScore(redirtySongId, instrument, accountId));
+
+        var logs = _log.Entries.ToList();
+        var rankingsIndex = logs.FindIndex(entry =>
+            entry.Message.Contains("[ComputeRankings]", StringComparison.Ordinal));
+        var projectionIndex = logs.FindIndex(entry =>
+            entry.Message.Contains("[PrepareSoloCurrentProjectionForDerived]", StringComparison.Ordinal));
+        var rivalsIndex = logs.FindIndex(entry =>
+            entry.Message.Contains("[Rivals]", StringComparison.Ordinal));
+        Assert.True(rankingsIndex >= 0, "Expected rankings to run.");
+        Assert.True(projectionIndex >= 0, "Expected validated projection preparation to run.");
+        Assert.True(projectionIndex > rankingsIndex, "Expected projection validation after rankings.");
+        Assert.True(rivalsIndex > projectionIndex, "Expected rivals to run after projection validation.");
+
+        var earlyGeneration = GetProjectionScopeGeneration(earlySongId, instrument);
+        var redirtyGeneration = GetProjectionScopeGeneration(redirtySongId, instrument);
+        InsertOverlayEntry(redirtySongId, instrument, accountId, 135_000);
+        var redirtyScope = new SoloCurrentProjectionScopeKey(redirtySongId, instrument);
+        ctx.AddNotificationProjectionScope(redirtyScope);
+        InsertSnapshotState(lateSongId, instrument, 43);
+        InsertSnapshotEntry(43, lateSongId, instrument, accountId, 100_000);
+        InsertProjectionScope(lateSongId, instrument, sourceSnapshotId: 43);
+        InsertOverlayEntry(lateSongId, instrument, accountId, 125_000);
+        var lateScope = new SoloCurrentProjectionScopeKey(lateSongId, instrument);
+        ctx.AddNotificationProjectionScope(lateScope);
+
+        await sut.RunPublicationCleanupAsync(
+            ctx,
+            ScrapePhase.SoloFinalize,
+            CancellationToken.None);
+
+        Assert.Equal(earlyGeneration, GetProjectionScopeGeneration(earlySongId, instrument));
+        Assert.NotEqual(redirtyGeneration, GetProjectionScopeGeneration(redirtySongId, instrument));
+        Assert.Equal(135_000, GetProjectedScore(redirtySongId, instrument, accountId));
+        Assert.Equal(125_000, GetProjectedScore(lateSongId, instrument, accountId));
+        Assert.Contains(redirtyScope, ctx.NotificationProjectionScopes);
+        Assert.Contains(lateScope, ctx.NotificationProjectionScopes);
+
+        var faultInjector = Substitute.For<IPostScrapePhaseFaultInjector>();
+        faultInjector
+            .When(injector => injector.BeforePhase("Rivals"))
+            .Do(_ =>
+            {
+                Assert.True(candidatePersistence.UseValidatedCurrentProjectionForWorkerReaders);
+                throw new InvalidOperationException("rivals fault");
+            });
+        var failingSut = CreateOrchestrator(
+            _cyclicalMachine,
+            _historyReconstructor,
+            persistence: candidatePersistence,
+            soloCurrentProjectionBuilder: candidateBuilder,
+            phaseFaultInjector: faultInjector);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            failingSut.RunAsync(
+                CreateContext(),
+                service,
+                ScrapePhase.SoloRivals,
+                CancellationToken.None));
+        Assert.False(candidatePersistence.UseValidatedCurrentProjectionForWorkerReaders);
+
+        var prepareCount = _log.Entries.Count(entry =>
+            entry.Message.Contains("[PrepareSoloCurrentProjectionForDerived]", StringComparison.Ordinal));
+        var incompleteCtx = CreateContext(leaderboardScrapeCompleted: false);
+        await sut.RunAsync(
+            incompleteCtx,
+            service,
+            ScrapePhase.SoloScrape | ScrapePhase.SoloRivals,
+            CancellationToken.None);
+
+        Assert.False(candidatePersistence.UseValidatedCurrentProjectionForWorkerReaders);
+        Assert.Equal(
+            prepareCount,
+            _log.Entries.Count(entry =>
+                entry.Message.Contains("[PrepareSoloCurrentProjectionForDerived]", StringComparison.Ordinal)));
+    }
+
+    [Fact]
     public void BandExtraction_DoesNotActivateSoloSnapshots()
     {
         var ctx = CreateContext(scrapeId: 42);
@@ -1809,7 +1955,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             ]);
         ctx.RankingsComputedSuccessfully = true;
         ctx.SoloCurrentProjectionRefreshedForPublication = true;
-        ctx.NotificationProjectionScopes.Add(
+        ctx.AddNotificationProjectionScope(
             new SoloCurrentProjectionScopeKey("song-notify-plan", "Solo_Guitar"));
 
         var scopes = await sut.PrepareImprovementNotificationProjectionScopesAsync(
@@ -2023,7 +2169,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         InsertOverlayEntry(songId, instrument, accountId, 125_000);
 
         var ctx = CreateContext(scrapeId: 77);
-        ctx.NotificationProjectionScopes.Add(
+        ctx.AddNotificationProjectionScope(
             new SoloCurrentProjectionScopeKey(songId, instrument));
 
         await _sut.RunPublicationCleanupAsync(
@@ -2278,6 +2424,21 @@ public class PostScrapeOrchestratorTests : IDisposable
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             SELECT source_snapshot_id
+            FROM solo_current_projection_scope
+            WHERE song_id = @songId AND instrument = @instrument
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        var result = cmd.ExecuteScalar();
+        return result is null or DBNull ? null : Convert.ToInt64(result);
+    }
+
+    private long? GetProjectionScopeGeneration(string songId, string instrument)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT projection_generation
             FROM solo_current_projection_scope
             WHERE song_id = @songId AND instrument = @instrument
             """;

@@ -2190,6 +2190,31 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
             Options.Create(new FeatureOptions()));
     }
 
+    [Fact]
+    public void ValidatedWorkerProjectionToggle_RequiresSnapshotReadersAndPropagates()
+    {
+        using var baseline = CreatePersistence();
+        Assert.Throws<InvalidOperationException>(() =>
+            baseline.SetValidatedCurrentProjectionForWorkerReaders(true));
+
+        using var candidate = CreatePersistence(new FeatureOptions
+        {
+            UseSnapshotOverlayWorkerReaders = true,
+        });
+        var guitar = Assert.IsType<InstrumentDatabase>(
+            candidate.GetOrCreateInstrumentDb("Solo_Guitar"));
+
+        candidate.SetValidatedCurrentProjectionForWorkerReaders(true);
+
+        Assert.True(candidate.UseValidatedCurrentProjectionForWorkerReaders);
+        Assert.True(guitar.UseValidatedCurrentProjectionForWorkerReaders);
+
+        candidate.SetValidatedCurrentProjectionForWorkerReaders(false);
+
+        Assert.False(candidate.UseValidatedCurrentProjectionForWorkerReaders);
+        Assert.False(guitar.UseValidatedCurrentProjectionForWorkerReaders);
+    }
+
     // ═══ GetLeaderboardWithCount ════════════════════════════════
 
     [Fact]

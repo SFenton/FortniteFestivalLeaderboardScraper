@@ -51,6 +51,12 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public bool UseSnapshotOverlayWorkerReaders { get; set; }
 
     /// <summary>
+    /// When true, the worker has rebuilt and validated the current projection
+    /// against the active snapshot/overlay source for this pass.
+    /// </summary>
+    public bool UseValidatedCurrentProjectionForWorkerReaders { get; set; }
+
+    /// <summary>
     /// When true, filtered projection reads preserve projection order by using
     /// the stored rank as the window ordering key.
     /// </summary>
@@ -70,6 +76,10 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     internal const int RankHistoryCleanupBatchSize = 5000;
     internal const int RankHistoryCleanupMaxBatches = 1;
+
+    private bool MustBypassCurrentProjection =>
+        UseSnapshotOverlayWorkerReaders
+        && !UseValidatedCurrentProjectionForWorkerReaders;
 
     private const string LeaderboardEntryConflictUpdateWhere =
         " WHERE EXCLUDED.score != leaderboard_entries.score " +
@@ -200,7 +210,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     private Dictionary<string, int>? TryGetCurrentProjectionSongCounts(NpgsqlConnection conn)
     {
-        if (UseSnapshotOverlayWorkerReaders)
+        if (MustBypassCurrentProjection)
             return null;
 
         try
@@ -235,7 +245,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     private long? TryGetReadyCurrentProjectionRowCount(NpgsqlConnection conn, string songId)
     {
-        if (UseSnapshotOverlayWorkerReaders)
+        if (MustBypassCurrentProjection)
             return null;
 
         try
@@ -282,7 +292,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     private bool HasAnyReadyCurrentProjectionScope(NpgsqlConnection conn)
     {
-        if (UseSnapshotOverlayWorkerReaders)
+        if (MustBypassCurrentProjection)
             return false;
 
         try
@@ -333,7 +343,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     private bool AllRequestedScopesReady(NpgsqlConnection conn, IReadOnlyCollection<string> songIds)
     {
-        if (UseSnapshotOverlayWorkerReaders)
+        if (MustBypassCurrentProjection)
             return false;
 
         var distinctSongIds = songIds
@@ -1849,7 +1859,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public int GetCurrentStateRankForScore(string songId, int score, int? maxScore = null)
     {
         using var conn = _ds.OpenConnection();
-        if (!UseSnapshotOverlayWorkerReaders)
+        if (!MustBypassCurrentProjection)
         {
             using var projectedCmd = conn.CreateCommand();
             var projectedScoreFilter = maxScore.HasValue ? "AND score <= @maxScore" : string.Empty;
@@ -1914,7 +1924,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public (int TotalCount, int? MaxScore, int? MinScrapeScore) GetCurrentStateRankOffsetCoverage(string songId)
     {
         using var conn = _ds.OpenConnection();
-        if (!UseSnapshotOverlayWorkerReaders)
+        if (!MustBypassCurrentProjection)
         {
             using var projectedCmd = conn.CreateCommand();
             projectedCmd.CommandText = $"""
@@ -2172,7 +2182,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public List<int> GetCurrentStateScoresInBand(string songId, int lowerBound, int upperBound)
     {
         using var conn = _ds.OpenConnection();
-        if (!UseSnapshotOverlayWorkerReaders)
+        if (!MustBypassCurrentProjection)
         {
             using var projectedCmd = conn.CreateCommand();
             projectedCmd.CommandText = $"""
@@ -2258,7 +2268,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public int GetCurrentStatePopulationAtOrBelow(string songId, int threshold)
     {
         using var conn = _ds.OpenConnection();
-        if (!UseSnapshotOverlayWorkerReaders)
+        if (!MustBypassCurrentProjection)
         {
             using var projectedCmd = conn.CreateCommand();
             projectedCmd.CommandText = $"""
@@ -3514,6 +3524,10 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
         var activeSongFilter = filterSong ? "AND state.song_id = @songId" : string.Empty;
         var projectionSongFilter = filterSong ? "AND scope.song_id = @songId" : string.Empty;
+        var usePublishedSnapshotDuringFreeze =
+            UseValidatedCurrentProjectionForWorkerReaders
+                ? "FALSE"
+                : "publication.public_reads_frozen";
         return $"""
             publication AS (
                 SELECT
@@ -3543,7 +3557,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                     'snapshot'::text AS source_kind,
                     CASE
                         WHEN active.active_snapshot_id IS NOT NULL
-                         AND publication.public_reads_frozen
+                         AND {usePublishedSnapshotDuringFreeze}
                          AND publication.published_scrape_id IS NOT NULL
                             THEN publication.published_scrape_id::bigint
                         ELSE active.active_snapshot_id

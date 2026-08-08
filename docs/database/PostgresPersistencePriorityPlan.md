@@ -6,14 +6,15 @@ This plan records the approved direction for improving FST Postgres persistence 
 
 - Production compose ownership: `/home/sfenton/Docker/FestivalServiceTracker`.
 - `fstservice`, `festivalweb`, and `fst-postgres` are healthy.
-  `fstservice` runs `fstservice:postb-838928c1`. Controlled publication B2
-  scrape `1280` completed and published as publication `30`, retaining
-  publication `25`; public reads are unfrozen. The matching run-once
-  `fstworker` is recreated in `created` state with restart policy `no`.
+  `fstservice` and `festivalweb` run the App Manual gate build from
+  `30013b93`. Legacy-reader candidate scrape `1282` completed and published
+  as publication `35`, retaining publication `30`; public reads are unfrozen.
+  The baseline run-once `fstworker` is recreated in `created` state with
+  restart policy `no`.
   SFentonX serves 3,049 scores across all nine instruments plus published
-  history, with no pending-rank banner. Pending filtered profile reads fail
-  closed until their refresh is published, preventing newer overlay/history
-  state from escaping the immutable full profile.
+  history and populated rivals; App Manual is disabled. Pending filtered
+  profile reads fail closed until their refresh is published, preventing newer
+  overlay/history state from escaping the immutable full profile.
 - Freshness is now a hard scheduling constraint: long storage/reclaim work
   finishes only its current bounded chunk, checkpoints, and yields before the
   next continuity scrape. A stale publication must not wait for repeated
@@ -236,6 +237,21 @@ This plan records the approved direction for improving FST Postgres persistence 
   `legacy-reader-migration` dual-lane data profile; it requires the reader
   candidate on, supplemental rollback writes on, main legacy scrape writes
   off, snapshot reuse off, publication gates on, and an exact worker image.
+- Full candidate scrape `1282` proved exact correctness: `6,291/6,291` solo
+  and `2,097/2,097` band manifests completed, publication `35` succeeded,
+  `83,817` band-context rows covered every legacy key, score-history duplicate
+  groups remained zero, and the 491-sample public monitor recorded zero
+  failures. Performance blocked promotion: Rivals regressed about `3,325%`
+  and PlayerStats about `1,438%` because worker reads scanned raw
+  snapshot/overlay state.
+- The next P9 iteration is implemented and test-validated but not deployed.
+  After rankings records its bounded notification scopes, post-processing
+  refreshes and validates `current_leaderboard_entries`, temporarily enables
+  indexed projection reads only for Rivals/PlayerStats, uses the active
+  candidate during the public-read freeze, resets the read lease on every exit,
+  and avoids duplicate cleanup refresh while preserving later dirtied scopes.
+  Supplemental legacy writes remain enabled until another complete live A/B
+  passes exact parity and the <=10% sustained-regression gate.
 - The earlier STORAGE-OWNERSHIP phase completed continuous-safe P6/P8/P9 owner cards and exact
   manifests for `player_score_observations`, `scrape_dirty_*`, and legacy
   `leaderboard_entries_*`: `61,217,292,288` bytes total. Observation dual
@@ -520,7 +536,7 @@ path, and post-action validation are documented.
 | Phase 8 physical snapshot write skipping | Code/readiness accepted / two live A/Bs capacity-blocked and reverted | Scrape `1264` failed the post-writer guard. Capacity-ready scrape `1265` passed that guard, completed `8,232/8,232` manifests and band maintenance, and proved `273` scopes / `218,892` rows reusable with zero unexpected physical rows. Ranking snapshots crossed the `14,571,150,203` safety floor at `13,144,125,440` free before publication. Production was reverted, `1236` remains published, and the flag remains off. |
 | P6 player-score observation ownership | Accepted and executed | Scrape `1267` proved both writers off with zero touches. A rollback rehearsal and no-`CASCADE` truncate reclaimed `12,682,330,112` database bytes; zero rows remain, schema/view/indexes/sequence are intact, and immediate plus 60-second public fingerprints were `13/13` exact. |
 | P8 stale dirty-work ownership | Accepted and executed | ORPHAN-RECLAIM truncated all four tables without `CASCADE`, preserving empty schemas and primary keys. Their `19,836,661` rows from scrapes `926`-`1146` were non-authoritative work state; the family contributed `8,706,752,512` pre-action bytes. |
-| P9 legacy mutable leaderboard ownership | Reader candidate implemented / live parity pending | The default-off worker candidate migrates publication-critical band extraction, active helper reads, projection fallback, precompute probes, and notification scans to finalized snapshots plus overlays. Supplemental writes remain on and the legacy family remains intact until a complete candidate scrape proves exact derived/public parity, acceptable band-extraction I/O, and zero legacy access. |
+| P9 legacy mutable leaderboard ownership | Correctness A/B passed / performance iteration ready | Scrape `1282` published exact snapshot/overlay and band-context output, but raw worker readers made Rivals and PlayerStats unacceptable. The next candidate refreshes the indexed solo projection after rankings, leases validated reads through Rivals/PlayerStats, handles frozen active-candidate sources, and deduplicates cleanup safely. Supplemental writes and the 40.8 GB legacy family remain until another full A/B passes parity and <=10% sustained regressions. |
 | Rank/temp spill write-mode reduction | Accepted config/code default | Switched band team ranking rebuild default from `Monolithic` to `ComboBatched` to reduce one-shot build-table insert pressure; all write modes already have parity coverage. |
 | Optional band-song projection pressure gate | Complete | Defaulted optional rebuilds to disabled, made published reads reject stale/missing rows, and retired `36,747,099` stale rows for `28,315,533,312` database bytes while retaining schema/state and an exact restore archive. |
 | BAND-SONG-PROJECTION retirement | Accepted | Truncated only `band_song_team_rankings` and the three `band_song_team_rankings_current_band_*` tables without `CASCADE`; 24/24 public route fingerprints remained exact, all nine indexes stayed valid, and both scrape guards now pass. Evidence: `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/band-song-projection-retirement-20260726T103231Z`. |
@@ -541,7 +557,7 @@ path, and post-action validation are documented.
 | CATALOG-1 immutable song catalog | Deployed / unchanged fast path under observation / reader cutover pending | Preserves known and unknown Epic fields through sync/restart, persists only complete non-merged responses, pins resume phases to the allocation-time catalog without provider refresh, replaces untrusted legacy baselines wholesale, rejects failed refreshes and token races before new allocation, retains exact current/previous/working snapshots, and never queues a refresh writer behind a shared publication lease. The `4f0934e6` repair checks an exact match under a shared try-lock before attempting any exclusive mutation, preventing the scrape-1279 catalog-refresh convoy. No endpoint reader changed and `EnablePublicationReadContext` remains false. |
 | PUB-CONTRACT + PUB-READINESS | Code complete / continuous-safe / default-off | Contract version `1` maps all 55 publication-bound route definitions to required surfaces. Current-generation readiness now validates binding kind/status/version/source identity, promised count/hash, and supported retained-source evidence. `/api/publication` reports effective readiness, while configured unready pinning fails `503` after stale-ID `409` ordering. No schema, deployment, restart, live probe, source cut, or flag enablement occurred. |
 | PUB-COMMIT-SPLIT | **Accepted / deployed** | B2 scrape `1280` published `6,291/6,291` complete solo sources, all 12 publication-critical phases, and publication `30` with previous `25`. Heavy preparation stayed outside the exclusive lock. During real commit intent, selected-profile page-one/25 hits stayed `200 X-FST-Public-Cache: hit`; page-two/50 misses returned `503 Retry-After: 1`; readiness stayed 200. Two deadline-bounded attempts deferred with new intent ownership before the successful `3,648.707ms` exclusive transaction. Final pointers, aliases, notifications, score-history integrity, unfreeze, and worker exit all passed. |
-| Next implementation phase | Snapshot reuse estimate/canary, then one strict A/B | Refresh the exact reusable-scope estimate against publication `30`, qualify the selected bounded network candidate, and use the guarded `snapshot-reuse` data profile. Keep retention rewriting off and accept only with >=1 GiB measured physical savings, exact parity, and <=10% resource/latency regression. |
+| Next implementation phase | P9 validated-projection performance A/B | Build and deploy the new worker image at a clean scrape boundary, retain supplemental legacy writes, pair it with one independently reversible network candidate, and run one complete guarded scrape/post-process/publication window. Require exact route/source/history parity and Rivals/PlayerStats plus all other phases within the <=10% sustained-regression gate before writer-off or reclaim. |
 
 ## PUB-COMMIT-SPLIT bounded publication repair (2026-08-05)
 

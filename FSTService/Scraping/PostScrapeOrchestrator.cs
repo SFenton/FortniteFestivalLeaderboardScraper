@@ -144,6 +144,9 @@ public sealed class PostScrapeOrchestrator
     /// </summary>
     public async Task RunAsync(ScrapePassContext ctx, FestivalService service, ScrapePhase resolvedPhases, CancellationToken ct)
     {
+        using var projectionReadPass =
+            _persistence.BeginValidatedCurrentProjectionReadPass();
+
         // ── Solo enrichment ──
         if (resolvedPhases.HasFlag(ScrapePhase.SoloEnrichment))
             await RunEnrichmentAsync(ctx, service, ct);
@@ -160,7 +163,7 @@ public sealed class PostScrapeOrchestrator
                 new SongProcessingMachine.MachineResult(),
                 alwaysPropagateFailure: true);
             foreach (var scope in registeredUserRefreshResult.UpdatedScopes)
-                ctx.NotificationProjectionScopes.Add(scope);
+                ctx.AddNotificationProjectionScope(scope);
         }
 
         var expectedSnapshotPairs = BuildExpectedSnapshotPairs(ctx);
@@ -347,7 +350,7 @@ public sealed class PostScrapeOrchestrator
                              ctx.RegisteredIds,
                              ctx.RankingsInputCutoffUtc.Value))
                 {
-                    ctx.NotificationProjectionScopes.Add(scope);
+                    ctx.AddNotificationProjectionScope(scope);
                 }
 
                 ctx.RankingsComputedSuccessfully = await RunPhaseAsync(
@@ -357,6 +360,16 @@ public sealed class PostScrapeOrchestrator
                     defaultValue: false,
                     alwaysPropagateFailure: true);
             }
+
+            if (ShouldPrepareSoloProjectionBeforeDerived(resolvedPhases))
+            {
+                await RunPhaseAsync(
+                    ctx,
+                    "PrepareSoloCurrentProjectionForDerived",
+                    () => PrepareSoloCurrentProjectionForDerivedAsync(ctx, ct),
+                    alwaysPropagateFailure: true);
+            }
+
             // ── Solo rivals ──
             if (resolvedPhases.HasFlag(ScrapePhase.SoloRivals))
             {
@@ -1118,7 +1131,7 @@ public sealed class PostScrapeOrchestrator
 
         await builder.EnsureSchemaAsync(ct);
         foreach (var scope in await builder.LoadStaleScopesAsync(ct))
-            ctx.NotificationProjectionScopes.Add(scope);
+            ctx.AddNotificationProjectionScope(scope);
 
         ctx.SoloCurrentProjectionScopesSealedForPublication = true;
         _log.LogInformation(
@@ -1144,6 +1157,7 @@ public sealed class PostScrapeOrchestrator
             var scopes = staleScopes
                 .Concat(ctx.NotificationProjectionScopes)
                 .Distinct()
+                .Where(scope => !ctx.RefreshedProjectionScopes.Contains(scope))
                 .OrderBy(static scope => scope.Instrument, StringComparer.Ordinal)
                 .ThenBy(static scope => scope.SongId, StringComparer.Ordinal)
                 .ToArray();
@@ -1206,6 +1220,73 @@ public sealed class PostScrapeOrchestrator
         {
             _progress.ReportPhaseItemComplete();
         }
+    }
+
+    private bool ShouldPrepareSoloProjectionBeforeDerived(ScrapePhase resolvedPhases) =>
+        _persistence.UseSnapshotOverlayWorkerReaders
+        && _soloCurrentProjectionBuilder is not null
+        && (
+            resolvedPhases.HasFlag(ScrapePhase.SoloRivals)
+            || resolvedPhases.HasFlag(ScrapePhase.SoloPlayerStats)
+        );
+
+    private async Task PrepareSoloCurrentProjectionForDerivedAsync(
+        ScrapePassContext ctx,
+        CancellationToken ct)
+    {
+        var builder = _soloCurrentProjectionBuilder
+            ?? throw new InvalidOperationException(
+                "Snapshot/overlay derived readers require a configured solo projection builder.");
+        var options = _options.Value;
+        var rebuildOptions = new SoloCurrentProjectionRebuildOptions
+        {
+            CommandTimeoutSeconds = Math.Max(
+                0,
+                options.SoloProjectionCleanupCommandTimeoutSeconds),
+            MaxDegreeOfParallelism = Math.Max(
+                1,
+                options.SoloProjectionCleanupMaxDegreeOfParallelism),
+        };
+
+        await builder.EnsureSchemaAsync(ct);
+        await builder.PruneOrphanedScopesAsync(rebuildOptions, ct);
+        var scopes = (await builder.LoadStaleScopesAsync(ct))
+            .Concat(ctx.NotificationProjectionScopes)
+            .Distinct()
+            .OrderBy(static scope => scope.Instrument, StringComparer.Ordinal)
+            .ThenBy(static scope => scope.SongId, StringComparer.Ordinal)
+            .ToArray();
+
+        if (scopes.Length > 0)
+        {
+            _log.LogInformation(
+                "Preparing {ScopeCount:N0} solo projection scope(s) before rivals/player stats.",
+                scopes.Length);
+            var result = await builder.RefreshScopesAsync(
+                scopes,
+                rebuildOptions,
+                ct);
+            if (result.FailedScopeCount > 0)
+            {
+                throw new InvalidOperationException(
+                    $"Early solo projection refresh failed for {result.FailedScopeCount} scope(s).");
+            }
+            foreach (var scope in scopes)
+                ctx.RefreshedProjectionScopes.Add(scope);
+        }
+
+        var remainingStaleScopes = await builder.LoadStaleScopesAsync(ct);
+        if (remainingStaleScopes.Count > 0
+            || await builder.HasOrphanedProjectionScopesAsync(ct))
+        {
+            throw new InvalidOperationException(
+                $"Early solo projection validation is incomplete: stale={remainingStaleScopes.Count}.");
+        }
+        ctx.SoloCurrentProjectionRefreshedForPublication = true;
+        _persistence.SetValidatedCurrentProjectionForWorkerReaders(true);
+        _log.LogInformation(
+            "Validated solo current projection for snapshot/overlay derived readers ({ScopeCount:N0} refreshed scope(s)).",
+            scopes.Length);
     }
 
     private async Task CleanupRankHistoryRetentionAsync(CancellationToken ct)

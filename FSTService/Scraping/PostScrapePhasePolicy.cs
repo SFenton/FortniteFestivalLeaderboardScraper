@@ -24,6 +24,7 @@ public static class PostScrapePhasePolicy
             ["RegisteredBandTargetedProcessing"] = PostScrapePhaseCriticality.BestEffort,
             ["DeferredRegistrationSync"] = PostScrapePhaseCriticality.PublicationCritical,
             ["BandMaintenance"] = PostScrapePhaseCriticality.PublicationCritical,
+            ["PrepareSoloCurrentProjectionForDerived"] = PostScrapePhaseCriticality.PublicationCritical,
             ["ComputeRankings"] = PostScrapePhaseCriticality.PublicationCritical,
             ["Rivals"] = PostScrapePhaseCriticality.PublicationCritical,
             ["PlayerStatsTiers"] = PostScrapePhaseCriticality.PublicationCritical,

@@ -405,6 +405,34 @@ public sealed class InstrumentDatabaseTests : IDisposable
         Assert.Equal(1, Assert.Single(profiles["acct-second"]).Rank);
     }
 
+    [Fact]
+    public void SnapshotOverlayWorkerReaders_UseProjectionOnlyAfterPassValidation()
+    {
+        InsertScrape(42);
+        InsertSnapshotEntry(42, "song-validated", "acct-user", 120_000, "scrape");
+        InsertSnapshotState("song-validated", 42, isFinalized: true);
+        InsertOverlayEntry("song-validated", "acct-user", 150_000, "backfill", 200, "test");
+        InsertProjectionScope("song-validated", sourceSnapshotId: 42, rowCount: 1);
+        InsertProjectionEntry("song-validated", "acct-user", 130_000, "projection");
+        Db.UseSnapshotOverlayWorkerReaders = true;
+
+        Assert.Equal(
+            150_000,
+            Assert.Single(Db.GetCurrentStatePlayerScores("acct-user", "song-validated")).Score);
+
+        Db.UseValidatedCurrentProjectionForWorkerReaders = true;
+
+        Assert.Equal(
+            130_000,
+            Assert.Single(Db.GetCurrentStatePlayerScores("acct-user", "song-validated")).Score);
+
+        Db.UseValidatedCurrentProjectionForWorkerReaders = false;
+
+        Assert.Equal(
+            150_000,
+            Assert.Single(Db.GetCurrentStatePlayerScores("acct-user", "song-validated")).Score);
+    }
+
     // ═══ GetLeaderboard ═════════════════════════════════════════
 
     [Fact]
@@ -990,6 +1018,23 @@ public sealed class InstrumentDatabaseTests : IDisposable
         SetPublicationState(publishedScrapeId: 815, publicReadsFrozen: true);
 
         var scores = Db.GetCurrentStatePlayerScores("acct_user", "song_frozen");
+
+        var score = Assert.Single(scores);
+        Assert.Equal(130_000, score.Score);
+    }
+
+    [Fact]
+    public void ValidatedWorkerProjection_uses_active_candidate_during_public_read_freeze()
+    {
+        InsertSnapshotEntry(816, "song_worker_frozen", "acct_user", 120_000, source: "scrape");
+        InsertSnapshotState("song_worker_frozen", 816, isFinalized: true);
+        InsertProjectionScope("song_worker_frozen", sourceSnapshotId: 816);
+        InsertProjectionEntry("song_worker_frozen", "acct_user", 130_000, source: "projection");
+        SetPublicationState(publishedScrapeId: 815, publicReadsFrozen: true);
+        Db.UseSnapshotOverlayWorkerReaders = true;
+        Db.UseValidatedCurrentProjectionForWorkerReaders = true;
+
+        var scores = Db.GetCurrentStatePlayerScores("acct_user", "song_worker_frozen");
 
         var score = Assert.Single(scores);
         Assert.Equal(130_000, score.Score);
