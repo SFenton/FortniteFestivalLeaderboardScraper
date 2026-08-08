@@ -343,6 +343,13 @@ public sealed class PrecomputeSubResourceTests : IDisposable
         var json = JsonDocument.Parse(result.Value.Json);
         Assert.Equal("u1", json.RootElement.GetProperty("accountId").GetString());
         Assert.True(json.RootElement.GetProperty("combos").GetArrayLength() >= 1);
+        var combo = json.RootElement.GetProperty("combos")[0].GetProperty("combo").GetString();
+        Assert.Equal("01", combo);
+        var list = _sut.TryGet($"rivals-list:u1:{combo}");
+        Assert.NotNull(list);
+        var listJson = JsonDocument.Parse(list.Value.Json);
+        Assert.Equal(combo, listJson.RootElement.GetProperty("combo").GetString());
+        Assert.Single(listJson.RootElement.GetProperty("above").EnumerateArray());
     }
 
     // ═══════════════════════════════════════════════════════════════

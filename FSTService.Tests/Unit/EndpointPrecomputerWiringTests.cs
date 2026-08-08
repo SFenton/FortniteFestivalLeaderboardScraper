@@ -113,6 +113,12 @@ public sealed class EndpointPrecomputerWiringTests : IDisposable
     }
 
     [Fact]
+    public void RivalsList_CacheKey_RoundTrips()
+    {
+        StoreAndVerify("rivals-list:user1:01", new { combo = "01", above = Array.Empty<object>(), below = Array.Empty<object>() });
+    }
+
+    [Fact]
     public void RivalsAll_CacheKey_RoundTrips()
     {
         StoreAndVerify("rivals-all:user1", new

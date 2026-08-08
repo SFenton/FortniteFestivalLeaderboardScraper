@@ -133,6 +133,7 @@ fi
 USE_SNAPSHOT_OVERLAY_WORKER_READERS=false
 if [[ "$DATA_PROFILE" == "legacy-reader-migration" ]]; then
     USE_SNAPSHOT_OVERLAY_WORKER_READERS=true
+    USE_LEADERBOARD_SCOPE_FINGERPRINTS=true
 fi
 
 RUN_ONCE=true \

@@ -58,6 +58,11 @@ public sealed class PostScrapeBandExtractor
     public Task<BandExtractionResult> RunAsync(CancellationToken ct) =>
         RunAsync(snapshotId: null, ct);
 
+    public Task EnsureBandContextReadyAsync(CancellationToken ct) =>
+        _useSnapshotOverlayWorkerReaders
+            ? EnsureBandContextSeededAsync(ct)
+            : Task.CompletedTask;
+
     public async Task<BandExtractionResult> RunAsync(long? snapshotId, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
@@ -72,7 +77,7 @@ public sealed class PostScrapeBandExtractor
 
         if (_useSnapshotOverlayWorkerReaders)
         {
-            await EnsureBandContextSeededAsync(ct);
+            await EnsureBandContextReadyAsync(ct);
             if (snapshotId is > 0)
                 await ReconcileBandContextFromSnapshotAsync(snapshotId.Value, ct);
         }

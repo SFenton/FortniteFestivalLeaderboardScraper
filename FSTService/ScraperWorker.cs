@@ -289,6 +289,8 @@ public sealed class ScraperWorker : BackgroundService
             opts.ScrapeInterval, opts.DegreeOfParallelism);
         _workerStatus?.PublishHeartbeat("running", "Worker ready");
 
+        await _postScrapeOrchestrator.EnsureBandContextReadyBeforeScrapeAsync(
+            stoppingToken);
         await EnsureImprovementNotificationsCompleteBeforeNextScrapeAsync(stoppingToken);
 
         // Ensure we have a valid auth session before entering the loop

@@ -785,6 +785,9 @@ public sealed class PostScrapeOrchestrator
         && ctx.RankingsComputedSuccessfully
         && ShouldRunImprovementNotifications(ctx, resolvedPhases);
 
+    public Task EnsureBandContextReadyBeforeScrapeAsync(CancellationToken ct) =>
+        _bandExtractor.EnsureBandContextReadyAsync(ct);
+
     public async Task<IReadOnlyCollection<SoloCurrentProjectionScopeKey>>
         PrepareImprovementNotificationProjectionScopesAsync(
             ScrapePassContext ctx,

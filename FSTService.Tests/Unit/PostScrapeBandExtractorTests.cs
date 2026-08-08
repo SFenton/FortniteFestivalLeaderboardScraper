@@ -350,6 +350,71 @@ public sealed class PostScrapeBandExtractorTests : IDisposable
         Assert.Equal(300_000, reader.GetInt32(3));
     }
 
+    [Fact]
+    public async Task BandContextSeed_IsOneTimeAndFeatureGated()
+    {
+        var members = SerializeMembers("acct-seed", "acct-mate");
+        InsertLegacyBandRow("song-seed", "acct-seed", members);
+        var pathDataStore = Substitute.For<IPathDataStore>();
+        pathDataStore.GetAllMaxScores().Returns(new Dictionary<string, SongMaxScores>(StringComparer.OrdinalIgnoreCase));
+        var disabledExtractor = new PostScrapeBandExtractor(
+            _fixture.DataSource,
+            pathDataStore,
+            Substitute.For<ILogger<PostScrapeBandExtractor>>());
+        await disabledExtractor.EnsureBandContextReadyAsync(CancellationToken.None);
+        using (var disabledConnection = _fixture.DataSource.OpenConnection())
+        using (var disabledCommand = disabledConnection.CreateCommand())
+        {
+            disabledCommand.CommandText = "SELECT COUNT(*) FROM leaderboard_band_context_state";
+            Assert.Equal(0L, (long)disabledCommand.ExecuteScalar()!);
+        }
+        var extractor = new PostScrapeBandExtractor(
+            _fixture.DataSource,
+            pathDataStore,
+            Substitute.For<ILogger<PostScrapeBandExtractor>>(),
+            featureOptions: Options.Create(new FeatureOptions { UseSnapshotOverlayWorkerReaders = true }));
+
+        await extractor.EnsureBandContextReadyAsync(CancellationToken.None);
+        InsertLegacyBandRow("song-late", "acct-late", members);
+        await extractor.EnsureBandContextReadyAsync(CancellationToken.None);
+
+        using var connection = _fixture.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT
+                (SELECT COUNT(*) FROM leaderboard_band_context),
+                (SELECT legacy_source_rows FROM leaderboard_band_context_state WHERE id = TRUE),
+                (SELECT seeded_at IS NOT NULL FROM leaderboard_band_context_state WHERE id = TRUE)
+            """;
+        using var reader = command.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(1L, reader.GetInt64(0));
+        Assert.Equal(1L, reader.GetInt64(1));
+        Assert.True(reader.GetBoolean(2));
+    }
+
+    private void InsertLegacyBandRow(string songId, string accountId, string members)
+    {
+        using var connection = _fixture.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO leaderboard_entries (
+                song_id, instrument, account_id, score, accuracy, is_full_combo,
+                stars, season, percentile, rank, source, difficulty, end_time,
+                band_members_json, band_score, base_score, instrument_bonus,
+                overdrive_bonus, instrument_combo, first_seen_at, last_updated_at)
+            VALUES (
+                @songId, 'Solo_Guitar', @accountId, 100000, 95, FALSE,
+                5, 3, 95.0, 1, 'backfill', 3, '2026-01-01T00:00:00Z',
+                @members, 150000, 100000, 30000,
+                20000, '0:1', now(), now())
+            """;
+        command.Parameters.AddWithValue("songId", songId);
+        command.Parameters.AddWithValue("accountId", accountId);
+        command.Parameters.AddWithValue("members", NpgsqlTypes.NpgsqlDbType.Jsonb, members);
+        command.ExecuteNonQuery();
+    }
+
     private static string SerializeMembers(string firstAccountId, string secondAccountId) =>
         JsonSerializer.Serialize(CreateMembers(firstAccountId, secondAccountId));
 

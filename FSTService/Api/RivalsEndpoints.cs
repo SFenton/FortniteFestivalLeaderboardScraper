@@ -369,6 +369,7 @@ public static partial class ApiEndpoints
             string accountId,
             string combo,
             IMetaDatabase metaDb,
+            ScrapeTimePrecomputer precomputer,
             [FromKeyedServices("RivalsCache")] ResponseCacheService rivalsCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
@@ -377,6 +378,13 @@ public static partial class ApiEndpoints
             if (resolvedCombo is null)
                 return Results.BadRequest(new { error = $"Invalid combo: {combo}" });
             combo = resolvedCombo.Value.CanonicalCombo;
+
+            {
+                var result = CacheHelper.ServeIfCached(
+                    httpContext,
+                    precomputer.TryGet($"rivals-list:{accountId}:{combo}"));
+                if (result is not null) return result;
+            }
 
             var cacheKey = $"list:{accountId}:{combo}";
             {

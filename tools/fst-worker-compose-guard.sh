@@ -443,6 +443,7 @@ if data_profile == "legacy-reader-migration":
         "Features__EnforcePublicationCriticalPhases",
         "Features__EnforceScopeCompletenessManifests",
         "Features__RequireSuccessfulScrapeWriters",
+        "Features__UseLeaderboardScopeFingerprints",
         "Features__WritePublishedScopeSources",
         "Features__UseSnapshotOverlayWorkerReaders",
         "Features__WriteLegacyLiveLeaderboardSupplementalRows",

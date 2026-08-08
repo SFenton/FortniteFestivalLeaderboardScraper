@@ -1278,13 +1278,32 @@ public sealed class ScrapeTimePrecomputer
         var combos = _metaDb.GetRivalCombos(accountId);
         if (combos.Count == 0) return;
 
+        var canonicalCombos = combos
+            .Select(combo => new
+            {
+                Combo = ComboIds.NormalizeSupportedRivalComboParam(
+                    combo.InstrumentCombo),
+                combo.AboveCount,
+                combo.BelowCount,
+            })
+            .Where(static combo => combo.Combo is not null)
+            .GroupBy(static combo => combo.Combo!, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => new
+            {
+                Combo = group.Key,
+                AboveCount = group.Max(static combo => combo.AboveCount),
+                BelowCount = group.Max(static combo => combo.BelowCount),
+            })
+            .ToList();
+        if (canonicalCombos.Count == 0) return;
+
         var payload = new
         {
             accountId,
             computedAt = status?.CompletedAt,
-            combos = combos.Select(c => new
+            combos = canonicalCombos.Select(c => new
             {
-                combo = c.InstrumentCombo,
+                combo = c.Combo,
                 aboveCount = c.AboveCount,
                 belowCount = c.BelowCount,
             }).ToList(),
@@ -1303,9 +1322,17 @@ public sealed class ScrapeTimePrecomputer
         var comboData = new Dictionary<string, (List<UserRivalRow> Above, List<UserRivalRow> Below)>();
         foreach (var c in combos)
         {
-            var above = _metaDb.GetUserRivals(accountId, c.InstrumentCombo, "above");
-            var below = _metaDb.GetUserRivals(accountId, c.InstrumentCombo, "below");
-            comboData[c.InstrumentCombo] = (above, below);
+            var canonicalCombo = ComboIds.NormalizeSupportedRivalComboParam(
+                c.InstrumentCombo);
+            if (canonicalCombo is null
+                || comboData.ContainsKey(canonicalCombo))
+            {
+                continue;
+            }
+
+            var above = _metaDb.GetUserRivals(accountId, canonicalCombo, "above");
+            var below = _metaDb.GetUserRivals(accountId, canonicalCombo, "below");
+            comboData[canonicalCombo] = (above, below);
             foreach (var r in above) allRivalIds.Add(r.RivalAccountId);
             foreach (var r in below) allRivalIds.Add(r.RivalAccountId);
         }
@@ -1314,6 +1341,31 @@ public sealed class ScrapeTimePrecomputer
         // Merge with provided display names
         foreach (var kv in displayNames)
             rivalNames.TryAdd(kv.Key, kv.Value);
+
+        foreach (var (combo, rivals) in comboData)
+        {
+            object MapRivalSummary(UserRivalRow rival) => new
+            {
+                accountId = rival.RivalAccountId,
+                displayName = rivalNames.GetValueOrDefault(rival.RivalAccountId),
+                rivalScore = rival.RivalScore,
+                sharedSongCount = rival.SharedSongCount,
+                aheadCount = rival.AheadCount,
+                behindCount = rival.BehindCount,
+                avgSignedDelta = rival.AvgSignedDelta,
+            };
+
+            var comboPayload = new
+            {
+                combo,
+                above = rivals.Above.Select(MapRivalSummary).ToList(),
+                below = rivals.Below.Select(MapRivalSummary).ToList(),
+            };
+            Store(
+                $"rivals-list:{accountId}:{combo}",
+                JsonSerializer.SerializeToUtf8Bytes(comboPayload, _jsonOpts),
+                storeOverride);
+        }
 
         // Bulk-fetch all song samples for this user (1 query instead of N×6)
         var allSamples = _metaDb.GetAllRivalSongSamplesForUser(accountId);
