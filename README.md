@@ -217,6 +217,14 @@ initialized. Rollback sets them to `false`; failed candidates and replay
 artifacts remain diagnostic-only, and public reads stay on the prior mapped
 published scrape.
 
+The normal `fstworker` Compose service runs continuously:
+
+- `restart: unless-stopped`
+- `Scraper__RunOnce=false`
+
+Controlled one-shot scrapes must use the dedicated run-once overlay/tooling,
+which explicitly overrides `Scraper__RunOnce=true` and `restart: "no"`.
+
 The App Manual is independently default-off. Production Compose maps
 `FEATURE_APP_MANUAL` to `Features__AppManual`; its web route and navigation
 remain hidden unless `/api/features` returns `appManual: true`.
