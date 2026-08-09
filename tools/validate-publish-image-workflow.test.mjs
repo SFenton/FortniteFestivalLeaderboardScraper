@@ -78,8 +78,14 @@ test('ui-utils cannot be removed from web-affecting classification', () => {
   assert.ok(validatePublishImageWorkflow(mutated, dockerfile).some(error => error.includes('ui-utils')));
 
   const nonWebMutation = workflow.replace(
-    'echo "web=true" >> "$GITHUB_OUTPUT"\n          fi\n\n      - name: Setup Node.js',
-    'echo "web=false" >> "$GITHUB_OUTPUT"\n          fi\n\n      - name: Setup Node.js',
+    `if echo "$CHANGED" | grep -qE '^packages/ui-utils/'; then
+            echo "ui_utils=true" >> "$GITHUB_OUTPUT"
+            echo "web=true" >> "$GITHUB_OUTPUT"
+          fi`,
+    `if echo "$CHANGED" | grep -qE '^packages/ui-utils/'; then
+            echo "ui_utils=true" >> "$GITHUB_OUTPUT"
+            echo "web=false" >> "$GITHUB_OUTPUT"
+          fi`,
   );
   assert.ok(validatePublishImageWorkflow(nonWebMutation, dockerfile).some(error => error.includes('web-affecting')));
 });
@@ -91,6 +97,27 @@ test('moving a ui-utils file outside its root still classifies the source packag
   ]);
   assert.equal(result.uiUtils, true);
   assert.equal(result.web, true);
+});
+
+test('publish workflow contract changes affect both images', () => {
+  for (const path of [
+    '.github/workflows/publish-image.yml',
+    'tools/validate-publish-image-workflow.mjs',
+    'tools/validate-publish-image-workflow.test.mjs',
+  ]) {
+    const result = classifyChangedPaths([path]);
+    assert.equal(result.service, true, path);
+    assert.equal(result.web, true, path);
+  }
+
+  const mutated = workflow.replace(
+    "grep -qE '^(\\.github/workflows/publish-image\\.yml|tools/validate-publish-image-workflow(\\.test)?\\.mjs)$'",
+    "grep -qE '^tools/not-the-publish-contract\\.mjs$'",
+  );
+  assert.ok(
+    validatePublishImageWorkflow(mutated, dockerfile)
+      .some(error => error.includes('publish workflow contract changes')),
+  );
 });
 
 test('ui-utils bump step cannot be disabled', () => {

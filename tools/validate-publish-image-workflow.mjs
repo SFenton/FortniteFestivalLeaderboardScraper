@@ -40,6 +40,11 @@ export function validatePublishImageWorkflow(workflow, webDockerfile) {
         || !uiUtilsBlock(run).includes('echo "web=true" >> "$GITHUB_OUTPUT"')) {
       errors.push('ui-utils changes are not classified as ui-utils and web-affecting');
     }
+    const distribution = distributionBlock(run);
+    if (!distribution.includes('echo "service=true" >> "$GITHUB_OUTPUT"')
+        || !distribution.includes('echo "web=true" >> "$GITHUB_OUTPUT"')) {
+      errors.push('publish workflow contract changes are not classified as service and web affecting');
+    }
 
     const requiredConditions = new Map([
       ['Bump FSTService version', "steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.service == 'true'"],
@@ -139,6 +144,10 @@ export function classifyChangedPaths(paths) {
     if (path.startsWith('packages/theme/')) result.themeTs = true;
     if (path.startsWith('packages/ui-utils/')) {
       result.uiUtils = true;
+      result.web = true;
+    }
+    if (/^(\.github\/workflows\/publish-image\.yml|tools\/validate-publish-image-workflow(\.test)?\.mjs)$/.test(path)) {
+      result.service = true;
       result.web = true;
     }
   }
@@ -328,6 +337,12 @@ function unquote(value) {
 function uiUtilsBlock(run) {
   return run.match(
     /if echo "\$CHANGED" \| grep -qE '\^packages\/ui-utils\/'; then[\s\S]*?\n\s*fi/,
+  )?.[0] ?? '';
+}
+
+function distributionBlock(run) {
+  return run.match(
+    /if echo "\$CHANGED" \| grep -qE '\^\(\\\.github\/workflows\/publish-image\\\.yml\|tools\/validate-publish-image-workflow\(\\\.test\)\?\\\.mjs\)\$'; then[\s\S]*?\n\s*fi/,
   )?.[0] ?? '';
 }
 
