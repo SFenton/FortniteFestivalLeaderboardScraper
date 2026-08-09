@@ -27,6 +27,7 @@ test('shared modal traps focus, restores focus, and has no serious axe violation
   expect(viewportContent).not.toContain('user-scalable=no');
 
   const launcher = page.getByRole('button', { name: 'Launch accessible modal' });
+  await launcher.focus();
   await expect(launcher).toBeFocused();
   await launcher.press('Enter');
 

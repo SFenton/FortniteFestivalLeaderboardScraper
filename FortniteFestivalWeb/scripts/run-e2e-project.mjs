@@ -14,7 +14,7 @@ const vitePackage = require.resolve('vite/package.json');
 const viteBin = resolve(dirname(vitePackage), require(vitePackage).bin.vite);
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const project = process.argv[2];
-const shardCount = readPositiveInteger('E2E_SHARDS', 4);
+const shardCount = readPositiveInteger('E2E_SHARDS', 8);
 const port = readPositiveInteger('PLAYWRIGHT_PORT', 4173);
 const startedAt = performance.now();
 
