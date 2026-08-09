@@ -10,7 +10,6 @@ import { TestProviders } from '../../helpers/TestProviders';
 import { stubScrollTo, stubResizeObserver, stubIntersectionObserver } from '../../helpers/browserStubs';
 import { contentHash } from '../../../src/firstRun/types';
 import { suggestionsSlides } from '../../../src/pages/suggestions/firstRun';
-import { expectCancellableCall } from '../../helpers/requestAssertions';
 
 const mockApi = vi.hoisted(() => {
   const fn = vi.fn;
