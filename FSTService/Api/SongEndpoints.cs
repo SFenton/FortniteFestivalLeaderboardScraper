@@ -31,7 +31,11 @@ public static partial class ApiEndpoints
                 }
             }
 
-            if (publicReadGate.FailedCandidateIsolationActive &&
+            var canUsePublishedFallback =
+                publicReadGate.FailedCandidateIsolationActive
+                || publicReadGate.IsFrozen
+                   && !publicReadGate.RequiresCachedReads;
+            if (canUsePublishedFallback &&
                 !scraperOptions.Value.EnableAutomaticPathGeneration)
             {
                 try
@@ -63,7 +67,7 @@ public static partial class ApiEndpoints
                         .CreateLogger("FSTService.Api.SongEndpoints")
                         .LogWarning(
                             ex,
-                            "Failed to build the published /api/songs fallback during failed-candidate isolation.");
+                            "Failed to build the published /api/songs fallback during the public-read freeze.");
                 }
             }
 

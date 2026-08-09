@@ -261,6 +261,16 @@ This plan records the approved direction for improving FST Postgres persistence 
   bounded publication-critical phase, records completed empty methods,
   precomputes all rank methods with canonical keys, and adds an exclusive,
   publication-pinned one-shot recovery path before the next A/B.
+- Continuous scrape `1284` published successfully as publication `39`, proving
+  the all-rank Leaderboard Rivals path through a complete window. The next
+  automatically scheduled scrape `1285` exposed a separate availability bug:
+  publication rotation had invalidated the in-memory `/api/songs` cache, and
+  the normal scrape freeze returned persistent `503` before any request could
+  rebuild it. `1285` was stopped and failed at
+  `public_songs_freeze_cache_gap`; publication `1284/39` remained
+  authoritative. Ordinary scrape/post-process freezes now serve the immutable
+  current published-catalog fallback, while commit-deferred and
+  isolation-pending states remain strictly fail-closed.
 - The earlier STORAGE-OWNERSHIP phase completed continuous-safe P6/P8/P9 owner cards and exact
   manifests for `player_score_observations`, `scrape_dirty_*`, and legacy
   `leaderboard_entries_*`: `61,217,292,288` bytes total. Observation dual
