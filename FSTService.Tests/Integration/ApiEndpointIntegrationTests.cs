@@ -1295,6 +1295,17 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
         metaDb.SetPublicReadFreeze(true, reason: "scrape");
         services.GetRequiredService<PublicReadGateService>().Invalidate();
+        services.GetRequiredService<SongsCacheService>().Invalidate();
+
+        var frozenSongsResponse = await client.GetAsync("/api/songs");
+        Assert.Equal(HttpStatusCode.OK, frozenSongsResponse.StatusCode);
+        Assert.Equal(
+            "published-catalog-fallback",
+            frozenSongsResponse.Headers.GetValues(
+                "X-FST-Songs-Source").Single());
+        Assert.Equal(
+            "no-store",
+            frozenSongsResponse.Headers.CacheControl?.ToString());
 
         var board = await (await client.GetAsync("/api/leaderboard/service_published_song/Solo_Guitar")).Content.ReadFromJsonAsync<JsonElement>();
         var boardScores = board.GetProperty("entries").EnumerateArray().Select(entry => entry.GetProperty("score").GetInt32()).ToArray();
