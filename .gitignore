@@ -311,6 +311,7 @@ FSTService/data/
 # Web stuff
 FortniteFestivalWeb/.yarn
 FortniteFestivalWeb/coverage
+FortniteFestivalWeb/.vitest-coverage-reports
 #Playwright
 .playwright-mcp
 

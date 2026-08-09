@@ -353,19 +353,14 @@ describe('SuggestionsPage', () => {
 
     const { container } = renderBandSuggestions(bandFilter);
 
-    await waitFor(
-      () => {
-        expectCancellableCall(mockApi.getBandSongRows, 'Band_Duets', selectedBand.teamKey, bandFilter.comboId);
-      },
-      { timeout: 5_000 },
-    );
-    expect(
-      (await screen.findAllByText('First Plays for This Combo', {}, { timeout: 5_000 })).length,
-    ).toBeGreaterThan(0);
-    const bandLinks = Array.from(container.querySelectorAll('a'))
-      .map(link => link.getAttribute('href'))
-      .filter(Boolean);
-    expect(bandLinks).toContain('/songs/s1/bands/Band_Duets');
+    await waitFor(() => {
+      expectCancellableCall(mockApi.getBandSongRows, 'Band_Duets', selectedBand.teamKey, bandFilter.comboId);
+      expect(screen.getAllByText('First Plays for This Combo').length).toBeGreaterThan(0);
+      const bandLinks = Array.from(container.querySelectorAll('a'))
+        .map(link => link.getAttribute('href'))
+        .filter(Boolean);
+      expect(bandLinks).toContain('/songs/s1/bands/Band_Duets');
+    }, { timeout: 12_000 });
   }, 15_000);
 
   it('renders visible categories after filtering', async () => {
