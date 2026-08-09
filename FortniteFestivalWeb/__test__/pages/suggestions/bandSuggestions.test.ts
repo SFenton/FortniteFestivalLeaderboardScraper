@@ -88,4 +88,19 @@ describe('buildBandSuggestionSource', () => {
 
     expect(source.scoresIndex.s1!.guitar?.percentHit).toBe(987650);
   });
+
+  it('derives percentile from rank when the provider percentile is absent', () => {
+    const source = buildBandSuggestionSource({
+      songs,
+      performances: [{
+        ...performances[0]!,
+        rank: 5,
+        totalEntries: 20,
+        percentile: 0,
+      }],
+      bandType: 'Band_Duets',
+    });
+
+    expect(source.scoresIndex.s1!.guitar?.rawPercentile).toBeCloseTo(0.25);
+  });
 });
