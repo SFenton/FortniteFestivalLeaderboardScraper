@@ -23,6 +23,17 @@ function render(ui: ReactElement) {
   );
 }
 
+async function findReadyQuickLinksButton() {
+  let button: HTMLButtonElement | null = null;
+  await waitFor(() => {
+    button = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Quick Links"][data-direct-action="true"]',
+    );
+    expect(button).not.toBeNull();
+  }, { timeout: 5000 });
+  return button!;
+}
+
 const mockApi = vi.hoisted(() => {
   const fn = vi.fn;
   return {
@@ -1904,10 +1915,7 @@ describe('App — mobile FAB branches', () => {
     render(<App />);
 
     await screen.findByRole('region', { name: 'Global Statistics' }, { timeout: 5000 });
-    const quickLinksButton = await screen.findByRole('button', { name: 'Quick Links' });
-    await waitFor(() => {
-      expect(quickLinksButton).toHaveAttribute('data-direct-action', 'true');
-    }, { timeout: 5000 });
+    const quickLinksButton = await findReadyQuickLinksButton();
     expect(screen.getByText('TrackedP')).toBeDefined();
     expect(screen.queryByRole('heading', { name: 'TrackedP' })).toBeNull();
     expect(screen.queryByTestId('player-header-actions')).toBeNull();
@@ -1936,13 +1944,11 @@ describe('App — mobile FAB branches', () => {
     window.location.hash = '#/statistics';
     render(<App />);
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
-    }, { timeout: 5000 });
+    await findReadyQuickLinksButton();
     expect(screen.getByText('TrackedP + BandMate')).toBeDefined();
     expect(screen.queryByRole('heading', { name: 'TrackedP + BandMate' })).toBeNull();
 
-    const sideActions = screen.getByTestId('fab-side-actions');
+    const sideActions = await screen.findByTestId('fab-side-actions', {}, { timeout: 5000 });
     const filterButton = within(sideActions).getByRole('button', { name: 'Duos' });
     expect(filterButton.textContent?.trim()).toBe('');
     expect(filterButton).not.toHaveStyle({ backgroundColor: '#2D82E6' });
@@ -1984,11 +1990,9 @@ describe('App — mobile FAB branches', () => {
     window.location.hash = '#/statistics';
     render(<App />);
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
-    }, { timeout: 5000 });
+    await findReadyQuickLinksButton();
 
-    const sideActions = screen.getByTestId('fab-side-actions');
+    const sideActions = await screen.findByTestId('fab-side-actions', {}, { timeout: 5000 });
     const filterButton = within(sideActions).getByRole('button', { name: 'Lead / Bass' });
     expect(filterButton).toHaveStyle({ backgroundColor: '#2D82E6' });
     expect(within(filterButton).getByAltText('Solo_Guitar')).toBeDefined();
@@ -2064,13 +2068,11 @@ describe('App — mobile FAB branches', () => {
     window.location.hash = '#/statistics';
     render(<App />);
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
-    }, { timeout: 5000 });
-    expect(within(screen.getByTestId('fab-side-actions')).getByRole('button', { name: 'Duos' })).toBeDefined();
+    const quickLinksButton = await findReadyQuickLinksButton();
+    expect(within(await screen.findByTestId('fab-side-actions', {}, { timeout: 5000 })).getByRole('button', { name: 'Duos' })).toBeDefined();
     expect(screen.queryByLabelText('Actions')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Quick Links' }));
+    fireEvent.click(quickLinksButton);
 
     expect(screen.queryByTestId('fab-menu')).toBeNull();
     const dialog = await screen.findByRole('dialog', { name: 'Quick Links' });
@@ -2110,7 +2112,7 @@ describe('App — mobile FAB branches', () => {
     expect(within(selectButton).getByText('Select OtherP')).toBeDefined();
     expect(screen.queryByLabelText('Actions')).toBeNull();
 
-    const quickLinksButton = await screen.findByRole('button', { name: 'Quick Links' }, { timeout: 5000 });
+    const quickLinksButton = await findReadyQuickLinksButton();
     fireEvent.click(quickLinksButton);
 
     expect(screen.queryByTestId('fab-menu')).toBeNull();
@@ -2133,7 +2135,7 @@ describe('App — mobile FAB branches', () => {
     expect(within(selectButton).getByText('Select Band')).toBeDefined();
     expect(screen.queryByLabelText('Actions')).toBeNull();
 
-    const quickLinksButton = await screen.findByRole('button', { name: 'Quick Links' }, { timeout: 5000 });
+    const quickLinksButton = await findReadyQuickLinksButton();
     fireEvent.click(quickLinksButton);
 
     expect(screen.queryByTestId('fab-menu')).toBeNull();
@@ -2149,10 +2151,7 @@ describe('App — mobile FAB branches', () => {
     render(<App />);
 
     await screen.findAllByText('RivalAbove', undefined, { timeout: 5000 });
-    const quickLinksButton = await screen.findByRole('button', { name: 'Quick Links' });
-    await waitFor(() => {
-      expect(quickLinksButton).toHaveAttribute('data-direct-action', 'true');
-    }, { timeout: 5000 });
+    const quickLinksButton = await findReadyQuickLinksButton();
 
     const sideActions = await screen.findByTestId('fab-side-actions');
     const toggleButton = within(sideActions).getByRole('button', { name: 'Leaderboard Rivals' });
@@ -2190,16 +2189,14 @@ describe('App — mobile FAB branches', () => {
     window.location.hash = '#/rivals/rival-1?name=TestRival';
     render(<App />);
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
-    }, { timeout: 5000 });
+    const quickLinksButton = await findReadyQuickLinksButton();
 
-    const sideActions = screen.getByTestId('fab-side-actions');
+    const sideActions = await screen.findByTestId('fab-side-actions', {}, { timeout: 5000 });
     const profileButton = within(sideActions).getByRole('button', { name: "View TestRival's Profile" });
     expect(within(profileButton).getByText("View TestRival's Profile")).toBeDefined();
     expect(screen.queryByLabelText('Actions')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Quick Links' }));
+    fireEvent.click(quickLinksButton);
 
     expect(screen.queryByTestId('fab-menu')).toBeNull();
     expect(await screen.findByRole('dialog', { name: 'Quick Links' })).toBeDefined();
@@ -2232,15 +2229,13 @@ describe('App — mobile FAB branches', () => {
     window.location.hash = '#/rivals/rival-1/rivalry?name=TestRival';
     render(<App />);
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
-    }, { timeout: 5000 });
+    const quickLinksButton = await findReadyQuickLinksButton();
 
-    const sideActions = screen.getByTestId('fab-side-actions');
+    const sideActions = await screen.findByTestId('fab-side-actions', {}, { timeout: 5000 });
     const profileButton = within(sideActions).getByRole('button', { name: "View TestRival's Profile" });
     expect(within(profileButton).getByText("View TestRival's Profile")).toBeDefined();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Quick Links' }));
+    fireEvent.click(quickLinksButton);
 
     expect(screen.queryByTestId('fab-menu')).toBeNull();
     expect(await screen.findByRole('dialog', { name: 'Quick Links' })).toBeDefined();
@@ -2254,11 +2249,9 @@ describe('App — mobile FAB branches', () => {
     window.location.hash = '#/compete';
     render(<App />);
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
-    }, { timeout: 5000 });
+    const quickLinksButton = await findReadyQuickLinksButton();
 
-    const sideActions = screen.getByTestId('fab-side-actions');
+    const sideActions = await screen.findByTestId('fab-side-actions', {}, { timeout: 5000 });
     const leaderboardsButton = within(sideActions).getByRole('button', { name: 'Leaderboards' });
     const rivalsButton = within(sideActions).getByRole('button', { name: 'Rivals' });
     expect(within(leaderboardsButton).getByText('Leaderboard')).toBeDefined();
@@ -2266,7 +2259,7 @@ describe('App — mobile FAB branches', () => {
     expect(screen.getAllByRole('button', { name: 'Quick Links' })).toHaveLength(1);
     expect(screen.queryByLabelText('Actions')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Quick Links' }));
+    fireEvent.click(quickLinksButton);
 
     expect(screen.queryByTestId('fab-menu')).toBeNull();
     expect(await screen.findByRole('dialog', { name: 'Quick Links' })).toBeDefined();
