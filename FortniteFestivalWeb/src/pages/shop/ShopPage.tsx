@@ -82,17 +82,17 @@ export default function ShopPage() {
   /* v8 ignore stop */
 
   // Register toggle action for FAB and sync view mode
-  const fabSearch = useFabSearch();
+  const { registerShopActions, setShopViewMode } = useFabSearch();
   const toggleViewRef = useRef(toggleView);
   toggleViewRef.current = toggleView;
   /* v8 ignore start — FAB registration callback */
   useLayoutEffect(() => {
-    fabSearch.registerShopActions({ toggleView: () => toggleViewRef.current() });
-    return () => fabSearch.registerShopActions(null);
-  }, [fabSearch]);
+    registerShopActions({ toggleView: () => toggleViewRef.current() });
+    return () => registerShopActions(null);
+  }, [registerShopActions]);
   useLayoutEffect(() => {
-    fabSearch.setShopViewMode(effectiveView);
-  }, [fabSearch, effectiveView]);
+    setShopViewMode(effectiveView);
+  }, [effectiveView, setShopViewMode]);
   /* v8 ignore stop */
 
   const enabledInstruments = useMemo(() => visibleInstruments(settings), [settings]);

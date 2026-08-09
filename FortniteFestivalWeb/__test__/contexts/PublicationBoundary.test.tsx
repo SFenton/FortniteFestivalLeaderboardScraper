@@ -1,7 +1,11 @@
 import { act, render, screen } from '@testing-library/react';
+import { useEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PublicationBoundary from '../../src/contexts/PublicationBoundary';
-import { resetPublicationForTests } from '../../src/api/publication';
+import {
+  PUBLICATION_CHANGED_EVENT,
+  resetPublicationForTests,
+} from '../../src/api/publication';
 
 describe('PublicationBoundary', () => {
   beforeEach(() => {
@@ -51,5 +55,54 @@ describe('PublicationBoundary', () => {
 
     expect(screen.getByText('Published app')).toBeInTheDocument();
     expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('remounts consumers for a same-publication refresh', async () => {
+    const publication = {
+      contractVersion: 1,
+      publicationId: 42,
+      previousPublicationId: 41,
+      publishedScrapeId: 1271,
+      publishedAt: '2026-07-30T19:35:02Z',
+      readyForPinning: true,
+      pinningEnabled: true,
+      unreadySurfaces: [],
+    };
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(publication), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    let mounts = 0;
+    let unmounts = 0;
+    function Consumer() {
+      useEffect(() => {
+        mounts++;
+        return () => { unmounts++; };
+      }, []);
+      return <div>Published app</div>;
+    }
+
+    render(
+      <PublicationBoundary>
+        <Consumer />
+      </PublicationBoundary>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mounts).toBe(1);
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(
+        PUBLICATION_CHANGED_EVENT,
+        { detail: publication },
+      ));
+    });
+
+    expect(mounts).toBe(2);
+    expect(unmounts).toBe(1);
   });
 });

@@ -3058,6 +3058,7 @@ case "$ACTION" in
         run_docker_query_bounded() {
             local joined="$*"
             if [[ "$joined" == *"config --format json"* ]]; then
+                # secret-scan: allow database-target-binding mock connection string
                 printf '%s\n' \
                     '{"services":{"fstservice":{"environment":{"ConnectionStrings__PostgreSQL":"Host=postgres;Port=5432;Database=fstservice;Username=fst;Password=not-logged"}}}}'
             elif [[ "$joined" == *"ps --all -q postgres"* ]]; then

@@ -53,7 +53,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   const slidesMemo = useMemo(() => statisticsSlides(isMobileChrome), [isMobileChrome]);
   useRegisterFirstRun('statistics', t('nav.statistics'), slidesMemo);
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: true }), []);
-  const firstRun = useFirstRun('statistics', firstRunGateCtx);
+  const firstRun = useFirstRun('statistics', firstRunGateCtx, slidesMemo);
 
   // Local state for when viewing an arbitrary player via URL -- use React Query
   const { data: queryData, isLoading: queryLoading, error: queryError } = useQuery({

@@ -491,6 +491,286 @@ public sealed class PublicationReadinessTests
         Assert.Equal("pointer read failed", error.Message);
     }
 
+    [Fact]
+    public void EvaluationFailureFailsClosed()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicationGeneration(PublicationId)
+            .Returns(_ => throw new InvalidOperationException(
+                "generation read failed"));
+        var evaluator = new PublicationReadinessEvaluator(metaDb);
+
+        var result = evaluator.Evaluate(PublicationId, ScrapeId);
+
+        Assert.False(result.ReadyForPinning);
+        AssertReason(
+            result,
+            PublicationReadinessEvaluator.EvaluatorSurface,
+            "evaluation_failed:InvalidOperationException");
+    }
+
+    [Fact]
+    public void MissingOrMismatchedGenerationFailsClosed()
+    {
+        var missingMeta = Substitute.For<IMetaDatabase>();
+        missingMeta.GetPublicationGeneration(PublicationId)
+            .Returns((PublicationGenerationInfo?)null);
+        missingMeta.GetPublicationSurfaceBindings(PublicationId)
+            .Returns(CreateReadyBindings());
+
+        var missing = new PublicationReadinessEvaluator(missingMeta)
+            .Evaluate(PublicationId, ScrapeId);
+
+        AssertReason(
+            missing,
+            PublicationReadinessEvaluator.GenerationSurface,
+            "generation_missing");
+
+        var mismatchedMeta = CreateMetaDatabase(CreateReadyBindings());
+        mismatchedMeta.GetPublicationGeneration(PublicationId)
+            .Returns(CreateGeneration() with
+            {
+                PublicationId = PublicationId + 1,
+            });
+
+        var mismatched =
+            new PublicationReadinessEvaluator(mismatchedMeta)
+                .Evaluate(PublicationId, ScrapeId);
+
+        AssertReason(
+            mismatched,
+            PublicationReadinessEvaluator.GenerationSurface,
+            "generation_publication_id_mismatch");
+    }
+
+    [Fact]
+    public void InvalidBindingEnvelopeReportsAllMetadataFailures()
+    {
+        var bindings = ReplaceBinding(
+            CreateReadyBindings(),
+            PublicationSurfaceNames.AccountNames,
+            binding => binding with
+            {
+                PublicationId = PublicationId + 1,
+                BindingKind = "unexpected",
+                BindingJson = "[]",
+                RowCount = -1,
+                BuiltAtUtc = default,
+            });
+        var evaluator = CreateEvaluator(bindings);
+
+        var result = evaluator.Evaluate(PublicationId, ScrapeId);
+
+        AssertReason(
+            result,
+            PublicationSurfaceNames.AccountNames,
+            "binding_publication_id_mismatch");
+        AssertReason(
+            result,
+            PublicationSurfaceNames.AccountNames,
+            "binding_kind_not_allowed:unexpected");
+        AssertReason(
+            result,
+            PublicationSurfaceNames.AccountNames,
+            "built_at_missing");
+        AssertReason(
+            result,
+            PublicationSurfaceNames.AccountNames,
+            "binding_json_not_object");
+        AssertReason(
+            result,
+            PublicationSurfaceNames.AccountNames,
+            "row_count_negative");
+    }
+
+    [Fact]
+    public void InvalidBindingJsonAndSourceValidationFailureFailClosed()
+    {
+        var invalidJsonBindings = ReplaceBinding(
+            CreateReadyBindings(),
+            PublicationSurfaceNames.AccountNames,
+            binding => binding with { BindingJson = "{" });
+        var invalidJson = CreateEvaluator(invalidJsonBindings)
+            .Evaluate(PublicationId, ScrapeId);
+
+        AssertReason(
+            invalidJson,
+            PublicationSurfaceNames.AccountNames,
+            "binding_json_invalid");
+
+        var sourceBindings = CreateReadyBindings();
+        var sourceMeta = CreateMetaDatabase(sourceBindings);
+        sourceMeta.GetPublicationSurfaceSourceEvidence(
+                PublicationId,
+                PublicationSurfaceNames.SongCatalog)
+            .Returns(_ => throw new InvalidOperationException(
+                "source unavailable"));
+        var sourceFailure =
+            new PublicationReadinessEvaluator(sourceMeta)
+                .Evaluate(PublicationId, ScrapeId);
+
+        AssertReason(
+            sourceFailure,
+            PublicationSurfaceNames.SongCatalog,
+            "source_validation_failed:InvalidOperationException");
+    }
+
+    [Fact]
+    public void BindingJsonRequirementsFailClosedWhenMissingOrWrong()
+    {
+        var songCatalogBindings = ReplaceBinding(
+            CreateReadyBindings(),
+            PublicationSurfaceNames.SongCatalog,
+            binding => binding with
+            {
+                BindingJson = JsonSerializer.Serialize(new
+                {
+                    contractVersion =
+                        PublicationRouteSurfaceContractCatalog
+                            .ContractVersion,
+                    publicationId = PublicationId,
+                    sourceKind = "derived",
+                    isExact = false,
+                }),
+            });
+        var songCatalog = CreateEvaluator(songCatalogBindings)
+            .Evaluate(PublicationId, ScrapeId);
+
+        AssertReason(
+            songCatalog,
+            PublicationSurfaceNames.SongCatalog,
+            "source_kind_not_allowed:derived");
+        AssertReason(
+            songCatalog,
+            PublicationSurfaceNames.SongCatalog,
+            "source_not_exact");
+
+        var missingSourceKindBindings = ReplaceBinding(
+            CreateReadyBindings(),
+            PublicationSurfaceNames.SongCatalog,
+            binding => binding with
+            {
+                BindingJson = JsonSerializer.Serialize(new
+                {
+                    contractVersion =
+                        PublicationRouteSurfaceContractCatalog
+                            .ContractVersion,
+                    publicationId = PublicationId,
+                    isExact = true,
+                }),
+            });
+        var missingSourceKind =
+            CreateEvaluator(missingSourceKindBindings)
+                .Evaluate(PublicationId, ScrapeId);
+        AssertReason(
+            missingSourceKind,
+            PublicationSurfaceNames.SongCatalog,
+            "source_kind_missing");
+
+        var notificationBindings = ReplaceBinding(
+            CreateReadyBindings(),
+            PublicationSurfaceNames.ImprovementNotifications,
+            binding => binding with
+            {
+                BindingJson = JsonSerializer.Serialize(new
+                {
+                    contractVersion =
+                        PublicationRouteSurfaceContractCatalog
+                            .ContractVersion,
+                    publicationId = PublicationId,
+                    scrapeId = ScrapeId,
+                }),
+            });
+        var notifications = CreateEvaluator(notificationBindings)
+            .Evaluate(PublicationId, ScrapeId);
+        AssertReason(
+            notifications,
+            PublicationSurfaceNames.ImprovementNotifications,
+            "binding_json_row_count_missing");
+
+        var mismatchedCountBindings = ReplaceBinding(
+            CreateReadyBindings(),
+            PublicationSurfaceNames.ImprovementNotifications,
+            binding => binding with
+            {
+                BindingJson = JsonSerializer.Serialize(new
+                {
+                    contractVersion =
+                        PublicationRouteSurfaceContractCatalog
+                            .ContractVersion,
+                    publicationId = PublicationId,
+                    scrapeId = ScrapeId,
+                    scopeCount = binding.RowCount + 1,
+                }),
+            });
+        var mismatchedCount =
+            CreateEvaluator(mismatchedCountBindings)
+                .Evaluate(PublicationId, ScrapeId);
+        AssertReason(
+            mismatchedCount,
+            PublicationSurfaceNames.ImprovementNotifications,
+            "binding_json_row_count_mismatch");
+    }
+
+    [Fact]
+    public void SourceIdentityAndGenerationMustMatchBinding()
+    {
+        var bindings = CreateReadyBindings();
+        var bandBinding = bindings.Single(static binding =>
+            binding.SurfaceName == PublicationSurfaceNames.BandRankings);
+        var metaDb = CreateMetaDatabase(
+            bindings,
+            new Dictionary<string, PublicationSurfaceSourceEvidence?>
+            {
+                [PublicationSurfaceNames.BandRankings] =
+                    new PublicationSurfaceSourceEvidence(
+                        PublicationSurfaceNames.BandRankings,
+                        Exists: true,
+                        PublicationId + 1,
+                        ScrapeId + 1,
+                        bandBinding.RowCount,
+                        bandBinding.ContentHash,
+                        BandGeneration + 1),
+            });
+
+        var result = new PublicationReadinessEvaluator(metaDb)
+            .Evaluate(PublicationId, ScrapeId);
+
+        AssertReason(
+            result,
+            PublicationSurfaceNames.BandRankings,
+            "source_evidence_publication_id_mismatch");
+        AssertReason(
+            result,
+            PublicationSurfaceNames.BandRankings,
+            "source_evidence_scrape_id_mismatch");
+        AssertReason(
+            result,
+            PublicationSurfaceNames.BandRankings,
+            "source_generation_mismatch");
+
+        var noGenerationBindings = ReplaceBinding(
+            bindings,
+            PublicationSurfaceNames.BandRankings,
+            binding => binding with
+            {
+                BindingJson = JsonSerializer.Serialize(new
+                {
+                    contractVersion =
+                        PublicationRouteSurfaceContractCatalog
+                            .ContractVersion,
+                    publicationId = PublicationId,
+                    scrapeId = ScrapeId,
+                }),
+            });
+        var noGeneration = CreateEvaluator(noGenerationBindings)
+            .Evaluate(PublicationId, ScrapeId);
+        AssertReason(
+            noGeneration,
+            PublicationSurfaceNames.BandRankings,
+            "source_generation_missing");
+    }
+
     private static PublicationReadinessEvaluator CreateEvaluator(
         IReadOnlyList<PublicationSurfaceBinding> bindings,
         IReadOnlyDictionary<

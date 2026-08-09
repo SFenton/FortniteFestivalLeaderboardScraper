@@ -20,7 +20,11 @@ type UseFirstRunResult = {
  * @param pageKey - The page key used when registering slides.
  * @param gateCtx - Context object evaluated against each slide's gate predicate.
  */
-export function useFirstRun(pageKey: string, gateCtx: FirstRunGateContext): UseFirstRunResult {
+export function useFirstRun(
+  pageKey: string,
+  gateCtx: FirstRunGateContext,
+  pageSlides?: FirstRunSlideDef[],
+): UseFirstRunResult {
   const { enabled, getUnseenSlides, getAllSlides, markSeen, setActiveCarousel, activeCarouselKey, registeredPages } = useFirstRunContext();
   const [dismissed, setDismissed] = useState(false);
   const [closing, setClosing] = useState(false);
@@ -31,14 +35,14 @@ export function useFirstRun(pageKey: string, gateCtx: FirstRunGateContext): UseF
       if (dismissed) return [];
       if (gateCtx.ready === false) return [];
       if (gateCtx.alwaysShow) {
-        const all = getAllSlides(pageKey);
+        const all = pageSlides ?? getAllSlides(pageKey);
         return all.filter(s => !s.gate || s.gate(gateCtx));
       }
-      return getUnseenSlides(pageKey, gateCtx);
+      return getUnseenSlides(pageKey, gateCtx, pageSlides);
     },
     // registeredPages forces re-evaluation after registration effects fire
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pageKey, gateCtx, getUnseenSlides, getAllSlides, dismissed, enabled, registeredPages],
+    [pageKey, gateCtx, pageSlides, getUnseenSlides, getAllSlides, dismissed, enabled, registeredPages],
   );
 
   // Freeze slides during exit animation so the carousel doesn't unmount early

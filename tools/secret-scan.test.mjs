@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { scanContent } from "./secret-scan.mjs";
 
@@ -30,5 +31,29 @@ describe("secret scan", () => {
     ];
 
     assert.deepEqual(findings, []);
+  });
+
+  it("allows only the exact repository database binding mock", () => {
+    const repositoryMock = scanContent(
+      "tools/postgres-stored-rank-rollout.sh",
+      readFileSync(
+        new URL("./postgres-stored-rank-rollout.sh", import.meta.url),
+        "utf8"
+      )
+    );
+    const reusedMarker = scanContent(
+      "tools/postgres-stored-rank-rollout.sh",
+      [
+        "# secret-scan: allow database-target-binding mock connection string",
+        "printf '%s\\n' \\",
+        '{"services":{"fstservice":{"environment":{"ConnectionStrings__PostgreSQL":"Host=postgres;Port=5432;Database=fstservice;Username=fst;Password=arbitrary-value"}}}}'
+      ].join("\n")
+    );
+
+    assert.deepEqual(repositoryMock, []);
+    assert.deepEqual(
+      reusedMarker.map(({ rule }) => rule),
+      ["connection-string-password"]
+    );
   });
 });

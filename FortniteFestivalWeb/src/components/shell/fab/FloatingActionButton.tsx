@@ -119,6 +119,7 @@ export default function FloatingActionButton({
   const [actionsOpen, setActionsOpen] = useState(false);
   const [popupMounted, setPopupMounted] = useState(false);
   const [popupVisible, setPopupVisible] = useState(false);
+  const popupDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [searchExpanded, setSearchExpanded] = useState(false);
   const [searchInputMounted, setSearchInputMounted] = useState(false);
   const [searchFieldContentVisible, setSearchFieldContentVisible] = useState(false);
@@ -162,18 +163,31 @@ export default function FloatingActionButton({
   useIOSKeyboardPanGuard({ active: searchGuardActive, mode: 'floating-page', scrollContainerRef });
 
   /* v8 ignore start — action menu open/close handlers (rAF/setTimeout) */
+  const clearPopupDismissTimer = useCallback(() => {
+    if (popupDismissTimerRef.current === null) return;
+    clearTimeout(popupDismissTimerRef.current);
+    popupDismissTimerRef.current = null;
+  }, []);
+
   const openActions = useCallback(() => {
+    clearPopupDismissTimer();
     for (const action of (actionGroups ?? []).flat()) action.onIntent?.();
     setActionsOpen(true);
     setPopupMounted(true);
     requestAnimationFrame(() => requestAnimationFrame(() => setPopupVisible(true)));
-  }, [actionGroups]);
+  }, [actionGroups, clearPopupDismissTimer]);
 
   const closeActions = useCallback(() => {
+    clearPopupDismissTimer();
     setPopupVisible(false);
     setActionsOpen(false);
-    setTimeout(() => { setPopupMounted(false); }, FAB_DISMISS_MS);
-  }, []);
+    popupDismissTimerRef.current = setTimeout(() => {
+      setPopupMounted(false);
+      popupDismissTimerRef.current = null;
+    }, FAB_DISMISS_MS);
+  }, [clearPopupDismissTimer]);
+
+  useEffect(() => clearPopupDismissTimer, [clearPopupDismissTimer]);
 
   const handleFabPress = useCallback(() => {
     if (effectiveDirectAction) {

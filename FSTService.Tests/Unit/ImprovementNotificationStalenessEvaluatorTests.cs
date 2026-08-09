@@ -5,6 +5,51 @@ namespace FSTService.Tests.Unit;
 public sealed class ImprovementNotificationStalenessEvaluatorTests
 {
     [Fact]
+    public void Evaluate_DisabledNotificationsAreHealthy()
+    {
+        var result = ImprovementNotificationStalenessEvaluator.Evaluate(
+            CreateStatus(
+                publishedScrapeId: 1267,
+                playerScrapeId: 1200,
+                bandScrapeId: 1200,
+                completedAt: DateTime.UtcNow.AddDays(-30),
+                scrapesBehind: 10,
+                markerStatus: "pending"),
+            new ImprovementNotificationOptions
+            {
+                Enabled = false,
+                IncludePlayers = true,
+                IncludeBands = true,
+            },
+            DateTime.UtcNow);
+
+        Assert.False(result.IsStale);
+        Assert.Equal(1267, result.PublishedScrapeId);
+        Assert.Equal(TimeSpan.Zero, result.Age);
+    }
+
+    [Fact]
+    public void Evaluate_NoPublishedScrapeIsHealthy()
+    {
+        var result = ImprovementNotificationStalenessEvaluator.Evaluate(
+            CreateStatus(
+                publishedScrapeId: 1267,
+                playerScrapeId: 1267,
+                bandScrapeId: 1267,
+                completedAt: DateTime.UtcNow,
+                scrapesBehind: 0,
+                markerStatus: "completed") with
+            {
+                PublishedScrapeId = null,
+            },
+            EnabledOptions(),
+            DateTime.UtcNow);
+
+        Assert.False(result.IsStale);
+        Assert.Null(result.PublishedScrapeId);
+    }
+
+    [Fact]
     public void Evaluate_FlagsPublishedScrapeWithoutDetection()
     {
         var now = new DateTime(2026, 7, 28, 15, 0, 0, DateTimeKind.Utc);

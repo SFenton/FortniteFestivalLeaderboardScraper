@@ -1,5 +1,6 @@
 import { test as base, expect, type Page, type Locator } from '@playwright/test';
 import { E2E_PLAYER, installDeterministicApiMocks } from './apiMocks';
+import { changelogHash } from '../../src/changelog';
 
 /* ── Constants ── */
 
@@ -96,6 +97,13 @@ export class FreState {
   async resetAppState() {
     await this.page.goto('/e2e/fixtures/reset.html', { waitUntil: 'load' });
     await this.clearAllAppState();
+    await this.page.evaluate(
+      hash => localStorage.setItem(
+        'fst:changelog',
+        JSON.stringify({ version: 'e2e', hash }),
+      ),
+      changelogHash(),
+    );
   }
 
   /** Clear all FRE seen-state from localStorage. */

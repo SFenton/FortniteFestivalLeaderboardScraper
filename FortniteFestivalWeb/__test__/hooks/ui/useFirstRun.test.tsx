@@ -51,6 +51,17 @@ describe('useFirstRun', () => {
     expect(result.current.show).toBe(true);
   });
 
+  it('evaluates supplied page slides before registry effects run', () => {
+    const slides = [makeSlide('direct')];
+    const { result } = renderHook(
+      () => useFirstRun('page1', { hasPlayer: false }, slides),
+      { wrapper },
+    );
+
+    expect(result.current.slides).toEqual(slides);
+    expect(result.current.show).toBe(true);
+  });
+
   it('returns no slides when gate context ready=false', () => {
     const slides = [makeSlide('a')];
     const { result } = renderHook(

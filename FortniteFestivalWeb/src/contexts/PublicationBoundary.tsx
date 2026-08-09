@@ -15,6 +15,7 @@ export default function PublicationBoundary({
   children: ReactNode;
 }) {
   const [publication, setPublication] = useState<PublicationResponse | null>(null);
+  const [refreshRevision, setRefreshRevision] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -26,7 +27,10 @@ export default function PublicationBoundary({
       queryClient.clear();
       clearSongsCache();
       resetAppWebSocketForPublicationChange();
-      if (active) setPublication(next);
+      if (active) {
+        setPublication(next);
+        setRefreshRevision(revision => revision + 1);
+      }
     };
     const loadPublication = () => {
       void ensurePublication()
@@ -59,5 +63,5 @@ export default function PublicationBoundary({
     return <div aria-busy="true">Loading published data...</div>;
   }
 
-  return <div key={publication.publicationId}>{children}</div>;
+  return <div key={`${publication.publicationId}:${refreshRevision}`}>{children}</div>;
 }

@@ -217,7 +217,9 @@ public sealed class NotificationService
         _log.LogInformation("Broadcast to all clients: {Message}", json);
     }
 
-    public async Task NotifyPublicationChangedAsync(long publicationId)
+    public async Task NotifyPublicationChangedAsync(
+        long publicationId,
+        bool forceRefresh = false)
     {
         foreach (var (accountId, deviceMap) in _connections)
         {
@@ -229,7 +231,8 @@ public sealed class NotificationService
                     if (await EnsureCurrentPublicationAsync(
                             connection.Socket,
                             connection.PublicationId,
-                            publicationId))
+                            publicationId,
+                            forceRefresh))
                     {
                         continue;
                     }
@@ -705,11 +708,14 @@ public sealed class NotificationService
     private static async Task<bool> EnsureCurrentPublicationAsync(
         WebSocket ws,
         long? connectionPublicationId,
-        long? currentPublicationId)
+        long? currentPublicationId,
+        bool forceRefresh = false)
     {
-        if (!connectionPublicationId.HasValue
-            || !currentPublicationId.HasValue
-            || connectionPublicationId.Value == currentPublicationId.Value)
+        if (!currentPublicationId.HasValue
+            || (!forceRefresh
+                && (!connectionPublicationId.HasValue
+                    || connectionPublicationId.Value
+                        == currentPublicationId.Value)))
         {
             return true;
         }

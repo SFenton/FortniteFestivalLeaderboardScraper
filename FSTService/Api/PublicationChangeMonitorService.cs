@@ -58,7 +58,8 @@ public sealed class PublicationChangeMonitorService : BackgroundService
                     _scrapeLifecycle.InvalidateInProcessCaches();
                     _songsCache.Invalidate();
                     await _notifications.NotifyPublicationChangedAsync(
-                        currentPublicationId.Value);
+                        currentPublicationId.Value,
+                        forceRefresh: true);
                 }
                 previousFreeze = currentFreeze;
 

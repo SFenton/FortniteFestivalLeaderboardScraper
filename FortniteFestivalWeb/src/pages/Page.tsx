@@ -354,7 +354,7 @@ export default function Page({
 /** Separated component so hooks only run when firstRun config is provided. */
 function PageFirstRun({ config }: { config: NonNullable<PageProps['firstRun']> }) {
   useRegisterFirstRun(config.key, config.label, config.slides);
-  const firstRun = useFirstRun(config.key, config.gateContext);
+  const firstRun = useFirstRun(config.key, config.gateContext, config.slides);
   if (!firstRun.show) return null;
   return <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />;
 }

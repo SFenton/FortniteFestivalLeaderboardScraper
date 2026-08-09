@@ -997,21 +997,24 @@ describe('App — mobile FAB branches', () => {
     render(<App />);
 
     await screen.findByText('Test Song', undefined, { timeout: 5000 });
-    const actionsButton = await screen.findByRole('button', { name: 'Actions' }, { timeout: 5000 });
-    fireEvent.click(actionsButton);
+    const openActions = async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Actions' }, { timeout: 5000 }));
+    };
+
+    await openActions();
     const listButton = await screen.findByRole('button', { name: 'List View' });
     expect(within(listButton).getByText('List View')).toBeDefined();
-
+    fireEvent.click(listButton);
     fireEvent.click(listButton);
 
-    fireEvent.click(actionsButton);
+    await openActions();
     const gridButton = await screen.findByRole('button', { name: 'Grid View' });
     expect(within(gridButton).getByText('Grid View')).toBeDefined();
     expect(localStorage.getItem('fst:shopView')).toBe('list');
-
+    fireEvent.click(gridButton);
     fireEvent.click(gridButton);
 
-    fireEvent.click(actionsButton);
+    await openActions();
     await screen.findByRole('button', { name: 'List View' });
     expect(localStorage.getItem('fst:shopView')).toBe('grid');
     window.location.hash = '';

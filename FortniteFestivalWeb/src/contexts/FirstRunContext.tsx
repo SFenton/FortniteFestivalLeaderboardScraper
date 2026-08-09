@@ -30,7 +30,11 @@ type FirstRunContextValue = {
   /** Unregister a page (on unmount). */
   unregister: (pageKey: string) => void;
   /** Get unseen slides for a page, filtered by gate predicates. */
-  getUnseenSlides: (pageKey: string, ctx: FirstRunGateContext) => FirstRunSlideDef[];
+  getUnseenSlides: (
+    pageKey: string,
+    ctx: FirstRunGateContext,
+    slides?: FirstRunSlideDef[],
+  ) => FirstRunSlideDef[];
   /** Get ALL slides for a page (ignoring seen state + gates). For Settings replay. */
   getAllSlides: (pageKey: string) => FirstRunSlideDef[];
   /** Mark slide IDs as seen in localStorage. */
@@ -67,10 +71,14 @@ export function FirstRunProvider({ children }: { children: ReactNode }) {
     setTick(t => t + 1);
   }, []);
 
-  const getUnseenSlides = useCallback((pageKey: string, ctx: FirstRunGateContext): FirstRunSlideDef[] => {
+  const getUnseenSlides = useCallback((
+    pageKey: string,
+    ctx: FirstRunGateContext,
+    slides?: FirstRunSlideDef[],
+  ): FirstRunSlideDef[] => {
     const page = registryRef.current.get(pageKey);
-    if (!page) return [];
-    return page.slides.filter(slide => {
+    const candidates = slides ?? page?.slides ?? [];
+    return candidates.filter(slide => {
       if (slide.gate && !slide.gate(ctx)) return false;
       return isSlideUnseen(slide, seenRef.current);
     });

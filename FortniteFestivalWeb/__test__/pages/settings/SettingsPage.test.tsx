@@ -279,6 +279,12 @@ function expectBefore(first: Element, second: Element) {
   expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 }
 
+function getToggleButton(label: string) {
+  const button = screen.getByText(label).closest('button');
+  expect(button).not.toBeNull();
+  return button as HTMLButtonElement;
+}
+
 describe('SettingsPage', () => {
   it('renders content on mobile', () => {
     setViewportQueries({ mobile: true, wide: false });
@@ -322,20 +328,20 @@ describe('SettingsPage', () => {
     renderSettings();
 
     expect(screen.getByText('Diagnostics')).toBeDefined();
-    const diagnosticsToggle = screen.getByRole('button', { name: /^Tap Diagnostics\b/i });
-    const telemetryToggle = screen.getByRole('button', { name: /Upload Tap Telemetry/i });
+    const diagnosticsToggle = getToggleButton('Tap Diagnostics');
+    const telemetryToggle = getToggleButton('Upload Tap Telemetry');
 
     expect(telemetryToggle).toBeDisabled();
 
     fireEvent.click(diagnosticsToggle);
     expect(localStorage.getItem('fst.tapDiagnostics')).toBe('1');
 
-    const enabledTelemetryToggle = screen.getByRole('button', { name: /Upload Tap Telemetry/i });
+    const enabledTelemetryToggle = getToggleButton('Upload Tap Telemetry');
     expect(enabledTelemetryToggle).not.toBeDisabled();
     fireEvent.click(enabledTelemetryToggle);
     expect(localStorage.getItem('fst.tapTelemetry')).toBe('1');
 
-    fireEvent.click(screen.getByRole('button', { name: /^Tap Diagnostics\b/i }));
+    fireEvent.click(getToggleButton('Tap Diagnostics'));
     expect(localStorage.getItem('fst.tapDiagnostics')).toBeNull();
     expect(localStorage.getItem('fst.tapTelemetry')).toBeNull();
   });

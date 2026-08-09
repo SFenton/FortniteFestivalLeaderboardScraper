@@ -76,6 +76,107 @@ public sealed class NotificationServiceTests
     }
 
     [Fact]
+    public async Task NotifyPublicationChanged_RotatesOnlyStaleConnections()
+    {
+        var svc = CreateService();
+        var stale = Substitute.For<WebSocket>();
+        var current = Substitute.For<WebSocket>();
+        stale.State.Returns(WebSocketState.Open);
+        current.State.Returns(WebSocketState.Open);
+        svc.AddConnection("acct1", "stale", stale, publicationId: 41);
+        svc.AddConnection("acct1", "current", current, publicationId: 42);
+
+        await svc.NotifyPublicationChangedAsync(42);
+
+        await stale.Received(1).SendAsync(
+            Arg.Is<ArraySegment<byte>>(segment =>
+                SegmentContains(
+                    segment,
+                    "\"type\":\"publication_changed\"",
+                    "\"publicationId\":42")),
+            WebSocketMessageType.Text,
+            true,
+            Arg.Any<CancellationToken>());
+        await stale.Received(1).CloseOutputAsync(
+            WebSocketCloseStatus.PolicyViolation,
+            "Publication changed",
+            Arg.Any<CancellationToken>());
+        await current.DidNotReceive().SendAsync(
+            Arg.Any<ArraySegment<byte>>(),
+            Arg.Any<WebSocketMessageType>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>());
+
+        stale.ClearReceivedCalls();
+        current.ClearReceivedCalls();
+        await svc.NotifyAccountAsync("acct1", new { type = "still_current" });
+
+        await stale.DidNotReceive().SendAsync(
+            Arg.Any<ArraySegment<byte>>(),
+            Arg.Any<WebSocketMessageType>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>());
+        await current.Received(1).SendAsync(
+            Arg.Is<ArraySegment<byte>>(segment =>
+                SegmentContains(segment, "\"type\":\"still_current\"")),
+            WebSocketMessageType.Text,
+            true,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task NotifyPublicationChanged_ForceRefreshRotatesCurrentConnections()
+    {
+        var svc = CreateService();
+        var current = Substitute.For<WebSocket>();
+        current.State.Returns(WebSocketState.Open);
+        svc.AddConnection("acct1", "current", current, publicationId: 42);
+
+        await svc.NotifyPublicationChangedAsync(
+            42,
+            forceRefresh: true);
+
+        await current.Received(1).SendAsync(
+            Arg.Is<ArraySegment<byte>>(segment =>
+                SegmentContains(
+                    segment,
+                    "\"type\":\"publication_changed\"",
+                    "\"publicationId\":42")),
+            WebSocketMessageType.Text,
+            true,
+            Arg.Any<CancellationToken>());
+        await current.Received(1).CloseOutputAsync(
+            WebSocketCloseStatus.PolicyViolation,
+            "Publication changed",
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task NotifyPublicationChanged_SendFailureRemovesConnection()
+    {
+        var svc = CreateService();
+        var ws = Substitute.For<WebSocket>();
+        ws.State.Returns(WebSocketState.Open);
+        ws.SendAsync(
+                Arg.Any<ArraySegment<byte>>(),
+                Arg.Any<WebSocketMessageType>(),
+                Arg.Any<bool>(),
+                Arg.Any<CancellationToken>())
+            .ThrowsAsync(new WebSocketException("publication rotation failed"));
+        svc.AddConnection("acct1", "dev1", ws, publicationId: 41);
+
+        await svc.NotifyPublicationChangedAsync(42);
+
+        ws.ClearReceivedCalls();
+        await svc.NotifyAccountAsync("acct1", new { type = "after_failure" });
+        await ws.DidNotReceive().SendAsync(
+            Arg.Any<ArraySegment<byte>>(),
+            Arg.Any<WebSocketMessageType>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task RemoveConnection_ThenNotify_DoesNotSend()
     {
         var svc = CreateService();
