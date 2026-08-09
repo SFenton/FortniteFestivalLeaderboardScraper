@@ -31,7 +31,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40babel/core",
-    repositoryUrl: "https://github.com/babel/babel.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (devDependencies)"],
   },
   {
@@ -42,7 +42,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40babel/preset-env",
-    repositoryUrl: "https://github.com/babel/babel.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (devDependencies)"],
   },
   {
@@ -53,7 +53,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40babel/runtime",
-    repositoryUrl: "https://github.com/babel/babel.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (devDependencies)"],
   },
   {
@@ -64,7 +64,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40bottom-tabs/react-navigation",
-    repositoryUrl: "git+https://github.com/callstackincubator/react-native-bottom-tabs.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)","FortniteFestivalRN/packages/app-screens/package.json (peerDependencies)","FortniteFestivalRN/packages/local-app/package.json (peerDependencies)","FortniteFestivalRN/packages/server-app/package.json (peerDependencies)"],
   },
   {
@@ -75,7 +75,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40callstack/liquid-glass",
-    repositoryUrl: "git+https://github.com/callstack/liquid-glass.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)","FortniteFestivalRN/packages/app-screens/package.json (peerDependencies)","FortniteFestivalRN/packages/local-app/package.json (peerDependencies)","FortniteFestivalRN/packages/server-app/package.json (peerDependencies)"],
   },
   {
@@ -152,7 +152,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40react-native-async-storage/async-storage",
-    repositoryUrl: "https://github.com/react-native-async-storage/async-storage.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)","FortniteFestivalRN/packages/contexts/package.json (peerDependencies)"],
   },
   {
@@ -163,7 +163,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40react-native-community/blur",
-    repositoryUrl: "https://github.com/react-native-community/react-native-blur",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)"],
   },
   {
@@ -174,7 +174,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40react-native-community/cli",
-    repositoryUrl: "https://github.com/react-native-community/cli.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (devDependencies)"],
   },
   {
@@ -185,7 +185,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40react-native-community/cli-platform-android",
-    repositoryUrl: "https://github.com/react-native-community/cli.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (devDependencies)"],
   },
   {
@@ -196,7 +196,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40react-native-community/cli-platform-ios",
-    repositoryUrl: "https://github.com/react-native-community/cli.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (devDependencies)"],
   },
   {
@@ -207,7 +207,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40react-native-masked-view/masked-view",
-    repositoryUrl: "git+https://github.com/react-native-masked-view/masked-view.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)","FortniteFestivalRN/packages/app-screens/package.json (peerDependencies)","FortniteFestivalRN/packages/local-app/package.json (peerDependencies)","FortniteFestivalRN/packages/server-app/package.json (peerDependencies)"],
   },
   {
@@ -218,7 +218,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40react-native/babel-preset",
-    repositoryUrl: "git+ssh://git@github.com/facebook/react-native.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (devDependencies)"],
   },
   {
@@ -229,7 +229,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40react-native/eslint-config",
-    repositoryUrl: "git+https://github.com/facebook/react-native.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (devDependencies)"],
   },
   {
@@ -240,7 +240,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40react-native/metro-config",
-    repositoryUrl: "git+https://github.com/facebook/react-native.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (devDependencies)"],
   },
   {
@@ -251,7 +251,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40react-native/new-app-screen",
-    repositoryUrl: "git+https://github.com/facebook/react-native.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)"],
   },
   {
@@ -262,7 +262,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40react-native/typescript-config",
-    repositoryUrl: "git+https://github.com/facebook/react-native.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (devDependencies)"],
   },
   {
@@ -273,7 +273,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40react-navigation/bottom-tabs",
-    repositoryUrl: "https://github.com/react-navigation/react-navigation.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)","FortniteFestivalRN/packages/app-screens/package.json (peerDependencies)","FortniteFestivalRN/packages/local-app/package.json (peerDependencies)","FortniteFestivalRN/packages/server-app/package.json (peerDependencies)"],
   },
   {
@@ -284,7 +284,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40react-navigation/drawer",
-    repositoryUrl: "https://github.com/react-navigation/react-navigation.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)"],
   },
   {
@@ -295,7 +295,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40react-navigation/native",
-    repositoryUrl: "https://github.com/react-navigation/react-navigation.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)","FortniteFestivalRN/packages/app-screens/package.json (peerDependencies)","FortniteFestivalRN/packages/local-app/package.json (peerDependencies)","FortniteFestivalRN/packages/server-app/package.json (peerDependencies)"],
   },
   {
@@ -306,7 +306,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40react-navigation/native-stack",
-    repositoryUrl: "https://github.com/react-navigation/react-navigation.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)","FortniteFestivalRN/packages/app-screens/package.json (peerDependencies)","FortniteFestivalRN/packages/local-app/package.json (peerDependencies)","FortniteFestivalRN/packages/server-app/package.json (peerDependencies)"],
   },
   {
@@ -317,7 +317,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40rnx-kit/jest-preset",
-    repositoryUrl: "https://github.com/microsoft/rnx-kit",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (devDependencies)"],
   },
   {
@@ -394,7 +394,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40types/jest",
-    repositoryUrl: "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (devDependencies)"],
   },
   {
@@ -427,7 +427,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40types/react",
-    repositoryUrl: "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (devDependencies)"],
   },
   {
@@ -471,7 +471,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40types/react-native-vector-icons",
-    repositoryUrl: "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (devDependencies)"],
   },
   {
@@ -482,7 +482,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/%40types/react-test-renderer",
-    repositoryUrl: "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (devDependencies)"],
   },
   {
@@ -525,8 +525,8 @@ export const licenseManifest = [
     version: "0.104.2",
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
-    packageUrl: "https://github.com/ClosedXML/ClosedXML",
-    repositoryUrl: "https://github.com/ClosedXML/ClosedXML",
+    packageUrl: "https://www.nuget.org/packages/ClosedXML/0.104.2",
+    repositoryUrl: null,
     consumers: ["FSTService/FSTService.csproj"],
   },
   {
@@ -536,8 +536,8 @@ export const licenseManifest = [
     version: "6.0.2",
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
-    packageUrl: "https://github.com/coverlet-coverage/coverlet",
-    repositoryUrl: "https://github.com/coverlet-coverage/coverlet.git",
+    packageUrl: "https://www.nuget.org/packages/coverlet.collector/6.0.2",
+    repositoryUrl: null,
     consumers: ["FSTService.Tests/FSTService.Tests.csproj"],
   },
   {
@@ -548,7 +548,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.nuget.org/packages/Docker.DotNet/3.125.15",
-    repositoryUrl: "https://github.com/dotnet/Docker.DotNet/",
+    repositoryUrl: null,
     consumers: ["FSTService/FSTService.csproj"],
   },
   {
@@ -559,7 +559,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/eslint",
-    repositoryUrl: "eslint/eslint",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (devDependencies)"],
   },
   {
@@ -625,7 +625,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/jest",
-    repositoryUrl: "https://github.com/jestjs/jest.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (devDependencies)"],
   },
   {
@@ -657,8 +657,8 @@ export const licenseManifest = [
     version: "9.0.0",
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
-    packageUrl: "https://asp.net/",
-    repositoryUrl: "https://github.com/dotnet/aspnetcore",
+    packageUrl: "https://www.nuget.org/packages/Microsoft.AspNetCore.Mvc.Testing/9.0.0",
+    repositoryUrl: null,
     consumers: ["FSTService.Tests/FSTService.Tests.csproj"],
   },
   {
@@ -668,8 +668,8 @@ export const licenseManifest = [
     version: "8.0.0",
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
-    packageUrl: "https://docs.microsoft.com/dotnet/standard/data/sqlite/",
-    repositoryUrl: "https://github.com/dotnet/efcore",
+    packageUrl: "https://www.nuget.org/packages/Microsoft.Data.Sqlite/8.0.0",
+    repositoryUrl: null,
     consumers: ["FortniteFestival.Core/FortniteFestival.Core.csproj"],
   },
   {
@@ -679,8 +679,8 @@ export const licenseManifest = [
     version: "9.0.0",
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
-    packageUrl: "https://dot.net/",
-    repositoryUrl: "https://github.com/dotnet/runtime",
+    packageUrl: "https://www.nuget.org/packages/Microsoft.Extensions.Http/9.0.0",
+    repositoryUrl: null,
     consumers: ["FSTService/FSTService.csproj"],
   },
   {
@@ -690,8 +690,8 @@ export const licenseManifest = [
     version: "9.0.0",
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
-    packageUrl: "https://dot.net/",
-    repositoryUrl: "https://github.com/dotnet/runtime",
+    packageUrl: "https://www.nuget.org/packages/Microsoft.Extensions.Logging.Abstractions/9.0.0",
+    repositoryUrl: null,
     consumers: ["FortniteFestival.Core/FortniteFestival.Core.csproj"],
   },
   {
@@ -701,8 +701,8 @@ export const licenseManifest = [
     version: "8.3.0",
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
-    packageUrl: "https://github.com/AzureAD/azure-activedirectory-identitymodel-extensions-for-dotnet",
-    repositoryUrl: "https://github.com/AzureAD/azure-activedirectory-identitymodel-extensions-for-dotnet",
+    packageUrl: "https://www.nuget.org/packages/Microsoft.IdentityModel.JsonWebTokens/8.3.0",
+    repositoryUrl: null,
     consumers: ["FSTService/FSTService.csproj"],
   },
   {
@@ -712,8 +712,8 @@ export const licenseManifest = [
     version: "17.12.0",
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
-    packageUrl: "https://github.com/microsoft/vstest",
-    repositoryUrl: "https://github.com/microsoft/vstest",
+    packageUrl: "https://www.nuget.org/packages/Microsoft.NET.Test.Sdk/17.12.0",
+    repositoryUrl: null,
     consumers: ["FSTService.Tests/FSTService.Tests.csproj"],
   },
   {
@@ -723,8 +723,8 @@ export const licenseManifest = [
     version: "13.0.3",
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
-    packageUrl: "https://www.newtonsoft.com/json",
-    repositoryUrl: "https://github.com/JamesNK/Newtonsoft.Json",
+    packageUrl: "https://www.nuget.org/packages/Newtonsoft.Json/13.0.3",
+    repositoryUrl: null,
     consumers: ["FortniteFestival.Core/FortniteFestival.Core.csproj"],
   },
   {
@@ -734,8 +734,8 @@ export const licenseManifest = [
     version: "9.0.3",
     licenseType: "PostgreSQL",
     licenseText: licenseTexts["PostgreSQL"],
-    packageUrl: "https://github.com/npgsql/npgsql",
-    repositoryUrl: "https://github.com/npgsql/npgsql",
+    packageUrl: "https://www.nuget.org/packages/Npgsql/9.0.3",
+    repositoryUrl: null,
     consumers: ["FSTService.Tests/FSTService.Tests.csproj","FSTService/FSTService.csproj"],
   },
   {
@@ -745,8 +745,8 @@ export const licenseManifest = [
     version: "5.3.0",
     licenseType: "BSD-3-Clause",
     licenseText: licenseTexts["BSD-3-Clause"],
-    packageUrl: "https://nsubstitute.github.io/",
-    repositoryUrl: "https://github.com/nsubstitute/NSubstitute",
+    packageUrl: "https://www.nuget.org/packages/NSubstitute/5.3.0",
+    repositoryUrl: null,
     consumers: ["FSTService.Tests/FSTService.Tests.csproj"],
   },
   {
@@ -757,7 +757,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/prettier",
-    repositoryUrl: "prettier/prettier",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (devDependencies)"],
   },
   {
@@ -768,7 +768,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/react",
-    repositoryUrl: "https://github.com/facebook/react.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)","FortniteFestivalRN/packages/app-screens/package.json (peerDependencies)","FortniteFestivalRN/packages/contexts/package.json (peerDependencies)","FortniteFestivalRN/packages/local-app/package.json (peerDependencies)","FortniteFestivalRN/packages/server-app/package.json (peerDependencies)","FortniteFestivalRN/packages/ui/package.json (peerDependencies)"],
   },
   {
@@ -845,7 +845,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/react-native",
-    repositoryUrl: "git+https://github.com/facebook/react-native.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)","FortniteFestivalRN/packages/app-screens/package.json (peerDependencies)","FortniteFestivalRN/packages/contexts/package.json (peerDependencies)","FortniteFestivalRN/packages/local-app/package.json (peerDependencies)","FortniteFestivalRN/packages/server-app/package.json (peerDependencies)","FortniteFestivalRN/packages/ui/package.json (peerDependencies)"],
   },
   {
@@ -856,7 +856,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/react-native-bottom-tabs",
-    repositoryUrl: "git+https://github.com/callstackincubator/react-native-bottom-tabs.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)"],
   },
   {
@@ -867,7 +867,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/react-native-draggable-flatlist",
-    repositoryUrl: "git+https://github.com/computerjazz/react-native-draggable-flatlist.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)","FortniteFestivalRN/packages/app-screens/package.json (peerDependencies)","FortniteFestivalRN/packages/local-app/package.json (peerDependencies)","FortniteFestivalRN/packages/server-app/package.json (peerDependencies)"],
   },
   {
@@ -878,7 +878,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/react-native-fs",
-    repositoryUrl: "git@github.com:itinance/react-native-fs.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)","FortniteFestivalRN/packages/contexts/package.json (peerDependencies)"],
   },
   {
@@ -889,7 +889,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/react-native-gesture-handler",
-    repositoryUrl: "git+https://github.com/software-mansion/react-native-gesture-handler.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)","FortniteFestivalRN/packages/app-screens/package.json (peerDependencies)","FortniteFestivalRN/packages/local-app/package.json (peerDependencies)","FortniteFestivalRN/packages/server-app/package.json (peerDependencies)"],
   },
   {
@@ -900,7 +900,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/react-native-linear-gradient",
-    repositoryUrl: "https://github.com/react-native-linear-gradient/react-native-linear-gradient.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)","FortniteFestivalRN/packages/app-screens/package.json (peerDependencies)","FortniteFestivalRN/packages/local-app/package.json (peerDependencies)","FortniteFestivalRN/packages/server-app/package.json (peerDependencies)"],
   },
   {
@@ -911,7 +911,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/react-native-modal",
-    repositoryUrl: "https://github.com/react-native-modal/react-native-modal",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)"],
   },
   {
@@ -922,7 +922,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/react-native-nitro-modules",
-    repositoryUrl: "git+https://github.com/mrousavy/nitro.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)"],
   },
   {
@@ -933,7 +933,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/react-native-nitro-sqlite",
-    repositoryUrl: "git+https://github.com/margelo/react-native-nitro-sqlite.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)"],
   },
   {
@@ -944,7 +944,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/react-native-pager-view",
-    repositoryUrl: "https://github.com/callstack/react-native-pager-view",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)"],
   },
   {
@@ -955,7 +955,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/react-native-reanimated",
-    repositoryUrl: "git+https://github.com/software-mansion/react-native-reanimated.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)"],
   },
   {
@@ -966,7 +966,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/react-native-safe-area-context",
-    repositoryUrl: "https://github.com/AppAndFlow/react-native-safe-area-context.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)","FortniteFestivalRN/packages/app-screens/package.json (peerDependencies)","FortniteFestivalRN/packages/local-app/package.json (peerDependencies)","FortniteFestivalRN/packages/server-app/package.json (peerDependencies)"],
   },
   {
@@ -977,7 +977,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/react-native-screens",
-    repositoryUrl: "git+https://github.com/software-mansion/react-native-screens.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)"],
   },
   {
@@ -988,7 +988,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/react-native-svg",
-    repositoryUrl: "https://github.com/react-native-community/react-native-svg",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)"],
   },
   {
@@ -999,7 +999,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/react-native-vector-icons",
-    repositoryUrl: "git://github.com/oblador/react-native-vector-icons.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)","FortniteFestivalRN/packages/app-screens/package.json (peerDependencies)","FortniteFestivalRN/packages/local-app/package.json (peerDependencies)","FortniteFestivalRN/packages/server-app/package.json (peerDependencies)"],
   },
   {
@@ -1010,7 +1010,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/react-native-windows",
-    repositoryUrl: "git@github.com:microsoft/react-native-windows.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)"],
   },
   {
@@ -1021,7 +1021,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/react-native-worklets",
-    repositoryUrl: "git+https://github.com/software-mansion/react-native-reanimated.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (dependencies)"],
   },
   {
@@ -1043,7 +1043,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.npmjs.com/package/react-test-renderer",
-    repositoryUrl: "https://github.com/facebook/react.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (devDependencies)"],
   },
   {
@@ -1097,8 +1097,8 @@ export const licenseManifest = [
     version: "8.0.5",
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
-    packageUrl: "https://dot.net/",
-    repositoryUrl: "https://github.com/dotnet/runtime",
+    packageUrl: "https://www.nuget.org/packages/System.Text.Json/8.0.5",
+    repositoryUrl: null,
     consumers: ["FortniteFestival.Core/FortniteFestival.Core.csproj"],
   },
   {
@@ -1108,8 +1108,8 @@ export const licenseManifest = [
     version: "4.3.0",
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
-    packageUrl: "https://dotnet.testcontainers.org/",
-    repositoryUrl: "https://github.com/testcontainers/testcontainers-dotnet",
+    packageUrl: "https://www.nuget.org/packages/Testcontainers.PostgreSql/4.3.0",
+    repositoryUrl: null,
     consumers: ["FSTService.Tests/FSTService.Tests.csproj"],
   },
   {
@@ -1131,7 +1131,7 @@ export const licenseManifest = [
     licenseType: "Apache-2.0",
     licenseText: licenseTexts["Apache-2.0"],
     packageUrl: "https://www.npmjs.com/package/typescript",
-    repositoryUrl: "https://github.com/microsoft/TypeScript.git",
+    repositoryUrl: null,
     consumers: ["FortniteFestivalRN/package.json (devDependencies)"],
   },
   {
@@ -1175,7 +1175,7 @@ export const licenseManifest = [
     licenseType: "Apache-2.0",
     licenseText: licenseTexts["Apache-2.0"],
     packageUrl: "https://www.nuget.org/packages/xunit/2.9.2",
-    repositoryUrl: "https://github.com/xunit/xunit",
+    repositoryUrl: null,
     consumers: ["FSTService.Tests/FSTService.Tests.csproj"],
   },
   {
@@ -1186,7 +1186,7 @@ export const licenseManifest = [
     licenseType: "Apache-2.0",
     licenseText: licenseTexts["Apache-2.0"],
     packageUrl: "https://www.nuget.org/packages/xunit.runner.visualstudio/2.8.2",
-    repositoryUrl: "https://github.com/xunit/visualstudio.xunit",
+    repositoryUrl: null,
     consumers: ["FSTService.Tests/FSTService.Tests.csproj"],
   }
 ] as const satisfies readonly LicenseManifestEntry[];
