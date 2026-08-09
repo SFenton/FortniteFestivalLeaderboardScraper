@@ -16,6 +16,7 @@ public class ScraperOptionsAndModelsTests
         Assert.Equal(TimeSpan.FromHours(4), opts.ScrapeInterval);
         Assert.Equal(16, opts.DegreeOfParallelism);
         Assert.Equal(1, opts.RankHistorySnapshotMaxDegreeOfParallelism);
+        Assert.Equal(4, opts.LeaderboardRivalsMaxDegreeOfParallelism);
         Assert.True(opts.QueryLead);
         Assert.True(opts.QueryDrums);
         Assert.True(opts.QueryVocals);

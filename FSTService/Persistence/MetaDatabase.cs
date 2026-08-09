@@ -15,6 +15,7 @@ namespace FSTService.Persistence;
 public sealed partial class MetaDatabase : IMetaDatabase
 {
     private static readonly AsyncLocal<long?> PublicationCacheBuildTarget = new();
+    private static readonly AsyncLocal<long?> PublicationMaintenanceTarget = new();
     private readonly NpgsqlDataSource _ds;
     private readonly ILogger<MetaDatabase> _log;
     private readonly BandRankHistoryOptions _bandRankHistoryOptions;
@@ -4540,7 +4541,10 @@ public sealed partial class MetaDatabase : IMetaDatabase
     // ── Leaderboard Rivals ───────────────────────────────────────────
 
     public void ReplaceLeaderboardRivalsData(string userId, string instrument,
-        IReadOnlyList<LeaderboardRivalRow> rivals, IReadOnlyList<LeaderboardRivalSongSampleRow> samples)
+        IReadOnlyList<LeaderboardRivalRow> rivals,
+        IReadOnlyList<LeaderboardRivalSongSampleRow> samples,
+        IReadOnlyCollection<string>? completedRankMethods = null,
+        IReadOnlyDictionary<string, int>? userRanks = null)
     {
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
@@ -4549,6 +4553,32 @@ public sealed partial class MetaDatabase : IMetaDatabase
         // Delete existing rivals + samples for this user/instrument
         using (var d = conn.CreateCommand()) { d.Transaction = tx; d.CommandText = "DELETE FROM leaderboard_rival_song_samples WHERE user_id = @uid AND instrument = @inst"; d.Parameters.AddWithValue("uid", userId); d.Parameters.AddWithValue("inst", instrument); d.ExecuteNonQuery(); }
         using (var d = conn.CreateCommand()) { d.Transaction = tx; d.CommandText = "DELETE FROM leaderboard_rivals WHERE user_id = @uid AND instrument = @inst"; d.Parameters.AddWithValue("uid", userId); d.Parameters.AddWithValue("inst", instrument); d.ExecuteNonQuery(); }
+        using (var d = conn.CreateCommand()) { d.Transaction = tx; d.CommandText = "DELETE FROM leaderboard_rivals_state WHERE user_id = @uid AND instrument = @inst"; d.Parameters.AddWithValue("uid", userId); d.Parameters.AddWithValue("inst", instrument); d.ExecuteNonQuery(); }
+
+        if (completedRankMethods is { Count: > 0 })
+        {
+            using var state = conn.CreateCommand();
+            state.Transaction = tx;
+            state.CommandText = """
+                INSERT INTO leaderboard_rivals_state (
+                    user_id, instrument, rank_method, user_rank, computed_at)
+                VALUES (@uid, @instrument, @rankMethod, @userRank, now())
+                """;
+            state.Parameters.AddWithValue("uid", userId);
+            state.Parameters.AddWithValue("instrument", instrument);
+            state.Parameters.Add(new NpgsqlParameter("rankMethod", NpgsqlDbType.Text));
+            state.Parameters.Add(new NpgsqlParameter("userRank", NpgsqlDbType.Integer));
+            state.Prepare();
+            foreach (var rankMethod in completedRankMethods.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                state.Parameters["rankMethod"].Value = rankMethod;
+                state.Parameters["userRank"].Value =
+                    userRanks is not null && userRanks.TryGetValue(rankMethod, out var userRank)
+                        ? userRank
+                        : DBNull.Value;
+                state.ExecuteNonQuery();
+            }
+        }
 
         // Insert rivals
         if (rivals.Count > 0)
@@ -4612,6 +4642,31 @@ public sealed partial class MetaDatabase : IMetaDatabase
         var list = new List<LeaderboardRivalRow>(); using var r = cmd.ExecuteReader();
         while (r.Read()) list.Add(new LeaderboardRivalRow { UserId = r.GetString(0), RivalAccountId = r.GetString(1), Instrument = r.GetString(2), RankMethod = r.GetString(3), Direction = r.GetString(4), UserRank = r.GetInt32(5), RivalRank = r.GetInt32(6), SharedSongCount = r.GetInt32(7), AheadCount = r.GetInt32(8), BehindCount = r.GetInt32(9), AvgSignedDelta = r.GetDouble(10), ComputedAt = r.GetDateTime(11).ToString("o") });
         return list;
+    }
+
+    public Dictionary<string, int?> GetLeaderboardRivalUserRanks(
+        string userId,
+        string instrument)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT rank_method, user_rank
+            FROM leaderboard_rivals_state
+            WHERE user_id = @userId
+              AND instrument = @instrument
+            """;
+        cmd.Parameters.AddWithValue("userId", userId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        var result = new Dictionary<string, int?>(
+            StringComparer.OrdinalIgnoreCase);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            result[reader.GetString(0)] =
+                reader.IsDBNull(1) ? null : reader.GetInt32(1);
+        }
+        return result;
     }
 
     public List<LeaderboardRivalSongSampleRow> GetLeaderboardRivalSongSamples(string userId, string rivalAccountId, string instrument, string rankMethod)
@@ -10757,13 +10812,174 @@ public sealed partial class MetaDatabase : IMetaDatabase
         }
     }
 
-    public void BulkSetCachedResponses(IEnumerable<(string Key, byte[] Json, string ETag)> entries)
+    public IDisposable AcquireCurrentPublicationMaintenanceLease(
+        long publicationId)
+    {
+        var conn = _ds.OpenConnection();
+        NpgsqlTransaction? tx = null;
+        try
+        {
+            tx = conn.BeginTransaction();
+            using (var timeouts = conn.CreateCommand())
+            {
+                timeouts.Transaction = tx;
+                timeouts.CommandText = """
+                    SET LOCAL lock_timeout = '5s';
+                    SET LOCAL statement_timeout = '30s';
+                    SET LOCAL idle_in_transaction_session_timeout = 0;
+                    """;
+                timeouts.ExecuteNonQuery();
+            }
+            using (var advisoryLock = conn.CreateCommand())
+            {
+                advisoryLock.Transaction = tx;
+                advisoryLock.CommandTimeout = 5;
+                advisoryLock.CommandText =
+                    "SELECT pg_try_advisory_xact_lock(@lockKey)";
+                advisoryLock.Parameters.AddWithValue(
+                    "lockKey",
+                    PublicationGenerationSchema.AdvisoryLockKey);
+                if (advisoryLock.ExecuteScalar() is not true)
+                {
+                    throw new InvalidOperationException(
+                        "Current-publication maintenance requires the global publication lock.");
+                }
+            }
+            using (var sourceLocks = conn.CreateCommand())
+            {
+                sourceLocks.Transaction = tx;
+                sourceLocks.CommandText = """
+                    LOCK TABLE leaderboard_entries_overlay IN SHARE MODE;
+                    LOCK TABLE leaderboard_entries IN SHARE MODE;
+                    """;
+                sourceLocks.ExecuteNonQuery();
+            }
+            using (var publicationRowLock = conn.CreateCommand())
+            {
+                publicationRowLock.Transaction = tx;
+                publicationRowLock.CommandText = """
+                    SELECT id
+                    FROM scrape_publication_state
+                    WHERE id = TRUE
+                    FOR UPDATE
+                    """;
+                if (publicationRowLock.ExecuteScalar() is not true)
+                {
+                    throw new InvalidOperationException(
+                        "Current-publication maintenance requires publication state.");
+                }
+            }
+
+            using var state = conn.CreateCommand();
+            state.Transaction = tx;
+            state.CommandText = """
+                WITH publication AS (
+                    SELECT current_publication_id,
+                           working_publication_id,
+                           published_scrape_id,
+                           COALESCE(public_reads_frozen, FALSE) AS public_reads_frozen
+                    FROM scrape_publication_state
+                    WHERE id = TRUE
+                ), worker AS (
+                    SELECT status, last_heartbeat_at
+                    FROM service_worker_status
+                    WHERE worker_key = @workerKey
+                )
+                SELECT publication.current_publication_id,
+                       publication.working_publication_id,
+                       publication.public_reads_frozen,
+                       EXISTS (
+                           SELECT 1
+                           FROM scrape_log scrape
+                           WHERE scrape.status = 'running'
+                       ) AS running_scrape,
+                       COALESCE((SELECT status FROM worker), 'offline'),
+                       (SELECT last_heartbeat_at FROM worker),
+                       EXISTS (
+                           SELECT 1
+                           FROM scrape_log scrape
+                           WHERE scrape.id > COALESCE(
+                               publication.published_scrape_id,
+                               0)
+                             AND scrape.status = 'failed'
+                             AND scrape.failure_phase = ANY(@failurePhases)
+                       ) AS failed_candidate_isolation
+                FROM publication
+                """;
+            state.Parameters.AddWithValue(
+                "workerKey",
+                WorkerStatusPublisher.ScraperWorkerKey);
+            state.Parameters.AddWithValue(
+                "failurePhases",
+                NpgsqlDbType.Array | NpgsqlDbType.Text,
+                FailedCandidateReadIsolationFailurePhases);
+            using var reader = state.ExecuteReader();
+            if (!reader.Read())
+            {
+                throw new InvalidOperationException(
+                    "Current-publication maintenance requires publication state.");
+            }
+
+            var currentPublicationId =
+                reader.IsDBNull(0) ? (long?)null : reader.GetInt64(0);
+            var workingPublicationId =
+                reader.IsDBNull(1) ? (long?)null : reader.GetInt64(1);
+            var frozen = reader.GetBoolean(2);
+            var runningScrape = reader.GetBoolean(3);
+            var workerStatus = reader.GetString(4);
+            var workerHeartbeat =
+                reader.IsDBNull(5) ? (DateTime?)null : reader.GetDateTime(5);
+            var failedCandidateIsolation = reader.GetBoolean(6);
+            var workerOffline =
+                workerStatus.Equals("offline", StringComparison.OrdinalIgnoreCase)
+                || workerStatus.Equals("stale", StringComparison.OrdinalIgnoreCase)
+                || workerHeartbeat is { } heartbeat
+                   && DateTime.UtcNow - heartbeat > TimeSpan.FromSeconds(90);
+
+            if (currentPublicationId != publicationId
+                || workingPublicationId.HasValue
+                || frozen
+                || runningScrape
+                || !workerOffline
+                || failedCandidateIsolation)
+            {
+                throw new InvalidOperationException(
+                    $"Current-publication maintenance gate failed: requested={publicationId}, current={currentPublicationId?.ToString() ?? "null"}, working={workingPublicationId?.ToString() ?? "null"}, frozen={frozen}, runningScrape={runningScrape}, workerStatus={workerStatus}, workerOffline={workerOffline}, failedIsolation={failedCandidateIsolation}.");
+            }
+
+            return new CurrentPublicationMaintenanceLease(
+                conn,
+                tx,
+                publicationId);
+        }
+        catch
+        {
+            tx?.Rollback();
+            tx?.Dispose();
+            conn.Dispose();
+            throw;
+        }
+    }
+
+    public void BulkSetCachedResponses(
+        IEnumerable<(string Key, byte[] Json, string ETag)> entries,
+        long? publicationId = null)
     {
         using var conn = _ds.OpenConnection();
         EnsureScrapePublicationStateTable(conn);
         using var tx = conn.BeginTransaction();
-        AcquirePublicationCacheMutationLock(conn, tx);
-        var publicationId = ReadCacheTargetPublicationId(conn, tx);
+        if (publicationId.HasValue
+            && !IsPublicationCacheBuildLockHeld(publicationId)
+            && !IsPublicationMaintenanceLockHeld(publicationId))
+        {
+            throw new InvalidOperationException(
+                $"Publication {publicationId.Value} cache mutation requires its build or maintenance lease.");
+        }
+        if (!publicationId.HasValue)
+            AcquirePublicationCacheMutationLock(conn, tx);
+        publicationId = publicationId.HasValue
+            ? ResolveCacheTargetPublicationId(conn, tx, publicationId)
+            : ReadCacheTargetPublicationId(conn, tx);
 
         using var legacy = conn.CreateCommand();
         legacy.Transaction = tx;
@@ -10810,6 +11026,57 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 generation.Parameters["etag"].Value = etag;
                 generation.ExecuteNonQuery();
             }
+        }
+
+        if (publicationId.HasValue)
+        {
+            using var binding = conn.CreateCommand();
+            binding.Transaction = tx;
+            binding.CommandText = """
+                INSERT INTO publication_surface_bindings (
+                    publication_id, surface_name, binding_kind, binding_json,
+                    row_count, content_hash, status, built_at)
+                VALUES (
+                    @publicationId,
+                    'api_response_cache',
+                    'generation_cache_table',
+                    COALESCE((
+                        SELECT binding_json
+                        FROM publication_surface_bindings
+                        WHERE publication_id = @publicationId
+                          AND surface_name = 'api_response_cache'
+                    ), '{}'::jsonb)
+                    || jsonb_build_object(
+                           'table', 'publication_api_response_cache',
+                           'publicationId', @publicationId),
+                    (
+                        SELECT COUNT(*)
+                        FROM publication_api_response_cache
+                        WHERE publication_id = @publicationId
+                    ),
+                    (
+                        SELECT md5(COALESCE(
+                            string_agg(
+                                cache_key || ':' || etag,
+                                '|' ORDER BY cache_key),
+                            ''))
+                        FROM publication_api_response_cache
+                        WHERE publication_id = @publicationId
+                    ),
+                    'ready',
+                    now())
+                ON CONFLICT (publication_id, surface_name) DO UPDATE SET
+                    binding_kind = EXCLUDED.binding_kind,
+                    binding_json = EXCLUDED.binding_json,
+                    row_count = EXCLUDED.row_count,
+                    content_hash = EXCLUDED.content_hash,
+                    status = EXCLUDED.status,
+                    built_at = EXCLUDED.built_at
+                """;
+            binding.Parameters.AddWithValue(
+                "publicationId",
+                publicationId.Value);
+            binding.ExecuteNonQuery();
         }
         tx.Commit();
     }
@@ -11026,6 +11293,12 @@ public sealed partial class MetaDatabase : IMetaDatabase
         && PublicationCacheBuildTarget.Value.Value
             == (publicationId ?? 0);
 
+    private static bool IsPublicationMaintenanceLockHeld(
+        long? publicationId) =>
+        PublicationMaintenanceTarget.Value.HasValue
+        && PublicationMaintenanceTarget.Value.Value
+            == (publicationId ?? 0);
+
     private static void ReleasePublicationCacheBuildLocks(
         NpgsqlConnection connection,
         long publicationId,
@@ -11185,6 +11458,45 @@ public sealed partial class MetaDatabase : IMetaDatabase
             }
             finally
             {
+                connection.Dispose();
+            }
+        }
+    }
+
+    private sealed class CurrentPublicationMaintenanceLease : IDisposable
+    {
+        private NpgsqlConnection? _connection;
+        private NpgsqlTransaction? _transaction;
+        private readonly long? _previousTarget;
+
+        public CurrentPublicationMaintenanceLease(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            long publicationId)
+        {
+            _connection = connection;
+            _transaction = transaction;
+            _previousTarget = PublicationMaintenanceTarget.Value;
+            PublicationMaintenanceTarget.Value = publicationId;
+        }
+
+        public void Dispose()
+        {
+            PublicationMaintenanceTarget.Value = _previousTarget;
+            var connection = Interlocked.Exchange(ref _connection, null);
+            if (connection is null)
+                return;
+            var transaction = Interlocked.Exchange(
+                ref _transaction,
+                null);
+
+            try
+            {
+                transaction?.Rollback();
+            }
+            finally
+            {
+                transaction?.Dispose();
                 connection.Dispose();
             }
         }

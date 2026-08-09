@@ -5348,6 +5348,49 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task LeaderboardRivals_ServesPrecomputedNonDefaultRankWhileFrozen()
+    {
+        const string accountId = "cached_lb_rivals";
+        const string rankBy = "adjusted";
+        var payload = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            instrument = "Solo_Guitar",
+            rankBy,
+            userRank = 7,
+            above = Array.Empty<object>(),
+            below = Array.Empty<object>(),
+        });
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var gate = _factory.Services.GetRequiredService<PublicReadGateService>();
+        metaDb.BulkSetCachedResponses(
+        [
+            (
+                $"lb-rivals:{accountId}:Solo_Guitar:{rankBy}",
+                payload,
+                ResponseCacheService.ComputeETag(payload)),
+        ]);
+        metaDb.SetPublicReadFreeze(true, reason: "scrape");
+        gate.Invalidate();
+
+        try
+        {
+            var response = await _client.GetAsync(
+                $"/api/player/{accountId}/leaderboard-rivals/solo_guitar?rankBy=Adjusted");
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("Solo_Guitar", json.GetProperty("instrument").GetString());
+            Assert.Equal(rankBy, json.GetProperty("rankBy").GetString());
+            Assert.Equal(7, json.GetProperty("userRank").GetInt32());
+        }
+        finally
+        {
+            metaDb.SetPublicReadFreeze(false);
+            gate.Invalidate();
+        }
+    }
+
+    [Fact]
     public async Task Rivals_GetCombos_WithSeededData_ReturnsCombos()
     {
         // Seed rivals data via the recompute endpoint first

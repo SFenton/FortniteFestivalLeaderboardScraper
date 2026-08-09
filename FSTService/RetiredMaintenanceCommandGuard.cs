@@ -51,6 +51,7 @@ internal static class RetiredMaintenanceCommandGuard
             "score-history-dedup-execute",
             "solo-family-ranking-backfill",
             "solo-family-ranking-backfill-execute",
+            "leaderboard-rivals-recompute-account",
         };
 
     public static void ThrowIfPresent(IReadOnlyList<string> args)

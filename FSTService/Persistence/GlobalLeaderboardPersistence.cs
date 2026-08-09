@@ -211,7 +211,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         // Purge any phantom instrument entries created by previous runs
         // (e.g. from unvalidated API requests before the guard was added).
         var phantoms = _instrumentDbs.Keys
-            .Where(k => !ValidInstrumentKeys.Contains(k))
+            .Where(k => !CanonicalInstrumentKeys.ContainsKey(k))
             .ToList();
         foreach (var key in phantoms)
         {
@@ -277,10 +277,22 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     }
 
     /// <summary>Valid instrument keys accepted by <see cref="GetOrCreateInstrumentDb"/>.</summary>
-    private static readonly HashSet<string> ValidInstrumentKeys = new(ComboIds.CanonicalOrder, StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, string> CanonicalInstrumentKeys =
+        ComboIds.CanonicalOrder.ToDictionary(
+            static instrument => instrument,
+            static instrument => instrument,
+            StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Returns true when <paramref name="instrument"/> is a recognised instrument key.</summary>
-    public static bool IsValidInstrument(string instrument) => ValidInstrumentKeys.Contains(instrument);
+    public static bool IsValidInstrument(string instrument) =>
+        CanonicalInstrumentKeys.ContainsKey(instrument);
+
+    public static bool TryGetCanonicalInstrument(
+        string instrument,
+        out string canonicalInstrument) =>
+        CanonicalInstrumentKeys.TryGetValue(
+            instrument,
+            out canonicalInstrument!);
 
     /// <summary>
     /// Get (or create on first access) the <see cref="IInstrumentDatabase"/>
@@ -292,7 +304,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         if (_instrumentDbs.TryGetValue(instrument, out var db))
             return db;
 
-        if (!ValidInstrumentKeys.Contains(instrument))
+        if (!CanonicalInstrumentKeys.ContainsKey(instrument))
             throw new ArgumentException($"Unknown instrument key: '{instrument}'. Valid keys: {string.Join(", ", ComboIds.CanonicalOrder)}");
 
         db = new InstrumentDatabase(
@@ -5799,7 +5811,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     {
         var results = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
-        var knownDbs = _instrumentDbs.Where(kvp => ValidInstrumentKeys.Contains(kvp.Key)).ToList();
+        var knownDbs = _instrumentDbs.Where(kvp => CanonicalInstrumentKeys.ContainsKey(kvp.Key)).ToList();
 
         if (_pgDataSource is not null)
         {
@@ -5850,7 +5862,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
         var results = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
-        var knownDbs = _instrumentDbs.Where(kvp => ValidInstrumentKeys.Contains(kvp.Key)).ToList();
+        var knownDbs = _instrumentDbs.Where(kvp => CanonicalInstrumentKeys.ContainsKey(kvp.Key)).ToList();
 
         if (_pgDataSource is not null)
         {

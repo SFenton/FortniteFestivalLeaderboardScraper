@@ -1620,10 +1620,15 @@ public class PostScrapeOrchestratorTests : IDisposable
             entry.Message.Contains("[PrepareSoloCurrentProjectionForDerived]", StringComparison.Ordinal));
         var rivalsIndex = logs.FindIndex(entry =>
             entry.Message.Contains("[Rivals]", StringComparison.Ordinal));
+        var leaderboardRivalsIndex = logs.FindIndex(entry =>
+            entry.Message.Contains("[LeaderboardRivals]", StringComparison.Ordinal));
         Assert.True(rankingsIndex >= 0, "Expected rankings to run.");
         Assert.True(projectionIndex >= 0, "Expected validated projection preparation to run.");
         Assert.True(projectionIndex > rankingsIndex, "Expected projection validation after rankings.");
         Assert.True(rivalsIndex > projectionIndex, "Expected rivals to run after projection validation.");
+        Assert.True(
+            leaderboardRivalsIndex > rivalsIndex,
+            "Expected leaderboard rivals to run after song rivals.");
 
         var earlyGeneration = GetProjectionScopeGeneration(earlySongId, instrument);
         var redirtyGeneration = GetProjectionScopeGeneration(redirtySongId, instrument);
@@ -1732,13 +1737,20 @@ public class PostScrapeOrchestratorTests : IDisposable
         var logs = _log.Entries.ToList();
         var rankingsIndex = logs.FindIndex(e => e.Message.Contains("[ComputeRankings]", StringComparison.Ordinal));
         var rivalsIndex = logs.FindIndex(e => e.Message.Contains("[Rivals]", StringComparison.Ordinal));
+        var leaderboardRivalsIndex = logs.FindIndex(e =>
+            e.Message.Contains("[LeaderboardRivals]", StringComparison.Ordinal));
         var playerStatsIndex = logs.FindIndex(e => e.Message.Contains("[PlayerStatsTiers]", StringComparison.Ordinal));
         var checkpointIndex = logs.FindIndex(e => e.Message.Contains("[Checkpoint]", StringComparison.Ordinal));
         var activateIndex = logs.FindIndex(e => e.Message.Contains("[ActivateShadowSnapshots]", StringComparison.Ordinal));
 
         Assert.True(rankingsIndex >= 0, "Expected rankings to run.");
         Assert.True(rivalsIndex > rankingsIndex, "Expected rivals to run after rankings.");
-        Assert.True(playerStatsIndex > rivalsIndex, "Expected player stats to run after rivals.");
+        Assert.True(
+            leaderboardRivalsIndex > rivalsIndex,
+            "Expected leaderboard rivals to run after song rivals.");
+        Assert.True(
+            playerStatsIndex > leaderboardRivalsIndex,
+            "Expected player stats to run after leaderboard rivals.");
         Assert.True(checkpointIndex > playerStatsIndex, "Expected checkpoint to run after player stats.");
         Assert.True(activateIndex > checkpointIndex, "Expected final snapshot activation to run after checkpoint.");
         Assert.DoesNotContain(logs, e => e.Message.Contains("[ImprovementNotifications]", StringComparison.Ordinal));

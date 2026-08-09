@@ -1696,6 +1696,15 @@ public static class DatabaseInitializer
         CREATE INDEX IF NOT EXISTS ix_lbr_user_inst
             ON leaderboard_rivals (user_id, instrument, rank_method, direction);
 
+        CREATE TABLE IF NOT EXISTS leaderboard_rivals_state (
+            user_id      TEXT        NOT NULL,
+            instrument   TEXT        NOT NULL,
+            rank_method  TEXT        NOT NULL,
+            user_rank    INTEGER,
+            computed_at  TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (user_id, instrument, rank_method)
+        );
+
         -- =====================================================================
         -- LEADERBOARD RIVAL SONG SAMPLES (from fst-meta.db)
         -- =====================================================================

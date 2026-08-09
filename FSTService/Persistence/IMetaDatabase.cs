@@ -275,8 +275,14 @@ public interface IMetaDatabase : IDisposable
 
     // ── Leaderboard Rivals ───────────────────────────────────────
     void ReplaceLeaderboardRivalsData(string userId, string instrument,
-        IReadOnlyList<LeaderboardRivalRow> rivals, IReadOnlyList<LeaderboardRivalSongSampleRow> samples);
+        IReadOnlyList<LeaderboardRivalRow> rivals,
+        IReadOnlyList<LeaderboardRivalSongSampleRow> samples,
+        IReadOnlyCollection<string>? completedRankMethods = null,
+        IReadOnlyDictionary<string, int>? userRanks = null);
     List<LeaderboardRivalRow> GetLeaderboardRivals(string userId, string? instrument = null, string? rankMethod = null, string? direction = null);
+    Dictionary<string, int?> GetLeaderboardRivalUserRanks(
+        string userId,
+        string instrument);
     List<LeaderboardRivalSongSampleRow> GetLeaderboardRivalSongSamples(string userId, string rivalAccountId, string instrument, string rankMethod);
 
     // ── Item shop ────────────────────────────────────────────────────
@@ -354,7 +360,11 @@ public interface IMetaDatabase : IDisposable
     IDisposable AcquirePublicationCacheBuildLease(
         long publicationId,
         bool requireCurrentPublication);
-    void BulkSetCachedResponses(IEnumerable<(string Key, byte[] Json, string ETag)> entries);
+    IDisposable AcquireCurrentPublicationMaintenanceLease(
+        long publicationId);
+    void BulkSetCachedResponses(
+        IEnumerable<(string Key, byte[] Json, string ETag)> entries,
+        long? publicationId = null);
     void ClearCachedResponses();
 
     /// <summary>

@@ -22,7 +22,16 @@ public static partial class ApiEndpoints
             ScrapeTimePrecomputer precomputer,
             [FromKeyedServices("LeaderboardRivalsCache")] ResponseCacheService cache) =>
         {
-            var effectiveRankBy = rankBy ?? "totalscore";
+            if (!GlobalLeaderboardPersistence.TryGetCanonicalInstrument(
+                    instrument,
+                    out var canonicalInstrument))
+            {
+                return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
+            }
+            instrument = canonicalInstrument;
+            var effectiveRankBy = (rankBy ?? "totalscore")
+                .Trim()
+                .ToLowerInvariant();
             // Validate rank method via whitelist
             var rankColumn = InstrumentDatabase.MapRankColumn(effectiveRankBy);
             if (rankColumn == "TotalScoreRank" && effectiveRankBy != "totalscore")
@@ -30,13 +39,12 @@ public static partial class ApiEndpoints
 
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
 
-            // ── Check precomputed store for default sort ──
-            if (effectiveRankBy == "totalscore")
             {
-                {
-                    var cachedPrecomputed = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet($"lb-rivals:{accountId}:{instrument}:totalscore"));
-                    if (cachedPrecomputed is not null) return cachedPrecomputed;
-                }
+                var cachedPrecomputed = CacheHelper.ServeIfCached(
+                    httpContext,
+                    precomputer.TryGet(
+                        $"lb-rivals:{accountId}:{instrument}:{effectiveRankBy}"));
+                if (cachedPrecomputed is not null) return cachedPrecomputed;
             }
 
             var cacheKey = $"lb-rivals:{accountId}:{instrument}:{effectiveRankBy}";
@@ -44,9 +52,6 @@ public static partial class ApiEndpoints
                 var cachedResponse = CacheHelper.ServeIfCached(httpContext, cache.Get(cacheKey));
                 if (cachedResponse is not null) return cachedResponse;
             }
-
-            if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
-                return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
 
             var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, cache);
             if (frozenMiss is not null) return frozenMiss;
@@ -95,13 +100,22 @@ public static partial class ApiEndpoints
             LeaderboardRivalsCalculator leaderboardRivalsCalculator,
             [FromKeyedServices("LeaderboardRivalsCache")] ResponseCacheService cache) =>
         {
-            var effectiveRankBy = rankBy ?? "totalscore";
+            if (!GlobalLeaderboardPersistence.TryGetCanonicalInstrument(
+                    instrument,
+                    out var canonicalInstrument))
+            {
+                return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
+            }
+            instrument = canonicalInstrument;
+            var effectiveRankBy = (rankBy ?? "totalscore")
+                .Trim()
+                .ToLowerInvariant();
+            var rankColumn = InstrumentDatabase.MapRankColumn(effectiveRankBy);
+            if (rankColumn == "TotalScoreRank" && effectiveRankBy != "totalscore")
+                effectiveRankBy = "totalscore";
             var effectiveSort = sort ?? "closest";
 
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
-
-            if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
-                return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
 
             var cacheKey = $"lb-rival-detail:{accountId}:{instrument}:{rivalId}:{effectiveRankBy}:{effectiveSort}";
             {

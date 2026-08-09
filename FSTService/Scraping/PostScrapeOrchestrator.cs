@@ -374,6 +374,11 @@ public sealed class PostScrapeOrchestrator
             if (resolvedPhases.HasFlag(ScrapePhase.SoloRivals))
             {
                 await RunPhaseAsync(ctx, "Rivals", () => ComputeRivalsAsync(ctx, ct));
+                await RunPhaseAsync(
+                    ctx,
+                    "LeaderboardRivals",
+                    () => ComputeLeaderboardRivalsAsync(ctx, ct),
+                    alwaysPropagateFailure: true);
             }
 
             // ── Solo player stats ──
@@ -2494,32 +2499,34 @@ public sealed class PostScrapeOrchestrator
         if (ctx.RegisteredIds.Count == 0)
             return;
 
-        try
-        {
-            _log.LogInformation("Computing leaderboard rivals for {Count} registered user(s).", ctx.RegisteredIds.Count);
+        var maxDegreeOfParallelism = Math.Max(
+            1,
+            _options.Value.LeaderboardRivalsMaxDegreeOfParallelism);
+        _log.LogInformation(
+            "Computing leaderboard rivals for {Count} registered user(s) with maxDegree={MaxDegree}.",
+            ctx.RegisteredIds.Count,
+            maxDegreeOfParallelism);
 
-            var tasks = ctx.RegisteredIds.Select(accountId => Task.Run(() =>
+        await Parallel.ForEachAsync(
+            ctx.RegisteredIds,
+            new ParallelOptions
             {
-                ct.ThrowIfCancellationRequested();
-                try
-                {
-                    var result = _leaderboardRivalsCalculator.ComputeForUser(accountId);
-                    _log.LogDebug(
-                        "Computed leaderboard rivals for {AccountId}: {Rivals} rival rows, {Samples} sample rows.",
-                        accountId, result.RivalCount, result.SampleCount);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _log.LogWarning(ex, "Leaderboard rivals computation failed for {AccountId}.", accountId);
-                }
-            }, ct)).ToList();
-
-            await Task.WhenAll(tasks);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.LogWarning(ex, "Leaderboard rivals computation failed. Will retry next pass.");
-        }
+                CancellationToken = ct,
+                MaxDegreeOfParallelism = maxDegreeOfParallelism,
+            },
+            (accountId, _) =>
+            {
+                var result = _leaderboardRivalsCalculator.ComputeForUser(
+                    accountId,
+                    rankingsAuthoritative:
+                        ctx.RankingsComputedSuccessfully);
+                _log.LogDebug(
+                    "Computed leaderboard rivals for {AccountId}: {Rivals} rival rows, {Samples} sample rows.",
+                    accountId,
+                    result.RivalCount,
+                    result.SampleCount);
+                return ValueTask.CompletedTask;
+            });
     }
 
     /// <summary>

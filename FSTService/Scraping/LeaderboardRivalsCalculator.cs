@@ -45,30 +45,38 @@ public sealed class LeaderboardRivalsCalculator
     /// <summary>
     /// Compute leaderboard rivals for a single user across all instruments and rank methods.
     /// </summary>
-    public LeaderboardRivalsResult ComputeForUser(string userId)
+    public LeaderboardRivalsResult ComputeForUser(
+        string userId,
+        bool rankingsAuthoritative = false)
     {
         var instrumentKeys = _persistence.GetInstrumentKeys();
         int totalRivals = 0;
         int totalSamples = 0;
-        var now = DateTime.UtcNow.ToString("o");
 
         foreach (var instrument in instrumentKeys)
         {
             var instrumentResult = ComputeInstrument(userId, instrument, RankMethods);
 
-            // Persist all data for this instrument at once — but only if the user
-            // was found in AccountRankings for at least one rank method.
-            if (instrumentResult.UserFound)
+            if (instrumentResult.UserFound
+                || !instrumentResult.HasUserScores
+                || rankingsAuthoritative)
             {
-                _meta.ReplaceLeaderboardRivalsData(userId, instrument, instrumentResult.Rivals, instrumentResult.Samples);
+                _meta.ReplaceLeaderboardRivalsData(
+                    userId,
+                    instrument,
+                    instrumentResult.Rivals,
+                    instrumentResult.Samples,
+                    instrumentResult.CompletedRankMethods,
+                    instrumentResult.UserRanks);
                 totalRivals += instrumentResult.Rivals.Count;
                 totalSamples += instrumentResult.Samples.Count;
             }
             else
             {
-                _log.LogDebug(
-                    "Skipping leaderboard rivals replace for {User}/{Instrument}: user not found in AccountRankings.",
-                    userId, instrument);
+                _log.LogWarning(
+                    "Preserving leaderboard rivals for {User}/{Instrument}: scores exist but AccountRankings has no user row.",
+                    userId,
+                    instrument);
             }
         }
 
@@ -92,6 +100,7 @@ public sealed class LeaderboardRivalsCalculator
             return new LeaderboardInstrumentRivalsResult
             {
                 Instrument = instrument,
+                CompletedRankMethods = rankMethods.ToArray(),
             };
         }
 
@@ -190,6 +199,8 @@ public sealed class LeaderboardRivalsCalculator
         return new LeaderboardInstrumentRivalsResult
         {
             Instrument = instrument,
+            HasUserScores = true,
+            CompletedRankMethods = rankMethods.ToArray(),
             UserRanks = userRanks,
             Rivals = instrumentRivals,
             Samples = instrumentSamples,
@@ -207,6 +218,8 @@ public sealed class LeaderboardRivalsResult
 public sealed class LeaderboardInstrumentRivalsResult
 {
     public required string Instrument { get; init; }
+    public bool HasUserScores { get; init; }
+    public IReadOnlyCollection<string> CompletedRankMethods { get; init; } = [];
     public IReadOnlyDictionary<string, int> UserRanks { get; init; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyList<LeaderboardRivalRow> Rivals { get; init; } = [];
     public IReadOnlyList<LeaderboardRivalSongSampleRow> Samples { get; init; } = [];

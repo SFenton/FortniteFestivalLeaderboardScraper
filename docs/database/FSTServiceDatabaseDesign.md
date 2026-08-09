@@ -1099,12 +1099,24 @@ partial result.
 | Tables | Class | Owner/callers | Retention/publication |
 |---|---|---|---|
 | `user_rivals`, `rival_song_samples`, `rival_song_fingerprints`, `rival_instrument_state`, `rivals_status`, `rivals_dirty_songs` | Derived durable user projection/work state | Rivals calculator and API | Rebuild from published source; dirty/status rows are resumable work |
-| `leaderboard_rivals`, `leaderboard_rival_song_samples` | Derived public projection | Rankings/rivals pipeline | Generation must match published leaderboard source |
+| `leaderboard_rivals`, `leaderboard_rival_song_samples`, `leaderboard_rivals_state` | Derived public projection | Publication-critical leaderboard-rivals phase and API precompute | State records every completed instrument/rank method, including valid empty or unranked results; cache generation must match the published leaderboard source |
 | `player_improvement_state`, `player_rank_improvement_state`, `band_improvement_state`, `band_rank_improvement_state`, `band_improvement_subjects` | Durable detection state | Improvement detector | Idempotency/delta state. Subjects registered after the prior completed detection run are baselined once before events are emitted, preventing back-catalog first-play/first-score spam while preserving later improvements. |
 | `player_improvement_events`, `band_improvement_events`, `improvement_detection_runs` | Durable event/audit | Improvement detector/service | Bounded retention with replay identity. `notification_purpose`, `notification_cause`, and `delivery_state` default existing/routine rows to visible. Public reads, source cursors, expiry, and supersession operate only on `delivery_state='visible'`. Detection runs record `published_scrape_id` and selective new-subject baseline counts so publication completion and catch-up are auditable. |
 | `service_notifications` | Durable notification outbox/read model | `ImprovementNotificationService` | Existing and item-shop rows default to visible routine metadata. Public reads and expiry cleanup require `delivery_state='visible'`; future process split must preserve replay. |
 | `improvement_notification_maintenance_runs`, `improvement_notification_maintenance_candidates` | Immutable historical audit/quarantine compatibility | No executable writer; schema retained by `ImprovementNotificationSchema` | The completed purpose `maintenance_pro_lead_max_score_repair_v1` run stores its exact manifest, total-charted count, canonical classification, and `26` quarantined candidates with `0` visible deliveries. `published_scrape_id` is a non-null immutable integer with no retention-coupled `scrape_log` FK. Rows have no expiry column and never participate in public reads, routine supersession, source cursors, or WebSocket invalidation. |
 | `api_response_cache`, `api_response_cache_staging` | Cache | Precompute/publication path | Staging swaps atomically after long band snapshot work; keep its exclusive lock at transaction end; safe to clear and regenerate from published source |
+
+Leaderboard-rivals publication runs after canonical rankings and song-rivals
+while the validated solo projection lease is active. It persists all five rank
+methods, writes explicit completion state for empty results, and precomputes
+canonical per-instrument cache keys for every method. Frozen list routes serve
+only the current publication cache; case variants normalize before lookup.
+The targeted recovery command
+`--leaderboard-rivals-recompute-account <accountId>` is allowed only while the
+scraper is offline, no scrape or working publication exists, and public reads
+are unfrozen. It holds the global publication lock plus shared locks on current
+score mutation tables, writes only the captured current publication, and
+refreshes the API-cache binding count/hash atomically.
 
 `solo_current_projection_scope.source_kind` records whether each projection
 scope was rebuilt from an active snapshot, overlay-only state, legacy rows, or

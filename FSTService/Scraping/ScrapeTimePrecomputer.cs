@@ -1439,72 +1439,101 @@ public sealed class ScrapeTimePrecomputer
         bool allowLiveFallback,
         List<(string Key, byte[] Json, string ETag)>? storeOverride = null)
     {
-        var persistedInstruments = 0;
-        var liveFallbackInstruments = 0;
-        var skippedInstruments = 0;
+        var persistedMethods = 0;
+        var liveFallbackMethods = 0;
+        var skippedMethods = 0;
 
         foreach (var instrument in instrumentKeys)
         {
-            LeaderboardInstrumentRivalsResult? live = null;
-            var rivals = _metaDb.GetLeaderboardRivals(accountId, instrument, "totalscore");
-            if (rivals.Count > 0)
+            var computedUserRanks = _metaDb.GetLeaderboardRivalUserRanks(
+                accountId,
+                instrument);
+            foreach (var rankMethod in LeaderboardRivalsCalculator.RankMethods)
             {
-                persistedInstruments++;
-            }
-            else if (allowLiveFallback && _leaderboardRivalsCalculator is not null)
-            {
-                live = _leaderboardRivalsCalculator.ComputeInstrument(accountId, instrument, "totalscore");
-                rivals = live.Rivals.ToList();
-                liveFallbackInstruments++;
-            }
-            else
-            {
-                skippedInstruments++;
-                continue;
-            }
-
-            if (rivals.Count == 0 && live is null)
-                continue;
-
-            var rivalNames = _metaDb.GetDisplayNames(rivals.Select(r => r.RivalAccountId));
-            foreach (var kv in displayNames)
-                rivalNames.TryAdd(kv.Key, kv.Value);
-
-            int? userRank;
-            if (live is not null)
-            {
-                userRank = live.GetUserRank("totalscore");
-                if (!live.UserFound && live.Rivals.Count == 0)
+                LeaderboardInstrumentRivalsResult? live = null;
+                var rivals = _metaDb.GetLeaderboardRivals(
+                    accountId,
+                    instrument,
+                    rankMethod);
+                if (rivals.Count > 0)
+                {
+                    persistedMethods++;
+                }
+                else if (computedUserRanks.ContainsKey(rankMethod))
+                {
+                    persistedMethods++;
+                }
+                else if (allowLiveFallback && _leaderboardRivalsCalculator is not null)
+                {
+                    live = _leaderboardRivalsCalculator.ComputeInstrument(
+                        accountId,
+                        instrument,
+                        rankMethod);
+                    rivals = live.Rivals.ToList();
+                    liveFallbackMethods++;
+                }
+                else
+                {
+                    skippedMethods++;
                     continue;
-            }
-            else
-            {
-                userRank = rivals.Count == 0 ? null : rivals[0].UserRank;
-            }
+                }
 
-            var above = rivals.Where(r => r.Direction == "above").Select(r => MapLbRival(r, rivalNames));
-            var below = rivals.Where(r => r.Direction == "below").Select(r => MapLbRival(r, rivalNames));
+                var rivalNames = _metaDb.GetDisplayNames(
+                    rivals.Select(r => r.RivalAccountId));
+                foreach (var kv in displayNames)
+                    rivalNames.TryAdd(kv.Key, kv.Value);
 
-            var payload = new
-            {
-                instrument,
-                rankBy = "totalscore",
-                userRank,
-                above = above.ToList(),
-                below = below.ToList(),
-            };
-            var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
-            Store($"lb-rivals:{accountId}:{instrument}:totalscore", jsonBytes, storeOverride);
+                int? userRank;
+                if (live is not null)
+                {
+                    userRank = live.GetUserRank(rankMethod);
+                    if (!live.UserFound && live.Rivals.Count == 0)
+                        continue;
+                }
+                else
+                {
+                    userRank = computedUserRanks.TryGetValue(
+                        rankMethod,
+                        out var computedUserRank)
+                        ? computedUserRank
+                        : rivals.Count == 0
+                            ? null
+                            : rivals[0].UserRank;
+                }
+
+                var above = rivals
+                    .Where(r => r.Direction == "above")
+                    .Select(r => MapLbRival(r, rivalNames));
+                var below = rivals
+                    .Where(r => r.Direction == "below")
+                    .Select(r => MapLbRival(r, rivalNames));
+
+                var payload = new
+                {
+                    instrument,
+                    rankBy = rankMethod,
+                    userRank,
+                    above = above.ToList(),
+                    below = below.ToList(),
+                };
+                var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(
+                    payload,
+                    _jsonOpts);
+                Store(
+                    $"lb-rivals:{accountId}:{instrument}:{rankMethod}",
+                    jsonBytes,
+                    storeOverride);
+            }
         }
 
-        if (persistedInstruments > 0 || liveFallbackInstruments > 0 || skippedInstruments > 0)
+        if (persistedMethods > 0 || liveFallbackMethods > 0 || skippedMethods > 0)
         {
             _log.LogInformation(
-                "[Precompute.LeaderboardRivals] account={AccountId} persisted_instruments={PersistedInstruments} live_fallback_instruments={LiveFallbackInstruments} skipped_instruments={SkippedInstruments}",
+                "[Precompute.LeaderboardRivals] account={AccountId} persisted_methods={PersistedMethods} live_fallback_methods={LiveFallbackMethods} skipped_methods={SkippedMethods}",
                 accountId,
-                persistedInstruments,
-                liveFallbackInstruments,
-                skippedInstruments);
+                persistedMethods,
+                liveFallbackMethods,
+                skippedMethods);
         }
     }
 

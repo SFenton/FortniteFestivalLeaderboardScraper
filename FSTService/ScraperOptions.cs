@@ -662,6 +662,12 @@ public sealed class ScraperOptions
     /// </summary>
     public int LeaderboardRivalRadius { get; set; } = 10;
 
+    /// <summary>
+    /// Maximum registered accounts processed concurrently while rebuilding
+    /// leaderboard-rival rows after rankings.
+    /// </summary>
+    public int LeaderboardRivalsMaxDegreeOfParallelism { get; set; } = 4;
+
     // ─── Band Scraping ─────────────────────────────────
 
     /// <summary>

@@ -251,6 +251,21 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
                     AvgSignedDelta = 1.5,
                     ComputedAt = DateTime.UtcNow.ToString("o"),
                 },
+                new LeaderboardRivalRow
+                {
+                    UserId = "user1",
+                    RivalAccountId = "rival2",
+                    Instrument = "Solo_Guitar",
+                    RankMethod = "adjusted",
+                    Direction = "below",
+                    UserRank = 12,
+                    RivalRank = 13,
+                    SharedSongCount = 4,
+                    AheadCount = 2,
+                    BehindCount = 2,
+                    AvgSignedDelta = -0.5,
+                    ComputedAt = DateTime.UtcNow.ToString("o"),
+                },
             ],
             []);
 
@@ -262,12 +277,20 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
             allowLiveFallback: false,
             storeOverride: entries);
 
-        var entry = Assert.Single(entries);
-        Assert.Equal("lb-rivals:user1:Solo_Guitar:totalscore", entry.Key);
-        var payload = JsonDocument.Parse(entry.Json).RootElement;
-        Assert.Equal(10, payload.GetProperty("userRank").GetInt32());
-        Assert.Single(payload.GetProperty("above").EnumerateArray());
-        Assert.Empty(payload.GetProperty("below").EnumerateArray());
+        Assert.Equal(2, entries.Count);
+        var totalScore = Assert.Single(entries, entry =>
+            entry.Key == "lb-rivals:user1:Solo_Guitar:totalscore");
+        var totalScorePayload = JsonDocument.Parse(totalScore.Json).RootElement;
+        Assert.Equal(10, totalScorePayload.GetProperty("userRank").GetInt32());
+        Assert.Single(totalScorePayload.GetProperty("above").EnumerateArray());
+        Assert.Empty(totalScorePayload.GetProperty("below").EnumerateArray());
+
+        var adjusted = Assert.Single(entries, entry =>
+            entry.Key == "lb-rivals:user1:Solo_Guitar:adjusted");
+        var adjustedPayload = JsonDocument.Parse(adjusted.Json).RootElement;
+        Assert.Equal(12, adjustedPayload.GetProperty("userRank").GetInt32());
+        Assert.Empty(adjustedPayload.GetProperty("above").EnumerateArray());
+        Assert.Single(adjustedPayload.GetProperty("below").EnumerateArray());
     }
 
     [Fact]
@@ -283,6 +306,37 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
             storeOverride: entries);
 
         Assert.Empty(entries);
+    }
+
+    [Fact]
+    public void PrecomputePlayerLeaderboardRivals_EmitsCompletedEmptyMethods()
+    {
+        _metaDb.ReplaceLeaderboardRivalsData(
+            "user1",
+            "Solo_Guitar",
+            [],
+            [],
+            LeaderboardRivalsCalculator.RankMethods,
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["adjusted"] = 12,
+            });
+        var entries = new List<(string Key, byte[] Json, string ETag)>();
+
+        _sut.PrecomputePlayerLeaderboardRivals(
+            "user1",
+            ["Solo_Guitar"],
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            allowLiveFallback: false,
+            storeOverride: entries);
+
+        Assert.Equal(LeaderboardRivalsCalculator.RankMethods.Length, entries.Count);
+        var adjusted = Assert.Single(entries, entry =>
+            entry.Key == "lb-rivals:user1:Solo_Guitar:adjusted");
+        var payload = JsonDocument.Parse(adjusted.Json).RootElement;
+        Assert.Equal(12, payload.GetProperty("userRank").GetInt32());
+        Assert.Empty(payload.GetProperty("above").EnumerateArray());
+        Assert.Empty(payload.GetProperty("below").EnumerateArray());
     }
 
     [Fact]

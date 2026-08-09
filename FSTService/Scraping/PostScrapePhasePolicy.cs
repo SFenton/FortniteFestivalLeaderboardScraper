@@ -27,6 +27,7 @@ public static class PostScrapePhasePolicy
             ["PrepareSoloCurrentProjectionForDerived"] = PostScrapePhaseCriticality.PublicationCritical,
             ["ComputeRankings"] = PostScrapePhaseCriticality.PublicationCritical,
             ["Rivals"] = PostScrapePhaseCriticality.PublicationCritical,
+            ["LeaderboardRivals"] = PostScrapePhaseCriticality.PublicationCritical,
             ["PlayerStatsTiers"] = PostScrapePhaseCriticality.PublicationCritical,
             ["Checkpoint"] = PostScrapePhaseCriticality.BestEffort,
             ["ActivateShadowSnapshots"] = PostScrapePhaseCriticality.PublicationCritical,

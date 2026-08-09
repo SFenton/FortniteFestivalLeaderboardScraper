@@ -81,6 +81,8 @@ var scoreHistoryDedupMaintenanceCommand =
     ScoreHistoryDedupMaintenanceCommand.Parse(args);
 var soloFamilyRankingBackfillCommand =
     SoloFamilyRankingBackfillCommand.Parse(args);
+var leaderboardRivalsRecomputeCommand =
+    LeaderboardRivalsRecomputeCommand.Parse(args);
 var initializeSchemaOnlyRequested = args.Any(
     arg => arg.Equals(
         "--initialize-schema-only",
@@ -106,6 +108,7 @@ if (rolloutReadOnlyStartupRequested
     && (improvementNotificationRecoveryRequested
         || scoreHistoryDedupMaintenanceCommand is not null
         || soloFamilyRankingBackfillCommand is not null
+        || leaderboardRivalsRecomputeCommand is not null
         || initializeSchemaOnlyRequested))
 {
     throw new ArgumentException(
@@ -114,6 +117,7 @@ if (rolloutReadOnlyStartupRequested
 if (scoreHistoryDedupMaintenanceCommand is not null
     && (improvementNotificationRecoveryRequested
         || soloFamilyRankingBackfillCommand is not null
+        || leaderboardRivalsRecomputeCommand is not null
         || initializeSchemaOnlyRequested))
 {
     throw new ArgumentException(
@@ -122,16 +126,26 @@ if (scoreHistoryDedupMaintenanceCommand is not null
 }
 if (soloFamilyRankingBackfillCommand is not null
     && (improvementNotificationRecoveryRequested
+        || leaderboardRivalsRecomputeCommand is not null
         || initializeSchemaOnlyRequested))
 {
     throw new ArgumentException(
         "Solo-family ranking backfill cannot run with another one-shot " +
         "schema or notification command.");
 }
+if (leaderboardRivalsRecomputeCommand is not null
+    && (improvementNotificationRecoveryRequested
+        || initializeSchemaOnlyRequested))
+{
+    throw new ArgumentException(
+        "Leaderboard-rivals recompute cannot run with another one-shot " +
+        "schema or notification command.");
+}
 
 var apiOnlyRequested = improvementNotificationRecoveryRequested
     || scoreHistoryDedupMaintenanceCommand is not null
     || soloFamilyRankingBackfillCommand is not null
+    || leaderboardRivalsRecomputeCommand is not null
     || initializeSchemaOnlyRequested
     || args.Any(arg => arg.Equals("--api-only", StringComparison.OrdinalIgnoreCase))
     || builder.Configuration.GetValue<bool>($"{ScraperOptions.Section}:ApiOnly");
@@ -713,7 +727,8 @@ builder.Services.AddCors(opts =>
 
 // StartupInitializer must run before ScraperWorker (hosted services start in registration order)
 builder.Services.AddSingleton<StartupInitializer>();
-if (soloFamilyRankingBackfillCommand is not null)
+if (soloFamilyRankingBackfillCommand is not null
+    || leaderboardRivalsRecomputeCommand is not null)
 {
     builder.Services.AddHealthChecks();
 }
@@ -764,6 +779,11 @@ if (soloFamilyRankingBackfillCommand is not null)
 {
     app.Logger.LogInformation(
         "Solo-family ranking backfill one-shot mode enabled; no hosted services were registered and schema initialization will not run.");
+}
+else if (leaderboardRivalsRecomputeCommand is not null)
+{
+    app.Logger.LogInformation(
+        "Leaderboard-rivals recompute one-shot mode enabled; no hosted services were registered.");
 }
 else if (rolloutReadOnlyStartupRequested)
 {
@@ -822,6 +842,86 @@ if (soloFamilyRankingBackfillCommand is not null)
     Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(report));
     if (report.InvalidRowCount > 0)
         Environment.ExitCode = 2;
+    return;
+}
+
+if (leaderboardRivalsRecomputeCommand is not null)
+{
+    var recomputeDataSource = app.Services.GetRequiredService<NpgsqlDataSource>();
+    var persistence = app.Services
+        .GetRequiredService<GlobalLeaderboardPersistence>();
+    persistence.InitializeReadOnly();
+    var metaDb = app.Services.GetRequiredService<IMetaDatabase>();
+    var pointers = metaDb.GetPublicationPointerState();
+    var currentPublicationId = pointers.CurrentPublicationId
+        ?? throw new InvalidOperationException(
+            "Leaderboard-rivals recompute requires a current publication.");
+    using var maintenanceLease =
+        metaDb.AcquireCurrentPublicationMaintenanceLease(
+            currentPublicationId);
+    await using (var schemaConnection =
+        await recomputeDataSource.OpenConnectionAsync())
+    await using (var schemaCheck = schemaConnection.CreateCommand())
+    {
+        schemaCheck.CommandText =
+            "SELECT to_regclass('public.leaderboard_rivals_state') IS NOT NULL";
+        if (await schemaCheck.ExecuteScalarAsync() is not true)
+        {
+            throw new InvalidOperationException(
+                "Leaderboard-rivals recompute requires current release schema. Run --initialize-schema-only first.");
+        }
+    }
+    var freeze = metaDb.GetPublicReadFreezeState();
+    if (freeze.IsFrozen || pointers.WorkingPublicationId.HasValue)
+    {
+        throw new InvalidOperationException(
+            "Leaderboard-rivals recompute requires unfrozen reads and no working publication.");
+    }
+
+    IDisposable? projectionReadPass = null;
+    if (persistence.UseSnapshotOverlayWorkerReaders)
+    {
+        var projection = app.Services
+            .GetRequiredService<SoloCurrentProjectionBuilder>();
+        await projection.EnsureSchemaAsync();
+        var staleScopes = await projection.LoadStaleScopesAsync();
+        if (staleScopes.Count > 0
+            || await projection.HasOrphanedProjectionScopesAsync())
+        {
+            throw new InvalidOperationException(
+                $"Leaderboard-rivals recompute requires a current solo projection; stale={staleScopes.Count}.");
+        }
+
+        projectionReadPass =
+            persistence.BeginValidatedCurrentProjectionReadPass();
+        persistence.SetValidatedCurrentProjectionForWorkerReaders(true);
+    }
+    using (projectionReadPass)
+    {
+        var calculator = app.Services
+            .GetRequiredService<LeaderboardRivalsCalculator>();
+        var calculation = calculator.ComputeForUser(
+            leaderboardRivalsRecomputeCommand.AccountId,
+            rankingsAuthoritative: true);
+        var precomputer = app.Services
+            .GetRequiredService<ScrapeTimePrecomputer>();
+        var entries = new List<(string Key, byte[] Json, string ETag)>();
+        precomputer.PrecomputePlayerLeaderboardRivals(
+            leaderboardRivalsRecomputeCommand.AccountId,
+            persistence.GetInstrumentKeys(),
+            metaDb.GetDisplayNames(
+                [leaderboardRivalsRecomputeCommand.AccountId]),
+            allowLiveFallback: false,
+            storeOverride: entries);
+        metaDb.BulkSetCachedResponses(entries, currentPublicationId);
+
+        Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(
+            new LeaderboardRivalsRecomputeReport(
+                leaderboardRivalsRecomputeCommand.AccountId,
+                calculation.RivalCount,
+                calculation.SampleCount,
+                entries.Count)));
+    }
     return;
 }
 
