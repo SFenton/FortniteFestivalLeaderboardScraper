@@ -48,6 +48,7 @@ export function validatePublishImageWorkflow(workflow, webDockerfile) {
       ['Bump @festival/core version', "steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.core_ts == 'true'"],
       ['Bump @festival/theme version', "steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.theme_ts == 'true'"],
       ['Bump @festival/ui-utils version', "steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.ui_utils == 'true'"],
+      ['Regenerate dependency license manifest', webBuildIf],
       ['Regenerate embedded web bundle', webBuildIf],
       ['Verify version-bumped embedded bundle', webBuildIf],
     ]);
@@ -58,7 +59,21 @@ export function validatePublishImageWorkflow(workflow, webDockerfile) {
       }
     }
 
+    const licenseManifest = requireStep(
+      versionJob,
+      'Regenerate dependency license manifest',
+      errors,
+    );
+    if (licenseManifest?.workingDirectory !== 'FortniteFestivalWeb') {
+      errors.push('Regenerate dependency license manifest must run from FortniteFestivalWeb');
+    }
+    if (licenseManifest?.run.trim() !== 'yarn licenses:generate') {
+      errors.push('Regenerate dependency license manifest must run exactly yarn licenses:generate');
+    }
+
     requireStepOrder(versionJob, errors,
+      'Install web dependencies',
+      'Regenerate dependency license manifest',
       'Regenerate embedded web bundle',
       'Create version bump commit',
       'Verify version-bumped embedded bundle',
@@ -241,7 +256,16 @@ function parseWorkflowSubset(source) {
     }
 
     if (indent === 6 && trimmed.startsWith('- ')) {
-      step = { name: '', uses: '', id: '', if: '', run: '', with: {}, env: {} };
+      step = {
+        name: '',
+        uses: '',
+        id: '',
+        if: '',
+        run: '',
+        workingDirectory: '',
+        with: {},
+        env: {},
+      };
       job.steps.push(step);
       section = null;
       const [key, value] = splitKeyValue(trimmed.slice(2));
@@ -270,9 +294,11 @@ function parseWorkflowSubset(source) {
 }
 
 function assignStepValue(step, key, value, indent, setBlock) {
-  const targetKey = key === 'name' || key === 'uses' || key === 'id' || key === 'if' || key === 'run'
-    ? key
-    : null;
+  const targetKey = key === 'working-directory'
+    ? 'workingDirectory'
+    : key === 'name' || key === 'uses' || key === 'id' || key === 'if' || key === 'run'
+      ? key
+      : null;
   if (!targetKey) return;
   assignValue(step, targetKey, value, indent, [], 0, setBlock);
 }

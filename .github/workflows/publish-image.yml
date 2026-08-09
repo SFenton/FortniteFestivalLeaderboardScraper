@@ -251,6 +251,11 @@ jobs:
         working-directory: FortniteFestivalWeb
         run: yarn install --immutable
 
+      - name: Regenerate dependency license manifest
+        if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.mobile == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
+        working-directory: FortniteFestivalWeb
+        run: yarn licenses:generate
+
       - name: Regenerate embedded web bundle
         if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.mobile == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
         working-directory: FortniteFestivalWeb

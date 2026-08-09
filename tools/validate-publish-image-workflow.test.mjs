@@ -109,6 +109,36 @@ test('ui-utils bump step cannot be disabled', () => {
   );
 });
 
+test('version bump must regenerate the dependency license manifest', () => {
+  const wrongCommand = mutateStep(
+    workflow,
+    'version-bump',
+    'Regenerate dependency license manifest',
+    block => block.replace(
+      'run: yarn licenses:generate',
+      'run: yarn licenses:check',
+    ),
+  );
+  assert.ok(
+    validatePublishImageWorkflow(wrongCommand, dockerfile)
+      .some(error => error.includes('must run exactly yarn licenses:generate')),
+  );
+
+  const wrongDirectory = mutateStep(
+    workflow,
+    'version-bump',
+    'Regenerate dependency license manifest',
+    block => block.replace(
+      'working-directory: FortniteFestivalWeb',
+      'working-directory: .',
+    ),
+  );
+  assert.ok(
+    validatePublishImageWorkflow(wrongDirectory, dockerfile)
+      .some(error => error.includes('must run from FortniteFestivalWeb')),
+  );
+});
+
 function mutateJob(source, jobName, mutate) {
   const marker = `  ${jobName}:\n`;
   const start = source.indexOf(marker);
