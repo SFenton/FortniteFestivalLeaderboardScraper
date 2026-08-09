@@ -1043,7 +1043,7 @@ function AppShell() {
           mode="players"
           ariaLabel={getFabQuickLinksActionLabel(t)}
           sideActions={[...statisticsSideActions, ...playerSelectSideActions]}
-          directAction={isPlayerDetailRoute || pageQuickLinks.hasPageQuickLinks}
+          directAction={pageQuickLinks.hasPageQuickLinks}
           onPress={() => pageQuickLinks.openPageQuickLinks()}
         />
       )}
@@ -1217,7 +1217,7 @@ function AppShell() {
           mode="players"
           ariaLabel={getFabQuickLinksActionLabel(t)}
           sideActions={[...bandFilterFabActions, ...bandSelectSideActions]}
-          directAction={pageQuickLinks.hasPageQuickLinks || bandSelectSideActions.length > 0}
+          directAction={pageQuickLinks.hasPageQuickLinks}
           onPress={() => pageQuickLinks.openPageQuickLinks()}
         />
       )}

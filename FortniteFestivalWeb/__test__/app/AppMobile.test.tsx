@@ -1216,7 +1216,7 @@ describe('App — mobile FAB branches', () => {
     }, { timeout: 5000 });
 
     const quickLinksButton = await screen.findByRole('button', { name: 'Quick Links' });
-    const sideActions = screen.getByTestId('fab-side-actions');
+    const sideActions = await screen.findByTestId('fab-side-actions', {}, { timeout: 5000 });
     const rankButton = within(sideActions).getByRole('button', { name: 'Change Leaderboard Ranking' });
     expect(rankButton).toBeDefined();
     expect(rankButton.style.backgroundColor).toBe(OPAQUE_FAB_GLASS_BACKGROUND.replace(/,/g, ', '));
@@ -1249,7 +1249,7 @@ describe('App — mobile FAB branches', () => {
       expect(mockApi.getRankings).toHaveBeenCalled();
     }, { timeout: 5000 });
 
-    const sideActions = screen.getByTestId('fab-side-actions');
+    const sideActions = await screen.findByTestId('fab-side-actions', {}, { timeout: 5000 });
     expect(within(sideActions).getByRole('button', { name: 'Change Leaderboard Ranking' })).toHaveStyle({ backgroundColor: Colors.accentBlue });
     expect(screen.queryByTestId('fab-menu')).toBeNull();
     window.location.hash = '';
@@ -2102,9 +2102,6 @@ describe('App — mobile FAB branches', () => {
     window.location.hash = '#/player/p2';
     render(<App />);
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
-    }, { timeout: 5000 });
     expect(await within(await screen.findByTestId('page-root')).findByRole('heading', { name: 'OtherP' })).toBeDefined();
     expect(screen.queryByTestId('player-header-actions')).toBeNull();
     expect(screen.queryByTestId('player-select-profile-slot')).toBeNull();
@@ -2113,7 +2110,8 @@ describe('App — mobile FAB branches', () => {
     expect(within(selectButton).getByText('Select OtherP')).toBeDefined();
     expect(screen.queryByLabelText('Actions')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Quick Links' }));
+    const quickLinksButton = await screen.findByRole('button', { name: 'Quick Links' }, { timeout: 5000 });
+    fireEvent.click(quickLinksButton);
 
     expect(screen.queryByTestId('fab-menu')).toBeNull();
     expect(await screen.findByRole('dialog', { name: 'Quick Links' }, { timeout: 5000 })).toBeDefined();
@@ -2127,9 +2125,6 @@ describe('App — mobile FAB branches', () => {
     window.location.hash = '#/bands/band-1';
     render(<App />);
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
-    }, { timeout: 5000 });
     expect(await within(await screen.findByTestId('page-root')).findByRole('heading', { name: 'TrackedP + BandMate' })).toBeDefined();
     expect(screen.queryByTestId('band-select-profile-slot')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Select Band Profile' })).toBeNull();
@@ -2138,7 +2133,8 @@ describe('App — mobile FAB branches', () => {
     expect(within(selectButton).getByText('Select Band')).toBeDefined();
     expect(screen.queryByLabelText('Actions')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Quick Links' }));
+    const quickLinksButton = await screen.findByRole('button', { name: 'Quick Links' }, { timeout: 5000 });
+    fireEvent.click(quickLinksButton);
 
     expect(screen.queryByTestId('fab-menu')).toBeNull();
     expect(await screen.findByRole('dialog', { name: 'Quick Links' })).toBeDefined();
