@@ -25,10 +25,3 @@ public static partial class ApiEndpoints
         app.MapWebSocketEndpoints();
     }
 }
-
-/// <summary>Request body for POST /api/register.</summary>
-public sealed class RegisterRequest
-{
-    public string DeviceId { get; set; } = "";
-    public string Username { get; set; } = "";
-}

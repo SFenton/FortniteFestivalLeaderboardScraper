@@ -29,7 +29,7 @@ Decompose ScraperWorker monolith, split ApiEndpoints, extract shared auth to Cor
 - [ ] Create `SongEndpoints.cs` (/api/songs, /api/leaderboard/*)
 - [ ] Create `PlayerEndpoints.cs` (/api/player/*)
 - [ ] Create `RivalsEndpoints.cs` (/api/player/*/rivals/*)
-- [ ] Create `AdminEndpoints.cs` (/api/register, /api/backfill/*, /api/progress)
+- [ ] Create `AdminEndpoints.cs` (/api/backfill/*, /api/progress)
 - [ ] Refactor to use `app.MapGroup()` pattern
 - [ ] Delete monolithic ApiEndpoints.cs (1,440 lines)
 
@@ -49,7 +49,6 @@ Decompose ScraperWorker monolith, split ApiEndpoints, extract shared auth to Cor
 - [ ] Refactor PercentileService HTTP calls → use shared client
 
 ### 11.6 — Cleanup
-- [ ] Add `Deprecation` header to `POST /api/register`
 - [ ] Delete diagnostic hardcoded lookup in ScraperWorker (song "092c2537")
 - [ ] Audit/delete vestigial migration methods in InstrumentDatabase
 - [ ] Delete nested index drop+recreate in InstrumentDatabase

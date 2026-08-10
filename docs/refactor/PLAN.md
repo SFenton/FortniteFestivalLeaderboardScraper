@@ -769,8 +769,7 @@ Each orchestrator has 3-5 dependencies (vs 22), is independently testable, and h
 - `SongEndpoints.cs` — `/api/songs`, `/api/leaderboard/*`
 - `PlayerEndpoints.cs` — `/api/player/*`
 - `RivalsEndpoints.cs` — `/api/player/*/rivals/*`
-- `AdminEndpoints.cs` — `/api/register`, `/api/backfill/*`, `/api/progress`
-- `AuthEndpoints.cs` — `/api/auth/*` (already partially split)
+- `AdminEndpoints.cs` — `/api/backfill/*`, `/api/progress`
 
 Register via `app.MapGroup()` pattern.
 
@@ -804,11 +803,7 @@ Register via `app.MapGroup()` pattern.
 - Structured error parsing via `HttpErrorHelper`
 - Both services consume it
 
-### 11.6 — Deprecate `POST /api/register`
-
-Already superseded by `/api/auth/login` per design docs. Add `Deprecation` response header. Remove after 2 minor versions.
-
-### 11.7 — Remove Diagnostic Code
+### 11.6 — Remove Diagnostic Code
 
 ScraperWorker backfill-only mode contains a hardcoded song "092c2537" lookup for #1 player verification. Delete or move to a dedicated diagnostic CLI tool.
 

@@ -159,11 +159,8 @@ public static class ApiPublicationRouteCatalog
         Publication(AnyMethod, "/api/ws"),
 
         // Account/auth, maintenance, diagnostics, and protected controls.
-        Private(HttpMethods.Get, "/api/account/check", "Pre-authentication account lookup is part of the account/auth flow."),
         Private(HttpMethods.Get, "/api/admin/epic-token", "Protected credential diagnostic."),
         Private(HttpMethods.Post, "/api/admin/shop/refresh", "Protected shop refresh command."),
-        Private(HttpMethods.Post, "/api/register", "Authenticated account registration flow."),
-        Private(HttpMethods.Delete, "/api/register", "Authenticated account registration flow."),
         Private(HttpMethods.Post, "/api/firstseen/calculate", "Protected derived-data maintenance command."),
         Private(HttpMethods.Post, "/api/admin/regenerate-paths", "Protected path maintenance command."),
         Private(HttpMethods.Get, "/api/backfill/{accountId}/status", "Protected account maintenance status."),
