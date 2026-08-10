@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +17,12 @@ const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const project = process.argv[2];
 const shardCount = readPositiveInteger('E2E_SHARDS', 8);
 const port = readPositiveInteger('PLAYWRIGHT_PORT', 4173);
+const isolatedTestFiles = [
+  'e2e/remote-data-ownership.spec.ts',
+  'e2e/secondary-controls-lazy.spec.ts',
+];
+const mainTestFiles = listTestFiles(resolve(webRoot, 'e2e'))
+  .filter(file => !isolatedTestFiles.includes(file));
 const startedAt = performance.now();
 
 if (project !== 'desktop' && project !== 'mobile') {
@@ -40,38 +47,24 @@ let exitCode = 0;
 try {
   await waitForServer(server, port);
 
-  for (let shard = 1; shard <= shardCount; shard += 1) {
+  const isolatedStartedAt = performance.now();
+  console.log(`\n[e2e] Running ${project} stateful isolation files`);
+  const isolatedResult = runPlaywright(isolatedTestFiles);
+  if (!handleResult(isolatedResult, `${project} stateful isolation files`, isolatedStartedAt)) {
+    exitCode = isolatedResult.status ?? 1;
+  }
+
+  for (let shard = 1; exitCode === 0 && shard <= shardCount; shard += 1) {
     const shardStartedAt = performance.now();
     console.log(`\n[e2e] Running ${project} shard ${shard}/${shardCount}`);
-    const result = spawnSync(process.execPath, [
-      playwrightBin,
-      'test',
-      `--project=${project}`,
-      '--workers=1',
+    const result = runPlaywright([
+      ...mainTestFiles,
       `--shard=${shard}/${shardCount}`,
-    ], {
-      cwd: webRoot,
-      env: {
-        ...process.env,
-        CI: process.env.CI ?? '1',
-        PLAYWRIGHT_PORT: String(port),
-        PLAYWRIGHT_REUSE_SERVER: '1',
-      },
-      stdio: 'inherit',
-    });
-
-    if (result.error) {
-      console.error(`[e2e] Shard ${shard}/${shardCount} failed to start: ${result.error.message}`);
-      exitCode = 1;
-      break;
-    }
-    if (result.status !== 0) {
-      console.error(`[e2e] ${project} shard ${shard}/${shardCount} failed after ${duration(shardStartedAt)}.`);
+    ]);
+    if (!handleResult(result, `${project} shard ${shard}/${shardCount}`, shardStartedAt)) {
       exitCode = result.status ?? 1;
-      break;
+      continue;
     }
-
-    console.log(`[e2e] ${project} shard ${shard}/${shardCount} passed in ${duration(shardStartedAt)}.`);
   }
 } catch (error) {
   console.error(`[e2e] ${error instanceof Error ? error.message : String(error)}`);
@@ -96,6 +89,52 @@ function readPositiveInteger(name, fallback) {
     process.exit(2);
   }
   return value;
+}
+
+function runPlaywright(testArgs) {
+  return spawnSync(process.execPath, [
+    playwrightBin,
+    'test',
+    ...testArgs,
+    `--project=${project}`,
+    '--workers=1',
+  ], {
+    cwd: webRoot,
+    env: {
+      ...process.env,
+      CI: process.env.CI ?? '1',
+      PLAYWRIGHT_PORT: String(port),
+      PLAYWRIGHT_REUSE_SERVER: '1',
+    },
+    stdio: 'inherit',
+  });
+}
+
+function handleResult(result, label, runStartedAt) {
+  if (result.error) {
+    console.error(`[e2e] ${label} failed to start: ${result.error.message}`);
+    return false;
+  }
+  if (result.status !== 0) {
+    console.error(`[e2e] ${label} failed after ${duration(runStartedAt)}.`);
+    return false;
+  }
+  console.log(`[e2e] ${label} passed in ${duration(runStartedAt)}.`);
+  return true;
+}
+
+function listTestFiles(directory, relativeDirectory = 'e2e') {
+  return readdirSync(directory, { withFileTypes: true })
+    .flatMap(entry => {
+      const relativePath = `${relativeDirectory}/${entry.name}`;
+      if (entry.isDirectory()) {
+        return listTestFiles(resolve(directory, entry.name), relativePath);
+      }
+      return entry.isFile() && entry.name.endsWith('.spec.ts')
+        ? [relativePath]
+        : [];
+    })
+    .sort();
 }
 
 async function waitForServer(child, serverPort) {
