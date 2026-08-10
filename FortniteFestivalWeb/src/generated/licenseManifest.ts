@@ -250,8 +250,8 @@ export const licenseManifest = [
     version: "0.104.2",
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
-    packageUrl: "https://github.com/ClosedXML/ClosedXML",
-    repositoryUrl: "https://github.com/ClosedXML/ClosedXML",
+    packageUrl: "https://www.nuget.org/packages/ClosedXML/0.104.2",
+    repositoryUrl: null,
     consumers: ["FSTService/FSTService.csproj"],
   },
   {
@@ -261,8 +261,8 @@ export const licenseManifest = [
     version: "6.0.2",
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
-    packageUrl: "https://github.com/coverlet-coverage/coverlet",
-    repositoryUrl: "https://github.com/coverlet-coverage/coverlet.git",
+    packageUrl: "https://www.nuget.org/packages/coverlet.collector/6.0.2",
+    repositoryUrl: null,
     consumers: ["FSTService.Tests/FSTService.Tests.csproj"],
   },
   {
@@ -273,7 +273,7 @@ export const licenseManifest = [
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://www.nuget.org/packages/Docker.DotNet/3.125.15",
-    repositoryUrl: "https://github.com/dotnet/Docker.DotNet/",
+    repositoryUrl: null,
     consumers: ["FSTService/FSTService.csproj"],
   },
   {
@@ -360,8 +360,8 @@ export const licenseManifest = [
     version: "9.0.0",
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
-    packageUrl: "https://asp.net/",
-    repositoryUrl: "https://github.com/dotnet/aspnetcore",
+    packageUrl: "https://www.nuget.org/packages/Microsoft.AspNetCore.Mvc.Testing/9.0.0",
+    repositoryUrl: null,
     consumers: ["FSTService.Tests/FSTService.Tests.csproj"],
   },
   {
@@ -371,8 +371,8 @@ export const licenseManifest = [
     version: "8.0.0",
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
-    packageUrl: "https://docs.microsoft.com/dotnet/standard/data/sqlite/",
-    repositoryUrl: "https://github.com/dotnet/efcore",
+    packageUrl: "https://www.nuget.org/packages/Microsoft.Data.Sqlite/8.0.0",
+    repositoryUrl: null,
     consumers: ["FortniteFestival.Core/FortniteFestival.Core.csproj"],
   },
   {
@@ -382,8 +382,8 @@ export const licenseManifest = [
     version: "9.0.0",
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
-    packageUrl: "https://dot.net/",
-    repositoryUrl: "https://github.com/dotnet/runtime",
+    packageUrl: "https://www.nuget.org/packages/Microsoft.Extensions.Http/9.0.0",
+    repositoryUrl: null,
     consumers: ["FSTService/FSTService.csproj"],
   },
   {
@@ -393,8 +393,8 @@ export const licenseManifest = [
     version: "9.0.0",
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
-    packageUrl: "https://dot.net/",
-    repositoryUrl: "https://github.com/dotnet/runtime",
+    packageUrl: "https://www.nuget.org/packages/Microsoft.Extensions.Logging.Abstractions/9.0.0",
+    repositoryUrl: null,
     consumers: ["FortniteFestival.Core/FortniteFestival.Core.csproj"],
   },
   {
@@ -404,8 +404,8 @@ export const licenseManifest = [
     version: "17.12.0",
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
-    packageUrl: "https://github.com/microsoft/vstest",
-    repositoryUrl: "https://github.com/microsoft/vstest",
+    packageUrl: "https://www.nuget.org/packages/Microsoft.NET.Test.Sdk/17.12.0",
+    repositoryUrl: null,
     consumers: ["FSTService.Tests/FSTService.Tests.csproj"],
   },
   {
@@ -415,8 +415,8 @@ export const licenseManifest = [
     version: "13.0.3",
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
-    packageUrl: "https://www.newtonsoft.com/json",
-    repositoryUrl: "https://github.com/JamesNK/Newtonsoft.Json",
+    packageUrl: "https://www.nuget.org/packages/Newtonsoft.Json/13.0.3",
+    repositoryUrl: null,
     consumers: ["FortniteFestival.Core/FortniteFestival.Core.csproj"],
   },
   {
@@ -426,8 +426,8 @@ export const licenseManifest = [
     version: "9.0.3",
     licenseType: "PostgreSQL",
     licenseText: licenseTexts["PostgreSQL"],
-    packageUrl: "https://github.com/npgsql/npgsql",
-    repositoryUrl: "https://github.com/npgsql/npgsql",
+    packageUrl: "https://www.nuget.org/packages/Npgsql/9.0.3",
+    repositoryUrl: null,
     consumers: ["FSTService.Tests/FSTService.Tests.csproj","FSTService/FSTService.csproj"],
   },
   {
@@ -437,8 +437,8 @@ export const licenseManifest = [
     version: "5.3.0",
     licenseType: "BSD-3-Clause",
     licenseText: licenseTexts["BSD-3-Clause"],
-    packageUrl: "https://nsubstitute.github.io/",
-    repositoryUrl: "https://github.com/nsubstitute/NSubstitute",
+    packageUrl: "https://www.nuget.org/packages/NSubstitute/5.3.0",
+    repositoryUrl: null,
     consumers: ["FSTService.Tests/FSTService.Tests.csproj"],
   },
   {
@@ -569,8 +569,8 @@ export const licenseManifest = [
     version: "8.0.5",
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
-    packageUrl: "https://dot.net/",
-    repositoryUrl: "https://github.com/dotnet/runtime",
+    packageUrl: "https://www.nuget.org/packages/System.Text.Json/8.0.5",
+    repositoryUrl: null,
     consumers: ["FortniteFestival.Core/FortniteFestival.Core.csproj"],
   },
   {
@@ -580,8 +580,8 @@ export const licenseManifest = [
     version: "4.3.0",
     licenseType: "MIT",
     licenseText: licenseTexts["MIT"],
-    packageUrl: "https://dotnet.testcontainers.org/",
-    repositoryUrl: "https://github.com/testcontainers/testcontainers-dotnet",
+    packageUrl: "https://www.nuget.org/packages/Testcontainers.PostgreSql/4.3.0",
+    repositoryUrl: null,
     consumers: ["FSTService.Tests/FSTService.Tests.csproj"],
   },
   {
@@ -636,7 +636,7 @@ export const licenseManifest = [
     licenseType: "Apache-2.0",
     licenseText: licenseTexts["Apache-2.0"],
     packageUrl: "https://www.nuget.org/packages/xunit/2.9.2",
-    repositoryUrl: "https://github.com/xunit/xunit",
+    repositoryUrl: null,
     consumers: ["FSTService.Tests/FSTService.Tests.csproj"],
   },
   {
@@ -647,7 +647,7 @@ export const licenseManifest = [
     licenseType: "Apache-2.0",
     licenseText: licenseTexts["Apache-2.0"],
     packageUrl: "https://www.nuget.org/packages/xunit.runner.visualstudio/2.8.2",
-    repositoryUrl: "https://github.com/xunit/visualstudio.xunit",
+    repositoryUrl: null,
     consumers: ["FSTService.Tests/FSTService.Tests.csproj"],
   }
 ] as const satisfies readonly LicenseManifestEntry[];
