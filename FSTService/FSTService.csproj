@@ -5,7 +5,7 @@
     <AssemblyName>FSTService</AssemblyName>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>1.0.186</Version>
+    <Version>1.0.187</Version>
   </PropertyGroup>
 
   <ItemGroup>
