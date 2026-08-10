@@ -57,6 +57,30 @@ describe('PublicationBoundary', () => {
     expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
+  it('renders maintenance mode when publication bootstrap returns bad gateway', async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(null, {
+        status: 502,
+        statusText: 'Bad Gateway',
+      }),
+    );
+
+    render(
+      <PublicationBoundary>
+        <div>Published app</div>
+      </PublicationBoundary>,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText(/currently down for maintenance/i)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText('Published app')).not.toBeInTheDocument();
+  });
+
   it('remounts consumers for a same-publication refresh', async () => {
     const publication = {
       contractVersion: 1,
