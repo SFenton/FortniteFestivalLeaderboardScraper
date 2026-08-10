@@ -40,7 +40,7 @@ test('desktop first-open chunks preserve loading, close/reopen, focus, and sorti
   expect(moduleRequests.some(url => url.includes('/components/search/SearchModal.tsx'))).toBe(true);
 
   await searchDialog.getByRole('button', { name: 'Close' }).click();
-  await expect(searchDialog).toBeHidden();
+  await expect(searchDialog).toHaveCount(0, { timeout: 10_000 });
   await expect(searchButton).toBeFocused();
 
   const searchRequestCount = moduleRequests.filter(url => url.includes('/components/search/SearchModal.tsx')).length;
@@ -57,7 +57,7 @@ test('desktop first-open chunks preserve loading, close/reopen, focus, and sorti
 
   await sortDialog.getByRole('button', { name: 'Descending' }).click();
   await sortDialog.getByRole('button', { name: 'Apply' }).click();
-  await expect(sortDialog).toBeHidden();
+  await expect(sortDialog).toHaveCount(0, { timeout: 10_000 });
   await expect(sortButton).toBeFocused();
 
   await sortButton.click();
