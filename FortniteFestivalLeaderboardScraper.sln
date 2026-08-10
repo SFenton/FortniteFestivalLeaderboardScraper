@@ -5,8 +5,6 @@ VisualStudioVersion = 17.8.34525.116
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FortniteFestival.Core", "FortniteFestival.Core\FortniteFestival.Core.csproj", "{289A4809-9A95-D430-3C88-E275A5628D83}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FortniteFestival.LeaderboardScraper.MAUI", "FortniteFestival.LeaderboardScraper.MAUI\FortniteFestival.LeaderboardScraper.MAUI.csproj", "{DD0495B0-7E0C-6D5E-1448-3336967EEB9F}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FSTService", "FSTService\FSTService.csproj", "{6E856324-37C4-4CB5-89D2-809D9C18A898}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FSTService.Tests", "FSTService.Tests\FSTService.Tests.csproj", "{3DE4AE40-457E-48EC-95A8-8FB653075B14}"
@@ -33,19 +31,6 @@ Global
 		{289A4809-9A95-D430-3C88-E275A5628D83}.Release|x64.Build.0 = Release|Any CPU
 		{289A4809-9A95-D430-3C88-E275A5628D83}.Release|x86.ActiveCfg = Release|Any CPU
 		{289A4809-9A95-D430-3C88-E275A5628D83}.Release|x86.Build.0 = Release|Any CPU
-		{DD0495B0-7E0C-6D5E-1448-3336967EEB9F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{DD0495B0-7E0C-6D5E-1448-3336967EEB9F}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{DD0495B0-7E0C-6D5E-1448-3336967EEB9F}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{DD0495B0-7E0C-6D5E-1448-3336967EEB9F}.Debug|x64.Build.0 = Debug|Any CPU
-		{DD0495B0-7E0C-6D5E-1448-3336967EEB9F}.Debug|x86.ActiveCfg = Debug|Any CPU
-		{DD0495B0-7E0C-6D5E-1448-3336967EEB9F}.Debug|x86.Build.0 = Debug|Any CPU
-		{DD0495B0-7E0C-6D5E-1448-3336967EEB9F}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{DD0495B0-7E0C-6D5E-1448-3336967EEB9F}.Release|Any CPU.Build.0 = Release|Any CPU
-		{DD0495B0-7E0C-6D5E-1448-3336967EEB9F}.Release|x64.ActiveCfg = Release|Any CPU
-		{DD0495B0-7E0C-6D5E-1448-3336967EEB9F}.Release|x64.Build.0 = Release|Any CPU
-		{DD0495B0-7E0C-6D5E-1448-3336967EEB9F}.Release|x64.Deploy.0 = Release|Any CPU
-		{DD0495B0-7E0C-6D5E-1448-3336967EEB9F}.Release|x86.ActiveCfg = Release|Any CPU
-		{DD0495B0-7E0C-6D5E-1448-3336967EEB9F}.Release|x86.Build.0 = Release|Any CPU
 		{6E856324-37C4-4CB5-89D2-809D9C18A898}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{6E856324-37C4-4CB5-89D2-809D9C18A898}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{6E856324-37C4-4CB5-89D2-809D9C18A898}.Debug|x64.ActiveCfg = Debug|Any CPU

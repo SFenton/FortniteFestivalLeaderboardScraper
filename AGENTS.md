@@ -9,7 +9,7 @@
 | FSTService | `FSTService/` | .NET / C# — ASP.NET Core + BackgroundService |
 | FortniteFestivalWeb | `FortniteFestivalWeb/` | React + TypeScript + Vite |
 | FortniteFestival.Core | `FortniteFestival.Core/` | Shared .NET library |
-| Shared TS packages | `packages/` | `@festival/core`, `@festival/theme`, `@festival/ui-utils`, `@festival/auth` |
+| Shared TS packages | `packages/` | `@festival/core`, `@festival/theme`, `@festival/ui-utils` |
 
 ## Core rules
 

@@ -17,7 +17,6 @@
 .gitignore
 
 # ── Projects not needed for Docker builds ─────────────────────
-FortniteFestival.LeaderboardScraper.MAUI/
 FSTService.Tests/
 docs/
 

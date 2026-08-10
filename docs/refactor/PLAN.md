@@ -324,7 +324,7 @@ Refactor the FortniteFestivalWeb app to eliminate per-page layout duplication by
 - **Page shell**: ALL pages go through `<Page>`. No exceptions.
 - **Frosted glass noise**: Move to single page-level composite layer (Option B).
 - **Data caching migration**: Move to React Query incrementally (rivals first, then leaderboard/songDetail).
-- **Excluded from scope**: Mobile navigation changes (BottomNav, FAB), FirstRun carousel system, modal architecture, React Native app.
+- **Excluded from scope**: Mobile navigation changes (BottomNav, FAB), FirstRun carousel system, and modal architecture.
 
 ## Further Considerations
 
@@ -611,7 +611,7 @@ FortniteFestivalWeb/
 - **v8 ignore ban**: Absolute. No exceptions. CI enforces with grep + eslint.
 - **Coverage model**: Vitest (jsdom) handles logic/state/rendering. Playwright handles DOM, animations, scroll, responsive, FRE, navigation flows.
 - **Playwright scope**: Integration tests, not visual regression. Assert behavior and DOM state, not pixel screenshots.
-- **Excluded**: React Native app, FSTService backend tests, PercentileService.
+- **Excluded**: FSTService backend tests and PercentileService.
 
 ---
 
@@ -899,7 +899,7 @@ ScraperWorker backfill-only mode contains a hardcoded song "092c2537" lookup for
 - **Dead code**: 5 web items + 3 service items
 - **Performance wins**: useScrollFade fix, pageCache migration, pipeline batching, index additions, difficulty normalization
 - **Storage savings**: ~480 MB (difficulty normalization) + ~800 MB (PK optimization)
-- **Excluded**: React Native app, MAUI app, full PercentileService merge (deferred)
+- **Excluded**: Full PercentileService merge (deferred)
 
 ---
 
@@ -1477,7 +1477,7 @@ Update `.vscode/mcp.json`:
 - **MCP server**: 1 (14 tools, Node.js)
 - **Agent files**: 1 agent, 3 instructions, 4 prompts, 1 hook
 - **FSTService refactor**: 3 orchestrators, 5 endpoint modules, Core auth extraction
-- **Excluded**: React Native app, MAUI app, full PercentileService merge
+- **Excluded**: Full PercentileService merge
 
 ---
 
@@ -1554,7 +1554,7 @@ index.ts           — Barrel re-exports everything
 **Key rules:**
 - Every constant gets exactly one home. No duplicates between files.
 - Some constants may have **semantic aliases** in different modules (e.g., `Font.title` = 22 AND `Size.pageTitleFont` = 22 if both are needed for different consumption contexts). The alias explicitly references the canonical source.
-- React Native compatible: no CSS variables, no DOM APIs. Pure numeric/string constants.
+- Platform-neutral: no CSS variables or DOM APIs; use pure numeric/string constants.
 - Each file ≤ 80 lines. If it grows beyond, split further.
 
 ### 16.2 — Delete Dead Web Theme Files
@@ -1699,7 +1699,7 @@ After migration:
 - Only 3 `.module.css` files remain in `src/styles/` (irreducible: `::after`, `@keyframes`, `@media`, `@container`, `backdrop-filter`, `mask-image`)
 - All styling flows through `useStyles()` or inline `style={}` backed by theme constants
 - `@festival/theme` has single-responsibility modules, each ≤ 80 lines
-- React Native can import any theme module without web-specific dependencies
+- Theme modules remain free of web-specific runtime dependencies
 - InstrumentSelector accepts `styles` prop (inline overrides) as preferred alternative to `classNames`
 
 ---

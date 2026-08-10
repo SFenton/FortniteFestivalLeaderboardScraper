@@ -1,5 +1,5 @@
 /**
- * Instrument icon component using the same PNG assets as the React Native mobile app.
+ * Instrument icon component backed by the canonical public instrument assets.
  * Assets are served from /instruments/ in the public folder.
  */
 import { memo, useMemo } from 'react';

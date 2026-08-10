@@ -74,7 +74,6 @@ When changing any package manifest, lockfile, or related NuGet/package reference
 - `@festival/core` — shared types, API client, enums, instruments
 - `@festival/theme` — Size, Layout, breakpoints
 - `@festival/ui-utils` — shared UI utilities
-- `@festival/auth` — Epic OAuth, JWT parsing
 
 ## Web Refactoring
 

@@ -1,47 +1,52 @@
 # Fortnite Festival Score Tracker
 
-A simple Windows utility for retrieving your highest Fortnite Festival scores across all instruments and across all seasons!
+Fortnite Festival Score Tracker (FST) continuously scrapes Epic's Festival
+leaderboards and preserves scores across seasonal resets. The public web
+application exposes song, player, rival, ranking, shop, suggestion, and band
+history views backed by the service's published PostgreSQL data.
 
-<img width="835" alt="image" src="https://github.com/user-attachments/assets/9c9f8213-8f5e-401f-a925-d26d1824f47b">
-<img width="833" alt="image" src="https://github.com/user-attachments/assets/ca5dbd34-a7be-41c5-932c-57b9e9bc527b">
+## Components
+
+| Component | Path | Purpose |
+|---|---|---|
+| FSTService | `FSTService/` | ASP.NET Core API and background scrape worker |
+| FortniteFestivalWeb | `FortniteFestivalWeb/` | React/Vite public web application |
+| FortniteFestival.Core | `FortniteFestival.Core/` | Shared .NET scraping and domain code |
+| Shared TypeScript packages | `packages/` | Web-facing core, theme, and UI utilities |
 
 ## Why?
 
-The Fortnite Festival leaderboards reset at the beginning of every season. This means that, while Epic is still saving your highest scores from previous seasons in their leaderboards (actually, every single session you've played!), they aren't surfaced in the game anywhere, most importantly on the song select screen, as they have been for the past... nearly twenty years. I wanted to make this tool because I worked hard for the FCs I've gotten, and it's kind of maddening that I didn't have a foolproof in-game way to track that across seasons.
+Fortnite Festival leaderboards reset at the beginning of every season. FST
+keeps a historical record so players can inspect scores, full combos,
+percentiles, rankings, and rivals that are no longer surfaced in the current
+in-game season.
 
-This app will also output scores you have for songs you don't own, which is a great way to track Battle Pass/Festival Pass/event songs that you missed out on. I don't think that information will ever be surfaced in game if you're playing solo/don't own those tracks and want to see your scores.
+## Local development
 
-## How does the app work?
+Service:
 
-By supplying the application with an Exchange Token, we simulate the Epic authentication process and spoof being a Fortnite client. This gives us special permissions to read the Fortnite Festival leaderboards, and we query each song, season, and instrument, find your highest scores, and write them out to an Excel workbook that is easily digestible.
+```bash
+dotnet build FSTService/FSTService.csproj -c Release
+dotnet test FSTService.Tests/FSTService.Tests.csproj
+```
 
-## What is an exchange token?
+Web:
 
-It is a special token required to authenticate with Epic's servers.
+```bash
+cd FortniteFestivalWeb
+corepack yarn install --immutable
+corepack yarn test:unit
+corepack yarn build
+```
 
-## Why do we need to authenticate?
+The repository compose files are templates. Production compose ownership is
+`/home/sfenton/Docker/FestivalServiceTracker`.
 
-Ideally, we'd just need your account ID, and leaderboards would be public and we could just make a GET request. Unfortunately, not only is leaderboard access locked behind authentication, but your authenticated token must also have special permissions that allow us to access the leaderboard API.
+## Credentials
 
-## Does this mean the app could potentially do other things with my account?
-
-Yes. I highly encourage you to read the source code and build the app from scratch yourself to avoid any possibility of this happening. This code will always be open source and available, and while I will provide binaries for those who don't wish to build it themselves, I want to be clear that having your Epic account authenticated could *potentially* mean it could be used for purposes other than this. Always be wary of the executables you download.
-
-## Can I be banned for this?
-
-I won't say no, but I think the chances are not high. We spoof being the PC client and are only querying the leaderboards, though it's possible Harmonix and/or Epic may find it... *odd* that your account is querying every song for every season and instrument, in a way that is not supported in game.
-
-## Is there any other way to see my scores?
-
-FortniteTracker has I think the top 200 scores for each song and instrument, so if you're up there, you're good. If not, no, outside of in-game seeing the current season.
-
-## Can I see band scores?
-
-In theory this is possible, but I haven't figured it out yet. The good news is, the app still pulls your individual scores, even from band runs!
-
-## I'm having an issue. What can I do?
-
-Please file a bug report or feature request! I'll be watching!
+FSTService has no tracked credential defaults. Use an ignored `.env` file or
+secret store for the API key, Epic client credentials, PostgreSQL password,
+and any optional feature credentials. Never commit real credential values.
 
 ## Autonomous repository operations
 
@@ -333,27 +338,3 @@ The worker holds before another scrape while the published scrape's
 notification marker is incomplete and retries recovery once per minute. The
 publication transaction independently refuses to replace an incomplete marker,
 so a later scrape cannot silently discard pending notification work.
-
-# How to run the app
-
-Log in to Epic Games on your web browser of choice. Then, in the app, click "Generate Exchange Code" and that link will open in your browser. Copy the "code" value over to the app, and then click Run. You will see the console output with all the information that the app is querying. The app will run, and drop a file called "FortniteFestivalScores.xlsx" in the executing directory. These are all your scores- including scores on songs you don't own!
-
-In addition, there is a tab in the app itself that allows you to view and sort your scores!
-
-Note that exchange tokens from the Epic site expire after about 300 seconds, and once an exchange token is authenticated, you cannot use it again. If you need to run the tool multiple times, you'll need to generate a new exchange token each time.
-
-## Can I play Fortnite while the tool runs?
-
-No. This will cause a new client to authenticate, rendering your previous token useless, and will cause the application to stop working. This is applicable to all platforms- you cannot play Fortnite on *any* platform while this utility runs, or the utility will fail.
-
-## Can I grab only certain songs?
-
-Yes! Head over to the "Select Songs" tab, and select the songs you want to retrieve scores for. If no songs are selected, we will grab all scores for all songs by default.
-
-## Can I grab only certain instruments?
-
-Yes! Head over to the "Options" tab, and toggle on/off the instruments you want to retrieve/write out to the output workbook. Note that you need to have at least one instrument selected to run the tool.
-
-## Can I change the output sort of data?
-
-Yes! Head over to the "Options" tab, where you can change how your output workbook is sorted.
