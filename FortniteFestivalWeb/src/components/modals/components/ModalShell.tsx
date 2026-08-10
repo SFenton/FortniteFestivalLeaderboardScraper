@@ -92,8 +92,6 @@ export interface ModalShellProps {
   desktopPlacement?: 'center' | 'rightDrawer';
   /** Optional test id applied to the dialog panel. */
   panelTestId?: string;
-  /** Explicit focus target used when the modal opener may be replaced during lazy loading. */
-  returnFocus?: HTMLElement | null;
   /** Transition duration in ms. Default: 300. */
   transitionMs?: number;
   /** Called when the open animation completes. */
@@ -113,7 +111,6 @@ export default function ModalShell({
   desktopStyle,
   desktopPlacement = 'center',
   panelTestId,
-  returnFocus,
   transitionMs = DEFAULT_TRANSITION_MS,
   onOpenComplete,
   onCloseComplete,
@@ -180,9 +177,7 @@ export default function ModalShell({
     if (!panel) return;
 
     const token = modalTokenRef.current;
-    previousFocusRef.current = returnFocus?.isConnected
-      ? returnFocus
-      : document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     activeModals.push({ token, panel });
     acquireBackgroundLock();
     syncModalInertState();
@@ -231,7 +226,7 @@ export default function ModalShell({
       previousFocusRef.current?.focus();
       previousFocusRef.current = null;
     };
-  }, [returnFocus, visible]);
+  }, [visible]);
 
   if (!rendered) return null;
 

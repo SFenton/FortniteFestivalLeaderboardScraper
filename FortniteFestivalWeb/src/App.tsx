@@ -480,7 +480,6 @@ function AppShell() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const validationOpenedNotificationsRef = useRef(false);
-  const searchReturnFocusRef = useRef<HTMLElement | null>(null);
   const [searchConfig, setSearchConfig] = useState<SearchModalConfig | null>(null);
   const [bandFilterModalOpen, setBandFilterModalOpen] = useState(false);
   const [appliedBandFilter, setAppliedBandFilter] = useState<AppliedBandComboFilter | null>(() => readAppliedBandFilterForSelectedProfile(selectedProfile));
@@ -504,18 +503,12 @@ function AppShell() {
   const navigate = useNavigate();
   const navType = useNavigationType();
 
-  const openSearch = useCallback((config?: SearchModalConfig, returnFocus?: HTMLElement) => {
-    const activeElement = document.activeElement;
-    searchReturnFocusRef.current = returnFocus
-      ?? (activeElement instanceof HTMLElement && activeElement !== document.body ? activeElement : null);
+  const openSearch = useCallback((config?: SearchModalConfig) => {
     preloadSearchModal();
     setSearchConfig(config ?? null);
     setSearchOpen(true);
   }, []);
-  const openProfileSearch = useCallback(
-    (returnFocus?: HTMLButtonElement) => openSearch(PROFILE_SEARCH_CONFIG, returnFocus),
-    [openSearch],
-  );
+  const openProfileSearch = useCallback(() => openSearch(PROFILE_SEARCH_CONFIG), [openSearch]);
 
   const closeSearch = useCallback(() => {
     setSearchOpen(false);
@@ -694,19 +687,19 @@ function AppShell() {
   }, [clearPlayer]);
 
   /* v8 ignore start — deep AppInner: compact desktop profile icon click */
-  const handleProfileClick = useCallback((trigger?: HTMLButtonElement) => {
+  const handleProfileClick = useCallback(() => {
     const dest = getProfileClickDestination(player, selectedProfile);
     if (dest === 'sidebar') setSidebarOpen(true);
-    else if (dest === 'search') openProfileSearch(trigger);
+    else if (dest === 'search') openProfileSearch();
     else navigate(dest);
   }, [navigate, openProfileSearch, player, selectedProfile]);
 
-  const handleMobileHeaderProfileAction = useCallback((trigger: HTMLButtonElement) => {
+  const handleMobileHeaderProfileAction = useCallback(() => {
     if (!selectedProfile) {
-      openProfileSearch(trigger);
+      openProfileSearch();
       return;
     }
-    handleProfileClick(trigger);
+    handleProfileClick();
   }, [handleProfileClick, openProfileSearch, selectedProfile]);
   const profileSelectionIntent = getProfileClickDestination(player, selectedProfile) === 'search'
     ? preloadSearchModal
@@ -955,7 +948,7 @@ function AppShell() {
             profileLabel={mobileHeaderProfileLabel}
             onProfileAction={handleMobileHeaderProfileAction}
             onProfileIntent={profileSelectionIntent}
-            onOpenSearch={(trigger) => openSearch(undefined, trigger)}
+            onOpenSearch={() => openSearch()}
             onSearchIntent={preloadSearchModal}
             onOpenNotifications={canOpenNotifications ? handleOpenNotifications : undefined}
             onNotificationsIntent={canOpenNotifications ? preloadMobileNotificationsModal : undefined}
@@ -971,7 +964,7 @@ function AppShell() {
             onOpenSidebar={() => setSidebarOpen((o) => !o)}
             onProfileClick={handleProfileClick}
             onProfileIntent={profileSelectionIntent}
-            onOpenSearch={(trigger) => openSearch(undefined, trigger)}
+            onOpenSearch={() => openSearch()}
             onSearchIntent={preloadSearchModal}
             onOpenNotifications={canOpenNotifications ? handleOpenNotifications : undefined}
             onNotificationsIntent={canOpenNotifications ? preloadMobileNotificationsModal : undefined}
@@ -1309,14 +1302,12 @@ function AppShell() {
         title={t('search.title')}
         boundaryName="search-modal"
         onClose={closeSearch}
-        returnFocus={searchReturnFocusRef.current}
         load={loadSearchModal}
         isLoaded={isSearchModalLoaded}
       >
         <LazySearchModal
           visible={searchOpen}
           onClose={closeSearch}
-          returnFocus={searchReturnFocusRef.current}
           availableTargets={searchConfig?.availableTargets}
           placeholderKey={searchConfig?.placeholderKey}
         />

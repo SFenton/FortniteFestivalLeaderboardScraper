@@ -10,7 +10,6 @@ type LazyModalBoundaryProps = {
   title: string;
   boundaryName: string;
   onClose: () => void;
-  returnFocus?: HTMLElement | null;
   load?: () => Promise<void>;
   isLoaded?: () => boolean;
   children: ReactNode;
@@ -42,7 +41,6 @@ export default function LazyModalBoundary({
   title,
   boundaryName,
   onClose,
-  returnFocus,
   load,
   isLoaded,
   children,
@@ -81,7 +79,6 @@ export default function LazyModalBoundary({
         title={title}
         boundaryName={boundaryName}
         onClose={onClose}
-        returnFocus={returnFocus}
       />
     );
   }
@@ -93,7 +90,6 @@ export default function LazyModalBoundary({
         title={title}
         boundaryName={boundaryName}
         onClose={onClose}
-        returnFocus={returnFocus}
       />
     );
   }
@@ -106,7 +102,6 @@ export default function LazyModalBoundary({
           title={title}
           boundaryName={boundaryName}
           onClose={onClose}
-          returnFocus={returnFocus}
         />
       )}
     >
@@ -117,7 +112,6 @@ export default function LazyModalBoundary({
             title={title}
             boundaryName={boundaryName}
             onClose={onClose}
-            returnFocus={returnFocus}
           />
         )}
       >
@@ -132,7 +126,6 @@ function LazyModalLoading({
   title,
   boundaryName,
   onClose,
-  returnFocus,
 }: Omit<LazyModalBoundaryProps, 'children'>) {
   const { t } = useTranslation();
   return (
@@ -140,7 +133,6 @@ function LazyModalLoading({
       visible={visible}
       title={title}
       onClose={onClose}
-      returnFocus={returnFocus}
       panelTestId={`${boundaryName}-lazy-loading`}
     >
       <div role="status" aria-live="polite" style={styles.content}>
@@ -156,7 +148,6 @@ function LazyModalFailure({
   title,
   boundaryName,
   onClose,
-  returnFocus,
 }: Omit<LazyModalBoundaryProps, 'children'>) {
   const { t } = useTranslation();
   return (
@@ -164,7 +155,6 @@ function LazyModalFailure({
       visible={visible}
       title={title}
       onClose={onClose}
-      returnFocus={returnFocus}
       panelTestId={`${boundaryName}-lazy-error`}
     >
       <div role="alert" style={styles.content}>

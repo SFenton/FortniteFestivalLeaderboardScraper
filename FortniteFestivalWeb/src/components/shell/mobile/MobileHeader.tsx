@@ -28,7 +28,7 @@ export interface MobileHeaderProps {
   /** Callback to open the navigation sidebar (shown on root pages). */
   onOpenSidebar?: () => void;
   /** Callback to open the unified search modal. */
-  onOpenSearch?: (trigger: HTMLButtonElement) => void;
+  onOpenSearch?: () => void;
   /** Callback used to warm the unified search modal before activation. */
   onSearchIntent?: () => void;
   /** Callback to open the notifications modal. */
@@ -46,7 +46,7 @@ export interface MobileHeaderProps {
   /** Accessible label for the selected-profile action. */
   profileLabel?: string;
   /** Callback for profile-state action presses. */
-  onProfileAction?: (trigger: HTMLButtonElement) => void;
+  onProfileAction?: () => void;
   /** Callback used to warm profile selection before activation. */
   onProfileIntent?: () => void;
 }

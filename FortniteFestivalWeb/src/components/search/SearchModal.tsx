@@ -43,7 +43,6 @@ const EMPTY_METADATA_ORDER: string[] = [];
 interface SearchModalProps {
   visible: boolean;
   onClose: () => void;
-  returnFocus?: HTMLElement | null;
   availableTargets?: readonly SearchTarget[];
   placeholderKey?: string;
   onPlayerSelect?: (player: AccountSearchResult) => void;
@@ -72,7 +71,7 @@ function getSearchPlaceholderKey(targets: readonly SearchTarget[]): string {
   return SEARCH_PLACEHOLDER_KEYS[targets.join('|')] ?? 'search.placeholder';
 }
 
-export default function SearchModal({ visible, onClose, returnFocus, availableTargets, placeholderKey, onPlayerSelect }: SearchModalProps) {
+export default function SearchModal({ visible, onClose, availableTargets, placeholderKey, onPlayerSelect }: SearchModalProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { profile: selectedProfile } = useSelectedProfile();
@@ -290,7 +289,6 @@ export default function SearchModal({ visible, onClose, returnFocus, availableTa
       title={t('search.title')}
       onClose={onClose}
       desktopStyle={SEARCH_MODAL_DESKTOP}
-      returnFocus={returnFocus}
       transitionMs={MODAL_TRANSITION_MS}
       onOpenComplete={handleOpenComplete}
       onCloseComplete={handleCloseComplete}
