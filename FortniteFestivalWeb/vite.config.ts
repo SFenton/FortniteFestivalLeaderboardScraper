@@ -33,8 +33,6 @@ export default defineConfig(({ mode }) => {
       alias: {
         '@festival/theme': path.resolve(__dirname, '../packages/theme/src'),
         '@festival/ui-utils': path.resolve(__dirname, '../packages/ui-utils/src'),
-        'react-native': path.resolve(__dirname, 'src/stubs/react-native.ts'),
-        'react-native-app-auth': path.resolve(__dirname, 'src/stubs/react-native-app-auth.ts'),
       },
     },
     test: {
@@ -50,7 +48,6 @@ export default defineConfig(({ mode }) => {
           '__test__/**',
           'src/vite-env.d.ts',
           'src/main.tsx',
-          'src/stubs/**',
           'src/utils/platform.ts',
           'src/components/sort/reorderTypes.ts',
           'src/pages/player/helpers/playerPageTypes.ts',

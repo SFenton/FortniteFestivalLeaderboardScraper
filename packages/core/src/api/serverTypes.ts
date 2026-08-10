@@ -439,12 +439,6 @@ export type PlayerResponse = {
   notYetPublished?: boolean;
 };
 
-export type AccountCheckResponse = {
-  exists: boolean;
-  accountId: string | null;
-  displayName: string | null;
-};
-
 export type AccountSearchResult = {
   accountId: string;
   displayName: string;

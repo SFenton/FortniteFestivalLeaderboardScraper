@@ -396,9 +396,9 @@ Evidence:
 - `@festival/core` now publishes explicit `runtime`, `config`, `api`, `app`,
   `suggestions`, `types`, and `persistence` entries plus compatibility
   subpaths. Web TypeScript and Vite resolve the package through those exports
-  instead of source aliases. The backward-compatible root remains intact for
-  React Native and other consumers.
-- All Web and shared-native runtime sources now avoid the root barrel.
+  instead of source aliases. The compatibility root remains available while
+  retained Web code uses explicit feature entry points.
+- All retained Web runtime sources now avoid the root barrel.
   Type-only imports use the type surface where appropriate, API contracts use
   the API entry, and only the lazy Suggestions feature imports suggestion
   generation. Package-resolution, source import-graph, and production Rollup

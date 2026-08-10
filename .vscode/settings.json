@@ -2,12 +2,6 @@
     "chat.subagents.allowInvocationsFromSubagents": true,
     "files.watcherExclude": {
         "**/node_modules/**": true,
-        "**/FortniteFestivalRN/android/**": true,
-        "**/FortniteFestivalRN/ios/**": true,
-        "**/FortniteFestivalRN/windows/**": true,
-        "**/FortniteFestivalRN/coverage/**": true,
-        "**/.gradle/**": true,
-        "**/.cxx/**": true,
         "**/bin/**": true,
         "**/obj/**": true,
         "**/TestResults/**": true

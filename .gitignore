@@ -170,9 +170,6 @@ PublishScripts/
 **/[Pp]ackages/*
 # except build/, which is used as an MSBuild target.
 !**/[Pp]ackages/build/
-# React Native workspace packages must NOT be ignored
-!FortniteFestivalRN/packages/
-!FortniteFestivalRN/packages/**
 # Shared packages at repo root must NOT be ignored
 !/packages/
 !/packages/**

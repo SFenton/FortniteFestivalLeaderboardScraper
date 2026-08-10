@@ -21,7 +21,6 @@ describe('@festival/core package boundaries', () => {
       './api': { types: './src/api/index.ts', default: './src/api/index.ts' },
       './app': { types: './src/app/index.ts', default: './src/app/index.ts' },
       './config': { types: './src/config.ts', default: './src/config.ts' },
-      './persistence': { types: './src/persistence.ts', default: './src/persistence.ts' },
       './runtime': { types: './src/runtime.ts', default: './src/runtime.ts' },
       './suggestions': { types: './src/suggestions/index.ts', default: './src/suggestions/index.ts' },
       './types': { types: './src/types.ts', default: './src/types.ts' },
@@ -40,7 +39,6 @@ describe('@festival/core package boundaries', () => {
       ['@festival/core/api', 'src/api/index.ts'],
       ['@festival/core/app', 'src/app/index.ts'],
       ['@festival/core/config', 'src/config.ts'],
-      ['@festival/core/persistence', 'src/persistence.ts'],
       ['@festival/core/runtime', 'src/runtime.ts'],
       ['@festival/core/suggestions', 'src/suggestions/index.ts'],
       ['@festival/core/types', 'src/types.ts'],
@@ -58,10 +56,7 @@ describe('@festival/core package boundaries', () => {
   });
 
   it('keeps bare root imports out of web and shared-package runtime sources', () => {
-    const sourceRoots = [
-      path.join(webRoot, 'src'),
-      path.join(repoRoot, 'packages/native/src'),
-    ];
+    const sourceRoots = [path.join(webRoot, 'src')];
     const bareImports = sourceRoots.flatMap(sourceRoot =>
       sourceFiles(sourceRoot).flatMap(fileName =>
         moduleSpecifiers(fileName)

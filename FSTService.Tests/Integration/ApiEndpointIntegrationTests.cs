@@ -2501,41 +2501,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.True(json.TryGetProperty("totalEntries", out _));
     }
 
-    // ─── Register ───────────────────────────────────────────────
-
-    [Fact]
-    public async Task ApiRegister_NoAuth_ReturnsUnauthorized()
-    {
-        var content = JsonContent.Create(new { deviceId = "dev1", accountId = "acct1" });
-        var response = await _client.PostAsync("/api/register", content);
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task ApiRegister_WithAuth_RegistersAndReturnsOk()
-    {
-        // Seed display name so register endpoint can resolve username → accountId
-        using (var scope = _factory.Services.CreateScope())
-        {
-            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
-            metaDb.InsertAccountNames(new[] { ("testAcct1", (string?)"TestUser1") });
-        }
-
-        var content = JsonContent.Create(new { deviceId = "testDev1", username = "TestUser1" });
-        var response = await _authedClient.PostAsync("/api/register", content);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.True(json.GetProperty("registered").GetBoolean());
-    }
-
-    [Fact]
-    public async Task ApiRegister_MissingFields_ReturnsBadRequest()
-    {
-        var content = JsonContent.Create(new { deviceId = "", accountId = "" });
-        var response = await _authedClient.PostAsync("/api/register", content);
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-    }
-
     // ─── Player history ─────────────────────────────────────────
 
     [Fact]
@@ -2548,16 +2513,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     [Fact]
     public async Task ApiPlayerHistory_RegisteredUserWithoutPublishedPayload_ReturnsSyncing()
     {
-        // Seed display name so register endpoint can resolve username → accountId
-        using (var scope = _factory.Services.CreateScope())
-        {
-            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
-            metaDb.InsertAccountNames(new[] { ("histAcct", (string?)"HistUser") });
-        }
-
-        // Register a user first
-        var regContent = JsonContent.Create(new { deviceId = "histDev", username = "HistUser" });
-        await _authedClient.PostAsync("/api/register", regContent);
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        metaDb.RegisterUser("histDev", "histAcct");
 
         var response = await _authedClient.GetAsync("/api/player/histAcct/history");
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
@@ -2803,81 +2760,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal("pending", json.GetProperty("status").GetString());
     }
 
-    // ─── Account check ──────────────────────────────────────────
-
-    [Fact]
-    public async Task AccountCheck_ExistingUsername_ReturnsFound()
-    {
-        using (var scope = _factory.Services.CreateScope())
-        {
-            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
-            metaDb.InsertAccountNames(new[] { ("checkAcct", (string?)"CheckUser") });
-        }
-
-        var response = await _client.GetAsync("/api/account/check?username=CheckUser");
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.True(json.GetProperty("exists").GetBoolean());
-        Assert.Equal("checkAcct", json.GetProperty("accountId").GetString());
-    }
-
-    [Fact]
-    public async Task AccountCheck_UnknownUsername_ReturnsNotFound()
-    {
-        var response = await _client.GetAsync("/api/account/check?username=NobodyHere");
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.False(json.GetProperty("exists").GetBoolean());
-    }
-
-    [Fact]
-    public async Task AccountCheck_EmptyUsername_ReturnsBadRequest()
-    {
-        var response = await _client.GetAsync("/api/account/check?username=");
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-    }
-
-    // ─── DELETE /api/register ───────────────────────────────────
-
-    [Fact]
-    public async Task DeleteRegister_Unregistered_ReturnsOk_WithFalse()
-    {
-        var response = await _authedClient.DeleteAsync(
-            "/api/register?deviceId=delDev&accountId=delAcct");
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.False(json.GetProperty("unregistered").GetBoolean());
-    }
-
-    [Fact]
-    public async Task DeleteRegister_MissingParams_ReturnsBadRequest()
-    {
-        var response = await _authedClient.DeleteAsync(
-            "/api/register?deviceId=&accountId=");
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task DeleteRegister_NoAuth_ReturnsUnauthorized()
-    {
-        var response = await _client.DeleteAsync(
-            "/api/register?deviceId=d&accountId=a");
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-    }
-
-    // ─── Register with unknown username ─────────────────────────
-
-    [Fact]
-    public async Task Register_UnknownUsername_ReturnsNotRegistered()
-    {
-        var content = JsonContent.Create(new { deviceId = "testDev99", username = "NobodyExists" });
-        var response = await _authedClient.PostAsync("/api/register", content);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.False(json.GetProperty("registered").GetBoolean());
-        Assert.Equal("no_account_found", json.GetProperty("error").GetString());
-    }
-
     // ─── FirstSeen endpoints ────────────────────────────────────
 
     [Fact]
@@ -2898,29 +2780,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
 
-    // ─── DELETE /api/register with registered user ──────────
-
-    [Fact]
-    public async Task DeleteRegister_Registered_Unregisters()
-    {
-        using (var scope = _factory.Services.CreateScope())
-        {
-            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
-            metaDb.InsertAccountNames(new[] { ("delRegisteredAcct", (string?)"DelRegisteredUser") });
-        }
-
-        // Register a user first
-        var regContent = JsonContent.Create(new { deviceId = "delRegDev", username = "DelRegisteredUser" });
-        await _authedClient.PostAsync("/api/register", regContent);
-
-        // Now delete (unregister)
-        var response = await _authedClient.DeleteAsync(
-            "/api/register?deviceId=delRegDev&accountId=delRegisteredAcct");
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.True(json.GetProperty("unregistered").GetBoolean());
-    }
-
     // ─── POST /api/backfill/{accountId} ─────────────────────
 
     [Fact]
@@ -2933,14 +2792,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     [Fact]
     public async Task Backfill_RegisteredAccount_RunsSuccessfully()
     {
-        // Register a user first
-        using (var scope = _factory.Services.CreateScope())
-        {
-            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
-            metaDb.InsertAccountNames(new[] { ("bfRunAcct", (string?)"BfRunUser") });
-        }
-        var regContent = JsonContent.Create(new { deviceId = "bfRunDev", username = "BfRunUser" });
-        await _authedClient.PostAsync("/api/register", regContent);
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        metaDb.RegisterUser("bfRunDev", "bfRunAcct");
 
         // TokenManager now returns a valid token → backfill executes
         var response = await _authedClient.PostAsync("/api/backfill/bfRunAcct", null);
@@ -6205,54 +6058,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
-    public async Task Admin_Register_RequiresAuth()
-    {
-        var body = new { deviceId = "d1", username = "test" };
-        var response = await _client.PostAsJsonAsync("/api/register", body);
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task Admin_Register_BadRequest_EmptyFields()
-    {
-        var body = new { deviceId = "", username = "" };
-        var response = await _authedClient.PostAsJsonAsync("/api/register", body);
-        // Returns 400 (BadRequest) for empty fields
-        Assert.True(response.StatusCode == HttpStatusCode.BadRequest || response.StatusCode == HttpStatusCode.OK);
-    }
-
-    [Fact]
-    public async Task Admin_Register_UnknownUsername_ReturnsNoAccountFound()
-    {
-        var body = new { deviceId = "test-device-999", username = "definitely_not_a_real_user" };
-        var response = await _authedClient.PostAsJsonAsync("/api/register", body);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("no_account_found", json.GetProperty("error").GetString());
-    }
-
-    [Fact]
-    public async Task Admin_Unregister_RequiresAuth()
-    {
-        var body = new { deviceId = "d1", username = "test" };
-        var response = await _client.SendAsync(new HttpRequestMessage(HttpMethod.Delete, "/api/register")
-        {
-            Content = JsonContent.Create(body),
-        });
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task Admin_Unregister_WithAuth_NoOp()
-    {
-        var response = await _authedClient.SendAsync(new HttpRequestMessage(HttpMethod.Delete,
-            "/api/register?deviceId=nonexistent&accountId=nonexistent"));
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.False(json.GetProperty("unregistered").GetBoolean());
-    }
-
-    [Fact]
     public async Task Admin_Backfill_RequiresAuth()
     {
         var response = await _client.PostAsync("/api/backfill/test_account", null);
@@ -6319,15 +6124,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     // ═══════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task Account_Check_ReturnsNotFound_ForUnknown()
-    {
-        var response = await _client.GetAsync("/api/account/check?username=definitely_not_a_real_user_xyz");
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.False(json.GetProperty("exists").GetBoolean());
-    }
-
-    [Fact]
     public async Task Account_Search_ReturnsEmptyForGarbage()
     {
         var response = await _client.GetAsync("/api/account/search?q=zzzzzzzzzznotauser");
@@ -6343,18 +6139,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var response = await _client.GetAsync("/api/account/search");
         // Should return 400 or empty — depends on implementation
         Assert.True(response.StatusCode == HttpStatusCode.BadRequest || response.StatusCode == HttpStatusCode.OK);
-    }
-
-    [Fact]
-    public async Task Account_Check_WithSeededName_ReturnsFound()
-    {
-        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
-        metaDb.InsertAccountNames([("check_test_acct", "CheckTestUser")]);
-
-        var response = await _client.GetAsync("/api/account/check?username=CheckTestUser");
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.True(json.GetProperty("exists").GetBoolean());
     }
 
     [Fact]
@@ -6590,20 +6374,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     // ═══════════════════════════════════════════════════════════
     // Additional Admin Endpoints — body coverage
     // ═══════════════════════════════════════════════════════════
-
-    [Fact]
-    public async Task Admin_Register_WithKnownUser_Succeeds()
-    {
-        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
-        metaDb.InsertAccountNames([("register_test_acct", "RegisterableUser")]);
-
-        var body = new { deviceId = "reg-device-001", username = "RegisterableUser" };
-        var response = await _authedClient.PostAsJsonAsync("/api/register", body);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.True(json.GetProperty("registered").GetBoolean());
-        Assert.Equal("register_test_acct", json.GetProperty("accountId").GetString());
-    }
 
     [Fact]
     public async Task Admin_BackfillStatus_WithRegisteredUser()
@@ -8043,16 +7813,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                     ["ConnectionStrings:PostgreSQL"] = _serviceConnectionString,
                     ["Api:ApiKey"] = TestApiKey,
                     ["Api:AllowedOrigins:0"] = "*",
-                    ["Jwt:SecretKey"] = "TestSecretKey_SuperLongEnough_For_HMACSHA256_12345678",
-                    ["Jwt:Issuer"] = "FSTService.Tests",
-                    ["Jwt:Audience"] = "FSTService.Tests",
-                    ["Jwt:AccessTokenExpirationMinutes"] = "60",
-                    ["Jwt:RefreshTokenExpirationDays"] = "7",
-                    ["EpicOAuth:ClientId"] = "test-client-id",
-                    ["EpicOAuth:ClientSecret"] = "test-client-secret",
-                    ["EpicOAuth:RedirectUri"] = "https://example.com/api/auth/epiccallback",
-                    ["EpicOAuth:AppDeepLink"] = "festscoretracker://auth/callback",
-                    ["EpicOAuth:TokenEncryptionKey"] = Convert.ToBase64String(new byte[32]),
                 });
             });
 

@@ -300,11 +300,8 @@ public sealed class ApiPublicationClassificationTests
 
     private static readonly RouteExpectation[] AdminPrivateRoutes =
     [
-        new(HttpMethods.Get, "/api/account/check"),
         new(HttpMethods.Get, "/api/admin/epic-token"),
         new(HttpMethods.Post, "/api/admin/shop/refresh"),
-        new(HttpMethods.Post, "/api/register"),
-        new(HttpMethods.Delete, "/api/register"),
         new(HttpMethods.Post, "/api/firstseen/calculate"),
         new(HttpMethods.Post, "/api/admin/regenerate-paths"),
         new(HttpMethods.Get, "/api/backfill/{accountId}/status"),

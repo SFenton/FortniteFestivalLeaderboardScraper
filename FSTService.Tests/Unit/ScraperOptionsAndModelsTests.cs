@@ -355,18 +355,6 @@ public class ScraperOptionsAndModelsTests
     }
 
     [Fact]
-    public void RegisterRequest_Properties()
-    {
-        var req = new FSTService.Api.RegisterRequest
-        {
-            DeviceId = "dev1",
-            Username = "TestUser",
-        };
-        Assert.Equal("dev1", req.DeviceId);
-        Assert.Equal("TestUser", req.Username);
-    }
-
-    [Fact]
     public void LeaderboardEntryDto_DisplayName_CanBeSet()
     {
         var dto = new FSTService.Persistence.LeaderboardEntryDto

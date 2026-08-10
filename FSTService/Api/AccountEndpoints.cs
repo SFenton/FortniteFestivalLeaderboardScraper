@@ -40,23 +40,6 @@ public static partial class ApiEndpoints
         .WithTags("Account")
         .RequireRateLimiting("public");
 
-        // Check if an account exists by username (used by mobile app before login)
-        app.MapGet("/api/account/check", (string username, IMetaDatabase metaDb) =>
-        {
-            if (string.IsNullOrWhiteSpace(username))
-                return Results.BadRequest(new { error = "username query parameter is required." });
-
-            var accountId = metaDb.GetAccountIdForUsername(username.Trim());
-            return Results.Ok(new
-            {
-                exists = accountId is not null,
-                accountId,
-                displayName = accountId is not null ? metaDb.GetDisplayName(accountId) : null,
-            });
-        })
-        .WithTags("Account")
-        .RequireRateLimiting("public");
-
         // Search account display names (autocomplete)
         app.MapGet("/api/account/search", (HttpContext httpContext, string q, int? limit, IMetaDatabase metaDb) =>
         {

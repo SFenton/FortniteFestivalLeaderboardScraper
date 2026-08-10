@@ -86,67 +86,6 @@ public static partial class ApiEndpoints
         .RequireAuthorization()
         .RequireRateLimiting("protected");
 
-        app.MapPost("/api/register", (
-            RegisterRequest request,
-            IMetaDatabase metaDb) =>
-        {
-            if (string.IsNullOrWhiteSpace(request.DeviceId) ||
-                string.IsNullOrWhiteSpace(request.Username))
-            {
-                return Results.BadRequest(new { error = "deviceId and username are required." });
-            }
-
-            // Look up the Epic account ID by display name (case-insensitive)
-            var accountId = metaDb.GetAccountIdForUsername(request.Username.Trim());
-            if (accountId is null)
-            {
-                return Results.Ok(new
-                {
-                    registered = false,
-                    error = "no_account_found",
-                    description = "No Epic Games account was found for that name. Please check spelling and try again.",
-                });
-            }
-
-            var displayName = metaDb.GetDisplayName(accountId);
-            var isNew = metaDb.RegisterUser(request.DeviceId, accountId);
-
-            return Results.Ok(new
-            {
-                registered = isNew,
-                deviceId = request.DeviceId,
-                accountId,
-                displayName,
-            });
-        })
-        .WithTags("Registration")
-        .RequireAuthorization()
-        .RequireRateLimiting("protected");
-
-        app.MapDelete("/api/register", (
-            string deviceId,
-            string accountId,
-            IMetaDatabase metaDb) =>
-        {
-            if (string.IsNullOrWhiteSpace(deviceId) ||
-                string.IsNullOrWhiteSpace(accountId))
-            {
-                return Results.BadRequest(new { error = "deviceId and accountId query parameters are required." });
-            }
-
-            var removed = metaDb.UnregisterUser(deviceId, accountId);
-
-            return Results.Ok(new
-            {
-                unregistered = removed,
-                deviceId,
-                accountId,
-            });
-        })
-        .WithTags("Registration")
-        .RequireAuthorization()
-        .RequireRateLimiting("protected");
-
         // ─── FirstSeenSeason endpoints ────────────────────
 
         app.MapGet("/api/firstseen", (

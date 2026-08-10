@@ -6,17 +6,9 @@ import { fileURLToPath } from 'node:url';
 
 const NPM_PACKAGE_MANIFESTS = [
   { path: 'FortniteFestivalWeb/package.json', workspaceRoot: 'FortniteFestivalWeb' },
-  { path: 'FortniteFestivalRN/package.json', workspaceRoot: 'FortniteFestivalRN' },
   { path: 'packages/core/package.json', workspaceRoot: '.' },
   { path: 'packages/theme/package.json', workspaceRoot: '.' },
   { path: 'packages/ui-utils/package.json', workspaceRoot: '.' },
-  { path: 'packages/auth/package.json', workspaceRoot: '.' },
-  { path: 'packages/native/package.json', workspaceRoot: '.' },
-  { path: 'FortniteFestivalRN/packages/local-app/package.json', workspaceRoot: 'FortniteFestivalRN' },
-  { path: 'FortniteFestivalRN/packages/server-app/package.json', workspaceRoot: 'FortniteFestivalRN' },
-  { path: 'FortniteFestivalRN/packages/app-screens/package.json', workspaceRoot: 'FortniteFestivalRN' },
-  { path: 'FortniteFestivalRN/packages/contexts/package.json', workspaceRoot: 'FortniteFestivalRN' },
-  { path: 'FortniteFestivalRN/packages/ui/package.json', workspaceRoot: 'FortniteFestivalRN' },
   { path: 'tools/mcp/package.json', workspaceRoot: 'tools/mcp' },
 ];
 
@@ -518,10 +510,14 @@ export function buildLicenseManifest(options = {}) {
   }
 
   for (const reference of nugetReferences) {
-    const packageMetadata = readNugetPackageMetadata(reference.name, reference.version);
-    const licenseType = normalizeLicenseType(overrides.nuget?.[reference.name])
-      ?? normalizeLicenseType(packageMetadata?.licenseType);
-    const licenseText = packageMetadata?.licenseText ?? (licenseType ? LICENSE_TEXTS[licenseType] : null);
+    const overrideLicenseType = normalizeLicenseType(overrides.nuget?.[reference.name]);
+    const packageMetadata = overrideLicenseType
+      ? null
+      : readNugetPackageMetadata(reference.name, reference.version);
+    const licenseType = overrideLicenseType ?? normalizeLicenseType(packageMetadata?.licenseType);
+    const licenseText = overrideLicenseType
+      ? LICENSE_TEXTS[overrideLicenseType]
+      : packageMetadata?.licenseText ?? (licenseType ? LICENSE_TEXTS[licenseType] : null);
     if (!licenseType || !licenseText) {
       errors.push(`Missing supported license metadata for NuGet package ${reference.name}@${reference.version}. Add it to ${OVERRIDES_PATH}.`);
       continue;
@@ -534,8 +530,8 @@ export function buildLicenseManifest(options = {}) {
       version: reference.version,
       licenseType,
       licenseText,
-      packageUrl: packageMetadata?.packageUrl ?? getNugetPackageUrl(reference.name, reference.version),
-      repositoryUrl: packageMetadata?.repositoryUrl ?? null,
+      packageUrl: getNugetPackageUrl(reference.name, reference.version),
+      repositoryUrl: null,
       consumers: [reference.sourcePath],
     });
   }

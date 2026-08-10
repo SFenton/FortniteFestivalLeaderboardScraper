@@ -1,7 +1,5 @@
 export type * from './instruments';
 export type * from './models';
-export type * from './settings';
-export type * from './persistence';
 export type * from './songListConfig';
 export type * from './api/serverTypes';
 export type * from './suggestions/types';

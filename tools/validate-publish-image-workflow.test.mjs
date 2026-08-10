@@ -99,6 +99,16 @@ test('moving a ui-utils file outside its root still classifies the source packag
   assert.equal(result.web, true);
 });
 
+test('component classification contains only retained projects', () => {
+  assert.deepEqual(classifyChangedPaths([]), {
+    service: false,
+    web: false,
+    coreTs: false,
+    themeTs: false,
+    uiUtils: false,
+  });
+});
+
 test('publish workflow contract changes affect both images', () => {
   for (const path of [
     '.github/workflows/publish-image.yml',
