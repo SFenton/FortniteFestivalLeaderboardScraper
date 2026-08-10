@@ -7,7 +7,7 @@ const targetTag = `type=raw,value=sha-${targetSha}`;
 const targetRevision = `org.opencontainers.image.revision=${targetSha}`;
 const downstreamIf = '${{ always() && !failure() && !cancelled() }}';
 const imageIf = "always() && !failure() && !cancelled() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')";
-const webBuildIf = "steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.mobile == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')";
+const webBuildIf = "steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')";
 
 export function validatePublishImageWorkflow(workflow, webDockerfile) {
   const errors = [];
@@ -49,7 +49,6 @@ export function validatePublishImageWorkflow(workflow, webDockerfile) {
     const requiredConditions = new Map([
       ['Bump FSTService version', "steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.service == 'true'"],
       ['Bump FortniteFestivalWeb version', "steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.web == 'true'"],
-      ['Bump FortniteFestivalRN version', "steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.mobile == 'true'"],
       ['Bump @festival/core version', "steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.core_ts == 'true'"],
       ['Bump @festival/theme version', "steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.theme_ts == 'true'"],
       ['Bump @festival/ui-utils version', "steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.ui_utils == 'true'"],
@@ -131,7 +130,6 @@ export function classifyChangedPaths(paths) {
   const result = {
     service: false,
     web: false,
-    mobile: false,
     coreTs: false,
     themeTs: false,
     uiUtils: false,
@@ -139,7 +137,6 @@ export function classifyChangedPaths(paths) {
   for (const path of paths) {
     if (/^(FSTService\/|FortniteFestival\.Core\/)/.test(path)) result.service = true;
     if (path.startsWith('FortniteFestivalWeb/')) result.web = true;
-    if (path.startsWith('FortniteFestivalRN/')) result.mobile = true;
     if (path.startsWith('packages/core/')) result.coreTs = true;
     if (path.startsWith('packages/theme/')) result.themeTs = true;
     if (path.startsWith('packages/ui-utils/')) {

@@ -9,7 +9,6 @@ on:
       - "FSTService.Tests/**"
       - "FSTService/Dockerfile"
       - "FortniteFestivalWeb/**"
-      - "FortniteFestivalRN/**"
       - "packages/**"
       - "tools/chopt-cli-linux/**"
       - "tools/validate-publish-image-workflow.mjs"
@@ -21,7 +20,6 @@ on:
       - "FortniteFestival.Core/**"
       - "FSTService.Tests/**"
       - "FortniteFestivalWeb/**"
-      - "FortniteFestivalRN/**"
       - "packages/**"
       - "tools/chopt-cli-linux/**"
       - "tools/validate-publish-image-workflow.mjs"
@@ -97,7 +95,6 @@ jobs:
           echo "bump_enabled=false" >> "$GITHUB_OUTPUT"
           echo "service=false" >> "$GITHUB_OUTPUT"
           echo "web=false" >> "$GITHUB_OUTPUT"
-          echo "mobile=false" >> "$GITHUB_OUTPUT"
           echo "core_ts=false" >> "$GITHUB_OUTPUT"
           echo "theme_ts=false" >> "$GITHUB_OUTPUT"
           echo "ui_utils=false" >> "$GITHUB_OUTPUT"
@@ -111,9 +108,6 @@ jobs:
           fi
           if echo "$CHANGED" | grep -qE '^FortniteFestivalWeb/'; then
             echo "web=true" >> "$GITHUB_OUTPUT"
-          fi
-          if echo "$CHANGED" | grep -qE '^FortniteFestivalRN/'; then
-            echo "mobile=true" >> "$GITHUB_OUTPUT"
           fi
           if echo "$CHANGED" | grep -qE '^packages/core/'; then
             echo "core_ts=true" >> "$GITHUB_OUTPUT"
@@ -131,13 +125,13 @@ jobs:
           fi
 
       - name: Setup Node.js
-        if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.mobile == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
+        if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
       - name: Enable Corepack
-        if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.mobile == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
+        if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
         run: corepack enable
 
       - name: Bump FSTService version
@@ -168,21 +162,6 @@ jobs:
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
           echo "FortniteFestivalWeb: $CURRENT -> $NEW_VERSION"
-
-      - name: Bump FortniteFestivalRN version
-        if: steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.mobile == 'true'
-        run: |
-          cd FortniteFestivalRN
-          CURRENT=$(node -p "require('./package.json').version")
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-          NEW_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            pkg.version = '$NEW_VERSION';
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-          "
-          echo "FortniteFestivalRN: $CURRENT -> $NEW_VERSION"
 
       - name: Bump @festival/core version
         if: steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.core_ts == 'true'
@@ -229,13 +208,6 @@ jobs:
           "
           echo "@festival/ui-utils: $CURRENT -> $NEW_VERSION"
 
-      - name: Sync APP_VERSION constant in @festival/core
-        if: steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.mobile == 'true'
-        run: |
-          NEW_VERSION=$(node -p "require('./FortniteFestivalRN/package.json').version")
-          sed -i "s|export const APP_VERSION = '.*';|export const APP_VERSION = '$NEW_VERSION';|" packages/core/src/index.ts
-          echo "Updated APP_VERSION in @festival/core to $NEW_VERSION"
-
       - name: Sync CORE_VERSION constant in @festival/core
         if: steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.core_ts == 'true'
         run: |
@@ -251,22 +223,22 @@ jobs:
           echo "Updated THEME_VERSION in @festival/core to $NEW_VERSION"
 
       - name: Install web dependencies
-        if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.mobile == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
+        if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
         working-directory: FortniteFestivalWeb
         run: yarn install --immutable
 
       - name: Regenerate dependency license manifest
-        if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.mobile == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
+        if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
         working-directory: FortniteFestivalWeb
         run: yarn licenses:generate
 
       - name: Regenerate embedded web bundle
-        if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.mobile == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
+        if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
         working-directory: FortniteFestivalWeb
         run: yarn build
 
       - name: Remove transient web build state
-        if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.mobile == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
+        if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
         run: |
           git restore --source=HEAD -- FortniteFestivalWeb/.yarn/install-state.gz
           rm -f FortniteFestivalWeb/tsconfig.tsbuildinfo
@@ -287,7 +259,7 @@ jobs:
           echo "commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Verify version-bumped embedded bundle
-        if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.mobile == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
+        if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
         working-directory: FortniteFestivalWeb
         run: yarn embedded:check
 
