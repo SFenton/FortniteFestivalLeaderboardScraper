@@ -10,6 +10,7 @@ type LazyModalBoundaryProps = {
   title: string;
   boundaryName: string;
   onClose: () => void;
+  onCloseComplete?: () => void;
   load?: () => Promise<void>;
   isLoaded?: () => boolean;
   children: ReactNode;
@@ -41,6 +42,7 @@ export default function LazyModalBoundary({
   title,
   boundaryName,
   onClose,
+  onCloseComplete,
   load,
   isLoaded,
   children,
@@ -79,6 +81,7 @@ export default function LazyModalBoundary({
         title={title}
         boundaryName={boundaryName}
         onClose={onClose}
+        onCloseComplete={onCloseComplete}
       />
     );
   }
@@ -90,6 +93,7 @@ export default function LazyModalBoundary({
         title={title}
         boundaryName={boundaryName}
         onClose={onClose}
+        onCloseComplete={onCloseComplete}
       />
     );
   }
@@ -102,6 +106,7 @@ export default function LazyModalBoundary({
           title={title}
           boundaryName={boundaryName}
           onClose={onClose}
+          onCloseComplete={onCloseComplete}
         />
       )}
     >
@@ -112,6 +117,7 @@ export default function LazyModalBoundary({
             title={title}
             boundaryName={boundaryName}
             onClose={onClose}
+            onCloseComplete={onCloseComplete}
           />
         )}
       >
@@ -126,6 +132,7 @@ function LazyModalLoading({
   title,
   boundaryName,
   onClose,
+  onCloseComplete,
 }: Omit<LazyModalBoundaryProps, 'children'>) {
   const { t } = useTranslation();
   return (
@@ -133,6 +140,7 @@ function LazyModalLoading({
       visible={visible}
       title={title}
       onClose={onClose}
+      onCloseComplete={onCloseComplete}
       panelTestId={`${boundaryName}-lazy-loading`}
     >
       <div role="status" aria-live="polite" style={styles.content}>
@@ -148,6 +156,7 @@ function LazyModalFailure({
   title,
   boundaryName,
   onClose,
+  onCloseComplete,
 }: Omit<LazyModalBoundaryProps, 'children'>) {
   const { t } = useTranslation();
   return (
@@ -155,6 +164,7 @@ function LazyModalFailure({
       visible={visible}
       title={title}
       onClose={onClose}
+      onCloseComplete={onCloseComplete}
       panelTestId={`${boundaryName}-lazy-error`}
     >
       <div role="alert" style={styles.content}>

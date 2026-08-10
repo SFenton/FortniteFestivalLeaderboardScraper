@@ -80,6 +80,7 @@ test('desktop profile selection and notifications load only on interaction', asy
   await expect(profileDialog.getByRole('button', { name: 'Bands' })).toBeVisible();
   await expect(profileDialog.getByRole('button', { name: 'Songs' })).toHaveCount(0);
   await profileDialog.getByRole('button', { name: 'Close' }).click();
+  await expect(profileDialog).toHaveCount(0, { timeout: 10_000 });
   await expect(profileButton).toBeFocused();
   expect(moduleRequests.some(url => url.includes('/components/search/SearchModal.tsx'))).toBe(true);
 

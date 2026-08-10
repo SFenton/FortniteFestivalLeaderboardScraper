@@ -43,6 +43,7 @@ const EMPTY_METADATA_ORDER: string[] = [];
 interface SearchModalProps {
   visible: boolean;
   onClose: () => void;
+  onCloseComplete?: () => void;
   availableTargets?: readonly SearchTarget[];
   placeholderKey?: string;
   onPlayerSelect?: (player: AccountSearchResult) => void;
@@ -71,7 +72,7 @@ function getSearchPlaceholderKey(targets: readonly SearchTarget[]): string {
   return SEARCH_PLACEHOLDER_KEYS[targets.join('|')] ?? 'search.placeholder';
 }
 
-export default function SearchModal({ visible, onClose, availableTargets, placeholderKey, onPlayerSelect }: SearchModalProps) {
+export default function SearchModal({ visible, onClose, onCloseComplete, availableTargets, placeholderKey, onPlayerSelect }: SearchModalProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { profile: selectedProfile } = useSelectedProfile();
@@ -174,7 +175,8 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
     setActiveTarget(null);
     setSearchFocused(false);
     resetKeyboardState();
-  }, [resetKeyboardState]);
+    onCloseComplete?.();
+  }, [onCloseComplete, resetKeyboardState]);
 
   const updateKeyboardInset = useCallback(() => {
     if (!visible || !isMobileChrome || !searchFocused) {

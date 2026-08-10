@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useState } from 'react';
 import {
   LEGACY_TRACKED_PLAYER_STORAGE_KEY,
   LEGACY_TRACKED_PLAYER_SYNC_EVENT,
@@ -39,7 +39,7 @@ export function useSelectedProfile() {
     setProfileState(null);
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const sync = () => setProfileState(readSelectedProfile());
     const syncStorage = (event: StorageEvent) => {
       if (event.key === SELECTED_PROFILE_STORAGE_KEY || event.key === LEGACY_TRACKED_PLAYER_STORAGE_KEY) sync();

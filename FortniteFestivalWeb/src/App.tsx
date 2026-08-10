@@ -480,6 +480,7 @@ function AppShell() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const validationOpenedNotificationsRef = useRef(false);
+  const searchReturnFocusRef = useRef<HTMLElement | null>(null);
   const [searchConfig, setSearchConfig] = useState<SearchModalConfig | null>(null);
   const [bandFilterModalOpen, setBandFilterModalOpen] = useState(false);
   const [appliedBandFilter, setAppliedBandFilter] = useState<AppliedBandComboFilter | null>(() => readAppliedBandFilterForSelectedProfile(selectedProfile));
@@ -504,6 +505,10 @@ function AppShell() {
   const navType = useNavigationType();
 
   const openSearch = useCallback((config?: SearchModalConfig) => {
+    searchReturnFocusRef.current = document.activeElement instanceof HTMLElement
+      && document.activeElement !== document.body
+      ? document.activeElement
+      : null;
     preloadSearchModal();
     setSearchConfig(config ?? null);
     setSearchOpen(true);
@@ -513,6 +518,12 @@ function AppShell() {
   const closeSearch = useCallback(() => {
     setSearchOpen(false);
     setSearchConfig(null);
+  }, []);
+
+  const restoreSearchFocus = useCallback(() => {
+    const returnFocus = searchReturnFocusRef.current;
+    searchReturnFocusRef.current = null;
+    if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
   }, []);
 
   const shouldAutoOpenNotifications = hasWindowValidationToken(NOTIFICATIONS_VALIDATION_TOKEN) || useEmptyNotificationMock;
@@ -1302,12 +1313,14 @@ function AppShell() {
         title={t('search.title')}
         boundaryName="search-modal"
         onClose={closeSearch}
+        onCloseComplete={restoreSearchFocus}
         load={loadSearchModal}
         isLoaded={isSearchModalLoaded}
       >
         <LazySearchModal
           visible={searchOpen}
           onClose={closeSearch}
+          onCloseComplete={restoreSearchFocus}
           availableTargets={searchConfig?.availableTargets}
           placeholderKey={searchConfig?.placeholderKey}
         />
