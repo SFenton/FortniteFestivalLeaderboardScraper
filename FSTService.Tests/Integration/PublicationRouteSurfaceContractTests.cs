@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace FSTService.Tests.Integration;
 
+[Collection(ApiIntegrationCollection.Name)]
 public sealed class PublicationRouteSurfaceContractTests
     : IClassFixture<ApiEndpointIntegrationTests.FstWebApplicationFactory>
 {

@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace FSTService.Tests.Integration;
 
+[Collection(ApiIntegrationCollection.Name)]
 public sealed class ApiPublicationClassificationTests
     : IClassFixture<ApiEndpointIntegrationTests.FstWebApplicationFactory>
 {

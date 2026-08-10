@@ -1134,11 +1134,10 @@ describe('SettingsPage', () => {
 
     await waitFor(() => {
       expect(within(screen.getByTestId('settings-service-info-row-selected-player-id')).getByText('Selected player ID')).toBeDefined();
+      expect(within(screen.getByTestId('settings-service-info-row-selected-player-id')).getByText('tracked-player-1')).toBeDefined();
+      expect(within(screen.getByTestId('settings-service-info-row-selected-player-rivals-status')).getByText('Selected player Rivals status')).toBeDefined();
+      expect(within(screen.getByTestId('settings-service-info-row-selected-player-rivals-status')).getByText('Complete')).toBeDefined();
     });
-
-    expect(within(screen.getByTestId('settings-service-info-row-selected-player-id')).getByText('tracked-player-1')).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-selected-player-rivals-status')).getByText('Selected player Rivals status')).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-selected-player-rivals-status')).getByText('Complete')).toBeDefined();
   });
 
   it('displays service version after fetch', async () => {

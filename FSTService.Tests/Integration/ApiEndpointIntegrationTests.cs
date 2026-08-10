@@ -34,6 +34,7 @@ namespace FSTService.Tests.Integration;
 /// Replaces external dependencies (auth, scraping) with test doubles and exercises
 /// the full ASP.NET Core pipeline: middleware, auth, rate limiting, JSON serialization.
 /// </summary>
+[Collection(ApiIntegrationCollection.Name)]
 public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationTests.FstWebApplicationFactory>, IDisposable
 {
     private readonly FstWebApplicationFactory _factory;
