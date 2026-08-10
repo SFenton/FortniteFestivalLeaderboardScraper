@@ -19,9 +19,9 @@ export type HeaderNotificationVisualState = 'icon' | 'iconOut' | 'spinnerIn' | '
 export interface HeaderActionsProps {
   profileType?: HeaderActionProfileType;
   profileLabel?: string;
-  onProfileAction?: () => void;
+  onProfileAction?: (trigger: HTMLButtonElement) => void;
   onProfileIntent?: () => void;
-  onOpenSearch?: () => void;
+  onOpenSearch?: (trigger: HTMLButtonElement) => void;
   onSearchIntent?: () => void;
   onOpenNotifications?: () => void;
   onNotificationsIntent?: () => void;
@@ -52,6 +52,8 @@ export default function HeaderActions({
   const { t } = useTranslation();
   const s = useStyles();
   const notificationLoading = notificationVisualState !== 'icon';
+  const profileButtonRef = useRef<HTMLButtonElement>(null);
+  const searchButtonRef = useRef<HTMLButtonElement>(null);
   const notificationVisible = Boolean(onOpenNotifications) || notificationLoading;
   const notificationInteractive = Boolean(onOpenNotifications) && !notificationLoading;
   const notificationVisualRef = useRef({ hasNotifications, notificationCount });
@@ -71,8 +73,20 @@ export default function HeaderActions({
   const spinnerOpacity = notificationVisualState === 'spinnerIn' || notificationVisualState === 'spinner' ? 1 : 0;
   const showNotificationBadge = (notificationVisualState === 'icon' || notificationVisualState === 'spinnerOut') && notificationVisual.notificationCount > 0;
   const notificationGlyphStyle = IS_IOS ? { ...s.notificationGlyph, ...s.notificationGlyphIos } : s.notificationGlyph;
-  const profilePressHandlers = usePressAction<HTMLButtonElement>({ onPress: () => onProfileAction?.(), disabled: !onProfileAction });
-  const searchPressHandlers = usePressAction<HTMLButtonElement>({ onPress: () => onOpenSearch?.(), disabled: !onOpenSearch });
+  const profilePressHandlers = usePressAction<HTMLButtonElement>({
+    onPress: () => {
+      const trigger = profileButtonRef.current;
+      if (trigger) onProfileAction?.(trigger);
+    },
+    disabled: !onProfileAction,
+  });
+  const searchPressHandlers = usePressAction<HTMLButtonElement>({
+    onPress: () => {
+      const trigger = searchButtonRef.current;
+      if (trigger) onOpenSearch?.(trigger);
+    },
+    disabled: !onOpenSearch,
+  });
   const notificationPressHandlers = usePressAction<HTMLButtonElement>({ onPress: () => onOpenNotifications?.(), disabled: !notificationInteractive });
 
   return (
@@ -80,6 +94,7 @@ export default function HeaderActions({
       {leadingSlot}
       {onProfileAction && (
         <button
+          ref={profileButtonRef}
           type="button"
           style={s.profileButton}
           {...profilePressHandlers}
@@ -93,6 +108,7 @@ export default function HeaderActions({
         </button>
       )}
       <button
+        ref={searchButtonRef}
         type="button"
         style={s.iconButton}
         {...searchPressHandlers}

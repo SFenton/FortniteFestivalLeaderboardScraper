@@ -9,9 +9,9 @@ export interface DesktopNavProps {
   profileType?: HeaderProfileType;
   profileLabel?: string;
   onOpenSidebar: () => void;
-  onProfileClick: () => void;
+  onProfileClick: (trigger: HTMLButtonElement) => void;
   onProfileIntent?: () => void;
-  onOpenSearch?: () => void;
+  onOpenSearch?: (trigger: HTMLButtonElement) => void;
   onSearchIntent?: () => void;
   onOpenNotifications?: () => void;
   onNotificationsIntent?: () => void;

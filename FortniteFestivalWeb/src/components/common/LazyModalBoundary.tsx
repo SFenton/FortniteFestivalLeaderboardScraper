@@ -10,7 +10,7 @@ type LazyModalBoundaryProps = {
   title: string;
   boundaryName: string;
   onClose: () => void;
-  onCloseComplete?: () => void;
+  returnFocus?: HTMLElement | null;
   load?: () => Promise<void>;
   isLoaded?: () => boolean;
   children: ReactNode;
@@ -42,7 +42,7 @@ export default function LazyModalBoundary({
   title,
   boundaryName,
   onClose,
-  onCloseComplete,
+  returnFocus,
   load,
   isLoaded,
   children,
@@ -81,7 +81,7 @@ export default function LazyModalBoundary({
         title={title}
         boundaryName={boundaryName}
         onClose={onClose}
-        onCloseComplete={onCloseComplete}
+        returnFocus={returnFocus}
       />
     );
   }
@@ -93,7 +93,7 @@ export default function LazyModalBoundary({
         title={title}
         boundaryName={boundaryName}
         onClose={onClose}
-        onCloseComplete={onCloseComplete}
+        returnFocus={returnFocus}
       />
     );
   }
@@ -106,7 +106,7 @@ export default function LazyModalBoundary({
           title={title}
           boundaryName={boundaryName}
           onClose={onClose}
-          onCloseComplete={onCloseComplete}
+          returnFocus={returnFocus}
         />
       )}
     >
@@ -117,7 +117,7 @@ export default function LazyModalBoundary({
             title={title}
             boundaryName={boundaryName}
             onClose={onClose}
-            onCloseComplete={onCloseComplete}
+            returnFocus={returnFocus}
           />
         )}
       >
@@ -132,7 +132,7 @@ function LazyModalLoading({
   title,
   boundaryName,
   onClose,
-  onCloseComplete,
+  returnFocus,
 }: Omit<LazyModalBoundaryProps, 'children'>) {
   const { t } = useTranslation();
   return (
@@ -140,7 +140,7 @@ function LazyModalLoading({
       visible={visible}
       title={title}
       onClose={onClose}
-      onCloseComplete={onCloseComplete}
+      returnFocus={returnFocus}
       panelTestId={`${boundaryName}-lazy-loading`}
     >
       <div role="status" aria-live="polite" style={styles.content}>
@@ -156,7 +156,7 @@ function LazyModalFailure({
   title,
   boundaryName,
   onClose,
-  onCloseComplete,
+  returnFocus,
 }: Omit<LazyModalBoundaryProps, 'children'>) {
   const { t } = useTranslation();
   return (
@@ -164,7 +164,7 @@ function LazyModalFailure({
       visible={visible}
       title={title}
       onClose={onClose}
-      onCloseComplete={onCloseComplete}
+      returnFocus={returnFocus}
       panelTestId={`${boundaryName}-lazy-error`}
     >
       <div role="alert" style={styles.content}>

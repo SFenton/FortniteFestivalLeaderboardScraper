@@ -43,7 +43,7 @@ const EMPTY_METADATA_ORDER: string[] = [];
 interface SearchModalProps {
   visible: boolean;
   onClose: () => void;
-  onCloseComplete?: () => void;
+  returnFocus?: HTMLElement | null;
   availableTargets?: readonly SearchTarget[];
   placeholderKey?: string;
   onPlayerSelect?: (player: AccountSearchResult) => void;
@@ -72,7 +72,7 @@ function getSearchPlaceholderKey(targets: readonly SearchTarget[]): string {
   return SEARCH_PLACEHOLDER_KEYS[targets.join('|')] ?? 'search.placeholder';
 }
 
-export default function SearchModal({ visible, onClose, onCloseComplete, availableTargets, placeholderKey, onPlayerSelect }: SearchModalProps) {
+export default function SearchModal({ visible, onClose, returnFocus, availableTargets, placeholderKey, onPlayerSelect }: SearchModalProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { profile: selectedProfile } = useSelectedProfile();
@@ -175,8 +175,7 @@ export default function SearchModal({ visible, onClose, onCloseComplete, availab
     setActiveTarget(null);
     setSearchFocused(false);
     resetKeyboardState();
-    onCloseComplete?.();
-  }, [onCloseComplete, resetKeyboardState]);
+  }, [resetKeyboardState]);
 
   const updateKeyboardInset = useCallback(() => {
     if (!visible || !isMobileChrome || !searchFocused) {
@@ -291,6 +290,7 @@ export default function SearchModal({ visible, onClose, onCloseComplete, availab
       title={t('search.title')}
       onClose={onClose}
       desktopStyle={SEARCH_MODAL_DESKTOP}
+      returnFocus={returnFocus}
       transitionMs={MODAL_TRANSITION_MS}
       onOpenComplete={handleOpenComplete}
       onCloseComplete={handleCloseComplete}
