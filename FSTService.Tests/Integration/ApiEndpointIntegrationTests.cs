@@ -8043,16 +8043,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                     ["ConnectionStrings:PostgreSQL"] = _serviceConnectionString,
                     ["Api:ApiKey"] = TestApiKey,
                     ["Api:AllowedOrigins:0"] = "*",
-                    ["Jwt:SecretKey"] = "TestSecretKey_SuperLongEnough_For_HMACSHA256_12345678",
-                    ["Jwt:Issuer"] = "FSTService.Tests",
-                    ["Jwt:Audience"] = "FSTService.Tests",
-                    ["Jwt:AccessTokenExpirationMinutes"] = "60",
-                    ["Jwt:RefreshTokenExpirationDays"] = "7",
-                    ["EpicOAuth:ClientId"] = "test-client-id",
-                    ["EpicOAuth:ClientSecret"] = "test-client-secret",
-                    ["EpicOAuth:RedirectUri"] = "https://example.com/api/auth/epiccallback",
-                    ["EpicOAuth:AppDeepLink"] = "festscoretracker://auth/callback",
-                    ["EpicOAuth:TokenEncryptionKey"] = Convert.ToBase64String(new byte[32]),
                 });
             });
 

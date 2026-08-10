@@ -79,7 +79,7 @@ describe('LicensesPage', () => {
   it('renders the generated package manifest', () => {
     renderLicensesPage();
 
-    expect(screen.getByRole('button', { name: /@babel\/core 7\.29\.0 MIT/ })).toBeDefined();
+    expect(screen.getByRole('button', { name: /react-dom 19\.2\.4 MIT/ })).toBeDefined();
     expect(screen.getByRole('button', { name: /Npgsql 9\.0\.3 PostgreSQL/ })).toBeDefined();
   });
 

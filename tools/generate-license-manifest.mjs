@@ -6,17 +6,9 @@ import { fileURLToPath } from 'node:url';
 
 const NPM_PACKAGE_MANIFESTS = [
   { path: 'FortniteFestivalWeb/package.json', workspaceRoot: 'FortniteFestivalWeb' },
-  { path: 'FortniteFestivalRN/package.json', workspaceRoot: 'FortniteFestivalRN' },
   { path: 'packages/core/package.json', workspaceRoot: '.' },
   { path: 'packages/theme/package.json', workspaceRoot: '.' },
   { path: 'packages/ui-utils/package.json', workspaceRoot: '.' },
-  { path: 'packages/auth/package.json', workspaceRoot: '.' },
-  { path: 'packages/native/package.json', workspaceRoot: '.' },
-  { path: 'FortniteFestivalRN/packages/local-app/package.json', workspaceRoot: 'FortniteFestivalRN' },
-  { path: 'FortniteFestivalRN/packages/server-app/package.json', workspaceRoot: 'FortniteFestivalRN' },
-  { path: 'FortniteFestivalRN/packages/app-screens/package.json', workspaceRoot: 'FortniteFestivalRN' },
-  { path: 'FortniteFestivalRN/packages/contexts/package.json', workspaceRoot: 'FortniteFestivalRN' },
-  { path: 'FortniteFestivalRN/packages/ui/package.json', workspaceRoot: 'FortniteFestivalRN' },
   { path: 'tools/mcp/package.json', workspaceRoot: 'tools/mcp' },
 ];
 
