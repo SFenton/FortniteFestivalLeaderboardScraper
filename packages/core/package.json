@@ -22,10 +22,6 @@
       "types": "./src/config.ts",
       "default": "./src/config.ts"
     },
-    "./persistence": {
-      "types": "./src/persistence.ts",
-      "default": "./src/persistence.ts"
-    },
     "./runtime": {
       "types": "./src/runtime.ts",
       "default": "./src/runtime.ts"

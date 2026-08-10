@@ -1,11 +1,16 @@
 import {
   formatPercentileBucket,
+  formatLeaderboardPercentile,
   formatPercentileTopExact,
   formatScoreCompact,
   instrumentKeyToColorHex,
   instrumentKeyToLabel,
   accuracyColor,
+  accuracyBgColor,
   calculateScoreWidth,
+  formatRatingValue,
+  maxScoreColor,
+  rankColor,
 } from '../formatters';
 
 describe('app/format/formatters', () => {
@@ -80,6 +85,18 @@ describe('app/format/formatters', () => {
     });
   });
 
+  describe('formatLeaderboardPercentile', () => {
+    test('returns undefined without a population', () => {
+      expect(formatLeaderboardPercentile(1, 0)).toBeUndefined();
+    });
+
+    test('uses granular and clamped percentile buckets', () => {
+      expect(formatLeaderboardPercentile(1, 10_000)).toBe('Top 0.01%');
+      expect(formatLeaderboardPercentile(5, 100)).toBe('Top 5%');
+      expect(formatLeaderboardPercentile(500, 100)).toBe('Top 100%');
+    });
+  });
+
   describe('instrument presentation', () => {
     test('maps keys to labels', () => {
       expect(instrumentKeyToLabel('guitar')).toBe('Lead');
@@ -111,6 +128,33 @@ describe('app/format/formatters', () => {
 
     test('clamps above 100', () => {
       expect(accuracyColor(150)).toBe('rgb(46,204,113)');
+    });
+  });
+
+  describe('related color helpers', () => {
+    test('formats accuracy backgrounds and rank colors', () => {
+      expect(accuracyBgColor(0)).toBe('rgba(220,40,40,0.25)');
+      expect(accuracyBgColor(100)).toBe('rgba(46,204,113,0.25)');
+      expect(rankColor(1, 0)).toBe('rgb(127,140,141)');
+      expect(rankColor(0, 100)).toBe('rgb(127,140,141)');
+      expect(rankColor(1, 100)).toBe('rgb(48,202,112)');
+    });
+
+    test('formats max-score colors', () => {
+      expect(maxScoreColor(0)).toBe('rgb(220,40,40)');
+      expect(maxScoreColor(100)).toBe('rgb(34,139,34)');
+      expect(maxScoreColor(200)).toBe('rgb(34,139,34)');
+    });
+  });
+
+  describe('formatRatingValue', () => {
+    test('formats invalid, small, fractional, and whole ratings', () => {
+      expect(formatRatingValue(Number.NaN)).toBe('N/A');
+      expect(formatRatingValue(0.01)).toBe('0.01');
+      expect(formatRatingValue(0)).toBe('0.0');
+      expect(formatRatingValue(-0.0012)).toBe('-0.0012');
+      expect(formatRatingValue(0.52)).toBe('0.52');
+      expect(formatRatingValue(42.34)).toBe('42.3');
     });
   });
 

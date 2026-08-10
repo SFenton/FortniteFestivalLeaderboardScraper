@@ -1,5 +1,3 @@
-import '../../packages/core/src/__tests__/i18nSetup';
-
 Object.defineProperty(window, 'matchMedia', {
   configurable: true,
   value: () => ({

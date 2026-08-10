@@ -18,7 +18,6 @@
 
 # ── Projects not needed for Docker builds ─────────────────────
 FortniteFestival.LeaderboardScraper.MAUI/
-FortniteFestivalRN/
 FSTService.Tests/
 docs/
 

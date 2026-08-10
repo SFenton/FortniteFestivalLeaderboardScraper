@@ -208,20 +208,6 @@ jobs:
           "
           echo "@festival/ui-utils: $CURRENT -> $NEW_VERSION"
 
-      - name: Sync CORE_VERSION constant in @festival/core
-        if: steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.core_ts == 'true'
-        run: |
-          NEW_VERSION=$(node -p "require('./packages/core/package.json').version")
-          sed -i "s|export const CORE_VERSION = '.*';|export const CORE_VERSION = '$NEW_VERSION';|" packages/core/src/index.ts
-          echo "Updated CORE_VERSION in @festival/core to $NEW_VERSION"
-
-      - name: Sync THEME_VERSION constant in @festival/core
-        if: steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.theme_ts == 'true'
-        run: |
-          NEW_VERSION=$(node -p "require('./packages/theme/package.json').version")
-          sed -i "s|export const THEME_VERSION = '.*';|export const THEME_VERSION = '$NEW_VERSION';|" packages/core/src/index.ts
-          echo "Updated THEME_VERSION in @festival/core to $NEW_VERSION"
-
       - name: Install web dependencies
         if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
         working-directory: FortniteFestivalWeb

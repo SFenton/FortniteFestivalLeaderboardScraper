@@ -16,36 +16,12 @@ export default defineConfig({
         replacement: path.resolve(repoRoot, 'packages/core/src'),
       },
       {
-        find: '@festival/auth',
-        replacement: path.resolve(repoRoot, 'packages/auth/src/tokenParsing.ts'),
-      },
-      {
         find: '@festival/ui-utils',
         replacement: path.resolve(repoRoot, 'packages/ui-utils/src'),
       },
       {
         find: '@vitest/coverage-v8',
         replacement: require.resolve('@vitest/coverage-v8'),
-      },
-      {
-        find: path.resolve(repoRoot, 'packages/core/src/epic'),
-        replacement: path.resolve(repoRoot, 'packages/native/src/epic'),
-      },
-      {
-        find: path.resolve(repoRoot, 'packages/core/src/services'),
-        replacement: path.resolve(repoRoot, 'packages/native/src/services'),
-      },
-      {
-        find: path.resolve(repoRoot, 'packages/core/src/persistence/file'),
-        replacement: path.resolve(repoRoot, 'packages/native/src/persistence/file'),
-      },
-      {
-        find: path.resolve(repoRoot, 'packages/core/src/io'),
-        replacement: path.resolve(repoRoot, 'packages/native/src/io'),
-      },
-      {
-        find: path.resolve(repoRoot, 'packages/core/src/auth/tokenParsing'),
-        replacement: path.resolve(repoRoot, 'packages/auth/src/tokenParsing'),
       },
     ],
   },
