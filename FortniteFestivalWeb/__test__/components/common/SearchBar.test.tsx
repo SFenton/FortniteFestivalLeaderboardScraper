@@ -14,6 +14,14 @@ describe('SearchBar', () => {
     expect(container.querySelector('input')?.getAttribute('placeholder')).toBe('Search...');
   });
 
+  it('keeps the input font size at or above the iPhone focus-zoom threshold', () => {
+    const { container } = render(
+      React.createElement(SearchBar, { value: '', onChange: vi.fn() }),
+    );
+    const input = container.querySelector('input') as HTMLInputElement;
+    expect(Number.parseFloat(input.style.fontSize)).toBeGreaterThanOrEqual(16);
+  });
+
   it('hides icon when hideIcon is true', () => {
     const onChange = vi.fn();
     const { container } = render(

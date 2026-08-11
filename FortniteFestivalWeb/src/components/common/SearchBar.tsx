@@ -132,7 +132,8 @@ function useStyles() {
       border: CssValue.none,
       outline: CssValue.none,
       color: Colors.textPrimary,
-      fontSize: Font.md,
+      // iPhone WebKit auto-zooms focused text controls below 16px.
+      fontSize: Font.lg,
       minWidth: Gap.none,
     },
   }), []);

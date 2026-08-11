@@ -143,6 +143,7 @@ export default function ModalShell({
 
   useLayoutEffect(() => {
     if (rendered && visible) {
+      previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       panelRef.current?.getBoundingClientRect();
       const id = requestAnimationFrame(() => setAnimIn(true));
       return () => cancelAnimationFrame(id);
@@ -177,14 +178,14 @@ export default function ModalShell({
     if (!panel) return;
 
     const token = modalTokenRef.current;
-    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     activeModals.push({ token, panel });
     acquireBackgroundLock();
     syncModalInertState();
 
     const focusFrame = window.requestAnimationFrame(() => {
+      if (panel.contains(document.activeElement)) return;
       const [firstFocusable] = getFocusableElements(panel);
-      (firstFocusable ?? panel).focus();
+      (firstFocusable ?? panel).focus({ preventScroll: true });
     });
     const handleKey = (event: KeyboardEvent) => {
       if (activeModals[activeModals.length - 1]?.token !== token) return;
@@ -223,8 +224,11 @@ export default function ModalShell({
       panel.removeAttribute('aria-hidden');
       syncModalInertState();
       releaseBackgroundLock();
-      previousFocusRef.current?.focus();
+      const previousFocus = previousFocusRef.current;
       previousFocusRef.current = null;
+      if (previousFocus?.isConnected && !panel.contains(previousFocus)) {
+        previousFocus.focus({ preventScroll: true });
+      }
     };
   }, [visible]);
 

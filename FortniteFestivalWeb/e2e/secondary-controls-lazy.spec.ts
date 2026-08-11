@@ -149,6 +149,27 @@ test('mobile search keeps keyboard focus and restores the launch control', async
   await expect(input).not.toBeFocused();
   await dialog.getByRole('button', { name: 'Close' }).click();
   await expect(dialog).toBeHidden();
+  await expect(searchButton).toBeFocused();
+});
+
+test('mobile Rivals search uses a zoom-safe input and restores Find Rival focus', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile', 'mobile Rivals focus behavior is covered once');
+  await seedState(page, PLAYER);
+  await page.goto('/#/rivals', { waitUntil: 'load' });
+  await dismissOverlays(page);
+
+  const findRivalButton = page.getByRole('button', { name: 'Find Rival' });
+  await findRivalButton.click();
+
+  const dialog = page.getByRole('dialog', { name: 'Search' });
+  const input = dialog.getByRole('textbox', { name: 'Search players…' });
+  await expect(dialog).toBeVisible();
+  await expect(input).toBeFocused();
+  expect(await input.evaluate(element => Number.parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(16);
+
+  await dialog.getByRole('button', { name: 'Close' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(findRivalButton).toBeFocused();
 });
 
 test('lazy chunk failure stays in an accessible fail-closed modal', async ({ page }, testInfo) => {
@@ -271,6 +292,10 @@ async function installApiMocks(page: Page) {
     }
     if (path === `/api/player/${PLAYER.accountId}/bands`) {
       return json(route, { accountId: PLAYER.accountId, group: 'all', totalCount: 0, entries: [] });
+    }
+    if (path.startsWith(`/api/player/${PLAYER.accountId}/rivals/`)) {
+      const combo = decodeURIComponent(path.slice(`/api/player/${PLAYER.accountId}/rivals/`.length));
+      return json(route, { combo, above: [], below: [] });
     }
     if (path === `/api/bands/${BAND.bandId}`) {
       return json(route, {

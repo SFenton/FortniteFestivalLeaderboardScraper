@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import ModalShell from '../../../../src/components/modals/components/ModalShell';
 
 // Mock useIsMobile
@@ -62,6 +62,24 @@ function ModalAccessibilityHarness() {
       <ModalShell visible={visible} title="Accessible modal" onClose={() => setVisible(false)}>
         <button type="button">First action</button>
         <button type="button">Last action</button>
+      </ModalShell>
+    </>
+  );
+}
+
+function ModalAutoFocusHarness() {
+  const [visible, setVisible] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useLayoutEffect(() => {
+    if (visible) inputRef.current?.focus({ preventScroll: true });
+  }, [visible]);
+
+  return (
+    <>
+      <button type="button" onClick={() => setVisible(true)}>Launch autofocus modal</button>
+      <ModalShell visible={visible} title="Autofocus modal" onClose={() => setVisible(false)}>
+        <input ref={inputRef} aria-label="Search input" />
       </ModalShell>
     </>
   );
@@ -182,6 +200,24 @@ describe('ModalShell', () => {
     expect(container.inert).toBe(false);
     expect(container.getAttribute('aria-hidden')).toBeNull();
     expect(document.body.style.overflow).toBe('');
+    expect(launcher).toHaveFocus();
+  });
+
+  it('restores launcher focus when a parent layout effect focuses modal content', () => {
+    render(<ModalAutoFocusHarness />);
+    const launcher = screen.getByRole('button', { name: 'Launch autofocus modal' });
+    launcher.focus();
+    fireEvent.click(launcher);
+
+    const input = screen.getByRole('textbox', { name: 'Search input' });
+    expect(input).toHaveFocus();
+
+    const inputFocusSpy = vi.spyOn(input, 'focus');
+    const launcherFocusSpy = vi.spyOn(launcher, 'focus');
+    fireEvent.click(screen.getByRole('button', { name: /close/i }));
+
+    expect(inputFocusSpy).not.toHaveBeenCalled();
+    expect(launcherFocusSpy).toHaveBeenCalledWith({ preventScroll: true });
     expect(launcher).toHaveFocus();
   });
 
