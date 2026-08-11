@@ -99,7 +99,17 @@ declare global {
 }
 
 const MAX_RECORDS = 240;
-const EVENT_TYPES = ['pointerdown', 'pointerup', 'click', 'touchstart', 'touchend'];
+const EVENT_TYPES = [
+  'pointerdown',
+  'pointerup',
+  'mousedown',
+  'mouseup',
+  'click',
+  'touchstart',
+  'touchend',
+  'focusin',
+  'focusout',
+];
 export const TAP_DIAGNOSTICS_STORAGE_KEY = 'fst.tapDiagnostics';
 export const TAP_TELEMETRY_STORAGE_KEY = 'fst.tapTelemetry';
 export const TAP_DIAGNOSTICS_SETTINGS_EVENT = 'fst:tap-diagnostics-settings-changed';

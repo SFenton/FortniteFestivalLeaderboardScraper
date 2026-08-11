@@ -238,6 +238,8 @@ beforeEach(() => {
 afterEach(() => {
   vi.runOnlyPendingTimers();
   vi.useRealTimers();
+  delete window.__fstTapDiagnostics;
+  delete window.__fstInteractionTelemetry;
   restoreProperty(window, 'visualViewport', originalVisualViewportDescriptor);
   restoreProperty(window, 'innerHeight', originalInnerHeightDescriptor);
   restoreProperty(document.documentElement, 'clientHeight', originalClientHeightDescriptor);
@@ -601,6 +603,56 @@ describe('SearchModal', () => {
     fireEvent.click(input);
 
     expect(blurSpy).not.toHaveBeenCalled();
+  });
+
+  it('records dismissal reactivation decisions in tap diagnostics', async () => {
+    const markAction = vi.fn();
+    window.__fstTapDiagnostics = {
+      enabled: true,
+      reset: vi.fn(),
+      dump: vi.fn(() => ({ state: {}, records: [] })),
+      getRecords: vi.fn(() => []),
+      getState: vi.fn(() => ({})),
+      markAction,
+    };
+    const visualViewport = installVisualViewport();
+    setViewportQueries({ mobile: true });
+    renderModal({ availableTargets: ['players'] });
+    const input = screen.getByPlaceholderText('Search players…') as HTMLInputElement;
+    input.focus();
+    setVisualViewport(visualViewport, 520);
+    await advanceAndFlush(20);
+    setVisualViewport(visualViewport, 620);
+    await advanceAndFlush(20);
+
+    fireEvent.pointerDown(input, { pointerType: 'touch', isPrimary: true, button: 0 });
+    fireEvent.pointerUp(input, { pointerType: 'touch', isPrimary: true, button: 0 });
+    fireEvent.click(input);
+
+    expect(markAction).toHaveBeenCalledWith(
+      'search:pointerdown',
+      'note',
+      expect.objectContaining({
+        keyboardPhase: 'closing',
+        decision: 'blur-and-arm',
+        decisionReason: 'phase-eligible',
+      }),
+    );
+    expect(markAction).toHaveBeenCalledWith(
+      'search:click-decision',
+      'note',
+      expect.objectContaining({
+        keyboardPhase: 'closing',
+        shouldReactivate: true,
+      }),
+    );
+    expect(markAction).toHaveBeenCalledWith(
+      'search:reactivation',
+      'success',
+      expect.objectContaining({
+        reactivationStage: 'complete',
+      }),
+    );
   });
 
   it('does not reactivate focused mobile search while the keyboard is open', async () => {
