@@ -48,6 +48,13 @@ overrides intentionally diverge between the public service and mutation worker.
 The option classes are authoritative when a property exists but is omitted from
 `appsettings.json`.
 
+`ClientTelemetry` defaults to disabled outside development. Set
+`CLIENT_TELEMETRY_ENABLED=true` to enable the bounded
+`/api/debug/client-interactions` ingestion endpoint temporarily. Installed PWA
+settings expose explicit diagnostics and telemetry opt-ins; disable ingestion
+again after the capture window. Search telemetry excludes the entered query and
+uploads only sanitized primitive decision and viewport fields.
+
 ## Role differences
 
 `deploy/config/fstservice-role.env` enables published-source reads while

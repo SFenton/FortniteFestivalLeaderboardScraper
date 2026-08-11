@@ -123,6 +123,15 @@ test.describe('Mobile tap diagnostics', () => {
     await searchDialog.getByRole('button', { name: 'Close' }).click();
     await expectHitTargetAvailable(page, testInfo, 'closed search modal leaves bottom nav tappable immediately', '[data-testid="bottom-nav-settings"]');
   });
+
+  test('installed PWA exposes diagnostics and telemetry controls', async ({ page, fre }, testInfo) => {
+    await page.goto('/?forcepwa#/settings', { waitUntil: 'load' });
+    await dismissFreIfVisible(page, fre, testInfo, 'dismiss settings FRE for PWA diagnostics');
+
+    await expect(page.getByText('Diagnostics', { exact: true })).toBeVisible();
+    await expect(page.getByText('Tap Diagnostics', { exact: true })).toBeVisible();
+    await expect(page.getByText('Upload Tap Telemetry', { exact: true })).toBeVisible();
+  });
 });
 
 async function expectHitTargetAvailable(page: Page, testInfo: TestInfo, label: string, targetSelector: string) {

@@ -162,6 +162,7 @@ public sealed class ClientInteractionTelemetryRecord
     public string? EventType { get; set; }
     public string? Label { get; set; }
     public string? Phase { get; set; }
+    public Dictionary<string, JsonElement>? Details { get; set; }
     public double Time { get; set; }
     public double? ClientX { get; set; }
     public double? ClientY { get; set; }

@@ -105,6 +105,11 @@ describe('tapDiagnostics', () => {
       },
     });
 
+    diagnostics!.api.markAction('search:click-decision', 'note', {
+      keyboardPhase: 'closing',
+      keyboardLoss: 224,
+      searchQuery: 'must-not-be-sent',
+    });
     button.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true, clientX: 12, clientY: 34 }));
     vi.advanceTimersByTime(10);
     await Promise.resolve();
@@ -115,14 +120,20 @@ describe('tapDiagnostics', () => {
     const payload = JSON.parse(String((init as RequestInit).body));
     expect(payload.sessionId).toBe('test-session');
     expect(payload.route).toBe('/songs');
-    expect(payload.events).toHaveLength(1);
-    expect(payload.events[0].target.testId).toBe('tap-target');
-    expect(payload.events[0].target.text).toBeUndefined();
-    expect(payload.events[0].target.ariaLabel).toBeUndefined();
-    expect(payload.events[0].state.search).toBeUndefined();
-    expect(payload.events[0].state.hasPlayer).toBe(true);
-    expect(payload.events[0].state.selectedProfile).toEqual({ type: 'player' });
-    expect(payload.events[0].state.fabReady).toEqual({ songs: true, label: 'Sort' });
+    expect(payload.events).toHaveLength(2);
+    const action = payload.events.find((event: { kind: string }) => event.kind === 'action');
+    const click = payload.events.find((event: { kind: string }) => event.kind === 'event');
+    expect(action.details).toEqual({
+      keyboardPhase: 'closing',
+      keyboardLoss: 224,
+    });
+    expect(click.target.testId).toBe('tap-target');
+    expect(click.target.text).toBeUndefined();
+    expect(click.target.ariaLabel).toBeUndefined();
+    expect(click.state.search).toBeUndefined();
+    expect(click.state.hasPlayer).toBe(true);
+    expect(click.state.selectedProfile).toEqual({ type: 'player' });
+    expect(click.state.fabReady).toEqual({ songs: true, label: 'Sort' });
 
     diagnostics!.dispose();
   });

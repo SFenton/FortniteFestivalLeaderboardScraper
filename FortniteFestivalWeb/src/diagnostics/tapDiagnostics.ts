@@ -1,3 +1,5 @@
+import { IS_PWA } from '@festival/ui-utils';
+
 export type TapDiagnosticsState = Record<string, unknown>;
 
 export type TapDiagnosticsElement = {
@@ -47,6 +49,7 @@ type TapTelemetryRecord = {
   eventType?: string;
   label?: string;
   phase?: TapDiagnosticsActionRecord['phase'];
+  details?: Record<string, unknown>;
   time: number;
   clientX?: number | null;
   clientY?: number | null;
@@ -133,7 +136,7 @@ export function isTapDiagnosticsEnabled(windowRef: Window = window): boolean {
 }
 
 export function isTapDiagnosticsUiAvailable(): boolean {
-  return import.meta.env.DEV || import.meta.env.VITE_FST_INTERACTION_TELEMETRY === 'true';
+  return import.meta.env.DEV || IS_PWA || import.meta.env.VITE_FST_INTERACTION_TELEMETRY === 'true';
 }
 
 export function isTapTelemetryEnabled(windowRef: Window = window): boolean {
@@ -404,6 +407,9 @@ function sanitizeTapTelemetryRecord(record: TapDiagnosticsRecord): TapTelemetryR
       kind: 'action',
       label: sanitizeString(record.label, 80),
       phase: record.phase,
+      details: record.label.startsWith('search:') && record.details
+        ? sanitizeTapTelemetryDetails(record.details)
+        : undefined,
       time: Math.round(record.time),
       state: sanitizeTapTelemetryState(record.state),
     };
@@ -470,6 +476,16 @@ function sanitizeTapTelemetryState(state: TapDiagnosticsState): Record<string, u
 function sanitizePrimitiveObject(value: Record<string, unknown>): Record<string, unknown> {
   const sanitized: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(value)) {
+    if (typeof item === 'boolean' || typeof item === 'number') sanitized[key] = item;
+    else if (typeof item === 'string') sanitized[key] = sanitizeString(item, 80);
+  }
+  return sanitized;
+}
+
+function sanitizeTapTelemetryDetails(value: Record<string, unknown>): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (/query|text|name|account|player|band/i.test(key)) continue;
     if (typeof item === 'boolean' || typeof item === 'number') sanitized[key] = item;
     else if (typeof item === 'string') sanitized[key] = sanitizeString(item, 80);
   }
