@@ -314,8 +314,10 @@ describe('ModalShell', () => {
       </ModalShell>,
     );
     const panel = screen.getByRole('dialog');
-    // Simulate transitionEnd with animIn = true
-    fireEvent.transitionEnd(panel);
+    fireEvent.transitionEnd(screen.getByText('Content'), { propertyName: 'transform' });
+    expect(onOpenComplete).not.toHaveBeenCalled();
+
+    fireEvent.transitionEnd(panel, { propertyName: 'transform' });
     expect(onOpenComplete).toHaveBeenCalledTimes(1);
   });
 
@@ -352,6 +354,18 @@ describe('ModalShell', () => {
     // Mobile panel has left/right set to 0
     expect(dialog.style.left).toBe('0px');
     expect(dialog.style.right).toBe('0px');
+  });
+
+  it('supports an onscreen mobile enter offset for autofocus content', () => {
+    mockIsMobile.mockReturnValue(true);
+    vi.mocked(window.requestAnimationFrame).mockImplementation(() => 1);
+    render(
+      <ModalShell visible title="Mobile Modal" onClose={vi.fn()} mobileEnterOffset={24}>
+        <div>Content</div>
+      </ModalShell>,
+    );
+
+    expect(screen.getByRole('dialog').style.transform).toBe('translateY(24px)');
   });
 
   it('keeps the mobile panel top stable while extending to the viewport bottom when visual viewport shrinks', () => {

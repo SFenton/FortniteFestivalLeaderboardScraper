@@ -2,7 +2,7 @@
  * Lightweight modal shell: overlay + panel + header + close + escape + lifecycle.
  * Modal variants compose from this to avoid reimplementing the same infrastructure.
  */
-import { useEffect, useLayoutEffect, useRef, useState, useCallback, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useCallback, type ReactNode, type TransitionEvent as ReactTransitionEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { IoClose } from 'react-icons/io5';
@@ -24,6 +24,7 @@ const FOCUSABLE_SELECTOR = [
 type ActiveModal = {
   token: symbol;
   panel: HTMLElement;
+  returnFocusTarget: HTMLElement | null;
 };
 
 const activeModals: ActiveModal[] = [];
@@ -88,6 +89,8 @@ export interface ModalShellProps {
   desktopClassName?: string;
   /** Extra inline styles merged onto the desktop panel (applied after desktopClassName). */
   desktopStyle?: React.CSSProperties;
+  /** Mobile enter translation. Defaults to a full-height bottom-sheet slide. */
+  mobileEnterOffset?: number | string;
   /** Desktop panel placement. Center preserves the existing modal; rightDrawer slides in from the right edge. */
   desktopPlacement?: 'center' | 'rightDrawer';
   /** Optional test id applied to the dialog panel. */
@@ -109,6 +112,7 @@ export default function ModalShell({
   children,
   desktopClassName,
   desktopStyle,
+  mobileEnterOffset = '100%',
   desktopPlacement = 'center',
   panelTestId,
   transitionMs = DEFAULT_TRANSITION_MS,
@@ -143,14 +147,20 @@ export default function ModalShell({
 
   useLayoutEffect(() => {
     if (rendered && visible) {
-      previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const topModal = activeModals[activeModals.length - 1];
+      previousFocusRef.current = topModal && (!topModal.panel.isConnected || activeElement === document.body)
+        ? topModal.returnFocusTarget
+        : activeElement;
       panelRef.current?.getBoundingClientRect();
       const id = requestAnimationFrame(() => setAnimIn(true));
       return () => cancelAnimationFrame(id);
     }
   }, [rendered, visible]);
 
-  const handleTransitionEnd = useCallback(() => {
+  const handleTransitionEnd = useCallback((event: ReactTransitionEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+    if (event.propertyName && event.propertyName !== 'transform') return;
     if (animIn) {
       onOpenComplete?.();
     } else {
@@ -178,7 +188,7 @@ export default function ModalShell({
     if (!panel) return;
 
     const token = modalTokenRef.current;
-    activeModals.push({ token, panel });
+    activeModals.push({ token, panel, returnFocusTarget: previousFocusRef.current });
     acquireBackgroundLock();
     syncModalInertState();
 
@@ -240,6 +250,7 @@ export default function ModalShell({
   const desktopTransition = `opacity ${transMs} ease, transform ${transMs} ease`;
   const useDesktopPanel = desktopPlacement === 'rightDrawer' || !isMobile;
   const modalPointerEvents = visible ? 'auto' as const : 'none' as const;
+  const mobileEnterTranslate = typeof mobileEnterOffset === 'number' ? `${mobileEnterOffset}px` : mobileEnterOffset;
   const computedMobileTop = vvOffsetTop + vvHeight * 0.2;
   if (!useDesktopPanel && visible && mobilePanelTopRef.current === null) {
     mobilePanelTopRef.current = computedMobileTop;
@@ -247,7 +258,7 @@ export default function ModalShell({
   const mobilePanelTop = mobilePanelTopRef.current ?? computedMobileTop;
 
   const panelStyle: React.CSSProperties = !useDesktopPanel
-    ? { ...css.panelMobile, transition: mobileTransition, top: mobilePanelTop, bottom: 0, transform: animIn ? 'translateY(0)' : 'translateY(100%)', pointerEvents: modalPointerEvents }
+    ? { ...css.panelMobile, transition: mobileTransition, top: mobilePanelTop, bottom: 0, transform: animIn ? 'translateY(0)' : `translateY(${mobileEnterTranslate})`, pointerEvents: modalPointerEvents }
     : desktopPlacement === 'rightDrawer'
       ? { ...css.panelDesktopRightDrawer, transition: desktopTransition, transform: animIn ? 'translateX(0)' : 'translateX(100%)', opacity: 1, pointerEvents: modalPointerEvents, ...desktopStyle }
       : { ...css.panelDesktop, transition: desktopTransition, transform: animIn ? 'translate(-50%, -50%)' : 'translate(-50%, -40%)', opacity: animIn ? 1 : 0, pointerEvents: modalPointerEvents, ...desktopStyle };

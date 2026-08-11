@@ -14,6 +14,8 @@ export interface SearchBarProps {
   /** HTML enterkeyhint attribute for mobile keyboards. */
   enterKeyHint?: 'done' | 'search' | 'go' | 'send' | 'next';
   onPointerDownCapture?: PointerEventHandler<HTMLDivElement>;
+  onPointerUpCapture?: PointerEventHandler<HTMLDivElement>;
+  onPointerCancelCapture?: PointerEventHandler<HTMLDivElement>;
   onTouchStartCapture?: TouchEventHandler<HTMLDivElement>;
   onMouseDownCapture?: MouseEventHandler<HTMLDivElement>;
   onClickCapture?: MouseEventHandler<HTMLDivElement>;
@@ -52,6 +54,8 @@ const SearchBar = forwardRef<SearchBarRef, SearchBarProps>(function SearchBar(
     onBlur,
     enterKeyHint,
     onPointerDownCapture,
+    onPointerUpCapture,
+    onPointerCancelCapture,
     onTouchStartCapture,
     onMouseDownCapture,
     onClickCapture,
@@ -86,6 +90,8 @@ const SearchBar = forwardRef<SearchBarRef, SearchBarProps>(function SearchBar(
       className={wrapperClass}
       style={{ ...s.searchBar, ...style }}
       onPointerDownCapture={onPointerDownCapture}
+      onPointerUpCapture={onPointerUpCapture}
+      onPointerCancelCapture={onPointerCancelCapture}
       onTouchStartCapture={onTouchStartCapture}
       onMouseDownCapture={onMouseDownCapture}
       onClickCapture={onClickCapture}

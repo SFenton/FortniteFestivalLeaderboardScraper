@@ -159,6 +159,17 @@ test('mobile Rivals search uses a zoom-safe input and restores Find Rival focus'
   await dismissOverlays(page);
 
   const findRivalButton = page.getByRole('button', { name: 'Find Rival' });
+  await page.evaluate(() => {
+    const probeWindow = window as Window & { __rivalsSearchInitialFocusRect?: { top: number; bottom: number } };
+    delete probeWindow.__rivalsSearchInitialFocusRect;
+    const recordInitialFocus = (event: FocusEvent) => {
+      if (!(event.target instanceof HTMLInputElement) || !event.target.closest('[role="dialog"]')) return;
+      const rect = event.target.getBoundingClientRect();
+      probeWindow.__rivalsSearchInitialFocusRect = { top: rect.top, bottom: rect.bottom };
+      document.removeEventListener('focusin', recordInitialFocus, true);
+    };
+    document.addEventListener('focusin', recordInitialFocus, true);
+  });
   await findRivalButton.click();
 
   const dialog = page.getByRole('dialog', { name: 'Search' });
@@ -166,6 +177,15 @@ test('mobile Rivals search uses a zoom-safe input and restores Find Rival focus'
   await expect(dialog).toBeVisible();
   await expect(input).toBeFocused();
   expect(await input.evaluate(element => Number.parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(16);
+  const initialFocusGeometry = await page.evaluate(() => {
+    const probeWindow = window as Window & { __rivalsSearchInitialFocusRect?: { top: number; bottom: number } };
+    return {
+      rect: probeWindow.__rivalsSearchInitialFocusRect,
+      viewportHeight: window.innerHeight,
+    };
+  });
+  expect(initialFocusGeometry.rect?.top).toBeGreaterThanOrEqual(0);
+  expect(initialFocusGeometry.rect?.bottom).toBeLessThanOrEqual(initialFocusGeometry.viewportHeight);
 
   await dialog.getByRole('button', { name: 'Close' }).click();
   await expect(dialog).toBeHidden();

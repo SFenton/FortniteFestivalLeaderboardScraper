@@ -438,12 +438,10 @@ describe('SearchModal', () => {
     expect(props.onClose).not.toHaveBeenCalled();
   });
 
-  it('auto-focuses with preventScroll when opened on desktop', async () => {
-    renderModal();
-    const input = screen.getByPlaceholderText('Search songs, players, or bands…');
-    const focusSpy = vi.spyOn(input, 'focus');
+  it('auto-focuses with preventScroll when opened on desktop', () => {
+    const focusSpy = vi.spyOn(HTMLInputElement.prototype, 'focus');
 
-    await advanceAndFlush(60);
+    renderModal();
 
     expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
   });
@@ -457,14 +455,47 @@ describe('SearchModal', () => {
     expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
   });
 
-  it('focuses with preventScroll from the modal search tap gesture', () => {
+  it('reactivates a focused mobile search after the keyboard closes without a blur', async () => {
+    const visualViewport = installVisualViewport();
     setViewportQueries({ mobile: true });
-    renderModal();
-    const input = screen.getByPlaceholderText('Search songs, players, or bands…') as HTMLInputElement;
+    renderModal({ availableTargets: ['players'] });
+    const input = screen.getByPlaceholderText('Search players…') as HTMLInputElement;
+    const wrapper = input.parentElement as HTMLElement;
+
+    fireEvent.focus(input);
+    setVisualViewport(visualViewport, 520);
+    await advanceAndFlush(0);
+    setVisualViewport(visualViewport, 844);
+    await advanceAndFlush(0);
+
+    const blurSpy = vi.spyOn(input, 'blur');
     const focusSpy = vi.spyOn(input, 'focus');
 
-    fireEvent.pointerDown(input.parentElement as HTMLElement);
+    const pointerDownAllowed = fireEvent.pointerDown(wrapper, {
+      pointerId: 7,
+      pointerType: 'touch',
+      isPrimary: true,
+      button: 0,
+    });
 
+    expect(pointerDownAllowed).toBe(true);
+    expect(blurSpy).toHaveBeenCalledTimes(1);
+    blurSpy.mockClear();
+    focusSpy.mockClear();
+
+    fireEvent.pointerUp(wrapper, {
+      pointerId: 7,
+      pointerType: 'touch',
+      isPrimary: true,
+      button: 0,
+    });
+
+    expect(blurSpy).toHaveBeenCalledTimes(1);
+    const blurOrder = blurSpy.mock.invocationCallOrder[0];
+    const focusOrder = focusSpy.mock.invocationCallOrder[0];
+    expect(blurOrder).toBeDefined();
+    expect(focusOrder).toBeDefined();
+    expect(blurOrder as number).toBeLessThan(focusOrder as number);
     expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
   });
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { LoadPhase } from '@festival/core/runtime';
@@ -30,6 +30,10 @@ const MODAL_TRANSITION_MS = 250;
 const SEARCH_STAGGER_VISIBLE_ITEMS = 8;
 const SEARCH_SCROLL_FADE_SIZE = 40;
 const SEARCH_KEYBOARD_CLEARANCE = 12;
+const SEARCH_KEYBOARD_OPEN_THRESHOLD = 120;
+const SEARCH_KEYBOARD_CLOSED_THRESHOLD = 80;
+const SEARCH_VIEWPORT_SCALE_TOLERANCE = 0.01;
+const SEARCH_MODAL_MOBILE_ENTER_OFFSET = 24;
 
 const SEARCH_TARGET_LABEL_KEYS: Record<SearchTarget, string> = {
   songs: 'search.tabs.songs',
@@ -84,6 +88,9 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
   const keyboardBaselineRef = useRef<number | null>(null);
   const filterBottomBaselineRef = useRef<number | null>(null);
   const keyboardInsetRef = useRef(0);
+  const keyboardWasOpenRef = useRef(false);
+  const keyboardDismissedWhileFocusedRef = useRef(false);
+  const refocusPointerIdRef = useRef<number | null>(null);
   const visibleTargets = useMemo(() => resolveSearchTargets(availableTargets), [availableTargets]);
   const resolvedPlaceholderKey = placeholderKey ?? getSearchPlaceholderKey(visibleTargets);
   const showTargetTabs = visibleTargets.length > 1;
@@ -110,6 +117,8 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
     keyboardBaselineRef.current = null;
     filterBottomBaselineRef.current = null;
     keyboardInsetRef.current = 0;
+    keyboardWasOpenRef.current = false;
+    keyboardDismissedWhileFocusedRef.current = false;
     setKeyboardInset(0);
   }, []);
 
@@ -120,6 +129,7 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
       setActiveTarget(null);
     }
     if (!visible) {
+      refocusPointerIdRef.current = null;
       setQuery('');
       setSearchFocused(false);
       resetKeyboardState();
@@ -138,20 +148,31 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
     focusSearchWithoutScroll();
   }, [focusSearchWithoutScroll, isMobileChrome, visible]);
 
-  const handleOpenComplete = useCallback(() => {
-    setTimeout(() => {
-      focusSearchWithoutScroll();
-      window.visualViewport?.dispatchEvent(new Event('resize'));
-      window.dispatchEvent(new Event('resize'));
-    }, 50);
-  }, [focusSearchWithoutScroll]);
+  const handleSearchPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (
+      event.pointerType === 'mouse'
+      || event.isPrimary === false
+      || event.button !== 0
+      || !keyboardDismissedWhileFocusedRef.current
+    ) return;
 
-  const handleSearchPressStart = useCallback((event: ReactPointerEvent<HTMLDivElement> | ReactTouchEvent<HTMLDivElement> | ReactMouseEvent<HTMLDivElement>) => {
-    if (document.activeElement === event.target) return;
-    event.preventDefault();
-    event.stopPropagation();
+    refocusPointerIdRef.current = event.pointerId;
+    inputRef.current?.blur();
+  }, []);
+
+  const handleSearchPointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (refocusPointerIdRef.current !== event.pointerId) return;
+    refocusPointerIdRef.current = null;
+    keyboardDismissedWhileFocusedRef.current = false;
+    inputRef.current?.blur();
     focusSearchWithoutScroll();
   }, [focusSearchWithoutScroll]);
+
+  const handleSearchPointerCancel = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (refocusPointerIdRef.current === event.pointerId) {
+      refocusPointerIdRef.current = null;
+    }
+  }, []);
 
   const handleSearchFocus = useCallback(() => {
     captureKeyboardBaseline();
@@ -173,6 +194,7 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
     setQuery('');
     setActiveTarget(null);
     setSearchFocused(false);
+    refocusPointerIdRef.current = null;
     resetKeyboardState();
   }, [resetKeyboardState]);
 
@@ -190,6 +212,20 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
     const visualViewportLoss = baseline - visibleBottom;
     const innerHeightLoss = baseline - window.innerHeight;
     const viewportLoss = Math.max(0, Math.round(visualViewportLoss), Math.round(innerHeightLoss));
+    const keyboardHeightLoss = Math.max(
+      0,
+      Math.round(baseline - (visualViewport?.height ?? window.innerHeight)),
+      Math.round(innerHeightLoss),
+    );
+    if (Math.abs((visualViewport?.scale ?? 1) - 1) < SEARCH_VIEWPORT_SCALE_TOLERANCE) {
+      if (keyboardHeightLoss >= SEARCH_KEYBOARD_OPEN_THRESHOLD) {
+        keyboardWasOpenRef.current = true;
+        keyboardDismissedWhileFocusedRef.current = false;
+      } else if (keyboardWasOpenRef.current && keyboardHeightLoss <= SEARCH_KEYBOARD_CLOSED_THRESHOLD) {
+        keyboardWasOpenRef.current = false;
+        keyboardDismissedWhileFocusedRef.current = true;
+      }
+    }
     const desiredBottom = visibleBottom - SEARCH_KEYBOARD_CLEARANCE;
     const filtersElement = mobileFiltersRef.current;
     const filterRect = filtersElement?.getBoundingClientRect();
@@ -209,6 +245,11 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
     keyboardInsetRef.current = nextInset;
     setKeyboardInset(nextInset);
   }, [captureKeyboardBaseline, isMobileChrome, searchFocused, visible]);
+
+  const handleOpenComplete = useCallback(() => {
+    if (!isMobileChrome) focusSearchWithoutScroll();
+    updateKeyboardInset();
+  }, [focusSearchWithoutScroll, isMobileChrome, updateKeyboardInset]);
 
   useEffect(() => {
     updateKeyboardInset();
@@ -289,6 +330,7 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
       title={t('search.title')}
       onClose={onClose}
       desktopStyle={SEARCH_MODAL_DESKTOP}
+      mobileEnterOffset={SEARCH_MODAL_MOBILE_ENTER_OFFSET}
       transitionMs={MODAL_TRANSITION_MS}
       onOpenComplete={handleOpenComplete}
       onCloseComplete={handleCloseComplete}
@@ -302,10 +344,9 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
           onKeyDown={handleSearchKeyDown}
           onFocus={handleSearchFocus}
           onBlur={handleSearchBlur}
-          onPointerDownCapture={handleSearchPressStart}
-          onTouchStartCapture={handleSearchPressStart}
-          onMouseDownCapture={handleSearchPressStart}
-          onClickCapture={handleSearchPressStart}
+          onPointerDownCapture={handleSearchPointerDown}
+          onPointerUpCapture={handleSearchPointerUp}
+          onPointerCancelCapture={handleSearchPointerCancel}
           enterKeyHint="search"
           style={st.searchBar}
         />
