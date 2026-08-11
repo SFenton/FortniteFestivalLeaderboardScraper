@@ -9,7 +9,7 @@ Use this skill when the operator explicitly asks for autonomous execution, names
 
 This skill is an execution orchestrator. It does not replace focused repository skills; it owns plan parsing, task ordering, stop counters, self-unblocking, progress cadence, commit/push boundaries, phase reports, and final recap reports while applying the focused skill for the current domain.
 
-Once invoked, run with day-trader-style persistence: continue through every approved phase/task/priority in order, insert safe derivative work as it is discovered, commit and push accepted progress, and do not stop at reports, completed probes, rejected hypotheses, commits, maintenance restarts, deployments, or parity-gated destructive actions. FST live-safety gates block only the exact unsafe/destructive action until the live-scrape A/B data-parity gate is met; they do not end the autonomous queue while safe code, docs, tests, probes, manifests, parity checks, feasibility packages, maintenance, deploy, scrape, or readiness work remains.
+Once invoked, use persistent autonomous execution: continue through every approved phase/task/priority in order, insert safe derivative work as it is discovered, commit and push accepted progress, and do not stop at reports, completed probes, rejected hypotheses, commits, maintenance restarts, deployments, or parity-gated destructive actions. FST live-safety gates block only the exact unsafe/destructive action until the live-scrape A/B data-parity gate is met; they do not end the autonomous queue while safe code, docs, tests, probes, manifests, parity checks, feasibility packages, maintenance, deploy, scrape, or readiness work remains.
 
 ## Required model and reasoning contract
 
@@ -367,7 +367,7 @@ follow the stricter gate.
 - FST-native `FST_AUTONOMOUS_EMAIL_*` variables always take precedence.
 - When those variables are unavailable and the operator identifies an existing trusted dotenv file with `DAY_TRADER_EMAIL_*` SMTP settings, pass it only to the report process with `--fallback-env-file <path>`. The renderer maps the explicit enabled, dry-run, sender, recipient, SMTP host/port/secure/user/password allowlist in memory; it does not execute the dotenv file, print values, write mapped values to artifacts, or persist them in the repository.
 - Use `--send` for mandatory real delivery. Example:
-  `node tools/agent-report-email.mjs --subject "<subject>" --input-md <report.md> --send --fallback-env-file /home/sfenton/repos/day-trader-agent/.env`
+  `node tools/agent-report-email.mjs --subject "<subject>" --input-md <report.md> --send --fallback-env-file <trusted-dotenv-path>`
 - Never copy the fallback dotenv file, include its values in a command, source it into a broad shell environment, attach it to a report, or commit it. If real delivery still fails, record only the non-secret error and render the same report to `.outbox/fst-autonomous-agent/`.
 
 ## Tooling and non-interactive constraints

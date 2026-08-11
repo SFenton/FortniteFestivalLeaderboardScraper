@@ -1,3 +1,16 @@
+---
+status: living-runbook
+owner: data
+last_verified: 2026-08-11
+last_verified_commit: 453fd9b6
+sources:
+  - FSTService/FeatureOptions.cs
+  - FSTService/Persistence/
+  - deploy/config/fstworker-role.env
+update_triggers:
+  - Snapshot fingerprinting, reuse, publication preparation, evaluation, rollout, or rollback changes.
+---
+
 # Published Physical Snapshot Reuse Runbook
 
 ## Current decision

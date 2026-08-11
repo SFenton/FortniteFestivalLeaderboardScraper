@@ -1,78 +1,65 @@
-# FSTService — Development Guidelines
+# FSTService Development Guidelines
 
 ## Stack
 
-.NET 9.0 / C# 12+ — ASP.NET Core + BackgroundService. PostgreSQL via Npgsql. No ORM — raw SQL with parameterized queries.
+.NET 9 / ASP.NET Core with BackgroundService and PostgreSQL through Npgsql.
+Use parameterized SQL; there is no ORM.
 
-## Language Conventions
+## Conventions
 
-- Nullable reference types enabled, implicit usings
-- `async/await` throughout; `CancellationToken` propagation in all background work
-- `ILogger<T>` via Microsoft.Extensions.Logging
-- `System.Text.Json` for serialization
-- Parameterized queries ALWAYS — never string interpolation in SQL
-- File paths via `Path.Combine` and `Path.GetFullPath`
+- Nullable reference types and implicit usings
+- `async`/`await` with `CancellationToken` propagation
+- `ILogger<T>`
+- `System.Text.Json`
+- `Path.Combine`/`Path.GetFullPath`
+- No interpolated SQL
 
 ## Architecture
 
-### Scrape Pipeline (sequential phases in ScraperWorker)
+The same binary supports API/frontend, full-worker, registration-sync,
+read-only rollout, setup, and one-shot modes. See:
 
-1. Auth token acquisition (EpicAuthService)
-2. Song catalog sync (FestivalService)
-3. Path generation (MIDI decrypt/CHOpt — parallel with scrape)
-4. Global leaderboard scrape (pipelined writes to sharded DBs)
-5. FirstSeenSeason calculation
-6. Account name resolution
-7. Post-scrape refresh (registered users)
-8. Score backfill (below-60K missing scores)
-9. History reconstruction (seasonal leaderboard walks)
-10. Rivals calculation
-11. Rankings aggregation
+- `docs/components/service-api.md`
+- `docs/components/worker.md`
+- `docs/architecture/data-publication-flow.md`
+- `docs/reference/cli.md`
 
-### Key Classes
+PostgreSQL is the service source of truth. `InstrumentDatabase` is a logical
+per-instrument wrapper over shared PostgreSQL relations, not a set of SQLite
+shards.
 
-- `ScrapeOrchestrator` / `PostScrapeOrchestrator` / `BackfillOrchestrator` — phase orchestration
-- `GlobalLeaderboardScraper` — Epic API leaderboard fetching
-- `MetaDatabase` — central metadata (10 tables)
-- `InstrumentDatabase` — per-instrument sharded DBs (6 shards)
-- `GlobalLeaderboardPersistence` — pipelined writes + change detection
-- `SharedDopPool` — shared concurrency pool across phases
-- `ResilientHttpExecutor` — retry/circuit-breaker HTTP
+## API
 
-### API Layer
+`FSTService/Api/ApiEndpoints.cs` is the endpoint-group aggregator. Actual routes
+live in domain `*Endpoints.cs` files.
 
-- Endpoint groups: Account, Admin, Leaderboard, LeaderboardRivals, Rivals, Player, Rankings, Song, Feature, Health, Diag, WebSocket
-- Route convention: `/api/{resource}/{id}/{subresource}` — kebab-case
-- Auth: `X-API-Key` header via ApiKeyAuth middleware
-- Rate limiting: public (60/min), protected (30/min), global (200/min)
-- Caching: `ResponseCacheService` with ETag + Cache-Control tiers
+Protected endpoints use `X-API-Key`. Public/auth/protected/global limiters
+currently share a 100-request-per-second fixed window outside tests.
+Publication-bound routes must retain their classification and required surface
+contract.
 
-### Database
+See `docs/reference/api-contract.md`.
 
-PostgreSQL with NpgsqlDataSource connection pooling.
+## Worker and publication
 
-- `using var conn = _ds.OpenConnection()` — always
-- Transactions: `using var tx = conn.BeginTransaction()` → `tx.Commit()`
-- Bulk writes: dual-path (≤50 prepared statements, >50 COPY binary import → temp table → INSERT ON CONFLICT)
-- Null params: `(object?)nullable ?? DBNull.Value`
-- Schema: `IF NOT EXISTS` for idempotency, async init via `EnsureSchemaAsync()`
+Candidate scrape state is not public state. Preserve exact catalog selection,
+read freeze, writer/phase gates, durable failure isolation, atomic publication,
+and post-commit client notification.
+
+Proxy/VPN behavior is worker-only and documented in
+`docs/operations/vpn-proxy-pool.md`.
 
 ## Testing
 
-- **Framework**: xUnit + NSubstitute + FluentAssertions-style
-- **Run**: `dotnet test FSTService.Tests\FSTService.Tests.csproj`
-- **Coverage gate**: 94% line coverage (CI enforced)
-- **Helpers**: `InMemoryMetaDatabase`, `TempInstrumentDatabase`, `MockHttpMessageHandler`
-- **Integration**: `WebApplicationFactory<Program>` with in-memory DBs
-- **Internals**: FSTService exposes via `InternalsVisibleTo`
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj
+dotnet build FSTService/FSTService.csproj -c Release
+```
 
-## Configuration
+Use xUnit and existing helpers/fixtures. Keep the CI coverage gate passing.
 
-`appsettings.json` under `Scraper` section:
-- `ScrapeInterval` (default: 4h), `DegreeOfParallelism` (default: 512)
-- `DataDirectory` (default: `data`), instrument toggles
-- Feature flags in `FeatureOptions`
+## Documentation
 
-## CI/CD
-
-`.github/workflows/publish-image.yml` — test → coverage gate (94%) → Docker build → push to ghcr.io. Version bumping automated per component.
+Follow `.github/instructions/documentation.instructions.md`. Changes to
+hosting, routes, middleware, phases, persistence, configuration, flags, or
+deployment must update the matching canonical docs in the same change.

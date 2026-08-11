@@ -1,80 +1,68 @@
-# FortniteFestivalWeb — Development Guidelines
+# FortniteFestivalWeb Development Guidelines
 
 ## Stack
 
-React 19 + TypeScript + Vite. React Router 7.1 (HashRouter). React Query (@tanstack) for server state. CSS Modules + @festival/theme for theming.
+React 19, TypeScript, Vite, React Router HashRouter, TanStack React Query,
+i18next, CSS Modules, and `@festival/theme`. Yarn 4 is authoritative for this
+application.
 
 ## Architecture
 
-### Routing (`src/routes.ts`)
+Current routes, bootstrap providers, publication behavior, state ownership,
+styling, shared packages, and deployment are documented in:
 
-`/songs`, `/songs/:songId`, `/songs/:songId/:instrument`, `/player/:accountId`, `/rivals`, `/leaderboards`, `/shop`, `/suggestions`, `/compete`, `/settings` (+ nested routes)
+- `docs/components/web-app.md`
+- `docs/components/shared-code.md`
+- `docs/reference/api-contract.md`
+- `docs/testing/README.md`
 
-### State Management
+Use `src/routes.ts` for route construction and `src/App.tsx` for the rendered
+tree. React Query owns remote data; focused contexts own application/shell
+state. Do not copy volatile context, test, route, or file counts into guidance.
 
-- 9 React Contexts: Festival, Settings, Shop, PlayerData, FirstRun, FabSearch, SearchQuery, ScrollContainer, FeatureFlags
-- No Redux/Zustand — pure Context + useState
-- React Query for remote data (`src/api/queryClient.ts`, `queryKeys.ts`)
-- `useLocalStorageSettings()` for persistent preferences
+## API and publication
 
-### Page Structure (canonical)
+The HTTP client lives in `src/api/client.ts`; shared response/domain types live
+in `@festival/core`. `PublicationBoundary` must continue to bootstrap before
+normal rendering and clear caches/reset WebSocket state on publication change.
 
-Every page uses the `<Page>` shell:
-```tsx
-<Page scrollRestoreKey="feature" loadPhase={loadPhase} firstRun={firstRunConfig} before={header} after={modals}>
-  {content}
-</Page>
-```
-- Loading: `useLoadPhase()` → `ArcSpinner` → content fade-in
-- Error: `<EmptyState>` with `parseApiError()`
-- Empty: `<EmptyState>` with descriptive message
+API changes must stay aligned with service routes/contracts and
+`packages/core/src/api/serverTypes.ts`.
 
-### Styling
+## Styling
 
-- **CSS Modules** for ≥3 rules (co-located `.module.css` with component)
-- **Inline styles** for <3 rules
-- **Shared effects**: `effects.module.css` (`navFrosted`, `headerFrosted`, etc.)
-- **Theme**: `theme.css` variables + `@festival/theme` (Size, Layout, QUERY_NARROW_GRID)
-- **Animations**: `animations.module.css` for keyframes
-
-### Hook Patterns
-
-- Modal: `useModalState<T>(defaults)`
-- Stagger: `useStaggerStyle(delay, opts)` for items; `buildStaggerStyle()` in `.map()`
-- FAB actions: register in `useEffect` with `[fabSearch, ...deps]` dependency array
-- Data: React Query `useQuery()` / `useQueries()`
-
-### Component Patterns
-
-- Common components: `PageHeader`, `EmptyState`, `FrostedCard`, `ActionPill`, `SearchBar`, `Modal`
-- All display components support `style?` + `onAnimationEnd?` for stagger integration
-- Modals: `{ visible, title, onClose, onApply, onReset?, children }`
-
-### State Persistence Rules
-
-- Navigation state (tab, sort) → URL `searchParams`
-- User preferences (view mode, dismissed tips) → `localStorage`
-- Remote data → React Query cache
+Use CSS Modules for selectors, pseudo states, media queries, and animations.
+Use `@festival/theme` for shared tokens and typed style values. Inline styles
+are appropriate for small dynamic values. The archived refactor/CSS migration
+documents are historical, not an active checklist.
 
 ## Testing
 
-- **Unit**: Vitest + @testing-library/react (181 test files in `__test__/`)
-- **E2E**: Playwright (17 specs in `e2e/`, 4 viewports: desktop, desktop-narrow, mobile, mobile-narrow)
-- **Helpers**: `TestProviders.ts` for context wrappers
-- **Run**: `npm test` (Vitest), `npx playwright test` (E2E)
+```bash
+corepack yarn test:unit
+corepack yarn test:shared
+corepack yarn lint
+corepack yarn lint:css
+corepack yarn build
+corepack yarn e2e
+```
 
-## Dependencies
+Use the smallest relevant Playwright project/spec.
 
-React 19, React Router 7.1, @tanstack/react-query 5.x, Recharts 3.x, @dnd-kit 6.x, @tanstack/react-virtual 3.x, react-i18next 16.x, KaTeX 0.16.x
+## Dependencies and licenses
 
-When changing any package manifest, lockfile, or related NuGet/package reference that is surfaced in the web Licenses page, run `npm run licenses:generate` and `npm run licenses:check` from `FortniteFestivalWeb`. Add unresolved package license metadata to `../tools/license-overrides.json`.
+When a package manifest, lockfile, NuGet reference, or bundled dependency
+changes:
 
-## Monorepo Packages
+```bash
+corepack yarn licenses:generate
+corepack yarn licenses:check
+```
 
-- `@festival/core` — shared types, API client, enums, instruments
-- `@festival/theme` — Size, Layout, breakpoints
-- `@festival/ui-utils` — shared UI utilities
+Add unresolved metadata to `../tools/license-overrides.json`.
 
-## Web Refactoring
+## Documentation
 
-Active refactor tracked in `docs/refactor/PLAN.md` (18 phases). CSS migration rules in `docs/refactor/CSS_MIGRATION_RULES.md`.
+Follow `.github/instructions/documentation.instructions.md`. Route, provider,
+state, styling, API, feature, testing, build, or deployment changes must update
+the canonical web documentation in the same change.

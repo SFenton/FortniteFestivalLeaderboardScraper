@@ -1,3 +1,15 @@
+---
+status: living-runbook
+owner: data
+last_verified: 2026-08-11
+last_verified_commit: 453fd9b6
+sources:
+  - FSTService/Persistence/ImprovementNotificationRecoveryService.cs
+  - FSTService/Program.cs
+update_triggers:
+  - Notification recovery commands, markers, projection plans, gates, validation, or rollback change.
+---
+
 # Improvement Notification Recovery Runbook
 
 Use this runbook when player or band improvement notifications stop advancing

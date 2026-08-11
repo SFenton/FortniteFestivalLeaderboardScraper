@@ -72,29 +72,43 @@ Use table-specific watermarks that match the task. Common FST examples:
 
 ```bash
 docker compose exec -T postgres psql -U fst -d fstservice -c "
-SELECT published_scrape_id, is_frozen, frozen_scrape_id, updated_at
+SELECT published_scrape_id,
+       published_at,
+       public_reads_frozen,
+       public_reads_frozen_scrape_id,
+       public_reads_frozen_reason,
+       updated_at
 FROM scrape_publication_state;
 
-SELECT id, status, started_at, completed_at, error_message
+SELECT id, status, started_at, completed_at, failed_at,
+       failure_phase, failure_message
 FROM scrape_log
 ORDER BY id DESC
 LIMIT 10;
 
-SELECT scrape_id, instrument, total_observed, new_rows, changed_rows, unchanged_rows
-FROM leaderboard_logical_write_metrics
-ORDER BY scrape_id DESC, instrument
+SELECT published_scrape_id,
+       instrument,
+       count(*) AS complete_scopes,
+       sum(row_count) AS published_rows
+FROM leaderboard_published_scope_source
+WHERE is_complete
+GROUP BY published_scrape_id, instrument
+ORDER BY published_scrape_id DESC, instrument
 LIMIT 30;"
 ```
 
 For data movement, record counts and scope ranges before and after:
 
 ```bash
-docker compose exec -T postgres psql -U fst -d fstservice -c "
+docker compose exec -T postgres psql -U fst -d fstservice \
+  -v snapshot_id=1234 <<'SQL'
 SELECT count(*) AS rows,
        count(DISTINCT song_id) AS songs,
        count(DISTINCT account_id) AS accounts
-FROM leaderboard_entries_snapshot_pro_lead
-WHERE scrape_id = 1214;"
+FROM leaderboard_entries_snapshot
+WHERE snapshot_id = :'snapshot_id'::bigint
+  AND instrument = 'Solo_PeripheralGuitar';
+SQL
 ```
 
 ## Query-plan probes
@@ -102,14 +116,17 @@ WHERE scrape_id = 1214;"
 Start with plain `EXPLAIN`:
 
 ```bash
-docker compose exec -T postgres psql -U fst -d fstservice -c "
+docker compose exec -T postgres psql -U fst -d fstservice \
+  -v snapshot_id=1234 <<'SQL'
 EXPLAIN
 SELECT *
-FROM leaderboard_entries_snapshot_pro_lead
-WHERE scrape_id = 1214
+FROM leaderboard_entries_snapshot
+WHERE snapshot_id = :'snapshot_id'::bigint
+  AND instrument = 'Solo_PeripheralGuitar'
   AND song_id = 'example-song-id'
 ORDER BY rank
-LIMIT 100;"
+LIMIT 100;
+SQL
 ```
 
 Only escalate to `EXPLAIN (ANALYZE, BUFFERS)` after confirming the query is bounded and safe.

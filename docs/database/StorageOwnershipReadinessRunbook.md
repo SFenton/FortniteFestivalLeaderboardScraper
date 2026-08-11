@@ -1,3 +1,15 @@
+---
+status: living-runbook
+owner: data
+last_verified: 2026-08-11
+last_verified_commit: 453fd9b6
+sources:
+  - FSTService/Persistence/
+  - docs/roadmap/data.md
+update_triggers:
+  - Storage ownership, active readers/writers, cleanup readiness, evidence, or promotion gates change.
+---
+
 # Storage Ownership Readiness Runbook
 
 ## Current decision

@@ -1,0 +1,79 @@
+---
+status: canonical
+owner: service
+last_verified: 2026-08-11
+last_verified_commit: 453fd9b6
+sources:
+  - FSTService/Api/ApiEndpoints.cs
+  - FSTService/Api/*Endpoints.cs
+  - FSTService/Api/PublicationRouteSurfaceContract.cs
+  - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
+  - packages/core/src/api/serverTypes.ts
+  - FortniteFestivalWeb/src/api/client.ts
+update_triggers:
+  - A route, payload, auth rule, rate limit, publication classification, or client method changes.
+---
+
+# API contract
+
+## Source set
+
+The API contract is distributed across:
+
+1. `FSTService/Api/ApiEndpoints.cs` - group registration and discoverability;
+2. `FSTService/Api/*Endpoints.cs` - actual HTTP route definitions;
+3. `PublicationRouteSurfaceContract.cs` - generation-surface requirements;
+4. `ApiPublicationClassificationTests.cs` - the intentional route inventory and
+   `PublicationBound`/`OperationalLive`/`AdminPrivate` classification;
+5. `packages/core/src/api/serverTypes.ts` - shared TypeScript response types;
+6. `FortniteFestivalWeb/src/api/client.ts` - browser requests and response use.
+
+Review all applicable files. `ApiEndpoints.cs` alone contains no route
+definitions, but it must remain aligned with the domain endpoint groups.
+
+## Current surface
+
+The service maps 80 HTTP routes across 14 route-bearing endpoint files plus
+`/api/ws`.
+
+| Group | Main responsibility |
+|---|---|
+| Health | liveness, readiness, version, progress, publication, service info |
+| Features | public web feature payload |
+| Account | name refresh and search |
+| Songs | songs, shop, path metadata and path data |
+| Leaderboard | solo/band song leaderboards and rank offsets |
+| Player | profile, tracking, sync, stats, bands, history |
+| Export | player and band exports |
+| Band sync | band synchronization status |
+| Rivals | rival lists, detail, diagnostics, recompute |
+| Leaderboard rivals | per-instrument comparisons and recompute |
+| Rankings | solo/family/combo/band rankings, history, neighborhoods, band lookup |
+| Notifications | player and band improvement notifications |
+| Admin | status, Epic token, refresh, path generation, backfill, DB/cache diagnostics |
+| Diagnostics | in-flight work, notification diagnostics, client interaction telemetry |
+| WebSocket | application publication/score change channel |
+
+Use the integration test's route arrays when an exact pattern list is needed;
+do not maintain a second hand-written 80-row table here.
+
+## Common behavior
+
+- Protected routes authenticate through `X-API-Key`.
+- Public/auth/protected/global fixed-window policies currently use 100 requests
+  per second per client outside tests.
+- Publication-bound responses participate in read gates, generation context,
+  cache behavior, and route-surface readiness.
+- Operational-live endpoints expose current process/coordination state.
+- Admin/private endpoints must not be reclassified as public data accidentally.
+
+## Change checklist
+
+For any API change:
+
+1. update the domain endpoint file and `ApiEndpoints.cs` when a group changes;
+2. update publication classification and required surfaces;
+3. update integration expectations;
+4. update shared TypeScript types;
+5. update the web client and its tests;
+6. update this document and any affected component/configuration page.

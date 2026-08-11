@@ -22,7 +22,11 @@ Like `ml-implementation-review`, this skill is seeded by permissively licensed O
 6. Codify Epic/API feeds, entitlements, rates, quotas, request pacing, storage, retention, and cleanup before adding or widening data-source automation or platform-managed ingestion.
 7. Prefer the smallest reproducible benchmark or probe that answers the question. Compare against matched baselines with identical data ranges, query shapes, concurrency, cache state, resource caps, and correctness checks.
 8. Keep secrets out of logs, docs, artifacts, shell history, and committed files. Redact connection strings and provider credentials.
-9. Update README and database/design/runbook docs whenever schema, persistence behavior, storage layout, retention, DB commands, platform posture, or operational safety changes.
+9. Follow `.github/instructions/documentation.instructions.md`. Update
+   `docs/architecture/data-storage.md`, the applicable living runbook, and any
+   affected publication/configuration/operations page whenever schema,
+   persistence behavior, storage layout, retention, DB commands, platform
+   posture, or operational safety changes. Keep `README.md` as a landing page.
 
 ## Mode selection
 

@@ -1,3 +1,15 @@
+---
+status: living-runbook
+owner: data
+last_verified: 2026-08-11
+last_verified_commit: 453fd9b6
+sources:
+  - FSTService/Persistence/ScoreHistoryDedupMaintenanceCommand.cs
+  - FSTService/Persistence/ScoreHistoryDedupMaintenanceService.cs
+update_triggers:
+  - Dedup scope, digest, lock, audit, execution, validation, or rollback behavior changes.
+---
+
 # Score-History NULL Dedup Maintenance Runbook
 
 ## Status and scope

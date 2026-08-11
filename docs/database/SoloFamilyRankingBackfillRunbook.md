@@ -1,3 +1,15 @@
+---
+status: living-runbook
+owner: data
+last_verified: 2026-08-11
+last_verified_commit: 453fd9b6
+sources:
+  - FSTService/Scraping/SoloFamilyRankingBackfillCommand.cs
+  - FSTService/Scraping/SoloFamilyRankingBackfillService.cs
+update_triggers:
+  - Backfill scope, maintenance gates, locks, timeouts, replacement, validation, or rollback changes.
+---
+
 # Solo-Family Ranking Denominator Backfill Runbook
 
 ## Status and incident evidence

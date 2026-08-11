@@ -1,67 +1,96 @@
-# Fortnite Festival Score Tracker — Project Guidelines
+# Fortnite Festival Score Tracker - Project Guidelines
 
-## Project overview
+## Project
 
-**Fortnite Festival Score Tracker (FST)** tracks Fortnite Festival leaderboard scores across seasons, instruments, and songs. Leaderboards reset every season, so the service continuously scrapes Epic APIs and persists a historical record.
+FST preserves Fortnite Festival leaderboard history across seasonal resets.
 
-| Component | Path | Stack |
-|---|---|---|
-| FSTService | `FSTService/` | .NET / C# — ASP.NET Core + BackgroundService |
-| FortniteFestivalWeb | `FortniteFestivalWeb/` | React + TypeScript + Vite |
-| FortniteFestival.Core | `FortniteFestival.Core/` | Shared .NET library |
-| Shared TS packages | `packages/` | `@festival/core`, `@festival/theme`, `@festival/ui-utils` |
+| Component | Path |
+|---|---|
+| Service/API and worker host | `FSTService/` |
+| Service tests | `FSTService.Tests/` |
+| Shared .NET code | `FortniteFestival.Core/` |
+| React/Vite web app | `FortniteFestivalWeb/` |
+| Shared TypeScript packages | `packages/` |
 
-## Core rules
+Current architecture and ownership are indexed in `docs/README.md`.
 
-- Work autonomously through approved tasks and priorities. Do not stop at reports, rejected hypotheses, completed probes, commits, or priority boundaries while safe in-scope work remains.
-- Stop only for required operator input, credentials/secrets, privileged access, provider/API terms or budget decisions, ambiguous user-owned changes, or live-safety/parity gates that cannot be cleared non-interactively.
-- Keep todos and docs accurate: completed tasks must be marked complete; blocked tasks must name the hard gate; safe follow-up work should become an active task instead of a handoff note.
-- Commit and push accepted/project-required changes before starting the next autonomous phase unless the operator says not to.
+## Operating rules
 
-## Live FST safety
+- Work autonomously through approved repository tasks while safe work remains.
+- Stop for required operator input, credentials, privileged access,
+  provider/budget decisions, ambiguous user-owned changes, or an uncleared
+  live-safety/parity gate.
+- Preserve unrelated worktree changes.
+- Keep task state and documentation accurate.
+- Commit and push accepted/project-required changes unless the operator says
+  not to.
 
-- Production compose ownership is `/home/sfenton/Docker/FestivalServiceTracker`; repo compose files are templates unless the operator explicitly says otherwise.
-- Scrapes should proceed normally. `fstworker`, `fstservice`, and `festivalweb` may be restarted or taken down for maintenance when useful, but redeploy/recover them as soon as possible to preserve the public user experience.
-- Destructive data/reclaim actions are auto-approved after live-scrape A/B testing proves the new path has the same data as the old path. Record the parity evidence, rollback path, and exact affected objects before executing.
-- Before broad DB probes, deploys, scrapes, or maintenance, check Docker health, Postgres readiness, public-read freeze state, published scrape, locks/long queries, disk headroom, CPU, and memory.
-- All FST database/storage/reclaim work must remain on the 4 TB FST drive. Do not use alternate drives for data, scratch, migration, export, or repack workspace unless SFenton explicitly overrides this rule later.
-- Preserve historical leaderboard correctness, Epic/API provenance, publication state, freeze/unfreeze behavior, and replay/parity evidence.
+## Live safety
 
-## Build and test
+- Production Compose ownership is
+  `/home/sfenton/Docker/FestivalServiceTracker`; repo Compose files are
+  templates.
+- Before broad DB probes, deploys, scrapes, or maintenance, check Docker,
+  PostgreSQL, freeze/publication state, locks/long queries, disk, CPU, and
+  memory.
+- Keep all FST database/storage/scratch/export/repack work on the 4 TB FST
+  drive unless explicitly overridden.
+- Preserve historical correctness, Epic provenance, publication state,
+  freeze/unfreeze behavior, and replay/parity evidence.
+- Destructive work requires current live-scrape A/B parity, exact objects,
+  rollback, and monitoring.
+
+See `docs/operations/live-safety.md`.
+
+## Documentation
+
+Follow `.github/instructions/documentation.instructions.md` and
+`docs/governance/documentation.md`.
+
+Whenever documented behavior changes, update the canonical document in the
+same change. Create and index a document for a new documentable area. Every
+completion must report updated documentation paths or a specific no-impact
+reason.
+
+Run:
 
 ```bash
-# Service
+node tools/check-docs.mjs
+```
+
+## Validation
+
+```bash
 dotnet test FSTService.Tests/FSTService.Tests.csproj
 dotnet build FSTService/FSTService.csproj -c Release
 
-# Web
-cd FortniteFestivalWeb && npm test
-cd FortniteFestivalWeb && npx playwright test
+cd FortniteFestivalWeb
+corepack yarn test:unit
+corepack yarn build
 ```
 
-Use the smallest targeted validation that covers changed behavior. Documentation-only changes do not require build/test unless they alter generated docs or tooling.
+Use the smallest relevant command from `docs/testing/README.md`.
 
-## Cross-repo conventions
+## Contract synchronization
 
-- API contract changes must keep `FSTService/Api/ApiEndpoints.cs` and `FortniteFestivalWeb/src/api/client.ts` aligned.
-- Feature flag changes must keep `FSTService/FeatureOptions.cs` and `FortniteFestivalWeb/src/contexts/FeatureFlagsContext.tsx` aligned.
-- Shared instrument/song types live in `FortniteFestival.Core/Config/InstrumentType.cs` and `packages/core/src/`.
-- Any third-party package add/remove/change must update generated license manifests and pass `cd FortniteFestivalWeb && npm run licenses:generate && npm run licenses:check`.
+API changes must keep the endpoint aggregator, affected domain endpoint files,
+publication contracts/tests, `packages/core/src/api/serverTypes.ts`,
+`FortniteFestivalWeb/src/api/client.ts`, and
+`docs/reference/api-contract.md` aligned.
 
-## Autonomous execution and reporting
+Public feature changes must keep `FSTService/FeatureOptions.cs`,
+`FSTService/Api/FeatureEndpoints.cs`,
+`packages/core/src/api/serverTypes.ts`,
+`FortniteFestivalWeb/src/contexts/FeatureFlagsContext.tsx`, and
+`docs/reference/feature-flags.md` aligned.
 
-- Use `.github/skills/autonomous-plan-executor/SKILL.md` when the operator requests autonomous execution.
-- Send or render phase and final recap reports through `node tools/agent-report-email.mjs`.
-- Missing SMTP configuration is a reporting degradation. Render to `.outbox/fst-autonomous-agent/` and continue.
-- E-mail reports must include accepted, rejected, blocked, and skipped-with-evidence work; commits; validation; performance; artifacts; and the next autonomous starting point when work remains but is hard-gated.
+## Dependencies
 
-## Design documents
+Any third-party package add/remove/change must update the license manifest
+workflow. For web-surfaced dependencies:
 
-Detailed designs live in `docs/`. Keep relevant docs current when behavior changes.
-
-| Document | Topic |
-|---|---|
-| `docs/database/PostgresPersistencePriorityPlan.md` | PostgreSQL persistence, reclaim, and throughput roadmap |
-| `docs/design/BandRankHistoryVNextDesign.md` | Band rank-history vNext design |
-| `docs/design/PhaseSelectiveScraping.md` | Scrape phase-selective execution |
-| `docs/design/ProxyRotationDesign.md` | Proxy rotation design |
+```bash
+cd FortniteFestivalWeb
+corepack yarn licenses:generate
+corepack yarn licenses:check
+```

@@ -143,9 +143,9 @@ services:
       # ── Required secrets (override defaults from appsettings.json) ──
       # Generate with: openssl rand -hex 32
       - Api__ApiKey=${API_KEY:?Set API_KEY in .env}
-      # ── Epic Games OAuth client (override built-in Switch client if needed) ──
-      - EPIC_CLIENT_ID=${EPIC_CLIENT_ID:-}
-      - EPIC_CLIENT_SECRET=${EPIC_CLIENT_SECRET:-}
+      # ── Epic Games OAuth client (required; no tracked credential defaults) ──
+      - EPIC_CLIENT_ID=${EPIC_CLIENT_ID:?Set EPIC_CLIENT_ID in .env}
+      - EPIC_CLIENT_SECRET=${EPIC_CLIENT_SECRET:?Set EPIC_CLIENT_SECRET in .env}
       # ── Leaderboard page cap (100 entries/page, default 100 pages = top 10K) ──
       - Scraper__MaxPagesPerLeaderboard=${MAX_PAGES_PER_LEADERBOARD:-100}
       # ── Sequential scrape: one song at a time, ~6×PageConcurrency concurrent requests (default: false) ──
