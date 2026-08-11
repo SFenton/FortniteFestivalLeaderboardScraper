@@ -60,6 +60,9 @@ export function usePressAction<T extends Element>({
 
   const commitPress = useCallback((event: PressEvent<T>, trigger: PressTrigger) => {
     blockEvent(event);
+    if (trigger === 'pointerup' && event.currentTarget instanceof HTMLElement) {
+      event.currentTarget.focus({ preventScroll: true });
+    }
     onPress(event, trigger);
   }, [blockEvent, onPress]);
 

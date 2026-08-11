@@ -195,11 +195,13 @@ describe('ModalShell', () => {
     expect(container.getAttribute('aria-hidden')).toBe('true');
     expect(document.body.style.overflow).toBe('hidden');
 
+    const dialog = screen.getByRole('dialog');
     fireEvent.click(screen.getByRole('button', { name: /close/i }));
 
     expect(container.inert).toBe(false);
     expect(container.getAttribute('aria-hidden')).toBeNull();
     expect(document.body.style.overflow).toBe('');
+    fireEvent.transitionEnd(dialog, { propertyName: 'opacity' });
     expect(launcher).toHaveFocus();
   });
 
@@ -214,8 +216,10 @@ describe('ModalShell', () => {
 
     const inputFocusSpy = vi.spyOn(input, 'focus');
     const launcherFocusSpy = vi.spyOn(launcher, 'focus');
+    const dialog = screen.getByRole('dialog');
     fireEvent.click(screen.getByRole('button', { name: /close/i }));
 
+    fireEvent.transitionEnd(dialog, { propertyName: 'opacity' });
     expect(inputFocusSpy).not.toHaveBeenCalled();
     expect(launcherFocusSpy).toHaveBeenCalledWith({ preventScroll: true });
     expect(launcher).toHaveFocus();
@@ -314,10 +318,10 @@ describe('ModalShell', () => {
       </ModalShell>,
     );
     const panel = screen.getByRole('dialog');
-    fireEvent.transitionEnd(screen.getByText('Content'), { propertyName: 'transform' });
+    fireEvent.transitionEnd(screen.getByText('Content'), { propertyName: 'opacity' });
     expect(onOpenComplete).not.toHaveBeenCalled();
 
-    fireEvent.transitionEnd(panel, { propertyName: 'transform' });
+    fireEvent.transitionEnd(panel, { propertyName: 'opacity' });
     expect(onOpenComplete).toHaveBeenCalledTimes(1);
   });
 
@@ -366,6 +370,32 @@ describe('ModalShell', () => {
     );
 
     expect(screen.getByRole('dialog').style.transform).toBe('translateY(24px)');
+  });
+
+  it('focuses the panel when requested instead of the first control', () => {
+    render(
+      <ModalShell visible title="Panel focus" onClose={vi.fn()} initialFocus="panel">
+        <button type="button">Content action</button>
+      </ModalShell>,
+    );
+
+    expect(screen.getByRole('dialog')).toHaveFocus();
+    expect(screen.getByRole('button', { name: /close/i })).not.toHaveFocus();
+  });
+
+  it('completes a zero-offset mobile entrance through opacity', () => {
+    mockIsMobile.mockReturnValue(true);
+    const onOpenComplete = vi.fn();
+    render(
+      <ModalShell visible title="Mobile Modal" onClose={vi.fn()} mobileEnterOffset={0} onOpenComplete={onOpenComplete}>
+        <div>Content</div>
+      </ModalShell>,
+    );
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.style.transform).toBe('translateY(0)');
+    fireEvent.transitionEnd(dialog, { propertyName: 'opacity' });
+    expect(onOpenComplete).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the mobile panel top stable while extending to the viewport bottom when visual viewport shrinks', () => {

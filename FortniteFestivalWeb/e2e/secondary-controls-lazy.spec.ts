@@ -131,25 +131,45 @@ test('desktop filters defer both Songs and selected-band controls', async ({ pag
   await expect(bandFilterButton).toBeFocused();
 });
 
-test('mobile search keeps keyboard focus and restores the launch control', async ({ page }, testInfo) => {
+test('mobile search uses touch-driven field focus and restores the launch control', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'mobile', 'mobile keyboard behavior is covered once');
   await seedState(page, null);
   await page.goto('/#/songs', { waitUntil: 'load' });
   await dismissOverlays(page);
 
   const searchButton = page.getByTestId('mobile-header-search');
-  await searchButton.click();
+  await page.route('**/src/components/search/SearchModal.tsx*', async (route) => {
+    await new Promise(resolve => setTimeout(resolve, 250));
+    await route.continue();
+  }, { times: 1 });
+  await searchButton.tap();
+  const loadingDialog = page.getByTestId('search-modal-lazy-loading');
+  await expect(loadingDialog).toBeVisible();
+  await expect(loadingDialog).toBeFocused();
+  await expect.poll(() => loadingDialog.evaluate(element => getComputedStyle(element).transform))
+    .toBe('matrix(1, 0, 0, 1, 0, 0)');
+
   const dialog = page.getByRole('dialog', { name: 'Search' });
   const input = dialog.locator('input');
   await expect(dialog).toBeVisible();
+  await expect(dialog).toBeFocused();
+  await expect(input).not.toBeFocused();
+
+  await input.tap();
   await expect(input).toBeFocused();
 
   await input.fill('WEB32');
   await input.press('Enter');
   await expect(input).not.toBeFocused();
-  await dialog.getByRole('button', { name: 'Close' }).click();
+  await dialog.getByRole('button', { name: 'Close' }).tap();
   await expect(dialog).toBeHidden();
   await expect(searchButton).toBeFocused();
+
+  await searchButton.tap();
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toBeFocused();
+  await input.tap();
+  await expect(input).toBeFocused();
 });
 
 test('mobile Rivals search uses a zoom-safe input and restores Find Rival focus', async ({ page }, testInfo) => {
@@ -159,35 +179,20 @@ test('mobile Rivals search uses a zoom-safe input and restores Find Rival focus'
   await dismissOverlays(page);
 
   const findRivalButton = page.getByRole('button', { name: 'Find Rival' });
-  await page.evaluate(() => {
-    const probeWindow = window as Window & { __rivalsSearchInitialFocusRect?: { top: number; bottom: number } };
-    delete probeWindow.__rivalsSearchInitialFocusRect;
-    const recordInitialFocus = (event: FocusEvent) => {
-      if (!(event.target instanceof HTMLInputElement) || !event.target.closest('[role="dialog"]')) return;
-      const rect = event.target.getBoundingClientRect();
-      probeWindow.__rivalsSearchInitialFocusRect = { top: rect.top, bottom: rect.bottom };
-      document.removeEventListener('focusin', recordInitialFocus, true);
-    };
-    document.addEventListener('focusin', recordInitialFocus, true);
-  });
-  await findRivalButton.click();
+  await findRivalButton.tap();
 
   const dialog = page.getByRole('dialog', { name: 'Search' });
   const input = dialog.getByRole('textbox', { name: 'Search players…' });
   await expect(dialog).toBeVisible();
-  await expect(input).toBeFocused();
+  await expect(dialog).toBeFocused();
+  await expect(input).not.toBeFocused();
   expect(await input.evaluate(element => Number.parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(16);
-  const initialFocusGeometry = await page.evaluate(() => {
-    const probeWindow = window as Window & { __rivalsSearchInitialFocusRect?: { top: number; bottom: number } };
-    return {
-      rect: probeWindow.__rivalsSearchInitialFocusRect,
-      viewportHeight: window.innerHeight,
-    };
-  });
-  expect(initialFocusGeometry.rect?.top).toBeGreaterThanOrEqual(0);
-  expect(initialFocusGeometry.rect?.bottom).toBeLessThanOrEqual(initialFocusGeometry.viewportHeight);
+  await expect.poll(() => dialog.evaluate(element => getComputedStyle(element).transform))
+    .toBe('matrix(1, 0, 0, 1, 0, 0)');
+  await input.tap();
+  await expect(input).toBeFocused();
 
-  await dialog.getByRole('button', { name: 'Close' }).click();
+  await dialog.getByRole('button', { name: 'Close' }).tap();
   await expect(dialog).toBeHidden();
   await expect(findRivalButton).toBeFocused();
 });

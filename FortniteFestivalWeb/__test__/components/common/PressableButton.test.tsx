@@ -60,6 +60,7 @@ describe('PressableButton', () => {
     fireEvent.click(button);
 
     expect(onPress).toHaveBeenCalledTimes(1);
+    expect(button).toHaveFocus();
   });
 
   it('cancels touch activation after movement', () => {

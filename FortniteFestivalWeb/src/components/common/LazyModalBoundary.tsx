@@ -1,9 +1,9 @@
-import { Component, Suspense, useEffect, useState, type ReactNode } from 'react';
+import { Component, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Colors, Font, Gap, flexCenter, flexColumn, padding } from '@festival/theme';
 import ArcSpinner, { SpinnerSize } from './ArcSpinner';
 import PressableButton from './PressableButton';
-import ModalShell from '../modals/components/ModalShell';
+import ModalShell, { ModalReturnFocusTargetContext } from '../modals/components/ModalShell';
 
 type LazyModalBoundaryProps = {
   visible: boolean;
@@ -12,6 +12,8 @@ type LazyModalBoundaryProps = {
   onClose: () => void;
   load?: () => Promise<void>;
   isLoaded?: () => boolean;
+  mobileEnterOffset?: number | string;
+  initialFocus?: 'first' | 'panel';
   children: ReactNode;
 };
 
@@ -43,15 +45,25 @@ export default function LazyModalBoundary({
   onClose,
   load,
   isLoaded,
+  mobileEnterOffset,
+  initialFocus,
   children,
 }: LazyModalBoundaryProps) {
   const [requested, setRequested] = useState(visible);
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'ready' | 'failed'>(() => (
     !load || isLoaded?.() ? 'ready' : 'idle'
   ));
+  const returnFocusTargetRef = useRef<HTMLElement | null>(null);
+  const captureReturnFocusTarget = useCallback((target: HTMLElement | null) => {
+    if (target?.isConnected) returnFocusTargetRef.current = target;
+  }, []);
 
   useEffect(() => {
-    if (visible) setRequested(true);
+    if (visible) {
+      setRequested(true);
+    } else {
+      returnFocusTargetRef.current = null;
+    }
   }, [visible]);
 
   useEffect(() => {
@@ -72,52 +84,69 @@ export default function LazyModalBoundary({
 
   if (!visible && !requested) return null;
 
+  let content: ReactNode;
   if (loadState === 'failed') {
-    return (
+    content = (
       <LazyModalFailure
         visible={visible}
         title={title}
         boundaryName={boundaryName}
         onClose={onClose}
+        mobileEnterOffset={mobileEnterOffset}
+        initialFocus={initialFocus}
+        onReturnFocusTargetCapture={captureReturnFocusTarget}
       />
     );
-  }
-
-  if (load && loadState !== 'ready' && !isLoaded?.()) {
-    return (
+  } else if (load && loadState !== 'ready' && !isLoaded?.()) {
+    content = (
       <LazyModalLoading
         visible={visible}
         title={title}
         boundaryName={boundaryName}
         onClose={onClose}
+        mobileEnterOffset={mobileEnterOffset}
+        initialFocus={initialFocus}
+        onReturnFocusTargetCapture={captureReturnFocusTarget}
       />
     );
-  }
-
-  return (
-    <LazyImportErrorBoundary
-      fallback={(
-        <LazyModalFailure
-          visible={visible}
-          title={title}
-          boundaryName={boundaryName}
-          onClose={onClose}
-        />
-      )}
-    >
-      <Suspense
+  } else {
+    content = (
+      <LazyImportErrorBoundary
         fallback={(
-          <LazyModalLoading
+          <LazyModalFailure
             visible={visible}
             title={title}
             boundaryName={boundaryName}
             onClose={onClose}
+            mobileEnterOffset={mobileEnterOffset}
+            initialFocus={initialFocus}
+            onReturnFocusTargetCapture={captureReturnFocusTarget}
           />
         )}
       >
-        {children}
-      </Suspense>
-    </LazyImportErrorBoundary>
+        <Suspense
+          fallback={(
+            <LazyModalLoading
+              visible={visible}
+              title={title}
+              boundaryName={boundaryName}
+              onClose={onClose}
+              mobileEnterOffset={mobileEnterOffset}
+              initialFocus={initialFocus}
+              onReturnFocusTargetCapture={captureReturnFocusTarget}
+            />
+          )}
+        >
+          {children}
+        </Suspense>
+      </LazyImportErrorBoundary>
+    );
+  }
+
+  return (
+    <ModalReturnFocusTargetContext.Provider value={returnFocusTargetRef.current}>
+      {content}
+    </ModalReturnFocusTargetContext.Provider>
   );
 }
 
@@ -126,13 +155,21 @@ function LazyModalLoading({
   title,
   boundaryName,
   onClose,
-}: Omit<LazyModalBoundaryProps, 'children'>) {
+  mobileEnterOffset,
+  initialFocus,
+  onReturnFocusTargetCapture,
+}: Omit<LazyModalBoundaryProps, 'children'> & {
+  onReturnFocusTargetCapture: (target: HTMLElement | null) => void;
+}) {
   const { t } = useTranslation();
   return (
     <ModalShell
       visible={visible}
       title={title}
       onClose={onClose}
+      mobileEnterOffset={mobileEnterOffset}
+      initialFocus={initialFocus}
+      onReturnFocusTargetCapture={onReturnFocusTargetCapture}
       panelTestId={`${boundaryName}-lazy-loading`}
     >
       <div role="status" aria-live="polite" style={styles.content}>
@@ -148,13 +185,21 @@ function LazyModalFailure({
   title,
   boundaryName,
   onClose,
-}: Omit<LazyModalBoundaryProps, 'children'>) {
+  mobileEnterOffset,
+  initialFocus,
+  onReturnFocusTargetCapture,
+}: Omit<LazyModalBoundaryProps, 'children'> & {
+  onReturnFocusTargetCapture: (target: HTMLElement | null) => void;
+}) {
   const { t } = useTranslation();
   return (
     <ModalShell
       visible={visible}
       title={title}
       onClose={onClose}
+      mobileEnterOffset={mobileEnterOffset}
+      initialFocus={initialFocus}
+      onReturnFocusTargetCapture={onReturnFocusTargetCapture}
       panelTestId={`${boundaryName}-lazy-error`}
     >
       <div role="alert" style={styles.content}>

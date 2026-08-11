@@ -1304,6 +1304,8 @@ function AppShell() {
         onClose={closeSearch}
         load={loadSearchModal}
         isLoaded={isSearchModalLoaded}
+        mobileEnterOffset={0}
+        initialFocus="panel"
       >
         <LazySearchModal
           visible={searchOpen}

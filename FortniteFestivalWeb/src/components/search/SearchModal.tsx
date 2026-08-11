@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { LoadPhase } from '@festival/core/runtime';
@@ -31,9 +31,8 @@ const SEARCH_STAGGER_VISIBLE_ITEMS = 8;
 const SEARCH_SCROLL_FADE_SIZE = 40;
 const SEARCH_KEYBOARD_CLEARANCE = 12;
 const SEARCH_KEYBOARD_OPEN_THRESHOLD = 120;
-const SEARCH_KEYBOARD_CLOSED_THRESHOLD = 80;
-const SEARCH_VIEWPORT_SCALE_TOLERANCE = 0.01;
-const SEARCH_MODAL_MOBILE_ENTER_OFFSET = 24;
+const SEARCH_KEYBOARD_INSET_DEADBAND = 8;
+const SEARCH_MODAL_MOBILE_ENTER_OFFSET = 0;
 
 const SEARCH_TARGET_LABEL_KEYS: Record<SearchTarget, string> = {
   songs: 'search.tabs.songs',
@@ -88,9 +87,9 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
   const keyboardBaselineRef = useRef<number | null>(null);
   const filterBottomBaselineRef = useRef<number | null>(null);
   const keyboardInsetRef = useRef(0);
-  const keyboardWasOpenRef = useRef(false);
-  const keyboardDismissedWhileFocusedRef = useRef(false);
-  const refocusPointerIdRef = useRef<number | null>(null);
+  const keyboardInsetFrameRef = useRef<number | null>(null);
+  const lastSearchPointerTypeRef = useRef('');
+  const searchInputWasFocusedOnPointerDownRef = useRef(false);
   const visibleTargets = useMemo(() => resolveSearchTargets(availableTargets), [availableTargets]);
   const resolvedPlaceholderKey = placeholderKey ?? getSearchPlaceholderKey(visibleTargets);
   const showTargetTabs = visibleTargets.length > 1;
@@ -103,10 +102,10 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
   const search = useUnifiedSearch(query, { enabledTargets: visibleTargets });
 
   const captureKeyboardBaseline = useCallback(() => {
+    if (keyboardBaselineRef.current != null) return;
     const visualViewport = window.visualViewport;
     const visualViewportBottom = visualViewport ? visualViewport.height + visualViewport.offsetTop : 0;
     keyboardBaselineRef.current = Math.max(
-      keyboardBaselineRef.current ?? 0,
       window.innerHeight || 0,
       document.documentElement.clientHeight || 0,
       visualViewportBottom,
@@ -117,8 +116,10 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
     keyboardBaselineRef.current = null;
     filterBottomBaselineRef.current = null;
     keyboardInsetRef.current = 0;
-    keyboardWasOpenRef.current = false;
-    keyboardDismissedWhileFocusedRef.current = false;
+    if (keyboardInsetFrameRef.current != null) {
+      window.cancelAnimationFrame(keyboardInsetFrameRef.current);
+      keyboardInsetFrameRef.current = null;
+    }
     setKeyboardInset(0);
   }, []);
 
@@ -129,7 +130,8 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
       setActiveTarget(null);
     }
     if (!visible) {
-      refocusPointerIdRef.current = null;
+      lastSearchPointerTypeRef.current = '';
+      searchInputWasFocusedOnPointerDownRef.current = false;
       setQuery('');
       setSearchFocused(false);
       resetKeyboardState();
@@ -143,36 +145,39 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
     inputRef.current?.focus({ preventScroll: true });
   }, [captureKeyboardBaseline]);
 
-  useLayoutEffect(() => {
-    if (!visible || !isMobileChrome) return;
-    focusSearchWithoutScroll();
-  }, [focusSearchWithoutScroll, isMobileChrome, visible]);
-
   const handleSearchPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (
-      event.pointerType === 'mouse'
-      || event.isPrimary === false
-      || event.button !== 0
-      || !keyboardDismissedWhileFocusedRef.current
-    ) return;
-
-    refocusPointerIdRef.current = event.pointerId;
-    inputRef.current?.blur();
+    lastSearchPointerTypeRef.current = event.pointerType;
+    const activeElement = document.activeElement;
+    searchInputWasFocusedOnPointerDownRef.current = activeElement instanceof HTMLInputElement
+      && event.currentTarget.contains(activeElement);
   }, []);
 
-  const handleSearchPointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (refocusPointerIdRef.current !== event.pointerId) return;
-    refocusPointerIdRef.current = null;
-    keyboardDismissedWhileFocusedRef.current = false;
+  const handleSearchPointerCancel = useCallback(() => {
+    lastSearchPointerTypeRef.current = '';
+    searchInputWasFocusedOnPointerDownRef.current = false;
+  }, []);
+
+  const isKeyboardOpen = useCallback(() => {
+    const baseline = keyboardBaselineRef.current;
+    if (baseline == null) return false;
+    const visualViewportHeight = window.visualViewport?.height ?? window.innerHeight;
+    const heightLoss = Math.max(
+      0,
+      Math.round(baseline - visualViewportHeight),
+      Math.round(baseline - window.innerHeight),
+    );
+    return heightLoss >= SEARCH_KEYBOARD_OPEN_THRESHOLD;
+  }, []);
+
+  const handleSearchClickCapture = useCallback(() => {
+    const pointerType = lastSearchPointerTypeRef.current;
+    const inputWasFocused = searchInputWasFocusedOnPointerDownRef.current;
+    lastSearchPointerTypeRef.current = '';
+    searchInputWasFocusedOnPointerDownRef.current = false;
+    if ((pointerType !== 'touch' && pointerType !== 'pen') || !inputWasFocused || isKeyboardOpen()) return;
     inputRef.current?.blur();
     focusSearchWithoutScroll();
-  }, [focusSearchWithoutScroll]);
-
-  const handleSearchPointerCancel = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (refocusPointerIdRef.current === event.pointerId) {
-      refocusPointerIdRef.current = null;
-    }
-  }, []);
+  }, [focusSearchWithoutScroll, isKeyboardOpen]);
 
   const handleSearchFocus = useCallback(() => {
     captureKeyboardBaseline();
@@ -194,7 +199,8 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
     setQuery('');
     setActiveTarget(null);
     setSearchFocused(false);
-    refocusPointerIdRef.current = null;
+    lastSearchPointerTypeRef.current = '';
+    searchInputWasFocusedOnPointerDownRef.current = false;
     resetKeyboardState();
   }, [resetKeyboardState]);
 
@@ -205,27 +211,10 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
       return;
     }
 
-    captureKeyboardBaseline();
-    const baseline = keyboardBaselineRef.current ?? window.innerHeight;
     const visualViewport = window.visualViewport;
     const visibleBottom = visualViewport ? visualViewport.height + visualViewport.offsetTop : window.innerHeight;
-    const visualViewportLoss = baseline - visibleBottom;
-    const innerHeightLoss = baseline - window.innerHeight;
-    const viewportLoss = Math.max(0, Math.round(visualViewportLoss), Math.round(innerHeightLoss));
-    const keyboardHeightLoss = Math.max(
-      0,
-      Math.round(baseline - (visualViewport?.height ?? window.innerHeight)),
-      Math.round(innerHeightLoss),
-    );
-    if (Math.abs((visualViewport?.scale ?? 1) - 1) < SEARCH_VIEWPORT_SCALE_TOLERANCE) {
-      if (keyboardHeightLoss >= SEARCH_KEYBOARD_OPEN_THRESHOLD) {
-        keyboardWasOpenRef.current = true;
-        keyboardDismissedWhileFocusedRef.current = false;
-      } else if (keyboardWasOpenRef.current && keyboardHeightLoss <= SEARCH_KEYBOARD_CLOSED_THRESHOLD) {
-        keyboardWasOpenRef.current = false;
-        keyboardDismissedWhileFocusedRef.current = true;
-      }
-    }
+    const layoutBottom = Math.max(window.innerHeight, document.documentElement.clientHeight);
+    const maxInset = Math.max(0, Math.round(layoutBottom - visibleBottom));
     const desiredBottom = visibleBottom - SEARCH_KEYBOARD_CLEARANCE;
     const filtersElement = mobileFiltersRef.current;
     const filterRect = filtersElement?.getBoundingClientRect();
@@ -237,14 +226,18 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
     }
     const unshiftedFilterBottom = filterBottomBaselineRef.current;
     const measuredInset = unshiftedFilterBottom == null
-      ? viewportLoss
+      ? maxInset
       : Math.max(0, Math.ceil(unshiftedFilterBottom - desiredBottom));
-    const nextInset = Math.min(viewportLoss, measuredInset);
+    const measuredNextInset = Math.min(maxInset, measuredInset);
+    const nextInset = measuredNextInset === 0
+      || Math.abs(keyboardInsetRef.current - measuredNextInset) >= SEARCH_KEYBOARD_INSET_DEADBAND
+      ? measuredNextInset
+      : keyboardInsetRef.current;
 
     if (keyboardInsetRef.current === nextInset) return;
     keyboardInsetRef.current = nextInset;
     setKeyboardInset(nextInset);
-  }, [captureKeyboardBaseline, isMobileChrome, searchFocused, visible]);
+  }, [isMobileChrome, searchFocused, visible]);
 
   const handleOpenComplete = useCallback(() => {
     if (!isMobileChrome) focusSearchWithoutScroll();
@@ -256,15 +249,26 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
 
     if (!visible || !isMobileChrome || !searchFocused) return undefined;
 
+    const scheduleKeyboardInsetUpdate = () => {
+      if (keyboardInsetFrameRef.current != null) return;
+      keyboardInsetFrameRef.current = window.requestAnimationFrame(() => {
+        keyboardInsetFrameRef.current = null;
+        updateKeyboardInset();
+      });
+    };
     const visualViewport = window.visualViewport;
-    visualViewport?.addEventListener('resize', updateKeyboardInset);
-    visualViewport?.addEventListener('scroll', updateKeyboardInset);
-    window.addEventListener('resize', updateKeyboardInset);
+    visualViewport?.addEventListener('resize', scheduleKeyboardInsetUpdate);
+    visualViewport?.addEventListener('scroll', scheduleKeyboardInsetUpdate);
+    window.addEventListener('resize', scheduleKeyboardInsetUpdate);
 
     return () => {
-      visualViewport?.removeEventListener('resize', updateKeyboardInset);
-      visualViewport?.removeEventListener('scroll', updateKeyboardInset);
-      window.removeEventListener('resize', updateKeyboardInset);
+      visualViewport?.removeEventListener('resize', scheduleKeyboardInsetUpdate);
+      visualViewport?.removeEventListener('scroll', scheduleKeyboardInsetUpdate);
+      window.removeEventListener('resize', scheduleKeyboardInsetUpdate);
+      if (keyboardInsetFrameRef.current != null) {
+        window.cancelAnimationFrame(keyboardInsetFrameRef.current);
+        keyboardInsetFrameRef.current = null;
+      }
     };
   }, [isMobileChrome, searchFocused, updateKeyboardInset, visible]);
 
@@ -331,6 +335,7 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
       onClose={onClose}
       desktopStyle={SEARCH_MODAL_DESKTOP}
       mobileEnterOffset={SEARCH_MODAL_MOBILE_ENTER_OFFSET}
+      initialFocus={isMobileChrome ? 'panel' : 'first'}
       transitionMs={MODAL_TRANSITION_MS}
       onOpenComplete={handleOpenComplete}
       onCloseComplete={handleCloseComplete}
@@ -345,8 +350,8 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
           onFocus={handleSearchFocus}
           onBlur={handleSearchBlur}
           onPointerDownCapture={handleSearchPointerDown}
-          onPointerUpCapture={handleSearchPointerUp}
           onPointerCancelCapture={handleSearchPointerCancel}
+          onClickCapture={handleSearchClickCapture}
           enterKeyHint="search"
           style={st.searchBar}
         />
@@ -758,7 +763,6 @@ function useStyles(isMobile: boolean, keyboardInset: number) {
         gap: Gap.sm,
         flexShrink: 0,
         transform: keyboardTransform,
-        transition: `transform ${QUICK_FADE_MS}ms ease`,
       } as CSSProperties,
       tab: tabBase,
       tabSelected: {
@@ -782,7 +786,6 @@ function useStyles(isMobile: boolean, keyboardInset: number) {
         ...flexColumn,
         overflowY: Overflow.auto,
         marginBottom: keyboardResultsMargin,
-        transition: `margin-bottom ${QUICK_FADE_MS}ms ease`,
       } as CSSProperties,
       resultList: {
         ...flexColumn,

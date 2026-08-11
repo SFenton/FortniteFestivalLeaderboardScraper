@@ -28,7 +28,15 @@ function LoadedModal({ visible, onClose }: { visible: boolean; onClose: () => vo
   );
 }
 
-function Harness({ loader }: { loader: () => Promise<{ default: typeof LoadedModal }> }) {
+function Harness({
+  loader,
+  mobileEnterOffset,
+  initialFocus,
+}: {
+  loader: () => Promise<{ default: typeof LoadedModal }>;
+  mobileEnterOffset?: number | string;
+  initialFocus?: 'first' | 'panel';
+}) {
   const [visible, setVisible] = useState(false);
   const LazyModal = useMemo(() => lazy(loader), [loader]);
   return (
@@ -39,6 +47,8 @@ function Harness({ loader }: { loader: () => Promise<{ default: typeof LoadedMod
         title="Deferred Control"
         boundaryName="deferred-control"
         onClose={() => setVisible(false)}
+        mobileEnterOffset={mobileEnterOffset}
+        initialFocus={initialFocus}
       >
         <LazyModal visible={visible} onClose={() => setVisible(false)} />
       </LazyModalBoundary>
