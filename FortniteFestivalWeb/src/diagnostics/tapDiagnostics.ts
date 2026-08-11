@@ -128,7 +128,6 @@ type TapDiagnosticsInstallOptions = {
 };
 
 export function isTapDiagnosticsEnabled(windowRef: Window = window): boolean {
-  if (import.meta.env.DEV && IS_PWA) return true;
   const params = new URLSearchParams(windowRef.location.search);
   if (params.get('tapDiagnostics') === '1') return true;
   const validation = params.get('validation') ?? '';
@@ -142,7 +141,6 @@ export function isTapDiagnosticsUiAvailable(): boolean {
 
 export function isTapTelemetryEnabled(windowRef: Window = window): boolean {
   if (!isTapDiagnosticsUiAvailable()) return false;
-  if (import.meta.env.DEV && IS_PWA) return true;
 
   const params = new URLSearchParams(windowRef.location.search);
   if (params.get('tapTelemetry') === '1') return true;
