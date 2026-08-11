@@ -8,14 +8,14 @@ sources:
   - AGENTS.md
   - .github/instructions/documentation.instructions.md
 update_triggers:
-  - Any canonical document is added, moved, superseded, or archived.
+  - Any canonical document is added, moved, or removed.
 ---
 
 # Documentation
 
-This index separates current guidance from living procedures, forward-looking
-work, architectural decisions, and historical evidence. Code, configuration,
-tests, and observed runtime evidence remain the behavioral sources of truth.
+This index contains current guidance, living procedures, forward-looking work,
+and architectural decisions. Code, configuration, tests, and observed runtime
+evidence remain the behavioral sources of truth.
 
 ## Start here
 
@@ -50,22 +50,7 @@ again. Verify their preconditions and current code before execution.
 - [Score-history deduplication maintenance](database/ScoreHistoryDedupMaintenanceRunbook.md)
 - [Snapshot reuse evaluation](database/SnapshotReuseRunbook.md)
 - [Solo-family ranking backfill](database/SoloFamilyRankingBackfillRunbook.md)
-- [Storage ownership readiness](database/StorageOwnershipReadinessRunbook.md)
 - [Runbook index and lifecycle](operations/runbooks/README.md)
-
-## Compatibility paths
-
-Several previously canonical-looking paths now contain short supersession
-notices. They remain so old links fail safely instead of presenting stale
-operational state:
-
-- `docs/database/FSTServiceDatabaseDesign.md`
-- `docs/database/PostgresPersistencePriorityPlan.md`
-- completed database runbook paths under `docs/database/`
-- design paths under `docs/design/`
-- refactor entry points under `docs/refactor/`
-
-The original content is preserved under [the archive](archive/README.md).
 
 ## Documentation classes
 
@@ -75,8 +60,10 @@ The original content is preserved under [the archive](archive/README.md).
 | `living-runbook` | Repeatable operator procedure with current gates and rollback. |
 | `roadmap` | Unresolved work only; never evidence that behavior exists. |
 | `decision` | Accepted architectural rationale and consequences. |
-| `superseded` | Compatibility pointer to a current document or archive. |
-| `archived` | Immutable historical evidence; not current guidance. |
+
+Obsolete documentation is removed from the current tree after its valid
+conclusions are incorporated into canonical docs. Git history remains
+available for forensic review, but is not current guidance.
 
 Run `node tools/check-docs.mjs` before completing a documentation-affecting
 change.

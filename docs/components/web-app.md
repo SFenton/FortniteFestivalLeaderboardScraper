@@ -77,8 +77,8 @@ Current styling combines:
   class;
 - shared UI utilities from `@festival/ui-utils`.
 
-The archived CSS migration checklist is history, not a current file-count or
-completion source.
+The obsolete CSS migration checklist was removed and is not a current
+file-count or completion source.
 
 ## API boundary
 

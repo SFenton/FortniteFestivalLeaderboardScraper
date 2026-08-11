@@ -70,9 +70,9 @@ files intentionally use different read/write settings for `fstservice` and
 - Preserve Epic/provider provenance, historical leaderboard correctness,
   publication state, and replay evidence.
 
-## Current procedures and history
+## Current procedures
 
 Use the [living runbook index](../operations/runbooks/README.md). Completed
-physical cleanup, retirement, compaction, and rejected rollout evidence is
-preserved under
-[`docs/archive/legacy/database/`](../archive/legacy/database/).
+physical cleanup, retirement, compaction, and rejected rollout documents were
+removed from the current tree after their current conclusions were captured.
+They must not be reintroduced as pending procedures.

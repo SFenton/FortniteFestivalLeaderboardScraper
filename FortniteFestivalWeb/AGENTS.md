@@ -33,8 +33,8 @@ API changes must stay aligned with service routes/contracts and
 
 Use CSS Modules for selectors, pseudo states, media queries, and animations.
 Use `@festival/theme` for shared tokens and typed style values. Inline styles
-are appropriate for small dynamic values. The archived refactor/CSS migration
-documents are historical, not an active checklist.
+are appropriate for small dynamic values. The obsolete refactor/CSS migration
+documents were removed and are not an active checklist.
 
 ## Testing
 

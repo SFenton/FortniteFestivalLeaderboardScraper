@@ -8,7 +8,7 @@
 - `FortniteFestivalWeb/`: React/Vite application
 - `packages/`: shared TypeScript packages
 - `deploy/` and `docker-compose.yml`: deployment templates
-- `docs/`: canonical documentation, runbooks, roadmap, decisions, and archive
+- `docs/`: canonical documentation, living runbooks, roadmap, and decisions
 
 Read the nearest `AGENTS.md` and
 [`docs/README.md`](docs/README.md) before changing a component.

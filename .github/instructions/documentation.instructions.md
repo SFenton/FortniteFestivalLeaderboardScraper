@@ -70,11 +70,13 @@ private endpoints, or provider account data into repository docs.
 - Roadmaps contain unresolved work only and are never proof that behavior
   exists.
 - Update an item's status in the same change that accepts, rejects, completes,
-  or supersedes it.
-- Move terminal evidence under `docs/archive/`.
-- Archived documents are historical and must not be cited as current guidance.
-- Completed destructive procedures must remain marked
-  `COMPLETED - DO NOT RE-EXECUTE`.
+  or removes it.
+- After moving valid current conclusions into canonical docs, delete obsolete
+  audits, plans, designs, progress journals, and completed/rejected one-shot
+  runbooks. Do not leave compatibility stubs or an in-repository archive.
+- Git history is forensic evidence only, not current guidance or authorization.
+- Keep safety-critical terminal facts in canonical current-state docs so
+  completed destructive work cannot be mistaken for pending work.
 - Do not append operational journals to `README.md`.
 
 ## Completion requirement

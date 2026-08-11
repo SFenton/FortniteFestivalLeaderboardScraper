@@ -10,7 +10,6 @@ const errors = [];
 const requiredDocs = [
   'docs/README.md',
   'docs/governance/documentation.md',
-  'docs/archive/README.md',
   'docs/architecture/system-overview.md',
   'docs/architecture/data-publication-flow.md',
   'docs/architecture/data-storage.md',
@@ -35,27 +34,36 @@ const requiredDocs = [
   'docs/decisions/0002-publication-generation.md',
   'docs/decisions/0003-vpn-http-proxy-isolation.md',
   'docs/decisions/0004-web-deployment-modes.md',
-  'docs/audits/README.md',
-  'docs/refactor/README.md',
-  'docs/refactor/PLAN.md',
-  'docs/refactor/CSS_MIGRATION_RULES.md',
-  'docs/design/BandRankHistoryVNextDesign.md',
-  'docs/design/PhaseSelectiveScraping.md',
-  'docs/design/ProxyRotationDesign.md',
-  'docs/design/StringUnionEnumMigration.md',
+  'docs/database/ImprovementNotificationRecoveryRunbook.md',
+  'docs/database/ScoreHistoryDedupMaintenanceRunbook.md',
+  'docs/database/SnapshotReuseRunbook.md',
+  'docs/database/SoloFamilyRankingBackfillRunbook.md',
+];
+
+const removedLegacyPaths = [
   'docs/database/FSTServiceDatabaseDesign.md',
   'docs/database/PostgresPersistencePriorityPlan.md',
   'docs/database/BandHistoryCompactionRunbook.md',
   'docs/database/LogicalLeaderboardShadowRetirementRunbook.md',
   'docs/database/OrphanReclaimRunbook.md',
   'docs/database/RetiredPhysicalSchemaCleanupRunbook.md',
-  'docs/database/StoredRankFilteredReadsRolloutRunbook.md',
-  'docs/database/ImprovementNotificationRecoveryRunbook.md',
-  'docs/database/ScoreHistoryDedupMaintenanceRunbook.md',
-  'docs/database/SnapshotReuseRunbook.md',
-  'docs/database/SoloFamilyRankingBackfillRunbook.md',
   'docs/database/StorageOwnershipReadinessRunbook.md',
+  'docs/database/StoredRankFilteredReadsRolloutRunbook.md',
 ];
+
+const removedLegacyPrefixes = [
+  'docs/archive/',
+  'docs/audits/',
+  'docs/design/',
+  'docs/refactor/',
+];
+
+const allowedStatuses = new Set([
+  'canonical',
+  'living-runbook',
+  'roadmap',
+  'decision',
+]);
 
 const metadataKeys = [
   'status',
@@ -108,12 +116,13 @@ for (const relativePath of requiredDocs) {
 }
 
 const managedDocs = walk(path.join(repoRoot, 'docs'))
-  .filter(file =>
-    !file.includes(`${path.sep}docs${path.sep}archive${path.sep}legacy${path.sep}`))
   .map(file => path.relative(repoRoot, file))
   .sort();
 const documentStatus = new Map();
 for (const relativePath of managedDocs) {
+  if (removedLegacyPrefixes.some(prefix => relativePath.startsWith(prefix))) {
+    errors.push(`${relativePath}: obsolete documentation namespace must remain removed`);
+  }
   const content = read(relativePath);
   const metadata = frontMatter(relativePath, content);
   for (const key of metadataKeys) {
@@ -122,7 +131,18 @@ for (const relativePath of managedDocs) {
     }
   }
   const status = metadata.match(/^status:\s*(\S+)/m)?.[1];
-  if (status) documentStatus.set(relativePath, status);
+  if (status) {
+    documentStatus.set(relativePath, status);
+    if (!allowedStatuses.has(status)) {
+      errors.push(`${relativePath}: unsupported documentation status '${status}'`);
+    }
+  }
+}
+
+for (const relativePath of removedLegacyPaths) {
+  if (fs.existsSync(path.join(repoRoot, relativePath))) {
+    errors.push(`${relativePath}: obsolete documentation path must remain removed`);
+  }
 }
 
 const docsIndex = read('docs/README.md');
@@ -144,8 +164,7 @@ const markdownFiles = [
   path.join(repoRoot, 'CONTRIBUTING.md'),
   path.join(repoRoot, 'AGENTS.md'),
   ...walk(path.join(repoRoot, '.github')),
-  ...walk(path.join(repoRoot, 'docs')).filter(file =>
-    !file.includes(`${path.sep}docs${path.sep}archive${path.sep}legacy${path.sep}`)),
+  ...walk(path.join(repoRoot, 'docs')),
   ...walk(path.join(repoRoot, 'FSTService')).filter(file => file.endsWith('AGENTS.md')),
   ...walk(path.join(repoRoot, 'FortniteFestivalWeb')).filter(file => file.endsWith('AGENTS.md')),
   ...walk(path.join(repoRoot, 'tools')).filter(file => file.endsWith('README.md')),
@@ -174,15 +193,6 @@ for (const absolutePath of new Set(markdownFiles)) {
     if (!fs.existsSync(resolved)) {
       errors.push(`${relativePath}: broken relative link '${match[1]}'`);
     }
-  }
-}
-
-const archiveFiles = walk(path.join(repoRoot, 'docs', 'archive', 'legacy'));
-for (const absolutePath of archiveFiles) {
-  const relativePath = path.relative(repoRoot, absolutePath);
-  const opening = fs.readFileSync(absolutePath, 'utf8').split('\n').slice(0, 8).join('\n');
-  if (!/Archived|COMPLETED/i.test(opening)) {
-    errors.push(`${relativePath}: archived original is missing an archive/completion banner`);
   }
 }
 
@@ -283,5 +293,5 @@ if (errors.length > 0) {
 console.log(
   `Documentation check passed: ${managedDocs.length} managed docs, `
   + `${new Set(markdownFiles).size} active Markdown files, `
-  + `${archiveFiles.length} archived originals.`,
+  + `${removedLegacyPaths.length} removed legacy paths enforced.`,
 );

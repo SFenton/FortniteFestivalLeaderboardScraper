@@ -66,7 +66,7 @@ proves the new path has the same data as the old path. Record:
 - maintenance window and monitoring;
 - validation that the command cannot target a different cluster/project.
 
-Completed destructive runbooks in the archive are evidence, not reusable
+Removed completed runbooks and Git history are forensic evidence, not reusable
 authorization.
 
 ## Service availability

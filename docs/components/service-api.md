@@ -67,7 +67,7 @@ See [API contract](../reference/api-contract.md).
 Protected endpoints use the `X-API-Key` authentication scheme. Public,
 authenticated, protected, and global fixed-window limiters currently share the
 same 100-request, one-second, per-client policy outside the test environment.
-Do not copy older minute-based limits from archived documents.
+Do not copy older minute-based limits from deleted historical guidance.
 
 ## Caching and publication
 

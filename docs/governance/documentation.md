@@ -24,15 +24,15 @@ Use this precedence when evidence conflicts:
 1. Current code, configuration, tests, and measured runtime evidence.
 2. Canonical documents listed in [`docs/README.md`](../README.md).
 3. Living runbooks whose prerequisites have been revalidated.
-4. Roadmaps, decisions, and archives for intent or history only.
+4. Roadmaps and decisions for future work or architectural rationale.
 
-A roadmap is never proof that a feature exists. An archive is never current
-operator guidance.
+A roadmap is never proof that a feature exists. Deleted documentation in Git
+history is never current operator guidance.
 
 ## Required metadata
 
-Canonical documents, living runbooks, roadmaps, decisions, and supersession
-stubs must begin with YAML front matter containing:
+Canonical documents, living runbooks, roadmaps, and decisions must begin with
+YAML front matter containing:
 
 - `status`
 - functional `owner`
@@ -42,8 +42,7 @@ stubs must begin with YAML front matter containing:
 - `update_triggers`
 
 Owners are functional areas such as `web`, `service`, `worker`, `data`,
-`operations`, or `repository`; do not invent a person. Archived original
-documents retain their historical body and use an archive banner instead.
+`operations`, or `repository`; do not invent a person.
 
 ## Same-change update triggers
 
@@ -74,17 +73,19 @@ that no current page owns. Add it to `docs/README.md` in the same change.
 Use an ADR under `docs/decisions/` when the rationale, alternatives, or
 consequences would not remain clear from code alone.
 
-## Roadmaps and archives
+## Roadmaps and obsolete documents
 
 - Roadmaps contain unresolved work only.
-- When work is accepted, rejected, completed, or superseded, update the roadmap
+- When work is accepted, rejected, completed, or removed, update the roadmap
   in the same change.
-- Move terminal evidence to `docs/archive/` instead of appending it to
-  `README.md` or a living design.
-- Completed destructive procedures must say `COMPLETED - DO NOT RE-EXECUTE`
-  at both the old compatibility path and the archived original.
-- Archived originals are changed only for a correction notice, redaction, or
-  supersession link.
+- Once valid current conclusions have been moved into canonical docs, delete
+  obsolete audits, plans, designs, progress journals, and completed/rejected
+  one-shot runbooks. Do not leave stubs or an in-repository archive.
+- Git history preserves removed text for forensic review. It is not a runnable
+  procedure or authorization.
+- Canonical current-state docs must record safety-critical terminal facts, such
+  as a completed destructive cleanup no longer being pending.
+- Do not append operational journals to `README.md` or a living design.
 
 ## Completion evidence
 
@@ -105,5 +106,4 @@ node tools/check-docs.mjs
 ```
 
 The checker validates the canonical document set, metadata, index coverage,
-relative links outside the archive, supersession paths, and the root README
-size boundary.
+relative links, removed legacy-path absence, and the root README size boundary.
