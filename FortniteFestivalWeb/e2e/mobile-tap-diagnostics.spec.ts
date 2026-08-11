@@ -131,6 +131,7 @@ test.describe('Mobile tap diagnostics', () => {
     await expect(page.getByText('Diagnostics', { exact: true })).toBeVisible();
     await expect(page.getByText('Tap Diagnostics', { exact: true })).toBeVisible();
     await expect(page.getByText('Upload Tap Telemetry', { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => Boolean(window.__fstTapDiagnostics))).toBe(true);
   });
 });
 
