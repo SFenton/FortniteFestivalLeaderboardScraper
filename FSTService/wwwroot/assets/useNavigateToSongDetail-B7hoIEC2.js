@@ -1,1 +1,0 @@
-import{aF as n,b as c,r,ag as u}from"./index-BkP7m1dd.js";function l(o){var s;const i=n(),t=c(),e=(s=i.state)==null?void 0:s.backTo,a=o?u.songDetail(o):void 0;return r.useCallback(()=>{a&&t(e===a?-1:a)},[e,a,t])}export{l as u};
