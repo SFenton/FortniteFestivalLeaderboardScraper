@@ -537,9 +537,15 @@ export function buildLicenseManifest(options = {}) {
   }
 
   for (const manualEntry of overrides.other ?? []) {
-    const licenseType = normalizeLicenseType(manualEntry.licenseType);
-    const licenseText = manualEntry.licenseText ?? (licenseType ? LICENSE_TEXTS[licenseType] : null);
-    if (!manualEntry.name || !manualEntry.version || !licenseType || !licenseText) {
+    const declaredLicenseType = String(manualEntry.licenseType ?? '').trim();
+    const normalizedLicenseType = normalizeLicenseType(declaredLicenseType);
+    const licenseText = manualEntry.licenseText
+      ?? (manualEntry.licenseTextPath
+        ? fs.readFileSync(path.join(repoRoot, manualEntry.licenseTextPath), 'utf8')
+        : normalizedLicenseType
+          ? LICENSE_TEXTS[normalizedLicenseType]
+          : null);
+    if (!manualEntry.name || !manualEntry.version || !declaredLicenseType || !licenseText) {
       errors.push(`Invalid manual license override entry in ${OVERRIDES_PATH}.`);
       continue;
     }
@@ -548,7 +554,7 @@ export function buildLicenseManifest(options = {}) {
       ecosystem: 'other',
       name: manualEntry.name,
       version: manualEntry.version,
-      licenseType,
+      licenseType: normalizedLicenseType ?? declaredLicenseType,
       licenseText,
       packageUrl: manualEntry.packageUrl ?? null,
       repositoryUrl: manualEntry.repositoryUrl ?? null,

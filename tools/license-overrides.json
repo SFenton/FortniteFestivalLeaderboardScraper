@@ -60,5 +60,15 @@
     "Microsoft.Data.Sqlite": "MIT",
     "System.Text.Json": "MIT"
   },
-  "other": []
+  "other": [
+    {
+      "name": "CHOpt",
+      "version": "1.12.2",
+      "licenseType": "GPL-3.0-or-later",
+      "licenseTextPath": "tools/chopt-cli-linux/LICENSE.txt",
+      "packageUrl": "https://github.com/SFenton/CHOpt/tree/d4ff3132cd147858bf34c47053df650ff6a3ab6e",
+      "repositoryUrl": "https://github.com/SFenton/CHOpt",
+      "sourcePath": "tools/chopt-cli-linux"
+    }
+  ]
 }
