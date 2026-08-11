@@ -150,7 +150,7 @@ function useStyles() {
       fontWeight: Weight.bold,
       color: Colors.textPrimary,
       whiteSpace: WhiteSpace.nowrap,
-      lineHeight: 1,
+      lineHeight: 1.2,
     } as CSSProperties,
     titleBack: {
       display: Display.inlineFlex,

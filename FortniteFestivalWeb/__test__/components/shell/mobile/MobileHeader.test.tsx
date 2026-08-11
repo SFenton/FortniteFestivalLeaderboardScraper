@@ -50,6 +50,7 @@ describe('MobileHeader', () => {
     expect(titleContainer?.style.flex).toContain('1');
     expect(titleContainer?.style.minWidth).toBe('0px');
     expect(titleContainer?.style.overflow).toBe('hidden');
+    expect(titleContainer?.style.lineHeight).toBe('1.2');
   });
 
   it('renders search action and calls onOpenSearch', () => {
