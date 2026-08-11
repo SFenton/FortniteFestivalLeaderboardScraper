@@ -5,12 +5,10 @@ import { SAFE_AREA_BOTTOM_RAW_VAR, SAFE_AREA_TOP_RAW_VAR } from '../../utils/saf
 
 const BG_DURATION = 1000;
 const BACKGROUND_LAYER_Z_INDEX = 0;
-const STATUS_BAR_LAYER_Z_INDEX = 2;
 const abStyles = {
   container: { ...fixedFill, top: `calc(-1 * ${SAFE_AREA_TOP_RAW_VAR})`, bottom: `calc(-1 * ${SAFE_AREA_BOTTOM_RAW_VAR})`, overflow: Overflow.hidden, zIndex: BACKGROUND_LAYER_Z_INDEX, pointerEvents: PointerEvents.none } as CSSProperties,
   layer: { ...absoluteFill, backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', willChange: 'transform, opacity' } as CSSProperties,
   dim: { ...absoluteFill, backgroundColor: Colors.backgroundBlack } as CSSProperties,
-  statusBar: { position: 'fixed', top: 0, left: 0, right: 0, height: SAFE_AREA_TOP_RAW_VAR, overflow: Overflow.hidden, zIndex: STATUS_BAR_LAYER_Z_INDEX, pointerEvents: PointerEvents.none } as CSSProperties,
 };
 
 const FADE_DURATION = 1000; // 1s crossfade
@@ -96,7 +94,6 @@ export function AnimatedBackground({
   const [containerVisible, setContainerVisible] = useState(false);
   const uriA = imageUris[layerAIdx];
   const uriB = imageUris[layerBIdx];
-  const statusBarUri = opacityB > opacityA && uriB ? uriB : uriA;
 
   // Reset layers when image URIs change
   useEffect(() => {
@@ -141,7 +138,7 @@ export function AnimatedBackground({
         setLayerBIdx(nextIdx);
       }, FADE_DURATION);
     }
-  }, [imageUris, uriA, uriB]);
+  }, [imageUris]);
 
   // Transition timer — fires every DISPLAY_DURATION, paused when tab is hidden
   useEffect(() => {
@@ -191,26 +188,18 @@ export function AnimatedBackground({
   /* v8 ignore stop */
 
   return (
-    <>
-      {statusBarUri && (
-        <div style={{ ...abStyles.statusBar, transition: `opacity ${BG_DURATION}ms ease`, opacity: containerVisible ? 1 : 0 }}>
-          <div style={{ ...abStyles.layer, backgroundImage: `url(${statusBarUri})` }} />
-          <div style={{ ...abStyles.dim, opacity: dimOpacity }} />
-        </div>
-      )}
-      <div style={{ ...abStyles.container, transition: `opacity ${BG_DURATION}ms ease`, opacity: containerVisible ? 1 : 0 }}>
+    <div style={{ ...abStyles.container, transition: `opacity ${BG_DURATION}ms ease`, opacity: containerVisible ? 1 : 0 }}>
+      <div
+        ref={layerARef}
+        style={{ ...abStyles.layer, opacity: opacityA, backgroundImage: `url(${uriA})`, transition: `opacity ${FADE_DURATION}ms ease` }}
+      />
+      {uriB && imageUris.length > 1 && (
         <div
-          ref={layerARef}
-          style={{ ...abStyles.layer, opacity: opacityA, backgroundImage: `url(${uriA})`, transition: `opacity ${FADE_DURATION}ms ease` }}
+          ref={layerBRef}
+          style={{ ...abStyles.layer, opacity: opacityB, backgroundImage: `url(${uriB})`, transition: `opacity ${FADE_DURATION}ms ease` }}
         />
-        {uriB && imageUris.length > 1 && (
-          <div
-            ref={layerBRef}
-            style={{ ...abStyles.layer, opacity: opacityB, backgroundImage: `url(${uriB})`, transition: `opacity ${FADE_DURATION}ms ease` }}
-          />
-        )}
-        <div style={{ ...abStyles.dim, opacity: dimOpacity }} />
-      </div>
-    </>
+      )}
+      <div style={{ ...abStyles.dim, opacity: dimOpacity }} />
+    </div>
   );
 }

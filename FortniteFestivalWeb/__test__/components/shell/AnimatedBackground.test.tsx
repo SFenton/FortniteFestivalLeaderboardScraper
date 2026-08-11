@@ -65,6 +65,13 @@ describe('AnimatedBackground', () => {
     expect(layers.length).toBe(1);
   });
 
+  it('uses one full-screen stack for the body and safe areas', () => {
+    const songs = [makeSong('s1')];
+    const { container } = render(<AnimatedBackground songs={songs} />);
+    expect(container.children).toHaveLength(1);
+    expect((container.firstElementChild as HTMLElement).style.top).toContain('--sat');
+  });
+
   it('renders two layers when multiple images are available', () => {
     const songs = [makeSong('s1'), makeSong('s2'), makeSong('s3')];
     const { container } = render(<AnimatedBackground songs={songs} />);
