@@ -654,9 +654,32 @@ public sealed class PostScrapeOrchestrator
             var totalPairs = backfill.TotalSongsToCheck > 0
                 ? backfill.TotalSongsToCheck
                 : chartedSongIds.Count * GlobalLeaderboardScraper.AllInstruments.Count;
+            var historyStatus = _persistence.Meta.GetHistoryReconStatus(
+                backfill.AccountId);
+            var displayProgress = _persistence.Meta.GetBackfillSongProgress(
+                backfill.AccountId,
+                backfill.SongsChecked,
+                totalPairs);
+            var backgroundRefresh =
+                BackfillSyncClassification.IsBackgroundRefresh(
+                    backfill,
+                    historyStatus,
+                    displayProgress);
+            if (backgroundRefresh
+                && !BackfillDeferredReasons.IsCatalogRefresh(
+                    backfill.DeferredReason))
+            {
+                _persistence.Meta.DeferBackfill(
+                    backfill.AccountId,
+                    totalPairs,
+                    BackfillDeferredReasons.CatalogRefreshQueue);
+            }
 
             _persistence.Meta.StartBackfill(backfill.AccountId);
-            _syncTracker.BeginBackfill(backfill.AccountId, totalPairs);
+            _syncTracker.BeginBackfill(
+                backfill.AccountId,
+                totalPairs,
+                backgroundRefresh);
             var historyAdmissionRevision = _persistence.Meta.AdmitHistoryRecon(
                 backfill.AccountId,
                 expectedHistoryPairs,

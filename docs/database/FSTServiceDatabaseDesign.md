@@ -672,7 +672,10 @@ all-time/current-season `PostScrape` work. Registration backfill and history
 reconstruction remain on the resumable registration/deferred workers and keep
 first-time profiles in no-store `202` state until a ranked publication exists.
 Once a complete profile/history payload is published, pending refresh work
-does not hide it. Filtered profile requests fail closed with no-store `503`
+does not hide it. Catalog-growth backfills use the durable
+`catalog_refresh_queue` reason and remain background-only in player sync status,
+so previously completed profiles do not show first-time sync banners while the
+worker fills newly added songs. Filtered profile requests fail closed with no-store `503`
 while backfill or ranking publication is pending because their dynamic
 published-scope fallback can include newer overlays or score-history metadata.
 Leeway-only requests still receive the full immutable profile because leeway

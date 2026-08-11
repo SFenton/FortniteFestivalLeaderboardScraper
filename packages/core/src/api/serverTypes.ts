@@ -216,6 +216,8 @@ export type SyncProgressMessage = {
   throttleStatusKey?: string;
   /** True when sync is complete and global ranks have not yet been recalculated. */
   pendingRankUpdate?: boolean;
+  /** True when this is a silent refresh for a profile that completed its initial sync previously. */
+  backgroundRefresh?: boolean;
   /** Estimated minutes until next global ranking pass. */
   estimatedRankUpdateMinutes?: number;
   /** Status key for CDN probe state (e.g. "probe_retrying", "probe_waiting"). */
@@ -490,6 +492,7 @@ export type TrackPlayerResponse = {
   backfillStatus: string;
   backfillKicked: boolean;
   syncDeferred?: boolean;
+  backgroundRefresh?: boolean;
   deferredReason?: string | null;
   pendingRankUpdate?: boolean;
 };
@@ -497,6 +500,7 @@ export type TrackPlayerResponse = {
 export type SyncStatusResponse = {
   accountId: string;
   isTracked: boolean;
+  backgroundRefresh?: boolean;
   pendingRankUpdate?: boolean;
   backfill: {
     status: string;

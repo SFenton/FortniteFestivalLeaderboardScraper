@@ -1,6 +1,7 @@
 using FSTService.Scraping;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Text.Json;
 
 namespace FSTService.Tests.Unit;
 
@@ -1039,6 +1040,25 @@ public class ScrapeProgressTrackerTests
 
         syncTracker.BeginBackfill("user1", 100);
         Assert.True(syncTracker.IsActiveHigherPriority("user1"));
+    }
+
+    [Fact]
+    public void UserSyncProgressTracker_PreservesBackgroundRefreshAcrossPhases()
+    {
+        var syncTracker = new UserSyncProgressTracker(
+            new Api.NotificationService(NullLogger<Api.NotificationService>.Instance),
+            NullLogger<UserSyncProgressTracker>.Instance);
+
+        syncTracker.BeginBackfill("user1", 100, backgroundRefresh: true);
+        syncTracker.BeginHistory("user1", 100);
+
+        var progress = syncTracker.GetProgress("user1");
+        Assert.NotNull(progress);
+        var payload = JsonSerializer.SerializeToElement(
+            syncTracker.BuildPayloadForAccount("user1", progress!));
+
+        Assert.True(payload.GetProperty("backgroundRefresh").GetBoolean());
+        Assert.Equal("history", payload.GetProperty("phase").GetString());
     }
 
     [Fact]

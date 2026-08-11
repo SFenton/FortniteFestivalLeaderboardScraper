@@ -290,17 +290,41 @@ public static partial class ApiEndpoints
 
             // Enqueue for backfill if missing, retryable, or completed against an older/smaller catalog.
             var existingStatus = metaDb.GetBackfillStatus(accountId);
+            var existingHistory = metaDb.GetHistoryReconStatus(accountId);
+            var existingDisplay = existingStatus is null
+                ? null
+                : metaDb.GetBackfillSongProgress(
+                    accountId,
+                    existingStatus.SongsChecked,
+                    existingStatus.TotalSongsToCheck);
             var estimatedPairs = Math.Max(festivalService.Songs.Count, 200)
                 * GlobalLeaderboardScraper.AllInstruments.Count;
+            var completedAgainstSmallerCatalog =
+                existingStatus?.Status == "complete"
+                && existingStatus.TotalSongsToCheck < estimatedPairs;
+            var backgroundRefresh = completedAgainstSmallerCatalog
+                || BackfillSyncClassification.IsBackgroundRefresh(
+                    existingStatus,
+                    existingHistory,
+                    existingDisplay);
             bool backfillKicked = false;
             bool syncDeferred = false;
             if (existingStatus is null
                 || existingStatus.Status is "error" or "deferred"
-                || (existingStatus.Status == "complete" && existingStatus.TotalSongsToCheck < estimatedPairs))
+                || completedAgainstSmallerCatalog)
             {
                 syncDeferred = true;
-                metaDb.DeferBackfill(accountId, estimatedPairs, "worker_backfill_queue");
-                log.LogInformation("Queued worker-owned low-priority backfill for tracked account {AccountId}.", accountId);
+                metaDb.DeferBackfill(
+                    accountId,
+                    estimatedPairs,
+                    backgroundRefresh
+                        ? BackfillDeferredReasons.CatalogRefreshQueue
+                        : BackfillDeferredReasons.WorkerQueue);
+                log.LogInformation(
+                    backgroundRefresh
+                        ? "Queued worker-owned background catalog refresh for tracked account {AccountId}."
+                        : "Queued worker-owned low-priority backfill for tracked account {AccountId}.",
+                    accountId);
             }
 
             var status = metaDb.GetBackfillStatus(accountId);
@@ -312,6 +336,7 @@ public static partial class ApiEndpoints
                 backfillStatus = status?.Status ?? "pending",
                 backfillKicked,
                 syncDeferred,
+                backgroundRefresh = syncDeferred && backgroundRefresh,
                 deferredReason = status?.DeferredReason,
                 pendingRankUpdate = status?.RankingsPending ?? false,
             });
@@ -382,11 +407,18 @@ public static partial class ApiEndpoints
             var backfillDisplay = backfill is null
                 ? null
                 : metaDb.GetBackfillSongProgress(accountId, liveBfChecked ?? backfill.SongsChecked, backfill.TotalSongsToCheck);
+            var backgroundRefresh =
+                liveProgress?.IsBackgroundRefresh == true
+                || BackfillSyncClassification.IsBackgroundRefresh(
+                    backfill,
+                    historyRecon,
+                    backfillDisplay);
 
             return Results.Ok(new
             {
                 accountId,
                 isTracked = isRegistered,
+                backgroundRefresh,
                 pendingRankUpdate = backfill?.RankingsPending ?? false,
                 backfill = backfill is null ? null : new
                 {

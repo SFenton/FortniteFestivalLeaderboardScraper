@@ -4192,6 +4192,7 @@ public sealed class MetaDatabaseTests : IDisposable
         pending = Db.GetPendingBackfills();
 
         Assert.Contains(pending, p => p.AccountId == "acct_deferred");
+        Assert.Null(Db.GetBackfillStatus("acct_deferred")!.DeferredReason);
     }
 
     [Fact]
@@ -4203,6 +4204,35 @@ public sealed class MetaDatabaseTests : IDisposable
         var deferred = Db.GetDeferredBackfills();
 
         Assert.Contains(deferred, p => p.AccountId == "acct_resume" && p.Status == "in_progress");
+    }
+
+    [Fact]
+    public void Catalog_refresh_reason_survives_backfill_lifecycle()
+    {
+        Db.DeferBackfill("acct_refresh", 200, "catalog_refresh_queue");
+
+        Db.StartBackfill("acct_refresh");
+        Assert.Equal(
+            "catalog_refresh_queue",
+            Db.GetBackfillStatus("acct_refresh")!.DeferredReason);
+
+        Db.CompleteBackfill("acct_refresh", rankingsPending: true);
+        Assert.Equal(
+            "catalog_refresh_queue",
+            Db.GetBackfillStatus("acct_refresh")!.DeferredReason);
+
+        Db.EnqueueBackfill("acct_refresh", 300);
+        Assert.Equal(
+            "catalog_refresh_queue",
+            Db.GetBackfillStatus("acct_refresh")!.DeferredReason);
+
+        Db.DeferBackfill(
+            "acct_refresh",
+            300,
+            "incomplete_alltime_coverage");
+        Assert.Equal(
+            "catalog_refresh_queue",
+            Db.GetBackfillStatus("acct_refresh")!.DeferredReason);
     }
 
     [Fact]

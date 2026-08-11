@@ -1233,6 +1233,11 @@ public sealed class ScrapeTimePrecomputer
         {
             accountId,
             isTracked = _metaDb.IsAccountRegistered(accountId),
+            backgroundRefresh =
+                BackfillSyncClassification.IsBackgroundRefresh(
+                    backfill,
+                    historyRecon,
+                    backfillDisplay),
             pendingRankUpdate = backfill?.RankingsPending ?? false,
             backfill = backfill is null ? null : new
             {

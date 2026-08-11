@@ -12,6 +12,8 @@ type SyncState = {
   syncStatusLoaded: boolean;
   /** Whether we're actively syncing (any phase in progress) */
   isSyncing: boolean;
+  /** Whether the active work is a silent refresh for an already-synced profile. */
+  backgroundRefresh: boolean;
   /** Current phase: backfill, history, rivals, complete, idle */
   phase: SyncPhase;
   /** Backfill progress 0..1 */
@@ -50,6 +52,7 @@ const idleSyncState: SyncState = {
   isTracked: false,
   syncStatusLoaded: false,
   isSyncing: false,
+  backgroundRefresh: false,
   phase: SyncPhase.Idle,
   backfillProgress: 0,
   historyProgress: 0,
@@ -138,6 +141,7 @@ function deriveSyncStateFromStatus(res: SyncStatusResponse, prev: SyncState): Sy
     isTracked: !!res.isTracked,
     syncStatusLoaded: true,
     isSyncing,
+    backgroundRefresh: res.backgroundRefresh ?? false,
     phase,
     backfillProgress: bfDeferred ? 0 : bfProgress,
     historyProgress: hrProgress,
@@ -205,6 +209,7 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
   const statusRequestRef = useRef<AbortController | null>(null);
   const wasSyncingRef = useRef(false);
   const syncKickedRef = useRef(false);
+  const backgroundRefreshRef = useRef(false);
   const mountedRef = useRef(true);
   const lastWsMsgRef = useRef(0);
   const desiredAccountRef = useRef<string | null>(accountId ?? null);
@@ -232,6 +237,7 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
     abortStatusRequest();
     wasSyncingRef.current = false;
     syncKickedRef.current = false;
+    backgroundRefreshRef.current = false;
     lastWsMsgRef.current = 0;
     probeLockedUntilRef.current = 0;
     setJustCompleted(false);
@@ -269,10 +275,14 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
         || phase === SyncPhase.History
         || phase === SyncPhase.Rivals
         || phase === SyncPhase.PostScrape;
+      const backgroundRefresh =
+        sp.backgroundRefresh ?? backgroundRefreshRef.current;
+      backgroundRefreshRef.current = backgroundRefresh;
       const displayProgress = resolveDisplayProgress(sp.itemsCompleted, sp.totalItems, sp.displayItemsCompleted, sp.displayTotalItems);
       const phaseProgress = displayProgress.total > 0 ? Math.min(displayProgress.completed / displayProgress.total, 1) : 0;
 
-      if (isSyncing) wasSyncingRef.current = true;
+      if (isSyncing && !backgroundRefresh)
+        wasSyncingRef.current = true;
 
       setSyncState(prev => {
         // 3s minimum display for probe states to prevent blips
@@ -301,6 +311,7 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
           isTracked: prev.isTracked,
           syncStatusLoaded: prev.syncStatusLoaded,
           isSyncing,
+          backgroundRefresh,
           phase,
           backfillProgress: phase === SyncPhase.Backfill ? phaseProgress : (phase === SyncPhase.Queued ? 0 : (prev.backfillProgress > 0 ? 1 : prev.backfillProgress)),
           historyProgress: phase === SyncPhase.History ? phaseProgress : (phase === SyncPhase.Rivals || phase === SyncPhase.Complete ? 1 : prev.historyProgress),
@@ -320,7 +331,10 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
         };
       });
 
-      if (!isSyncing && phase === SyncPhase.Complete && (wasSyncingRef.current || syncKickedRef.current)) {
+      if (!isSyncing
+          && !backgroundRefresh
+          && phase === SyncPhase.Complete
+          && (wasSyncingRef.current || syncKickedRef.current)) {
         setJustCompleted(true);
       }
       stopPolling();
@@ -410,8 +424,10 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
     try {
       const res: SyncStatusResponse = await api.getSyncStatus(requestedAccountId, { signal: controller.signal });
       const isSyncing = isSyncingStatus(res);
+      const backgroundRefresh = res.backgroundRefresh ?? false;
+      backgroundRefreshRef.current = backgroundRefresh;
 
-      if (isSyncing) {
+      if (isSyncing && !backgroundRefresh) {
         wasSyncingRef.current = true;
       }
       const phase = getSyncPhaseFromStatus(res);
@@ -425,7 +441,9 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
       if (!isSyncing && (phase === SyncPhase.Complete || phase === SyncPhase.Error)) {
         // Sync finished — stop active polling entirely
         stopPolling();
-        if (phase === SyncPhase.Complete && (wasSyncingRef.current || syncKickedRef.current)) {
+        if (!backgroundRefresh
+            && phase === SyncPhase.Complete
+            && (wasSyncingRef.current || syncKickedRef.current)) {
           /* v8 ignore start */
           setJustCompleted(true);
           /* v8 ignore stop */
@@ -482,7 +500,11 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
 
           preflightPhase = getSyncPhaseFromStatus(preflightStatus);
           preflightWasSyncing = isSyncingStatus(preflightStatus);
-          if (preflightWasSyncing) wasSyncingRef.current = true;
+          const preflightBackgroundRefresh =
+            preflightStatus.backgroundRefresh ?? false;
+          backgroundRefreshRef.current = preflightBackgroundRefresh;
+          if (preflightWasSyncing && !preflightBackgroundRefresh)
+            wasSyncingRef.current = true;
 
           setSyncState(prev => deriveSyncStateFromStatus(preflightStatus!, prev));
 
@@ -493,6 +515,7 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
             setSyncState(prev => ({
               ...prev,
               isSyncing: true,
+              backgroundRefresh: false,
               phase: SyncPhase.Queued,
               backfillProgress: 0,
               historyProgress: 0,
@@ -518,32 +541,43 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
           const res = await api.trackPlayer(requestedAccountId);
           if (!mountedRef.current || desiredAccountRef.current !== requestedAccountId) return;
           if (res.syncDeferred) {
+            const backgroundRefresh = res.backgroundRefresh ?? false;
             syncKickedRef.current = true;
-            wasSyncingRef.current = true;
+            backgroundRefreshRef.current = backgroundRefresh;
+            if (!backgroundRefresh)
+              wasSyncingRef.current = true;
             setSyncState(prev => ({
               ...prev,
               isTracked: true,
               isSyncing: true,
+              backgroundRefresh,
               phase: SyncPhase.Queued,
               pendingRankUpdate: res.pendingRankUpdate ?? prev.pendingRankUpdate,
             }));
           } else if (res.backfillKicked) {
+            const backgroundRefresh = res.backgroundRefresh ?? false;
             syncKickedRef.current = true;
-            wasSyncingRef.current = true;
+            backgroundRefreshRef.current = backgroundRefresh;
+            if (!backgroundRefresh)
+              wasSyncingRef.current = true;
             // Optimistic: show banner immediately so fast backfills don't race
             // past the first HTTP poll without the user ever seeing the banner.
             setSyncState(prev => ({
               ...prev,
               isTracked: true,
               isSyncing: true,
+              backgroundRefresh,
               phase: SyncPhase.Backfill,
             }));
           } else if (optimisticQueued) {
             syncKickedRef.current = false;
             wasSyncingRef.current = preflightWasSyncing;
             if (preflightStatus) {
+              backgroundRefreshRef.current =
+                preflightStatus.backgroundRefresh ?? false;
               setSyncState(prev => deriveSyncStateFromStatus(preflightStatus!, prev));
             } else {
+              backgroundRefreshRef.current = false;
               setSyncState(createIdleSyncState());
             }
           }
@@ -552,8 +586,11 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
             syncKickedRef.current = false;
             wasSyncingRef.current = preflightWasSyncing;
             if (preflightStatus) {
+              backgroundRefreshRef.current =
+                preflightStatus.backgroundRefresh ?? false;
               setSyncState(prev => deriveSyncStateFromStatus(preflightStatus!, prev));
             } else {
+              backgroundRefreshRef.current = false;
               setSyncState(createIdleSyncState());
             }
           }
@@ -631,7 +668,15 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
   }, [effectiveSyncState.phase, effectiveSyncState.backfillProgress, effectiveSyncState.historyProgress, effectiveSyncState.rivalsProgress, effectiveSyncState.itemsCompleted, effectiveSyncState.totalItems]);
 
   return useMemo(
-    () => ({ ...effectiveSyncState, progress, justCompleted: effectiveJustCompleted, clearCompleted }),
+    () => ({
+      ...effectiveSyncState,
+      isSyncing:
+        effectiveSyncState.isSyncing
+        && !effectiveSyncState.backgroundRefresh,
+      progress,
+      justCompleted: effectiveJustCompleted,
+      clearCompleted,
+    }),
     [effectiveSyncState, progress, effectiveJustCompleted, clearCompleted],
   );
 }

@@ -44,9 +44,11 @@ public sealed class UserSyncProgressTracker
 
     // ─── Begin phase ────────────────────────────────────────
 
-    public void BeginQueued(string accountId, int totalItems)
+    public void BeginQueued(string accountId, int totalItems, bool? backgroundRefresh = null)
     {
         var p = GetOrCreate(accountId);
+        if (backgroundRefresh.HasValue)
+            p.IsBackgroundRefresh = backgroundRefresh.Value;
         p.Phase = SyncProgressPhase.Queued;
         p.ItemsCompleted = 0;
         p.TotalItems = totalItems;
@@ -57,9 +59,11 @@ public sealed class UserSyncProgressTracker
         PushProgress(accountId, p);
     }
 
-    public void BeginBackfill(string accountId, int totalItems)
+    public void BeginBackfill(string accountId, int totalItems, bool? backgroundRefresh = null)
     {
         var p = GetOrCreate(accountId);
+        if (backgroundRefresh.HasValue)
+            p.IsBackgroundRefresh = backgroundRefresh.Value;
         p.Phase = SyncProgressPhase.Backfill;
         p.ItemsCompleted = 0;
         p.TotalItems = totalItems;
@@ -325,6 +329,7 @@ public sealed class UserSyncProgressTracker
             probeAttempt = p.ProbeAttempt > 0 ? p.ProbeAttempt : (int?)null,
             pendingRankUpdate = isComplete ? true : (bool?)null,
             estimatedRankUpdateMinutes = estimatedRankMinutes,
+            backgroundRefresh = p.IsBackgroundRefresh,
         };
     }
 
@@ -387,6 +392,7 @@ public sealed class UserSyncProgress
     public int RivalsFound;
     public volatile string? CurrentSongName;
     public volatile string? ErrorMessage;
+    public volatile bool IsBackgroundRefresh;
     public DateTime StartedAtUtc = DateTime.UtcNow;
     public readonly Stopwatch Stopwatch = new();
 

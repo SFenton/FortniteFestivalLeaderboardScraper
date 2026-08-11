@@ -244,6 +244,51 @@ describe('useSyncStatus', () => {
     expect(result.current.phase).toBe('complete');
   });
 
+  it('keeps a catalog refresh queued without exposing the sync banner state', async () => {
+    mockGetStatus.mockResolvedValue({
+      accountId: 'acc1',
+      isTracked: true,
+      pendingRankUpdate: false,
+      backgroundRefresh: false,
+      backfill: { status: 'complete', songsChecked: 100, totalSongsToCheck: 100, entriesFound: 10, startedAt: null, completedAt: null },
+      historyRecon: { status: 'complete', songsProcessed: 100, totalSongsToProcess: 100, seasonsQueried: 10, historyEntriesFound: 10, startedAt: null, completedAt: null },
+      rivals: null,
+      postScrape: null,
+    } as any);
+    mockTrackPlayer.mockResolvedValue({
+      syncDeferred: true,
+      backgroundRefresh: true,
+    } as any);
+
+    const { result } = renderHook(() => useSyncStatus('acc1'), { wrapper });
+    await flush();
+
+    expect(result.current.phase).toBe('queued');
+    expect(result.current.isSyncing).toBe(false);
+  });
+
+  it('hides a persisted background refresh returned by sync status', async () => {
+    mockGetStatus.mockResolvedValue({
+      accountId: 'acc1',
+      isTracked: true,
+      pendingRankUpdate: false,
+      backgroundRefresh: true,
+      backfill: { status: 'deferred', songsChecked: 0, totalSongsToCheck: 120, entriesFound: 0, startedAt: null, completedAt: null },
+      historyRecon: { status: 'complete', songsProcessed: 100, totalSongsToProcess: 100, seasonsQueried: 10, historyEntriesFound: 10, startedAt: null, completedAt: null },
+      rivals: null,
+      postScrape: null,
+    } as any);
+
+    const { result } = renderHook(
+      () => useSyncStatus('acc1', { track: false, useWebSocket: false }),
+      { wrapper },
+    );
+    await flush();
+
+    expect(result.current.phase).toBe('queued');
+    expect(result.current.isSyncing).toBe(false);
+  });
+
   it('rolls back optimistic queued when trackPlayer does not start sync', async () => {
     mockGetStatus.mockResolvedValue({ accountId: 'acc1', isTracked: false, backfill: null, historyRecon: null, rivals: null, postScrape: null } as any);
     mockTrackPlayer.mockResolvedValue({ syncDeferred: false, backfillKicked: false } as any);
@@ -540,6 +585,38 @@ describe('useSyncStatus', () => {
     expect(result.current.isSyncing).toBe(true);
     expect(result.current.phase).toBe('postscrape');
     expect(result.current.pendingRankUpdate).toBe(true);
+    expect(result.current.justCompleted).toBe(false);
+  });
+
+  it('does not expose or complete a background refresh received over WebSocket', async () => {
+    mockGetStatus.mockResolvedValue({
+      accountId: 'acc1',
+      isTracked: true,
+      backgroundRefresh: true,
+      backfill: { status: 'deferred', songsChecked: 0, totalSongsToCheck: 100, entriesFound: 0, startedAt: null, completedAt: null },
+      historyRecon: { status: 'complete', songsProcessed: 100, totalSongsToProcess: 100, seasonsQueried: 10, historyEntriesFound: 10, startedAt: null, completedAt: null },
+      rivals: null,
+    } as any);
+    const { result } = renderHook(
+      () => useSyncStatus('acc1', { track: false }),
+      { wrapper },
+    );
+    await flush();
+
+    await act(async () => {
+      wsHandlers.forEach(handler => handler({
+        type: 'sync_progress',
+        accountId: 'acc1',
+        phase: 'complete',
+        backgroundRefresh: true,
+        itemsCompleted: 100,
+        totalItems: 100,
+        entriesFound: 0,
+      } as any));
+    });
+
+    expect(result.current.isSyncing).toBe(false);
+    expect(result.current.phase).toBe('complete');
     expect(result.current.justCompleted).toBe(false);
   });
 

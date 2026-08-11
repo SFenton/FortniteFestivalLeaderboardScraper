@@ -2965,6 +2965,28 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task SyncStatus_CatalogRefresh_IsMarkedBackground()
+    {
+        const string acct = "syncStatusBackgroundAcct";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            metaDb.RegisterUser("syncStatusBackgroundDev", acct);
+            metaDb.DeferBackfill(acct, 100, "catalog_refresh_queue");
+        }
+
+        var response = await _client.GetAsync($"/api/player/{acct}/sync-status");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.True(json.GetProperty("backgroundRefresh").GetBoolean());
+        Assert.Equal(
+            "deferred",
+            json.GetProperty("backfill").GetProperty("status").GetString());
+    }
+
+    [Fact]
     public async Task SyncStatus_IgnoresStalePublishedCacheAndReadsLiveOperationalState()
     {
         const string accountId = "syncLiveAcct";
@@ -3243,6 +3265,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.True(json.GetProperty("trackingStarted").GetBoolean());
         Assert.False(json.GetProperty("backfillKicked").GetBoolean());
         Assert.True(json.GetProperty("syncDeferred").GetBoolean());
+        Assert.False(json.GetProperty("backgroundRefresh").GetBoolean());
         Assert.Equal("deferred", json.GetProperty("backfillStatus").GetString());
         Assert.Equal("TrackPlayer", json.GetProperty("displayName").GetString());
     }
@@ -3362,8 +3385,9 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.True(json.GetProperty("syncDeferred").GetBoolean());
+        Assert.True(json.GetProperty("backgroundRefresh").GetBoolean());
         Assert.Equal("deferred", json.GetProperty("backfillStatus").GetString());
-        Assert.Equal("worker_backfill_queue", json.GetProperty("deferredReason").GetString());
+        Assert.Equal("catalog_refresh_queue", json.GetProperty("deferredReason").GetString());
     }
 
     [Fact]

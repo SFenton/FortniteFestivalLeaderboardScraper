@@ -820,6 +820,77 @@ public sealed class NotificationServiceTests
     }
 
     [Fact]
+    public async Task HandleConnectionAsync_SubscribeSync_PreservesDurableBackgroundRefreshForLivePostScrape()
+    {
+        var svc = CreateService();
+        var tracker = new UserSyncProgressTracker(
+            svc,
+            Substitute.For<ILogger<UserSyncProgressTracker>>());
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetBackfillStatus("real-acct").Returns(new BackfillStatusInfo
+        {
+            AccountId = "real-acct",
+            Status = "complete",
+            DeferredReason = "catalog_refresh_queue",
+        });
+        svc.SetSyncTracker(tracker);
+        svc.SetMetaDatabase(metaDb);
+        tracker.BeginPostScrape("real-acct", 100);
+
+        var ws = Substitute.For<WebSocket>();
+        var subscribeJson = Encoding.UTF8.GetBytes(
+            """{"action":"subscribe_sync","accountId":"real-acct"}""");
+        var callCount = 0;
+        ws.State.Returns(_ =>
+            callCount < 2
+                ? WebSocketState.Open
+                : WebSocketState.Closed);
+        ws.ReceiveAsync(
+                Arg.Any<ArraySegment<byte>>(),
+                Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                callCount++;
+                var buffer = callInfo.ArgAt<ArraySegment<byte>>(0);
+                if (callCount == 1)
+                {
+                    Array.Copy(
+                        subscribeJson,
+                        0,
+                        buffer.Array!,
+                        buffer.Offset,
+                        subscribeJson.Length);
+                    return new WebSocketReceiveResult(
+                        subscribeJson.Length,
+                        WebSocketMessageType.Text,
+                        true);
+                }
+
+                return new WebSocketReceiveResult(
+                    0,
+                    WebSocketMessageType.Close,
+                    true);
+            });
+
+        await svc.HandleConnectionAsync(
+            "anon-123",
+            "dev1",
+            ws,
+            CancellationToken.None);
+
+        await ws.Received().SendAsync(
+            Arg.Is<ArraySegment<byte>>(segment =>
+                SegmentContains(
+                    segment,
+                    "\"type\":\"sync_progress\"",
+                    "\"phase\":\"postscrape\"",
+                    "\"backgroundRefresh\":true")),
+            WebSocketMessageType.Text,
+            true,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task HandleConnectionAsync_SubscribeSync_DoesNotSurfacePendingHistory()
     {
         var svc = CreateService();

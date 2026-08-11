@@ -551,6 +551,11 @@ public sealed class NotificationService
         var liveProgress = _syncTracker?.GetProgress(accountId);
         if (liveProgress is not null && liveProgress.Phase != SyncProgressPhase.Queued)
         {
+            if (!liveProgress.IsBackgroundRefresh
+                && IsDurableBackgroundRefresh(accountId))
+            {
+                liveProgress.IsBackgroundRefresh = true;
+            }
             return _syncTracker!.BuildPayloadForAccount(accountId, liveProgress);
         }
 
@@ -561,44 +566,71 @@ public sealed class NotificationService
         return liveProgress is null ? null : _syncTracker!.BuildPayloadForAccount(accountId, liveProgress);
     }
 
+    private bool IsDurableBackgroundRefresh(string accountId)
+    {
+        if (_metaDb is null)
+            return false;
+
+        var backfill = _metaDb.GetBackfillStatus(accountId);
+        var history = _metaDb.GetHistoryReconStatus(accountId);
+        var displayProgress = backfill is null
+            ? null
+            : _metaDb.GetBackfillSongProgress(
+                accountId,
+                backfill.SongsChecked,
+                backfill.TotalSongsToCheck);
+        return BackfillSyncClassification.IsBackgroundRefresh(
+            backfill,
+            history,
+            displayProgress);
+    }
+
     private object? BuildDurableSyncStatePayload(string accountId)
     {
         if (_metaDb is null) return null;
 
         var backfill = _metaDb.GetBackfillStatus(accountId);
+        var history = _metaDb.GetHistoryReconStatus(accountId);
+        var backfillDisplay = backfill is null
+            ? null
+            : _metaDb.GetBackfillSongProgress(
+                accountId,
+                backfill.SongsChecked,
+                backfill.TotalSongsToCheck);
+        var backgroundRefresh = BackfillSyncClassification.IsBackgroundRefresh(
+            backfill,
+            history,
+            backfillDisplay);
         if (backfill is not null)
         {
-            var backfillDisplay = _metaDb.GetBackfillSongProgress(accountId, backfill.SongsChecked, backfill.TotalSongsToCheck);
             var backfillPayload = backfill.Status switch
             {
-                "deferred" => BuildSyncProgressPayload(accountId, "queued", 0, backfill.TotalSongsToCheck, backfill.EntriesFound, displayItemsCompleted: 0, displayTotalItems: backfillDisplay?.TotalSongs, pendingRankUpdate: backfill.RankingsPending),
-                "pending" or "in_progress" => BuildSyncProgressPayload(accountId, "backfill", backfill.SongsChecked, backfill.TotalSongsToCheck, backfill.EntriesFound, displayItemsCompleted: backfillDisplay?.SongsChecked, displayTotalItems: backfillDisplay?.TotalSongs, pendingRankUpdate: backfill.RankingsPending),
-                "error" => BuildSyncProgressPayload(accountId, "error", backfill.SongsChecked, backfill.TotalSongsToCheck, backfill.EntriesFound, displayItemsCompleted: backfillDisplay?.SongsChecked, displayTotalItems: backfillDisplay?.TotalSongs, pendingRankUpdate: backfill.RankingsPending),
+                "deferred" => BuildSyncProgressPayload(accountId, "queued", 0, backfill.TotalSongsToCheck, backfill.EntriesFound, displayItemsCompleted: 0, displayTotalItems: backfillDisplay?.TotalSongs, pendingRankUpdate: backfill.RankingsPending, backgroundRefresh: backgroundRefresh),
+                "pending" or "in_progress" => BuildSyncProgressPayload(accountId, "backfill", backfill.SongsChecked, backfill.TotalSongsToCheck, backfill.EntriesFound, displayItemsCompleted: backfillDisplay?.SongsChecked, displayTotalItems: backfillDisplay?.TotalSongs, pendingRankUpdate: backfill.RankingsPending, backgroundRefresh: backgroundRefresh),
+                "error" => BuildSyncProgressPayload(accountId, "error", backfill.SongsChecked, backfill.TotalSongsToCheck, backfill.EntriesFound, displayItemsCompleted: backfillDisplay?.SongsChecked, displayTotalItems: backfillDisplay?.TotalSongs, pendingRankUpdate: backfill.RankingsPending, backgroundRefresh: backgroundRefresh),
                 _ => null,
             };
             if (backfillPayload is not null)
                 return backfillPayload;
         }
 
-        var history = _metaDb.GetHistoryReconStatus(accountId);
         if (history?.Status is "in_progress")
-            return BuildSyncProgressPayload(accountId, "history", history.SongsProcessed, history.TotalSongsToProcess, history.HistoryEntriesFound, seasonsQueried: history.SeasonsQueried);
+            return BuildSyncProgressPayload(accountId, "history", history.SongsProcessed, history.TotalSongsToProcess, history.HistoryEntriesFound, seasonsQueried: history.SeasonsQueried, backgroundRefresh: backgroundRefresh);
         if (history?.Status is "error")
-            return BuildSyncProgressPayload(accountId, "error", history.SongsProcessed, history.TotalSongsToProcess, history.HistoryEntriesFound, seasonsQueried: history.SeasonsQueried);
+            return BuildSyncProgressPayload(accountId, "error", history.SongsProcessed, history.TotalSongsToProcess, history.HistoryEntriesFound, seasonsQueried: history.SeasonsQueried, backgroundRefresh: backgroundRefresh);
 
         var rivals = _metaDb.GetRivalsStatus(accountId);
         if (rivals?.Status is "pending" or "in_progress")
-            return BuildSyncProgressPayload(accountId, "rivals", rivals.CombosComputed, rivals.TotalCombosToCompute, 0, rivalsFound: rivals.RivalsFound);
+            return BuildSyncProgressPayload(accountId, "rivals", rivals.CombosComputed, rivals.TotalCombosToCompute, 0, rivalsFound: rivals.RivalsFound, backgroundRefresh: backgroundRefresh);
         if (rivals?.Status is "error")
-            return BuildSyncProgressPayload(accountId, "error", rivals.CombosComputed, rivals.TotalCombosToCompute, 0, rivalsFound: rivals.RivalsFound);
+            return BuildSyncProgressPayload(accountId, "error", rivals.CombosComputed, rivals.TotalCombosToCompute, 0, rivalsFound: rivals.RivalsFound, backgroundRefresh: backgroundRefresh);
 
         if (backfill?.Status is "complete")
         {
-            var backfillDisplay = _metaDb.GetBackfillSongProgress(accountId, backfill.SongsChecked, backfill.TotalSongsToCheck);
-            return BuildSyncProgressPayload(accountId, "complete", backfill.TotalSongsToCheck, backfill.TotalSongsToCheck, backfill.EntriesFound, displayItemsCompleted: backfillDisplay?.TotalSongs, displayTotalItems: backfillDisplay?.TotalSongs, pendingRankUpdate: backfill.RankingsPending);
+            return BuildSyncProgressPayload(accountId, "complete", backfill.TotalSongsToCheck, backfill.TotalSongsToCheck, backfill.EntriesFound, displayItemsCompleted: backfillDisplay?.TotalSongs, displayTotalItems: backfillDisplay?.TotalSongs, pendingRankUpdate: backfill.RankingsPending, backgroundRefresh: backgroundRefresh);
         }
         if (history?.Status is "complete")
-            return BuildSyncProgressPayload(accountId, "complete", history.TotalSongsToProcess, history.TotalSongsToProcess, history.HistoryEntriesFound, seasonsQueried: history.SeasonsQueried, pendingRankUpdate: backfill?.RankingsPending);
+            return BuildSyncProgressPayload(accountId, "complete", history.TotalSongsToProcess, history.TotalSongsToProcess, history.HistoryEntriesFound, seasonsQueried: history.SeasonsQueried, pendingRankUpdate: backfill?.RankingsPending, backgroundRefresh: backgroundRefresh);
 
         return null;
     }
@@ -613,7 +645,8 @@ public sealed class NotificationService
         int? displayTotalItems = null,
         int seasonsQueried = 0,
         int rivalsFound = 0,
-        bool? pendingRankUpdate = null)
+        bool? pendingRankUpdate = null,
+        bool backgroundRefresh = false)
     {
         return new
         {
@@ -636,6 +669,7 @@ public sealed class NotificationService
             probeAttempt = (int?)null,
             pendingRankUpdate,
             estimatedRankUpdateMinutes = (int?)null,
+            backgroundRefresh,
         };
     }
 
