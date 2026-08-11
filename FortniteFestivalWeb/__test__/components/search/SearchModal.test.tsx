@@ -42,16 +42,19 @@ const originalClientHeightDescriptor = Object.getOwnPropertyDescriptor(document.
 class MockVisualViewport extends EventTarget {
   height: number;
   offsetTop: number;
+  scale: number;
 
-  constructor(height = 844, offsetTop = 0) {
+  constructor(height = 844, offsetTop = 0, scale = 1) {
     super();
     this.height = height;
     this.offsetTop = offsetTop;
+    this.scale = scale;
   }
 
-  set(height: number, offsetTop: number) {
+  set(height: number, offsetTop: number, scale = this.scale) {
     this.height = height;
     this.offsetTop = offsetTop;
+    this.scale = scale;
     this.dispatchEvent(new Event('resize'));
     this.dispatchEvent(new Event('scroll'));
   }
@@ -79,8 +82,8 @@ function removeVisualViewport({ innerHeight = 844, clientHeight = 844 } = {}) {
   Object.defineProperty(document.documentElement, 'clientHeight', { configurable: true, value: clientHeight });
 }
 
-function setVisualViewport(visualViewport: MockVisualViewport, height: number, offsetTop = 0) {
-  act(() => { visualViewport.set(height, offsetTop); });
+function setVisualViewport(visualViewport: MockVisualViewport, height: number, offsetTop = 0, scale = visualViewport.scale) {
+  act(() => { visualViewport.set(height, offsetTop, scale); });
 }
 
 function getModalBody(): HTMLElement {
@@ -455,11 +458,16 @@ describe('SearchModal', () => {
     expect(focusSpy).not.toHaveBeenCalled();
   });
 
-  it('reactivates a focused mobile search on the final touch click when the keyboard is closed', () => {
+  it('reactivates a focused mobile search after an observed keyboard fully closes', async () => {
+    const visualViewport = installVisualViewport();
     setViewportQueries({ mobile: true });
     renderModal({ availableTargets: ['players'] });
     const input = screen.getByPlaceholderText('Search players…') as HTMLInputElement;
     input.focus();
+    setVisualViewport(visualViewport, 520);
+    await advanceAndFlush(20);
+    setVisualViewport(visualViewport, 844);
+    await advanceAndFlush(20);
 
     const blurSpy = vi.spyOn(input, 'blur');
     const focusSpy = vi.spyOn(input, 'focus');
@@ -471,10 +479,10 @@ describe('SearchModal', () => {
     });
 
     expect(pointerDownAllowed).toBe(true);
-    expect(blurSpy).not.toHaveBeenCalled();
+    expect(blurSpy).toHaveBeenCalledTimes(1);
+    expect(focusSpy).not.toHaveBeenCalledWith({ preventScroll: true });
     fireEvent.click(input);
 
-    expect(blurSpy).toHaveBeenCalledTimes(1);
     const blurOrder = blurSpy.mock.invocationCallOrder[blurSpy.mock.invocationCallOrder.length - 1];
     const focusOrder = focusSpy.mock.invocationCallOrder[focusSpy.mock.invocationCallOrder.length - 1];
     expect(blurOrder).toBeDefined();
@@ -498,21 +506,101 @@ describe('SearchModal', () => {
     expect(focusSpy).not.toHaveBeenCalledWith({ preventScroll: true });
   });
 
-  it('reactivates a wrapper tap after compatibility mousedown blurs the search input', () => {
+  it('reactivates a wrapper tap after compatibility mousedown blurs a fully dismissed keyboard', async () => {
+    const visualViewport = installVisualViewport();
     setViewportQueries({ mobile: true });
     renderModal({ availableTargets: ['players'] });
     const input = screen.getByPlaceholderText('Search players…') as HTMLInputElement;
     const wrapper = input.parentElement as HTMLElement;
     input.focus();
+    setVisualViewport(visualViewport, 520);
+    await advanceAndFlush(20);
+    setVisualViewport(visualViewport, 844);
+    await advanceAndFlush(20);
 
-    fireEvent.pointerDown(wrapper, { pointerType: 'touch', isPrimary: true, button: 0 });
-    input.blur();
     const blurSpy = vi.spyOn(input, 'blur');
     const focusSpy = vi.spyOn(input, 'focus');
+    fireEvent.pointerDown(wrapper, { pointerType: 'touch', isPrimary: true, button: 0 });
+
+    expect(blurSpy).toHaveBeenCalledTimes(1);
     fireEvent.click(wrapper);
 
     expect(blurSpy).toHaveBeenCalledTimes(1);
     expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it('reverses keyboard dismissal while height loss remains above the open threshold', async () => {
+    const visualViewport = installVisualViewport();
+    setViewportQueries({ mobile: true });
+    renderModal({ availableTargets: ['players'] });
+    const input = screen.getByPlaceholderText('Search players…') as HTMLInputElement;
+    input.focus();
+    setVisualViewport(visualViewport, 520);
+    await advanceAndFlush(20);
+    setVisualViewport(visualViewport, 620);
+    await advanceAndFlush(20);
+
+    const blurSpy = vi.spyOn(input, 'blur');
+    const focusSpy = vi.spyOn(input, 'focus');
+    fireEvent.pointerDown(input, { pointerType: 'touch', isPrimary: true, button: 0 });
+
+    expect(blurSpy).toHaveBeenCalledTimes(1);
+    expect(focusSpy).not.toHaveBeenCalledWith({ preventScroll: true });
+    fireEvent.click(input);
+    expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it('does not churn focus when no software keyboard was observed', () => {
+    setViewportQueries({ mobile: true });
+    renderModal({ availableTargets: ['players'] });
+    const input = screen.getByPlaceholderText('Search players…') as HTMLInputElement;
+    input.focus();
+
+    const blurSpy = vi.spyOn(input, 'blur');
+    const focusSpy = vi.spyOn(input, 'focus');
+    fireEvent.pointerDown(input, { pointerType: 'touch', isPrimary: true, button: 0 });
+    fireEvent.click(input);
+
+    expect(blurSpy).not.toHaveBeenCalled();
+    expect(focusSpy).not.toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it('does not interrupt composition while the keyboard is dismissing', async () => {
+    const visualViewport = installVisualViewport();
+    setViewportQueries({ mobile: true });
+    renderModal({ availableTargets: ['players'] });
+    const input = screen.getByPlaceholderText('Search players…') as HTMLInputElement;
+    input.focus();
+    setVisualViewport(visualViewport, 520);
+    await advanceAndFlush(20);
+    setVisualViewport(visualViewport, 620);
+    await advanceAndFlush(20);
+    fireEvent.compositionStart(input);
+
+    const blurSpy = vi.spyOn(input, 'blur');
+    fireEvent.pointerDown(input, { pointerType: 'touch', isPrimary: true, button: 0 });
+    fireEvent.click(input);
+
+    expect(blurSpy).not.toHaveBeenCalled();
+    fireEvent.compositionEnd(input);
+  });
+
+  it('does not treat pinch zoom as keyboard dismissal', async () => {
+    const visualViewport = installVisualViewport();
+    setViewportQueries({ mobile: true });
+    renderModal({ availableTargets: ['players'] });
+    const input = screen.getByPlaceholderText('Search players…') as HTMLInputElement;
+    input.focus();
+    setVisualViewport(visualViewport, 520);
+    await advanceAndFlush(20);
+    setVisualViewport(visualViewport, 620, 0, 1.5);
+    await advanceAndFlush(20);
+
+    const blurSpy = vi.spyOn(input, 'blur');
+    fireEvent.pointerDown(input, { pointerType: 'touch', isPrimary: true, button: 0 });
+    fireEvent.click(input);
+
+    expect(blurSpy).not.toHaveBeenCalled();
   });
 
   it('does not reactivate focused mobile search while the keyboard is open', async () => {

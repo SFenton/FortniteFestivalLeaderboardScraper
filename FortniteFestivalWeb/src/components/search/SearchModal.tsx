@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { LoadPhase } from '@festival/core/runtime';
@@ -31,7 +31,13 @@ const SEARCH_STAGGER_VISIBLE_ITEMS = 8;
 const SEARCH_SCROLL_FADE_SIZE = 40;
 const SEARCH_KEYBOARD_CLEARANCE = 12;
 const SEARCH_KEYBOARD_OPEN_THRESHOLD = 120;
+const SEARCH_KEYBOARD_CLOSED_THRESHOLD = 80;
+const SEARCH_KEYBOARD_DIRECTION_DEADBAND = 8;
+const SEARCH_KEYBOARD_LARGE_CLOSING_DELTA = 64;
 const SEARCH_KEYBOARD_INSET_DEADBAND = 8;
+const SEARCH_KEYBOARD_OPEN_SAMPLE_COUNT = 2;
+const SEARCH_VIEWPORT_SCALE_TOLERANCE = 0.01;
+const SEARCH_VIEWPORT_WIDTH_TOLERANCE = 8;
 const SEARCH_MODAL_MOBILE_ENTER_OFFSET = 0;
 
 const SEARCH_TARGET_LABEL_KEYS: Record<SearchTarget, string> = {
@@ -52,6 +58,7 @@ interface SearchModalProps {
 }
 
 type SearchViewKey = SearchTarget | 'global';
+type KeyboardPhase = 'unknown' | 'opening' | 'open' | 'closing' | 'closed';
 
 const SEARCH_PLACEHOLDER_KEYS: Record<string, string> = {
   songs: 'search.placeholders.songs',
@@ -90,6 +97,19 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
   const keyboardInsetFrameRef = useRef<number | null>(null);
   const lastSearchPointerTypeRef = useRef('');
   const searchInputWasFocusedOnPointerDownRef = useRef(false);
+  const keyboardPhaseRef = useRef<KeyboardPhase>('unknown');
+  const lastKeyboardLossRef = useRef<number | null>(null);
+  const keyboardOpenSampleCountRef = useRef(0);
+  const keyboardClosingSampleCountRef = useRef(0);
+  const keyboardWasEverOpenRef = useRef(false);
+  const keyboardBaselineWidthRef = useRef<number | null>(null);
+  const pointerDownKeyboardLossRef = useRef<number | null>(null);
+  const intentionalRefocusRef = useRef(false);
+  const reactivationArmedRef = useRef(false);
+  const isComposingRef = useRef(false);
+  const pendingClickPointerTypeRef = useRef('');
+  const pendingClickInputWasFocusedRef = useRef(false);
+  const suppressCompatibilityBlurRef = useRef(false);
   const visibleTargets = useMemo(() => resolveSearchTargets(availableTargets), [availableTargets]);
   const resolvedPlaceholderKey = placeholderKey ?? getSearchPlaceholderKey(visibleTargets);
   const showTargetTabs = visibleTargets.length > 1;
@@ -110,12 +130,27 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
       document.documentElement.clientHeight || 0,
       visualViewportBottom,
     );
+    keyboardBaselineWidthRef.current = visualViewport?.width ?? window.innerWidth;
+    lastKeyboardLossRef.current = 0;
   }, []);
 
   const resetKeyboardState = useCallback(() => {
     keyboardBaselineRef.current = null;
+    keyboardBaselineWidthRef.current = null;
     filterBottomBaselineRef.current = null;
     keyboardInsetRef.current = 0;
+    keyboardPhaseRef.current = 'unknown';
+    lastKeyboardLossRef.current = null;
+    keyboardOpenSampleCountRef.current = 0;
+    keyboardClosingSampleCountRef.current = 0;
+    keyboardWasEverOpenRef.current = false;
+    pointerDownKeyboardLossRef.current = null;
+    intentionalRefocusRef.current = false;
+    reactivationArmedRef.current = false;
+    isComposingRef.current = false;
+    pendingClickPointerTypeRef.current = '';
+    pendingClickInputWasFocusedRef.current = false;
+    suppressCompatibilityBlurRef.current = false;
     if (keyboardInsetFrameRef.current != null) {
       window.cancelAnimationFrame(keyboardInsetFrameRef.current);
       keyboardInsetFrameRef.current = null;
@@ -145,49 +180,224 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
     inputRef.current?.focus({ preventScroll: true });
   }, [captureKeyboardBaseline]);
 
+  const readKeyboardLoss = useCallback((): number | null => {
+    const baseline = keyboardBaselineRef.current;
+    const baselineWidth = keyboardBaselineWidthRef.current;
+    if (baseline == null || baselineWidth == null) return null;
+
+    const visualViewport = window.visualViewport;
+    const scale = visualViewport?.scale ?? 1;
+    const width = visualViewport?.width ?? window.innerWidth;
+    if (Math.abs(scale - 1) >= SEARCH_VIEWPORT_SCALE_TOLERANCE) {
+      keyboardPhaseRef.current = 'unknown';
+      lastKeyboardLossRef.current = null;
+      keyboardOpenSampleCountRef.current = 0;
+      keyboardClosingSampleCountRef.current = 0;
+      return null;
+    }
+    if (Math.abs(width - baselineWidth) >= SEARCH_VIEWPORT_WIDTH_TOLERANCE) {
+      const visualViewportBottom = visualViewport
+        ? visualViewport.height + visualViewport.offsetTop
+        : 0;
+      keyboardBaselineRef.current = Math.max(
+        window.innerHeight || 0,
+        document.documentElement.clientHeight || 0,
+        visualViewportBottom,
+      );
+      keyboardBaselineWidthRef.current = width;
+      keyboardPhaseRef.current = 'unknown';
+      lastKeyboardLossRef.current = 0;
+      keyboardOpenSampleCountRef.current = 0;
+      keyboardClosingSampleCountRef.current = 0;
+      keyboardWasEverOpenRef.current = false;
+      return null;
+    }
+
+    return Math.max(
+      0,
+      Math.round(baseline - (visualViewport?.height ?? window.innerHeight)),
+      Math.round(baseline - window.innerHeight),
+    );
+  }, []);
+
+  const sampleKeyboardPhase = useCallback((): number | null => {
+    const loss = readKeyboardLoss();
+    if (loss == null) return null;
+
+    const previousLoss = lastKeyboardLossRef.current;
+    lastKeyboardLossRef.current = loss;
+
+    if (loss <= SEARCH_KEYBOARD_CLOSED_THRESHOLD) {
+      keyboardPhaseRef.current = keyboardWasEverOpenRef.current ? 'closed' : 'unknown';
+      keyboardOpenSampleCountRef.current = 0;
+      keyboardClosingSampleCountRef.current = 0;
+      return loss;
+    }
+
+    if (
+      previousLoss != null
+      && loss < previousLoss - SEARCH_KEYBOARD_DIRECTION_DEADBAND
+      && keyboardWasEverOpenRef.current
+    ) {
+      keyboardOpenSampleCountRef.current = 0;
+      keyboardClosingSampleCountRef.current += 1;
+      if (
+        previousLoss - loss >= SEARCH_KEYBOARD_LARGE_CLOSING_DELTA
+        || keyboardClosingSampleCountRef.current >= SEARCH_KEYBOARD_OPEN_SAMPLE_COUNT
+      ) {
+        keyboardPhaseRef.current = 'closing';
+      }
+      return loss;
+    }
+
+    if (previousLoss != null && loss > previousLoss + SEARCH_KEYBOARD_DIRECTION_DEADBAND) {
+      keyboardPhaseRef.current = 'opening';
+      keyboardClosingSampleCountRef.current = 0;
+      if (loss >= SEARCH_KEYBOARD_OPEN_THRESHOLD) {
+        keyboardWasEverOpenRef.current = true;
+        keyboardOpenSampleCountRef.current = 1;
+      }
+      return loss;
+    }
+
+    if (keyboardPhaseRef.current === 'closing') return loss;
+
+    if (loss >= SEARCH_KEYBOARD_OPEN_THRESHOLD) {
+      keyboardWasEverOpenRef.current = true;
+      keyboardOpenSampleCountRef.current += 1;
+      keyboardClosingSampleCountRef.current = 0;
+      if (keyboardOpenSampleCountRef.current >= SEARCH_KEYBOARD_OPEN_SAMPLE_COUNT) {
+        keyboardPhaseRef.current = 'open';
+      } else {
+        keyboardPhaseRef.current = 'opening';
+      }
+    }
+
+    return loss;
+  }, [readKeyboardLoss]);
+
   const handleSearchPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (intentionalRefocusRef.current || reactivationArmedRef.current) {
+      intentionalRefocusRef.current = false;
+      reactivationArmedRef.current = false;
+      setSearchFocused(false);
+      resetKeyboardState();
+    }
     lastSearchPointerTypeRef.current = event.pointerType;
+    pendingClickPointerTypeRef.current = '';
+    pendingClickInputWasFocusedRef.current = false;
+    suppressCompatibilityBlurRef.current = false;
     const activeElement = document.activeElement;
     searchInputWasFocusedOnPointerDownRef.current = activeElement instanceof HTMLInputElement
       && event.currentTarget.contains(activeElement);
+    suppressCompatibilityBlurRef.current = searchInputWasFocusedOnPointerDownRef.current
+      && event.target !== activeElement;
+    pointerDownKeyboardLossRef.current = sampleKeyboardPhase();
+    reactivationArmedRef.current = false;
+
+    const isTouchPointer = event.pointerType === 'touch' || event.pointerType === 'pen';
+    const phase = keyboardPhaseRef.current;
+    if (
+      isTouchPointer
+      && event.isPrimary !== false
+      && event.button === 0
+      && searchInputWasFocusedOnPointerDownRef.current
+      && keyboardWasEverOpenRef.current
+      && !isComposingRef.current
+      && (phase === 'closing' || phase === 'closed')
+    ) {
+      intentionalRefocusRef.current = true;
+      reactivationArmedRef.current = true;
+      inputRef.current?.blur();
+    }
+  }, [resetKeyboardState, sampleKeyboardPhase]);
+
+  const handleSearchPointerUp = useCallback(() => {
+    pendingClickPointerTypeRef.current = lastSearchPointerTypeRef.current;
+    pendingClickInputWasFocusedRef.current = searchInputWasFocusedOnPointerDownRef.current;
+    lastSearchPointerTypeRef.current = '';
+    searchInputWasFocusedOnPointerDownRef.current = false;
   }, []);
 
   const handleSearchPointerCancel = useCallback(() => {
+    const wasArmed = reactivationArmedRef.current;
     lastSearchPointerTypeRef.current = '';
     searchInputWasFocusedOnPointerDownRef.current = false;
-  }, []);
+    pointerDownKeyboardLossRef.current = null;
+    pendingClickPointerTypeRef.current = '';
+    pendingClickInputWasFocusedRef.current = false;
+    suppressCompatibilityBlurRef.current = false;
+    reactivationArmedRef.current = false;
+    intentionalRefocusRef.current = false;
+    if (wasArmed) {
+      setSearchFocused(false);
+      resetKeyboardState();
+    }
+  }, [resetKeyboardState]);
 
-  const isKeyboardOpen = useCallback(() => {
-    const baseline = keyboardBaselineRef.current;
-    if (baseline == null) return false;
-    const visualViewportHeight = window.visualViewport?.height ?? window.innerHeight;
-    const heightLoss = Math.max(
-      0,
-      Math.round(baseline - visualViewportHeight),
-      Math.round(baseline - window.innerHeight),
-    );
-    return heightLoss >= SEARCH_KEYBOARD_OPEN_THRESHOLD;
-  }, []);
+  const handleSearchClickCapture = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    const pointerType = pendingClickPointerTypeRef.current || lastSearchPointerTypeRef.current;
+    const inputWasFocused = pendingClickPointerTypeRef.current
+      ? pendingClickInputWasFocusedRef.current
+      : searchInputWasFocusedOnPointerDownRef.current;
+    const pointerDownLoss = pointerDownKeyboardLossRef.current;
+    const clickLoss = sampleKeyboardPhase();
+    const phase = keyboardPhaseRef.current;
+    const closingWithinGesture = pointerDownLoss != null
+      && clickLoss != null
+      && clickLoss < pointerDownLoss - SEARCH_KEYBOARD_DIRECTION_DEADBAND;
+    const isTouchPointer = pointerType === 'touch' || pointerType === 'pen';
+    const shouldReactivate = isTouchPointer
+      && inputWasFocused
+      && keyboardWasEverOpenRef.current
+      && !isComposingRef.current
+      && (phase === 'closing' || phase === 'closed' || closingWithinGesture);
 
-  const handleSearchClickCapture = useCallback(() => {
-    const pointerType = lastSearchPointerTypeRef.current;
-    const inputWasFocused = searchInputWasFocusedOnPointerDownRef.current;
+    if (!reactivationArmedRef.current && shouldReactivate) {
+      intentionalRefocusRef.current = true;
+      reactivationArmedRef.current = true;
+      inputRef.current?.blur();
+    }
+
     lastSearchPointerTypeRef.current = '';
     searchInputWasFocusedOnPointerDownRef.current = false;
-    if ((pointerType !== 'touch' && pointerType !== 'pen') || !inputWasFocused || isKeyboardOpen()) return;
-    inputRef.current?.blur();
+    pointerDownKeyboardLossRef.current = null;
+    pendingClickPointerTypeRef.current = '';
+    pendingClickInputWasFocusedRef.current = false;
+    suppressCompatibilityBlurRef.current = false;
+    if (!reactivationArmedRef.current) {
+      intentionalRefocusRef.current = false;
+      reactivationArmedRef.current = false;
+      return;
+    }
+
+    event.preventDefault();
     focusSearchWithoutScroll();
-  }, [focusSearchWithoutScroll, isKeyboardOpen]);
+    keyboardPhaseRef.current = 'opening';
+    keyboardOpenSampleCountRef.current = 0;
+    reactivationArmedRef.current = false;
+    intentionalRefocusRef.current = false;
+  }, [focusSearchWithoutScroll, sampleKeyboardPhase]);
 
   const handleSearchFocus = useCallback(() => {
     captureKeyboardBaseline();
     setSearchFocused(true);
-  }, [captureKeyboardBaseline]);
+    sampleKeyboardPhase();
+  }, [captureKeyboardBaseline, sampleKeyboardPhase]);
 
   const handleSearchBlur = useCallback(() => {
+    if (intentionalRefocusRef.current || suppressCompatibilityBlurRef.current) return;
     setSearchFocused(false);
     resetKeyboardState();
   }, [resetKeyboardState]);
+
+  const handleCompositionStart = useCallback(() => {
+    isComposingRef.current = true;
+  }, []);
+
+  const handleCompositionEnd = useCallback(() => {
+    isComposingRef.current = false;
+  }, []);
 
   const handleSearchKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     if (isMobileChrome && e.key === 'Enter') {
@@ -247,30 +457,35 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
   useEffect(() => {
     updateKeyboardInset();
 
-    if (!visible || !isMobileChrome || !searchFocused) return undefined;
+    if (!visible || !isMobileChrome) return undefined;
 
     const scheduleKeyboardInsetUpdate = () => {
       if (keyboardInsetFrameRef.current != null) return;
       keyboardInsetFrameRef.current = window.requestAnimationFrame(() => {
         keyboardInsetFrameRef.current = null;
+        sampleKeyboardPhase();
         updateKeyboardInset();
       });
     };
+    const handleViewportChange = () => {
+      sampleKeyboardPhase();
+      scheduleKeyboardInsetUpdate();
+    };
     const visualViewport = window.visualViewport;
-    visualViewport?.addEventListener('resize', scheduleKeyboardInsetUpdate);
-    visualViewport?.addEventListener('scroll', scheduleKeyboardInsetUpdate);
-    window.addEventListener('resize', scheduleKeyboardInsetUpdate);
+    visualViewport?.addEventListener('resize', handleViewportChange);
+    visualViewport?.addEventListener('scroll', handleViewportChange);
+    window.addEventListener('resize', handleViewportChange);
 
     return () => {
-      visualViewport?.removeEventListener('resize', scheduleKeyboardInsetUpdate);
-      visualViewport?.removeEventListener('scroll', scheduleKeyboardInsetUpdate);
-      window.removeEventListener('resize', scheduleKeyboardInsetUpdate);
+      visualViewport?.removeEventListener('resize', handleViewportChange);
+      visualViewport?.removeEventListener('scroll', handleViewportChange);
+      window.removeEventListener('resize', handleViewportChange);
       if (keyboardInsetFrameRef.current != null) {
         window.cancelAnimationFrame(keyboardInsetFrameRef.current);
         keyboardInsetFrameRef.current = null;
       }
     };
-  }, [isMobileChrome, searchFocused, updateKeyboardInset, visible]);
+  }, [isMobileChrome, sampleKeyboardPhase, updateKeyboardInset, visible]);
 
   const closeAndNavigate = useCallback((path: string) => {
     onClose();
@@ -349,7 +564,10 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
           onKeyDown={handleSearchKeyDown}
           onFocus={handleSearchFocus}
           onBlur={handleSearchBlur}
+          onCompositionStart={handleCompositionStart}
+          onCompositionEnd={handleCompositionEnd}
           onPointerDownCapture={handleSearchPointerDown}
+          onPointerUpCapture={handleSearchPointerUp}
           onPointerCancelCapture={handleSearchPointerCancel}
           onClickCapture={handleSearchClickCapture}
           enterKeyHint="search"

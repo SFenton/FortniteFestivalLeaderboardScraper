@@ -1,4 +1,4 @@
-import { forwardRef, useRef, useImperativeHandle, useLayoutEffect, useMemo, type KeyboardEventHandler, type MouseEventHandler, type PointerEventHandler, type ReactNode, type TouchEventHandler } from 'react';
+import { forwardRef, useRef, useImperativeHandle, useLayoutEffect, useMemo, type CompositionEventHandler, type KeyboardEventHandler, type MouseEventHandler, type PointerEventHandler, type ReactNode, type TouchEventHandler } from 'react';
 import { IoSearch } from 'react-icons/io5';
 import { IconSize, Colors, Font, Gap, Display, Align, Cursor, CssValue } from '@festival/theme';
 import fx from '../../styles/effects.module.css';
@@ -11,9 +11,12 @@ export interface SearchBarProps {
   onFocus?: () => void;
   /** Called when the input loses focus. */
   onBlur?: () => void;
+  onCompositionStart?: CompositionEventHandler<HTMLInputElement>;
+  onCompositionEnd?: CompositionEventHandler<HTMLInputElement>;
   /** HTML enterkeyhint attribute for mobile keyboards. */
   enterKeyHint?: 'done' | 'search' | 'go' | 'send' | 'next';
   onPointerDownCapture?: PointerEventHandler<HTMLDivElement>;
+  onPointerUpCapture?: PointerEventHandler<HTMLDivElement>;
   onPointerCancelCapture?: PointerEventHandler<HTMLDivElement>;
   onTouchStartCapture?: TouchEventHandler<HTMLDivElement>;
   onMouseDownCapture?: MouseEventHandler<HTMLDivElement>;
@@ -51,8 +54,11 @@ const SearchBar = forwardRef<SearchBarRef, SearchBarProps>(function SearchBar(
     onKeyDown,
     onFocus,
     onBlur,
+    onCompositionStart,
+    onCompositionEnd,
     enterKeyHint,
     onPointerDownCapture,
+    onPointerUpCapture,
     onPointerCancelCapture,
     onTouchStartCapture,
     onMouseDownCapture,
@@ -88,12 +94,13 @@ const SearchBar = forwardRef<SearchBarRef, SearchBarProps>(function SearchBar(
       className={wrapperClass}
       style={{ ...s.searchBar, ...style }}
       onPointerDownCapture={onPointerDownCapture}
+      onPointerUpCapture={onPointerUpCapture}
       onPointerCancelCapture={onPointerCancelCapture}
       onTouchStartCapture={onTouchStartCapture}
       onMouseDownCapture={onMouseDownCapture}
       onClickCapture={onClickCapture}
       onClick={event => {
-        if (event.target === inputRef.current) return;
+        if (event.defaultPrevented || event.target === inputRef.current) return;
         inputRef.current?.focus({ preventScroll: true });
       }}
     >
@@ -108,6 +115,8 @@ const SearchBar = forwardRef<SearchBarRef, SearchBarProps>(function SearchBar(
         onKeyDown={onKeyDown}
         onFocus={onFocus}
         onBlur={onBlur}
+        onCompositionStart={onCompositionStart}
+        onCompositionEnd={onCompositionEnd}
         enterKeyHint={enterKeyHint}
       />
       {trailing}
