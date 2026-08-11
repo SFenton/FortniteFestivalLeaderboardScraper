@@ -9,7 +9,6 @@ import {
 import { clearSongsCache } from '../api/songsCache';
 import MaintenanceApp from '../components/maintenance/MaintenanceApp';
 import { resetAppWebSocketForPublicationChange } from '../hooks/data/useAppWebSocket';
-import { isServiceUnavailableError } from '../utils/apiError';
 
 export default function PublicationBoundary({
   children,
@@ -59,8 +58,7 @@ export default function PublicationBoundary({
   }, []);
 
   if (error) {
-    if (isServiceUnavailableError(error)) return <MaintenanceApp />;
-    return <div role="alert">Published data unavailable; retrying: {error}</div>;
+    return <MaintenanceApp />;
   }
   if (!publication) {
     return <div aria-busy="true">Loading published data...</div>;

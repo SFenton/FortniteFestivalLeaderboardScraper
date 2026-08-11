@@ -18,7 +18,7 @@ describe('PublicationBoundary', () => {
     vi.useRealTimers();
   });
 
-  it('retries a transient bootstrap failure', async () => {
+  it('shows service unavailable while retrying a transient bootstrap failure', async () => {
     global.fetch = vi.fn()
       .mockRejectedValueOnce(new Error('temporary outage'))
       .mockResolvedValueOnce(new Response(JSON.stringify({
@@ -45,7 +45,8 @@ describe('PublicationBoundary', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(screen.getByRole('alert')).toHaveTextContent('retrying');
+    expect(screen.getByText(/currently down for maintenance/i)).toBeInTheDocument();
+    expect(screen.queryByText('Published app')).not.toBeInTheDocument();
 
     await act(async () => {
       vi.advanceTimersByTime(2_000);
@@ -57,11 +58,14 @@ describe('PublicationBoundary', () => {
     expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
-  it('renders maintenance mode when publication bootstrap returns bad gateway', async () => {
+  it.each([
+    [404, 'Not Found'],
+    [502, 'Bad Gateway'],
+  ])('renders maintenance mode when publication bootstrap returns %i', async (status, statusText) => {
     global.fetch = vi.fn().mockResolvedValue(
       new Response(null, {
-        status: 502,
-        statusText: 'Bad Gateway',
+        status,
+        statusText,
       }),
     );
 

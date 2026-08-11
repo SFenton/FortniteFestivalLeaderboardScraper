@@ -39,6 +39,21 @@ corepack yarn test:unit
 corepack yarn build
 ```
 
+Run the Vite development server against an already-running API by setting
+`VITE_API_BASE`. The repository Compose template exposes the API on port 8080;
+the production Compose project exposes it on port 8081.
+
+```bash
+cd FortniteFestivalWeb
+
+# Example: production Compose service with the web app on port 5173
+VITE_API_BASE=http://127.0.0.1:8081 corepack yarn dev --port 5173
+```
+
+Vite proxies browser requests under `/api` to that target. Set
+`VITE_API_KEY` in the shell or an ignored `.env.local` file only when the
+target service requires an API key.
+
 The repository compose files are templates. Production compose ownership is
 `/home/sfenton/Docker/FestivalServiceTracker`.
 
