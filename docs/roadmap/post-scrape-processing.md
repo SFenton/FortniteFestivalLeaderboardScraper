@@ -2,7 +2,7 @@
 status: roadmap
 owner: worker
 last_verified: 2026-08-12
-last_verified_commit: 86b45d30
+last_verified_commit: 02039c9c
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -782,6 +782,11 @@ Each iteration below is a separate branch/PR.
 **Class:** `full-scrape-ab` for production deployment because this changes
 worker/schema behavior. Implementation, tests, documentation, and local image
 preparation remain safe while the current scrape runs.
+
+**Candidate state:** implementation is in progress on
+`copilot/post-scrape-phase-timing`. It is not accepted, merged, deployed, or
+live-validated. Promotion still requires the branch/PR quality gates, a local
+candidate image, and one complete scrape/post-process/publication A/B.
 
 Strict contents:
 

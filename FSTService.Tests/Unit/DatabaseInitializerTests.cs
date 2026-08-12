@@ -1438,6 +1438,167 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public async Task EnsureSchemaAsync_creates_exact_scrape_phase_timings_shape_idempotently()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using (var columns = conn.CreateCommand())
+        {
+            columns.CommandText = """
+                SELECT
+                    array_agg(column_name ORDER BY ordinal_position),
+                    array_agg(udt_name ORDER BY ordinal_position),
+                    array_agg(is_nullable ORDER BY ordinal_position),
+                    array_agg(COALESCE(column_default, '') ORDER BY ordinal_position)
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'scrape_phase_timings'
+                """;
+            using var reader = columns.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.Equal(
+                [
+                    "id",
+                    "scrape_id",
+                    "phase",
+                    "subphase",
+                    "item_key",
+                    "started_at",
+                    "completed_at",
+                    "duration_ms",
+                    "rows_read",
+                    "rows_written",
+                    "rows_deleted",
+                    "scope_count",
+                    "success",
+                    "error_message",
+                ],
+                reader.GetFieldValue<string[]>(0));
+            Assert.Equal(
+                [
+                    "int8",
+                    "int8",
+                    "text",
+                    "text",
+                    "text",
+                    "timestamptz",
+                    "timestamptz",
+                    "int8",
+                    "int8",
+                    "int8",
+                    "int8",
+                    "int8",
+                    "bool",
+                    "text",
+                ],
+                reader.GetFieldValue<string[]>(1));
+            Assert.Equal(
+                [
+                    "NO",
+                    "NO",
+                    "NO",
+                    "YES",
+                    "YES",
+                    "NO",
+                    "NO",
+                    "NO",
+                    "YES",
+                    "YES",
+                    "YES",
+                    "YES",
+                    "NO",
+                    "YES",
+                ],
+                reader.GetFieldValue<string[]>(2));
+
+            var defaults = reader.GetFieldValue<string[]>(3);
+            Assert.Contains("nextval('scrape_phase_timings_id_seq'::regclass)", defaults[0]);
+            Assert.Equal("true", defaults[12]);
+        }
+
+        using (var constraints = conn.CreateCommand())
+        {
+            constraints.CommandText = """
+                SELECT
+                    count(*) FILTER (WHERE contype = 'p'),
+                    count(*) FILTER (WHERE contype = 'f')
+                FROM pg_constraint
+                WHERE conrelid = 'public.scrape_phase_timings'::regclass
+                """;
+            using var reader = constraints.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.Equal(1, reader.GetInt64(0));
+            Assert.Equal(0, reader.GetInt64(1));
+        }
+
+        using var indexes = conn.CreateCommand();
+        indexes.CommandText = """
+            SELECT indexname, indexdef
+            FROM pg_indexes
+            WHERE schemaname = 'public'
+              AND tablename = 'scrape_phase_timings'
+            ORDER BY indexname
+            """;
+        using var indexReader = indexes.ExecuteReader();
+        var definitions = new Dictionary<string, string>(StringComparer.Ordinal);
+        while (indexReader.Read())
+            definitions[indexReader.GetString(0)] = indexReader.GetString(1);
+
+        Assert.Contains("scrape_phase_timings_pkey", definitions.Keys);
+        Assert.Contains(
+            "(scrape_id, phase, subphase, item_key)",
+            definitions["ix_scrape_phase_timings_scrape"]);
+        Assert.Contains(
+            "(started_at DESC)",
+            definitions["ix_scrape_phase_timings_started"]);
+    }
+
+    [Fact]
+    public void RecordScrapePhaseTiming_roundtrips_after_fresh_schema_bootstrap()
+    {
+        var startedAt = DateTime.UtcNow.AddSeconds(-2);
+        var completedAt = DateTime.UtcNow;
+        _metaFixture.Db.RecordScrapePhaseTiming(new ScrapePhaseTimingRecord(
+            4242,
+            "BandMaintenance",
+            "prune",
+            null,
+            startedAt,
+            completedAt,
+            2_000,
+            RowsRead: 11,
+            RowsWritten: 12,
+            RowsDeleted: 13,
+            ScopeCount: 14));
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT scrape_id, phase, subphase, item_key, duration_ms,
+                   rows_read, rows_written, rows_deleted, scope_count,
+                   success, error_message
+            FROM scrape_phase_timings
+            WHERE scrape_id = 4242
+            """;
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(4242, reader.GetInt64(0));
+        Assert.Equal("BandMaintenance", reader.GetString(1));
+        Assert.Equal("prune", reader.GetString(2));
+        Assert.True(reader.IsDBNull(3));
+        Assert.Equal(2_000, reader.GetInt64(4));
+        Assert.Equal(11, reader.GetInt64(5));
+        Assert.Equal(12, reader.GetInt64(6));
+        Assert.Equal(13, reader.GetInt64(7));
+        Assert.Equal(14, reader.GetInt64(8));
+        Assert.True(reader.GetBoolean(9));
+        Assert.True(reader.IsDBNull(10));
+        Assert.False(reader.Read());
+    }
+
+    [Fact]
     public async Task EnsureSchemaAsync_does_not_recreate_retired_composite_history_latest_index()
     {
         await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);

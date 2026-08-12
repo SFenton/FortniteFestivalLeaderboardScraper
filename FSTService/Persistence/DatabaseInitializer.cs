@@ -865,6 +865,30 @@ public static class DatabaseInitializer
             ON scrape_phase_outcomes (scrape_id, criticality, phase)
             WHERE status = 'failed';
 
+        CREATE TABLE IF NOT EXISTS scrape_phase_timings (
+            id            BIGSERIAL   PRIMARY KEY,
+            scrape_id     BIGINT      NOT NULL,
+            phase         TEXT        NOT NULL,
+            subphase      TEXT,
+            item_key      TEXT,
+            started_at    TIMESTAMPTZ NOT NULL,
+            completed_at  TIMESTAMPTZ NOT NULL,
+            duration_ms   BIGINT      NOT NULL,
+            rows_read     BIGINT,
+            rows_written  BIGINT,
+            rows_deleted  BIGINT,
+            scope_count   BIGINT,
+            success       BOOLEAN     NOT NULL DEFAULT TRUE,
+            error_message TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_scrape_phase_timings_scrape
+            ON scrape_phase_timings
+               (scrape_id, phase, subphase, item_key);
+
+        CREATE INDEX IF NOT EXISTS ix_scrape_phase_timings_started
+            ON scrape_phase_timings (started_at DESC);
+
         CREATE TABLE IF NOT EXISTS scrape_publication_state (
             id                  BOOLEAN     PRIMARY KEY DEFAULT TRUE CHECK (id),
             published_scrape_id INTEGER     REFERENCES scrape_log(id),

@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-08-11
-last_verified_commit: 453fd9b6
+last_verified: 2026-08-12
+last_verified_commit: 02039c9c
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -41,7 +41,7 @@ surface is not the production service persistence model.
 | Account state | Display names, registrations, selected profiles, refresh/backfill progress |
 | Derived products | Rankings, rivals, statistics, precomputed responses, improvement notifications |
 | Publication state | Published scrape/generation, source bindings, read freeze, commit intent, leases, cache generations |
-| Operations/audit | Worker heartbeat, maintenance evidence, dedup/recovery audit state |
+| Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, maintenance evidence, dedup/recovery audit state |
 
 The exact relation inventory is intentionally source-driven because it changes
 frequently. `DatabaseInitializer` and its tests are the schema inventory;
@@ -58,6 +58,25 @@ Feature flags support staged migration among legacy mutable rows, snapshot and
 overlay readers, per-scope published sources, and generation-aware reads. Role
 files intentionally use different read/write settings for `fstservice` and
 `fstworker`.
+
+## Phase timing evidence
+
+`scrape_phase_outcomes` is the terminal correctness ledger for named
+post-scrape phases and their publication criticality.
+
+`scrape_phase_timings` is append-only operational evidence for finer subphases.
+Its bootstrap shape intentionally matches the surviving production relation:
+
+- `BIGSERIAL` primary key;
+- scrape, phase, optional subphase/item, timestamps, duration, optional
+  row/scope counts, success, and optional error;
+- no foreign key in this compatibility repair;
+- indexes on `(scrape_id, phase, subphase, item_key)` and
+  `started_at DESC`.
+
+Timing persistence is best effort and cannot change phase failure,
+cancellation, or publication behavior. Retention remains owned by the existing
+service-level metadata cleanup.
 
 ## Storage and maintenance rules
 

@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-11
-last_verified_commit: 2bdf7287
+last_verified: 2026-08-12
+last_verified_commit: 02039c9c
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -94,6 +94,29 @@ The pipeline has two useful abstractions:
 `ScrapePhaseResolver` expands `--solo-scrape`, `--solo-leaderboards`, and
 `--band-scrape`, and fills intermediate solo phases. Selective flags affect the
 first launch pass only; later scheduled cycles use the full pipeline.
+
+## Post-scrape timing
+
+Terminal phase names and publication criticality remain recorded through
+`scrape_phase_outcomes`.
+
+Band maintenance additionally records three stable timing subphases under the
+`BandMaintenance` phase:
+
+- `prune`;
+- `search_projection_refresh`;
+- `current_projection_refresh`.
+
+The timing rows reuse counts already returned by those operations: deleted
+band/member rows and affected scopes for prune, inserted/deleted projection
+rows and impacted teams for search, and inserted/deleted rows and refreshed
+scopes for the current projection. They add no discovery query.
+
+Timing persistence is best effort. A timing-write failure cannot replace a
+phase exception or cancellation and cannot change candidate publication.
+BandExtraction membership/configuration work is not part of these
+BandMaintenance timings. Durable live progress, API fields, and Settings
+changes remain future roadmap work.
 
 ## Publication safety
 
