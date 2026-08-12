@@ -125,15 +125,15 @@ if $CONFIG_ONLY; then
 fi
 
 SKIP_UNCHANGED_PHYSICAL_LEADERBOARD_SNAPSHOTS=false
-USE_LEADERBOARD_SCOPE_FINGERPRINTS=false
+# Every supported full-scrape profile requires current fingerprints so strict
+# published-source coverage can account for non-empty scopes.
+USE_LEADERBOARD_SCOPE_FINGERPRINTS=true
 if [[ "$DATA_PROFILE" == "snapshot-reuse" ]]; then
     SKIP_UNCHANGED_PHYSICAL_LEADERBOARD_SNAPSHOTS=true
-    USE_LEADERBOARD_SCOPE_FINGERPRINTS=true
 fi
 USE_SNAPSHOT_OVERLAY_WORKER_READERS=false
 if [[ "$DATA_PROFILE" == "legacy-reader-migration" ]]; then
     USE_SNAPSHOT_OVERLAY_WORKER_READERS=true
-    USE_LEADERBOARD_SCOPE_FINGERPRINTS=true
 fi
 
 RUN_ONCE=true \

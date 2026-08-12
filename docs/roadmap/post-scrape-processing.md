@@ -783,10 +783,24 @@ Each iteration below is a separate branch/PR.
 worker/schema behavior. Implementation, tests, documentation, and local image
 preparation remain safe while the current scrape runs.
 
-**Candidate state:** implementation is in progress on
-`copilot/post-scrape-phase-timing`. It is not accepted, merged, deployed, or
-live-validated. Promotion still requires the branch/PR quality gates, a local
-candidate image, and one complete scrape/post-process/publication A/B.
+**Candidate state:** implementation is open in PR #10 on
+`copilot/post-scrape-phase-timing` and remains unaccepted and unmerged. Live
+candidate scrape `1292` was rejected before post-processing: the selected
+`publication-cache-generation` run-once profile explicitly disabled
+`UseLeaderboardScopeFingerprints`, so all `6,249` non-empty solo scopes lacked
+a current-scrape fingerprint while the `69` empty scopes were persisted.
+Strict scope coverage therefore reported `expected=6318`, `observed=6318`,
+`persisted=69`, `missing=0`, and `incomplete=0`. The three BandMaintenance
+subphases never ran, so the telemetry lane is unevaluated rather than rejected
+on its implementation.
+
+The scope-persistence code is byte-identical across deployed baseline
+`453fd9b6`, merged plan commit `02039c9c`, and PR #10 head `5c9f2167`; PR #10
+changes only timing bootstrap and post-scrape telemetry on this path. The next
+candidate requires the run-once wrapper and guard to preserve/require current
+scope fingerprints, focused tool tests and config-only validation, then a new
+complete scrape/post-process/publication A/B. Scrape `1292` is rejection
+evidence, not an accepted timing or performance baseline.
 
 Strict contents:
 

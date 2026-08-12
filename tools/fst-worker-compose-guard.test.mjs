@@ -323,6 +323,24 @@ function buildRunonceComposeConfig() {
   return config;
 }
 
+function buildPublicationCacheRunonceConfig({
+  useLeaderboardScopeFingerprints = true
+} = {}) {
+  const config = buildComposeConfig({ runOnce: true });
+  Object.assign(config.services.fstworker.environment, {
+    Scraper__EnabledPhases: "All",
+    Features__EnforcePublicationCriticalPhases: "true",
+    Features__EnforceScopeCompletenessManifests: "true",
+    Features__RequireSuccessfulScrapeWriters: "true",
+    Features__UseLeaderboardScopeFingerprints:
+      String(useLeaderboardScopeFingerprints),
+    Features__WritePublishedScopeSources: "true",
+    Features__UseStoredSoloProjectionRanksForFilteredReads: "false",
+    Features__SkipUnchangedPhysicalLeaderboardSnapshots: "false"
+  });
+  return config;
+}
+
 async function createHarness({
   config = buildComposeConfig(),
   scenario = {}
@@ -980,6 +998,52 @@ describe("fstworker Compose startup recovery", () => {
       assert.equal(result.code, 0, result.stderr);
       assert.deepEqual(await harness.events(), []);
       assert.match(result.stdout, /run_once=true/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("accepts publication-cache generation with current scope fingerprints", async () => {
+    const harness = await createHarness({
+      config: buildPublicationCacheRunonceConfig()
+    });
+    try {
+      const result = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--data-profile",
+        "publication-cache-generation",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test"
+      ]);
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), []);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("rejects publication-cache generation without current scope fingerprints", async () => {
+    const harness = await createHarness({
+      config: buildPublicationCacheRunonceConfig({
+        useLeaderboardScopeFingerprints: false
+      })
+    });
+    try {
+      const result = await harness.run([
+        "--check-runonce",
+        "--config-only",
+        "--data-profile",
+        "publication-cache-generation",
+        "--expected-worker-image",
+        "example.invalid/fstworker:test"
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), []);
+      assert.match(
+        result.stderr,
+        /requires Features__UseLeaderboardScopeFingerprints=true/
+      );
     } finally {
       await harness.cleanup();
     }
