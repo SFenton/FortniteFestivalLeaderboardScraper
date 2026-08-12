@@ -86,6 +86,7 @@ same validation workflow without path filtering:
 
 - service build, tests, and coverage;
 - web build, embedded-bundle verification, unit/shared tests and coverage;
+- bundle-performance and source-encoding checks;
 - dependency and Manual-image checks;
 - Playwright Chromium desktop/mobile, wide responsive, WebKit mobile,
   component, and publication suites;

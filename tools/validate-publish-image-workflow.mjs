@@ -70,6 +70,8 @@ export function validatePublishImageWorkflow(workflow, webDockerfile) {
     for (const [name, run] of [
       ['Build', 'yarn build'],
       ['Verify committed embedded bundle', 'yarn embedded:check'],
+      ['Check bundle budgets', 'node scripts/check-performance-budgets.mjs --out performance-artifacts/bundle.json'],
+      ['Check source encoding', 'yarn check:encoding'],
       ['Run unit tests', 'yarn test:unit'],
       ['Enforce unit coverage', 'yarn test:coverage'],
       ['Run shared package tests', 'yarn test:shared'],

@@ -224,6 +224,14 @@ jobs:
         working-directory: FortniteFestivalWeb
         run: yarn embedded:check
 
+      - name: Check bundle budgets
+        working-directory: FortniteFestivalWeb
+        run: node scripts/check-performance-budgets.mjs --out performance-artifacts/bundle.json
+
+      - name: Check source encoding
+        working-directory: FortniteFestivalWeb
+        run: yarn check:encoding
+
       - name: Run unit tests
         working-directory: FortniteFestivalWeb
         run: yarn test:unit
