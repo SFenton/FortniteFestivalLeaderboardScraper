@@ -1,14 +1,15 @@
 ---
 status: roadmap
 owner: data
-last_verified: 2026-08-11
-last_verified_commit: 453fd9b6
+last_verified: 2026-08-12
+last_verified_commit: 86b45d30
 sources:
   - FSTService/FeatureOptions.cs
   - FSTService/appsettings.json
   - deploy/config/fstservice-role.env
   - deploy/config/fstworker-role.env
   - docs/database/SnapshotReuseRunbook.md
+  - docs/roadmap/post-scrape-processing.md
 update_triggers:
   - Publication, snapshot ownership, retention, or analytics readiness changes.
 ---
@@ -23,6 +24,11 @@ These are verified gaps, not automatic implementation approvals.
 | Finish snapshot/current-state ownership migration | Snapshot-overlay worker reads and unchanged-snapshot skipping remain disabled | Complete scrape A/B parity, replay evidence, rollback, and storage/resource comparison |
 | Revalidate snapshot reuse | The living runbook contains evaluation history but no blanket promotion | Fresh matched baseline and candidate on current schema/code |
 | Evaluate bounded artifact analytics | DuckDB/Parquet is routed as an artifact-only option, not a production source of truth | Bounded export/replay benchmark that preserves PostgreSQL publication correctness and stays on the FST drive |
+| Produce an exact snapshot-capacity/reclaim plan | Report-only retention planning is already enabled, but its exact protected generations, candidate partitions, purge/retained bytes, rewrite workspace, runtime cost, and rollback objects are not persisted in current evidence; rewrite remains off and current free space is below the 500 GiB gate | Run the existing planner read-only after a safe scrape boundary, preserve its exact output, prove planner load is safe, then require current live-scrape parity and rollback before any rewrite/reclaim |
+
+Detailed post-scrape phase, progress, replay, deployment, A/B, and optimization
+work is owned by the
+[post-scrape processing roadmap](post-scrape-processing.md).
 
 Completed physical cleanup, compaction, retirement, and rejected stored-rank
 rollout documents were removed from the current tree and must not be
