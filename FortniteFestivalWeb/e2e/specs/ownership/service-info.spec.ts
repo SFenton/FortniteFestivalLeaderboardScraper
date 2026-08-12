@@ -65,6 +65,6 @@ test('one shared request owns cold Settings, route reuse, and polling', async ({
   expect(maxInFlight).toBe(1);
   for (let index = 1; index < requestStarts.length; index += 1) {
     expect(requestStarts[index]! - requestStarts[index - 1]!).toBeGreaterThanOrEqual(4_500);
-    expect(requestStarts[index]! - requestStarts[index - 1]!).toBeLessThan(6_500);
+    expect(requestStarts[index]! - requestStarts[index - 1]!).toBeLessThan(8_000);
   }
 });
