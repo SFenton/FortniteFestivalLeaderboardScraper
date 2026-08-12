@@ -23,15 +23,11 @@ test.describe('Carousel Interaction', () => {
 
     // ArrowRight → next slide
     await page.keyboard.press('ArrowRight');
-    await page.waitForTimeout(300);
-    const secondTitle = await fre.title.textContent();
-    expect(secondTitle).not.toBe(firstTitle);
+    await expect.poll(() => fre.title.textContent()).not.toBe(firstTitle);
 
     // ArrowLeft → back to first
     await page.keyboard.press('ArrowLeft');
-    await page.waitForTimeout(300);
-    const backTitle = await fre.title.textContent();
-    expect(backTitle).toBe(firstTitle);
+    await expect(fre.title).toHaveText(firstTitle!);
   });
 
   test('keyboard: Escape dismisses carousel', async ({ page, fre }) => {
