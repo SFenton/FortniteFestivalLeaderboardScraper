@@ -1861,14 +1861,17 @@ public class PostScrapeOrchestratorTests : IDisposable
                      (
                          Subphase:
                              PostScrapeOrchestrator.BandMaintenancePruneSubphase,
+                         RowsRead: (long?)null,
                          RowsWritten: (long?)null),
                      (
                          Subphase:
                              PostScrapeOrchestrator.BandMaintenanceSearchProjectionSubphase,
+                         RowsRead: (long?)null,
                          RowsWritten: (long?)0),
                      (
                          Subphase:
                              PostScrapeOrchestrator.BandMaintenanceCurrentProjectionSubphase,
+                         RowsRead: (long?)0,
                          RowsWritten: (long?)0),
                  })
         {
@@ -1878,7 +1881,10 @@ public class PostScrapeOrchestratorTests : IDisposable
                 reader.GetString(0));
             Assert.Equal(expected.Subphase, reader.GetString(1));
             Assert.True(reader.IsDBNull(2));
-            Assert.True(reader.IsDBNull(3));
+            if (expected.RowsRead.HasValue)
+                Assert.Equal(expected.RowsRead.Value, reader.GetInt64(3));
+            else
+                Assert.True(reader.IsDBNull(3));
             if (expected.RowsWritten.HasValue)
                 Assert.Equal(expected.RowsWritten.Value, reader.GetInt64(4));
             else
@@ -1955,11 +1961,89 @@ public class PostScrapeOrchestratorTests : IDisposable
                         failedScopes: 0,
                         publishedRows: 17),
                 TotalElapsedMs: 30,
-                Scopes: []));
-        Assert.Null(current.RowsRead);
+                Scopes: []),
+            consideredScopeCount: 9);
+        Assert.Equal(9, current.RowsRead);
         Assert.Equal(17, current.RowsWritten);
         Assert.Equal(19, current.RowsDeleted);
         Assert.Equal(7, current.ScopeCount);
+
+        var unchanged = PostScrapeOrchestrator.GetBandCurrentProjectionTimingMetrics(
+            new BandCurrentProjectionIncrementalRefreshResult(
+                ScopeCount: 0,
+                SuccessfulScopes: 0,
+                FailedScopes: 0,
+                InsertedRows: 0,
+                DeletedRows: 0,
+                CandidateRowsDeleted: 0,
+                PublishResult:
+                    BandCurrentProjectionPublishResult.NotPublished(
+                        generation: 2,
+                        scopeCount: 0,
+                        readyScopes: 0,
+                        missingScopes: 0,
+                        failedScopes: 0,
+                        publishedRows: 0),
+                TotalElapsedMs: 5,
+                Scopes: []),
+            consideredScopeCount: 9);
+        Assert.Equal(9, unchanged.RowsRead);
+        Assert.Equal(0, unchanged.RowsWritten);
+        Assert.Equal(0, unchanged.RowsDeleted);
+        Assert.Equal(0, unchanged.ScopeCount);
+
+        Assert.Equal(0, PostScrapeOrchestrator.BandMaintenanceTimingMetrics.NoWork.RowsRead);
+        Assert.Equal(0, PostScrapeOrchestrator.BandMaintenanceTimingMetrics.NoWork.ScopeCount);
+    }
+
+    [Fact]
+    public async Task BandMaintenance_current_projection_timing_distinguishes_considered_from_refreshed()
+    {
+        const long scrapeId = 90_005;
+        var ctx = CreateContext(scrapeId: scrapeId);
+        var unchangedResult = new BandCurrentProjectionIncrementalRefreshResult(
+            ScopeCount: 0,
+            SuccessfulScopes: 0,
+            FailedScopes: 0,
+            InsertedRows: 0,
+            DeletedRows: 0,
+            CandidateRowsDeleted: 0,
+            PublishResult:
+                BandCurrentProjectionPublishResult.NotPublished(
+                    generation: 2,
+                    scopeCount: 0,
+                    readyScopes: 0,
+                    missingScopes: 0,
+                    failedScopes: 0,
+                    publishedRows: 0),
+            TotalElapsedMs: 5,
+            Scopes: []);
+
+        await _sut.RunTimedBandMaintenanceSubphaseAsync(
+            ctx,
+            PostScrapeOrchestrator.BandMaintenanceCurrentProjectionSubphase,
+            () => Task.FromResult(unchangedResult),
+            result =>
+                PostScrapeOrchestrator.GetBandCurrentProjectionTimingMetrics(
+                    result,
+                    consideredScopeCount: 9));
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT rows_read, rows_written, rows_deleted, scope_count, success
+            FROM scrape_phase_timings
+            WHERE scrape_id = @scrapeId
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(9, reader.GetInt64(0));
+        Assert.Equal(0, reader.GetInt64(1));
+        Assert.Equal(0, reader.GetInt64(2));
+        Assert.Equal(0, reader.GetInt64(3));
+        Assert.True(reader.GetBoolean(4));
+        Assert.False(reader.Read());
     }
 
     [Fact]
@@ -1975,13 +2059,14 @@ public class PostScrapeOrchestratorTests : IDisposable
                 PostScrapeOrchestrator.BandMaintenanceSearchProjectionSubphase,
                 () => Task.FromException<int>(failure),
                 static _ =>
-                    PostScrapeOrchestrator.BandMaintenanceTimingMetrics.Empty));
+                    PostScrapeOrchestrator.BandMaintenanceTimingMetrics.NoWork));
         Assert.Same(failure, thrown);
 
         using var conn = _metaFixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT phase, subphase, success, error_message
+            SELECT phase, subphase, rows_read, rows_written, rows_deleted,
+                   scope_count, success, error_message
             FROM scrape_phase_timings
             WHERE scrape_id = @scrapeId
             """;
@@ -1994,8 +2079,12 @@ public class PostScrapeOrchestratorTests : IDisposable
         Assert.Equal(
             PostScrapeOrchestrator.BandMaintenanceSearchProjectionSubphase,
             reader.GetString(1));
-        Assert.False(reader.GetBoolean(2));
-        Assert.Equal(failure.Message, reader.GetString(3));
+        Assert.True(reader.IsDBNull(2));
+        Assert.True(reader.IsDBNull(3));
+        Assert.True(reader.IsDBNull(4));
+        Assert.True(reader.IsDBNull(5));
+        Assert.False(reader.GetBoolean(6));
+        Assert.Equal(failure.Message, reader.GetString(7));
         Assert.False(reader.Read());
     }
 
@@ -2014,13 +2103,14 @@ public class PostScrapeOrchestratorTests : IDisposable
                 PostScrapeOrchestrator.BandMaintenanceCurrentProjectionSubphase,
                 () => Task.FromException<int>(cancellation),
                 static _ =>
-                    PostScrapeOrchestrator.BandMaintenanceTimingMetrics.Empty));
+                    PostScrapeOrchestrator.BandMaintenanceTimingMetrics.NoWork));
         Assert.Equal(cts.Token, thrown.CancellationToken);
 
         using var conn = _metaFixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT subphase, success
+            SELECT subphase, rows_read, rows_written, rows_deleted,
+                   scope_count, success, error_message
             FROM scrape_phase_timings
             WHERE scrape_id = @scrapeId
             """;
@@ -2030,7 +2120,12 @@ public class PostScrapeOrchestratorTests : IDisposable
         Assert.Equal(
             PostScrapeOrchestrator.BandMaintenanceCurrentProjectionSubphase,
             reader.GetString(0));
-        Assert.False(reader.GetBoolean(1));
+        Assert.True(reader.IsDBNull(1));
+        Assert.True(reader.IsDBNull(2));
+        Assert.True(reader.IsDBNull(3));
+        Assert.True(reader.IsDBNull(4));
+        Assert.False(reader.GetBoolean(5));
+        Assert.Equal(cancellation.Message, reader.GetString(6));
         Assert.False(reader.Read());
     }
 

@@ -78,6 +78,14 @@ Timing persistence is best effort and cannot change phase failure,
 cancellation, or publication behavior. Retention remains owned by the existing
 service-level metadata cleanup.
 
+For BandMaintenance timing rows, `success=false` means the subphase did not
+complete successfully, including cancellation. Optional row/scope metrics are
+null on failure because partial work may have occurred. Successful no-work
+subphases record zero. For `current_projection_refresh`, `rows_read` stores the
+already-known impacted scope count considered and `scope_count` stores scopes
+selected for refresh, so `0`/`0` and `N`/`0` remain distinct without another
+query or timing row.
+
 ## Storage and maintenance rules
 
 - Production data, scratch, exports, repacks, and migration artifacts stay on

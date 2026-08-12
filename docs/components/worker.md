@@ -110,10 +110,17 @@ Band maintenance additionally records three stable timing subphases under the
 The timing rows reuse counts already returned by those operations: deleted
 band/member rows and affected scopes for prune, inserted/deleted projection
 rows and impacted teams for search, and inserted/deleted rows and refreshed
-scopes for the current projection. They add no discovery query.
+scopes for the current projection. For `current_projection_refresh`,
+`rows_read` is the number of impacted scopes presented to the builder, while
+`scope_count` is the number selected for refresh after unchanged-scope
+filtering. This distinguishes no impacted scopes (`0`/`0`) from impacted but
+unchanged scopes (`N`/`0`). They add no discovery query.
 
 Timing persistence is best effort. A timing-write failure cannot replace a
 phase exception or cancellation and cannot change candidate publication.
+`success=false` means the subphase did not complete successfully, including
+cancellation. Row/scope metrics are null on exception or cancellation because
+partial work may have occurred; a successful no-work subphase records zero.
 BandExtraction membership/configuration work is not part of these
 BandMaintenance timings. Durable live progress, API fields, and Settings
 changes remain future roadmap work.

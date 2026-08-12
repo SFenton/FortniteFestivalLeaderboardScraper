@@ -35,8 +35,10 @@ public sealed class PostScrapeOrchestrator
         long? RowsDeleted = null,
         long? ScopeCount = null)
     {
-        public static BandMaintenanceTimingMetrics Empty { get; } =
-            new(RowsWritten: 0, RowsDeleted: 0, ScopeCount: 0);
+        public static BandMaintenanceTimingMetrics NoWork { get; } =
+            new(RowsRead: 0, RowsWritten: 0, RowsDeleted: 0, ScopeCount: 0);
+
+        public static BandMaintenanceTimingMetrics Unknown { get; } = new();
     }
 
     private readonly GlobalLeaderboardPersistence _persistence;
@@ -1662,7 +1664,11 @@ public sealed class PostScrapeOrchestrator
             ctx,
             BandMaintenanceCurrentProjectionSubphase,
             () => _bandCurrentProjectionBuilder is null
-                ? Task.FromResult(BandMaintenanceTimingMetrics.Empty)
+                ? Task.FromResult(new BandMaintenanceTimingMetrics(
+                    RowsRead: impactedCurrentProjectionScopes.Count,
+                    RowsWritten: 0,
+                    RowsDeleted: 0,
+                    ScopeCount: 0))
                 : RefreshBandCurrentProjectionScopesAsync(
                     impactedCurrentProjectionScopes,
                     ct),
@@ -1711,7 +1717,7 @@ public sealed class PostScrapeOrchestrator
                 startedAt,
                 stopwatch.Elapsed,
                 false,
-                BandMaintenanceTimingMetrics.Empty,
+                BandMaintenanceTimingMetrics.Unknown,
                 ex.Message);
             throw;
         }
@@ -1734,8 +1740,10 @@ public sealed class PostScrapeOrchestrator
             ScopeCount: result.ImpactedTeams);
 
     internal static BandMaintenanceTimingMetrics GetBandCurrentProjectionTimingMetrics(
-        BandCurrentProjectionIncrementalRefreshResult result) =>
+        BandCurrentProjectionIncrementalRefreshResult result,
+        int consideredScopeCount) =>
         new(
+            RowsRead: consideredScopeCount,
             RowsWritten: result.InsertedRows,
             RowsDeleted: result.DeletedRows,
             ScopeCount: result.ScopeCount);
@@ -1786,7 +1794,7 @@ public sealed class PostScrapeOrchestrator
         const int FallbackChunkSize = 128;
 
         if (scopes.Count == 0)
-            return BandMaintenanceTimingMetrics.Empty;
+            return BandMaintenanceTimingMetrics.NoWork;
 
         _log.LogInformation("Refreshing band current projection for {ScopeCount:N0} impacted scope(s).", scopes.Count);
 
@@ -1818,7 +1826,7 @@ public sealed class PostScrapeOrchestrator
                 $"Band current projection failed for {result.FailedScopes}/{result.ScopeCount} scope(s).");
         }
 
-        return GetBandCurrentProjectionTimingMetrics(result);
+        return GetBandCurrentProjectionTimingMetrics(result, scopes.Count);
     }
 
     private async Task<BandMaintenanceTimingMetrics> RefreshBandCurrentProjectionScopesInChunksAsync(
@@ -1885,6 +1893,7 @@ public sealed class PostScrapeOrchestrator
         }
 
         return new BandMaintenanceTimingMetrics(
+            RowsRead: scopes.Count,
             RowsWritten: insertedRows,
             RowsDeleted: deletedRows,
             ScopeCount: refreshedScopes);
