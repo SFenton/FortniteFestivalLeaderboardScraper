@@ -2,9 +2,12 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-11
-last_verified_commit: 453fd9b6
+last_verified_commit: 2bdf7287
 sources:
   - tools/
+  - tools/fst-worker-compose-guard.sh
+  - tools/fst-worker-compose-guard.test.mjs
+  - tools/fst-worker-no-progress-watchdog.mjs
   - deploy/fst-compose.sh
   - FortniteFestivalWeb/package.json
   - .github/skills/
@@ -44,6 +47,47 @@ Database scripts are not generic production authorization. Use the matching
 runbook and live-safety gates. The worker Compose guard validates the standard
 PIA overlay, role flags, aligned proxy arrays, dependencies, and supported data
 profiles before a guarded recreate.
+
+### Worker Compose guard
+
+`tools/fst-worker-compose-guard.sh` retains the purposes of `--check`,
+`--check-runonce`, `--recreate`, and `--recreate-runonce`, but deliberately
+tightens every action to require canonical effective-service membership and
+reject effective static PIA endpoint-IP pins. Every action also requires the
+guard-only `worker` Compose profile. Continuous actions require
+`restart: on-failure:5`; run-once actions require `restart: no`. Its
+`--recover-start` action is the continuous production startup handoff after the
+production-owned boot orchestrator has started core services and effective
+proxies.
+
+Every worker-start/recreate action shares one nonblocking host lock; checks do
+not take it. By default the lock is derived as
+`<resolved-compose-dir>/.fst-worker-compose-guard.lock`; an explicit absolute
+override remains available. All invokers must share the resolved directory or
+override and Unix owner.
+
+Recovery is effective-set-only, capped by stage windows and a 1,800-second
+default total deadline, and fail-closed. It does not accept `--config-only`,
+run-once/data profiles, or any `candidate-*` throughput profile. It does not
+recreate core services or non-effective proxies. The guard passes
+`--profile worker` for every worker-dependent config resolution and
+worker-targeted `up`; proxy-only recreates remain effective-name-only. Output
+reports stages and counts without resolved endpoints, IPs, credentials, or
+environment values.
+
+If post-start readiness fails, cleanup stops the worker only while
+`currentUpdate` remains idle and public reads remain unfrozen. Otherwise it
+leaves the worker running and directs the operator to
+`tools/fst-worker-no-progress-watchdog.mjs` and the canonical
+[live-safety procedure](../operations/live-safety.md).
+
+The action's host-side controls are documented in
+[Configuration](configuration.md). Validate changes with:
+
+```bash
+bash -n tools/fst-worker-compose-guard.sh
+node --test tools/fst-worker-compose-guard.test.mjs
+```
 
 ## Pak extractor
 

@@ -2,13 +2,14 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-11
-last_verified_commit: 453fd9b6
+last_verified_commit: 2bdf7287
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/playwright.config.ts
   - .github/workflows/publish-image.yml
   - tools/check-docs.mjs
+  - tools/fst-worker-compose-guard.test.mjs
 update_triggers:
   - Test runners, scripts, projects, coverage gates, CI, or documentation checks change.
 ---
@@ -50,6 +51,20 @@ Dependency changes that appear on the Licenses page must also run:
 cd FortniteFestivalWeb
 corepack yarn licenses:generate
 corepack yarn licenses:check
+```
+
+## Operational tools
+
+The worker guard has a dependency-free Node harness with stubbed Docker/Compose
+behavior, including lock contention, signal cleanup, overall deadlines,
+active/frozen cleanup boundaries, runtime qualification failures, dynamic lock
+derivation, and live-config-independent checks of repository worker profiles
+and restart policies. Its fake Compose implementation omits `fstworker` unless
+`--profile worker` is explicit, matching the integration boundary:
+
+```bash
+bash -n tools/fst-worker-compose-guard.sh
+node --test tools/fst-worker-compose-guard.test.mjs
 ```
 
 ## Documentation

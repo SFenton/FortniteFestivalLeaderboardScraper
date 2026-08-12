@@ -2,7 +2,7 @@
 status: canonical
 owner: operations
 last_verified: 2026-08-11
-last_verified_commit: 453fd9b6
+last_verified_commit: 2bdf7287
 sources:
   - FSTService/appsettings.json
   - FSTService/Program.cs
@@ -12,6 +12,7 @@ sources:
   - deploy/config/fstservice-role.env
   - deploy/config/fstworker-role.env
   - deploy/.env.example
+  - tools/fst-worker-compose-guard.sh
 update_triggers:
   - An appsettings section, environment key, secret, role file, or configuration precedence rule changes.
 ---
@@ -84,6 +85,52 @@ endpoints, or provider account data.
 Use the .NET key in prose (`Features:AppManual`) and the Compose form in
 examples (`Features__AppManual`). Shell-friendly aliases such as
 `FEATURE_APP_MANUAL` are template inputs, not service option names.
+
+## Worker guard environment
+
+These variables configure host-side
+`tools/fst-worker-compose-guard.sh` mutation/recovery behavior. They are not
+FSTService options and do not belong in container environment arrays.
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `FST_WORKER_COMPOSE_GUARD_LOCK_PATH` | `<resolved-compose-dir>/.fst-worker-compose-guard.lock` | Optional explicit shared absolute lock for `--recreate`, `--recreate-runonce`, and `--recover-start` |
+| `FST_WORKER_RECOVERY_CORE_WAIT_SECONDS` | `60` | Bounded PostgreSQL/API readiness window |
+| `FST_WORKER_RECOVERY_INITIAL_WAIT_SECONDS` | `360` | Initial effective-proxy convergence window |
+| `FST_WORKER_RECOVERY_RECREATE_WAIT_SECONDS` | `360` | Post-recreate effective-proxy convergence window |
+| `FST_WORKER_RECOVERY_WORKER_WAIT_SECONDS` | `180` | Worker health/new-heartbeat convergence window |
+| `FST_WORKER_RECOVERY_TOTAL_DEADLINE_SECONDS` | `1800` | Positive overall deadline across core, proxies, runtime probes, and worker readiness |
+| `FST_WORKER_RECOVERY_POLL_INTERVAL_SECONDS` | `5` | Positive health polling interval |
+| `FST_WORKER_RECOVERY_MAX_PROXY_RECREATES` | `3` | Maximum effective services recreated in one invocation |
+| `FST_WORKER_RECOVERY_HEARTBEAT_FRESH_SECONDS` | `30` | Maximum accepted age for the new worker heartbeat |
+| `FST_WORKER_RECOVERY_WORKER_STOP_TIMEOUT_SECONDS` | `30` | Fail-closed worker stop grace after startup failure |
+
+All numeric values are validated before Compose inspection or mutation. The
+360-second proxy windows accommodate the observed startup class, while the
+1,800-second overall deadline prevents their probe/retry composition from
+becoming an open-ended boot.
+
+The production owner may set these in the boot-unit environment; repository
+Compose templates do not own them. Without an override, the lock is derived
+after `COMPOSE_DIR` is resolved. Every production invoker must therefore use
+the same resolved Compose directory and Unix owner. An explicit override must
+be one shared absolute path with the same owner. Size `TimeoutStartSec` above
+the total deadline plus signal-cleanup margin.
+
+## Worker Compose startup contract
+
+Repository templates and production-synchronized merged configurations use:
+
+- `profiles: ["worker"]` so generic Compose startup excludes `fstworker`;
+- `restart: on-failure:5` for continuous worker configurations, providing only
+  bounded nonzero process-exit retries while Docker remains running;
+- `restart: no` for run-once overlays.
+
+The guard explicitly passes `--profile worker` for every merged config
+resolution that needs `fstworker` and every worker-targeted start. Proxy-only
+recreates do not enable the profile. The `on-failure:5` policy intentionally
+does not restore the worker after Docker daemon or host restart; guarded host
+startup owns that operation.
 
 ## Change checklist
 

@@ -2,7 +2,7 @@
 status: canonical
 owner: operations
 last_verified: 2026-08-11
-last_verified_commit: 453fd9b6
+last_verified_commit: 2bdf7287
 sources:
   - FSTService/Program.cs
   - FSTService/ScraperOptions.cs
@@ -11,6 +11,7 @@ sources:
   - FSTService/Scraping/GluetunContainerRecycler.cs
   - deploy/docker-compose.yml
   - tools/fst-worker-compose-guard.sh
+  - tools/fst-worker-compose-guard.test.mjs
   - /home/sfenton/Docker/FestivalServiceTracker/docker-compose.pia-30.yml
 update_triggers:
   - Proxy selection, pacing, transport, Gluetun services, provider overlays, self-heal, or guard contracts change.
@@ -95,6 +96,33 @@ Only `fstworker` receives `/var/run/docker.sock`. API/frontend roles use
 normally restarts a container without rewriting provider selectors; legacy
 recreate/city-selection support exists for provider-specific workflows.
 
+The recycler cannot repair boot before `fstworker` starts. The production
+startup contract therefore has a separate host-side boundary:
+
+1. the production-owned orchestrator starts core services and the exact
+   effective proxies with a plain idempotent `up -d --no-deps`;
+2. `tools/fst-worker-compose-guard.sh --recover-start` takes the shared
+   Compose-directory worker-start/recreate lock and validates the merged
+   continuous config with `--profile worker`, then validates the `worker`
+   profile and `on-failure:5` policy;
+3. it requires healthy PostgreSQL/API readiness, a stopped worker, an idle
+   update, and unfrozen public reads;
+4. it waits up to 360 seconds for initial effective-set convergence;
+5. it may force-recreate only the still-unhealthy effective services, each once
+   and no more than three total by default, then waits another 360 seconds;
+6. it runs the existing DNS, control, HTTP-proxy, and distinct-egress probes
+   before recreating only `fstworker`;
+7. it requires worker container health plus a new, fresh operational heartbeat;
+8. one 1,800-second default total deadline caps the complete recovery path.
+
+Non-effective canonical services are ignored, healthy services are not
+recreated, and no spare is promoted automatically. A failure starts no worker.
+After worker start, cleanup stops it only while the operational state remains
+idle and unfrozen; active/frozen work remains running for the no-progress
+watchdog. Core service containers are never restarted by this path.
+Proxy-only force-recreate commands name only the unhealthy effective services
+and do not enable or target the worker profile.
+
 ## Compose layouts
 
 | Layer | Purpose |
@@ -111,6 +139,15 @@ aligned arrays, PIA provider labels, and matching worker dependencies. The
 optional 80-endpoint expansion is a separate production-owned topology and is
 not the standard guard target.
 
+Effective PIA services must not resolve a nonempty `OPENVPN_ENDPOINT_IP`.
+Hostname/region selection remains supported; static resolved IP pins are
+rejected because they can preserve a dead tunnel across boot.
+Canonical effective-service membership and this pin rejection apply to
+`--check`, run-once checks, and both existing recreate actions as deliberate
+safety tightening. Every action also requires the guard-only `worker` profile;
+continuous actions require `on-failure:5`, while run-once actions require
+`restart: no`.
+
 ## Safety and secrecy
 
 - Never commit VPN credentials, provider account data, private endpoints, or
@@ -122,3 +159,6 @@ not the standard guard target.
   values.
 - Treat configured service counts separately from observed running-container
   state.
+- Keep candidate throughput profiles, including `candidate-1600-64-8`, confined
+  to guarded run-once evaluation. Continuous recovery accepts the approved
+  `baseline-up-to-800-32-4` profile.

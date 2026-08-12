@@ -174,7 +174,10 @@ services:
     <<: *fst-worker-resources
     build: *fstservice_build
     container_name: fstworker
-    restart: unless-stopped
+    # Guard-only startup: bare Compose up excludes this service; the guard
+    # explicitly enables the profile for config validation and targeted starts.
+    profiles: ["worker"]
+    restart: "on-failure:5"
     depends_on:
       postgres:
         condition: service_healthy

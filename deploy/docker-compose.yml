@@ -7,7 +7,7 @@
 #
 # Preferred usage:
 #   ./fst-compose.sh pull
-#   ./fst-compose.sh up -d
+#   ./fst-compose.sh up -d  # core/API/web only; guard starts fstworker
 #
 # The wrapper honors FST_DEPLOY_COMPOSE_DIR from the environment, repo .env, or
 # deploy/.env. Set it on hosts that keep the live Compose project elsewhere
@@ -255,7 +255,10 @@ services:
     <<: *fst-worker-resources
     image: *fstservice_image
     container_name: fstworker
-    restart: unless-stopped
+    # Guard-only startup: bare Compose up excludes this service; the guard
+    # explicitly enables the profile for config validation and targeted starts.
+    profiles: ["worker"]
+    restart: "on-failure:5"
     depends_on:
       postgres:
         condition: service_healthy

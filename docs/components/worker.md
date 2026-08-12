@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-11
-last_verified_commit: 453fd9b6
+last_verified_commit: 2bdf7287
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -10,6 +10,8 @@ sources:
   - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FSTService/HostedWorkerMode.cs
   - deploy/config/fstworker-role.env
+  - tools/fst-worker-compose-guard.sh
+  - tools/fst-worker-no-progress-watchdog.mjs
 update_triggers:
   - Worker registration, phase selection, scrape sequencing, background coordination, recovery, or publication changes.
 ---
@@ -32,6 +34,38 @@ Full-worker mode registers:
 
 API/frontend modes register only the background services appropriate to those
 roles. Registration-sync mode omits scheduled scrape and band-history work.
+
+## Production startup
+
+The production startup contract has the boot orchestrator start the database,
+API/web roles, and effective proxies without starting `fstworker`. Docker can
+otherwise leave a worker Created forever when a `service_healthy` dependency
+misses boot; its restart policy does not apply to a container that never
+started.
+
+Repository Compose templates put `fstworker` in the `worker` profile, so bare
+Compose startup cannot include it. The continuous policy is
+`restart: on-failure:5`: Docker may retry a nonzero process exit up to five
+times while the daemon remains running, but daemon/host restart does not start
+the worker. The guarded host startup path owns that transition. Run-once
+merges retain `restart: no`.
+
+The host then runs `tools/fst-worker-compose-guard.sh --recover-start`. That
+action validates the continuous baseline and exact effective arrays, refuses
+active/frozen work, requires the worker profile and restart policy, performs
+bounded effective-proxy recovery and qualification, and recreates only
+`fstworker` with `--no-deps`. The guard explicitly supplies `--profile worker`
+both when resolving merged config and when targeting the worker start. Success
+additionally requires a healthy worker container and a new fresh heartbeat
+through `/api/service-info`.
+
+The in-worker Gluetun recycler remains responsible for tunnel failures after
+startup; it is not the boot healer. Recovery failure keeps or returns the
+worker to a stopped state only if work remains idle and public reads remain
+unfrozen. Once work or a freeze begins, the guard leaves the worker running and
+directs the operator to the no-progress watchdog instead of risking a stranded
+candidate. PostgreSQL, API, and web roles are never restarted. Candidate
+profiles are run-once-only and are not continuous startup authorization.
 
 ## Continuous loop
 

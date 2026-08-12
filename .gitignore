@@ -305,6 +305,8 @@ FSTService/data/
 .env.local
 .env*.local
 .env.e2e
+# Compose-directory worker guard lock
+.fst-worker-compose-guard.lock
 # Web stuff
 FortniteFestivalWeb/.yarn
 FortniteFestivalWeb/coverage
