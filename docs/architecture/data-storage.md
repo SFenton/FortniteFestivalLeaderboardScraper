@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-12
-last_verified_commit: 02039c9c
+last_verified_commit: 042f9686
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -86,10 +86,22 @@ already-known impacted scope count considered and `scope_count` stores scopes
 selected for refresh, so `0`/`0` and `N`/`0` remain distinct without another
 query or timing row.
 
+Live scrape `1293` validated the compatibility shape and bounded write cost:
+the two prior comparable scrapes contained `69` timing rows each, while `1293`
+contained `72`, exactly the three new BandMaintenance rows. Their stored tuple
+size was about `411` bytes in total. Whole-phase reconciliation left only
+`257 ms` (`0.00324%`) outside the timed subphases, a conservative upper bound
+for timing-persistence overhead and well below the `1%` acceptance gate.
+
 ## Storage and maintenance rules
 
 - Production data, scratch, exports, repacks, and migration artifacts stay on
   the 4 TB FST drive unless the operator explicitly overrides the rule.
+- After scrape `1293`, the capacity guard reported about `254.5 GB` free,
+  `94%` filesystem use, and `2.11` projected headroom days. Storage recovery
+  remains urgent. The report-only retention planner still requires repair and
+  exact reclaim adjudication; no retention, rewrite, or gate reduction is
+  authorized by the timing acceptance.
 - Destructive maintenance requires exact affected objects, parity evidence,
   rollback, live preflight, and a bounded maintenance window.
 - Schema initialization is idempotent but is not a substitute for a bounded

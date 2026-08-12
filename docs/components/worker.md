@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-12
-last_verified_commit: 02039c9c
+last_verified_commit: 042f9686
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -124,6 +124,15 @@ partial work may have occurred; a successful no-work subphase records zero.
 BandExtraction membership/configuration work is not part of these
 BandMaintenance timings. Durable live progress, API fields, and Settings
 changes remain future roadmap work.
+
+Corrected live candidate scrape `1293` accepted this contract. It emitted
+exactly the three successful rows above, with no extras, and published normally.
+BandMaintenance took `7,939,927 ms`; the subphases accounted for
+`7,939,670 ms`, leaving `257 ms` (`0.00324%`) for all orchestration including
+timing persistence. `current_projection_refresh` dominated at `6,049,933 ms`
+(`76.20%`), followed by prune at `1,144,264 ms` and search refresh at
+`745,473 ms`. The current refresh considered `53,543` scopes, selected `8,020`,
+wrote `14,179,946` rows, and deleted `14,189,655`.
 
 ## Publication safety
 

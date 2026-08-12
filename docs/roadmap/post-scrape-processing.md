@@ -2,7 +2,7 @@
 status: roadmap
 owner: worker
 last_verified: 2026-08-12
-last_verified_commit: 02039c9c
+last_verified_commit: 042f9686
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -39,12 +39,12 @@ update_triggers:
   bounded artifact/replay companions.
 - Reject microservices, runtime-loaded plugins, full scrape N+1 overlap, and
   raw-HTTP capture as current implementation directions.
-- Implement observability before optimization. The first implementation PR is
-  strictly the timing-schema compatibility repair plus BandMaintenance
-  subphase/scope telemetry.
+- Use the accepted timing foundation to optimize measured bottlenecks rather
+  than inferred phase cost. The first BandMaintenance target is current
+  projection refresh.
 - Treat storage capacity as an urgent independent safety lane. The existing
-  report-only snapshot-retention planner must be observed at a safe scrape
-  boundary before any rewrite or reclaim proposal.
+  report-only snapshot-retention planner must be repaired and its exact reclaim
+  estimates adjudicated before any rewrite or reclaim proposal.
 
 Implementation is approved after this plan is rendered to the local autonomous
 agent outbox. All implementation, evaluation, deployment, and promotion
@@ -159,7 +159,7 @@ long-run distribution.
 
 | Phase | Samples | p50 or representative duration | Tail/variance note |
 |---|---:|---:|---|
-| `BandMaintenance` | 10+ | About 171 minutes | About 252-minute recent tail; no internal timing attribution |
+| `BandMaintenance` | 10+ | About 171 minutes | Scrape `1293` took 132.3 minutes: current projection 100.8 minutes (76.20%), prune 19.1 minutes, search refresh 12.4 minutes |
 | `ComputeRankings` | 10+ | About 68 minutes | Stable near 70 minutes |
 | `RefreshRegisteredUsers` | 10 | About 24 minutes | About 44-minute tail |
 | `Cleanup.PrecomputeAll` | 10 | About 13 minutes | Stable |
@@ -340,7 +340,7 @@ branch reads `band_entries` while the prune branch writes it.
 
 | Work | Reads | Writes/deletes | Important resources |
 |---|---|---|---|
-| BandExtraction membership/configuration summaries | `band_members`, `band_member_stats` | `band_team_membership`, `band_team_membership_state`, `band_team_configurations` | Runs under BandExtraction ownership; outside PR-1 telemetry scope |
+| BandExtraction membership/configuration summaries | `band_members`, `band_member_stats` | `band_team_membership`, `band_team_membership_state`, `band_team_configurations` | Runs under BandExtraction ownership; outside the BandMaintenance timing contract |
 | Band prune | `band_entries`, `band_members` | `band_entries`, `band_member_stats`, `band_members` | Global window sort, one long transaction, WAL/temp |
 | Search projection | `band_entries`, `band_member_stats`, `band_members` | `band_search_team_projection`, `band_search_member_projection`, `band_search_projection_state`, `band_identity` | Dedicated advisory rebuild lock |
 | Current band projection | `band_entries`, `band_member_stats` | `current_band_leaderboard_entries`, `band_current_projection_scope/state` | Per-scope transactions, default max two band types |
@@ -371,9 +371,10 @@ required before performance acceptance.
 | `BandExtraction` | Make impacted teams/scopes reflect actual changed rows | Already parallel; do not increase DOP first | Same input rows, compare impacted-key sets and band outputs | Exact band rows; fewer downstream scopes | Keep broad-impact mode | `full-scrape-ab` |
 | `LegacyBandScrape` | Retire unreachable normal-pass branch after mode audit | Remove only in a dedicated dead-path PR | CLI/config/reference search plus targeted tests | No supported mode loses band acquisition | Revert deletion | `scrape-boundary-deploy` |
 | Band discovery/targeting | Add lookup budgets, results, retry, and checkpoint timings | Low priority; mutual parallelism must preserve provider budget | Bounded captured/provider canary | Same teams/scopes, no retry/error increase | Restore serial order | `full-scrape-ab` |
-| Band prune | Restrict ranking/window work to changed `(song, band_type)` scopes | Highest-value hypothesis if telemetry attributes wall time here | PR-1 subphase timings, then isolated changed-scope A/B | Exact retained entries/members; ≥20% BandMaintenance reduction; no >10% WAL/temp/IO regression | Global-prune feature flag | `full-scrape-ab` |
-| BandExtraction membership/configuration summaries | Measure changed-team batching and skip exact unchanged summaries in a later dedicated iteration | Remains owned by BandExtraction; no instrumentation or behavior change in PR-1 | Same extraction inputs, membership/configuration checksums | Exact membership/configuration rows with fewer writes or lower extraction wall | Existing broad summary rebuild | `full-scrape-ab` |
-| BandMaintenance search/current projections | Skip exact unchanged teams/scopes; batch by measured resource class | Projection work may later overlap solo ranks, never band prune with band ranks | Changed-key/checksum comparison in isolated Postgres | Exact search/current/public DTO hashes; fewer rows and wall | Broad refresh switch | `full-scrape-ab` |
+| Band prune | Restrict ranking/window work to changed `(song, band_type)` scopes | Secondary measured target: `1,144,264 ms` (`14.41%`) in scrape `1293` | Isolated changed-scope A/B after current projection analysis | Exact retained entries/members; ≥20% subphase reduction; no >10% WAL/temp/IO regression | Global-prune feature flag | `full-scrape-ab` |
+| BandExtraction membership/configuration summaries | Measure changed-team batching and skip exact unchanged summaries in a later dedicated iteration | Remains owned by BandExtraction; separate from BandMaintenance timing and optimization | Same extraction inputs, membership/configuration checksums | Exact membership/configuration rows with fewer writes or lower extraction wall | Existing broad summary rebuild | `full-scrape-ab` |
+| BandMaintenance current projection refresh | Analyze unchanged-scope selection and replace/delete volume before changing the algorithm | First measured target: `6,049,933 ms` (`76.20%`), `53,543` considered scopes, `8,020` refreshed | Bounded query/plan and same-input checksum probe, then one-variable full-scrape A/B | Exact current/public DTO hashes; materially fewer than `14,179,946` writes and `14,189,655` deletes; no >10% resource regression | Existing broad current refresh | `full-scrape-ab` |
+| BandMaintenance search projection refresh | Skip exact unchanged teams/scopes and batch by measured resource class | Lower priority: `745,473 ms` (`9.39%`) in scrape `1293` | Changed-team/checksum comparison in isolated PostgreSQL | Exact search/public DTO hashes; fewer rows and wall | Existing broad search refresh | `full-scrape-ab` |
 | Per-instrument rankings | Profile materialization/window queries under existing DOP 2 | Never blindly raise DOP; prior unbounded concurrency OOM-killed PostgreSQL | Isolated DOP 1/2/3 resource-capped A/B after query plans | Exact rankings; ≥10% wall benefit; no >10% memory/WAL/temp/API regression | DOP/config restore | `full-scrape-ab` |
 | Composite/family/combo | Test bounded two-way execution and adaptive diff/replace | Data-disjoint but memory/WAL-sensitive | Same loaded metrics, independent output hashes | Exact rows/order; ≥10% combined wall reduction | Serial execution and full replace | `full-scrape-ab` |
 | Rank-history snapshots | First optimize latest-state scan; then test existing overlap flag or DOP change separately | Largest ranking subphase; do not combine concurrency hypotheses | Isolated current-history query plan and one-variable A/B | Exact histories; meaningful wall reduction; no >10% resource regression | Overlap/DOP off | `full-scrape-ab` |
@@ -390,7 +391,7 @@ required before performance acceptance.
 | Best-effort cleanup | Move after publication under pressure admission | Correctness-of-intent fix; typical measured benefit near zero | Failure injection and API/resource observation | Publication unchanged; cleanup failure cannot block it; live-read p95 within gate | Restore pre-publication call | `full-scrape-ab` |
 | Publication | Persist scope-source, notification-plan, preparation, drain, exclusive, and cleanup timings | Ordering remains strict | Additive timing-only observation | Exact pointer/freeze/route parity; <1% overhead | Disable timing writes | `continuous-safe` |
 | Improvement notifications | Record skip reason and detection-stage/scope timing | Already post-publication | Inspect conditions and several published scrapes | No silent starvation; exact notification state | Remove counters | `continuous-safe` |
-| `PostScrapeRefresher` / deferred sync | Audit supported modes and retire or explicitly re-home | Verified no current production caller; removal is not PR-1 | Reference/config/tests plus best-effort skip audit | No supported mode loses refresh/backfill/recovery | Revert deletion | `scrape-boundary-deploy` |
+| `PostScrapeRefresher` / deferred sync | Audit supported modes and retire or explicitly re-home | Verified no current production caller; removal is separate from timing/progress work | Reference/config/tests plus best-effort skip audit | No supported mode loses refresh/backfill/recovery | Revert deletion | `scrape-boundary-deploy` |
 
 Default rejection is any correctness/publication difference or a sustained
 greater-than-10% regression in API p95, phase wall clock, CPU, memory, WAL,
@@ -761,74 +762,23 @@ No wall-clock benefit is forecast until those gates are measured.
 
 Each iteration below is a separate branch/PR.
 
-### Parallel evidence task after the current scrape boundary
+### Parallel storage evidence task
 
-**Read-only snapshot retention plan**
+**Repair and adjudicate the read-only snapshot retention plan**
 
-- Execution: bounded operational evidence, not a production mutation.
-- Wait for scrape `1291` to complete post-processing, publication/unfreeze, and
-  notification decision.
-- Run the already-enabled report-only planner under live-safety checks.
-- Persist exact candidate partitions, protected snapshot IDs/publications,
-  total/retained/purge bytes, required rewrite workspace, free-space gate,
-  rollback objects, query/runtime cost, and whether the planner itself is safe.
+- The report-only planner ran after scrape `1291` in `85 ms` and returned nine
+  plans, but every plan reported zero estimated retained rows despite explicit
+  keep/protected IDs.
+- Repair or explain that contradiction before treating purge rows/bytes as
+  executable reclaim evidence.
+- Re-run under live-safety checks and persist exact candidate partitions,
+  protected snapshot IDs/publications, retained/purge rows and bytes, required
+  rewrite workspace, rollback objects, query/runtime cost, and the current
+  `500 GiB` free-space gate.
 - Do not enable rewrite, lower the 500 GiB gate, delete rows/indexes, repack, or
   move data.
 - Use the result to design capacity recovery. Execution remains
   `parity-gated-maintenance` and currently blocked by free-space requirements.
-
-### PR-1: timing compatibility and BandMaintenance attribution
-
-**Class:** `full-scrape-ab` for production deployment because this changes
-worker/schema behavior. Implementation, tests, documentation, and local image
-preparation remain safe while the current scrape runs.
-
-**Candidate state:** implementation is open in PR #10 on
-`copilot/post-scrape-phase-timing` and remains unaccepted and unmerged. Live
-candidate scrape `1292` was rejected before post-processing: the selected
-`publication-cache-generation` run-once profile explicitly disabled
-`UseLeaderboardScopeFingerprints`, so all `6,249` non-empty solo scopes lacked
-a current-scrape fingerprint while the `69` empty scopes were persisted.
-Strict scope coverage therefore reported `expected=6318`, `observed=6318`,
-`persisted=69`, `missing=0`, and `incomplete=0`. The three BandMaintenance
-subphases never ran, so the telemetry lane is unevaluated rather than rejected
-on its implementation.
-
-The scope-persistence code is byte-identical across deployed baseline
-`453fd9b6`, merged plan commit `02039c9c`, and PR #10 head `5c9f2167`; PR #10
-changes only timing bootstrap and post-scrape telemetry on this path. The next
-candidate requires the run-once wrapper and guard to preserve/require current
-scope fingerprints, focused tool tests and config-only validation, then a new
-complete scrape/post-process/publication A/B. Scrape `1292` is rejection
-evidence, not an accepted timing or performance baseline.
-
-Strict contents:
-
-- exact `scrape_phase_timings` DDL compatibility repair;
-- fresh-schema and repeated-initialization tests;
-- insert round-trip test proving timing persistence on a fresh database;
-- BandMaintenance subphase timings and existing scope/row counts for prune,
-  search projection refresh, and current band projection refresh;
-- required docs.
-
-Explicit exclusions:
-
-- no phase-attempt ledger;
-- no progress API fields;
-- no Settings changes;
-- no phase reordering;
-- no query or algorithm change;
-- no BandExtraction or membership/configuration instrumentation;
-- no retention execution.
-
-Acceptance:
-
-- identical outputs;
-- telemetry survives fresh bootstrap;
-- no missing-table debug fallback;
-- fewer than a small bounded number of timing writes per scrape;
-- less than 1% overhead;
-- rollback is removal/disablement of calls; additive table remains harmless.
 
 ### PR-2: durable progress and additive API
 
@@ -895,7 +845,8 @@ and isolated validation proceed continuously.
 
 Order is evidence-driven:
 
-1. dominant measured BandMaintenance subphase;
+1. BandMaintenance current projection refresh, starting with the measured
+   `53,543` considered / `8,020` refreshed scope and row-churn path;
 2. solo current-projection write reduction;
 3. rank-history query path and one-variable concurrency/overlap experiment;
 4. leaderboard-rivals batching/fingerprints;
@@ -1005,9 +956,9 @@ metrics. Correctness/publication differences reject regardless of speed.
 
 | Gap | Evidence class | Exact next probe | Gate |
 |---|---|---|---|
-| BandMaintenance attribution | Unknown | PR-1 timings and scope/row counts across comparable complete scrapes | No optimization before attribution |
-| Exact snapshot reclaim plan | Unknown | Existing report-only planner after scrape boundary; persist exact plans/bytes/protected IDs/runtime | No rewrite or gate reduction |
-| Planner safety/runtime | Unknown | CPU/IO/query/lock observation during read-only planner | Pause if public health or scrape continuity degrades |
+| Current band projection rewrite feasibility | Unknown | Bounded plan/same-input checksum probe for the `53,543` considered / `8,020` refreshed scope path | Separate one-variable A/B; exact projection/publication parity; no >10% resource regression |
+| Exact snapshot reclaim plan | Unknown | Repair zero-retained-row arithmetic, rerun report-only planning, and persist exact plans/bytes/protected IDs | No rewrite or gate reduction |
+| Repaired planner safety/runtime | Unknown | Repeat CPU/IO/query/lock observation after the arithmetic repair | Pause if public health or scrape continuity degrades |
 | Improvement-notification gaps | Unknown | Record skip reasons and inspect markers/coverage on recent publications | Do not call the phase starved or removable without evidence |
 | Best-effort skip/starvation | Unknown | Compare requested phases, outcomes, skip reasons, pressure decisions, and feature conditions | Required before dead-path PR |
 | Projection diff ratios | Unknown | Persist aggregate would-insert/update/delete metrics | Required before merge strategy |
@@ -1028,11 +979,8 @@ This tandem plan is accepted for implementation after local outbox rendering.
 - Approval of this roadmap is not authorization to bypass the current
   live-safety, parity, publication, provider, storage, rollback, or maintenance
   gate for any later action.
-- PR-1 begins only after this roadmap/ADR PR is reviewed and merged or the
-  operator otherwise authorizes its branch.
-- PR-1 scope is fixed to timing DDL compatibility, tests, and
-  BandMaintenance telemetry.
-- Snapshot-retention planning is a parallel read-only evidence task after the
-  current scrape boundary.
-- No production, Docker, database, worker, API, or web implementation occurs
-  in this planning change.
+- PR-2 remains the next progress/API implementation boundary and must preserve
+  the accepted timing IDs and publication behavior.
+- Current-projection optimization is a separate future full-scrape A/B; it
+  cannot be combined with PR-2 progress/API work.
+- Snapshot-retention planner repair remains a parallel read-only evidence task.
