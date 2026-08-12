@@ -119,7 +119,6 @@ services:
       - Features__WriteLegacyLiveLeaderboardSupplementalRows=${WRITE_LEGACY_LIVE_LEADERBOARD_SUPPLEMENTAL_ROWS:-true}
       - Features__UseSnapshotOverlayWorkerReaders=${USE_SNAPSHOT_OVERLAY_WORKER_READERS:-false}
       - Features__UseStoredSoloProjectionRanksForFilteredReads=${USE_STORED_SOLO_PROJECTION_RANKS_FOR_FILTERED_READS:-false}
-      - ClientTelemetry__Enabled=${CLIENT_TELEMETRY_ENABLED:-false}
       - ImprovementNotifications__Enabled=${IMPROVEMENT_NOTIFICATIONS_ENABLED:-true}
       - ImprovementNotifications__Scope=${IMPROVEMENT_NOTIFICATIONS_SCOPE:-registered}
       - ImprovementNotifications__IncludePlayers=${IMPROVEMENT_NOTIFICATIONS_INCLUDE_PLAYERS:-true}

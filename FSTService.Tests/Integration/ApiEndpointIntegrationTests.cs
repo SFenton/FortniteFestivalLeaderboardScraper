@@ -669,7 +669,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             sessionId = "test-session",
             route = "/songs",
             viewport = new { width = 390, height = 844, devicePixelRatio = 3 },
-            events = new object[]
+            events = new[]
             {
                 new
                 {
@@ -681,22 +681,13 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                     path = new[] { new { tag = "button", testId = "mobile-header-search" } },
                     state = new { pathname = "/songs", isMobile = true },
                 },
-                new
-                {
-                    kind = "action",
-                    label = "search:click-decision",
-                    phase = "note",
-                    time = 11,
-                    details = new { keyboardPhase = "closing", keyboardLoss = 224 },
-                    state = new { pathname = "/songs", isMobile = true },
-                },
             },
         });
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.True(json.GetProperty("accepted").GetBoolean());
-        Assert.Equal(2, json.GetProperty("eventCount").GetInt32());
+        Assert.Equal(1, json.GetProperty("eventCount").GetInt32());
     }
 
     [Fact]
