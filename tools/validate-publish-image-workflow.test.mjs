@@ -14,6 +14,20 @@ test('current publish workflow satisfies the distribution contract', () => {
   assert.deepEqual(validatePublishImageWorkflow(workflow, dockerfile), []);
 });
 
+test('pull-request and master validation cannot regain path filters', () => {
+  for (const event of ['push', 'pull_request']) {
+    const mutated = workflow.replace(
+      `  ${event}:\n    branches: [master]`,
+      `  ${event}:\n    branches: [master]\n    paths:\n      - "FortniteFestivalWeb/**"`,
+    );
+    assert.ok(
+      validatePublishImageWorkflow(mutated, dockerfile)
+        .some(error => error.includes('must not use path filters')),
+      event,
+    );
+  }
+});
+
 for (const job of ['build-and-push-service', 'build-and-push-web']) {
   const metadataId = job === 'build-and-push-service' ? 'meta-fst' : 'meta-web';
 
@@ -55,7 +69,48 @@ for (const job of ['build-and-push-service', 'build-and-push-web']) {
         .some(error => error.includes(`${job} build tags must come from ${metadataId}`)),
     );
   });
+
+  test(`${job} cannot publish or authenticate during pull requests`, () => {
+    const alwaysPush = mutateJob(
+      workflow,
+      job,
+      block => block.replace(
+        "push: ${{ github.event_name != 'pull_request' }}",
+        'push: true',
+      ),
+    );
+    assert.ok(
+      validatePublishImageWorkflow(alwaysPush, dockerfile)
+        .some(error => error.includes('only publish images outside pull requests')),
+    );
+
+    const alwaysLogin = mutateJob(
+      workflow,
+      job,
+      block => block.replace(
+        "if: github.event_name != 'pull_request'",
+        'if: always()',
+      ),
+    );
+    assert.ok(
+      validatePublishImageWorkflow(alwaysLogin, dockerfile)
+        .some(error => error.includes('registry login must be skipped')),
+    );
+  });
 }
+
+test('web validation cannot drop Playwright runners', () => {
+  const mutated = mutateStep(
+    workflow,
+    'test-web',
+    'Run browser tests',
+    block => block.replace('run: yarn e2e:ci', 'run: echo skipped'),
+  );
+  assert.ok(
+    validatePublishImageWorkflow(mutated, dockerfile)
+      .some(error => error.includes('Run browser tests must run exactly yarn e2e:ci')),
+  );
+});
 
 test('multi-commit push range cannot regress to HEAD~1', () => {
   const mutated = workflow.replace(
@@ -130,49 +185,29 @@ test('publish workflow contract changes affect both images', () => {
   );
 });
 
-test('ui-utils bump step cannot be disabled', () => {
+test('publish workflow cannot push directly to master', () => {
+  const mutated = workflow.replace(
+    'echo "commit_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"',
+    'git push',
+  );
+  assert.ok(
+    validatePublishImageWorkflow(mutated, dockerfile).some(error => error.includes('must not push')),
+  );
+});
+
+test('target commit cannot be replaced by a generated commit', () => {
   const mutated = mutateStep(
     workflow,
     'version-bump',
-    'Bump @festival/ui-utils version',
+    'Select target commit',
     block => block.replace(
-      /        if: .*/,
-      '        if: false',
+      'echo "commit_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"',
+      'echo "commit_sha=$(git rev-parse HEAD^)" >> "$GITHUB_OUTPUT"',
     ),
   );
   assert.ok(
     validatePublishImageWorkflow(mutated, dockerfile)
-      .some(error => error.includes('Bump @festival/ui-utils version has incorrect condition')),
-  );
-});
-
-test('version bump must regenerate the dependency license manifest', () => {
-  const wrongCommand = mutateStep(
-    workflow,
-    'version-bump',
-    'Regenerate dependency license manifest',
-    block => block.replace(
-      'run: yarn licenses:generate',
-      'run: yarn licenses:check',
-    ),
-  );
-  assert.ok(
-    validatePublishImageWorkflow(wrongCommand, dockerfile)
-      .some(error => error.includes('must run exactly yarn licenses:generate')),
-  );
-
-  const wrongDirectory = mutateStep(
-    workflow,
-    'version-bump',
-    'Regenerate dependency license manifest',
-    block => block.replace(
-      'working-directory: FortniteFestivalWeb',
-      'working-directory: .',
-    ),
-  );
-  assert.ok(
-    validatePublishImageWorkflow(wrongDirectory, dockerfile)
-      .some(error => error.includes('must run from FortniteFestivalWeb')),
+      .some(error => error.includes('exact target SHA capture')),
   );
 });
 

@@ -73,6 +73,29 @@ The scheduled engine/component tier runs:
 corepack yarn e2e:nightly
 ```
 
+## Merge and release gates
+
+`master` is PR-only with no push bypass. The legacy `version-bump` job name is
+retained as a stable required-check context, but the job now only detects
+affected images and exposes the workflow SHA. Version changes, generated
+license metadata, and the embedded web bundle must be included in the pull
+request; the workflow never writes back to `master`.
+
+Every pull request targeting `master` and every update to `master` runs the
+same validation workflow without path filtering:
+
+- service build, tests, and coverage;
+- web build, embedded-bundle verification, unit/shared tests and coverage;
+- dependency and Manual-image checks;
+- Playwright Chromium desktop/mobile, wide responsive, WebKit mobile,
+  component, and publication suites;
+- relevant service and web Docker image builds.
+
+Pull requests build relevant images with `push: false`; they never log in to
+GHCR or publish tags. A successful `master` push runs the same gates and
+publishes the affected images. The required merge checks are `test`,
+`test-web`, `build-and-push-service`, and `build-and-push-web`.
+
 The browser fixture architecture, scenario rules, folder ownership, sharding
 environment variables, and targeted commands are documented in
 `FortniteFestivalWeb/e2e/README.md`.
