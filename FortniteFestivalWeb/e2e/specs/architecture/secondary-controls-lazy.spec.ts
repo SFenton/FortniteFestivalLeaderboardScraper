@@ -28,14 +28,15 @@ test('desktop first-open chunks preserve loading, close/reopen, focus, and sorti
   expect(moduleRequests.some(url => url.includes('/components/search/SearchModal.tsx'))).toBe(false);
   expect(moduleRequests.some(url => url.includes('@dnd-kit'))).toBe(false);
 
-  await page.route('**/src/components/search/SearchModal.tsx*', async (route) => {
-    await new Promise(resolve => setTimeout(resolve, 250));
-    await route.continue();
-  }, { times: 1 });
+  const releaseSearchModule = await holdFirstRoute(page, '**/src/components/search/SearchModal.tsx*');
 
   const searchButton = page.getByTestId('desktop-header-search');
   await searchButton.click();
-  await expect(page.getByTestId('search-modal-lazy-loading')).toBeVisible();
+  try {
+    await expect(page.getByTestId('search-modal-lazy-loading')).toBeVisible();
+  } finally {
+    releaseSearchModule();
+  }
   const searchDialog = page.getByRole('dialog', { name: 'Search' });
   await expect(searchDialog).toBeVisible();
   expect(moduleRequests.some(url => url.includes('/components/search/SearchModal.tsx'))).toBe(true);
@@ -139,16 +140,17 @@ test('mobile search uses touch-driven field focus and restores the launch contro
   await dismissOverlays(page);
 
   const searchButton = page.getByTestId('mobile-header-search');
-  await page.route('**/src/components/search/SearchModal.tsx*', async (route) => {
-    await new Promise(resolve => setTimeout(resolve, 250));
-    await route.continue();
-  }, { times: 1 });
+  const releaseSearchModule = await holdFirstRoute(page, '**/src/components/search/SearchModal.tsx*');
   await searchButton.tap();
   const loadingDialog = page.getByTestId('search-modal-lazy-loading');
-  await expect(loadingDialog).toBeVisible();
-  await expect(loadingDialog).toBeFocused();
-  await expect.poll(() => loadingDialog.evaluate(element => getComputedStyle(element).transform))
-    .toBe('matrix(1, 0, 0, 1, 0, 0)');
+  try {
+    await expect(loadingDialog).toBeVisible();
+    await expect(loadingDialog).toBeFocused();
+    await expect.poll(() => loadingDialog.evaluate(element => getComputedStyle(element).transform))
+      .toBe('matrix(1, 0, 0, 1, 0, 0)');
+  } finally {
+    releaseSearchModule();
+  }
 
   const dialog = page.getByRole('dialog', { name: 'Search' });
   const input = dialog.locator('input');
@@ -221,6 +223,18 @@ function trackModuleRequests(page: Page) {
     if (url.includes('/src/') || url.includes('/node_modules/')) requests.push(url);
   });
   return requests;
+}
+
+async function holdFirstRoute(page: Page, url: string): Promise<() => void> {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  await page.route(url, async route => {
+    await gate;
+    await route.continue();
+  }, { times: 1 });
+  return release;
 }
 
 async function seedState(page: Page, profile: typeof PLAYER | typeof BAND | null) {
