@@ -39,7 +39,7 @@ export default defineConfig(({ mode }) => {
       environment: 'jsdom',
       globals: true,
       setupFiles: ['./__test__/setup.ts'],
-      exclude: ['e2e/**', 'node_modules/**'],
+      exclude: ['e2e/**', 'component-tests/**', 'node_modules/**'],
       coverage: {
         provider: 'v8',
         reporter: ['text', 'json', 'lcov'],
@@ -47,6 +47,7 @@ export default defineConfig(({ mode }) => {
         exclude: [
           '__test__/**',
           'src/vite-env.d.ts',
+          'src/**/*.story.tsx',
           'src/main.tsx',
           'src/utils/platform.ts',
           'src/components/sort/reorderTypes.ts',

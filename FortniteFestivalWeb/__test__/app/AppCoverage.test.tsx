@@ -213,15 +213,13 @@ describe('App — coverage: changelog modal', () => {
     });
 
     // Changelog should be showing (no version stored yet)
-    const changelogContent = container.textContent!;
-    expect(changelogContent.length).toBeGreaterThan(0);
+    expect(screen.getByRole('dialog', { name: /What's New/ })).toBeTruthy();
 
     // localStorage should NOT be written until the user dismisses
     expect(localStorage.getItem('fst:changelog')).toBeNull();
 
     // Dismiss the changelog
-    const dismissBtn = container.querySelector('button[aria-label="Close"]') as HTMLElement;
-    if (dismissBtn) fireEvent.click(dismissBtn);
+    fireEvent.click(screen.getByLabelText('Close'));
 
     // Now localStorage should be written
     await waitFor(() => {

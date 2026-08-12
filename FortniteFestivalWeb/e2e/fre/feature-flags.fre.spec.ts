@@ -27,7 +27,7 @@ test.describe('Legacy Feature Flag Overrides', () => {
     await goto(page, '/compete');
 
     await page.waitForURL(/#\/compete/, { timeout: 15_000 });
-    await expect(page.getByRole('heading', { name: 'Compete' })).toBeVisible();
+    await expect(page.locator('#main-content')).toContainText('Leaderboards');
   });
 
   test('legacy leaderboards override leaves formerly gated pages eligible for FRE', async ({ page, fre, freState }) => {

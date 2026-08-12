@@ -11,7 +11,7 @@ import PressableButton from '../../common/PressableButton';
 import { sidebarStyles as s } from './sidebarStyles';
 import { Routes } from '../../../routes';
 import { getStatisticsNavigationPath } from '../../../utils/profileNavigation';
-import { markTapDiagnosticsAction } from '../../../diagnostics/tapDiagnostics';
+import { markTapDiagnosticsAction } from '../../../diagnostics/tapDiagnosticsBridge';
 import { usePressAction } from '../../../hooks/ui/usePressAction';
 import { scheduleCompatibilityClickSuppression } from '../../../hooks/ui/pressCompatibilityClickSuppression';
 
