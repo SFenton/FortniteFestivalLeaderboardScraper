@@ -1,3 +1,15 @@
+import {
+  TAP_DIAGNOSTICS_SETTINGS_EVENT,
+  TAP_DIAGNOSTICS_STORAGE_KEY,
+  TAP_TELEMETRY_STORAGE_KEY,
+} from './tapDiagnosticsBridge';
+
+export {
+  TAP_DIAGNOSTICS_SETTINGS_EVENT,
+  TAP_DIAGNOSTICS_STORAGE_KEY,
+  TAP_TELEMETRY_STORAGE_KEY,
+} from './tapDiagnosticsBridge';
+
 export type TapDiagnosticsState = Record<string, unknown>;
 
 export type TapDiagnosticsElement = {
@@ -100,9 +112,6 @@ declare global {
 
 const MAX_RECORDS = 240;
 const EVENT_TYPES = ['pointerdown', 'pointerup', 'click', 'touchstart', 'touchend'];
-export const TAP_DIAGNOSTICS_STORAGE_KEY = 'fst.tapDiagnostics';
-export const TAP_TELEMETRY_STORAGE_KEY = 'fst.tapTelemetry';
-export const TAP_DIAGNOSTICS_SETTINGS_EVENT = 'fst:tap-diagnostics-settings-changed';
 const ENABLED_STORAGE_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
 export type TapDiagnosticsPreference = 'diagnostics' | 'telemetry';

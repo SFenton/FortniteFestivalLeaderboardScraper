@@ -1,4 +1,5 @@
-import { useMemo, useEffect, useLayoutEffect, useState, useRef, useCallback, type CSSProperties } from 'react';
+import { useMemo, useId, useLayoutEffect, useState, useRef, useCallback, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { IoClose } from 'react-icons/io5';
 import {
@@ -14,6 +15,7 @@ import { changelog, type ChangelogEntry } from '../../changelog';
 import { useScrollMask } from '../../hooks/ui/useScrollMask';
 import { usePressAction } from '../../hooks/ui/usePressAction';
 import { paddingWithSafeAreaBottom } from '../../utils/safeAreaStyles';
+import { useOverlayDialogFocus } from '../../hooks/ui/useOverlayDialogFocus';
 
 export default function ChangelogModal({ onDismiss, onExitComplete }: { onDismiss: () => void; onExitComplete?: () => void }) {
   const { t } = useTranslation();
@@ -38,22 +40,29 @@ export default function ChangelogModal({ onDismiss, onExitComplete }: { onDismis
   }, [animOut, onDismiss, onExitComplete]);
   /* v8 ignore stop */
 
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') handleDismiss(); };
-    document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
-  }, [handleDismiss]);
+  const panelRef = useOverlayDialogFocus(handleDismiss);
+  const titleId = useId();
 
   const updateMask = useScrollMask(scrollRef, [animIn], { selfScroll: true });
   const handleScroll = useCallback(() => updateMask(), [updateMask]);
   const dismissPressHandlers = usePressAction<HTMLButtonElement>({ onPress: handleDismiss, disabled: animOut });
   const overlayPressHandlers = usePressAction<HTMLDivElement>({ onPress: handleDismiss, disabled: animOut });
 
-  return (
-    <div style={s.overlay} {...overlayPressHandlers} data-glow-scope="">
-      <div style={s.card} onPointerDown={e => e.stopPropagation()} onPointerUp={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
+  return createPortal(
+    <div style={s.overlay} {...overlayPressHandlers} data-glow-scope="" data-modal-root="">
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        style={s.card}
+        onPointerDown={e => e.stopPropagation()}
+        onPointerUp={e => e.stopPropagation()}
+        onClick={e => e.stopPropagation()}
+      >
         <div style={s.header}>
-          <h2 style={s.title}>{t('changelog.title')} <span style={s.dot}>·</span> {APP_VERSION}</h2>
+          <h2 id={titleId} style={s.title}>{t('changelog.title')} <span style={s.dot}>·</span> {APP_VERSION}</h2>
           <button style={s.closeBtn} {...dismissPressHandlers} aria-label={t('common.close')}>
             <IoClose size={18} />
           </button>
@@ -82,7 +91,8 @@ export default function ChangelogModal({ onDismiss, onExitComplete }: { onDismis
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

@@ -392,13 +392,21 @@ jobs:
         working-directory: FortniteFestivalWeb
         run: yarn manual:images:check
 
-      - name: Install Chromium
+      - name: Install Playwright browsers
         working-directory: FortniteFestivalWeb
-        run: yarn playwright install --with-deps chromium
+        run: yarn playwright install --with-deps chromium webkit
 
       - name: Run browser tests
         working-directory: FortniteFestivalWeb
         run: yarn e2e:ci
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: web-playwright-failure
+          if-no-files-found: ignore
+          path: |
+            FortniteFestivalWeb/test-results
+            FortniteFestivalWeb/blob-report
 
   build-and-push-service:
     needs: [version-bump, test, test-web]

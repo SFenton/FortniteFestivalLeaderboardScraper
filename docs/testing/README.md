@@ -1,13 +1,17 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-11
-last_verified_commit: 2bdf7287
+last_verified: 2026-08-12
+last_verified_commit: 02039c9c
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/playwright.config.ts
+  - FortniteFestivalWeb/playwright.component.config.ts
+  - FortniteFestivalWeb/playwright.publication.config.ts
+  - FortniteFestivalWeb/e2e/README.md
   - .github/workflows/publish-image.yml
+  - .github/workflows/web-playwright-nightly.yml
   - tools/check-docs.mjs
   - tools/fst-worker-compose-guard.test.mjs
 update_triggers:
@@ -39,11 +43,39 @@ corepack yarn lint
 corepack yarn lint:css
 corepack yarn build
 corepack yarn e2e
+corepack yarn e2e:typecheck
+corepack yarn e2e:component
+corepack yarn e2e:publication
 ```
 
-Playwright defines six project IDs: `wide-desktop`, `desktop-wide`, `desktop`,
-`desktop-narrow`, `mobile`, and `mobile-narrow`. Run a targeted project/spec
-when the change does not require the full matrix.
+Playwright browser projects are named by engine and owned layout:
+
+- `chromium-desktop` and `chromium-mobile` run the full functional suite;
+- `chromium-wide` owns Manual asset and breakpoint-boundary tests;
+- `webkit-mobile` owns critical iPhone-class and accessibility coverage;
+- `webkit-desktop` and `firefox-desktop` run in the scheduled matrix.
+
+Component UX uses Playwright's stable stories-and-gallery model through
+`playwright.component.config.ts`; publication transitions use a dedicated
+network-publication server through `playwright.publication.config.ts`.
+Breakpoint widths are parameterized in focused tests rather than represented
+as full-suite projects.
+
+The pull-request browser tier runs:
+
+```bash
+corepack yarn e2e:ci
+```
+
+The scheduled engine/component tier runs:
+
+```bash
+corepack yarn e2e:nightly
+```
+
+The browser fixture architecture, scenario rules, folder ownership, sharding
+environment variables, and targeted commands are documented in
+`FortniteFestivalWeb/e2e/README.md`.
 
 Dependency changes that appear on the Licenses page must also run:
 

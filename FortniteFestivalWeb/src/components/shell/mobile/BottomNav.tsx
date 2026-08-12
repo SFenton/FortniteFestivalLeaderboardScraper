@@ -114,6 +114,7 @@ export default function BottomNav({ player, selectedProfile = null, activeTab, o
           data-testid={`bottom-nav-${tab.key}`}
           data-tab-key={tab.key}
           data-pending={pendingTab === tab.key ? 'true' : undefined}
+          aria-current={isTabVisuallyActive(tab) ? 'page' : undefined}
           style={isTabVisuallyActive(tab) ? s.tabActive : s.tab}
         >
           <span style={s.tabIcon}>{tab.icon}</span>
@@ -161,7 +162,7 @@ function useStyles() {
       tab,
       tabActive: {
         ...tab,
-        color: Colors.accentPurple,
+        color: Colors.accentBlueBright,
         fontWeight: Weight.bold,
       } as CSSProperties,
       tabIcon: {

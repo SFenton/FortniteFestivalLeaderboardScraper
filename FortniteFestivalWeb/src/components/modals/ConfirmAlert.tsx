@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useLayoutEffect, useState, useCallback, type CSSProperties } from 'react';
+import { useMemo, useId, useLayoutEffect, useState, useCallback, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import {
@@ -11,6 +11,7 @@ import {
 import { paddingWithSafeAreaBottom } from '../../utils/safeAreaStyles';
 import MarqueeText from '../common/MarqueeText';
 import { usePressAction } from '../../hooks/ui/usePressAction';
+import { useOverlayDialogFocus } from '../../hooks/ui/useOverlayDialogFocus';
 
 export default function ConfirmAlert({
   title,
@@ -69,19 +70,27 @@ export default function ConfirmAlert({
   const noPressHandlers = usePressAction<HTMLButtonElement>({ onPress: handleNo, disabled: animOut });
   const yesPressHandlers = usePressAction<HTMLButtonElement>({ onPress: handleYes, disabled: animOut });
   const overlayPressHandlers = usePressAction<HTMLDivElement>({ onPress: handleNo, disabled: animOut });
-
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') handleNo(); };
-    document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
-  }, [handleNo]);
+  const panelRef = useOverlayDialogFocus(handleNo);
+  const titleId = useId();
+  const messageId = useId();
 
   return createPortal(
     /* v8 ignore start — animation ternaries */
-    <div style={s.overlay} {...overlayPressHandlers} data-glow-scope="">
-      <div style={s.card} onPointerDown={e => e.stopPropagation()} onPointerUp={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
-        <div style={s.title}>{title}</div>
-        <div style={s.message}>{message}</div>
+    <div style={s.overlay} {...overlayPressHandlers} data-glow-scope="" data-modal-root="">
+      <div
+        ref={panelRef}
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={messageId}
+        tabIndex={-1}
+        style={s.card}
+        onPointerDown={e => e.stopPropagation()}
+        onPointerUp={e => e.stopPropagation()}
+        onClick={e => e.stopPropagation()}
+      >
+        <div id={titleId} style={s.title}>{title}</div>
+        <div id={messageId} style={s.message}>{message}</div>
         <div style={s.buttons}>
           <button style={s.btnNo} {...noPressHandlers}>
             <MarqueeText text={noText} as="span" style={s.buttonLabel} />

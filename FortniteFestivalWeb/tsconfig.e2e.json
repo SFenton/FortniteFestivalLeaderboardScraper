@@ -1,0 +1,28 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node", "@playwright/test", "vite/client"],
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
+  },
+  "include": [
+    "e2e/fixtures/apiMocks.ts",
+    "e2e/fixtures/apiRouter.ts",
+    "e2e/fixtures/appState.ts",
+    "e2e/fixtures/fre.ts",
+    "e2e/fixtures/navigation.ts",
+    "e2e/fixtures/scenarios.ts",
+    "e2e/fixtures/test.ts",
+    "e2e/specs/**/*.ts",
+    "e2e/support/**/*.ts",
+    "component-tests/**/*.ts",
+    "component-tests/**/*.tsx",
+    "playwright.config.ts",
+    "playwright.component.config.ts",
+    "playwright.publication.config.ts",
+    "playwright/gallery/**/*.ts",
+    "playwright/gallery/**/*.tsx"
+  ]
+}

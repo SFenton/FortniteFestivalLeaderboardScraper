@@ -22,6 +22,10 @@ beforeEach(() => {
 
 import ChangelogModal from '../../../src/components/modals/ChangelogModal';
 
+function getOverlay(): HTMLElement {
+  return document.body.querySelector('[data-modal-root][data-glow-scope]') as HTMLElement;
+}
+
 describe('ChangelogModal', () => {
   it('renders changelog entries', () => {
     render(<ChangelogModal onDismiss={vi.fn()} />);
@@ -32,16 +36,16 @@ describe('ChangelogModal', () => {
 
   it('calls onDismiss when overlay is clicked', () => {
     const onDismiss = vi.fn();
-    const { container } = render(<ChangelogModal onDismiss={onDismiss} />);
-    const overlay = container.firstElementChild!;
+    render(<ChangelogModal onDismiss={onDismiss} />);
+    const overlay = getOverlay();
     fireEvent.click(overlay);
     expect(onDismiss).toHaveBeenCalled();
   });
 
   it('dismisses from touch pointerup on the overlay without double firing on click', () => {
     const onDismiss = vi.fn();
-    const { container } = render(<ChangelogModal onDismiss={onDismiss} />);
-    const overlay = container.firstElementChild!;
+    render(<ChangelogModal onDismiss={onDismiss} />);
+    const overlay = getOverlay();
 
     fireEvent.pointerDown(overlay, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 24, clientY: 52 });
     fireEvent.pointerUp(overlay, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 24, clientY: 52 });
@@ -96,9 +100,9 @@ describe('ChangelogModal', () => {
 
   it('stops propagation on card click', () => {
     const onDismiss = vi.fn();
-    const { container } = render(<ChangelogModal onDismiss={onDismiss} />);
+    render(<ChangelogModal onDismiss={onDismiss} />);
     // Card is the first child inside the overlay
-    const overlay = container.firstElementChild as HTMLElement;
+    const overlay = getOverlay();
     const card = overlay.firstElementChild as HTMLElement;
     fireEvent.click(card);
     expect(onDismiss).not.toHaveBeenCalled();
@@ -106,8 +110,8 @@ describe('ChangelogModal', () => {
 
   it('stops propagation on card touch pointerup', () => {
     const onDismiss = vi.fn();
-    const { container } = render(<ChangelogModal onDismiss={onDismiss} />);
-    const overlay = container.firstElementChild as HTMLElement;
+    render(<ChangelogModal onDismiss={onDismiss} />);
+    const overlay = getOverlay();
     const card = overlay.firstElementChild as HTMLElement;
 
     fireEvent.pointerDown(card, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 180, clientY: 320 });
@@ -117,9 +121,9 @@ describe('ChangelogModal', () => {
   });
 
   it('handles scroll event on content', () => {
-    const { container } = render(<ChangelogModal onDismiss={vi.fn()} />);
+    render(<ChangelogModal onDismiss={vi.fn()} />);
     // Content area contains the changelog list items
-    const overlay = container.firstElementChild as HTMLElement;
+    const overlay = getOverlay();
     const card = overlay.firstElementChild as HTMLElement;
     // Content is between header and footer — the second child of card
     const content = card.children[1] as HTMLElement;
@@ -176,8 +180,8 @@ describe('ChangelogModal', () => {
   });
 
   it('overlay has data-glow-scope to suppress light painting', () => {
-    const { container } = render(<ChangelogModal onDismiss={vi.fn()} />);
-    const overlay = container.firstElementChild as HTMLElement;
+    render(<ChangelogModal onDismiss={vi.fn()} />);
+    const overlay = getOverlay();
     expect(overlay.hasAttribute('data-glow-scope')).toBe(true);
   });
 

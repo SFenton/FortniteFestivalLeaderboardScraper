@@ -48,6 +48,29 @@ function syncModalInertState() {
   });
 }
 
+export function registerModalLayer(
+  token: symbol,
+  panel: HTMLElement,
+  returnFocusTarget: HTMLElement | null,
+): void {
+  activeModals.push({ token, panel, returnFocusTarget });
+  acquireBackgroundLock();
+  syncModalInertState();
+}
+
+export function unregisterModalLayer(token: symbol, panel: HTMLElement): void {
+  const index = activeModals.findIndex((entry) => entry.token === token);
+  if (index >= 0) activeModals.splice(index, 1);
+  panel.inert = false;
+  panel.removeAttribute('aria-hidden');
+  syncModalInertState();
+  releaseBackgroundLock();
+}
+
+export function isTopModalLayer(token: symbol): boolean {
+  return activeModals[activeModals.length - 1]?.token === token;
+}
+
 function acquireBackgroundLock() {
   backgroundLockCount += 1;
   if (backgroundLockCount !== 1) return;
@@ -219,9 +242,7 @@ export default function ModalShell({
     if (!panel) return;
 
     const token = modalTokenRef.current;
-    activeModals.push({ token, panel, returnFocusTarget: previousFocusRef.current });
-    acquireBackgroundLock();
-    syncModalInertState();
+    registerModalLayer(token, panel, previousFocusRef.current);
 
     const focusFrame = window.requestAnimationFrame(() => {
       if (panel.contains(document.activeElement)) return;
@@ -263,12 +284,7 @@ export default function ModalShell({
     return () => {
       window.cancelAnimationFrame(focusFrame);
       document.removeEventListener('keydown', handleKey);
-      const index = activeModals.findIndex((entry) => entry.token === token);
-      if (index >= 0) activeModals.splice(index, 1);
-      panel.inert = false;
-      panel.removeAttribute('aria-hidden');
-      syncModalInertState();
-      releaseBackgroundLock();
+      unregisterModalLayer(token, panel);
     };
   }, [initialFocus, restorePreviousFocus, visible]);
 

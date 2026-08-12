@@ -1,6 +1,7 @@
-import { test as base, expect, type Page, type Locator } from '@playwright/test';
-import { E2E_PLAYER, installDeterministicApiMocks } from './apiMocks';
-import { changelogHash } from '../../src/changelog';
+import { type Page, type Locator } from '@playwright/test';
+import { test as base, expect } from './test';
+import { AppState } from './appState';
+import { E2E_PLAYER } from './scenarios';
 
 /* ── Constants ── */
 
@@ -86,8 +87,7 @@ export class FreCarousel {
 
 /* ── localStorage helpers ── */
 
-export class FreState {
-  constructor(private page: Page) {}
+export class FreState extends AppState {
 
   /**
    * Navigate to a same-origin static resource so localStorage is accessible
@@ -95,109 +95,61 @@ export class FreState {
    * desired state and call goto() so the app reads it on its first mount.
    */
   async resetAppState() {
-    await this.page.goto('/e2e/fixtures/reset.html', { waitUntil: 'load' });
-    await this.clearAllAppState();
-    await this.page.evaluate(
-      hash => localStorage.setItem(
-        'fst:changelog',
-        JSON.stringify({ version: 'e2e', hash }),
-      ),
-      changelogHash(),
-    );
+    await this.reset();
   }
 
   /** Clear all FRE seen-state from localStorage. */
   async clearFirstRunState() {
-    await this.page.evaluate(() => localStorage.removeItem('fst:firstRun'));
+    await this.clearFirstRun();
   }
 
   /** Clear the tracked player from localStorage. */
   async clearTrackedPlayer() {
-    await this.page.evaluate(() => localStorage.removeItem('fst:trackedPlayer'));
+    await this.page.localStorage.removeItem('fst:trackedPlayer');
   }
 
-  /** Clear all fst:* keys from localStorage. */
+  /** Clear application state from both browser storage areas. */
   async clearAllAppState() {
-    await this.page.evaluate(() => {
-      const keys = Object.keys(localStorage).filter(k => k.startsWith('fst:'));
-      keys.forEach(k => localStorage.removeItem(k));
-    });
+    await Promise.all([
+      this.page.localStorage.clear(),
+      this.page.sessionStorage.clear(),
+    ]);
   }
 
   /** Set a tracked player in localStorage. */
   async setTrackedPlayer(accountId = TEST_PLAYER.accountId, displayName = TEST_PLAYER.displayName) {
-    await this.page.evaluate(
-      ({ id, name }) => {
-        const profile = { accountId: id, displayName: name };
-        localStorage.setItem('fst:trackedPlayer', JSON.stringify(profile));
-        localStorage.setItem('fst:selectedProfile', JSON.stringify({ type: 'player', ...profile }));
-      },
-      { id: accountId, name: displayName },
-    );
+    await this.selectPlayer(accountId, displayName);
   }
 
   /** Merge partial settings into fst:appSettings in localStorage. */
   async setSettings(partial: Record<string, unknown>) {
-    await this.page.evaluate(
-      (p) => {
-        const raw = localStorage.getItem('fst:appSettings');
-        const current = raw ? JSON.parse(raw) : {};
-        localStorage.setItem('fst:appSettings', JSON.stringify({ ...current, ...p }));
-      },
-      partial,
-    );
+    await super.setSettings(partial);
   }
 
   /** Set legacy feature flag overrides. The app should now ignore these. */
   async setLegacyFeatureFlagOverrides(overrides: Record<string, boolean>) {
-    await this.page.evaluate(
-      (o) => localStorage.setItem('fst:featureFlagOverrides', JSON.stringify(o)),
-      overrides,
-    );
+    await super.setLegacyFeatureFlagOverrides(overrides);
   }
 
   /** Clear legacy feature flag overrides. */
   async clearLegacyFeatureFlagOverrides() {
-    await this.page.evaluate(() => localStorage.removeItem('fst:featureFlagOverrides'));
-  }
-
-  /** Write seen records for the given slide IDs so they won't appear again. */
-  async markSlidesSeen(slideIds: string[]) {
-    await this.page.evaluate(
-      (ids) => {
-        const raw = localStorage.getItem('fst:firstRun');
-        const state: Record<string, unknown> = raw ? JSON.parse(raw) : {};
-        for (const id of ids) {
-          state[id] = { version: 999, hash: 'e2e', seenAt: new Date().toISOString() };
-        }
-        localStorage.setItem('fst:firstRun', JSON.stringify(state));
-      },
-      slideIds,
-    );
+    await super.clearLegacyFeatureFlagOverrides();
   }
 
   /** Read the current fst:firstRun seen state. */
   async getSeenSlides(): Promise<Record<string, unknown>> {
-    return this.page.evaluate(() => {
-      const raw = localStorage.getItem('fst:firstRun');
-      return raw ? JSON.parse(raw) : {};
-    });
+    return this.firstRunState();
   }
 }
 
 /* ── Extended test fixture ── */
 
 type FreFixtures = {
-  deterministicApi: void;
   fre: FreCarousel;
   freState: FreState;
 };
 
 export const test = base.extend<FreFixtures>({
-  deterministicApi: [async ({ page }, use) => {
-    await installDeterministicApiMocks(page);
-    await use();
-  }, { auto: true }],
   fre: async ({ page }, use) => {
     await use(new FreCarousel(page));
   },
