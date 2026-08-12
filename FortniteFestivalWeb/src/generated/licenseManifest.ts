@@ -79,10 +79,10 @@ export const licenseManifest = [
     consumers: ["tools/mcp/package.json (dependencies)"],
   },
   {
-    id: "npm:@playwright/test@1.58.2",
+    id: "npm:@playwright/test@1.62.1",
     ecosystem: "npm",
     name: "@playwright/test",
-    version: "1.58.2",
+    version: "1.62.1",
     licenseType: "Apache-2.0",
     licenseText: licenseTexts["Apache-2.0"],
     packageUrl: "https://www.npmjs.com/package/%40playwright/test",

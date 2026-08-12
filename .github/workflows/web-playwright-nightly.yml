@@ -1,0 +1,42 @@
+name: Web Playwright nightly
+
+on:
+  schedule:
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-playwright-nightly
+  cancel-in-progress: false
+
+jobs:
+  browser-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: corepack enable
+      - name: Install web dependencies
+        working-directory: FortniteFestivalWeb
+        run: yarn install --immutable
+      - name: Install Playwright browsers
+        working-directory: FortniteFestivalWeb
+        run: yarn playwright install --with-deps chromium webkit firefox
+      - name: Run scheduled engine and component matrix
+        working-directory: FortniteFestivalWeb
+        run: yarn e2e:nightly
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-playwright-nightly
+          if-no-files-found: ignore
+          path: |
+            FortniteFestivalWeb/test-results
+            FortniteFestivalWeb/blob-report
+            FortniteFestivalWeb/playwright-report

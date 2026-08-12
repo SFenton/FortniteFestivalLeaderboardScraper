@@ -152,7 +152,8 @@ describe('BottomNav', () => {
     );
     const settingsBtn = screen.getByText('Settings').closest('button')!;
     expect(settingsBtn.style.fontWeight).toBe('700');
-    expect(settingsBtn.style.color).toBe('rgb(124, 58, 237)');
+    expect(settingsBtn.style.color).toBe('rgb(76, 125, 255)');
+    expect(settingsBtn).toHaveAttribute('aria-current', 'page');
   });
 
   it('applies active style to split rivals tab', () => {
@@ -166,7 +167,8 @@ describe('BottomNav', () => {
 
     const rivalsBtn = screen.getByTestId('bottom-nav-rivals');
     expect(rivalsBtn.style.fontWeight).toBe('700');
-    expect(rivalsBtn.style.color).toBe('rgb(124, 58, 237)');
+    expect(rivalsBtn.style.color).toBe('rgb(76, 125, 255)');
+    expect(rivalsBtn).toHaveAttribute('aria-current', 'page');
   });
 
   it('keeps compact compete visually active for split competitive routes', () => {
@@ -180,7 +182,8 @@ describe('BottomNav', () => {
 
     const competeBtn = screen.getByTestId('bottom-nav-compete');
     expect(competeBtn.style.fontWeight).toBe('700');
-    expect(competeBtn.style.color).toBe('rgb(124, 58, 237)');
+    expect(competeBtn.style.color).toBe('rgb(76, 125, 255)');
+    expect(competeBtn).toHaveAttribute('aria-current', 'page');
   });
 
   it('applies inactive style to non-active tab', () => {
@@ -205,7 +208,8 @@ describe('BottomNav', () => {
     fireEvent.pointerDown(settingsBtn);
 
     expect(settingsBtn.style.fontWeight).toBe('700');
-    expect(settingsBtn.style.color).toBe('rgb(124, 58, 237)');
+    expect(settingsBtn.style.color).toBe('rgb(76, 125, 255)');
+    expect(settingsBtn).toHaveAttribute('aria-current', 'page');
     expect(settingsBtn.dataset.pending).toBe('true');
   });
 

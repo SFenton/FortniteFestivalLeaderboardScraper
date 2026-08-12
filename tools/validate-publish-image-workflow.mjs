@@ -6,8 +6,10 @@ const targetSha = '${{ needs.version-bump.outputs.commit_sha || github.sha }}';
 const targetTag = `type=raw,value=sha-${targetSha}`;
 const targetRevision = `org.opencontainers.image.revision=${targetSha}`;
 const downstreamIf = '${{ always() && !failure() && !cancelled() }}';
-const imageIf = "always() && !failure() && !cancelled() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')";
-const webBuildIf = "steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')";
+const serviceImageIf = "always() && !failure() && !cancelled() && ( github.event_name == 'workflow_dispatch' || needs.version-bump.outputs.service_changed == 'true' )";
+const webImageIf = "always() && !failure() && !cancelled() && ( github.event_name == 'workflow_dispatch' || needs.version-bump.outputs.web_changed == 'true' || needs.version-bump.outputs.core_ts_changed == 'true' || needs.version-bump.outputs.theme_ts_changed == 'true' || needs.version-bump.outputs.ui_utils_changed == 'true' )";
+const imagePush = "${{ github.event_name != 'pull_request' }}";
+const registryLoginIf = "github.event_name != 'pull_request'";
 
 export function validatePublishImageWorkflow(workflow, webDockerfile) {
   const errors = [];
@@ -19,7 +21,16 @@ export function validatePublishImageWorkflow(workflow, webDockerfile) {
   const webImageJob = requireJob(parsed, 'build-and-push-web', errors);
 
   requireRaw(workflow, errors, 'version-bump SHA output', 'commit_sha: ${{ steps.commit.outputs.commit_sha }}');
-  requireRaw(workflow, errors, 'exact committed SHA capture', 'echo "commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"');
+  requireRaw(workflow, errors, 'exact target SHA capture', 'echo "commit_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"');
+  if (workflow.includes('git push')) {
+    errors.push('publish workflow must not push directly to master');
+  }
+  if (/pull_request:\s*\n(?: {4}.*\n)* {4}paths:/m.test(workflow)) {
+    errors.push('pull-request validation must not use path filters');
+  }
+  if (/push:\s*\n(?: {4}.*\n)* {4}paths:/m.test(workflow)) {
+    errors.push('master validation and release must not use path filters');
+  }
 
   if (versionJob) {
     const checkout = requireStep(versionJob, 'Checkout', errors);
@@ -46,42 +57,11 @@ export function validatePublishImageWorkflow(workflow, webDockerfile) {
       errors.push('publish workflow contract changes are not classified as service and web affecting');
     }
 
-    const requiredConditions = new Map([
-      ['Bump FSTService version', "steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.service == 'true'"],
-      ['Bump FortniteFestivalWeb version', "steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.web == 'true'"],
-      ['Bump @festival/core version', "steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.core_ts == 'true'"],
-      ['Bump @festival/theme version', "steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.theme_ts == 'true'"],
-      ['Bump @festival/ui-utils version', "steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.ui_utils == 'true'"],
-      ['Regenerate dependency license manifest', webBuildIf],
-      ['Regenerate embedded web bundle', webBuildIf],
-      ['Verify version-bumped embedded bundle', webBuildIf],
-    ]);
-    for (const [stepName, expectedIf] of requiredConditions) {
-      const step = requireStep(versionJob, stepName, errors);
-      if (step && normalizeExpression(step.if) !== normalizeExpression(expectedIf)) {
-        errors.push(`${stepName} has incorrect condition`);
-      }
+    const target = requireStep(versionJob, 'Select target commit', errors);
+    if (!target?.run.includes('echo "bumped=false" >> "$GITHUB_OUTPUT"')
+        || !target?.run.includes('echo "commit_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"')) {
+      errors.push('Select target commit must expose the unmodified workflow SHA');
     }
-
-    const licenseManifest = requireStep(
-      versionJob,
-      'Regenerate dependency license manifest',
-      errors,
-    );
-    if (licenseManifest?.workingDirectory !== 'FortniteFestivalWeb') {
-      errors.push('Regenerate dependency license manifest must run from FortniteFestivalWeb');
-    }
-    if (licenseManifest?.run.trim() !== 'yarn licenses:generate') {
-      errors.push('Regenerate dependency license manifest must run exactly yarn licenses:generate');
-    }
-
-    requireStepOrder(versionJob, errors,
-      'Install web dependencies',
-      'Regenerate dependency license manifest',
-      'Regenerate embedded web bundle',
-      'Create version bump commit',
-      'Verify version-bumped embedded bundle',
-      'Push version bump commit');
   }
 
   validateDownstreamTestJob(testJob, 'test', '[version-bump]', errors);
@@ -90,10 +70,14 @@ export function validatePublishImageWorkflow(workflow, webDockerfile) {
     for (const [name, run] of [
       ['Build', 'yarn build'],
       ['Verify committed embedded bundle', 'yarn embedded:check'],
+      ['Check bundle budgets', 'node scripts/check-performance-budgets.mjs --out performance-artifacts/bundle.json'],
+      ['Check source encoding', 'yarn check:encoding'],
       ['Run unit tests', 'yarn test:unit'],
       ['Enforce unit coverage', 'yarn test:coverage'],
       ['Run shared package tests', 'yarn test:shared'],
       ['Enforce shared package coverage', 'yarn test:shared:coverage'],
+      ['Install Playwright browsers', 'yarn playwright install --with-deps chromium webkit'],
+      ['Run browser tests', 'yarn e2e:ci'],
     ]) {
       const step = requireStep(webTestJob, name, errors);
       if (step?.run.trim() !== run) errors.push(`${name} must run exactly ${run}`);
@@ -110,6 +94,7 @@ export function validatePublishImageWorkflow(workflow, webDockerfile) {
     metadataStep: 'Extract FSTService metadata',
     metadataId: 'meta-fst',
     buildStep: 'Build and push FSTService',
+    condition: serviceImageIf,
   }, errors);
   validateImageJob(webImageJob, {
     name: 'build-and-push-web',
@@ -117,6 +102,7 @@ export function validatePublishImageWorkflow(workflow, webDockerfile) {
     metadataStep: 'Extract FestivalWeb metadata',
     metadataId: 'meta-web',
     buildStep: 'Build and push FestivalWeb',
+    condition: webImageIf,
   }, errors);
 
   if (!webDockerfile.includes('FST_WEB_OUT_DIR=/webapp-dist yarn build')) {
@@ -161,8 +147,8 @@ function validateDownstreamTestJob(job, name, needs, errors) {
 function validateImageJob(job, expected, errors) {
   if (!job) return;
   requireField(job, 'needs', expected.needs, `${expected.name} needs`, errors);
-  if (normalizeExpression(job.fields.if) !== imageIf) {
-    errors.push(`${expected.name} has incorrect publish condition`);
+  if (normalizeExpression(job.fields.if) !== expected.condition) {
+    errors.push(`${expected.name} has incorrect build condition`);
   }
   validateCheckout(job, expected.name, errors);
 
@@ -191,6 +177,14 @@ function validateImageJob(job, expected, errors) {
   const expectedLabels = `\${{ steps.${expected.metadataId}.outputs.labels }}`;
   if (build?.with.labels !== expectedLabels) {
     errors.push(`${expected.name} build labels must come from ${expected.metadataId}`);
+  }
+  if (build?.with.push !== imagePush) {
+    errors.push(`${expected.name} must only publish images outside pull requests`);
+  }
+
+  const login = requireStep(job, 'Log in to GitHub Container Registry', errors);
+  if (normalizeExpression(login?.if) !== registryLoginIf) {
+    errors.push(`${expected.name} registry login must be skipped for pull requests`);
   }
 }
 
@@ -398,7 +392,7 @@ function runCli() {
     for (const error of errors) console.error(`[workflow] ${error}`);
     process.exit(1);
   }
-  console.log('[workflow] structured range, SHA, bump, shared-test, and image-job contract is valid.');
+  console.log('[workflow] structured range, SHA, test, Playwright, and image-job contract is valid.');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

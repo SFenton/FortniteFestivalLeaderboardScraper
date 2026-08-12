@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: web
-last_verified: 2026-08-11
-last_verified_commit: 453fd9b6
+last_verified: 2026-08-12
+last_verified_commit: 02039c9c
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/src/main.tsx
@@ -10,6 +10,10 @@ sources:
   - FortniteFestivalWeb/src/routes.ts
   - FortniteFestivalWeb/src/api/
   - FortniteFestivalWeb/src/contexts/
+  - FortniteFestivalWeb/playwright.config.ts
+  - FortniteFestivalWeb/playwright.component.config.ts
+  - FortniteFestivalWeb/playwright.publication.config.ts
+  - FortniteFestivalWeb/e2e/README.md
   - FortniteFestivalWeb/nginx.conf
 update_triggers:
   - Routes, providers, state ownership, publication handling, styling conventions, package boundaries, or web deployment changes.
@@ -99,5 +103,21 @@ caching, and falls back to `index.html` for client routes.
 
 FSTService can also serve an embedded `wwwroot` bundle when one is present; see
 [ADR 0004](../decisions/0004-web-deployment-modes.md).
+
+## Browser test ownership
+
+Playwright uses typed named application scenarios rather than generic empty
+payloads. The shared router models publication headers, request transitions,
+storage, selected player/band profiles, populated and partial score states,
+rankings, rivals, notifications, paths, and WebSockets. Route specs protect
+every rendered and guarded route contract; page specs own rich rows,
+pagination, graphs, filters, and persistence.
+
+The project matrix separates actual browser/device regimes from responsive
+boundaries. Chromium desktop/mobile run the full functional suite, WebKit and
+Firefox own engine-sensitive coverage, and breakpoint widths are exercised in
+focused responsive or component tests. Real production components use
+Playwright's stories-and-gallery mount model for focus, overflow, touch,
+geometry, and constrained width/height behavior.
 
 Validation commands are in [Testing](../testing/README.md).

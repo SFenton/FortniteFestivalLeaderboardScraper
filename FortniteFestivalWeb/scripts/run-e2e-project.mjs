@@ -1,6 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
@@ -15,18 +14,13 @@ const vitePackage = require.resolve('vite/package.json');
 const viteBin = resolve(dirname(vitePackage), require(vitePackage).bin.vite);
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const project = process.argv[2];
-const shardCount = readPositiveInteger('E2E_SHARDS', 8);
 const port = readPositiveInteger('PLAYWRIGHT_PORT', 4173);
-const isolatedTestFiles = [
-  'e2e/remote-data-ownership.spec.ts',
-  'e2e/secondary-controls-lazy.spec.ts',
-];
-const mainTestFiles = listTestFiles(resolve(webRoot, 'e2e'))
-  .filter(file => !isolatedTestFiles.includes(file));
+const workers = readPositiveInteger('E2E_WORKERS', process.env.CI ? 2 : 4);
+const shard = process.env.E2E_SHARD;
 const startedAt = performance.now();
 
-if (project !== 'desktop' && project !== 'mobile') {
-  console.error(`[e2e] Project must be "desktop" or "mobile"; received "${project ?? ''}".`);
+if (project !== 'chromium-desktop' && project !== 'chromium-mobile') {
+  console.error(`[e2e] Project must be "chromium-desktop" or "chromium-mobile"; received "${project ?? ''}".`);
   process.exit(2);
 }
 
@@ -47,24 +41,9 @@ let exitCode = 0;
 try {
   await waitForServer(server, port);
 
-  const isolatedStartedAt = performance.now();
-  console.log(`\n[e2e] Running ${project} stateful isolation files`);
-  const isolatedResult = runPlaywright(isolatedTestFiles);
-  if (!handleResult(isolatedResult, `${project} stateful isolation files`, isolatedStartedAt)) {
-    exitCode = isolatedResult.status ?? 1;
-  }
-
-  for (let shard = 1; exitCode === 0 && shard <= shardCount; shard += 1) {
-    const shardStartedAt = performance.now();
-    console.log(`\n[e2e] Running ${project} shard ${shard}/${shardCount}`);
-    const result = runPlaywright([
-      ...mainTestFiles,
-      `--shard=${shard}/${shardCount}`,
-    ]);
-    if (!handleResult(result, `${project} shard ${shard}/${shardCount}`, shardStartedAt)) {
-      exitCode = result.status ?? 1;
-      continue;
-    }
+  const result = runPlaywright(shard ? [`--shard=${shard}`] : []);
+  if (!handleResult(result, `${project}${shard ? ` shard ${shard}` : ''}`, startedAt)) {
+    exitCode = result.status ?? 1;
   }
 } catch (error) {
   console.error(`[e2e] ${error instanceof Error ? error.message : String(error)}`);
@@ -77,7 +56,7 @@ if (exitCode !== 0) {
   process.exit(exitCode);
 }
 
-console.log(`\n[e2e] All ${shardCount} ${project} shards passed in ${duration(startedAt)}.`);
+console.log(`\n[e2e] ${project}${shard ? ` shard ${shard}` : ''} passed in ${duration(startedAt)}.`);
 
 function readPositiveInteger(name, fallback) {
   const raw = process.env[name];
@@ -97,7 +76,7 @@ function runPlaywright(testArgs) {
     'test',
     ...testArgs,
     `--project=${project}`,
-    '--workers=1',
+    `--workers=${workers}`,
   ], {
     cwd: webRoot,
     env: {
@@ -121,20 +100,6 @@ function handleResult(result, label, runStartedAt) {
   }
   console.log(`[e2e] ${label} passed in ${duration(runStartedAt)}.`);
   return true;
-}
-
-function listTestFiles(directory, relativeDirectory = 'e2e') {
-  return readdirSync(directory, { withFileTypes: true })
-    .flatMap(entry => {
-      const relativePath = `${relativeDirectory}/${entry.name}`;
-      if (entry.isDirectory()) {
-        return listTestFiles(resolve(directory, entry.name), relativePath);
-      }
-      return entry.isFile() && entry.name.endsWith('.spec.ts')
-        ? [relativePath]
-        : [];
-    })
-    .sort();
 }
 
 async function waitForServer(child, serverPort) {

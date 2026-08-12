@@ -40,7 +40,10 @@ export async function ensurePublication(
   force = false,
   notifyEvenIfSame = false,
 ): Promise<PublicationResponse> {
-  if (import.meta.env.MODE === 'e2e') {
+  if (
+    import.meta.env.MODE === 'e2e'
+    && import.meta.env.VITE_FST_STUB_PUBLICATION !== 'false'
+  ) {
     currentPublication ??= {
       contractVersion: 1,
       publicationId: 1,

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties }
 import { Colors, Overflow, PointerEvents, fixedFill, absoluteFill } from '@festival/theme';
 import { type ServerSong as Song } from '@festival/core/api';
 import { SAFE_AREA_BOTTOM_RAW_VAR, SAFE_AREA_TOP_RAW_VAR } from '../../utils/safeAreaStyles';
+import { useMediaQuery } from '../../hooks/ui/useMediaQuery';
 
 const BG_DURATION = 1000;
 const BACKGROUND_LAYER_Z_INDEX = 0;
@@ -63,6 +64,7 @@ export function AnimatedBackground({
   songs: Song[];
   dimOpacity?: number;
 }) {
+  const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
   // Build shuffled image list — only rebuild when pool size changes.
   const candidateCount = useMemo(
     () => songs.filter((s) => !!s.albumArt).length,
@@ -109,8 +111,13 @@ export function AnimatedBackground({
   // Start initial motion on layer A once images load
   useEffect(() => {
     if (imageUris.length === 0) return;
+    if (reducedMotion) {
+      layerARef.current?.getAnimations?.().forEach(animation => animation.cancel());
+      layerBRef.current?.getAnimations?.().forEach(animation => animation.cancel());
+      return;
+    }
     startMotion(layerARef.current);
-  }, [imageUris]);
+  }, [imageUris, reducedMotion]);
 
   const doTransition = useCallback(() => {
     if (imageUris.length < 2) return;
@@ -142,6 +149,11 @@ export function AnimatedBackground({
 
   // Transition timer — fires every DISPLAY_DURATION, paused when tab is hidden
   useEffect(() => {
+    if (reducedMotion) {
+      layerARef.current?.getAnimations?.().forEach(animation => animation.cancel());
+      layerBRef.current?.getAnimations?.().forEach(animation => animation.cancel());
+      return;
+    }
     if (imageUris.length < 2) return;
     let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -172,7 +184,7 @@ export function AnimatedBackground({
       stop();
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [imageUris.length, doTransition]);
+  }, [imageUris.length, doTransition, reducedMotion]);
 
   // Fade in the container once images are available
   useEffect(() => {
@@ -191,9 +203,15 @@ export function AnimatedBackground({
     <div style={{ ...abStyles.container, transition: `opacity ${BG_DURATION}ms ease`, opacity: containerVisible ? 1 : 0 }}>
       <div
         ref={layerARef}
-        style={{ ...abStyles.layer, opacity: opacityA, backgroundImage: `url(${uriA})`, transition: `opacity ${FADE_DURATION}ms ease` }}
+        style={{
+          ...abStyles.layer,
+          willChange: reducedMotion ? 'auto' : abStyles.layer.willChange,
+          opacity: opacityA,
+          backgroundImage: `url(${uriA})`,
+          transition: reducedMotion ? 'none' : `opacity ${FADE_DURATION}ms ease`,
+        }}
       />
-      {uriB && imageUris.length > 1 && (
+      {!reducedMotion && uriB && imageUris.length > 1 && (
         <div
           ref={layerBRef}
           style={{ ...abStyles.layer, opacity: opacityB, backgroundImage: `url(${uriB})`, transition: `opacity ${FADE_DURATION}ms ease` }}

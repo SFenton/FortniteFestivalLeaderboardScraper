@@ -5,7 +5,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { TabKey } from '@festival/core/runtime';
-import { markTapDiagnosticsAction } from '../../diagnostics/tapDiagnostics';
+import { markTapDiagnosticsAction } from '../../diagnostics/tapDiagnosticsBridge';
 export type { TabKey };
 
 export const TAB_ROOTS: Record<TabKey, string> = {

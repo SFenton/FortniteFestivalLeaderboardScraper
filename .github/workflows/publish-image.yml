@@ -3,27 +3,8 @@ name: Publish Docker Image
 on:
   push:
     branches: [master]
-    paths:
-      - "FSTService/**"
-      - "FortniteFestival.Core/**"
-      - "FSTService.Tests/**"
-      - "FSTService/Dockerfile"
-      - "FortniteFestivalWeb/**"
-      - "packages/**"
-      - "tools/chopt-cli-linux/**"
-      - "tools/validate-publish-image-workflow.mjs"
-      - ".github/workflows/publish-image.yml"
   pull_request:
     branches: [master]
-    paths:
-      - "FSTService/**"
-      - "FortniteFestival.Core/**"
-      - "FSTService.Tests/**"
-      - "FortniteFestivalWeb/**"
-      - "packages/**"
-      - "tools/chopt-cli-linux/**"
-      - "tools/validate-publish-image-workflow.mjs"
-      - ".github/workflows/publish-image.yml"
   workflow_dispatch: # Allow manual trigger
 
 env:
@@ -38,16 +19,20 @@ jobs:
     outputs:
       bumped: ${{ steps.commit.outputs.bumped }}
       commit_sha: ${{ steps.commit.outputs.commit_sha }}
+      service_changed: ${{ steps.changes.outputs.service }}
+      web_changed: ${{ steps.changes.outputs.web }}
+      core_ts_changed: ${{ steps.changes.outputs.core_ts }}
+      theme_ts_changed: ${{ steps.changes.outputs.theme_ts }}
+      ui_utils_changed: ${{ steps.changes.outputs.ui_utils }}
 
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Detect changed components
         id: changes
@@ -57,7 +42,6 @@ jobs:
           BEFORE_SHA: ${{ github.event.before }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           ZERO_SHA=0000000000000000000000000000000000000000
           is_commit() {
@@ -92,16 +76,11 @@ jobs:
           echo "Changed files:"
           echo "$CHANGED"
 
-          echo "bump_enabled=false" >> "$GITHUB_OUTPUT"
           echo "service=false" >> "$GITHUB_OUTPUT"
           echo "web=false" >> "$GITHUB_OUTPUT"
           echo "core_ts=false" >> "$GITHUB_OUTPUT"
           echo "theme_ts=false" >> "$GITHUB_OUTPUT"
           echo "ui_utils=false" >> "$GITHUB_OUTPUT"
-
-          if [ "$EVENT_NAME" = "push" ] && [[ "$HEAD_MESSAGE" != *"[version-bump]"* ]]; then
-            echo "bump_enabled=true" >> "$GITHUB_OUTPUT"
-          fi
 
           if echo "$CHANGED" | grep -qE '^(FSTService/|FortniteFestival\.Core/)'; then
             echo "service=true" >> "$GITHUB_OUTPUT"
@@ -124,134 +103,11 @@ jobs:
             echo "web=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Setup Node.js
-        if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Enable Corepack
-        if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
-        run: corepack enable
-
-      - name: Bump FSTService version
-        if: steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.service == 'true'
-        run: |
-          CSPROJ="FSTService/FSTService.csproj"
-          CURRENT=$(sed -n 's/.*<Version>\(.*\)<\/Version>.*/\1/p' "$CSPROJ")
-          if [ -z "$CURRENT" ]; then
-            echo "No <Version> found in $CSPROJ, skipping"
-            exit 0
-          fi
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-          NEW_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
-          sed -i "s|<Version>$CURRENT</Version>|<Version>$NEW_VERSION</Version>|" "$CSPROJ"
-          echo "FSTService: $CURRENT -> $NEW_VERSION"
-
-      - name: Bump FortniteFestivalWeb version
-        if: steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.web == 'true'
-        run: |
-          cd FortniteFestivalWeb
-          CURRENT=$(node -p "require('./package.json').version")
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-          NEW_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            pkg.version = '$NEW_VERSION';
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-          "
-          echo "FortniteFestivalWeb: $CURRENT -> $NEW_VERSION"
-
-      - name: Bump @festival/core version
-        if: steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.core_ts == 'true'
-        run: |
-          cd packages/core
-          CURRENT=$(node -p "require('./package.json').version")
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-          NEW_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            pkg.version = '$NEW_VERSION';
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-          "
-          echo "@festival/core: $CURRENT -> $NEW_VERSION"
-
-      - name: Bump @festival/theme version
-        if: steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.theme_ts == 'true'
-        run: |
-          cd packages/theme
-          CURRENT=$(node -p "require('./package.json').version")
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-          NEW_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            pkg.version = '$NEW_VERSION';
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-          "
-          echo "@festival/theme: $CURRENT -> $NEW_VERSION"
-
-      - name: Bump @festival/ui-utils version
-        if: steps.changes.outputs.bump_enabled == 'true' && steps.changes.outputs.ui_utils == 'true'
-        run: |
-          cd packages/ui-utils
-          CURRENT=$(node -p "require('./package.json').version")
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-          NEW_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            pkg.version = '$NEW_VERSION';
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-          "
-          echo "@festival/ui-utils: $CURRENT -> $NEW_VERSION"
-
-      - name: Install web dependencies
-        if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
-        working-directory: FortniteFestivalWeb
-        run: yarn install --immutable
-
-      - name: Regenerate dependency license manifest
-        if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
-        working-directory: FortniteFestivalWeb
-        run: yarn licenses:generate
-
-      - name: Regenerate embedded web bundle
-        if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
-        working-directory: FortniteFestivalWeb
-        run: yarn build
-
-      - name: Remove transient web build state
-        if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
-        run: |
-          git restore --source=HEAD -- FortniteFestivalWeb/.yarn/install-state.gz
-          rm -f FortniteFestivalWeb/tsconfig.tsbuildinfo
-
-      - name: Create version bump commit
+      - name: Select target commit
         id: commit
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "No version changes to commit"
-            echo "bumped=false" >> "$GITHUB_OUTPUT"
-          else
-            git commit -m "chore: auto version bump [version-bump]"
-            echo "bumped=true" >> "$GITHUB_OUTPUT"
-          fi
-          echo "commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Verify version-bumped embedded bundle
-        if: steps.changes.outputs.bump_enabled == 'true' && (steps.changes.outputs.web == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true')
-        working-directory: FortniteFestivalWeb
-        run: yarn embedded:check
-
-      - name: Push version bump commit
-        if: steps.commit.outputs.bumped == 'true'
-        run: git push
+          echo "bumped=false" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
 
   test:
     needs: [version-bump]
@@ -368,6 +224,14 @@ jobs:
         working-directory: FortniteFestivalWeb
         run: yarn embedded:check
 
+      - name: Check bundle budgets
+        working-directory: FortniteFestivalWeb
+        run: node scripts/check-performance-budgets.mjs --out performance-artifacts/bundle.json
+
+      - name: Check source encoding
+        working-directory: FortniteFestivalWeb
+        run: yarn check:encoding
+
       - name: Run unit tests
         working-directory: FortniteFestivalWeb
         run: yarn test:unit
@@ -392,21 +256,32 @@ jobs:
         working-directory: FortniteFestivalWeb
         run: yarn manual:images:check
 
-      - name: Install Chromium
+      - name: Install Playwright browsers
         working-directory: FortniteFestivalWeb
-        run: yarn playwright install --with-deps chromium
+        run: yarn playwright install --with-deps chromium webkit
 
       - name: Run browser tests
         working-directory: FortniteFestivalWeb
         run: yarn e2e:ci
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: web-playwright-failure
+          if-no-files-found: ignore
+          path: |
+            FortniteFestivalWeb/test-results
+            FortniteFestivalWeb/blob-report
 
   build-and-push-service:
     needs: [version-bump, test, test-web]
-    # Run on push/dispatch after version-bump completes (or is skipped).
+    # PRs build without publishing; master pushes and manual runs publish.
     if: |-
       always()
       && !failure() && !cancelled()
-      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && (
+        github.event_name == 'workflow_dispatch'
+        || needs.version-bump.outputs.service_changed == 'true'
+      )
     runs-on: ubuntu-latest
 
     permissions:
@@ -420,6 +295,7 @@ jobs:
           ref: ${{ needs.version-bump.outputs.commit_sha || github.sha }}
 
       - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -442,17 +318,23 @@ jobs:
         with:
           context: .
           file: FSTService/Dockerfile
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta-fst.outputs.tags }}
           labels: ${{ steps.meta-fst.outputs.labels }}
 
   build-and-push-web:
     needs: [version-bump, test-web]
-    # Run on push/dispatch after version-bump completes (or is skipped).
+    # PRs build without publishing; master pushes and manual runs publish.
     if: |-
       always()
       && !failure() && !cancelled()
-      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && (
+        github.event_name == 'workflow_dispatch'
+        || needs.version-bump.outputs.web_changed == 'true'
+        || needs.version-bump.outputs.core_ts_changed == 'true'
+        || needs.version-bump.outputs.theme_ts_changed == 'true'
+        || needs.version-bump.outputs.ui_utils_changed == 'true'
+      )
     runs-on: ubuntu-latest
 
     permissions:
@@ -466,6 +348,7 @@ jobs:
           ref: ${{ needs.version-bump.outputs.commit_sha || github.sha }}
 
       - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -488,6 +371,6 @@ jobs:
         with:
           context: .
           file: FortniteFestivalWeb/Dockerfile
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta-web.outputs.tags }}
           labels: ${{ steps.meta-web.outputs.labels }}

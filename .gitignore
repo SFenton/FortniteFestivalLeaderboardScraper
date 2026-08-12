@@ -313,6 +313,10 @@ FortniteFestivalWeb/coverage
 FortniteFestivalWeb/.vitest-coverage-reports
 #Playwright
 .playwright-mcp
+FortniteFestivalWeb/test-results/
+FortniteFestivalWeb/blob-report/
+FortniteFestivalWeb/playwright-report/
+FortniteFestivalWeb/tsconfig.tsbuildinfo
 
 harness-output/
 noop.txt
