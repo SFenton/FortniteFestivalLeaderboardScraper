@@ -50,6 +50,10 @@ Implementation is approved after this plan is rendered to the local autonomous
 agent outbox. All implementation, evaluation, deployment, and promotion
 decisions remain GPT-5.6 Sol owned.
 
+This approval is limited to the operator-approved roadmap. It never bypasses
+the active live-safety, publication-parity, provider, storage, rollback, or
+maintenance gates for a future action.
+
 ### Runtime contract
 
 | Field | Required value |
@@ -57,6 +61,10 @@ decisions remain GPT-5.6 Sol owned.
 | Model | `gpt-5.6-sol` |
 | Reasoning effort | `max` |
 | Context tier | `long_context` |
+
+This table records the active operator-approved autonomous run's execution
+metadata. It is not standing repository authorization for a future live,
+destructive, or parity-gated action.
 
 No implementation agent may silently substitute another model, lower effort,
 or shorter context.
@@ -126,7 +134,7 @@ public-read freeze.
 | Live writer mode | `OnlineBounded`; successful page batches are not retained as replay files |
 | Production correctness flags | Scope manifests, successful writers, publication-critical phases, and published-scope-source writes are enforced; legacy live scrape writes are disabled |
 | Snapshot reuse | All supporting correctness prerequisites are present, but `SkipUnchangedPhysicalLeaderboardSnapshots` remains false |
-| Snapshot retention | Report-only planning true; rewrite false; max one partition; free-space path `/app/data`; 500 GiB minimum free-space gate currently blocks rewrite |
+| Snapshot retention | Report-only planning is enabled by the current code/appsettings default and is not explicitly set in the worker role environment; rewrite false; max one partition; free-space path `/app/data`; 500 GiB minimum free-space gate currently blocks rewrite |
 
 ### Workload and wall-clock baseline
 
@@ -140,7 +148,7 @@ per scrape.
 | Full scrape range | 7 h 57 m 41 s to 9 h 47 m 36 s |
 | Scrape `1290` wall clock | 9 h 35 m 03 s |
 | Scrape `1290` recorded post-phase sum | 5 h 36 m 21 s |
-| Publication completion-to-ready p50 | About 4.3 minutes |
+| Publication completion-to-ready p50 | About 4.9 minutes |
 | Ready-to-published commit interval | About 7–17 seconds on recent split-publication runs |
 
 These ten scrapes are workload-comparable but span recent code/configuration
@@ -267,12 +275,13 @@ Exact catalog selection
        RankRecompute || FirstSeenSeason || AccountNameResolution
   -> registered-user recurring refresh
   -> early snapshot activation
-  -> band extraction
+  -> BandExtraction:
+       derive band rows
+       -> team membership/configuration summary rebuild
   -> registered-player band discovery
   -> registered-band targeted processing
   -> BandMaintenance:
        global prune
-       -> membership/configuration rebuild
        -> search projection refresh
        -> current band projection refresh
   -> ComputeRankings:
@@ -305,11 +314,11 @@ Exact catalog selection
 | `AccountNameResolution` | `AccountNameResolver` | Unresolved account IDs | Display-name state | Best effort |
 | `RefreshRegisteredUsers` | `CyclicalSongMachine` | Registered accounts, catalog, seasons, Epic lookups | Overlays, session history, scope checkpoints | Publication-critical |
 | `ActivateShadowSnapshotsEarly` | `GlobalLeaderboardPersistence` | Candidate snapshot rows and expected scopes | Active snapshot state | Publication-critical |
-| `BandExtraction` | `PostScrapeBandExtractor` | Band context, max scores | Band entries/member rows and impacted scopes | Publication-critical |
+| `BandExtraction` | `PostScrapeBandExtractor` | Band context, max scores | Band entries/member rows, team membership/configuration summaries, and impacted scopes | Publication-critical |
 | `LegacyBandScrape` | `BandScrapePhase` | Legacy band network path | Band entries | Publication-critical, unreachable in a normal `BandAll` pass |
 | `RegisteredPlayerBandDiscovery` | Discovery orchestrator | Registered accounts, season windows, Epic | Discovered teams/scopes | Best effort |
 | `RegisteredBandTargetedProcessing` | Targeted orchestrator | Registered teams, Epic | Targeted team rows/scopes | Best effort |
-| `BandMaintenance` | Band persistence/projection builders | Band entries/members and impacted teams/scopes | Pruned band state, membership/search/current projections | Publication-critical |
+| `BandMaintenance` | Band persistence/projection builders | Band entries/members and impacted teams/scopes | Pruned band state plus search and current projections | Publication-critical |
 | `ComputeRankings` | `RankingsCalculator` | Current solo/band state, populations, max scores | Solo/composite/family/combo/band rankings and histories | Publication-critical |
 | `PrepareSoloCurrentProjectionForDerived` | `SoloCurrentProjectionBuilder` | Snapshots and overlays | Validated current projection | Publication-critical, currently flag-dependent |
 | `Rivals` | `RivalsOrchestrator` | Current scores/ranks and dirty fingerprints | Song-rival rows/samples | Publication-critical |
@@ -324,15 +333,15 @@ Exact catalog selection
 | Publication | Worker and `MetaDatabase.Publication` | Complete candidate and required bindings | Current publication pointer | Publication-critical |
 | `ImprovementNotifications` | Notification recovery service | Published generation and projection plan | Notification state/events | Best effort, post-publication |
 
-## BandMaintenance and rankings table/resource map
+## BandExtraction, BandMaintenance, and rankings table/resource map
 
 BandMaintenance cannot overlap complete rankings because the band-ranking
 branch reads `band_entries` while the prune branch writes it.
 
 | Work | Reads | Writes/deletes | Important resources |
 |---|---|---|---|
+| BandExtraction membership/configuration summaries | `band_members`, `band_member_stats` | `band_team_membership`, `band_team_membership_state`, `band_team_configurations` | Runs under BandExtraction ownership; outside PR-1 telemetry scope |
 | Band prune | `band_entries`, `band_members` | `band_entries`, `band_member_stats`, `band_members` | Global window sort, one long transaction, WAL/temp |
-| Membership rebuild | `band_members`, `band_member_stats` | `band_team_membership`, `band_team_membership_state`, `band_team_configurations` | Named advisory transaction lock |
 | Search projection | `band_entries`, `band_member_stats`, `band_members` | `band_search_team_projection`, `band_search_member_projection`, `band_search_projection_state`, `band_identity` | Dedicated advisory rebuild lock |
 | Current band projection | `band_entries`, `band_member_stats` | `current_band_leaderboard_entries`, `band_current_projection_scope/state` | Per-scope transactions, default max two band types |
 | Per-instrument solo rankings | Current solo state, `song_stats`, population/max-score inputs | `song_stats`, overrides, temp valid entries, `account_rankings` | Two sessions with elevated per-session sort/index memory |
@@ -363,7 +372,8 @@ required before performance acceptance.
 | `LegacyBandScrape` | Retire unreachable normal-pass branch after mode audit | Remove only in a dedicated dead-path PR | CLI/config/reference search plus targeted tests | No supported mode loses band acquisition | Revert deletion | `scrape-boundary-deploy` |
 | Band discovery/targeting | Add lookup budgets, results, retry, and checkpoint timings | Low priority; mutual parallelism must preserve provider budget | Bounded captured/provider canary | Same teams/scopes, no retry/error increase | Restore serial order | `full-scrape-ab` |
 | Band prune | Restrict ranking/window work to changed `(song, band_type)` scopes | Highest-value hypothesis if telemetry attributes wall time here | PR-1 subphase timings, then isolated changed-scope A/B | Exact retained entries/members; ≥20% BandMaintenance reduction; no >10% WAL/temp/IO regression | Global-prune feature flag | `full-scrape-ab` |
-| Band membership/search/current projections | Skip exact unchanged teams/scopes; batch by measured resource class | Projection work may later overlap solo ranks, never band prune with band ranks | Changed-key/checksum comparison in isolated Postgres | Exact search/current/public DTO hashes; fewer rows and wall | Broad refresh switch | `full-scrape-ab` |
+| BandExtraction membership/configuration summaries | Measure changed-team batching and skip exact unchanged summaries in a later dedicated iteration | Remains owned by BandExtraction; no instrumentation or behavior change in PR-1 | Same extraction inputs, membership/configuration checksums | Exact membership/configuration rows with fewer writes or lower extraction wall | Existing broad summary rebuild | `full-scrape-ab` |
+| BandMaintenance search/current projections | Skip exact unchanged teams/scopes; batch by measured resource class | Projection work may later overlap solo ranks, never band prune with band ranks | Changed-key/checksum comparison in isolated Postgres | Exact search/current/public DTO hashes; fewer rows and wall | Broad refresh switch | `full-scrape-ab` |
 | Per-instrument rankings | Profile materialization/window queries under existing DOP 2 | Never blindly raise DOP; prior unbounded concurrency OOM-killed PostgreSQL | Isolated DOP 1/2/3 resource-capped A/B after query plans | Exact rankings; ≥10% wall benefit; no >10% memory/WAL/temp/API regression | DOP/config restore | `full-scrape-ab` |
 | Composite/family/combo | Test bounded two-way execution and adaptive diff/replace | Data-disjoint but memory/WAL-sensitive | Same loaded metrics, independent output hashes | Exact rows/order; ≥10% combined wall reduction | Serial execution and full replace | `full-scrape-ab` |
 | Rank-history snapshots | First optimize latest-state scan; then test existing overlap flag or DOP change separately | Largest ranking subphase; do not combine concurrency hypotheses | Isolated current-history query plan and one-variable A/B | Exact histories; meaningful wall reduction; no >10% resource regression | Overlap/DOP off | `full-scrape-ab` |
@@ -779,7 +789,7 @@ Strict contents:
 - fresh-schema and repeated-initialization tests;
 - insert round-trip test proving timing persistence on a fresh database;
 - BandMaintenance subphase timings and existing scope/row counts for prune,
-  membership/search projection, and current projection;
+  search projection refresh, and current band projection refresh;
 - required docs.
 
 Explicit exclusions:
@@ -789,6 +799,7 @@ Explicit exclusions:
 - no Settings changes;
 - no phase reordering;
 - no query or algorithm change;
+- no BandExtraction or membership/configuration instrumentation;
 - no retention execution.
 
 Acceptance:
@@ -995,6 +1006,9 @@ This tandem plan is accepted for implementation after local outbox rendering.
 
 - GPT-5.6 Sol owns every implementation, test, benchmark, deployment,
   production probe, A/B, rollback, commit, and promotion decision.
+- Approval of this roadmap is not authorization to bypass the current
+  live-safety, parity, publication, provider, storage, rollback, or maintenance
+  gate for any later action.
 - PR-1 begins only after this roadmap/ADR PR is reviewed and merged or the
   operator otherwise authorizes its branch.
 - PR-1 scope is fixed to timing DDL compatibility, tests, and
