@@ -34,6 +34,7 @@
     "manual:images:check": "node scripts/generate-manual-image-variants.mjs --check",
     "embedded:check": "node scripts/verify-embedded-bundle.mjs",
     "performance:manual": "node scripts/capture-manual-performance.mjs",
+    "performance:suggestions": "SUGGESTIONS_BENCHMARK=1 playwright test e2e/specs/performance/suggestions-long-scroll.spec.ts --project=chromium-desktop --workers=1",
     "icons:generate": "node scripts/generate-pwa-icons.mjs",
     "licenses:generate": "node ../tools/generate-license-manifest.mjs",
     "licenses:check": "node ../tools/generate-license-manifest.mjs --check",
@@ -55,7 +56,6 @@
     "react-dom": "^19.0.0",
     "react-i18next": "^16.5.8",
     "react-icons": "^5.6.0",
-    "react-infinite-scroll-component": "^6.1.1",
     "react-is": "^19.2.4",
     "react-router-dom": "^7.1.0",
     "recharts": "^3.7.0"
