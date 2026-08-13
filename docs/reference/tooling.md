@@ -1,10 +1,11 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-11
-last_verified_commit: 2bdf7287
+last_verified: 2026-08-12
+last_verified_commit: 9f343376
 sources:
   - tools/
+  - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
   - tools/fst-worker-compose-guard.sh
   - tools/fst-worker-compose-guard.test.mjs
   - tools/fst-worker-no-progress-watchdog.mjs
@@ -47,6 +48,27 @@ Database scripts are not generic production authorization. Use the matching
 runbook and live-safety gates. The worker Compose guard validates the standard
 PIA overlay, role flags, aligned proxy arrays, dependencies, and supported data
 profiles before a guarded recreate.
+
+### Snapshot retention evidence
+
+Snapshot-retention report harnesses must call only
+`DatabaseMaintenanceDryRunReporter.BuildSnapshotRetentionRewritePlansAsync`
+through a read-only PostgreSQL transaction and a distinct application name.
+Keep their source, build output, result, resource monitor, and checksums on the
+FST drive.
+
+Report-only estimates are not executable reclaim proof when `CanExecute=false`.
+In particular, `EstimatedCandidatePurgeRows/Bytes` are informational evidence;
+`EstimatedPurgeRows/Bytes` remain zero when protected IDs are missing from
+MCV statistics or partition estimates are partial, stale, or inconsistent.
+Never substitute candidate estimates for the exact execution preflight or the
+`500 GiB` free-space gate.
+
+The accepted live evidence pattern records the harness source, compiled output,
+merged Compose command review, read-only verification, bounded resource
+monitor, exact JSON result, and checksums on the FST drive. The current
+publication-`1293` observation took `94 ms`, produced nine blocked plans, and
+kept API/web/PostgreSQL healthy.
 
 ### Worker Compose guard
 

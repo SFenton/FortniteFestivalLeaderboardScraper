@@ -11,6 +11,8 @@ public sealed class DatabaseMaintenanceDryRunReporter
     private const long SnapshotMaintenanceAdvisoryLockKey = 2026050201;
     private const long MaintenanceIndexAdvisoryLockKey = 2026050801;
     private const string SnapshotParentTable = "leaderboard_entries_snapshot";
+    private const double SnapshotStatsFrequencyTolerance = 0.000001;
+    private const double SnapshotStatsRowEstimateDriftTolerance = 0.10;
 
     private static readonly IReadOnlyDictionary<string, string> SnapshotPartitionInstruments = new Dictionary<string, string>(StringComparer.Ordinal)
     {
@@ -146,8 +148,10 @@ public sealed class DatabaseMaintenanceDryRunReporter
             projectionSourceSnapshotIds,
             scrapes,
             options.RollbackCompletedSnapshotsToKeep);
+        snapshotPartitions = AttachMissingProtectedSnapshotIds(snapshotPartitions, policy.ProtectedSnapshotIds);
         var observedSnapshotIds = snapshotPartitions
             .SelectMany(partition => partition.SnapshotEstimates.Select(estimate => estimate.SnapshotId))
+            .Concat(policy.ProtectedSnapshotIds)
             .Distinct()
             .OrderByDescending(id => id)
             .ToArray();
@@ -158,6 +162,7 @@ public sealed class DatabaseMaintenanceDryRunReporter
             activeSnapshotIds,
             projectionSourceSnapshotIds,
             scrapes,
+            snapshotPartitions,
             snapshotDecisions,
             partitionCandidates,
             options.RollbackCompletedSnapshotsToKeep);
@@ -326,8 +331,10 @@ public sealed class DatabaseMaintenanceDryRunReporter
             projectionSourceSnapshotIds,
             scrapes,
             options.RollbackCompletedSnapshotsToKeep);
+        snapshotPartitions = AttachMissingProtectedSnapshotIds(snapshotPartitions, policy.ProtectedSnapshotIds);
         var observedSnapshotIds = snapshotPartitions
             .SelectMany(partition => partition.SnapshotEstimates.Select(estimate => estimate.SnapshotId))
+            .Concat(policy.ProtectedSnapshotIds)
             .Distinct()
             .OrderByDescending(id => id)
             .ToArray();
@@ -434,6 +441,7 @@ public sealed class DatabaseMaintenanceDryRunReporter
         IReadOnlyList<long> activeSnapshotIds,
         IReadOnlyList<long> projectionSourceSnapshotIds,
         IReadOnlyList<ScrapeSummary> scrapes,
+        IReadOnlyList<SnapshotPartitionStats> partitions,
         IReadOnlyList<SnapshotRetentionDecision> snapshotDecisions,
         IReadOnlyList<PartitionSnapshotCandidate> partitionCandidates,
         int rollbackCompletedSnapshotsToKeep)
@@ -444,6 +452,20 @@ public sealed class DatabaseMaintenanceDryRunReporter
         static long SumEstimatedRows(IEnumerable<PartitionSnapshotCandidate> candidates, SnapshotCleanupAction action) =>
             candidates.Where(candidate => candidate.Action == action).Sum(candidate => candidate.EstimatedRows);
 
+        var estimatedKeepRows = SumEstimatedRows(partitionCandidates, SnapshotCleanupAction.Keep);
+        var estimatedBlockedRows = SumEstimatedRows(partitionCandidates, SnapshotCleanupAction.Blocked);
+        var estimatedKeepBytes = SumEstimatedBytes(partitionCandidates, SnapshotCleanupAction.Keep);
+        var estimatedBlockedBytes = SumEstimatedBytes(partitionCandidates, SnapshotCleanupAction.Blocked);
+        var estimatedUnknownRows = partitions.Sum(partition => partition.EstimatedUnknownRows);
+        var estimatedUnknownBytes = partitions.Sum(partition => partition.EstimatedUnknownBytes);
+        var estimatedCandidatePurgeRows = SumEstimatedRows(partitionCandidates, SnapshotCleanupAction.PurgeCandidate);
+        var estimatedCandidatePurgeBytes = SumEstimatedBytes(partitionCandidates, SnapshotCleanupAction.PurgeCandidate);
+        var estimatesComplete = partitions.All(partition =>
+            partition.EstimatesComplete
+            && partition.ProtectedSnapshotIdsMissingFromStats.Count == 0);
+        var estimatedTotalRows = partitions.Sum(partition => partition.PlannerEstimatedRows);
+        var totalBytes = partitions.Sum(partition => partition.TotalBytes);
+
         return new SnapshotDryRunSummary(
             rollbackCompletedSnapshotsToKeep,
             activeSnapshotIds,
@@ -451,12 +473,26 @@ public sealed class DatabaseMaintenanceDryRunReporter
             scrapes.OrderByDescending(scrape => scrape.Id).Take(20).ToArray(),
             snapshotDecisions,
             partitionCandidates,
-            EstimatedKeepRows: SumEstimatedRows(partitionCandidates, SnapshotCleanupAction.Keep),
-            EstimatedPurgeRows: SumEstimatedRows(partitionCandidates, SnapshotCleanupAction.PurgeCandidate),
-            EstimatedBlockedRows: SumEstimatedRows(partitionCandidates, SnapshotCleanupAction.Blocked),
-            EstimatedKeepBytes: SumEstimatedBytes(partitionCandidates, SnapshotCleanupAction.Keep),
-            EstimatedPurgeBytes: SumEstimatedBytes(partitionCandidates, SnapshotCleanupAction.PurgeCandidate),
-            EstimatedBlockedBytes: SumEstimatedBytes(partitionCandidates, SnapshotCleanupAction.Blocked));
+            EstimatedKeepRows: estimatedKeepRows,
+            EstimatedPurgeRows: estimatesComplete ? estimatedCandidatePurgeRows : 0,
+            EstimatedBlockedRows: estimatedBlockedRows,
+            EstimatedKeepBytes: estimatedKeepBytes,
+            EstimatedPurgeBytes: estimatesComplete ? estimatedCandidatePurgeBytes : 0,
+            EstimatedBlockedBytes: estimatedBlockedBytes)
+        {
+            EstimatedTotalRows = estimatedTotalRows,
+            EstimatedRetainedRows = estimatesComplete
+                ? checked(estimatedKeepRows + estimatedBlockedRows + estimatedUnknownRows)
+                : estimatedTotalRows,
+            EstimatedRetainedBytes = estimatesComplete
+                ? checked(estimatedKeepBytes + estimatedBlockedBytes + estimatedUnknownBytes)
+                : totalBytes,
+            EstimatedCandidatePurgeRows = estimatedCandidatePurgeRows,
+            EstimatedCandidatePurgeBytes = estimatedCandidatePurgeBytes,
+            EstimatedUnknownRows = estimatedUnknownRows,
+            EstimatedUnknownBytes = estimatedUnknownBytes,
+            EstimatesComplete = estimatesComplete,
+        };
     }
 
     private static IReadOnlyList<PartitionSnapshotCandidate> BuildPartitionSnapshotCandidates(
@@ -479,6 +515,24 @@ public sealed class DatabaseMaintenanceDryRunReporter
                     estimate.EstimatedRows,
                     estimate.EstimatedBytes,
                     estimate.EstimatedRowShare));
+            }
+
+            foreach (var snapshotId in partition.ProtectedSnapshotIdsMissingFromStats)
+            {
+                if (!decisionBySnapshot.TryGetValue(snapshotId, out var decision))
+                    continue;
+
+                candidates.Add(new PartitionSnapshotCandidate(
+                    partition.PartitionName,
+                    snapshotId,
+                    decision.Action,
+                    [.. decision.Reasons, "protected snapshot id is absent from pg_stats most-common values"],
+                    EstimatedRows: 0,
+                    EstimatedBytes: 0,
+                    EstimatedRowShare: 0)
+                {
+                    EstimateIsKnown = false,
+                });
             }
         }
 
@@ -511,6 +565,7 @@ public sealed class DatabaseMaintenanceDryRunReporter
 
         var observedIds = partition.SnapshotEstimates
             .Select(estimate => estimate.SnapshotId)
+            .Concat(partition.ProtectedSnapshotIdsMissingFromStats)
             .Distinct()
             .OrderByDescending(id => id)
             .ToArray();
@@ -529,10 +584,63 @@ public sealed class DatabaseMaintenanceDryRunReporter
         var candidates = partitionCandidates
             .Where(candidate => string.Equals(candidate.PartitionName, partition.PartitionName, StringComparison.Ordinal))
             .ToArray();
-        var canExecute = !string.IsNullOrWhiteSpace(instrument) && keepIds.Length > 0 && purgeIds.Length > 0;
-        var reason = canExecute
-            ? "eligible for partition-local keep-only rewrite with explicit execution approval"
-            : BuildSnapshotRewriteRefusalReason(instrument, keepIds, purgeIds);
+        var unknownSnapshotIds = candidates
+            .Where(candidate => !candidate.EstimateIsKnown)
+            .Select(candidate => candidate.SnapshotId)
+            .Distinct()
+            .OrderByDescending(id => id)
+            .ToArray();
+        var knownRetainRows = candidates
+            .Where(candidate => candidate.EstimateIsKnown && candidate.Action != SnapshotCleanupAction.PurgeCandidate)
+            .Sum(candidate => candidate.EstimatedRows);
+        var knownRetainBytes = candidates
+            .Where(candidate => candidate.EstimateIsKnown && candidate.Action != SnapshotCleanupAction.PurgeCandidate)
+            .Sum(candidate => candidate.EstimatedBytes);
+        var candidatePurgeRows = candidates
+            .Where(candidate => candidate.EstimateIsKnown && candidate.Action == SnapshotCleanupAction.PurgeCandidate)
+            .Sum(candidate => candidate.EstimatedRows);
+        var candidatePurgeBytes = candidates
+            .Where(candidate => candidate.EstimateIsKnown && candidate.Action == SnapshotCleanupAction.PurgeCandidate)
+            .Sum(candidate => candidate.EstimatedBytes);
+        var estimatedRowsReconcile =
+            candidates.Where(candidate => candidate.EstimateIsKnown).Sum(candidate => candidate.EstimatedRows)
+            + partition.EstimatedUnknownRows
+            == partition.PlannerEstimatedRows;
+        var estimatedBytesReconcile =
+            candidates.Where(candidate => candidate.EstimateIsKnown).Sum(candidate => candidate.EstimatedBytes)
+            + partition.EstimatedUnknownBytes
+            == partition.TotalBytes;
+        var estimatesComplete =
+            partition.EstimatesComplete
+            && unknownSnapshotIds.Length == 0
+            && estimatedRowsReconcile
+            && estimatedBytesReconcile;
+        var canExecute =
+            !string.IsNullOrWhiteSpace(instrument)
+            && keepIds.Length > 0
+            && purgeIds.Length > 0
+            && knownRetainRows > 0
+            && candidatePurgeRows > 0
+            && estimatesComplete;
+        var reason = BuildSnapshotRewritePlanReason(
+            instrument,
+            keepIds,
+            purgeIds,
+            unknownSnapshotIds,
+            partition,
+            estimatedRowsReconcile,
+            estimatedBytesReconcile,
+            knownRetainRows,
+            candidatePurgeRows,
+            canExecute);
+        var estimatedRetainRows = canExecute
+            ? checked(knownRetainRows + partition.EstimatedUnknownRows)
+            : partition.PlannerEstimatedRows;
+        var estimatedRetainBytes = canExecute
+            ? checked(knownRetainBytes + partition.EstimatedUnknownBytes)
+            : partition.TotalBytes;
+        var estimatedPurgeRows = canExecute ? candidatePurgeRows : 0;
+        var estimatedPurgeBytes = canExecute ? candidatePurgeBytes : 0;
 
         return new SnapshotPartitionRewritePlan(
             partition.PartitionName,
@@ -544,11 +652,54 @@ public sealed class DatabaseMaintenanceDryRunReporter
             partition.HeapBytes,
             partition.IndexBytes,
             partition.LiveTuples,
-            candidates.Where(candidate => candidate.Action == SnapshotCleanupAction.Keep).Sum(candidate => candidate.EstimatedRows),
-            candidates.Where(candidate => candidate.Action == SnapshotCleanupAction.PurgeCandidate).Sum(candidate => candidate.EstimatedRows),
-            candidates.Where(candidate => candidate.Action == SnapshotCleanupAction.PurgeCandidate).Sum(candidate => candidate.EstimatedBytes),
+            estimatedRetainRows,
+            estimatedPurgeRows,
+            estimatedPurgeBytes,
             canExecute,
-            reason);
+            reason)
+        {
+            EstimatedTotalRows = partition.PlannerEstimatedRows,
+            EstimatedRetainBytes = estimatedRetainBytes,
+            EstimatedCandidatePurgeRows = candidatePurgeRows,
+            EstimatedCandidatePurgeBytes = candidatePurgeBytes,
+            EstimatedUnknownRows = partition.EstimatedUnknownRows,
+            EstimatedUnknownBytes = partition.EstimatedUnknownBytes,
+            EstimatedStatsCoverage = partition.EstimatedStatsCoverage,
+            EstimatesComplete = estimatesComplete,
+            EstimateReason = partition.EstimateReason,
+            UnknownSnapshotIds = unknownSnapshotIds,
+        };
+    }
+
+    private static string BuildSnapshotRewritePlanReason(
+        string instrument,
+        IReadOnlyList<long> keepIds,
+        IReadOnlyList<long> purgeIds,
+        IReadOnlyList<long> unknownSnapshotIds,
+        SnapshotPartitionStats partition,
+        bool estimatedRowsReconcile,
+        bool estimatedBytesReconcile,
+        long knownRetainRows,
+        long candidatePurgeRows,
+        bool canExecute)
+    {
+        if (canExecute)
+            return "eligible for partition-local keep-only rewrite with explicit execution approval";
+
+        var policyReason = BuildSnapshotRewriteRefusalReason(instrument, keepIds, purgeIds);
+        if (string.IsNullOrWhiteSpace(instrument) || keepIds.Count == 0 || purgeIds.Count == 0)
+            return policyReason;
+        if (unknownSnapshotIds.Count > 0)
+            return $"blocked: {unknownSnapshotIds.Count:N0} protected snapshot id estimate(s) are missing from pg_stats; purge estimates withheld";
+        if (!partition.EstimatesComplete)
+            return $"blocked: snapshot statistics cannot safely establish a keep-only rewrite ({partition.EstimateReason}); purge estimates withheld";
+        if (!estimatedRowsReconcile || !estimatedBytesReconcile)
+            return "blocked: snapshot row/byte estimates do not reconcile to partition totals; purge estimates withheld";
+        if (knownRetainRows <= 0)
+            return "blocked: retained row estimate is zero for a nonempty partition; purge estimates withheld";
+        if (candidatePurgeRows <= 0)
+            return "not a cleanup candidate: estimated purge row count is zero";
+        return "blocked: snapshot retention estimate is not executable";
     }
 
     private static string BuildSnapshotRewriteRefusalReason(string instrument, IReadOnlyList<long> keepIds, IReadOnlyList<long> purgeIds)
@@ -561,6 +712,26 @@ public sealed class DatabaseMaintenanceDryRunReporter
             return "not a cleanup candidate: no purge snapshot ids were identified";
         return "blocked by snapshot rewrite policy";
     }
+
+    private static IReadOnlyList<SnapshotPartitionStats> AttachMissingProtectedSnapshotIds(
+        IReadOnlyList<SnapshotPartitionStats> partitions,
+        IReadOnlyCollection<long> protectedSnapshotIds) =>
+        partitions
+            .Select(partition =>
+            {
+                var estimatedIds = partition.SnapshotEstimates
+                    .Select(estimate => estimate.SnapshotId)
+                    .ToHashSet();
+                return partition with
+                {
+                    ProtectedSnapshotIdsMissingFromStats = protectedSnapshotIds
+                        .Where(snapshotId => !estimatedIds.Contains(snapshotId))
+                        .Distinct()
+                        .OrderByDescending(snapshotId => snapshotId)
+                        .ToArray(),
+                };
+            })
+            .ToArray();
 
     private async Task<SnapshotPartitionRewritePlan> BuildSnapshotRewritePlanForExecutionAsync(
         NpgsqlConnection conn,
@@ -615,7 +786,24 @@ public sealed class DatabaseMaintenanceDryRunReporter
         var footprint = await LoadRelationFootprintAsync(conn, partitionName, ct);
         var estimatedRetainRows = keepIds.Length == 0 ? 0 : await CountSnapshotRowsAsync(conn, partitionName, keepIds, ct);
         var estimatedPurgeRows = purgeIds.Length == 0 ? 0 : await CountSnapshotRowsAsync(conn, partitionName, purgeIds, ct);
-        var canExecute = keepIds.Length > 0 && purgeIds.Length > 0;
+        var estimatedRetainBytes = footprint is null
+            ? 0
+            : EstimateRetainedBytes(footprint.TotalBytes, estimatedRetainRows, estimatedPurgeRows);
+        var estimatedPurgeBytes = footprint is null
+            ? 0
+            : Math.Max(0, footprint.TotalBytes - estimatedRetainBytes);
+        var canExecute =
+            keepIds.Length > 0
+            && purgeIds.Length > 0
+            && estimatedRetainRows > 0
+            && estimatedPurgeRows > 0;
+        var reason = canExecute
+            ? "eligible for partition-local keep-only rewrite with explicit execution approval"
+            : estimatedRetainRows <= 0 && keepIds.Length > 0
+                ? "blocked: exact retained row count is zero"
+                : estimatedPurgeRows <= 0 && purgeIds.Length > 0
+                    ? "not a cleanup candidate: exact purge row count is zero"
+                    : BuildSnapshotRewriteRefusalReason(instrument, keepIds, purgeIds);
 
         return new SnapshotPartitionRewritePlan(
             partitionName,
@@ -629,9 +817,17 @@ public sealed class DatabaseMaintenanceDryRunReporter
             footprint?.LiveTuples ?? 0,
             estimatedRetainRows,
             estimatedPurgeRows,
-            purgeIds.Length == 0 || footprint is null ? 0 : Math.Max(0, footprint.TotalBytes - EstimateRetainedBytes(footprint.TotalBytes, estimatedRetainRows, estimatedPurgeRows)),
+            estimatedPurgeBytes,
             canExecute,
-            canExecute ? "eligible for partition-local keep-only rewrite with explicit execution approval" : BuildSnapshotRewriteRefusalReason(instrument, keepIds, purgeIds));
+            reason)
+        {
+            EstimatedTotalRows = checked(estimatedRetainRows + estimatedPurgeRows),
+            EstimatedRetainBytes = estimatedRetainBytes,
+            EstimatedCandidatePurgeRows = estimatedPurgeRows,
+            EstimatedCandidatePurgeBytes = estimatedPurgeBytes,
+            EstimatesComplete = true,
+            EstimateReason = "exact execution preflight row counts",
+        };
     }
 
     private static long EstimateRetainedBytes(long totalBytes, long retainRows, long purgeRows)
@@ -717,6 +913,7 @@ public sealed class DatabaseMaintenanceDryRunReporter
                 pg_relation_size(c.oid)::BIGINT AS heap_bytes,
                 pg_indexes_size(c.oid)::BIGINT AS index_bytes,
                 COALESCE(st.n_live_tup, 0)::BIGINT AS n_live_tup,
+                GREATEST(COALESCE(c.reltuples, 0), 0)::REAL AS reltuples,
                 COALESCE(stats.n_distinct, 0)::REAL AS n_distinct,
                 COALESCE(stats.most_common_vals::TEXT, '') AS most_common_vals,
                 COALESCE(stats.most_common_freqs::TEXT, '') AS most_common_freqs
@@ -741,11 +938,17 @@ public sealed class DatabaseMaintenanceDryRunReporter
             var heapBytes = reader.GetInt64(2);
             var indexBytes = reader.GetInt64(3);
             var liveTuples = reader.GetInt64(4);
-            var nDistinct = reader.GetFloat(5);
-            var valuesText = reader.GetString(6);
-            var frequenciesText = reader.GetString(7);
-            var estimates = ParseSnapshotEstimates(valuesText, frequenciesText, liveTuples, totalBytes);
-            var coverage = estimates.Sum(estimate => estimate.EstimatedRowShare);
+            var relationTuples = reader.GetFloat(5);
+            var nDistinct = reader.GetFloat(6);
+            var valuesText = reader.GetString(7);
+            var frequenciesText = reader.GetString(8);
+            var distribution = EstimateSnapshotDistribution(
+                valuesText,
+                frequenciesText,
+                liveTuples,
+                relationTuples,
+                nDistinct,
+                totalBytes);
 
             partitions.Add(new SnapshotPartitionStats(
                 partitionName,
@@ -754,8 +957,16 @@ public sealed class DatabaseMaintenanceDryRunReporter
                 indexBytes,
                 liveTuples,
                 nDistinct,
-                coverage,
-                estimates));
+                distribution.EstimatedStatsCoverage,
+                distribution.SnapshotEstimates)
+            {
+                RelationTuples = relationTuples,
+                PlannerEstimatedRows = distribution.EstimatedTotalRows,
+                EstimatedUnknownRows = distribution.EstimatedUnknownRows,
+                EstimatedUnknownBytes = distribution.EstimatedUnknownBytes,
+                EstimatesComplete = distribution.EstimatesComplete,
+                EstimateReason = distribution.Reason,
+            });
         }
 
         return partitions;
@@ -1851,24 +2062,97 @@ public sealed class DatabaseMaintenanceDryRunReporter
         };
     }
 
-    private static IReadOnlyList<SnapshotEstimate> ParseSnapshotEstimates(string valuesText, string frequenciesText, long liveTuples, long totalBytes)
+    internal static SnapshotEstimateDistribution EstimateSnapshotDistribution(
+        string valuesText,
+        string frequenciesText,
+        long liveTuples,
+        double relationTuples,
+        double nDistinct,
+        long totalBytes)
     {
         var values = ParseLongArray(valuesText);
         var frequencies = ParseDoubleArray(frequenciesText);
         var count = Math.Min(values.Count, frequencies.Count);
+        var arraysAligned = values.Count == frequencies.Count;
+        var frequenciesValid = frequencies.All(frequency =>
+            double.IsFinite(frequency)
+            && frequency >= 0
+            && frequency <= 1);
+        var rawFrequencies = frequencies
+            .Take(count)
+            .Select(frequency => Math.Clamp(frequency, 0, 1))
+            .ToArray();
+        var rawCoverage = rawFrequencies.Sum();
+        var normalization = rawCoverage > 1 ? rawCoverage : 1;
+        var estimatedTotalRows = Math.Max(
+            Math.Max(0, liveTuples),
+            (long)Math.Round(Math.Max(0, relationTuples), MidpointRounding.AwayFromZero));
         var estimates = new List<SnapshotEstimate>(count);
 
         for (var i = 0; i < count; i++)
         {
-            var frequency = Math.Clamp(frequencies[i], 0, 1);
+            var frequency = rawFrequencies[i] / normalization;
             estimates.Add(new SnapshotEstimate(
                 values[i],
                 frequency,
-                (long)Math.Round(liveTuples * frequency, MidpointRounding.AwayFromZero),
-                (long)Math.Round(totalBytes * frequency, MidpointRounding.AwayFromZero)));
+                (long)Math.Floor(estimatedTotalRows * frequency),
+                (long)Math.Floor(totalBytes * frequency)));
         }
 
-        return estimates.OrderByDescending(estimate => estimate.SnapshotId).ToArray();
+        var orderedEstimates = estimates
+            .OrderByDescending(estimate => estimate.SnapshotId)
+            .ToArray();
+        var estimatedKnownRows = orderedEstimates.Sum(estimate => estimate.EstimatedRows);
+        var estimatedKnownBytes = orderedEstimates.Sum(estimate => estimate.EstimatedBytes);
+        var estimatedUnknownRows = Math.Max(0, estimatedTotalRows - estimatedKnownRows);
+        var estimatedUnknownBytes = Math.Max(0, totalBytes - estimatedKnownBytes);
+        var estimatedDistinct = nDistinct switch
+        {
+            > 0 => nDistinct,
+            < 0 => -nDistinct * estimatedTotalRows,
+            _ => 0,
+        };
+        var nonnegativeLiveTuples = Math.Max(0, liveTuples);
+        var nonnegativeRelationTuples = Math.Max(0, relationTuples);
+        var rowEstimateBase = Math.Max(nonnegativeLiveTuples, nonnegativeRelationTuples);
+        var rowEstimateDrift = nonnegativeLiveTuples <= 0 || nonnegativeRelationTuples <= 0
+            ? 0
+            : Math.Abs(nonnegativeLiveTuples - nonnegativeRelationTuples) / rowEstimateBase;
+        var rowRoundingTolerance = Math.Max(1, count);
+        var byteRoundingTolerance = Math.Max(4096, count);
+        var trulyEmpty = estimatedTotalRows == 0;
+        var refusalReasons = new List<string>();
+        if (!arraysAligned)
+            refusalReasons.Add("MCV value/frequency lengths differ");
+        if (!frequenciesValid)
+            refusalReasons.Add("MCV frequencies contain invalid values");
+        if (rawCoverage > 1 + SnapshotStatsFrequencyTolerance)
+            refusalReasons.Add("MCV frequency sum exceeds one");
+        if (!trulyEmpty && count == 0)
+            refusalReasons.Add("MCV statistics are missing");
+        if (!trulyEmpty && nDistinct == 0)
+            refusalReasons.Add("n_distinct is zero or unknown");
+        if (!trulyEmpty && estimatedDistinct > count + 0.5)
+            refusalReasons.Add($"n_distinct estimates {estimatedDistinct:N2} values but MCV covers {count:N0}");
+        if (!trulyEmpty && rowEstimateDrift > SnapshotStatsRowEstimateDriftTolerance)
+            refusalReasons.Add($"n_live_tup and reltuples differ by {rowEstimateDrift:P2}");
+        if (!trulyEmpty && estimatedUnknownRows > rowRoundingTolerance)
+            refusalReasons.Add($"{estimatedUnknownRows:N0} estimated row(s) remain outside MCV coverage");
+        if (!trulyEmpty && estimatedUnknownBytes > byteRoundingTolerance)
+            refusalReasons.Add($"{estimatedUnknownBytes:N0} byte(s) remain outside MCV coverage");
+
+        return new SnapshotEstimateDistribution(
+            estimatedTotalRows,
+            Math.Min(1, Math.Max(0, rawCoverage)),
+            estimatedUnknownRows,
+            estimatedUnknownBytes,
+            EstimatesComplete: refusalReasons.Count == 0,
+            Reason: refusalReasons.Count == 0
+                ? trulyEmpty
+                    ? "partition is estimated empty"
+                    : "snapshot statistics are complete within rounding tolerance"
+                : string.Join("; ", refusalReasons),
+            orderedEstimates);
     }
 
     private static IReadOnlyList<long> ParseLongArray(string text)
@@ -1926,7 +2210,17 @@ public sealed record SnapshotDryRunSummary(
     long EstimatedBlockedRows,
     long EstimatedKeepBytes,
     long EstimatedPurgeBytes,
-    long EstimatedBlockedBytes);
+    long EstimatedBlockedBytes)
+{
+    public long EstimatedTotalRows { get; init; }
+    public long EstimatedRetainedRows { get; init; } = checked(EstimatedKeepRows + EstimatedBlockedRows);
+    public long EstimatedRetainedBytes { get; init; } = checked(EstimatedKeepBytes + EstimatedBlockedBytes);
+    public long EstimatedCandidatePurgeRows { get; init; } = EstimatedPurgeRows;
+    public long EstimatedCandidatePurgeBytes { get; init; } = EstimatedPurgeBytes;
+    public long EstimatedUnknownRows { get; init; }
+    public long EstimatedUnknownBytes { get; init; }
+    public bool EstimatesComplete { get; init; } = true;
+}
 
 public sealed record ScrapeSummary(long Id, DateTime? StartedAt, DateTime? CompletedAt)
 {
@@ -1941,9 +2235,27 @@ public sealed record SnapshotPartitionStats(
     long LiveTuples,
     double NDistinct,
     double EstimatedStatsCoverage,
-    IReadOnlyList<SnapshotEstimate> SnapshotEstimates);
+    IReadOnlyList<SnapshotEstimate> SnapshotEstimates)
+{
+    public double RelationTuples { get; init; } = LiveTuples;
+    public long PlannerEstimatedRows { get; init; } = LiveTuples;
+    public long EstimatedUnknownRows { get; init; }
+    public long EstimatedUnknownBytes { get; init; }
+    public bool EstimatesComplete { get; init; } = true;
+    public string EstimateReason { get; init; } = "snapshot statistics supplied by caller";
+    public IReadOnlyList<long> ProtectedSnapshotIdsMissingFromStats { get; init; } = [];
+}
 
 public sealed record SnapshotEstimate(long SnapshotId, double EstimatedRowShare, long EstimatedRows, long EstimatedBytes);
+
+internal sealed record SnapshotEstimateDistribution(
+    long EstimatedTotalRows,
+    double EstimatedStatsCoverage,
+    long EstimatedUnknownRows,
+    long EstimatedUnknownBytes,
+    bool EstimatesComplete,
+    string Reason,
+    IReadOnlyList<SnapshotEstimate> SnapshotEstimates);
 
 public sealed record PartitionSnapshotCandidate(
     string PartitionName,
@@ -1952,7 +2264,10 @@ public sealed record PartitionSnapshotCandidate(
     IReadOnlyList<string> Reasons,
     long EstimatedRows,
     long EstimatedBytes,
-    double EstimatedRowShare);
+    double EstimatedRowShare)
+{
+    public bool EstimateIsKnown { get; init; } = true;
+}
 
 public sealed record SnapshotPartitionRewritePlan(
     string PartitionName,
@@ -1968,7 +2283,19 @@ public sealed record SnapshotPartitionRewritePlan(
     long EstimatedPurgeRows,
     long EstimatedPurgeBytes,
     bool CanExecute,
-    string Reason);
+    string Reason)
+{
+    public long EstimatedTotalRows { get; init; } = LiveTuples;
+    public long EstimatedRetainBytes { get; init; } = Math.Max(0, TotalBytes - EstimatedPurgeBytes);
+    public long EstimatedCandidatePurgeRows { get; init; } = EstimatedPurgeRows;
+    public long EstimatedCandidatePurgeBytes { get; init; } = EstimatedPurgeBytes;
+    public long EstimatedUnknownRows { get; init; }
+    public long EstimatedUnknownBytes { get; init; }
+    public double EstimatedStatsCoverage { get; init; } = 1;
+    public bool EstimatesComplete { get; init; } = true;
+    public string EstimateReason { get; init; } = "snapshot statistics supplied by caller";
+    public IReadOnlyList<long> UnknownSnapshotIds { get; init; } = [];
+}
 
 public sealed record SnapshotPartitionRewritePreflight(
     bool CanExecute,
@@ -2167,6 +2494,14 @@ public sealed class SnapshotRetentionPolicy
             .Select(Classify)
             .ToArray();
     }
+
+    public IReadOnlyList<long> ProtectedSnapshotIds =>
+        _activeSnapshotIds
+            .Concat(_projectionSourceSnapshotIds)
+            .Concat(_rollbackSnapshotIds)
+            .Distinct()
+            .OrderByDescending(snapshotId => snapshotId)
+            .ToArray();
 
     public SnapshotRetentionDecision Classify(long snapshotId)
     {

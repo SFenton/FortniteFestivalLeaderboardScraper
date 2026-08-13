@@ -28,6 +28,7 @@ public sealed class DatabaseMaintenanceDryRunReporterTests
         Assert.Contains("rollback completed snapshot", decisions[749].Reasons);
         Assert.Equal(SnapshotCleanupAction.PurgeCandidate, decisions[746].Action);
         Assert.Contains("older completed scrape outside rollback window", decisions[746].Reasons);
+        Assert.Equal([750, 749], policy.ProtectedSnapshotIds);
     }
 
     [Fact]
@@ -370,6 +371,184 @@ public sealed class DatabaseMaintenanceDryRunReporterTests
         Assert.Equal([749, 720], plan.KeepSnapshotIds);
         Assert.Equal([720], plan.BlockedSnapshotIds);
         Assert.Equal([746], plan.PurgeSnapshotIds);
+        Assert.Equal(70, plan.EstimatedRetainRows);
+        Assert.Equal(700, plan.EstimatedRetainBytes);
+        Assert.Equal(30, plan.EstimatedPurgeRows);
+        Assert.Equal(300, plan.EstimatedPurgeBytes);
+        Assert.Equal(plan.EstimatedTotalRows, plan.EstimatedRetainRows + plan.EstimatedPurgeRows);
+        Assert.Equal(plan.TotalBytes, plan.EstimatedRetainBytes + plan.EstimatedPurgeBytes);
+    }
+
+    [Fact]
+    public void SnapshotRewritePlan_FailsClosedWhenProtectedIdIsMissingFromMcv()
+    {
+        var partition = new SnapshotPartitionStats(
+            "leaderboard_entries_snapshot_pro_drums",
+            TotalBytes: 1_000,
+            HeapBytes: 700,
+            IndexBytes: 300,
+            LiveTuples: 100,
+            NDistinct: 2,
+            EstimatedStatsCoverage: 0.5,
+            SnapshotEstimates: [new SnapshotEstimate(746, 0.5, 50, 500)])
+        {
+            PlannerEstimatedRows = 100,
+            EstimatedUnknownRows = 50,
+            EstimatedUnknownBytes = 500,
+            EstimatesComplete = false,
+            EstimateReason = "protected current snapshot is absent from MCV statistics",
+            ProtectedSnapshotIdsMissingFromStats = [750],
+        };
+        var decisions = new[]
+        {
+            new SnapshotRetentionDecision(750, SnapshotCleanupAction.Keep, ["active snapshot state"]),
+            new SnapshotRetentionDecision(746, SnapshotCleanupAction.PurgeCandidate, ["older completed scrape outside rollback window"]),
+        };
+        var candidates = InvokePartitionSnapshotCandidates(
+            [partition],
+            decisions.ToDictionary(decision => decision.SnapshotId));
+
+        var plan = Assert.Single(InvokeSnapshotRewritePlans([partition], decisions, candidates));
+
+        Assert.False(plan.CanExecute);
+        Assert.Equal([750], plan.KeepSnapshotIds);
+        Assert.Equal([750], plan.UnknownSnapshotIds);
+        Assert.Equal(100, plan.EstimatedRetainRows);
+        Assert.Equal(1_000, plan.EstimatedRetainBytes);
+        Assert.Equal(0, plan.EstimatedPurgeRows);
+        Assert.Equal(0, plan.EstimatedPurgeBytes);
+        Assert.Equal(50, plan.EstimatedCandidatePurgeRows);
+        Assert.Equal(500, plan.EstimatedCandidatePurgeBytes);
+        Assert.Equal(50, plan.EstimatedUnknownRows);
+        Assert.Equal(500, plan.EstimatedUnknownBytes);
+        Assert.Equal(plan.EstimatedTotalRows, plan.EstimatedRetainRows + plan.EstimatedPurgeRows);
+        Assert.Equal(plan.TotalBytes, plan.EstimatedRetainBytes + plan.EstimatedPurgeBytes);
+        Assert.Contains("protected snapshot id estimate", plan.Reason);
+    }
+
+    [Fact]
+    public void SnapshotEstimateDistribution_ReconcilesUnknownFrequencyRemainder()
+    {
+        var distribution = DatabaseMaintenanceDryRunReporter.EstimateSnapshotDistribution(
+            "{750,746}",
+            "{0.4,0.3}",
+            liveTuples: 100,
+            relationTuples: 100,
+            nDistinct: 3,
+            totalBytes: 1_000);
+
+        Assert.False(distribution.EstimatesComplete);
+        Assert.Equal(100, distribution.EstimatedTotalRows);
+        Assert.Equal(30, distribution.EstimatedUnknownRows);
+        Assert.Equal(300, distribution.EstimatedUnknownBytes);
+        Assert.Equal(
+            distribution.EstimatedTotalRows,
+            distribution.SnapshotEstimates.Sum(estimate => estimate.EstimatedRows)
+                + distribution.EstimatedUnknownRows);
+        Assert.Equal(
+            1_000,
+            distribution.SnapshotEstimates.Sum(estimate => estimate.EstimatedBytes)
+                + distribution.EstimatedUnknownBytes);
+        Assert.Contains("outside MCV coverage", distribution.Reason);
+    }
+
+    [Fact]
+    public void SnapshotEstimateDistribution_AcceptsCompleteMixedKeepPurgeStatistics()
+    {
+        var distribution = DatabaseMaintenanceDryRunReporter.EstimateSnapshotDistribution(
+            "{750,746}",
+            "{0.6,0.4}",
+            liveTuples: 100,
+            relationTuples: 100,
+            nDistinct: 2,
+            totalBytes: 1_000);
+
+        Assert.True(distribution.EstimatesComplete);
+        Assert.Equal(0, distribution.EstimatedUnknownRows);
+        Assert.Equal(0, distribution.EstimatedUnknownBytes);
+        Assert.Equal(100, distribution.SnapshotEstimates.Sum(estimate => estimate.EstimatedRows));
+        Assert.Equal(1_000, distribution.SnapshotEstimates.Sum(estimate => estimate.EstimatedBytes));
+    }
+
+    [Fact]
+    public void SnapshotEstimateDistribution_RejectsStaleRowEstimateSources()
+    {
+        var distribution = DatabaseMaintenanceDryRunReporter.EstimateSnapshotDistribution(
+            "{750,746}",
+            "{0.6,0.4}",
+            liveTuples: 100,
+            relationTuples: 1_000,
+            nDistinct: 2,
+            totalBytes: 1_000);
+
+        Assert.False(distribution.EstimatesComplete);
+        Assert.Equal(1_000, distribution.EstimatedTotalRows);
+        Assert.Contains("n_live_tup and reltuples differ", distribution.Reason);
+    }
+
+    [Fact]
+    public void SnapshotEstimateDistribution_AllowsLaggingZeroLiveTupleStat()
+    {
+        var distribution = DatabaseMaintenanceDryRunReporter.EstimateSnapshotDistribution(
+            "{750,746}",
+            "{0.6,0.4}",
+            liveTuples: 0,
+            relationTuples: 100,
+            nDistinct: 2,
+            totalBytes: 1_000);
+
+        Assert.True(distribution.EstimatesComplete);
+        Assert.Equal(100, distribution.EstimatedTotalRows);
+    }
+
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(-0.20, false)]
+    [InlineData(-0.02, true)]
+    public void SnapshotEstimateDistribution_HandlesZeroAndNegativeNDistinct(
+        double nDistinct,
+        bool expectedComplete)
+    {
+        var distribution = DatabaseMaintenanceDryRunReporter.EstimateSnapshotDistribution(
+            "{750,746}",
+            "{0.6,0.4}",
+            liveTuples: 100,
+            relationTuples: 100,
+            nDistinct,
+            totalBytes: 1_000);
+
+        Assert.Equal(expectedComplete, distribution.EstimatesComplete);
+    }
+
+    [Fact]
+    public void SnapshotEstimateDistribution_RejectsMismatchedMcvArrays()
+    {
+        var distribution = DatabaseMaintenanceDryRunReporter.EstimateSnapshotDistribution(
+            "{750,746}",
+            "{1.0}",
+            liveTuples: 100,
+            relationTuples: 100,
+            nDistinct: 2,
+            totalBytes: 1_000);
+
+        Assert.False(distribution.EstimatesComplete);
+        Assert.Contains("lengths differ", distribution.Reason);
+    }
+
+    [Fact]
+    public void SnapshotEstimateDistribution_AllowsTrulyEmptyPartition()
+    {
+        var distribution = DatabaseMaintenanceDryRunReporter.EstimateSnapshotDistribution(
+            "{}",
+            "{}",
+            liveTuples: 0,
+            relationTuples: 0,
+            nDistinct: 0,
+            totalBytes: 8_192);
+
+        Assert.True(distribution.EstimatesComplete);
+        Assert.Equal(0, distribution.EstimatedTotalRows);
+        Assert.Empty(distribution.SnapshotEstimates);
     }
 
     [Fact]
@@ -437,6 +616,19 @@ public sealed class DatabaseMaintenanceDryRunReporterTests
         Assert.NotNull(method);
 
         return Assert.IsAssignableFrom<IReadOnlyList<SnapshotPartitionRewritePlan>>(method.Invoke(null, [partitions, decisions, candidates]));
+    }
+
+    private static IReadOnlyList<PartitionSnapshotCandidate> InvokePartitionSnapshotCandidates(
+        IReadOnlyList<SnapshotPartitionStats> partitions,
+        IReadOnlyDictionary<long, SnapshotRetentionDecision> decisions)
+    {
+        var method = typeof(DatabaseMaintenanceDryRunReporter).GetMethod(
+            "BuildPartitionSnapshotCandidates",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+
+        return Assert.IsAssignableFrom<IReadOnlyList<PartitionSnapshotCandidate>>(
+            method.Invoke(null, [partitions, decisions]));
     }
 
     private static bool MethodBodyContainsCall(MethodInfo method, MethodInfo target)

@@ -451,7 +451,7 @@ public sealed class DatabaseRetentionMaintenanceService : IDatabaseRetentionMain
         if (options.SnapshotRetentionMinimumEstimatedPurgeBytes > 0 && plan.EstimatedPurgeBytes < options.SnapshotRetentionMinimumEstimatedPurgeBytes)
             return false;
 
-        var estimatedRetainedBytes = Math.Max(0, plan.TotalBytes - plan.EstimatedPurgeBytes);
+        var estimatedRetainedBytes = plan.EstimatedRetainBytes;
         if (options.SnapshotRetentionMaximumEstimatedRetainedBytes > 0 && estimatedRetainedBytes > options.SnapshotRetentionMaximumEstimatedRetainedBytes)
             return false;
 
@@ -480,7 +480,7 @@ public sealed class DatabaseRetentionMaintenanceService : IDatabaseRetentionMain
                 return new SnapshotRetentionFreeSpaceCheck(false, $"blocked: cannot resolve filesystem root for {path}");
 
             var drive = new DriveInfo(root);
-            var estimatedRetainedBytes = Math.Max(0, plan.TotalBytes - plan.EstimatedPurgeBytes);
+            var estimatedRetainedBytes = plan.EstimatedRetainBytes;
             var requiredBytes = checked(options.SnapshotRetentionMinimumFreeBytes + estimatedRetainedBytes);
             return drive.AvailableFreeSpace >= requiredBytes
                 ? SnapshotRetentionFreeSpaceCheck.Pass

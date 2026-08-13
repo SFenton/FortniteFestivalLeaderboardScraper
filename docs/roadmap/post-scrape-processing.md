@@ -2,7 +2,7 @@
 status: roadmap
 owner: worker
 last_verified: 2026-08-12
-last_verified_commit: 042f9686
+last_verified_commit: 9f343376
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -43,8 +43,9 @@ update_triggers:
   than inferred phase cost. The first BandMaintenance target is current
   projection refresh.
 - Treat storage capacity as an urgent independent safety lane. The existing
-  report-only snapshot-retention planner must be repaired and its exact reclaim
-  estimates adjudicated before any rewrite or reclaim proposal.
+  report-only snapshot-retention planner must fail closed on incomplete
+  statistics, and exact reclaim/workspace evidence must pass the current gate
+  before any rewrite proposal.
 
 Implementation is approved after this plan is rendered to the local autonomous
 agent outbox. All implementation, evaluation, deployment, and promotion
@@ -762,23 +763,33 @@ No wall-clock benefit is forecast until those gates are measured.
 
 Each iteration below is a separate branch/PR.
 
-### Parallel storage evidence task
+### Parallel storage and reclaim evidence
 
-**Repair and adjudicate the read-only snapshot retention plan**
+**Establish an exact executable snapshot-retention plan**
 
-- The report-only planner ran after scrape `1291` in `85 ms` and returned nine
-  plans, but every plan reported zero estimated retained rows despite explicit
-  keep/protected IDs.
-- Repair or explain that contradiction before treating purge rows/bytes as
-  executable reclaim evidence.
-- Re-run under live-safety checks and persist exact candidate partitions,
-  protected snapshot IDs/publications, retained/purge rows and bytes, required
-  rewrite workspace, rollback objects, query/runtime cost, and the current
-  `500 GiB` free-space gate.
+- Planner-estimator correctness is `continuous-safe`: it changes only bounded
+  read-only evidence and fail-closed eligibility, and the live harness can
+  validate it without a scrape or deployment.
+- Use only plans with complete protected-ID coverage, reconciled row/byte
+  totals, and `CanExecute=true`.
+- Current publication-`1293` catalog evidence reconciles but all nine plans are
+  blocked: protected IDs `1293` and `1291` are absent from MCV statistics,
+  `n_live_tup` and `reltuples` are stale/inconsistent, and unknown MCV
+  remainder is material.
+- Informational candidate purge estimates are about `2.52` billion rows /
+  `1.46 TB`; executable purge estimates remain zero and full retained workspace
+  is about `2.61 TB`.
+- When catalog statistics are stale or partial, choose and validate a bounded
+  evidence source: maintenance-window statistics refresh with adequate target,
+  durable per-snapshot rollup metadata, or exact partition counts under a
+  separately approved load window.
+- Persist exact candidate partitions, protected snapshot IDs/publications,
+  retained/purge rows and bytes, required rewrite workspace, rollback objects,
+  query/runtime cost, and the current `500 GiB` free-space gate.
 - Do not enable rewrite, lower the 500 GiB gate, delete rows/indexes, repack, or
   move data.
-- Use the result to design capacity recovery. Execution remains
-  `parity-gated-maintenance` and currently blocked by free-space requirements.
+- Execution remains `parity-gated-maintenance` and blocked until statistics,
+  exact-count, parity, and workspace evidence all agree.
 
 ### PR-2: durable progress and additive API
 
@@ -957,8 +968,7 @@ metrics. Correctness/publication differences reject regardless of speed.
 | Gap | Evidence class | Exact next probe | Gate |
 |---|---|---|---|
 | Current band projection rewrite feasibility | Unknown | Bounded plan/same-input checksum probe for the `53,543` considered / `8,020` refreshed scope path | Separate one-variable A/B; exact projection/publication parity; no >10% resource regression |
-| Exact snapshot reclaim plan | Unknown | Repair zero-retained-row arithmetic, rerun report-only planning, and persist exact plans/bytes/protected IDs | No rewrite or gate reduction |
-| Repaired planner safety/runtime | Unknown | Repeat CPU/IO/query/lock observation after the arithmetic repair | Pause if public health or scrape continuity degrades |
+| Exact snapshot reclaim plan | Unknown | Establish complete protected-ID row distribution and exact workspace evidence from a bounded validated source | No rewrite or gate reduction |
 | Improvement-notification gaps | Unknown | Record skip reasons and inspect markers/coverage on recent publications | Do not call the phase starved or removable without evidence |
 | Best-effort skip/starvation | Unknown | Compare requested phases, outcomes, skip reasons, pressure decisions, and feature conditions | Required before dead-path PR |
 | Projection diff ratios | Unknown | Persist aggregate would-insert/update/delete metrics | Required before merge strategy |
@@ -983,4 +993,5 @@ This tandem plan is accepted for implementation after local outbox rendering.
   the accepted timing IDs and publication behavior.
 - Current-projection optimization is a separate future full-scrape A/B; it
   cannot be combined with PR-2 progress/API work.
-- Snapshot-retention planner repair remains a parallel read-only evidence task.
+- Snapshot-retention execution remains a separate parity- and capacity-gated
+  maintenance task.

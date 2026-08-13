@@ -2,12 +2,14 @@
 status: canonical
 owner: data
 last_verified: 2026-08-12
-last_verified_commit: 042f9686
+last_verified_commit: 9f343376
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/InstrumentDatabase.cs
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
+  - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
+  - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
   - FSTService/FeatureOptions.cs
   - deploy/postgres.Dockerfile
 update_triggers:
@@ -93,15 +95,53 @@ size was about `411` bytes in total. Whole-phase reconciliation left only
 `257 ms` (`0.00324%`) outside the timed subphases, a conservative upper bound
 for timing-persistence overhead and well below the `1%` acceptance gate.
 
+## Snapshot retention planning evidence
+
+`DatabaseMaintenanceDryRunReporter` estimates partition-local keep-only
+rewrites from bounded PostgreSQL catalogs and `pg_stats`; report-only planning
+does not scan snapshot partitions.
+
+The estimator is fail-closed:
+
+- retained rows include both policy `Keep` and `Blocked` snapshot IDs;
+- active, current-projection-source, and rollback-protected IDs are present in
+  every partition plan even when absent from `most_common_vals`;
+- positive `n_distinct`, negative fraction-of-row `n_distinct`, zero/unknown
+  values, MCV/frequency length, frequency remainder, and the drift between
+  `n_live_tup` and `reltuples` all contribute to statistics safety;
+- MCV row/byte estimates plus an explicit unknown remainder reconcile to one
+  conservative row total and the relation's total bytes. Floor-rounding
+  residual is retained, never purged;
+- complete statistics allow at most `max(1, MCV count)` residual rows and
+  `max(4096 bytes, MCV count)` residual bytes from floor rounding, and require
+  nonzero `n_live_tup` versus `reltuples` drift to stay within `10%`;
+- if protected estimates are missing or statistics are partial, stale, or
+  inconsistent, executable purge rows/bytes are zero, retained/workspace
+  estimates become the full partition, and `CanExecute=false`;
+- informational candidate-purge estimates remain separate from executable
+  estimates.
+
+A truly empty partition may report zero retained rows, but it is not a rewrite
+candidate. Exact row scans remain confined to the separately guarded execution
+preflight and are never introduced into report-only planning.
+
+The live read-only candidate on publication `1293` completed in `94 ms`
+without locks or public degradation. All nine partitions contained protected
+IDs `1293` and `1291` that were absent from MCV statistics, so every plan
+failed closed. Estimated rows and bytes reconciled, but conservative retained
+workspace became the full `2,607,232,278,528` bytes; executable purge
+rows/bytes were zero. The separately labeled informational candidate was about
+`2.52` billion rows / `1.46 TB`, with about `392 GB` outside MCV coverage.
+Those values are not reclaim proof.
+
 ## Storage and maintenance rules
 
 - Production data, scratch, exports, repacks, and migration artifacts stay on
   the 4 TB FST drive unless the operator explicitly overrides the rule.
-- After scrape `1293`, the capacity guard reported about `254.5 GB` free,
-  `94%` filesystem use, and `2.11` projected headroom days. Storage recovery
-  remains urgent. The report-only retention planner still requires repair and
-  exact reclaim adjudication; no retention, rewrite, or gate reduction is
-  authorized by the timing acceptance.
+- The current read-only retention observation reported about `258.8 GB` free,
+  `94%` filesystem use, and `2.14` projected headroom days. Storage recovery
+  remains urgent. Trustworthy report-only planning does not authorize
+  retention, rewrite, or reduction of the `500 GiB` free-space gate.
 - Destructive maintenance requires exact affected objects, parity evidence,
   rollback, live preflight, and a bounded maintenance window.
 - Schema initialization is idempotent but is not a substitute for a bounded
