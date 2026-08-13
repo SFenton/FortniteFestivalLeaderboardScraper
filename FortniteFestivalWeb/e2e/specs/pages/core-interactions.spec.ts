@@ -62,7 +62,7 @@ test('Song detail paths and chart controls are browser-interactive', async ({ pa
   await expect(
     dialog.getByRole('img', { name: 'Solo_PeripheralCymbals' }).first(),
   ).toBeVisible();
-  await expect(dialog.getByText('2: 1 beats after NN (R)', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('2: 1 beats after NN (R)', { exact: true })).toHaveCount(0);
   await expect(dialog.getByText('20.99', { exact: true })).toBeVisible();
   await dialog.getByRole('button', { name: 'Close' }).click();
   await expect(dialog).toBeHidden();

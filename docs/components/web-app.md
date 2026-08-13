@@ -144,9 +144,10 @@ client aligned.
 
 The path modal can display the generated PNG or a text table. Text mode renders
 one row per activation, not one row per optional start note. Schema-v2
-artifacts supply authoritative per-activation instructions and trigger
-metadata; legacy artifacts use their one-to-one `pathSummary` instructions and
-show unavailable legacy metrics explicitly. See
+artifacts supply authoritative trigger metadata for the fret cue, beat, time,
+Overdrive, and score columns. Raw CHOpt instruction strings remain in the JSON
+contract for parity validation but are not shown in the modal; legacy artifacts
+show unavailable metrics explicitly. See
 [Path generation](path-generation.md).
 
 The selector exposes Lead, Bass, Drums, Tap Vocals, Pro Lead, Pro Bass,

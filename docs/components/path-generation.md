@@ -85,8 +85,9 @@ The publication-bound routes are:
 - `GET /api/paths/{songId}/{instrument}/{difficulty}/data` for JSON.
 
 An optional `generationId` query must equal the song's current generation.
-The browser's Text view renders exactly one row per activation, using schema-v2
-structured fields when present and the legacy `pathSummary` fallback otherwise.
+The browser's Text view renders exactly one row per activation. It shows the
+structured fret cue, beat, time, Overdrive, and score fields without exposing
+raw CHOpt instruction notation.
 
 `POST /api/admin/regenerate-paths` is protected by `X-API-Key` and requires one
 `songId`. `force=true` is for bounded canaries. Catalogue regeneration must
