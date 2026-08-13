@@ -160,9 +160,12 @@ Suggestions are locally generated from the current catalog and selected
 player/band score source; they are not paginated remote data and therefore do
 not use `useInfiniteQuery`. `useSuggestions` owns the generator, navigation
 cache, and batch commit guard. A lightweight per-identity scroll map is shared
-with the persistent shell; a new generator resets only its own stale snapshot.
-The shell loads the restoration controller through the existing lazy
-Suggestions module and restores on route return, profile/layout ownership
+with the persistent shell. Because generated content caches one identity,
+creating a replacement generator resets its identity and invalidates snapshots
+for discarded identities before the shell can restore them. Same-identity
+route and layout remounts preserve their snapshot because they reuse the
+generator. The shell loads the restoration controller through the existing
+lazy Suggestions module and restores on route return, profile/layout ownership
 changes, and song-detail Back navigation. Pages without a restoration key no
 longer share an anonymous fallback cache.
 

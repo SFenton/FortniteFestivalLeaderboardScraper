@@ -77,6 +77,19 @@ describe('Suggestions scroll restoration', () => {
     });
   });
 
+  it('invalidates snapshots for discarded generator identities', () => {
+    initializeSuggestionsScrollState('solo:discarded');
+    updateSuggestionsScrollY('solo:discarded', 1_200);
+    markCurrentSuggestionsScrollRestorable();
+
+    initializeSuggestionsScrollState('solo:other');
+    expect(getSuggestionsScrollRestoreState('solo:discarded')).toEqual({
+      matches: false,
+      restorable: false,
+      scrollY: 0,
+    });
+  });
+
   it('keeps a clamped target pending until content can represent it', () => {
     initializeSuggestionsScrollState('solo:materializing');
     updateSuggestionsScrollY('solo:materializing', 5_000);
