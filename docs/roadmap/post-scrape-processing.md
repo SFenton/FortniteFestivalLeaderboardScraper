@@ -1,8 +1,8 @@
 ---
 status: roadmap
 owner: worker
-last_verified: 2026-08-12
-last_verified_commit: 9f343376
+last_verified: 2026-08-13
+last_verified_commit: 3ff9cbc8
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -10,6 +10,8 @@ sources:
   - FSTService/Scraping/RankingsCalculator.cs
   - FSTService/Scraping/ScrapeProgressTracker.cs
   - FSTService/Scraping/WorkerStatusPublisher.cs
+  - FSTService/Scraping/PhaseProgressCatalog.cs
+  - FSTService/Scraping/DurablePhaseProgressSink.cs
   - FSTService/Scraping/OnlineBoundedPageWriter.cs
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -93,10 +95,10 @@ resolved through repository and bounded runtime evidence.
 | Historical correctness and publication safety | Great: candidate isolation, exact catalog binding, complete-scope manifests, critical-phase gates, atomic generation publication, and fail-closed reads are strong | High |
 | Test posture | Good: extensive Postgres, worker, API, publication, web, and browser coverage; CI enforces 94% service line coverage | High |
 | Modularity | Okay: phases are testable, but `PostScrapeOrchestrator.cs` is 2,748 lines and still contains dormant or PostgreSQL-no-op paths | High |
-| Live progress observability | Poor: worker-local progress is empty in the API process and the durable summary is too lossy | High |
+| Live progress observability | Okay: normalized durable phase attempts and additive service-info v2 fields now bridge worker progress into the API process; the Settings UI still consumes legacy presentation | High |
 | Performance | Poor: recent full-scrape p50 is about 8.58 hours and recorded post-processing consumes about 5.6 hours on scrape 1290 | High |
 | Storage sustainability | Poor and urgent: the database is about 3.3 TB on a 3.6 TB drive with roughly 299 GB free | High |
-| Overall | Correctness-first and operationally dependable, but expensive and insufficiently observable | High |
+| Overall | Correctness-first and operationally dependable, with a durable backend progress contract now available but substantial performance, storage, replay, and UI work unresolved | High |
 
 ## Evidence rules
 
@@ -398,119 +400,6 @@ Default rejection is any correctness/publication difference or a sustained
 greater-than-10% regression in API p95, phase wall clock, CPU, memory, WAL,
 temp bytes, or disk I/O. Observability-only work targets less than 1% overhead.
 
-## Durable progress contract
-
-### Decision
-
-Use a hybrid model:
-
-1. `service_worker_status.current_operation_json` remains the backward-compatible
-   liveness/current-summary surface.
-2. A normalized phase-attempt ledger owns durable phase/subphase progress,
-   attempts, restart history, and ETA training data.
-3. `scrape_phase_outcomes` remains the terminal publication-critical ledger.
-4. `scrape_phase_timings` remains completed subphase/resource evidence.
-
-Liveness heartbeat must never advance the phase progress timestamp.
-
-### Stable operation model
-
-```json
-{
-  "contractVersion": 2,
-  "operationId": "scrape:1291",
-  "operationType": "leaderboard_update",
-  "status": "running",
-  "scrapeId": 1291,
-  "phasePlanVersion": 1,
-  "heartbeatAt": "2026-08-12T04:50:00Z",
-  "lastProgressAt": "2026-08-12T04:49:57Z",
-  "currentPhase": {
-    "id": "post.band_maintenance",
-    "ordinal": 9,
-    "plannedCount": 22,
-    "status": "running",
-    "units": {
-      "kind": "scope",
-      "completed": 1200,
-      "total": 4000,
-      "totalIsFinal": true
-    },
-    "percent": 30.0
-  },
-  "currentSubphase": {
-    "id": "post.band_maintenance.current_projection"
-  },
-  "overall": {
-    "percent": 61.4,
-    "kind": "estimated",
-    "modelVersion": 1
-  },
-  "eta": {
-    "p50Seconds": 5100,
-    "lowSeconds": 3900,
-    "highSeconds": 8100,
-    "confidence": "medium",
-    "sampleCount": 7
-  }
-}
-```
-
-### Percentage semantics
-
-- Exact phase/subphase percent is emitted only when the denominator is final.
-- Dynamically discovered or monolithic work is `indeterminate`; never display
-  a fabricated zero.
-- A total that is still being discovered exposes counts and
-  `totalIsFinal=false`.
-- Overall percent is explicitly an estimate based on a phase plan whose
-  weights are fixed when the operation begins.
-- A phase must be split into measurable batches before claiming exact
-  incremental completion.
-
-### ETA semantics
-
-- ETA is never labelled exact.
-- Countable phases blend current throughput with comparable successful history.
-- Monolithic phases use historical duration ranges until rewritten into
-  countable units.
-- Future-phase ETA uses the operation's fixed plan.
-- Failed, cancelled, provider-anomalous, or materially different configuration
-  runs are excluded.
-- Confidence depends on sample count and variance.
-- Hide ETA when evidence is insufficient.
-
-### Persistence and cadence
-
-The later progress PR will define one row per
-`(scrape_id, phase_id, attempt)` with stable IDs, status, parent/ordinal,
-units, final-denominator flag, start/progress/heartbeat/end timestamps,
-build/config fingerprints, and terminal error.
-
-- Write immediately on transition, retry, failure, cancellation, and
-  completion.
-- Coalesce active progress writes, initially no more than once per five
-  seconds and only after meaningful progress.
-- Measure actual WAL/call overhead before fixing the percentage threshold.
-- Worker liveness remains the 15-second heartbeat.
-- A new worker marks the prior running attempt interrupted and creates the
-  next attempt if replay/resume permits it.
-- The no-progress watchdog consumes `last_progress_at`; liveness consumes
-  `last_heartbeat_at`; active worker-owned SQL continues to defer false
-  abandonment.
-
-### Browser delivery
-
-- Extend `/api/service-info` additively; do not require a new endpoint in the
-  first progress iteration.
-- Keep current fields until every consumer migrates.
-- Keep the existing shared React Query request and single-flight behavior.
-- Poll about every five seconds while Settings is visible and less often in a
-  background tab.
-- Conditional requests or ETags may reduce unchanged payload transfer.
-- A progress WebSocket message is optional later and must be rate-limited; it
-  is not required for the first implementation.
-
 ## Settings simplification
 
 Settings will use three primary visual groups:
@@ -557,19 +446,16 @@ See
 
 ### Migration sequence
 
-1. Restore trustworthy phase timing bootstrap and instrument dominant work.
-2. Define stable phase IDs/descriptors and a progress sink in the existing
-   FSTService assembly.
-3. Convert orchestration to an explicit dependency/resource graph without
+1. Convert orchestration to an explicit dependency/resource graph without
    changing execution order.
-4. Add guarded phase replay to the existing FSTService one-shot host.
-5. Prove identical phase inputs/outputs and restart behavior in isolated
+2. Add guarded phase replay to the existing FSTService one-shot host.
+3. Prove identical phase inputs/outputs and restart behavior in isolated
    PostgreSQL.
-6. Extract a static contracts/implementation assembly only after dependency
+4. Extract a static contracts/implementation assembly only after dependency
    direction is clean or a second consumer needs it.
-7. Consider a separate runner project/process only after the existing host is
+5. Consider a separate runner project/process only after the existing host is
    a measured obstacle.
-8. Reconsider service extraction only if one independently scalable lifecycle
+6. Reconsider service extraction only if one independently scalable lifecycle
    has measured value greater than versioning, operations, and distributed
    consistency cost.
 
@@ -791,22 +677,6 @@ Each iteration below is a separate branch/PR.
 - Execution remains `parity-gated-maintenance` and blocked until statistics,
   exact-count, parity, and workspace evidence all agree.
 
-### PR-2: durable progress and additive API
-
-**Class:** `full-scrape-ab` for worker/schema deployment, although implementation
-and isolated validation proceed continuously.
-
-- stable phase IDs/descriptors;
-- normalized phase-attempt ledger;
-- rate-limited progress sink;
-- current-operation JSON summary bridge;
-- additive v2 service-info fields and shared TypeScript contract;
-- liveness/progress separation;
-- restart/interrupted/resumed attempt behavior;
-- ETA plan/history scaffolding without false precision;
-- watchdog compatibility;
-- no UI dependency for backend acceptance.
-
 ### PR-3: Settings progress experience
 
 **Class:** `continuous-safe`
@@ -989,9 +859,9 @@ This tandem plan is accepted for implementation after local outbox rendering.
 - Approval of this roadmap is not authorization to bypass the current
   live-safety, parity, publication, provider, storage, rollback, or maintenance
   gate for any later action.
-- PR-2 remains the next progress/API implementation boundary and must preserve
-  the accepted timing IDs and publication behavior.
+- PR-3 remains the next progress/UI boundary and must consume the additive v2
+  contract without removing version-1 fallback behavior.
 - Current-projection optimization is a separate future full-scrape A/B; it
-  cannot be combined with PR-2 progress/API work.
+  cannot be combined with PR-3 Settings work.
 - Snapshot-retention execution remains a separate parity- and capacity-gated
   maintenance task.

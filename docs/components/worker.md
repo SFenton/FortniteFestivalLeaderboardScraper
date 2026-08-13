@@ -1,13 +1,15 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-12
-last_verified_commit: 9f343376
+last_verified: 2026-08-13
+last_verified_commit: 3ff9cbc8
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
+  - FSTService/Scraping/PhaseProgressCatalog.cs
+  - FSTService/Scraping/DurablePhaseProgressSink.cs
   - FSTService/HostedWorkerMode.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
   - deploy/config/fstworker-role.env
@@ -123,8 +125,7 @@ phase exception or cancellation and cannot change candidate publication.
 cancellation. Row/scope metrics are null on exception or cancellation because
 partial work may have occurred; a successful no-work subphase records zero.
 BandExtraction membership/configuration work is not part of these
-BandMaintenance timings. Durable live progress, API fields, and Settings
-changes remain future roadmap work.
+BandMaintenance timings.
 
 Corrected live candidate scrape `1293` accepted this contract. It emitted
 exactly the three successful rows above, with no extras, and published normally.
@@ -134,6 +135,39 @@ timing persistence. `current_projection_refresh` dominated at `6,049,933 ms`
 (`76.20%`), followed by prune at `1,144,264 ms` and search refresh at
 `745,473 ms`. The current refresh considered `53,543` scopes, selected `8,020`,
 wrote `14,179,946` rows, and deleted `14,189,655`.
+
+## Durable phase progress
+
+Plan `fst.scrape-plan.v2` assigns 28 test-locked IDs to the existing
+leaderboard scrape, named post-scrape phases, and publication commit. The
+catalog does not add a DAG, reorder work, or replace legacy labels; descriptors
+carry both the stable ID and the current human-readable phase name.
+
+The worker writes additive `scrape_phase_attempts` rows:
+
+- start, subphase transition, retry/new attempt, failure, cancellation, and
+  completion persist immediately;
+- active counters persist only after meaningful advancement and at most once
+  per five seconds;
+- the 15-second liveness heartbeat updates `heartbeat_at` without advancing
+  `last_progress_at`;
+- exact `phase_percent` exists only when the denominator is final; totals that
+  grow through `AddPhaseItems` remain indeterminate until explicitly finalized;
+- a new worker instance marks orphaned running attempts `interrupted` before
+  creating its attempt;
+- persistence failures log a warning and do not replace phase exceptions,
+  cancellation, or publication decisions.
+
+One current-operation bridge preserves all version-1 JSON fields and adds
+contract version 2 identifiers, units, exact phase percent, conservative
+overall/ETA metadata, heartbeat, and last-progress timestamps. Overall progress
+starts as `indeterminate`. ETA is omitted unless at least five successful
+same-plan/same-config durations have the same final units kind and a workload
+total within 10%, then pass the `0.35` coefficient-of-variation gate. Emitted
+ranges are monotonic and carry model version, confidence, and sample count.
+The configuration fingerprint covers an allowlist of phase, network,
+persistence, publication, ranking, notification, and retention controls; it
+never stores credentials or resolved provider endpoints.
 
 ## Publication safety
 

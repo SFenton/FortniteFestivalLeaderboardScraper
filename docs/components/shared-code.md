@@ -1,13 +1,14 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-11
-last_verified_commit: 453fd9b6
+last_verified: 2026-08-13
+last_verified_commit: 3ff9cbc8
 sources:
   - FortniteFestival.Core/FortniteFestival.Core.csproj
   - FortniteFestival.Core/Config/InstrumentType.cs
   - packages/core/package.json
   - packages/core/src/index.ts
+  - packages/core/src/api/serverTypes.ts
   - packages/theme/src/index.ts
   - packages/ui-utils/src/index.ts
 update_triggers:
@@ -43,6 +44,11 @@ dependencies. Package exports are the public boundary.
 API types in `packages/core/src/api/serverTypes.ts` are manually mirrored from
 the service contract; they are not generated from OpenAPI. The HTTP client
 lives in `FortniteFestivalWeb/src/api/client.ts`.
+
+`ServiceInfoResponse` includes the additive durable-progress v2 phase-plan,
+attempt, units, exact-phase-percent, conservative overall/ETA, heartbeat, and
+last-progress fields. They remain optional in TypeScript so an accepted older
+service response stays consumable during rolling deployment.
 
 When a service DTO, route payload, feature response, or publication response
 changes, review all three surfaces rather than type-asserting around a mismatch.

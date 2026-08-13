@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-11
-last_verified_commit: 453fd9b6
+last_verified: 2026-08-13
+last_verified_commit: 3ff9cbc8
 sources:
   - FSTService/Program.cs
   - FSTService/HostedWorkerMode.cs
@@ -76,3 +76,12 @@ scrape lifecycle. Publication-bound routes declare the generation surfaces they
 require. Read pinning is permitted only when configuration is enabled and all
 required surfaces are ready; stale or unavailable generations fail explicitly
 instead of silently reading candidate state.
+
+## Operational progress
+
+`GET /api/service-info` remains operational-live and exposes additive contract
+version 2 phase-plan, normalized attempt, units, progress, ETA-confidence, and
+separate heartbeat/last-progress fields. It preserves the version-1 labels and
+summary fields for rolling worker and browser compatibility. The normalized
+PostgreSQL ledger is authoritative when a running attempt exists; the worker
+operation JSON remains the fallback summary.

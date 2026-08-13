@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-12
-last_verified_commit: 9f343376
+last_verified: 2026-08-13
+last_verified_commit: 3ff9cbc8
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
@@ -110,6 +110,19 @@ If post-start readiness fails, cleanup stops the worker only while
 leaves the worker running and directs the operator to
 `tools/fst-worker-no-progress-watchdog.mjs` and the canonical
 [live-safety procedure](../operations/live-safety.md).
+
+### No-progress watchdog progress source
+
+`tools/fst-worker-no-progress-watchdog.mjs` detects the normalized
+`scrape_phase_attempts` relation once at startup. When a running attempt
+exists, its `last_progress_at` and start time take precedence over
+`current_operation_json.UpdatedAtUtc`; `heartbeat_at` is deliberately excluded
+from timeout progress. Older databases or windows without an active normalized
+attempt retain the existing operation/outcome/registered-refresh fallback.
+
+Guarded timeout recovery also marks running normalized attempts `interrupted`
+and records their prior values in rollback SQL. Pointer, mapping, worker-query,
+lock, and maintenance guards are unchanged.
 
 The action's host-side controls are documented in
 [Configuration](configuration.md). Validate changes with:
