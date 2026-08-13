@@ -244,7 +244,7 @@ export default function ModalShell({
     const token = modalTokenRef.current;
     registerModalLayer(token, panel, previousFocusRef.current);
 
-    const focusFrame = window.requestAnimationFrame(() => {
+    const focusPanel = () => {
       if (panel.contains(document.activeElement)) return;
       if (initialFocus === 'panel') {
         panel.focus({ preventScroll: true });
@@ -252,7 +252,9 @@ export default function ModalShell({
       }
       const [firstFocusable] = getFocusableElements(panel);
       (firstFocusable ?? panel).focus({ preventScroll: true });
-    });
+    };
+    const focusFrame = window.requestAnimationFrame(focusPanel);
+    const focusFallback = window.setTimeout(focusPanel, 100);
     const handleKey = (event: KeyboardEvent) => {
       if (activeModals[activeModals.length - 1]?.token !== token) return;
       if (event.key === 'Escape') {
@@ -283,6 +285,7 @@ export default function ModalShell({
     document.addEventListener('keydown', handleKey);
     return () => {
       window.cancelAnimationFrame(focusFrame);
+      window.clearTimeout(focusFallback);
       document.removeEventListener('keydown', handleKey);
       unregisterModalLayer(token, panel);
     };

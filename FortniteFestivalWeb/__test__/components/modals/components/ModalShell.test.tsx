@@ -166,6 +166,22 @@ describe('ModalShell', () => {
     expect(screen.getByRole('button', { name: /close/i })).toHaveFocus();
   });
 
+  it('falls back to timed focus when animation frames are starved', () => {
+    vi.useFakeTimers();
+    vi.mocked(window.requestAnimationFrame).mockImplementation(() => 1);
+    render(
+      <ModalShell visible title="Focus fallback" onClose={vi.fn()} initialFocus="panel">
+        <button type="button">Content action</button>
+      </ModalShell>,
+    );
+    const dialog = screen.getByRole('dialog', { name: 'Focus fallback' });
+    expect(dialog).not.toHaveFocus();
+
+    act(() => vi.advanceTimersByTime(100));
+
+    expect(dialog).toHaveFocus();
+  });
+
   it('traps forward and backward keyboard focus inside the dialog', () => {
     render(<ModalAccessibilityHarness />);
     fireEvent.click(screen.getByRole('button', { name: 'Launch modal' }));
