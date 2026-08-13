@@ -2,13 +2,14 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-12
-last_verified_commit: 042f9686
+last_verified_commit: 9f343376
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FSTService/HostedWorkerMode.cs
+  - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
   - deploy/config/fstworker-role.env
   - tools/fst-worker-compose-guard.sh
   - tools/fst-worker-no-progress-watchdog.mjs
@@ -148,6 +149,26 @@ Role defaults intentionally differ:
 - service resolves public reads through published sources;
 - publication read-context rollout remains disabled until every bound surface
   is generation-addressable.
+
+## Service-level retention planning
+
+The service-level database maintenance worker may produce snapshot-retention
+plans while rewrite execution remains disabled. Planning uses bounded
+PostgreSQL catalog/statistics queries and does not scan snapshot partitions.
+
+Plans retain active, projection-source, rollback, and policy-blocked IDs.
+Missing protected-ID estimates, partial MCV coverage, unknown or negative
+`n_distinct` semantics, stale row estimates, or row/byte reconciliation gaps
+make the plan non-executable. In that state purge rows/bytes are withheld and
+the full partition is treated as retained workspace. The later execution path
+still requires its exact row-count preflight, free-space gate, advisory lock,
+and explicit rewrite enablement.
+
+On publication `1293`, the report-only path evaluated all nine snapshot
+partitions in `94 ms`, emitted zero executable plans, held publication
+`1293` unfrozen, and left the worker offline. Every partition was blocked by
+missing protected-ID MCV estimates and incomplete/stale statistics; no rewrite
+or metadata cleanup ran.
 
 See [Scrape and publication flow](../architecture/data-publication-flow.md),
 [CLI reference](../reference/cli.md), and
