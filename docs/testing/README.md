@@ -136,6 +136,9 @@ back/forward scroll restoration. Set `SUGGESTIONS_METRICS_PATH` to persist the
 JSON report outside the repository and `SUGGESTIONS_TRIGGER_TARGET` to run a
 larger manual profile. PR 4 establishes the observer-based baseline; the
 virtualization phase owns enforcement of the final DOM and runtime ceilings.
+CI runs the 100-trigger case in a dedicated one-worker pass after the normal
+Chromium desktop suite so its intentionally unbounded baseline cannot compete
+with another browser worker.
 
 The accepted PR 4 unvirtualized baseline produced 540 generated/rendered
 categories, about 22.7k DOM nodes, 1,471 frosted markers, about 50.6 MB of

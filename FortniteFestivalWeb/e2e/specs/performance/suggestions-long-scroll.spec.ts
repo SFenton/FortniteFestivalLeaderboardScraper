@@ -230,7 +230,10 @@ test('Suggestions restores after visiting one of its song links', async ({ page 
     .toBe(suggestionsScrollTop);
 });
 
-test('100-trigger Suggestions benchmark records growth and restores scroll', async ({ page }, testInfo) => {
+test('100-trigger Suggestions benchmark records growth and restores scroll', {
+  tag: '@suggestions-benchmark',
+}, async ({ page }, testInfo) => {
+  test.skip(process.env.SUGGESTIONS_BENCHMARK !== '1', 'Suggestions benchmark runs in its isolated CI pass');
   test.skip(!isPrimaryDesktopProject(testInfo.project.name), 'Suggestions benchmark is owned by primary desktop');
   const triggerTarget = readTriggerTarget();
   const rivalsReady = page.waitForResponse(response => (

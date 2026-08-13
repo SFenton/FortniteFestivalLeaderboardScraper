@@ -34,7 +34,7 @@
     "manual:images:check": "node scripts/generate-manual-image-variants.mjs --check",
     "embedded:check": "node scripts/verify-embedded-bundle.mjs",
     "performance:manual": "node scripts/capture-manual-performance.mjs",
-    "performance:suggestions": "playwright test e2e/specs/performance/suggestions-long-scroll.spec.ts --project=chromium-desktop --workers=1",
+    "performance:suggestions": "SUGGESTIONS_BENCHMARK=1 playwright test e2e/specs/performance/suggestions-long-scroll.spec.ts --project=chromium-desktop --workers=1",
     "icons:generate": "node scripts/generate-pwa-icons.mjs",
     "licenses:generate": "node ../tools/generate-license-manifest.mjs",
     "licenses:check": "node ../tools/generate-license-manifest.mjs --check",

@@ -114,6 +114,8 @@ unvirtualized baseline; PR 5 promotes the final DOM, marker, geometry, and
 long-task targets to enforced assertions. The PR 4 baseline is 540 rendered
 categories, about 22.7k DOM nodes, 1,471 frosted markers, roughly 50.6 MB
 post-GC heap growth, a 1.28 s worst long task, and 1,471 geometry reads.
+The PR runner executes this memory-intensive benchmark in a dedicated
+one-worker pass after the normal Chromium desktop project.
 
 `scripts/run-e2e-project.mjs` accepts:
 
