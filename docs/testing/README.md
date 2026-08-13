@@ -119,6 +119,33 @@ By. Playwright request tests separately prove that KaTeX JS/CSS waits for the
 per-instrument info action, KaTeX fonts wait for a formula slide, and band,
 combo, and solo-family controls never expose the instrument-only help.
 
+## Suggestions performance
+
+The deterministic long-scroll benchmark runs in the primary Chromium desktop
+project and can be invoked directly:
+
+```bash
+cd FortniteFestivalWeb
+corepack yarn performance:suggestions
+```
+
+It fixes the generator clock, drives at least 100 accepted load triggers, and
+records generated/rendered category counts, total DOM nodes, frosted markers,
+scroll height, available JS heap, long tasks, mousemove geometry reads, and
+back/forward scroll restoration. Set `SUGGESTIONS_METRICS_PATH` to persist the
+JSON report outside the repository and `SUGGESTIONS_TRIGGER_TARGET` to run a
+larger manual profile. PR 4 establishes the observer-based baseline; the
+virtualization phase owns enforcement of the final DOM and runtime ceilings.
+CI runs the 100-trigger case in a dedicated one-worker pass after the normal
+Chromium desktop suite so its intentionally unbounded baseline cannot compete
+with another browser worker.
+
+The accepted PR 4 unvirtualized baseline produced 540 generated/rendered
+categories, about 22.7k DOM nodes, 1,471 frosted markers, about 50.6 MB of
+post-GC heap growth, a 1.28 s worst observed long task, and 1,471 frosted-card
+geometry reads for one mousemove. Structural counts and scroll restoration are
+deterministic; heap and long-task observations remain runtime measurements.
+
 ## Merge and release gates
 
 `master` is PR-only with no push bypass. The legacy `version-bump` job name is

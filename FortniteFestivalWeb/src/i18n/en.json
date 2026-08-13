@@ -583,6 +583,7 @@
     "failedToLoadSubtitle": "The band list could not be loaded. Try refreshing."
   },
   "suggestions": {
+    "loadMore": "Load more suggestions",
     "title": "Suggestions",
     "noSuggestions": "No suggestions available.",
     "noSuggestionsSubtitle": "Select a player profile to get personalized suggestions.",

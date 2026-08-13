@@ -18,6 +18,9 @@ sources:
   - FortniteFestivalWeb/src/pages/shop/ShopPage.tsx
   - FortniteFestivalWeb/src/pages/leaderboards/modals/RankByModal.tsx
   - FortniteFestivalWeb/src/pages/leaderboards/firstRun/metricInfo/
+  - FortniteFestivalWeb/src/pages/suggestions/SuggestionsPage.tsx
+  - FortniteFestivalWeb/src/pages/suggestions/components/SuggestionsLoadSentinel.tsx
+  - FortniteFestivalWeb/src/pages/suggestions/suggestionsSessionCache.ts
   - FortniteFestivalWeb/performance-budgets.json
   - FortniteFestivalWeb/scripts/check-performance-budgets.mjs
   - .github/workflows/web-performance.yml
@@ -154,6 +157,26 @@ the only instrument without path visualization.
 only the checked hash metadata in `src/changelogHash.ts`; a unit test requires
 that metadata to match the lazy announcement content. The changelog is not a
 durable release history or a source of implementation status.
+
+## Suggestions generation and loading
+
+Suggestions are locally generated from the current catalog and selected
+player/band score source; they are not paginated remote data and therefore do
+not use `useInfiniteQuery`. `useSuggestions` owns the generator, navigation
+cache, and batch commit guard. A lightweight per-identity scroll map is shared
+with the persistent shell; a new generator resets only its own stale snapshot.
+The shell loads the restoration controller through the existing lazy
+Suggestions module and restores on route return, profile/layout ownership
+changes, and song-detail Back navigation. Pages without a restoration key no
+longer share an anonymous fallback cache.
+
+An internal `IntersectionObserver` sentinel observes against the application
+scroll container with the shared prefetch distance. Each raw-category commit
+re-arms the sentinel, while page and hook guards coalesce repeated observer
+notifications before React commits the batch. Browsers without
+`IntersectionObserver` receive a manual Load More control. The legacy
+`react-infinite-scroll-component` and `throttle-debounce` dependency path is
+removed.
 
 ## Build and deployment
 

@@ -1,6 +1,6 @@
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { IoCompass, IoPerson, IoPersonAdd, IoSwapVerticalSharp, IoFunnel, IoFlash, IoGrid, IoList, IoOptions, IoMusicalNotes, IoTrophy, IoBagHandle, IoPeople, IoSearch } from 'react-icons/io5';
-import { useEffect, useState, useMemo, useRef, useCallback, Suspense, lazy } from 'react';
+import { useEffect, useLayoutEffect, useState, useMemo, useRef, useCallback, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { FestivalProvider, useFestival } from './contexts/FestivalContext';
@@ -22,7 +22,8 @@ const LeaderboardPage = lazy(() => import('./pages/leaderboard/global/Leaderboar
 const SongBandLeaderboardPage = lazy(() => import('./pages/leaderboard/band/SongBandLeaderboardPage'));
 const PlayerHistoryPage = lazy(() => import('./pages/leaderboard/player/PlayerHistoryPage'));
 const PlayerPage = lazy(() => import('./pages/player/PlayerPage'));
-const SuggestionsPage = lazy(() => import('./pages/suggestions/SuggestionsPage'));
+const loadSuggestionsPage = () => import('./pages/suggestions/SuggestionsPage');
+const SuggestionsPage = lazy(loadSuggestionsPage);
 const ManualPage = lazy(() => import('./pages/manual/ManualPage'));
 const SettingsPage = lazy(() => import('./pages/settings/SettingsPage'));
 const LicensesPage = lazy(() => import('./pages/settings/LicensesPage'));
@@ -176,6 +177,9 @@ import { writeSelectedProfile } from './state/selectedProfile';
 import { queryClient } from './api/queryClient';
 import { invalidateLeaderboardData } from './api/queryPolicy';
 import { Routes as AppRoutes, RoutePatterns } from './routes';
+import {
+  markCurrentSuggestionsScrollRestorable,
+} from './pages/suggestions/suggestionsSessionCache';
 import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext';
 import { ScrollContainerProvider, useShellRefs, useScrollContainer, HEADER_PORTAL_HEIGHT_VAR } from './contexts/ScrollContainerContext';
 import { useTapDiagnostics } from './diagnostics/useTapDiagnostics';
@@ -352,7 +356,7 @@ function WideDesktopLayout({
     <div style={appStyles.bodySection}>
       {/* Scroll container starts below the header overlay — content can never reach it.
          top is driven by a CSS custom property updated outside React to avoid re-render cascades. */}
-      <div ref={shellScrollRef} style={{ ...appStyles.scrollContainerFull, top: `var(${HEADER_PORTAL_HEIGHT_VAR}, 0px)` }}>
+      <div data-testid="app-scroll-container" ref={shellScrollRef} style={{ ...appStyles.scrollContainerFull, top: `var(${HEADER_PORTAL_HEIGHT_VAR}, 0px)` }}>
         <div style={appStyles.scrollContentRow}>
           <div style={appStyles.sidebarGutter} />
           <div style={appStyles.centerColumn}>
@@ -921,7 +925,7 @@ function AppShell() {
     <>
     {showAnimatedBg && <AnimatedBackground songs={songs} />}
     <div style={appStyles.shell}>
-      <ScrollToTop />
+      <ScrollToTop layoutKey={wideDesktop ? 'wide' : 'standard'} />
 
       {/* v8 ignore start — sidebar callbacks tested via Sidebar.test / PinnedSidebar.test */}
       {!wideDesktop && (
@@ -993,7 +997,7 @@ function AppShell() {
       ) : (
         <>
         <div ref={shellPortalRefCallback} style={appStyles.headerPortal} />
-        <div ref={shellScrollRef} style={appStyles.scrollContainer}>
+        <div data-testid="app-scroll-container" ref={shellScrollRef} style={appStyles.scrollContainer}>
         <div style={appStyles.contentColumn}>
         <div id="main-content" style={appStyles.content}>
           <RoutesContent player={player} selectedProfile={selectedProfile} />
@@ -1397,30 +1401,83 @@ function AppShell() {
   );
 }
 
-/* v8 ignore start — scroll restoration utility */
-function ScrollToTop() {
+function ScrollToTop({ layoutKey }: { layoutKey: 'standard' | 'wide' }) {
   const location = useLocation();
-  const { pathname } = location;
+  const { key: locationKey, pathname } = location;
   const preserveShellScrollKey = (location.state as PreserveShellScrollState | null)?.preserveShellScrollKey;
   const scrollContainerRef = useScrollContainer();
+  const previousLayoutKeyRef = useRef(layoutKey);
+  const previousPathnameRef = useRef(pathname);
+  const suggestionsRestoreCleanupRef = useRef<(() => void) | null>(null);
+  const suggestionsRestoreFrameRef = useRef(0);
+  const suggestionsRestoreRequestRef = useRef(0);
+  const stopSuggestionsRestoration = useCallback(() => {
+    suggestionsRestoreRequestRef.current += 1;
+    cancelAnimationFrame(suggestionsRestoreFrameRef.current);
+    suggestionsRestoreFrameRef.current = 0;
+    suggestionsRestoreCleanupRef.current?.();
+    suggestionsRestoreCleanupRef.current = null;
+  }, []);
+  const startSuggestionsRestoration = useCallback(() => {
+    stopSuggestionsRestoration();
+    const request = suggestionsRestoreRequestRef.current;
+    void loadSuggestionsPage().then(({ beginSuggestionsScrollRestoration }) => {
+      if (request !== suggestionsRestoreRequestRef.current) return;
+      const scrollElement = scrollContainerRef.current;
+      if (scrollElement) {
+        suggestionsRestoreCleanupRef.current = beginSuggestionsScrollRestoration(scrollElement);
+        return;
+      }
+      suggestionsRestoreFrameRef.current = requestAnimationFrame(() => {
+        suggestionsRestoreFrameRef.current = 0;
+        if (request !== suggestionsRestoreRequestRef.current) return;
+        const nextScrollElement = scrollContainerRef.current;
+        if (nextScrollElement) {
+          suggestionsRestoreCleanupRef.current = beginSuggestionsScrollRestoration(nextScrollElement);
+        }
+      });
+    });
+  }, [scrollContainerRef, stopSuggestionsRestoration]);
   useEffect(() => {
     if ('scrollRestoration' in history) {
       history.scrollRestoration = 'manual';
     }
   }, []);
+  useLayoutEffect(() => {
+    const layoutChanged = previousLayoutKeyRef.current !== layoutKey;
+    previousLayoutKeyRef.current = layoutKey;
+    if (layoutChanged && pathname === AppRoutes.suggestions) {
+      markCurrentSuggestionsScrollRestorable();
+    }
+  }, [layoutKey, pathname]);
+  useLayoutEffect(() => {
+    const previousPathname = previousPathnameRef.current;
+    previousPathnameRef.current = pathname;
+    if (previousPathname === AppRoutes.suggestions && pathname !== AppRoutes.suggestions) {
+      markCurrentSuggestionsScrollRestorable();
+    }
+  }, [pathname]);
   useEffect(() => {
     if (preserveShellScrollKey && !consumedPreserveShellScrollKeys.has(preserveShellScrollKey)) {
       consumedPreserveShellScrollKeys.add(preserveShellScrollKey);
       return;
     }
+    if (pathname === AppRoutes.suggestions) return;
     // On browser refresh, always scroll to top — page exemptions only apply to in-app navigation
     if (!IS_PAGE_RELOAD) {
-      if (pathname === AppRoutes.suggestions || pathname === AppRoutes.songs) return;
+      if (pathname === AppRoutes.songs) return;
       // Song detail pages manage their own scroll restoration
       if (RoutePatterns.songDetail.test(pathname)) return;
     }
     scrollContainerRef.current?.scrollTo(0, 0);
   }, [pathname, preserveShellScrollKey, scrollContainerRef]);
+
+  useLayoutEffect(() => {
+    if (pathname === AppRoutes.suggestions && !preserveShellScrollKey) {
+      startSuggestionsRestoration();
+    } else {
+      stopSuggestionsRestoration();
+    }
+  }, [layoutKey, locationKey, pathname, preserveShellScrollKey, startSuggestionsRestoration, stopSuggestionsRestoration]);
   return null;
 }
-/* v8 ignore stop */

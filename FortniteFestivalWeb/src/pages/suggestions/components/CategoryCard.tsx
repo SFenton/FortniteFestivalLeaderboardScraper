@@ -22,6 +22,7 @@ import {
   flexRow, flexColumn, flexCenter, frostedCardSurface, border, padding, transition,
 } from '@festival/theme';
 import { resolveCategoryI18n } from '../suggestionsHelpers';
+import { markCurrentSuggestionsScrollRestorable } from '../suggestionsSessionCache';
 import { Routes } from '../../../routes';
 
 const BASE = import.meta.env.BASE_URL;
@@ -97,7 +98,7 @@ export const CategoryCard = memo(function CategoryCard({
   const title = resolved ? t(resolved.titleKey, resolved.params) : category.title;
   const description = resolved ? t(resolved.descKey, resolved.params) : category.description;
   return (
-    <div style={st.card}>
+    <div data-testid="suggestion-category-card" style={st.card}>
       <div style={st.cardHeader}>
         <div style={st.cardHeaderRow}>
           <div>
@@ -147,7 +148,7 @@ export function SongRow({ song, categoryKey, albumArt, leaderboardData, bandType
     : instrument
     ? `/songs/${song.songId}?instrument=${CORE_TO_SERVER_INSTRUMENT[instrument]}`
     : `/songs/${song.songId}`;
-  const linkPress = useNavLinkPress<HTMLAnchorElement>({ to: songUrl });
+  const linkPress = useNavLinkPress<HTMLAnchorElement>({ to: songUrl, onNavigate: markCurrentSuggestionsScrollRestorable });
   const starSrc = isGold ? `${BASE}star_gold.png` : `${BASE}star_white.png`;
   const hasMetadata = layout !== 'hidden';
   const iconOnly = (layout === 'singleInstrument' && !showStars) || layout === 'season';
@@ -158,6 +159,7 @@ export function SongRow({ song, categoryKey, albumArt, leaderboardData, bandType
       to={songUrl}
       style={{ ...st.row, ...(twoRow ? { ...flexColumn, alignItems: Align.stretch } : undefined), ...(linkPress.isPressed ? st.rowPressed : undefined) }}
       data-pressed={linkPress.isPressed ? 'true' : undefined}
+      onClickCapture={markCurrentSuggestionsScrollRestorable}
       {...linkPress.linkPressHandlers}
     >
       <div style={twoRow ? st.rowMainLine : { display: Display.contents }}>

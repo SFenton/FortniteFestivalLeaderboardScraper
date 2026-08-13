@@ -497,17 +497,6 @@ export const licenseManifest = [
     consumers: ["FortniteFestivalWeb/package.json (dependencies)"],
   },
   {
-    id: "npm:react-infinite-scroll-component@6.1.1",
-    ecosystem: "npm",
-    name: "react-infinite-scroll-component",
-    version: "6.1.1",
-    licenseType: "MIT",
-    licenseText: licenseTexts["MIT"],
-    packageUrl: "https://www.npmjs.com/package/react-infinite-scroll-component",
-    repositoryUrl: "git+https://github.com/ankeetmaini/react-infinite-scroll-component.git",
-    consumers: ["FortniteFestivalWeb/package.json (dependencies)"],
-  },
-  {
     id: "npm:react-is@19.2.4",
     ecosystem: "npm",
     name: "react-is",
