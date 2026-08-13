@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-12
-last_verified_commit: 9f343376
+last_verified_commit: 3ff9cbc8
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FortniteFestivalWeb/package.json
@@ -111,6 +111,14 @@ same validation workflow without path filtering:
 - Playwright Chromium desktop/mobile, wide responsive, WebKit mobile,
   component, and publication suites;
 - relevant service and web Docker image builds.
+
+The image classifier treats `tools/chopt-cli-linux/` as service-affecting so a
+binary-only CHOpt update cannot merge without building and publishing a new
+FSTService image. Validate classifier changes with:
+
+```bash
+node --test tools/validate-publish-image-workflow.test.mjs
+```
 
 Pull requests build relevant images with `push: false`; they never log in to
 GHCR or publish tags. A successful `master` push runs the same gates and

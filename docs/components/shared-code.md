@@ -52,6 +52,9 @@ remains unaccepted, unmerged, undeployed, and not live-validated. Fields stay
 optional so the accepted production service response remains consumable
 during any later rolling deployment.
 
+The mirrored contract includes path JSON notes, activations, legacy start-note
+metadata, and schema-v2 activation fields consumed by the path modal.
+
 When a service DTO, route payload, feature response, or publication response
 changes, review all three surfaces rather than type-asserting around a mismatch.
 

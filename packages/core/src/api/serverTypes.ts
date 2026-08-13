@@ -173,6 +173,65 @@ export type MemberScoreFilterResponse = {
   instruments?: ServerInstrumentKey[];
 };
 
+export type PathDataNote = {
+  beat: number;
+  seconds?: number;
+  isSpNote: boolean;
+  frets: {
+    green?: number;
+    red?: number;
+    yellow?: number;
+    blue?: number;
+    orange?: number;
+    open?: number;
+  };
+};
+
+export type PathStartNote = {
+  beat: number;
+  seconds?: number;
+  cumulativeScore: number;
+  noteValue: number;
+  odPercent: number;
+  isSpGranting: boolean;
+};
+
+export type PathActivation = {
+  startBeat: number;
+  endBeat: number;
+  startSeconds?: number;
+  endSeconds?: number;
+  scoreBeforeActivation?: number;
+  /** Required by schema v2; absent on legacy artifacts. */
+  instruction?: string;
+  /** Required by schema v2; the chart point that triggers activation. */
+  activationBeat?: number;
+  activationSeconds?: number;
+  /** Required by schema v2; the note anchoring the textual instruction. */
+  anchorBeat?: number;
+  anchorSeconds?: number;
+  beatsAfterAnchor?: number;
+  /** Required by schema v2 as a fraction in the inclusive range 0..1. */
+  odAtActivation?: number;
+  startNotes?: PathStartNote[];
+};
+
+export type PathDataResponse = {
+  schemaVersion?: number;
+  songName: string;
+  artist: string;
+  charter: string;
+  difficulty: string;
+  totalScore: number;
+  pathSummary: string;
+  activations: PathActivation[];
+  notes: PathDataNote[];
+  spPhrases: unknown[];
+  measures: unknown[];
+  bpms: unknown[];
+  timeSignatures: unknown[];
+};
+
 // ─── WebSocket notification types ──────────────────────────────
 
 export type ShopChangedMessage = {

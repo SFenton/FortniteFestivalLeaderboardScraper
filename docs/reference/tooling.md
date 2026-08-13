@@ -33,6 +33,17 @@ implementation fragments into ad hoc commands.
 | Production MCP adapters | `tools/mcp/` |
 | Pak extraction | `tools/FortnitePakExtractor/` |
 
+## Bundled CHOpt
+
+`tools/chopt-cli-linux/` contains the pinned Linux CHOpt CLI, launcher,
+runtime libraries, license, and provenance README used by FSTService path
+generation. Changes under that directory are service-image changes even when
+no `FSTService/` source file changes; the publish workflow and its contract
+test enforce that classification.
+
+See [Path generation](../components/path-generation.md) for the JSON contract,
+profile invalidation, canaries, and regeneration gates.
+
 ## Web scripts
 
 `FortniteFestivalWeb/package.json` is the command inventory for unit/shared

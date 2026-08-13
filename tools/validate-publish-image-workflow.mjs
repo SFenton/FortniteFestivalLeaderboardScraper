@@ -51,6 +51,9 @@ export function validatePublishImageWorkflow(workflow, webDockerfile) {
         || !uiUtilsBlock(run).includes('echo "web=true" >> "$GITHUB_OUTPUT"')) {
       errors.push('ui-utils changes are not classified as ui-utils and web-affecting');
     }
+    if (!run.includes('tools/chopt-cli-linux/')) {
+      errors.push('bundled CHOpt changes are not classified as service-affecting');
+    }
     const distribution = distributionBlock(run);
     if (!distribution.includes('echo "service=true" >> "$GITHUB_OUTPUT"')
         || !distribution.includes('echo "web=true" >> "$GITHUB_OUTPUT"')) {
@@ -121,7 +124,9 @@ export function classifyChangedPaths(paths) {
     uiUtils: false,
   };
   for (const path of paths) {
-    if (/^(FSTService\/|FortniteFestival\.Core\/)/.test(path)) result.service = true;
+    if (/^(FSTService\/|FortniteFestival\.Core\/|tools\/chopt-cli-linux\/)/.test(path)) {
+      result.service = true;
+    }
     if (path.startsWith('FortniteFestivalWeb/')) result.web = true;
     if (path.startsWith('packages/core/')) result.coreTs = true;
     if (path.startsWith('packages/theme/')) result.themeTs = true;

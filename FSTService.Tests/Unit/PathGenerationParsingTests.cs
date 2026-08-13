@@ -8,7 +8,7 @@ namespace FSTService.Tests.Unit;
 public sealed class PathGenerationParsingTests
 {
     private const string ValidPathJson =
-        """{"songName":"Song","artist":"Artist","charter":"Charter","difficulty":"expert","totalScore":123456,"pathSummary":"","activations":[],"notes":[],"spPhrases":[],"measures":[],"bpms":[],"timeSignatures":[]}""";
+        """{"schemaVersion":2,"songName":"Song","artist":"Artist","charter":"Charter","difficulty":"expert","totalScore":123456,"pathSummary":"","activations":[],"notes":[],"spPhrases":[],"measures":[],"bpms":[],"timeSignatures":[]}""";
     private const string ValidPngBase64 =
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
     private const string UndecodablePngBase64 =
@@ -63,6 +63,11 @@ public sealed class PathGenerationParsingTests
             requirePositiveScore: true,
             out var score));
         Assert.Equal(123456, score);
+        Assert.True(PathArtifactValidator.TryParseJson(
+            ValidPathJson,
+            requirePositiveScore: true,
+            out _,
+            requiredSchemaVersion: 2));
 
         Assert.False(PathArtifactValidator.TryParseJson(
             ValidPathJson.Replace(

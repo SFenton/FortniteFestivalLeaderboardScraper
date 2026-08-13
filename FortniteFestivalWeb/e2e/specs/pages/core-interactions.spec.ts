@@ -37,7 +37,10 @@ test('Suggestions filter opens with populated player data', async ({ page }, tes
 });
 
 test('Song detail paths and chart controls are browser-interactive', async ({ page, appState }) => {
-  await appState.setSettings({ pathUnavailableWarningDismissed: true });
+  await appState.setSettings({
+    pathDefaultView: 'text',
+    pathUnavailableWarningDismissed: true,
+  });
   await gotoAppRoute(page, `/songs/${E2E_SONG_ID}`);
   await page.getByTestId('fre-overlay').waitFor({ state: 'visible', timeout: 3_000 }).catch(() => {});
   await dismissObstructions(page);
@@ -51,7 +54,8 @@ test('Song detail paths and chart controls are browser-interactive', async ({ pa
   await paths.click();
   const dialog = page.getByRole('dialog', { name: 'Paths' });
   await expect(dialog).toBeVisible();
-  await expect(dialog.locator('img, svg').first()).toBeVisible();
+  await expect(dialog.getByText('2: 1 beats after NN (R)', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('20.99', { exact: true })).toBeVisible();
   await dialog.getByRole('button', { name: 'Close' }).click();
   await expect(dialog).toBeHidden();
 });

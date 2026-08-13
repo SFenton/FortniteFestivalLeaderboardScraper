@@ -331,7 +331,10 @@ public sealed class PathArtifactResolver
                     !PathArtifactValidator.TryReadJson(
                         jsonPath,
                         requirePositiveScore: difficulty == "expert",
-                        out var score) ||
+                        out var score,
+                        requiredSchemaVersion:
+                            PathArtifactValidator.RequiredSchemaVersion(
+                                manifest.GenerationProfile)) ||
                     (difficulty == "expert" && score != expertMaximum))
                 {
                     throw new InvalidOperationException(
@@ -438,6 +441,8 @@ internal sealed record PathArtifactManifest(
 
 internal static class PathArtifactValidator
 {
+    internal const int CurrentSchemaVersion = 2;
+
     private static readonly byte[] PngSignature =
         [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
     private static readonly byte[] IhdrChunk = "IHDR"u8.ToArray();
@@ -585,7 +590,8 @@ internal static class PathArtifactValidator
     public static bool TryReadJson(
         string path,
         bool requirePositiveScore,
-        out int? totalScore)
+        out int? totalScore,
+        int? requiredSchemaVersion = null)
     {
         totalScore = null;
         try
@@ -593,7 +599,8 @@ internal static class PathArtifactValidator
             return TryParseJson(
                 File.ReadAllText(path),
                 requirePositiveScore,
-                out totalScore);
+                out totalScore,
+                requiredSchemaVersion);
         }
         catch (IOException)
         {
@@ -608,7 +615,8 @@ internal static class PathArtifactValidator
     public static bool TryParseJson(
         string json,
         bool requirePositiveScore,
-        out int? totalScore)
+        out int? totalScore,
+        int? requiredSchemaVersion = null)
     {
         totalScore = null;
         try
@@ -618,12 +626,22 @@ internal static class PathArtifactValidator
                 return false;
 
             var root = document.RootElement;
-            if (!HasString(root, "songName") ||
+            if ((requiredSchemaVersion is not null &&
+                 (!root.TryGetProperty("schemaVersion", out var schemaVersion) ||
+                  schemaVersion.ValueKind != JsonValueKind.Number ||
+                  !schemaVersion.TryGetInt32(out var parsedSchemaVersion) ||
+                  parsedSchemaVersion != requiredSchemaVersion)) ||
+                !HasString(root, "songName") ||
                 !HasString(root, "artist") ||
                 !HasString(root, "charter") ||
                 !HasString(root, "difficulty") ||
                 !HasString(root, "pathSummary") ||
-                !HasArray(root, "activations", ValidateActivation) ||
+                !HasArray(
+                    root,
+                    "activations",
+                    activation => ValidateActivation(
+                        activation,
+                        requiredSchemaVersion)) ||
                 !HasArray(root, "notes", ValidateNote) ||
                 !HasArray(root, "spPhrases") ||
                 !HasArray(root, "measures") ||
@@ -681,7 +699,9 @@ internal static class PathArtifactValidator
             fret.Value.ValueKind == JsonValueKind.Number);
     }
 
-    private static bool ValidateActivation(JsonElement activation)
+    private static bool ValidateActivation(
+        JsonElement activation,
+        int? requiredSchemaVersion)
     {
         if (activation.ValueKind != JsonValueKind.Object ||
             !HasNumber(activation, "startBeat") ||
@@ -689,6 +709,23 @@ internal static class PathArtifactValidator
             !IsOptionalNumber(activation, "startSeconds") ||
             !IsOptionalNumber(activation, "endSeconds") ||
             !IsOptionalNumber(activation, "scoreBeforeActivation"))
+        {
+            return false;
+        }
+
+        if (requiredSchemaVersion == CurrentSchemaVersion &&
+            (!HasNonEmptyString(activation, "instruction") ||
+             !HasNumber(activation, "activationBeat") ||
+             !HasNumber(activation, "activationSeconds") ||
+             !HasNumber(activation, "scoreBeforeActivation") ||
+             !HasNumberInRange(
+                 activation,
+                 "odAtActivation",
+                 0.0,
+                 1.0) ||
+             !HasNumber(activation, "anchorBeat") ||
+             !HasNumber(activation, "anchorSeconds") ||
+             !IsOptionalNumber(activation, "beatsAfterAnchor")))
         {
             return false;
         }
@@ -712,15 +749,40 @@ internal static class PathArtifactValidator
         => root.TryGetProperty(propertyName, out var property) &&
            property.ValueKind == JsonValueKind.Number;
 
+    private static bool HasNumberInRange(
+        JsonElement root,
+        string propertyName,
+        double minimum,
+        double maximum)
+        => root.TryGetProperty(propertyName, out var property) &&
+           property.ValueKind == JsonValueKind.Number &&
+           property.TryGetDouble(out var value) &&
+           value >= minimum &&
+           value <= maximum;
+
     private static bool HasBoolean(JsonElement root, string propertyName)
         => root.TryGetProperty(propertyName, out var property) &&
            property.ValueKind is JsonValueKind.True or JsonValueKind.False;
+
+    private static bool HasNonEmptyString(
+        JsonElement root,
+        string propertyName)
+        => root.TryGetProperty(propertyName, out var property) &&
+           property.ValueKind == JsonValueKind.String &&
+           !string.IsNullOrWhiteSpace(property.GetString());
 
     private static bool IsOptionalNumber(
         JsonElement root,
         string propertyName)
         => !root.TryGetProperty(propertyName, out var property) ||
            property.ValueKind == JsonValueKind.Number;
+
+    internal static int? RequiredSchemaVersion(string? generationProfile)
+        => generationProfile?.EndsWith(
+            $"-v{CurrentSchemaVersion}",
+            StringComparison.Ordinal) == true
+                ? CurrentSchemaVersion
+                : null;
 
     private static bool TryReadPngHeader(
         ReadOnlySpan<byte> header,

@@ -53,6 +53,11 @@ The mapped groups are health, feature flags, account, songs/shop/paths,
 leaderboards, players, exports, band sync, rivals, leaderboard rivals,
 rankings/bands, improvement notifications, admin, diagnostics, and WebSocket.
 
+Path PNG and JSON routes are publication-bound and resolve one current
+immutable artifact generation. The protected single-song regeneration route
+uses the same atomic promotion path; it is not a full-catalogue bulk endpoint.
+See [Path generation](path-generation.md).
+
 The current source contains 80 HTTP mappings across 14 route-bearing endpoint
 files, plus `/api/ws`. Integration tests classify each intentional route as:
 
