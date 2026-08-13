@@ -69,6 +69,72 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
     }
 
     [Fact]
+    public void Song_request_maps_plastic_drums_to_both_path_modes()
+    {
+        var request = SongPathRequest.FromSong(
+            CreateSong("plastic-drums", new In { pd = 0 }));
+
+        Assert.NotNull(request);
+        Assert.Equal(
+            ["Solo_PeripheralCymbals", "Solo_PeripheralDrums"],
+            request!.ExpectedInstruments);
+    }
+
+    [Fact]
+    public void Plastic_drum_path_definitions_use_distinct_scoring_modes()
+    {
+        var cymbals = PathGenerationInstruments.GetDefinition(
+            "Solo_PeripheralCymbals");
+        var drums = PathGenerationInstruments.GetDefinition(
+            "Solo_PeripheralDrums");
+
+        Assert.Equal("og", cymbals.MidiVariant);
+        Assert.Equal("prodrums", cymbals.ChoptInstrument);
+        Assert.False(cymbals.DisableProDrums);
+        Assert.Equal("og", drums.MidiVariant);
+        Assert.Equal("prodrums", drums.ChoptInstrument);
+        Assert.True(drums.DisableProDrums);
+    }
+
+    [Fact]
+    public async Task Plastic_drum_modes_pass_only_the_pad_mode_disable_flag()
+    {
+        var logPath = Path.Combine(
+            _dataDirectory,
+            "plastic-drum-invocations.log");
+        var chopt = CreateChoptScript(
+            new ChoptBehavior(InvocationLog: logPath));
+        var store = new FakePathDataStore();
+        store.EnsureSong("plastic-drums-flags");
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            new StaticDatHandler(_encryptedDat));
+
+        var result = await coordinator.GeneratePathsAsync(
+            [CreateSong("plastic-drums-flags", new In { pd = 0 })],
+            force: false,
+            CancellationToken.None);
+
+        Assert.Equal(1, result.Promoted);
+        var invocations = File.ReadAllLines(logPath);
+        Assert.Equal(8, invocations.Length);
+        Assert.All(
+            invocations,
+            line => Assert.Contains("-i prodrums", line));
+        Assert.Equal(
+            4,
+            invocations.Count(line => line.Contains(
+                "--no-pro-drums=true",
+                StringComparison.Ordinal)));
+        Assert.Equal(
+            4,
+            invocations.Count(line => line.Contains(
+                "--no-pro-drums=false",
+                StringComparison.Ordinal)));
+    }
+
+    [Fact]
     public async Task Automatic_generation_processes_only_durable_pending_rows()
     {
         var chopt = CreateChoptScript();
@@ -304,7 +370,9 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
         Assert.Equal("2026-08-01T00:00:00.0000000Z", state.SongLastModified);
         Assert.Equal("1.10.3", state.ChoptVersion);
         Assert.Equal(runtime.BinarySha256, state.ChoptBinarySha256);
-        Assert.Equal("chopt-fnf-ew0-s20-json-png-v2", state.GenerationProfile);
+        Assert.Equal(
+            "chopt-fnf-ew0-s20-json-png-prodrums-v3",
+            state.GenerationProfile);
         Assert.Equal(["Solo_Guitar"], state.ExpectedInstruments);
         Assert.Equal(123_456, state.MaxScores.MaxLeadScore);
         Assert.True(PathArtifactResolver.IsGenerationComplete(_dataDirectory, state));
@@ -870,6 +938,7 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
     [Theory]
     [InlineData("chopt-fnf-ew0-s20-json-png-v1", true)]
     [InlineData("chopt-fnf-ew0-s20-json-png-v2", false)]
+    [InlineData("chopt-fnf-ew0-s20-json-png-prodrums-v3", false)]
     public async Task Json_schema_validation_follows_generation_profile(
         string profile,
         bool expectedPromotion)
@@ -941,7 +1010,8 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
         string choptPath,
         FakePathDataStore store,
         HttpMessageHandler? handler = null,
-        string profile = "chopt-fnf-ew0-s20-json-png-v2",
+        string profile =
+            "chopt-fnf-ew0-s20-json-png-prodrums-v3",
         SongsCacheService? cache = null,
         IOptions<ScraperOptions>? configuredOptions = null,
         IPathGenerationAdmissionLeaseProvider? admissionLeaseProvider = null,
@@ -974,7 +1044,8 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
 
     private IOptions<ScraperOptions> CreateOptions(
         string choptPath,
-        string profile = "chopt-fnf-ew0-s20-json-png-v2",
+        string profile =
+            "chopt-fnf-ew0-s20-json-png-prodrums-v3",
         bool automaticPathGeneration = true)
         => Options.Create(new ScraperOptions
         {
@@ -1104,16 +1175,18 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
             out=""
             instrument=""
             difficulty=""
+            no_pro_drums=false
             while [ "$#" -gt 0 ]; do
               case "$1" in
                 -o) out="$2"; shift ;;
                 -i) instrument="$2"; shift ;;
                 -d) difficulty="$2"; shift ;;
+                --no-pro-drums) no_pro_drums=true ;;
               esac
               shift
             done
             if [ -n {{invocationLog}} ]; then
-              printf '%s\n' "-i $instrument -d $difficulty -o $out" >> {{invocationLog}}
+              printf '%s\n' "-i $instrument -d $difficulty --no-pro-drums=$no_pro_drums -o $out" >> {{invocationLog}}
             fi
             if [ "{{behavior.Mode}}" = "process-tree" ]; then
               sleep 30 &
@@ -1162,6 +1235,8 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
             _dataDirectory,
             $"fake-chopt-{Guid.NewGuid():N}.bat");
         var mode = behavior.Mode.Replace("\"", "");
+        var invocationLog =
+            (behavior.InvocationLog ?? "").Replace("\"", "");
         var script = $$"""
             @echo off
             if "%~1"=="--version" (
@@ -1171,14 +1246,17 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
             set "out="
             set "instrument="
             set "difficulty="
+            set "noProDrums=false"
             :parse
             if "%~1"=="" goto done
             if "%~1"=="-o" set "out=%~2"
             if "%~1"=="-i" set "instrument=%~2"
             if "%~1"=="-d" set "difficulty=%~2"
+            if "%~1"=="--no-pro-drums" set "noProDrums=true"
             shift
             goto parse
             :done
+            if not "{{invocationLog}}"=="" echo -i %instrument% -d %difficulty% --no-pro-drums=%noProDrums% -o %out%>>"{{invocationLog}}"
             if "{{mode}}"=="missing-png" goto json
             if "{{mode}}"=="empty-png" type nul > "%out%" & goto json
             if "{{mode}}"=="bad-png" echo bad> "%out%" & goto json
@@ -1457,7 +1535,9 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
                                pair.Value.MaxScores.GetByInstrument("Solo_Drums") is not null ||
                                pair.Value.MaxScores.GetByInstrument("Solo_Vocals") is not null ||
                                pair.Value.MaxScores.GetByInstrument("Solo_PeripheralGuitar") is not null ||
-                               pair.Value.MaxScores.GetByInstrument("Solo_PeripheralBass") is not null)
+                               pair.Value.MaxScores.GetByInstrument("Solo_PeripheralBass") is not null ||
+                               pair.Value.MaxScores.GetByInstrument("Solo_PeripheralCymbals") is not null ||
+                               pair.Value.MaxScores.GetByInstrument("Solo_PeripheralDrums") is not null)
                 .ToDictionary(
                     pair => pair.Key,
                     pair => pair.Value.MaxScores,

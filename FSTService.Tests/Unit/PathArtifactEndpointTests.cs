@@ -192,6 +192,39 @@ public sealed class PathArtifactEndpointTests : IDisposable
             Assert.IsAssignableFrom<IStatusCodeHttpResult>(json).StatusCode);
     }
 
+    [Theory]
+    [InlineData("Solo_PeripheralCymbals")]
+    [InlineData("Solo_PeripheralDrums")]
+    public void Plastic_drum_instruments_are_valid_path_routes(
+        string instrument)
+    {
+        const string songId = "plastic-drums";
+        var state = CreateState(songId, generationId: null) with
+        {
+            ExpectedInstruments = [instrument],
+        };
+        var resolver = new PathArtifactResolver(
+            new ResolverStore(state),
+            Options.Create(
+                new ScraperOptions
+                {
+                    DataDirectory = _dataDirectory,
+                }));
+
+        var result = ApiEndpoints.GetPathArtifactResult(
+            songId,
+            instrument,
+            "expert",
+            "json",
+            null,
+            resolver);
+
+        Assert.Equal(
+            StatusCodes.Status404NotFound,
+            Assert.IsAssignableFrom<IStatusCodeHttpResult>(result)
+                .StatusCode);
+    }
+
     private static PathGenerationState CreateState(
         string songId,
         string? generationId)

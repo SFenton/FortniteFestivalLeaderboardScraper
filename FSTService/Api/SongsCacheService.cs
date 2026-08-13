@@ -440,6 +440,10 @@ public sealed class SongsCacheService
         Add("Solo_Vocals", maxScores.MaxVocalsScore);
         Add("Solo_PeripheralGuitar", maxScores.MaxProLeadScore);
         Add("Solo_PeripheralBass", maxScores.MaxProBassScore);
+        Add(
+            "Solo_PeripheralCymbals",
+            maxScores.MaxProCymbalsScore);
+        Add("Solo_PeripheralDrums", maxScores.MaxProDrumsScore);
         return result.Count == 0 ? null : result;
 
         void Add(string instrument, int? value)

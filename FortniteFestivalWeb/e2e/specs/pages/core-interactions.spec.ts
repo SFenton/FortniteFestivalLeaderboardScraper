@@ -40,6 +40,8 @@ test('Song detail paths and chart controls are browser-interactive', async ({ pa
   await appState.setSettings({
     pathDefaultView: 'text',
     pathUnavailableWarningDismissed: true,
+    showPeripheralCymbals: true,
+    showPeripheralDrums: true,
   });
   await gotoAppRoute(page, `/songs/${E2E_SONG_ID}`);
   await page.getByTestId('fre-overlay').waitFor({ state: 'visible', timeout: 3_000 }).catch(() => {});
@@ -54,6 +56,12 @@ test('Song detail paths and chart controls are browser-interactive', async ({ pa
   await paths.click();
   const dialog = page.getByRole('dialog', { name: 'Paths' });
   await expect(dialog).toBeVisible();
+  await expect(
+    dialog.getByRole('img', { name: 'Solo_PeripheralDrums' }).first(),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole('img', { name: 'Solo_PeripheralCymbals' }).first(),
+  ).toBeVisible();
   await expect(dialog.getByText('2: 1 beats after NN (R)', { exact: true })).toBeVisible();
   await expect(dialog.getByText('20.99', { exact: true })).toBeVisible();
   await dialog.getByRole('button', { name: 'Close' }).click();

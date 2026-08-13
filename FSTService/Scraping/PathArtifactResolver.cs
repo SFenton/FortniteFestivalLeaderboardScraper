@@ -778,9 +778,8 @@ internal static class PathArtifactValidator
            property.ValueKind == JsonValueKind.Number;
 
     internal static int? RequiredSchemaVersion(string? generationProfile)
-        => generationProfile?.EndsWith(
-            $"-v{CurrentSchemaVersion}",
-            StringComparison.Ordinal) == true
+        => generationProfile?.EndsWith("-v2", StringComparison.Ordinal) == true ||
+           generationProfile == "chopt-fnf-ew0-s20-json-png-prodrums-v3"
                 ? CurrentSchemaVersion
                 : null;
 

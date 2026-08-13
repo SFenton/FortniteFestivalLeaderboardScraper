@@ -405,7 +405,9 @@ public sealed class ManifestGenerator
                 song.max_drums_score,
                 song.max_vocals_score,
                 song.max_pro_lead_score,
-                song.max_pro_bass_score
+                song.max_pro_bass_score,
+                song.max_pro_cymbals_score,
+                song.max_pro_drums_score
             FROM requested
             JOIN published_sources source
               ON source.song_id = requested.song_id

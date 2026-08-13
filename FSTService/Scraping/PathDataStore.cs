@@ -103,6 +103,7 @@ public sealed class PathDataStore : IPathDataStore
                 SELECT song_id,
                        max_lead_score, max_bass_score, max_drums_score,
                        max_vocals_score, max_pro_lead_score, max_pro_bass_score,
+                       max_pro_cymbals_score, max_pro_drums_score,
                        paths_generated_at, chopt_version, chopt_binary_sha256,
                        path_generation_profile, path_artifact_generation_id,
                        COALESCE(path_expected_instruments, ARRAY[]::TEXT[])
@@ -113,6 +114,8 @@ public sealed class PathDataStore : IPathDataStore
                    OR max_vocals_score IS NOT NULL
                    OR max_pro_lead_score IS NOT NULL
                    OR max_pro_bass_score IS NOT NULL
+                   OR max_pro_cymbals_score IS NOT NULL
+                   OR max_pro_drums_score IS NOT NULL
                 """;
             using var r = cmd.ExecuteReader();
             while (r.Read())
@@ -125,12 +128,24 @@ public sealed class PathDataStore : IPathDataStore
                     MaxVocalsScore = r.IsDBNull(4) ? null : r.GetInt32(4),
                     MaxProLeadScore = r.IsDBNull(5) ? null : r.GetInt32(5),
                     MaxProBassScore = r.IsDBNull(6) ? null : r.GetInt32(6),
-                    GeneratedAt = r.IsDBNull(7) ? null : r.GetDateTime(7).ToString("o"),
-                    CHOptVersion = r.IsDBNull(8) ? null : r.GetString(8),
-                    CHOptBinarySha256 = r.IsDBNull(9) ? null : r.GetString(9),
-                    GenerationProfile = r.IsDBNull(10) ? null : r.GetString(10),
-                    ArtifactGenerationId = r.IsDBNull(11) ? null : r.GetString(11),
-                    ExpectedInstruments = r.GetFieldValue<string[]>(12),
+                    MaxProCymbalsScore =
+                        r.IsDBNull(7) ? null : r.GetInt32(7),
+                    MaxProDrumsScore =
+                        r.IsDBNull(8) ? null : r.GetInt32(8),
+                    GeneratedAt =
+                        r.IsDBNull(9)
+                            ? null
+                            : r.GetDateTime(9).ToString("o"),
+                    CHOptVersion =
+                        r.IsDBNull(10) ? null : r.GetString(10),
+                    CHOptBinarySha256 =
+                        r.IsDBNull(11) ? null : r.GetString(11),
+                    GenerationProfile =
+                        r.IsDBNull(12) ? null : r.GetString(12),
+                    ArtifactGenerationId =
+                        r.IsDBNull(13) ? null : r.GetString(13),
+                    ExpectedInstruments =
+                        r.GetFieldValue<string[]>(14),
                 };
             }
 
@@ -156,6 +171,8 @@ public sealed class PathDataStore : IPathDataStore
                 max_vocals_score   = @vocals,
                 max_pro_lead_score = @proLead,
                 max_pro_bass_score = @proBass,
+                max_pro_cymbals_score = @proCymbals,
+                max_pro_drums_score = @proDrums,
                 dat_file_hash      = @hash,
                 song_last_modified = @songLastMod,
                 paths_generated_at = @genAt,
@@ -174,6 +191,12 @@ public sealed class PathDataStore : IPathDataStore
         cmd.Parameters.AddWithValue("vocals", (object?)scores.MaxVocalsScore ?? DBNull.Value);
         cmd.Parameters.AddWithValue("proLead", (object?)scores.MaxProLeadScore ?? DBNull.Value);
         cmd.Parameters.AddWithValue("proBass", (object?)scores.MaxProBassScore ?? DBNull.Value);
+        cmd.Parameters.AddWithValue(
+            "proCymbals",
+            (object?)scores.MaxProCymbalsScore ?? DBNull.Value);
+        cmd.Parameters.AddWithValue(
+            "proDrums",
+            (object?)scores.MaxProDrumsScore ?? DBNull.Value);
         cmd.Parameters.AddWithValue("hash", datFileHash);
         cmd.Parameters.AddWithValue("songLastMod", (object?)songLastModified ?? DBNull.Value);
         cmd.Parameters.AddWithValue("genAt", DateTime.UtcNow);
@@ -242,6 +265,8 @@ public sealed class PathDataStore : IPathDataStore
                     max_vocals_score = @vocals,
                     max_pro_lead_score = @proLead,
                     max_pro_bass_score = @proBass,
+                    max_pro_cymbals_score = @proCymbals,
+                    max_pro_drums_score = @proDrums,
                     dat_file_hash = @datHash,
                     song_last_modified = @songLastModified,
                     paths_generated_at = @generatedAt,
@@ -261,6 +286,14 @@ public sealed class PathDataStore : IPathDataStore
             update.Parameters.AddWithValue("vocals", (object?)promotion.MaxScores.MaxVocalsScore ?? DBNull.Value);
             update.Parameters.AddWithValue("proLead", (object?)promotion.MaxScores.MaxProLeadScore ?? DBNull.Value);
             update.Parameters.AddWithValue("proBass", (object?)promotion.MaxScores.MaxProBassScore ?? DBNull.Value);
+            update.Parameters.AddWithValue(
+                "proCymbals",
+                (object?)promotion.MaxScores.MaxProCymbalsScore
+                    ?? DBNull.Value);
+            update.Parameters.AddWithValue(
+                "proDrums",
+                (object?)promotion.MaxScores.MaxProDrumsScore
+                    ?? DBNull.Value);
             update.Parameters.AddWithValue("datHash", promotion.DatFileHash);
             update.Parameters.AddWithValue(
                 "songLastModified",
@@ -325,6 +358,10 @@ public sealed class PathDataStore : IPathDataStore
             MaxVocalsScore = r.IsDBNull(13) ? null : r.GetInt32(13),
             MaxProLeadScore = r.IsDBNull(14) ? null : r.GetInt32(14),
             MaxProBassScore = r.IsDBNull(15) ? null : r.GetInt32(15),
+            MaxProCymbalsScore =
+                r.IsDBNull(16) ? null : r.GetInt32(16),
+            MaxProDrumsScore =
+                r.IsDBNull(17) ? null : r.GetInt32(17),
             GeneratedAt = r.IsDBNull(4) ? null : r.GetDateTime(4).ToString("o"),
             CHOptVersion = r.IsDBNull(5) ? null : r.GetString(5),
             CHOptBinarySha256 = r.IsDBNull(6) ? null : r.GetString(6),
@@ -345,8 +382,8 @@ public sealed class PathDataStore : IPathDataStore
             r.IsDBNull(8) ? null : r.GetString(8),
             r.GetFieldValue<string[]>(9),
             scores,
-            r.IsDBNull(16) ? null : r.GetString(16),
-            r.GetBoolean(17));
+            r.IsDBNull(18) ? null : r.GetString(18),
+            r.GetBoolean(19));
     }
 
     private void InvalidateMaxScoresCache()
@@ -398,8 +435,10 @@ public sealed class PathDataStore : IPathDataStore
                max_drums_score,
                max_vocals_score,
                max_pro_lead_score,
-        max_pro_bass_score,
-        NULLIF(last_modified, ''),
-        path_generation_pending
+               max_pro_bass_score,
+               max_pro_cymbals_score,
+               max_pro_drums_score,
+               NULLIF(last_modified, ''),
+               path_generation_pending
         """;
 }

@@ -2,7 +2,7 @@
 status: canonical
 owner: web
 last_verified: 2026-08-13
-last_verified_commit: cb7b2f6e
+last_verified_commit: 96ed9680
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
@@ -145,6 +145,10 @@ artifacts supply authoritative per-activation instructions and trigger
 metadata; legacy artifacts use their one-to-one `pathSummary` instructions and
 show unavailable legacy metrics explicitly. See
 [Path generation](path-generation.md).
+
+The selector exposes Lead, Bass, Drums, Tap Vocals, Pro Lead, Pro Bass,
+Pro Drums, and Pro Drums + Cymbals when enabled in Settings. Karaoke remains
+the only instrument without path visualization.
 
 `src/changelog.ts` is current in-app announcement content. The eager shell reads
 only the checked hash metadata in `src/changelogHash.ts`; a unit test requires

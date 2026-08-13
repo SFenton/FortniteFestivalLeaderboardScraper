@@ -95,6 +95,58 @@ public sealed class BandRankingRepairServiceTests : IDisposable
         Assert.True(GetIsOverThreshold("song_threshold", "Band_Duets", "over-a:over-b", "2:7"));
     }
 
+    [Fact]
+    public void RecomputeOverThresholdFlags_UsesBothPlasticDrumMaxScores()
+    {
+        SeedSongWithMaxScores(
+            "plastic_drums_threshold",
+            maxProDrumsScore: 100_000,
+            maxProCymbalsScore: 120_000);
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<Microsoft.Extensions.Logging.ILogger<BandLeaderboardPersistence>>());
+
+        persistence.UpsertBandEntries("plastic_drums_threshold", "Band_Duets",
+        [
+            MakeBandEntry(
+                ["under-drums", "under-cymbals"],
+                "6:8",
+                220_000,
+                isOverThreshold: true,
+                memberStats:
+                [
+                    MakeMember(0, "under-drums", instrumentId: 6, score: 100_000),
+                    MakeMember(1, "under-cymbals", instrumentId: 8, score: 120_000),
+                ]),
+            MakeBandEntry(
+                ["over-drums", "over-cymbals"],
+                "6:8",
+                226_000,
+                isOverThreshold: false,
+                memberStats:
+                [
+                    MakeMember(0, "over-drums", instrumentId: 6, score: 106_000),
+                    MakeMember(1, "over-cymbals", instrumentId: 8, score: 120_000),
+                ]),
+        ]);
+
+        var changed = _sut.RecomputeOverThresholdFlags(
+            ["Band_Duets"],
+            overThresholdMultiplier: 1.05);
+
+        Assert.Equal(2, changed);
+        Assert.False(GetIsOverThreshold(
+            "plastic_drums_threshold",
+            "Band_Duets",
+            "under-cymbals:under-drums",
+            "6:8"));
+        Assert.True(GetIsOverThreshold(
+            "plastic_drums_threshold",
+            "Band_Duets",
+            "over-cymbals:over-drums",
+            "6:8"));
+    }
+
     private void SeedSongs(params string[] songIds)
     {
         using var conn = _fixture.DataSource.OpenConnection();
@@ -109,18 +161,44 @@ public sealed class BandRankingRepairServiceTests : IDisposable
         }
     }
 
-    private void SeedSongWithMaxScores(string songId, int? maxVocalsScore = null)
+    private void SeedSongWithMaxScores(
+        string songId,
+        int? maxVocalsScore = null,
+        int? maxProDrumsScore = null,
+        int? maxProCymbalsScore = null)
     {
         using var conn = _fixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO songs (song_id, title, artist, max_vocals_score)
-            VALUES (@songId, @title, @artist, @maxVocalsScore)
+            INSERT INTO songs (
+                song_id,
+                title,
+                artist,
+                max_vocals_score,
+                max_pro_drums_score,
+                max_pro_cymbals_score)
+            VALUES (
+                @songId,
+                @title,
+                @artist,
+                @maxVocalsScore,
+                @maxProDrumsScore,
+                @maxProCymbalsScore)
             """;
         cmd.Parameters.AddWithValue("songId", songId);
         cmd.Parameters.AddWithValue("title", songId);
         cmd.Parameters.AddWithValue("artist", "artist");
         cmd.Parameters.AddWithValue("maxVocalsScore", maxVocalsScore.HasValue ? maxVocalsScore.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue(
+            "maxProDrumsScore",
+            maxProDrumsScore.HasValue
+                ? maxProDrumsScore.Value
+                : DBNull.Value);
+        cmd.Parameters.AddWithValue(
+            "maxProCymbalsScore",
+            maxProCymbalsScore.HasValue
+                ? maxProCymbalsScore.Value
+                : DBNull.Value);
         cmd.ExecuteNonQuery();
     }
 

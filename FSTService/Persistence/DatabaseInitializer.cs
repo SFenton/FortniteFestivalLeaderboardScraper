@@ -165,6 +165,8 @@ public static class DatabaseInitializer
             max_vocals_score     INTEGER,
             max_pro_lead_score   INTEGER,
             max_pro_bass_score   INTEGER,
+            max_pro_cymbals_score INTEGER,
+            max_pro_drums_score  INTEGER,
             dat_file_hash        TEXT,
             song_last_modified   TEXT,
             paths_generated_at   TIMESTAMPTZ,
@@ -179,6 +181,10 @@ public static class DatabaseInitializer
 
         ALTER TABLE songs
             ADD COLUMN IF NOT EXISTS provider_json JSONB;
+        ALTER TABLE songs
+            ADD COLUMN IF NOT EXISTS max_pro_cymbals_score INTEGER;
+        ALTER TABLE songs
+            ADD COLUMN IF NOT EXISTS max_pro_drums_score INTEGER;
         ALTER TABLE songs
             ADD COLUMN IF NOT EXISTS chopt_binary_sha256 TEXT;
         ALTER TABLE songs
@@ -207,6 +213,8 @@ public static class DatabaseInitializer
                     NEW.max_vocals_score,
                     NEW.max_pro_lead_score,
                     NEW.max_pro_bass_score,
+                    NEW.max_pro_cymbals_score,
+                    NEW.max_pro_drums_score,
                     NEW.dat_file_hash,
                     NEW.song_last_modified,
                     NEW.paths_generated_at,
@@ -223,6 +231,8 @@ public static class DatabaseInitializer
                     OLD.max_vocals_score,
                     OLD.max_pro_lead_score,
                     OLD.max_pro_bass_score,
+                    OLD.max_pro_cymbals_score,
+                    OLD.max_pro_drums_score,
                     OLD.dat_file_hash,
                     OLD.song_last_modified,
                     OLD.paths_generated_at,
@@ -251,6 +261,8 @@ public static class DatabaseInitializer
             max_vocals_score,
             max_pro_lead_score,
             max_pro_bass_score,
+            max_pro_cymbals_score,
+            max_pro_drums_score,
             dat_file_hash,
             song_last_modified,
             paths_generated_at,
