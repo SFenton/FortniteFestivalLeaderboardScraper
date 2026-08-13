@@ -293,6 +293,7 @@ import { contentHash } from '../../src/firstRun/types';
 import { shopSlides } from '../../src/pages/shop/firstRun';
 import { NOTIFICATION_SEEN_STORAGE_KEY } from '../../src/components/notifications/notificationSeenState';
 import { defaultSongSettings } from '../../src/utils/songSettings';
+import { seedAllFirstRunSeen } from '../helpers/firstRunState';
 import { loadSearchModal, loadSongsFilterModal } from '../../src/components/lazy/secondaryControls';
 
 function setMobile() {
@@ -393,6 +394,7 @@ beforeEach(() => {
   queryClient.clear();
   localStorage.clear();
   localStorage.setItem('fst:changelog', JSON.stringify({ version: APP_VERSION, hash: changelogHash() }));
+  seedAllFirstRunSeen();
   mockApi.getPlayerNotifications.mockResolvedValue(notificationResponse());
   mockApi.getBandNotificationsById.mockResolvedValue(notificationResponse());
 });

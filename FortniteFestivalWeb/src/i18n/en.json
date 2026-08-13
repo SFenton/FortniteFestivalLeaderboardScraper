@@ -1569,6 +1569,7 @@
     "colScore": "Score"
   },
   "firstRun": {
+    "carouselLabel": "Feature tour",
     "demoSimulated": "Some demo data may be simulated.",
     "songs": {
       "songList": {
@@ -1797,15 +1798,15 @@
         "fcrate": {
           "how": {
             "title": "How FC Rate Works",
-            "description": "The percentage of songs you Full Combo'd — hitting every note without breaking your streak."
+            "description": "Full Combos divided by the total number of charted songs for the instrument."
           },
           "experience": {
-            "title": "Why Playing More Songs Helps",
-            "description": "A perfect record on 2 songs is only a small sample; consistent FCs across 100 songs carry more weight."
+            "title": "Why Catalog Coverage Matters",
+            "description": "Unplayed charts remain in the denominator, so a few easy Full Combos cannot create a perfect rate."
           },
           "hood": {
             "title": "Under the Hood",
-            "description": "Same score-count rule — your real FC rate counts more as you add more scores on the instrument."
+            "description": "FC Rate uses the catalog-wide Full Combo fraction directly, without Bayesian score-count adjustment."
           },
           "experimental": {
             "title": "Why It's Experimental",
@@ -1823,11 +1824,11 @@
           },
           "hood": {
             "title": "Under the Hood",
-            "description": "Scores are capped at 105% per song to limit the impact of inaccurate maximums."
+            "description": "Scores above 105% of the computed maximum are excluded; eligible ratios are capped at 105%."
           },
           "hoodCap": {
-            "title": "Per-Song Cap",
-            "description": "Each score is compared with the computed maximum, capped at 105%, then averaged."
+            "title": "Eligibility And Per-Song Cap",
+            "description": "Only scores at or below the 105% validity cutoff are included, then each eligible ratio is capped at 105% and averaged."
           },
           "hoodRating": {
             "title": "Final Rating",
@@ -1965,6 +1966,8 @@
     "rankBy": "Rank By",
     "rankByHint": "Choose how players are ranked.",
     "rankByBandHint": "Choose how bands are ranked.",
+    "metricInfoButton": "Learn how {{metric}} works",
+    "metricInfoAriaLabel": "{{metric}} details",
     "rankByReset": "Reset to Default",
     "rankByResetHint": "Revert to Total Score ranking.",
     "rankByCancelTitle": "Discard changes?",
@@ -1980,11 +1983,25 @@
       "weighted": "Popularity-Weighted Percentile",
       "weightedDesc": "Rank percentile weighted by each song's leaderboard population, factoring in the number of scores on the selected instrument so players with only a few scores do not rank too highly. Lower is better.",
       "fcrate": "FC Rate",
-      "fcrateDesc": "Percentage of played songs with a full combo, factoring in the number of scores on the selected instrument so a short perfect streak does not rank too highly.",
+      "fcrateDesc": "Full Combos divided by the total charted songs for the selected instrument. Unplayed charts remain in the denominator.",
       "totalscore": "Total Score",
       "totalscoreDesc": "Sum of all scores across every played song.",
       "maxscore": "Max Score %",
       "maxscoreDesc": "Percentage of the maximum possible score achieved, factoring in the number of scores on the selected instrument so a few near-perfect scores do not rank too highly."
+    },
+    "comboMetric": {
+      "adjustedDesc": "Song-count-weighted average of the adjusted percentile ratings from the instruments in this combo. Lower is better.",
+      "weightedDesc": "Song-count-weighted average of the popularity-weighted percentile ratings from the instruments in this combo. Lower is better.",
+      "fcrateDesc": "Full Combos divided by songs played across the instruments in this combo.",
+      "totalscoreDesc": "Sum of eligible scores across the instruments in this combo.",
+      "maxscoreDesc": "Average of the adjusted Max Score % ratings for the instruments represented in this combo."
+    },
+    "familyMetric": {
+      "adjustedDesc": "Catalog-wide percentile across this instrument family. Unplayed charts contribute the worst percentile before the credibility adjustment. Lower is better.",
+      "weightedDesc": "Catalog-wide popularity-weighted percentile across this instrument family. Unplayed charts contribute the worst percentile before the credibility adjustment. Lower is better.",
+      "fcrateDesc": "Full Combos divided by every chart in this instrument family's catalog, including unplayed charts.",
+      "totalscoreDesc": "Sum of eligible scores across this instrument family.",
+      "maxscoreDesc": "Catalog-wide Max Score % across this instrument family. Unplayed charts contribute 0% before the credibility adjustment."
     },
     "bandMetric": {
       "adjustedDesc": "Average rank percentile across songs, factoring in chart coverage so bands with only a few scores do not rank too highly. Lower is better.",

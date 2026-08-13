@@ -1,9 +1,19 @@
+import { isValidElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import MetricInfoSlide from '../../../../src/pages/leaderboards/firstRun/metricInfo/MetricInfoSlide';
-import { getMetricInfoSlides } from '../../../../src/pages/leaderboards/firstRun/metricInfo';
+import {
+  calculateCredibilityAdjustedRating,
+  FC_RATE_EXAMPLE_CATALOG_SIZE,
+  FC_RATE_EXAMPLE_COUNTS,
+  FC_RATE_FORMULA,
+  MAX_SCORE_EXAMPLE_VALUES,
+  WEIGHTED_HOW_EXAMPLES,
+  getMetricInfoSlides,
+} from '../../../../src/pages/leaderboards/firstRun/metricInfo';
 import { SlideHeightContext } from '../../../../src/firstRun/SlideHeightContext';
-import type { RankingMetric } from '@festival/core/api';
+import type { ExperimentalRankingMetric } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
+import type { MetricInfoSlideProps } from '../../../../src/pages/leaderboards/firstRun/metricInfo/MetricInfoSlide';
 
 const mockUseIsMobile = vi.hoisted(() => vi.fn(() => false));
 
@@ -29,7 +39,7 @@ function renderSlide(slideHeight = 420) {
   );
 }
 
-function formulaCountsFor(metric: RankingMetric) {
+function formulaCountsFor(metric: ExperimentalRankingMetric) {
   return getMetricInfoSlides(metric).filter(slide => slide.id.includes('hood')).map(slide => {
     const { container } = render(<>{slide.render()}</>);
     const count = container.querySelectorAll('.katex-display').length;
@@ -38,7 +48,7 @@ function formulaCountsFor(metric: RankingMetric) {
   });
 }
 
-function renderMetricFormulaSlide(metric: RankingMetric, id: string) {
+function renderMetricFormulaSlide(metric: ExperimentalRankingMetric, id: string) {
   const slide = getMetricInfoSlides(metric).find(candidate => candidate.id === id);
   if (!slide) throw new Error(`Slide ${id} not found`);
 
@@ -49,7 +59,7 @@ function renderMetricFormulaSlide(metric: RankingMetric, id: string) {
   );
 }
 
-function renderMetricSlide(metric: RankingMetric, id: string, slideHeight = 520) {
+function renderMetricSlide(metric: ExperimentalRankingMetric, id: string, slideHeight = 520) {
   const slide = getMetricInfoSlides(metric).find(candidate => candidate.id === id);
   if (!slide) throw new Error(`Slide ${id} not found`);
 
@@ -73,9 +83,9 @@ const comparisonCards = [
   {
     label: 'After 100 songs',
     entries: [
-      { rank: 3, displayName: 'GoldStreak', ratingLabel: '94.5%' },
-      { rank: 4, displayName: 'NoteHunter', ratingLabel: '94.3%' },
-      { rank: 5, displayName: 'You', ratingLabel: '94.1%', isPlayer: true },
+      { rank: 3, displayName: 'GoldStreak', ratingLabel: '79.7%' },
+      { rank: 4, displayName: 'NoteHunter', ratingLabel: '79.5%' },
+      { rank: 5, displayName: 'You', ratingLabel: '79.3%', isPlayer: true },
     ],
     highlight: 'Consistent accuracy across many songs',
   },
@@ -116,13 +126,87 @@ describe('MetricInfoSlide', () => {
   });
 
   it('keeps metric-info formula slides to one display formula each', () => {
-    for (const metric of ['adjusted', 'weighted', 'maxscore'] as RankingMetric[]) {
+    for (const metric of ['adjusted', 'weighted', 'fcrate', 'maxscore'] as ExperimentalRankingMetric[]) {
       const counts = formulaCountsFor(metric);
       expect(counts.filter(slide => slide.count > 1), metric).toEqual([]);
     }
 
     expect(formulaCountsFor('weighted').filter(slide => slide.count === 1)).toHaveLength(3);
+    expect(formulaCountsFor('fcrate').filter(slide => slide.count === 1)).toHaveLength(1);
     expect(formulaCountsFor('maxscore').filter(slide => slide.count === 1)).toHaveLength(2);
+  });
+
+  it('defines exactly seven reviewed TeX formulas with the production FC denominator', () => {
+    const formulas = (['adjusted', 'weighted', 'fcrate', 'maxscore'] as ExperimentalRankingMetric[])
+      .flatMap(metric => getMetricInfoSlides(metric))
+      .flatMap(slide => {
+        const element = slide.render();
+        if (!isValidElement<MetricInfoSlideProps>(element)) return [];
+        return element.props.formulas ?? [];
+      });
+
+    expect(formulas).toHaveLength(7);
+    expect(formulas).toContain(FC_RATE_FORMULA);
+    expect(FC_RATE_FORMULA).toContain('Total Charted Songs');
+    expect(FC_RATE_FORMULA).not.toContain('n + 50');
+  });
+
+  it('describes the fixed FC denominator without implying attempts lower the rate', () => {
+    const slide = getMetricInfoSlides('fcrate')
+      .find(candidate => candidate.id === 'metric-info-fcrate-experimental');
+    const { container } = render(<>{slide?.render()}</>);
+
+    expect(container.textContent).toContain('only completed FCs change the numerator');
+    expect(container.textContent).not.toContain('only attempts easy charts');
+  });
+
+  it('uses population and FC examples that discrete production values can represent', () => {
+    expect(WEIGHTED_HOW_EXAMPLES.map(example => ({
+      rank: example.rank,
+      percentile: example.rank / example.population,
+    }))).toEqual([
+      { rank: 360, percentile: 0.03 },
+      { rank: 3, percentile: 0.03 },
+    ]);
+
+    expect(FC_RATE_EXAMPLE_COUNTS.map(count => (
+      `${((count / FC_RATE_EXAMPLE_CATALOG_SIZE) * 100).toFixed(1)}%`
+    ))).toEqual([
+      '3.0%', '2.0%', '1.0%',
+      '66.0%', '65.0%', '64.0%',
+    ]);
+  });
+
+  it('derives credibility examples from the production formula', () => {
+    expect(calculateCredibilityAdjustedRating(0, 5)).toBeCloseTo(25 / 55);
+    expect(calculateCredibilityAdjustedRating(1.05, 100)).toBeCloseTo(130 / 150);
+
+    const weighted = getMetricInfoSlides('weighted')
+      .find(slide => slide.id === 'metric-info-weighted-experience');
+    const weightedRender = render(<>{weighted?.render()}</>);
+    expect(weightedRender.container.textContent).toContain('45.7%');
+    expect(weightedRender.container.textContent).not.toContain('44.8%');
+    weightedRender.unmount();
+
+    const maxScore = getMetricInfoSlides('maxscore')
+      .find(slide => slide.id === 'metric-info-maxscore-experience');
+    const maxScoreRender = render(<>{maxScore?.render()}</>);
+    expect(maxScoreRender.container.textContent).toContain('79.7%');
+    expect(maxScoreRender.container.textContent).not.toContain('94.5%');
+  });
+
+  it('documents how missing chart maxima affect Max Score credibility', () => {
+    const slide = getMetricInfoSlides('maxscore')
+      .find(candidate => candidate.id === 'metric-info-maxscore-experimental');
+    const { container } = render(<>{slide?.render()}</>);
+
+    expect(container.textContent).toContain('omitted from the raw per-song average');
+    expect(container.textContent).toContain('still counts toward the credibility adjustment');
+  });
+
+  it('keeps the max-score example below the 105 percent eligibility cutoff', () => {
+    expect(MAX_SCORE_EXAMPLE_VALUES.map(value => value.valueLines[1])).toEqual(['95.2%', '94.5%', '104.9%']);
+    expect(MAX_SCORE_EXAMPLE_VALUES.some(value => value.valueLabel.includes('cap'))).toBe(false);
   });
 
   it('uses compact formula-slide layout and TeX labels for weighted formulas', () => {
@@ -185,7 +269,7 @@ describe('MetricInfoSlide', () => {
   });
 
   it('keeps blue percentage labels on score-count rank-card demos', () => {
-    const cases: Array<[RankingMetric, string, number]> = [
+    const cases: Array<[ExperimentalRankingMetric, string, number]> = [
       ['adjusted', 'metric-info-adjusted-experience', 8],
       ['weighted', 'metric-info-weighted-experience', 6],
       ['maxscore', 'metric-info-maxscore-experience', 6],

@@ -164,7 +164,8 @@ async function dismissDialogs(page: Page) {
     if (!(await dialog.isVisible().catch(() => false))) return;
     const button = dialog.getByRole('button', { name: /close|skip|got it|continue|done|later/i }).last();
     if (!(await button.isVisible().catch(() => false))) return;
-    await button.click();
+    await button.click({ force: true });
+    await dialog.waitFor({ state: 'hidden', timeout: 2_000 }).catch(() => {});
   }
 }
 

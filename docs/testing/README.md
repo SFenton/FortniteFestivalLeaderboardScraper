@@ -13,6 +13,7 @@ sources:
   - FortniteFestivalWeb/performance-budgets.json
   - FortniteFestivalWeb/scripts/check-performance-budgets.mjs
   - FortniteFestivalWeb/scripts/check-coverage-ignores.mjs
+  - FortniteFestivalWeb/scripts/shared-package-boundary-plugin.mjs
   - FortniteFestivalWeb/e2e/README.md
   - .github/workflows/publish-image.yml
   - .github/workflows/web-performance.yml
@@ -109,6 +110,14 @@ The report records required, active, and Docker Node versions plus zlib, Vite,
 app, core, and theme versions. The check fails when either runtime differs from
 the pinned version, when an existing raw, gzip, Brotli, or largest-chunk ceiling
 is exceeded, or when entry gzip headroom falls below 5,000 bytes.
+
+The production build also enforces the Rank By interaction boundary. Normal
+route and Rank By closures must exclude metric-help definitions,
+`FirstRunCarousel`, `Math.tsx`, KaTeX, and KaTeX CSS. The lazy metric-help
+closure must contain those modules and retain the direct dynamic edge from Rank
+By. Playwright request tests separately prove that KaTeX JS/CSS waits for the
+per-instrument info action, KaTeX fonts wait for a formula slide, and band,
+combo, and solo-family controls never expose the instrument-only help.
 
 ## Merge and release gates
 

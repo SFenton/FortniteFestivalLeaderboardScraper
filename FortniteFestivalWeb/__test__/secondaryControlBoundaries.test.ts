@@ -26,6 +26,8 @@ const targetFiles = [
   'src/components/sort/SortableRow.tsx',
   'src/pages/songinfo/components/path/PathDataTable.tsx',
   'src/pages/leaderboards/modals/RankByModal.tsx',
+  'src/pages/leaderboards/firstRun/metricInfo/MetricInfoCarousel.tsx',
+  'src/pages/leaderboards/firstRun/metricInfo/index.ts',
   'src/components/common/Math.tsx',
 ].map(fileName => path.join(webRoot, fileName));
 
@@ -52,6 +54,23 @@ describe('secondary control import boundaries', () => {
       '../notifications/MobileNotificationsModal',
       '../search/SearchModal',
     ]);
+  });
+
+  it('keeps metric help and KaTeX behind the Rank By info action', () => {
+    const rankByFile = path.join(webRoot, 'src/pages/leaderboards/modals/RankByModal.tsx');
+    const metricInfoLoader = path.join(webRoot, 'src/pages/leaderboards/firstRun/metricInfo/lazyMetricInfo.ts');
+    const rankByGraph = collectStaticGraph(rankByFile);
+
+    for (const target of [
+      'src/pages/leaderboards/firstRun/metricInfo/MetricInfoCarousel.tsx',
+      'src/pages/leaderboards/firstRun/metricInfo/index.ts',
+      'src/components/firstRun/FirstRunCarousel.tsx',
+      'src/components/common/Math.tsx',
+    ].map(fileName => path.join(webRoot, fileName))) {
+      expect(rankByGraph.has(target), path.relative(webRoot, target)).toBe(false);
+    }
+    expect([...rankByGraph].flatMap(moduleSpecifiers).some(specifier => specifier === 'katex')).toBe(false);
+    expect(dynamicImportSpecifiers(metricInfoLoader)).toEqual(['./MetricInfoCarousel']);
   });
 
   it('keeps the path column settings contract independent of the DnD table implementation', () => {

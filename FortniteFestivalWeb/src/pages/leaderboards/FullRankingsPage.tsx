@@ -446,6 +446,7 @@ export default function FullRankingsPage() {
           experimentalRanksEnabled={experimentalRanksEnabled}
           metrics={selectedBand ? getEnabledBandRankingMetrics(experimentalRanksEnabled) : undefined}
           subject={selectedBand ? 'bands' : 'players'}
+          playerScope={isCombo ? 'combo' : isFamily ? 'family' : 'instrument'}
         />
       </>}
     >

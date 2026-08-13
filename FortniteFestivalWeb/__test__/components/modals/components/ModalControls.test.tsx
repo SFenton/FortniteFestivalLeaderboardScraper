@@ -56,11 +56,20 @@ describe('RadioRow', () => {
     expect(clicked).toBe(true);
   });
 
+  it('keeps the padded row area on the selection control', () => {
+    render(<RadioRow label="Option" selected={false} onSelect={() => {}} onInfo={() => {}} infoLabel="Explain Option" />);
+    const selection = screen.getByRole('button', { name: 'Option' });
+    expect(selection.style.padding).not.toBe('0px');
+    expect(selection.style.minHeight).toBe('44px');
+  });
+
   it('uses pointerup for info without selecting the row', () => {
     const onInfo = vi.fn();
     const onSelect = vi.fn();
-    const { container } = render(<RadioRow label="Option" selected={false} onSelect={onSelect} onInfo={onInfo} />);
-    const info = container.querySelector('span[role="button"]')!;
+    render(<RadioRow label="Option" selected={false} onSelect={onSelect} onInfo={onInfo} infoLabel="Explain Option" />);
+    const selection = screen.getByRole('button', { name: 'Option' });
+    const info = screen.getByRole('button', { name: 'Explain Option' });
+    expect(selection.contains(info)).toBe(false);
 
     dispatchPointer(info, 'pointerdown', { clientX: 8, clientY: 8, timeStamp: 10 });
     dispatchPointer(info, 'pointerup', { clientX: 8, clientY: 8, timeStamp: 20 });

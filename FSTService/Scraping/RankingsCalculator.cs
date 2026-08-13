@@ -16,11 +16,12 @@ namespace FSTService.Scraping;
 ///   - Adjusted Skill:  AVG(rank/entries) per song, with Bayesian credibility adjustment.
 ///   - Weighted:  Log₂-weighted AVG(rank/entries) — songs with more leaderboard entries
 ///                count more — with Bayesian credibility adjustment.
-///   - FC Rate:   Percentage of played songs with a full combo, with Bayesian credibility adjustment.
+///   - FC Rate:   Full Combos divided by the total charted songs for the instrument.
 ///   - Total Score: Sum of all scores across played songs (no credibility adjustment).
-///   - Max Score %: Average of (score / CHOpt max score) per song, with Bayesian credibility adjustment.
+///   - Max Score %: Average of (score / CHOpt max score) where a max is available,
+///                  with Bayesian credibility based on all otherwise-valid scored songs.
 ///
-/// Adjusted Skill, Weighted, FC Rate, and Max Score % apply Bayesian credibility:
+/// Adjusted Skill, Weighted, and Max Score % apply Bayesian credibility:
 ///   adjusted = (songs × raw + m × C) / (songs + m)
 /// where m = 50 (CredibilityThreshold) and C = 0.5 (PopulationMedian).
 /// This pulls accounts with few songs toward the median, preventing
