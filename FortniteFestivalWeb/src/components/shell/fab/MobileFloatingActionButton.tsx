@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import FloatingActionButton, { type ActionItem } from './FloatingActionButton';
 import { useFabVisibility } from '../../../contexts/FabVisibilityContext';
 import { useIsMobileChrome } from '../../../hooks/ui/useIsMobile';
@@ -37,7 +37,8 @@ type Props = FabProps & {
  */
 export default function MobileFloatingActionButton({ pageKey, ...props }: Props) {
   const isMobile = useIsMobileChrome();
-  const { mobileFabHidden } = useFabVisibility();
+  const { mobileFabHidden, setMobileFabSurfacePresence } = useFabVisibility();
+  const surfaceId = useId();
   const fabKey = pageKey ? `fab:${pageKey}` : null;
   const initialRevealedRef = useRef<{ key: string | null; value: boolean }>({ key: null, value: false });
   if (initialRevealedRef.current.key !== fabKey) {
@@ -71,7 +72,14 @@ export default function MobileFloatingActionButton({ pageKey, ...props }: Props)
   const actionGroups = props.actionGroups ?? [];
   const hasActions = actionGroups.some(group => group.length > 0);
   const hasSideActions = (props.sideActions?.length ?? 0) > 0;
-  const hasAnyContent = props.defaultOpen || hasActions || hasSideActions || props.directAction;
+  const hasAnyContent = Boolean(props.defaultOpen || hasActions || hasSideActions || props.directAction);
+  const hasMobileFabSurface = isMobile && !mobileFabHidden && hasAnyContent;
+  useLayoutEffect(() => {
+    if (!hasMobileFabSurface) return;
+    setMobileFabSurfacePresence(surfaceId, true);
+    return () => setMobileFabSurfacePresence(surfaceId, false);
+  }, [hasMobileFabSurface, setMobileFabSurfacePresence, surfaceId]);
+
   if (!isMobile || mobileFabHidden) return null;
   // Suppress the FAB only when:
   //   • content is ready (so the page committed to "no FAB on this route"), AND

@@ -1,11 +1,12 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { act, createEvent, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import React, { type ReactNode } from 'react';
+import React, { useId, useLayoutEffect, type ReactNode } from 'react';
 import { FADE_DURATION, Layout, MaxWidth } from '@festival/theme';
 import Page, { pageCss } from '../../../src/pages/Page';
 import { ScrollContainerProvider, useScrollContainer, useHeaderPortalRef, useQuickLinksRailPortalRef } from '../../../src/contexts/ScrollContainerContext';
 import { PageQuickLinksProvider, usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
+import { FabVisibilityProvider, useFabVisibility } from '../../../src/contexts/FabVisibilityContext';
 import { SONGS_FAB_KEYBOARD_INSET_VAR } from '../../../src/constants/keyboardLayoutVars';
 
 function setViewportQueries({ mobile = false, wide = false }: { mobile?: boolean; wide?: boolean } = {}) {
@@ -76,6 +77,20 @@ function PageQuickLinksSpy() {
   return <span data-testid="page-quick-links-title">{pageQuickLinks.pageQuickLinks?.title ?? ''}</span>;
 }
 
+function RegisteredFabSurface() {
+  const id = useId();
+  const { setMobileFabSurfacePresence } = useFabVisibility();
+  useLayoutEffect(() => {
+    setMobileFabSurfacePresence(id, true);
+    return () => setMobileFabSurfacePresence(id, false);
+  }, [id, setMobileFabSurfacePresence]);
+  return null;
+}
+
+beforeEach(() => {
+  setViewportQueries();
+});
+
 describe('Page', () => {
   it('renders children', () => {
     render(<PageWrapper><div>Test content</div></PageWrapper>);
@@ -107,6 +122,34 @@ describe('Page', () => {
     const scrollArea = container.querySelector('[data-testid="scroll-area"]')!;
     const lastChild = scrollArea.lastElementChild as HTMLElement;
     expect(lastChild.style.height).not.toBe(`${pageCss.fabSpacer.height}px`);
+  });
+
+  it('keeps fabSpacer="auto" on desktop', () => {
+    const { container } = render(<PageWrapper fabSpacer="auto"><div>Content</div></PageWrapper>);
+    const scrollArea = container.querySelector('[data-testid="scroll-area"]')!;
+    const spacer = scrollArea.lastElementChild as HTMLElement;
+    expect(spacer.style.height).toBe(`${pageCss.fabSpacer.height}px`);
+  });
+
+  it('omits fabSpacer="auto" on mobile without a FAB surface', () => {
+    setViewportQueries({ mobile: true });
+    const { container } = render(<PageWrapper fabSpacer="auto"><div>Content</div></PageWrapper>);
+    const scrollArea = container.querySelector('[data-testid="scroll-area"]')!;
+    const lastChild = scrollArea.lastElementChild as HTMLElement;
+    expect(lastChild.style.height).not.toBe(`${pageCss.fabSpacer.height}px`);
+  });
+
+  it('keeps fabSpacer="auto" on mobile while a FAB surface is registered', () => {
+    setViewportQueries({ mobile: true });
+    const { container } = render(
+      <FabVisibilityProvider mobileFabHidden={false}>
+        <PageWrapper fabSpacer="auto"><div>Content</div></PageWrapper>
+        <RegisteredFabSurface />
+      </FabVisibilityProvider>,
+    );
+    const scrollArea = container.querySelector('[data-testid="scroll-area"]')!;
+    const spacer = scrollArea.lastElementChild as HTMLElement;
+    expect(spacer.style.height).toBe(`${pageCss.fabSpacer.height}px`);
   });
 
   it('applies marginBottom to scroll container when fabSpacer="fixed"', () => {
