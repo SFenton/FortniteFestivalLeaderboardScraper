@@ -60,6 +60,15 @@ public sealed class PathArtifactResolver
                 StringComparer.Ordinal)
                 ? currentGenerationId
                 : null;
+        if (currentGenerationId is not null &&
+            generationId is null &&
+            instrument is
+                "Solo_PeripheralCymbals" or
+                "Solo_PeripheralDrums")
+        {
+            return null;
+        }
+
         return Resolve(
             _options.Value.DataDirectory,
             songId,
@@ -67,6 +76,29 @@ public sealed class PathArtifactResolver
             difficulty,
             extension,
             generationId);
+    }
+
+    public bool IsUnavailableInCurrentGeneration(
+        string songId,
+        string instrument,
+        string? requestedGenerationId)
+    {
+        if (instrument is not
+            ("Solo_PeripheralCymbals" or "Solo_PeripheralDrums"))
+        {
+            return false;
+        }
+
+        var state = _store.GetPathGenerationState(songId);
+        return state?.ArtifactGenerationId is { } currentGenerationId &&
+               (requestedGenerationId is null ||
+                string.Equals(
+                    requestedGenerationId,
+                    currentGenerationId,
+                    StringComparison.Ordinal)) &&
+               !state.ExpectedInstruments.Contains(
+                   instrument,
+                   StringComparer.Ordinal);
     }
 
     internal static ResolvedPathArtifact? Resolve(

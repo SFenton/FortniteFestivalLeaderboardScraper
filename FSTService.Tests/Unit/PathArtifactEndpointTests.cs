@@ -225,6 +225,45 @@ public sealed class PathArtifactEndpointTests : IDisposable
                 .StatusCode);
     }
 
+    [Theory]
+    [InlineData("Solo_PeripheralCymbals")]
+    [InlineData("Solo_PeripheralDrums")]
+    public void Plastic_drum_migration_rejects_stale_legacy_artifacts(
+        string instrument)
+    {
+        const string songId = "plastic-drums-migration";
+        const string generationId = "generation-v2";
+        var resolver = new PathArtifactResolver(
+            new ResolverStore(CreateState(songId, generationId)),
+            Options.Create(
+                new ScraperOptions
+                {
+                    DataDirectory = _dataDirectory,
+                }));
+        var legacyDirectory = Path.Combine(
+            _dataDirectory,
+            "paths",
+            songId,
+            instrument);
+        Directory.CreateDirectory(legacyDirectory);
+        File.WriteAllText(
+            Path.Combine(legacyDirectory, "expert.json"),
+            """{"schemaVersion":1,"totalScore":1}""");
+
+        var result = ApiEndpoints.GetPathArtifactResult(
+            songId,
+            instrument,
+            "expert",
+            "json",
+            generationId,
+            resolver);
+
+        Assert.Equal(
+            StatusCodes.Status404NotFound,
+            Assert.IsAssignableFrom<IStatusCodeHttpResult>(result)
+                .StatusCode);
+    }
+
     private static PathGenerationState CreateState(
         string songId,
         string? generationId)

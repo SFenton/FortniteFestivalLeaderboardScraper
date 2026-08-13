@@ -103,6 +103,8 @@ license manifest together.
 The profile-derived validator accepts both the prior v2 profile and the
 eight-instrument v3 profile as schema-v2 JSON. Switching to v3 changes the
 expected instrument set and is the atomic fail-closed regeneration trigger.
+While an immutable v2 song is pending v3 regeneration, the two plastic-drums
+routes return unavailable rather than falling back to stale legacy artifacts.
 
 Before deploying the v3 service, run the existing
 `--initialize-schema-only` one-shot with that image. It adds the nullable,
