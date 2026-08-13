@@ -450,7 +450,7 @@ internal static class PathArtifactValidator
     private static readonly byte[] IendChunk = "IEND"u8.ToArray();
     private static readonly byte[] PlteChunk = "PLTE"u8.ToArray();
     private const int MaxPngChunkLength = 64 * 1024 * 1024;
-    private const int MaxPngDimension = 16_384;
+    private const int MaxPngDimension = 32_768;
     private const long MaxPngDecodedBytes = 256L * 1024 * 1024;
 
     public static bool IsValidPng(string path)
