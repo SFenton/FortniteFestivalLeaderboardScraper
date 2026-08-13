@@ -23,59 +23,20 @@ import {
   Display, TextAlign, Overflow, Cursor, CssValue,
   border, padding, frostedCard, STAGGER_ROW_MS,
 } from '@festival/theme';
+import type {
+  PathDataNote,
+  PathDataResponse,
+} from '@festival/core/api';
 import { DEFAULT_COLUMN_ORDER, type ColumnKey } from './pathTableColumns';
 
 export { DEFAULT_COLUMN_ORDER } from './pathTableColumns';
 export type { ColumnKey } from './pathTableColumns';
-
-// ── Types ────────────────────────────────────────────────────
-
-export interface PathDataNote {
-  beat: number;
-  seconds?: number;
-  isSpNote: boolean;
-  frets: {
-    green?: number;
-    red?: number;
-    yellow?: number;
-    blue?: number;
-    orange?: number;
-    open?: number;
-  };
-}
-
-export interface PathStartNote {
-  beat: number;
-  seconds?: number;
-  cumulativeScore: number;
-  noteValue: number;
-  odPercent: number;
-  isSpGranting: boolean;
-}
-
-export interface PathActivation {
-  startBeat: number;
-  endBeat: number;
-  startSeconds?: number;
-  endSeconds?: number;
-  scoreBeforeActivation?: number;
-  startNotes?: PathStartNote[];
-}
-
-export interface PathDataResponse {
-  songName: string;
-  artist: string;
-  charter: string;
-  difficulty: string;
-  totalScore: number;
-  pathSummary: string;
-  activations: PathActivation[];
-  notes: PathDataNote[];
-  spPhrases: unknown[];
-  measures: unknown[];
-  bpms: unknown[];
-  timeSignatures: unknown[];
-}
+export type {
+  PathActivation,
+  PathDataNote,
+  PathDataResponse,
+  PathStartNote,
+} from '@festival/core/api';
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -83,8 +44,9 @@ interface TableRow {
   frets: PathDataNote['frets'];
   beat: number;
   seconds: number;
-  odPercent: number;
-  cumulativeScore: number;
+  instruction: string;
+  odPercent?: number;
+  cumulativeScore?: number;
 }
 
 const FRET_KEYS = ['green', 'red', 'yellow', 'blue', 'orange'] as const;
@@ -99,7 +61,29 @@ const FRET_COLORS: Record<FretKey, string> = {
 };
 const FRET_INACTIVE = Colors.surfaceMuted;
 
-function buildRows(data: PathDataResponse): TableRow[] {
+const PATH_SUMMARY_METADATA_PREFIXES = [
+  'Path:',
+  'No SP score:',
+  'Total score:',
+  'Average multiplier:',
+  'Optimising',
+  'Optimizing',
+  'Optimisation',
+  'Optimization',
+  'Setting up',
+];
+
+export function extractPathInstructions(pathSummary: string): string[] {
+  return pathSummary
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => (
+      line.length > 0
+      && !PATH_SUMMARY_METADATA_PREFIXES.some(prefix => line.startsWith(prefix))
+    ));
+}
+
+export function buildPathRows(data: PathDataResponse): TableRow[] {
   // Build sorted notes array for tolerance-based lookup
   const sortedNotes = [...data.notes].sort((a, b) => a.beat - b.beat);
 
@@ -134,25 +118,49 @@ function buildRows(data: PathDataResponse): TableRow[] {
     return merged;
   }
 
-  const MERGE_EPSILON = 0.02;
-  const rows: TableRow[] = [];
-  for (const act of data.activations) {
-    if (!act.startNotes) continue;
-    for (const sn of act.startNotes) {
-      // Merge chord members at the same beat into one row
-      const prev = rows.length > 0 ? rows[rows.length - 1] : undefined;
-      if (prev && Math.abs(prev.beat - sn.beat) < MERGE_EPSILON) {
-        continue;
+  function findAnchorBeat(activationBeat: number): number | undefined {
+    const EPSILON = 0.02;
+    let previousBeat: number | undefined;
+    let sustainBeat: number | undefined;
+    for (const note of sortedNotes) {
+      if (note.beat > activationBeat + EPSILON) break;
+      previousBeat = note.beat;
+      const longestSustain = Math.max(
+        0,
+        ...Object.values(note.frets).filter(
+          (length): length is number => typeof length === 'number',
+        ),
+      );
+      if (note.beat + longestSustain >= activationBeat - EPSILON) {
+        sustainBeat = note.beat;
       }
-      const frets = findChord(sn.beat);
-      rows.push({
-        frets,
-        beat: sn.beat,
-        seconds: sn.seconds ?? 0,
-        odPercent: sn.odPercent * 100,
-        cumulativeScore: act.scoreBeforeActivation ?? sn.cumulativeScore,
-      });
     }
+    if (sustainBeat !== undefined) return sustainBeat;
+    return previousBeat !== undefined
+      && Math.abs(previousBeat - activationBeat) < EPSILON
+        ? previousBeat
+        : undefined;
+  }
+
+  const instructions = extractPathInstructions(data.pathSummary);
+  const rows: TableRow[] = [];
+  for (const [index, act] of data.activations.entries()) {
+    const startNote = act.startNotes?.[0];
+    const beat = act.activationBeat ?? startNote?.beat ?? act.startBeat;
+    const anchorBeat = act.anchorBeat ?? startNote?.beat ?? findAnchorBeat(beat);
+    rows.push({
+      frets: anchorBeat === undefined ? {} : findChord(anchorBeat),
+      beat,
+      seconds: act.activationSeconds
+        ?? startNote?.seconds
+        ?? act.startSeconds
+        ?? 0,
+      instruction: act.instruction ?? instructions[index] ?? '',
+      odPercent: act.odAtActivation === undefined
+        ? startNote === undefined ? undefined : startNote.odPercent * 100
+        : act.odAtActivation * 100,
+      cumulativeScore: act.scoreBeforeActivation ?? startNote?.cumulativeScore,
+    });
   }
   return rows;
 }
@@ -169,7 +177,7 @@ const scoreFormatter = new Intl.NumberFormat('en-US');
 // ── Column ordering ──────────────────────────────────────────
 
 const COLUMN_WIDTHS: Record<ColumnKey, string> = {
-  note: '160px',
+  note: 'minmax(260px, 1.6fr)',
   beat: '80px',
   time: '110px',
   od: '1fr',
@@ -354,7 +362,7 @@ export function PathDataHeader({ isMobile, columnOrder = DEFAULT_COLUMN_ORDER, o
 
 export default memo(function PathDataTable({ data, isMobile, columnOrder = DEFAULT_COLUMN_ORDER, stagger }: PathDataTableProps & { isMobile: boolean; columnOrder?: ColumnKey[]; stagger?: boolean }) {
   const { t } = useTranslation();
-  const rows = useMemo(() => buildRows(data), [data]);
+  const rows = useMemo(() => buildPathRows(data), [data]);
   const s = useTableStyles(isMobile, columnOrder);
 
   if (rows.length === 0) {
@@ -366,6 +374,7 @@ export default memo(function PathDataTable({ data, isMobile, columnOrder = DEFAU
       case 'note':
         return (
           <div key={col} style={s.cellNote}>
+            {row.instruction && <span style={s.instruction}>{row.instruction}</span>}
             <div style={s.fretRow}>
               {FRET_KEYS.map(fk => (
                 <FretPill key={fk} fretKey={fk} active={row.frets[fk] !== undefined} />
@@ -378,9 +387,15 @@ export default memo(function PathDataTable({ data, isMobile, columnOrder = DEFAU
       case 'time':
         return <span key={col} style={s.cellMono}>{formatTime(row.seconds)}</span>;
       case 'od':
-        return <div key={col} style={s.cellOd}><OdBar percent={row.odPercent} /></div>;
+        return row.odPercent === undefined
+          ? <span key={col} style={s.missingValue}>—</span>
+          : <div key={col} style={s.cellOd}><OdBar percent={row.odPercent} /></div>;
       case 'score':
-        return <span key={col} style={s.cellScore}>{scoreFormatter.format(row.cumulativeScore)}</span>;
+        return (
+          <span key={col} style={row.cumulativeScore === undefined ? s.missingValue : s.cellScore}>
+            {row.cumulativeScore === undefined ? '—' : scoreFormatter.format(row.cumulativeScore)}
+          </span>
+        );
     }
   }
 
@@ -399,6 +414,7 @@ export default memo(function PathDataTable({ data, isMobile, columnOrder = DEFAU
               <>
                 <div>
                   <div style={s.mobileLabelNote}>{t('paths.colNote')}</div>
+                  {row.instruction && <div style={s.mobileInstruction}>{row.instruction}</div>}
                   <div style={s.fretRow}>
                     {FRET_KEYS.map(fk => (
                       <FretPill key={fk} fretKey={fk} active={row.frets[fk] !== undefined} />
@@ -416,12 +432,16 @@ export default memo(function PathDataTable({ data, isMobile, columnOrder = DEFAU
                   </div>
                   <div style={{ flex: 1 }}>
                     <div style={s.mobileLabel}>{t('paths.colScore')}</div>
-                    <span style={s.cellScore}>{scoreFormatter.format(row.cumulativeScore)}</span>
+                    <span style={row.cumulativeScore === undefined ? s.missingValue : s.cellScore}>
+                      {row.cumulativeScore === undefined ? '—' : scoreFormatter.format(row.cumulativeScore)}
+                    </span>
                   </div>
                 </div>
                 <div>
                   <div style={s.mobileLabelOd}>{t('paths.colOd')}</div>
-                  <div style={s.cellOd}><OdBar percent={row.odPercent} /></div>
+                  {row.odPercent === undefined
+                    ? <span style={s.missingValue}>—</span>
+                    : <div style={s.cellOd}><OdBar percent={row.odPercent} /></div>}
                 </div>
               </>
             ) : (
@@ -515,11 +535,39 @@ function useTableStyles(isMobile: boolean, columnOrder: ColumnKey[] = DEFAULT_CO
         letterSpacing: Font.letterSpacingWide,
         marginBottom: Gap.sm,
       } as CSSProperties,
-      cellNote: { ...cellBase, justifyContent: isMobile ? 'flex-start' : 'center' } as CSSProperties,
+      cellNote: {
+        ...cellBase,
+        alignItems: isMobile ? 'flex-start' : 'center',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        gap: Gap.sm,
+        minWidth: 0,
+        whiteSpace: 'normal',
+      } as CSSProperties,
       cell: { ...cellBase, justifyContent: isMobile ? 'flex-start' : 'center' } as CSSProperties,
       cellMono: { ...cellBase, justifyContent: isMobile ? 'flex-start' : 'center' } as CSSProperties,
       cellOd: { ...cellBase, justifyContent: isMobile ? 'flex-start' : 'center', minWidth: 0, width: '100%' } as CSSProperties,
       cellScore: { ...cellBase, justifyContent: isMobile ? 'flex-start' : 'center', fontVariantNumeric: 'tabular-nums', fontWeight: Weight.semibold } as CSSProperties,
+      instruction: {
+        width: '100%',
+        color: Colors.textPrimary,
+        fontSize: Font.sm,
+        fontWeight: Weight.semibold,
+        lineHeight: 1.35,
+        textAlign: TextAlign.left,
+      } as CSSProperties,
+      mobileInstruction: {
+        color: Colors.textPrimary,
+        fontSize: Font.sm,
+        fontWeight: Weight.semibold,
+        lineHeight: 1.35,
+        marginBottom: Gap.md,
+      } as CSSProperties,
+      missingValue: {
+        ...cellBase,
+        justifyContent: isMobile ? 'flex-start' : 'center',
+        color: Colors.textMuted,
+      } as CSSProperties,
       fretRow: { display: Display.flex, gap: Gap.xs, alignItems: 'center', justifyContent: isMobile ? 'flex-start' : 'center' } as CSSProperties,
     };
   }, [isMobile, columnOrder]);

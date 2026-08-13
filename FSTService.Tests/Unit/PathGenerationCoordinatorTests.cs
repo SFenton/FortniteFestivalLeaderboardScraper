@@ -304,7 +304,7 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
         Assert.Equal("2026-08-01T00:00:00.0000000Z", state.SongLastModified);
         Assert.Equal("1.10.3", state.ChoptVersion);
         Assert.Equal(runtime.BinarySha256, state.ChoptBinarySha256);
-        Assert.Equal("chopt-fnf-ew0-s20-json-png-v1", state.GenerationProfile);
+        Assert.Equal("chopt-fnf-ew0-s20-json-png-v2", state.GenerationProfile);
         Assert.Equal(["Solo_Guitar"], state.ExpectedInstruments);
         Assert.Equal(123_456, state.MaxScores.MaxLeadScore);
         Assert.True(PathArtifactResolver.IsGenerationComplete(_dataDirectory, state));
@@ -867,6 +867,36 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
             store.GetPathGenerationState("version")!.ChoptVersion);
     }
 
+    [Theory]
+    [InlineData("chopt-fnf-ew0-s20-json-png-v1", true)]
+    [InlineData("chopt-fnf-ew0-s20-json-png-v2", false)]
+    public async Task Json_schema_validation_follows_generation_profile(
+        string profile,
+        bool expectedPromotion)
+    {
+        var chopt = CreateChoptScript(
+            new ChoptBehavior(Mode: "legacy-json"));
+        var store = new FakePathDataStore();
+        store.EnsureSong($"schema-{expectedPromotion}");
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            new StaticDatHandler(_encryptedDat),
+            profile);
+
+        var result = await coordinator.GeneratePathsAsync(
+            [CreateSong($"schema-{expectedPromotion}", new In { gr = 0 })],
+            false,
+            CancellationToken.None);
+
+        Assert.Equal(expectedPromotion ? 1 : 0, result.Promoted);
+        Assert.Equal(expectedPromotion ? 0 : 1, result.Failed);
+        Assert.Equal(
+            expectedPromotion,
+            store.GetPathGenerationState($"schema-{expectedPromotion}")!
+                .ArtifactGenerationId is not null);
+    }
+
     [Fact]
     public async Task Unparseable_runtime_version_blocks_download_and_promotion()
     {
@@ -911,7 +941,7 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
         string choptPath,
         FakePathDataStore store,
         HttpMessageHandler? handler = null,
-        string profile = "chopt-fnf-ew0-s20-json-png-v1",
+        string profile = "chopt-fnf-ew0-s20-json-png-v2",
         SongsCacheService? cache = null,
         IOptions<ScraperOptions>? configuredOptions = null,
         IPathGenerationAdmissionLeaseProvider? admissionLeaseProvider = null,
@@ -944,7 +974,7 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
 
     private IOptions<ScraperOptions> CreateOptions(
         string choptPath,
-        string profile = "chopt-fnf-ew0-s20-json-png-v1",
+        string profile = "chopt-fnf-ew0-s20-json-png-v2",
         bool automaticPathGeneration = true)
         => Options.Create(new ScraperOptions
         {
@@ -1105,6 +1135,7 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
             esac
             case "{{behavior.Mode}}" in
               malformed-json) printf '{' ;;
+              legacy-json) printf '%s' '{{BuildLegacyPathJson(123_456, "expert")}}' ;;
               missing-notes) printf '%s' '{{BuildValidPathJson(123_456, "expert").Replace(",\"notes\":[]", "", StringComparison.Ordinal)}}' ;;
               zero-expert)
                 if [ "$difficulty" = "expert" ]; then
@@ -1155,9 +1186,10 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
             powershell -NoProfile -Command "[IO.File]::WriteAllBytes('%out%', [Convert]::FromBase64String('{{ValidPngBase64}}'))"
             :json
             if "{{mode}}"=="malformed-json" echo {
+            if "{{mode}}"=="legacy-json" echo {{BuildLegacyPathJson(123_456, "expert")}}
             if "{{mode}}"=="missing-notes" echo {{BuildValidPathJson(123_456, "expert").Replace(",\"notes\":[]", "", StringComparison.Ordinal)}}
             if "{{mode}}"=="zero-expert" echo {{BuildValidPathJson(0, "expert")}}
-            if not "{{mode}}"=="malformed-json" if not "{{mode}}"=="missing-notes" if not "{{mode}}"=="zero-expert" echo {{BuildValidPathJson(123_456, "expert")}}
+            if not "{{mode}}"=="malformed-json" if not "{{mode}}"=="legacy-json" if not "{{mode}}"=="missing-notes" if not "{{mode}}"=="zero-expert" echo {{BuildValidPathJson(123_456, "expert")}}
             """;
         File.WriteAllText(path, script);
         return path;
@@ -1211,6 +1243,11 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
             Convert.FromBase64String(ValidPngBase64));
 
     private static string BuildValidPathJson(
+        int totalScore,
+        string difficulty)
+        => $$"""{"schemaVersion":2,"songName":"Song","artist":"Artist","charter":"Charter","difficulty":"{{difficulty}}","totalScore":{{totalScore}},"pathSummary":"","activations":[],"notes":[],"spPhrases":[],"measures":[],"bpms":[],"timeSignatures":[]}""";
+
+    private static string BuildLegacyPathJson(
         int totalScore,
         string difficulty)
         => $$"""{"songName":"Song","artist":"Artist","charter":"Charter","difficulty":"{{difficulty}}","totalScore":{{totalScore}},"pathSummary":"","activations":[],"notes":[],"spPhrases":[],"measures":[],"bpms":[],"timeSignatures":[]}""";

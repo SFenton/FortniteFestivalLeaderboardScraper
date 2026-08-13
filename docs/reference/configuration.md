@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-11
-last_verified_commit: 2bdf7287
+last_verified: 2026-08-12
+last_verified_commit: 3ff9cbc8
 sources:
   - FSTService/appsettings.json
   - FSTService/Program.cs
@@ -45,6 +45,21 @@ overrides intentionally diverge between the public service and mutation worker.
 | `Api` | API key and allowed origins |
 | `ConnectionStrings` | PostgreSQL |
 | `Kestrel` | HTTP listener |
+
+## Path generation
+
+| Key | Default | Purpose |
+|---|---|---|
+| `Scraper:CHOptPath` | `tools/CHOpt` | Bundled CHOpt launcher or binary |
+| `Scraper:EnablePathGeneration` | `true` | Allows explicit path generation |
+| `Scraper:EnableAutomaticPathGeneration` | `false` | Processes only pending songs from background catalog refresh when enabled |
+| `Scraper:PathGenerationParallelism` | `4` | Maximum concurrent CHOpt processes |
+| `Scraper:PathGenerationProfile` | `chopt-fnf-ew0-s20-json-png-v2` | Semantic identity for arguments and artifact schema |
+
+The MIDI decryption key is operator-supplied and must not appear in logs,
+documentation, artifacts, or commands. Profile changes invalidate selected
+older generations but do not select the full catalogue; use the guarded
+sequential procedure in [Path generation](../components/path-generation.md).
 
 The option classes are authoritative when a property exists but is omitted from
 `appsettings.json`.

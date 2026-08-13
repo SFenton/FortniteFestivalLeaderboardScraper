@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-12
-last_verified_commit: 9f343376
+last_verified_commit: 3ff9cbc8
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
@@ -32,6 +32,17 @@ implementation fragments into ad hoc commands.
 | Autonomous reports | `tools/agent-report-email.mjs` |
 | Production MCP adapters | `tools/mcp/` |
 | Pak extraction | `tools/FortnitePakExtractor/` |
+
+## Bundled CHOpt
+
+`tools/chopt-cli-linux/` contains the pinned Linux CHOpt CLI, launcher,
+runtime libraries, license, and provenance README used by FSTService path
+generation. Changes under that directory are service-image changes even when
+no `FSTService/` source file changes; the publish workflow and its contract
+test enforce that classification.
+
+See [Path generation](../components/path-generation.md) for the JSON contract,
+profile invalidation, canaries, and regeneration gates.
 
 ## Web scripts
 

@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-11
-last_verified_commit: 453fd9b6
+last_verified: 2026-08-12
+last_verified_commit: 3ff9cbc8
 sources:
   - README.md
   - AGENTS.md
@@ -27,6 +27,7 @@ evidence remain the behavioral sources of truth.
 | Work on the React application | [Web app](components/web-app.md) |
 | Work on HTTP serving and API behavior | [Service and API](components/service-api.md) |
 | Work on scheduled scraping and derived data | [Worker](components/worker.md) |
+| Understand optimal path generation and regeneration | [Path generation](components/path-generation.md) |
 | Work on shared .NET or TypeScript code | [Shared code](components/shared-code.md) |
 | Review API synchronization requirements | [API contract](reference/api-contract.md) |
 | Configure a role or deployment | [Configuration](reference/configuration.md) |

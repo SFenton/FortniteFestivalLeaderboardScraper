@@ -12,6 +12,7 @@ public sealed class PathArtifactValidationTests
     private const string RichPathJson =
         """
         {
+          "schemaVersion": 2,
           "songName": "Song",
           "artist": "Artist",
           "charter": "Charter",
@@ -24,6 +25,12 @@ public sealed class PathArtifactValidationTests
               "endBeat": 2,
               "startSeconds": 0.5,
               "endSeconds": 1.5,
+              "instruction": "2: NN (G)",
+              "activationBeat": 1,
+              "activationSeconds": 0.5,
+              "anchorBeat": 1,
+              "anchorSeconds": 0.5,
+              "odAtActivation": 0.25,
               "scoreBeforeActivation": 100,
               "startNotes": [
                 {
@@ -60,6 +67,96 @@ public sealed class PathArtifactValidationTests
             requirePositiveScore: true,
             out var score));
         Assert.Equal(123456, score);
+    }
+
+    [Fact]
+    public void JsonValidation_RequiresCompleteV2ActivationMetadataWhenRequested()
+    {
+        Assert.True(PathArtifactValidator.TryParseJson(
+            RichPathJson,
+            requirePositiveScore: true,
+            out var score,
+            requiredSchemaVersion: 2));
+        Assert.Equal(123456, score);
+
+        foreach (var property in new[]
+        {
+            "\"instruction\": \"2: NN (G)\",",
+            "\"activationBeat\": 1,",
+            "\"activationSeconds\": 0.5,",
+            "\"odAtActivation\": 0.25,",
+            "\"scoreBeforeActivation\": 100,",
+        })
+        {
+            Assert.False(PathArtifactValidator.TryParseJson(
+                RichPathJson.Replace(property, "", StringComparison.Ordinal),
+                requirePositiveScore: true,
+                out _,
+                requiredSchemaVersion: 2));
+        }
+
+        Assert.False(PathArtifactValidator.TryParseJson(
+            RichPathJson.Replace(
+                "\"schemaVersion\": 2,",
+                "\"schemaVersion\": 1,",
+                StringComparison.Ordinal),
+            requirePositiveScore: true,
+            out _,
+            requiredSchemaVersion: 2));
+
+        Assert.False(PathArtifactValidator.TryParseJson(
+            RichPathJson.Replace(
+                "\"instruction\": \"2: NN (G)\"",
+                "\"instruction\": \" \"",
+                StringComparison.Ordinal),
+            requirePositiveScore: true,
+            out _,
+            requiredSchemaVersion: 2));
+        Assert.False(PathArtifactValidator.TryParseJson(
+            RichPathJson.Replace(
+                "\"anchorBeat\": 1",
+                "\"anchorBeat\": \"one\"",
+                StringComparison.Ordinal),
+            requirePositiveScore: true,
+            out _,
+            requiredSchemaVersion: 2));
+        Assert.False(PathArtifactValidator.TryParseJson(
+            RichPathJson.Replace(
+                "\"anchorSeconds\": 0.5,",
+                "",
+                StringComparison.Ordinal),
+            requirePositiveScore: true,
+            out _,
+            requiredSchemaVersion: 2));
+        Assert.False(PathArtifactValidator.TryParseJson(
+            RichPathJson.Replace(
+                "\"odAtActivation\": 0.25,",
+                "\"odAtActivation\": 1.25,",
+                StringComparison.Ordinal),
+            requirePositiveScore: true,
+            out _,
+            requiredSchemaVersion: 2));
+        Assert.False(PathArtifactValidator.TryParseJson(
+            RichPathJson.Replace(
+                "\"anchorSeconds\": 0.5,",
+                "\"anchorSeconds\": 0.5,\n              \"beatsAfterAnchor\": \"later\",",
+                StringComparison.Ordinal),
+            requirePositiveScore: true,
+            out _,
+            requiredSchemaVersion: 2));
+    }
+
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("chopt-fnf-ew0-s20-json-png-v1", null)]
+    [InlineData("chopt-fnf-ew0-s20-json-png-v2", 2)]
+    public void JsonValidation_MapsProfilesToRequiredSchema(
+        string? profile,
+        int? expected)
+    {
+        Assert.Equal(
+            expected,
+            PathArtifactValidator.RequiredSchemaVersion(profile));
     }
 
     [Fact]

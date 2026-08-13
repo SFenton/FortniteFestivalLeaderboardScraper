@@ -82,7 +82,7 @@ jobs:
           echo "theme_ts=false" >> "$GITHUB_OUTPUT"
           echo "ui_utils=false" >> "$GITHUB_OUTPUT"
 
-          if echo "$CHANGED" | grep -qE '^(FSTService/|FortniteFestival\.Core/)'; then
+          if echo "$CHANGED" | grep -qE '^(FSTService/|FortniteFestival\.Core/|tools/chopt-cli-linux/)'; then
             echo "service=true" >> "$GITHUB_OUTPUT"
           fi
           if echo "$CHANGED" | grep -qE '^FortniteFestivalWeb/'; then

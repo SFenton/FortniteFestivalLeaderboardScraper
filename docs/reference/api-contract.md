@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-11
-last_verified_commit: 453fd9b6
+last_verified: 2026-08-12
+last_verified_commit: 3ff9cbc8
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -56,6 +56,24 @@ The service maps 80 HTTP routes across 14 route-bearing endpoint files plus
 
 Use the integration test's route arrays when an exact pattern list is needed;
 do not maintain a second hand-written 80-row table here.
+
+### Path artifacts
+
+`GET /api/paths/{songId}/{instrument}/{difficulty}` serves the current PNG.
+Appending `/data` serves the matching structured JSON. Both routes are
+publication-bound, accept an optional current `generationId`, and return an
+explicit error for invalid instruments, difficulties, generation IDs, or
+missing artifacts.
+
+Path JSON schema v2 is represented by `PathDataResponse` in
+`packages/core/src/api/serverTypes.ts`. Every activation has an authoritative
+instruction and exact trigger score/Overdrive metadata. Legacy schema-v1 JSON
+remains readable while catalogue regeneration is in progress.
+
+`POST /api/admin/regenerate-paths?songId=<id>&force=<bool>` is an
+`AdminPrivate` single-song command. It requires `X-API-Key`, returns `202`, and
+starts the normal atomic generation flow. Omitting `songId` is rejected; the
+endpoint intentionally does not accept a full catalogue.
 
 ## Common behavior
 

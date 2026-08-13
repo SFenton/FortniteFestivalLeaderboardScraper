@@ -2,6 +2,7 @@ import type { Page, Route, WebSocketRoute } from '@playwright/test';
 import type {
   BandRankingsPageResponse,
   ComboPageResponse,
+  PathDataResponse,
   RankingsPageResponse,
   SoloFamilyPageResponse,
 } from '@festival/core/api';
@@ -524,9 +525,59 @@ async function handleRoute(
 
   if (/^\/api\/paths\/[^/]+\/[^/]+\/[^/]+\/data$/.test(path)) {
     return fulfill(route, scenario, {
-      path: [{ time: 0, action: 'start' }, { time: 1, action: 'activate' }],
-      metadata: { generatedAt: E2E_NOW },
-    });
+      songName: 'Fixture Song',
+      artist: 'Fixture Artist',
+      charter: 'Fixture Charter',
+      difficulty: 'expert',
+      totalScore: 12_345,
+      pathSummary: [
+        'Optimising, please wait...',
+        'Path: 2-2',
+        'No SP score: 10,000',
+        'Total score: 12,345',
+        '2: 1 beats after NN (R)',
+        '2: NN (B)',
+      ].join('\n'),
+      activations: [
+        {
+          startBeat: 20.99,
+          endBeat: 36.99,
+          startSeconds: 10.5,
+        },
+        {
+          startBeat: 40,
+          endBeat: 56,
+          startSeconds: 20,
+          scoreBeforeActivation: 5_000,
+          startNotes: [{
+            beat: 40,
+            seconds: 20,
+            cumulativeScore: 5_100,
+            noteValue: 100,
+            odPercent: 0.5,
+            isSpGranting: false,
+          }],
+        },
+      ],
+      notes: [
+        {
+          beat: 20,
+          seconds: 10,
+          isSpNote: false,
+          frets: { red: 2 },
+        },
+        {
+          beat: 40,
+          seconds: 20,
+          isSpNote: false,
+          frets: { blue: 0 },
+        },
+      ],
+      spPhrases: [],
+      measures: [],
+      bpms: [],
+      timeSignatures: [],
+    } satisfies PathDataResponse);
   }
   if (/^\/api\/paths\/[^/]+\/[^/]+\/[^/]+$/.test(path)) {
     return route.fulfill({

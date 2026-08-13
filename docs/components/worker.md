@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-12
-last_verified_commit: 9f343376
+last_verified_commit: 3ff9cbc8
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -81,6 +81,12 @@ After startup the worker:
 
 Background registration and band work is paused and drained at scrape
 boundaries so it cannot race publication-critical work.
+
+Optimal-path generation is a separate coordinated workload. Automatic path
+generation remains disabled by default and selects only pending songs; the
+protected admin route accepts one song at a time. CHOpt outputs are validated
+and promoted as immutable generations, and complete catalogue migrations must
+remain sequential and resumable. See [Path generation](path-generation.md).
 
 ## Two phase views
 
