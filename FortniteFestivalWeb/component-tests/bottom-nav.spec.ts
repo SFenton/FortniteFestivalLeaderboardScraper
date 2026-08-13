@@ -9,6 +9,7 @@ test('active tab is semantic, readable, and responsive at the split boundary', a
 
   const settings = component.getByRole('button', { name: 'Settings' });
   await expect(settings).toHaveAttribute('aria-current', 'page');
+  await expect(component.locator('[aria-current="page"]')).toHaveCount(1);
   await expect(settings).toHaveCSS('color', 'rgb(76, 125, 255)');
   await expect(component.getByRole('button', { name: 'Compete' })).toBeVisible();
   await expect(component.getByRole('button', { name: 'Leaderboards' })).toHaveCount(0);
@@ -17,6 +18,13 @@ test('active tab is semantic, readable, and responsive at the split boundary', a
   await expect(component.getByRole('button', { name: 'Leaderboards' })).toBeVisible();
   await expect(component.getByRole('button', { name: 'Rivals' })).toBeVisible();
 
-  await component.getByRole('button', { name: 'Songs' }).click();
+  const songs = component.getByRole('button', { name: 'Songs' });
+  await songs.dispatchEvent('pointerdown', { pointerType: 'mouse', button: 0 });
+  await expect(settings).toHaveAttribute('aria-current', 'page');
+  await expect(songs).not.toHaveAttribute('aria-current');
+  await songs.click();
   await expect(component.getByTestId('active-tab')).toHaveValue('songs');
+  await expect(songs).toHaveAttribute('aria-current', 'page');
+  await expect(settings).not.toHaveAttribute('aria-current');
+  await expect(component.locator('[aria-current="page"]')).toHaveCount(1);
 });

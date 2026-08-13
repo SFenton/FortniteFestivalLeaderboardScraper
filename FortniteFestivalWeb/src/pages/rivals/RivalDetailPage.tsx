@@ -189,7 +189,7 @@ export default function RivalDetailPage() {
   const displayName = rivalName ?? '\u2026';
   const playerName = player?.displayName ?? 'You';
   /* v8 ignore stop */
-  /* v8 ignore start -- JSX render tree */  return (
+  return (
     <Page
       scrollRestoreKey={`rivalDetail:${cacheKey}`}
       scrollDeps={[phase]}
@@ -266,5 +266,4 @@ export default function RivalDetailPage() {
       )}
     </Page>
   );
-  /* v8 ignore stop */
 }

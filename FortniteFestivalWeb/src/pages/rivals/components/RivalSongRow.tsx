@@ -58,7 +58,6 @@ const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, sig, pla
   );
   /* v8 ignore stop */
 
-  /* v8 ignore start -- JSX render trees */
   if (standalone) {
     const tintClass = userWins ? s.rivalSongWinning : rivalWins ? s.rivalSongLosing : '';
     return (
@@ -151,7 +150,6 @@ const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, sig, pla
       {instrumentGlyph}
     </CardPressable>
   );
-  /* v8 ignore stop */
 });
 
 export default RivalSongRow;

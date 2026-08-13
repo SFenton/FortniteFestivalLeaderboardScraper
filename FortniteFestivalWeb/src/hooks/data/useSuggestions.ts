@@ -71,7 +71,6 @@ export function useSuggestions(
   const scrollContainerRef = useScrollContainer();
   useEffect(() => {
     const scrollY = _cache?.cacheKey === cacheKey ? _cache.scrollY : 0;
-    /* v8 ignore start — scroll position restore */
     if (scrollY > 0) {
       /* v8 ignore start */
       const t1 = setTimeout(() => scrollContainerRef.current?.scrollTo(0, scrollY), 0);

@@ -114,7 +114,6 @@ export function buildInstrumentStatsItems(
   }
 
   // Build stat cards
-  /* v8 ignore start — stat card navigation click handlers */
   const cards: { label: string; value: React.ReactNode; color?: string; onClick?: () => void }[] = [];
 
   if (stats.songsPlayed > 0) {
@@ -178,8 +177,6 @@ export function buildInstrumentStatsItems(
   cards.push({ label: t('player.songsPlayed'), value: stats.avgPercentile, color: pctGold(stats.avgPercentile), onClick: () => {
     navigateToSongs(instPercentileWithScoresUpdater(inst));
   } });
-  /* v8 ignore stop */
-
   for (let ci = 0; ci < cards.length; ci++) {
     const c = cards[ci]!;
     items.push({ key: `${inst}-card-${ci}`, span: false, heightEstimate: 100, style: cardStyle, node: <StatBox label={c.label} value={c.value} color={c.color} onClick={c.onClick} /> });

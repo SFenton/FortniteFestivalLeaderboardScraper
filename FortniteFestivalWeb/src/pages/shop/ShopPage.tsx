@@ -29,7 +29,6 @@ import { hasVisitedPage, markPageVisited } from '../../hooks/ui/usePageTransitio
 import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { shopSlides } from './firstRun';
 
-/* v8 ignore start -- page component with multiple context/hook dependencies */
 const STORAGE_KEY = 'fst:shopView';
 
 function loadViewMode(): 'grid' | 'list' {
@@ -205,8 +204,6 @@ export default function ShopPage() {
     </Page>
   );
 }
-/* v8 ignore stop */
-
 function useShopPageStyles() {
   return useMemo(() => ({
     count: {

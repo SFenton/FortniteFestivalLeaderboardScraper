@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-12
-last_verified_commit: 3ff9cbc8
+last_verified_commit: 41c3bdb4
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FortniteFestivalWeb/package.json
@@ -12,11 +12,13 @@ sources:
   - FortniteFestivalWeb/.node-version
   - FortniteFestivalWeb/performance-budgets.json
   - FortniteFestivalWeb/scripts/check-performance-budgets.mjs
+  - FortniteFestivalWeb/scripts/check-coverage-ignores.mjs
   - FortniteFestivalWeb/e2e/README.md
   - .github/workflows/publish-image.yml
   - .github/workflows/web-performance.yml
   - .github/workflows/web-playwright-nightly.yml
   - tools/check-docs.mjs
+  - tools/check-coverage-ignores.test.mjs
   - tools/fst-worker-compose-guard.test.mjs
 update_triggers:
   - Test runners, scripts, projects, coverage gates, CI, or documentation checks change.
@@ -45,6 +47,7 @@ corepack yarn test:unit
 corepack yarn test:shared
 corepack yarn lint
 corepack yarn lint:css
+corepack yarn check:coverage-ignores
 corepack yarn build
 corepack yarn e2e
 corepack yarn e2e:typecheck
@@ -64,6 +67,20 @@ Component UX uses Playwright's stable stories-and-gallery model through
 network-publication server through `playwright.publication.config.ts`.
 Breakpoint widths are parameterized in focused tests rather than represented
 as full-suite projects.
+
+Coverage-ignore directives are validated before coverage:
+
+```bash
+corepack yarn check:coverage-ignores
+```
+
+The checker pins `ast-v8-to-istanbul` parser semantics, requires every
+`start/stop` range to be a real comment, rejects nesting, orphaned or EOF
+ranges, and caps each range at 50 inclusive lines. Counted `ignore next N`
+directives are unsupported. Only four verified `ignore next` directives in
+Suggestions first-run demos are permitted; every other executable branch must
+be tested or covered by a bounded range. Coverage thresholds remain 88% lines,
+79% branches, 86% statements, and 87% functions.
 
 The pull-request browser tier runs:
 

@@ -13,7 +13,6 @@ interface ShopCardProps {
   staggerDelay?: number;
 }
 
-/* v8 ignore start -- visual component tested via ShopPage integration */
 export default memo(function ShopCard({ song, leavingTomorrow, isNew, staggerDelay }: ShopCardProps) {
   const { t } = useTranslation();
   const href = song.shopUrl ?? `/songs/${song.songId}`;
@@ -68,8 +67,6 @@ export default memo(function ShopCard({ song, leavingTomorrow, isNew, staggerDel
     </a>
   );
 });
-/* v8 ignore stop */
-
 function useStyles() {
   return useMemo(() => ({
     card: {

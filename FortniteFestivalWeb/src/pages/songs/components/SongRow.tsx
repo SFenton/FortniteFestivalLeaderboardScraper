@@ -460,7 +460,6 @@ export const SongRow = memo(function SongRow({ song,
     const stripEntries = lastPlayedEntry ? entries.filter(e => e.key !== 'lastplayed') : entries;
     return (
       externalHref ? (
-        /* v8 ignore start -- external href mobile render */
         <a ref={linkRef as React.Ref<HTMLAnchorElement>} {...linkProps} className={rowClassName} style={mergedChipStyle} onAnimationEnd={handleAnimEnd}>
           <div style={s.mobileTopRow}>
             {songInfo}

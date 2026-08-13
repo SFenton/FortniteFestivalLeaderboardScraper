@@ -235,7 +235,7 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, mod
 
       {/* Instruments */}
       {showInstrumentControls && <ModalSection>
-        <Accordion title={t('suggestionsFilter.instruments')} hint={t('suggestionsFilter.instrumentsHint')}>
+        <Accordion title={t('suggestionsFilter.instruments')} hint={t('suggestionsFilter.instrumentsHint')} panelLandmark>
           {visibleInstruments.map(inst => (
             <ToggleRow
               key={inst.key}
@@ -254,7 +254,7 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, mod
 
       {/* General type toggles */}
       <ModalSection>
-        <Accordion title={t('suggestionsFilter.general')} hint={t('suggestionsFilter.generalHint')}>
+        <Accordion title={t('suggestionsFilter.general')} hint={t('suggestionsFilter.generalHint')} panelLandmark>
           {visibleSuggestionTypes.map(st => (
             <ToggleRow
               key={st.id}
@@ -298,4 +298,3 @@ function areSuggestionsModalDraftsEqual(a: SuggestionsModalDraftState, b: Sugges
   return JSON.stringify(a.suggestions) === JSON.stringify(b.suggestions)
     && areBandInstrumentDraftsEqual(a.bandCombo, b.bandCombo);
 }
-

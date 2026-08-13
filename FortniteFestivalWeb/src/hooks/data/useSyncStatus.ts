@@ -402,7 +402,6 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
   }, [useWebSocket, wsSend]);
 
   // ── HTTP fallback polling ──
-  /* v8 ignore start — async polling callback */
   const checkStatus = useCallback(async () => {
     /* v8 ignore start */
     const requestedAccountId = accountId;

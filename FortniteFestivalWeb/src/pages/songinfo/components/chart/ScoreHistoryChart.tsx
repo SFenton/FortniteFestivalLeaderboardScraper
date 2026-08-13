@@ -119,7 +119,6 @@ export default memo(function ScoreHistoryChart({
   const visibleCards = useMemo(() => [...chartData].sort((a, b) => b.score - a.score).slice(0, 5), [chartData]);
 
   const handleViewAll = useCallback(() => {
-    /* v8 ignore next — navigation */
     navigate(`/songs/${songId}/${selected}/history`);
   }, [navigate, songId, selected]);
 
@@ -358,4 +357,3 @@ function useChartStyles() {
     legendGold: { display: 'inline-block', width: Size.iconXs, height: 12, borderRadius: 2, backgroundColor: Colors.gold } as React.CSSProperties,
   }), []);
 }
-
