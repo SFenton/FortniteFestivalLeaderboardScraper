@@ -48,19 +48,6 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
   }, [animOut, onDismiss, onExitComplete]);
   /* v8 ignore stop */
 
-  // Escape key dismisses
-  useEffect(() => {
-    /* v8 ignore start -- keyboard handler branches */
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') handleDismiss();
-      else if (e.key === 'ArrowLeft') goBack();
-      else if (e.key === 'ArrowRight') goForward();
-    };
-    /* v8 ignore stop */
-    document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
-  });
-
   /* v8 ignore start -- fading guard requires sub-frame timing */
   const navigateTo = useCallback((nextIndex: number) => {
     if (fading) return;
@@ -82,6 +69,29 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
   const goForward = useCallback(() => {
     navigateTo(currentIndex + 1);
   }, [navigateTo, currentIndex]);
+  const keyboardActionsRef = useRef({
+    dismiss: handleDismiss,
+    back: goBack,
+    forward: goForward,
+  });
+  keyboardActionsRef.current = {
+    dismiss: handleDismiss,
+    back: goBack,
+    forward: goForward,
+  };
+
+  // Bind once so rapid keys never hit a previous render's fading/index closure.
+  useEffect(() => {
+    /* v8 ignore start -- keyboard handler branches */
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') keyboardActionsRef.current.dismiss();
+      else if (event.key === 'ArrowLeft') keyboardActionsRef.current.back();
+      else if (event.key === 'ArrowRight') keyboardActionsRef.current.forward();
+    };
+    /* v8 ignore stop */
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, []);
   const dismissPressHandlers = usePressAction<HTMLButtonElement>({ onPress: handleDismiss, disabled: animOut });
   const prevPressHandlers = usePressAction<HTMLButtonElement>({ onPress: goBack, disabled: animOut || fading || currentIndex === 0 });
   const nextPressHandlers = usePressAction<HTMLButtonElement>({ onPress: goForward, disabled: animOut || fading || currentIndex >= slides.length - 1 });
