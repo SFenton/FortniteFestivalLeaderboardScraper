@@ -77,6 +77,29 @@ describe('useSuggestions', () => {
     expect(result.current.categories).toHaveLength(2);
   });
 
+  it('coalesces repeated load triggers until the previous batch commits', () => {
+    const batch1 = [{ key: 'cat1', title: 'C1', songs: [] }];
+    const batch2 = [{ key: 'cat2', title: 'C2', songs: [] }];
+    const batch3 = [{ key: 'cat3', title: 'C3', songs: [] }];
+    mockGetNext.mockReturnValueOnce(batch1).mockReturnValueOnce(batch2).mockReturnValueOnce(batch3);
+
+    const songs = [{ _title: 'S', track: { su: 's1', tt: 'S', an: 'A' } }] as any[];
+    const { result } = renderHook(() => useSuggestions('acc-dedup', songs, {}, 1));
+
+    act(() => {
+      result.current.loadMore();
+      result.current.loadMore();
+    });
+    expect(mockGetNext).toHaveBeenCalledTimes(2);
+    expect(result.current.categories).toHaveLength(2);
+    expect(result.current.loadTriggerCount).toBe(1);
+
+    act(() => { result.current.loadMore(); });
+    expect(mockGetNext).toHaveBeenCalledTimes(3);
+    expect(result.current.categories).toHaveLength(3);
+    expect(result.current.loadTriggerCount).toBe(2);
+  });
+
   it('sets hasMore=false when generator returns empty', () => {
     const batch1 = [{ key: 'cat1', title: 'C1', songs: [] }];
     mockGetNext.mockReturnValueOnce(batch1) // initial

@@ -195,17 +195,38 @@ describe('FirstRunCarousel', () => {
     render(<FirstRunCarousel slides={makeSlides(3)} onDismiss={vi.fn()} />);
     act(() => { vi.advanceTimersByTime(500); });
 
-    fireEvent.keyDown(document, { key: 'ArrowRight' });
-    act(() => { vi.advanceTimersByTime(200); });
+    const leakedArrow = vi.fn();
+    window.addEventListener('keydown', leakedArrow);
+    const rightEvent = new KeyboardEvent('keydown', {
+      key: 'ArrowRight',
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      document.dispatchEvent(rightEvent);
+      vi.advanceTimersByTime(200);
+    });
 
     // Now on slide 2, back should be enabled
     expect(screen.getByLabelText('Back one entry')).not.toBeDisabled();
+    expect(rightEvent.defaultPrevented).toBe(true);
+    expect(leakedArrow).not.toHaveBeenCalled();
 
-    fireEvent.keyDown(document, { key: 'ArrowLeft' });
-    act(() => { vi.advanceTimersByTime(200); });
+    const leftEvent = new KeyboardEvent('keydown', {
+      key: 'ArrowLeft',
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      document.dispatchEvent(leftEvent);
+      vi.advanceTimersByTime(200);
+    });
 
     // Back on slide 1, back should be disabled
     expect(screen.getByLabelText('Back one entry')).toBeDisabled();
+    expect(leftEvent.defaultPrevented).toBe(true);
+    expect(leakedArrow).not.toHaveBeenCalled();
+    window.removeEventListener('keydown', leakedArrow);
     vi.useRealTimers();
   });
 

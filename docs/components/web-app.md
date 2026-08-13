@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: web
-last_verified: 2026-08-12
-last_verified_commit: 41c3bdb4
+last_verified: 2026-08-13
+last_verified_commit: cb7b2f6e
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
@@ -11,7 +11,16 @@ sources:
   - FortniteFestivalWeb/src/App.tsx
   - FortniteFestivalWeb/src/components/lazy/secondaryControls.ts
   - FortniteFestivalWeb/src/components/common/Accordion.tsx
+  - FortniteFestivalWeb/src/components/shell/fab/MobileFloatingActionButton.tsx
   - FortniteFestivalWeb/src/components/shell/mobile/BottomNav.tsx
+  - FortniteFestivalWeb/src/contexts/FabVisibilityContext.tsx
+  - FortniteFestivalWeb/src/pages/Page.tsx
+  - FortniteFestivalWeb/src/pages/shop/ShopPage.tsx
+  - FortniteFestivalWeb/src/pages/leaderboards/modals/RankByModal.tsx
+  - FortniteFestivalWeb/src/pages/leaderboards/firstRun/metricInfo/
+  - FortniteFestivalWeb/src/pages/suggestions/SuggestionsPage.tsx
+  - FortniteFestivalWeb/src/pages/suggestions/components/SuggestionsLoadSentinel.tsx
+  - FortniteFestivalWeb/src/pages/suggestions/suggestionsSessionCache.ts
   - FortniteFestivalWeb/performance-budgets.json
   - FortniteFestivalWeb/scripts/check-performance-budgets.mjs
   - .github/workflows/web-performance.yml
@@ -95,6 +104,25 @@ Sort and Suggestions accordions expose named regions; dense instrument filter
 groups avoid excessive landmarks. Mobile BottomNav uses pending state only for
 visual feedback and assigns `aria-current="page"` solely to the committed route.
 
+`Page` owns the standard bottom-clearance contract for fixed action surfaces.
+Its default `end` spacer always reserves FAB clearance, while `fixed` adjusts
+the shell viewport and `none` delegates spacing to the caller. The opt-in
+`auto` mode preserves the existing desktop spacer but, in mobile chrome,
+reserves clearance only while `MobileFloatingActionButton` has registered a
+renderable surface. Empty warm-up mounts do not register, and the shared
+registry tracks overlapping page-owned and shell-owned FABs independently.
+The Item Shop uses `auto`, so narrow handsets without quick links, a selected
+band filter, or the view-toggle action retain only the list's normal bottom
+padding; handset states that do render a FAB remain protected from overlap.
+
+Rank By keeps its normal radio controls in the shared secondary-control chunk.
+Per-instrument player metric-help content is a nested interaction boundary: the
+accessible info button loads the metric carousel, formulas, KaTeX JS/CSS, and
+formula fonts only after activation. The parent modal becomes inert while help
+owns focus; Escape closes only help and returns focus to the exact info
+trigger. Band, combo, and solo-family Rank By controls use scope-specific
+descriptions and intentionally expose no per-instrument metric-help action.
+
 Current styling combines:
 
 - co-located CSS Modules for selectors, pseudo states, media queries, and
@@ -125,6 +153,29 @@ show unavailable legacy metrics explicitly. See
 only the checked hash metadata in `src/changelogHash.ts`; a unit test requires
 that metadata to match the lazy announcement content. The changelog is not a
 durable release history or a source of implementation status.
+
+## Suggestions generation and loading
+
+Suggestions are locally generated from the current catalog and selected
+player/band score source; they are not paginated remote data and therefore do
+not use `useInfiniteQuery`. `useSuggestions` owns the generator, navigation
+cache, and batch commit guard. A lightweight per-identity scroll map is shared
+with the persistent shell. Because generated content caches one identity,
+creating a replacement generator resets its identity and invalidates snapshots
+for discarded identities before the shell can restore them. Same-identity
+route and layout remounts preserve their snapshot because they reuse the
+generator. The shell loads the restoration controller through the existing
+lazy Suggestions module and restores on route return, profile/layout ownership
+changes, and song-detail Back navigation. Pages without a restoration key no
+longer share an anonymous fallback cache.
+
+An internal `IntersectionObserver` sentinel observes against the application
+scroll container with the shared prefetch distance. Each raw-category commit
+re-arms the sentinel, while page and hook guards coalesce repeated observer
+notifications before React commits the batch. Browsers without
+`IntersectionObserver` receive a manual Load More control. The legacy
+`react-infinite-scroll-component` and `throttle-debounce` dependency path is
+removed.
 
 ## Build and deployment
 

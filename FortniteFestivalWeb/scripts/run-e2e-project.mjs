@@ -18,6 +18,7 @@ const port = readPositiveInteger('PLAYWRIGHT_PORT', 4173);
 const workers = readPositiveInteger('E2E_WORKERS', process.env.CI ? 2 : 4);
 const shard = process.env.E2E_SHARD;
 const startedAt = performance.now();
+const suggestionsBenchmark = 'e2e/specs/performance/suggestions-long-scroll.spec.ts';
 
 if (project !== 'chromium-desktop' && project !== 'chromium-mobile') {
   console.error(`[e2e] Project must be "chromium-desktop" or "chromium-mobile"; received "${project ?? ''}".`);
@@ -44,6 +45,18 @@ try {
   const result = runPlaywright(shard ? [`--shard=${shard}`] : []);
   if (!handleResult(result, `${project}${shard ? ` shard ${shard}` : ''}`, startedAt)) {
     exitCode = result.status ?? 1;
+  } else if (project === 'chromium-desktop' && shouldRunSuggestionsBenchmark(shard)) {
+    const benchmarkStartedAt = performance.now();
+    const benchmarkResult = runPlaywright(
+      [suggestionsBenchmark, '--grep=@suggestions-benchmark'],
+      {
+        env: { SUGGESTIONS_BENCHMARK: '1' },
+        workers: 1,
+      },
+    );
+    if (!handleResult(benchmarkResult, 'Suggestions benchmark', benchmarkStartedAt)) {
+      exitCode = benchmarkResult.status ?? 1;
+    }
   }
 } catch (error) {
   console.error(`[e2e] ${error instanceof Error ? error.message : String(error)}`);
@@ -70,23 +83,28 @@ function readPositiveInteger(name, fallback) {
   return value;
 }
 
-function runPlaywright(testArgs) {
+function runPlaywright(testArgs, overrides = {}) {
   return spawnSync(process.execPath, [
     playwrightBin,
     'test',
     ...testArgs,
     `--project=${project}`,
-    `--workers=${workers}`,
+    `--workers=${overrides.workers ?? workers}`,
   ], {
     cwd: webRoot,
     env: {
       ...process.env,
+      ...overrides.env,
       CI: process.env.CI ?? '1',
       PLAYWRIGHT_PORT: String(port),
       PLAYWRIGHT_REUSE_SERVER: '1',
     },
     stdio: 'inherit',
   });
+}
+
+function shouldRunSuggestionsBenchmark(shardValue) {
+  return !shardValue || shardValue.split('/')[0] === '1';
 }
 
 function handleResult(result, label, runStartedAt) {

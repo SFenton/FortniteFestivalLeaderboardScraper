@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-12
-last_verified_commit: 3ff9cbc8
+last_verified_commit: 41c3bdb4
 sources:
   - FSTService/Scraping/PathGenerationCoordinator.cs
   - FSTService/Scraping/PathArtifactResolver.cs
@@ -33,6 +33,9 @@ together as an immutable generation.
    `hard`, and `expert`, using the `fnf` engine, zero early whammy, and 20%
    squeeze.
 4. FST validates every PNG and JSON artifact. Expert scores must be positive.
+   PNGs may be up to 32,768 pixels on either axis, while the independent
+   256 MiB decoded-image limit still rejects oversized or compressed-bomb
+   payloads. This accommodates the longest current Festival charts.
 5. A manifest records the song identity, `.dat` hash, CHOpt version and binary
    SHA-256, generation profile, expected instruments, and expert maxima.
 6. The complete directory is moved into

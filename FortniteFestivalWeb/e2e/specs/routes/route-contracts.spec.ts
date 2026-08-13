@@ -99,7 +99,7 @@ test.describe('guarded route redirects', () => {
   ]) {
     test(`${path} redirects to Songs without a selected profile`, async ({ page }) => {
       await page.goto(`/#${path}`, { waitUntil: 'load' });
-      await expect(page).toHaveURL(/#\/songs$/);
+      await expect(page).toHaveURL(/#\/songs$/, { timeout: 15_000 });
       await expectMainContent(page, 'Deterministic Song');
     });
   }

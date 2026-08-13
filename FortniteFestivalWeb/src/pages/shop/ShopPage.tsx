@@ -143,6 +143,7 @@ export default function ShopPage() {
   return (
     <Page
       scrollRestoreKey="shop"
+      fabSpacer="auto"
       staggerRushRef={staggerRushRef}
       scrollDeps={[loadPhase, shopSongs]}
       loadPhase={loadPhase}

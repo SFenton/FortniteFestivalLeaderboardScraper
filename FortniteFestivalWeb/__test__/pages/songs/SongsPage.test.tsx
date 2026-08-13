@@ -16,6 +16,7 @@ import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../h
 import type { AppliedBandComboFilter } from '../../../src/types/bandFilter';
 import { expectCancellableCall } from '../../helpers/requestAssertions';
 import { loadSongsFilterModal } from '../../../src/components/lazy/secondaryControls';
+import { seedAllFirstRunSeen } from '../../helpers/firstRunState';
 
 const SONGS_MOBILE_CENTER_TOP_STYLE = `max(${Layout.desktopNavHeight}px, var(${HEADER_PORTAL_HEIGHT_VAR}, 0px))`;
 const SONGS_MOBILE_CENTER_BOTTOM_STYLE = `max(${safeAreaBottomOffset(Layout.fabBottom + Layout.fabSize)}, var(${SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR}, 0px))`;
@@ -84,6 +85,7 @@ beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.clearAllMocks();
   localStorage.clear();
+  seedAllFirstRunSeen();
   resetMocks();
 });
 

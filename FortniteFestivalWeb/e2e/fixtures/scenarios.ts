@@ -202,6 +202,28 @@ export function createEmptyScenario(): AppScenario {
   };
 }
 
+export function createScrollableShopScenario(): AppScenario {
+  const populated = createPopulatedScenario();
+  return {
+    ...populated,
+    name: 'scrollable-shop',
+    shop: {
+      songs: populated.songs.songs.map((song, index) => ({
+        songId: song.songId,
+        title: song.title,
+        artist: song.artist,
+        year: song.year,
+        albumArt: song.albumArt,
+        shopUrl: `https://example.invalid/shop/${song.songId}`,
+        isNew: index === 0,
+        leavingTomorrow: index === populated.songs.songs.length - 1,
+      })),
+      newSongs: [populated.songs.songs[0]!.songId],
+      lastUpdated: E2E_NOW,
+    },
+  };
+}
+
 export function createPopulatedScenario(): AppScenario {
   const songs = createSongs();
   const scores = songs.slice(0, 10).map((song, index) => ({

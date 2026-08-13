@@ -17,13 +17,14 @@ import { createContext, lazy, Suspense, useContext, useEffect, useMemo, useRef, 
 import { createPortal } from 'react-dom';
 import { useNavigationType } from 'react-router-dom';
 import { Colors, ZIndex, MaxWidth, Layout, Position, Size, Spinner, Border, flexColumn, flexCenter, fixedFill, CssValue, Opacity, BorderStyle, BoxSizing, PointerEvents, padding, Gap, SPINNER_FADE_MS } from '@festival/theme';
-import { useIsMobile, useIsWideDesktop } from '../hooks/ui/useIsMobile';
+import { useIsMobile, useIsMobileChrome, useIsWideDesktop } from '../hooks/ui/useIsMobile';
 import { useScrollMask, type ScrollMaskOptions } from '../hooks/ui/useScrollMask';
 import { useStaggerRush } from '../hooks/ui/useStaggerRush';
 import { useScrollRestore } from '../hooks/ui/useScrollRestore';
 import { useScrollContainer, useHeaderPortal, useQuickLinksRailPortal } from '../contexts/ScrollContainerContext';
 import { SONGS_FAB_KEYBOARD_INSET_VAR } from '../constants/keyboardLayoutVars';
 import { usePageQuickLinksController } from '../contexts/PageQuickLinksContext';
+import { useFabVisibility } from '../contexts/FabVisibilityContext';
 import { useRegisterFirstRun } from '../hooks/ui/useRegisterFirstRun';
 import { useFirstRun } from '../hooks/ui/useFirstRun';
 import type { FirstRunSlideDef, FirstRunGateContext } from '../firstRun/types';
@@ -159,10 +160,11 @@ export interface PageProps {
   /**
    * Controls bottom spacing to keep content clear of fixed overlays (FAB, pagination, etc.).
    * - `'end'` (default): spacer div at the end of scrollable content.
+   * - `'auto'`: keeps the end spacer on desktop and only while a mobile FAB surface is rendered.
    * - `'fixed'`: shrinks the scroll viewport itself (marginBottom on shell scroll container).
    * - `'none'`: disables all spacing — caller manages its own bottom clearance.
    */
-  fabSpacer?: 'end' | 'fixed' | 'none';
+  fabSpacer?: 'end' | 'auto' | 'fixed' | 'none';
   children: ReactNode;
 }
 
@@ -248,7 +250,9 @@ export default function Page({
   }, [portalTarget]);
 
   const isMobile = useIsMobile();
+  const isMobileChrome = useIsMobileChrome();
   const isWideDesktop = useIsWideDesktop();
+  const { hasMobileFabSurface } = useFabVisibility();
   const [quickLinksMaxHeight, setQuickLinksMaxHeight] = useState<number | null>(null);
 
   const hasQuickLinks = !!quickLinks && quickLinks.items.length > 0;
@@ -305,6 +309,8 @@ export default function Page({
   const pgStyle = pageStyle(variant);
   const saStyle = scrollAreaStyle(scrollVariant);
   const cStyle = getContainerStyle(containerVariant);
+  const showEndFabSpacer = fabSpacer === 'end'
+    || (fabSpacer === 'auto' && (!isMobileChrome || hasMobileFabSurface));
   const resolvedContainerStyle = {
     ...cStyle,
     paddingTop: isMobile ? Gap.sm : Gap.md,
@@ -316,7 +322,7 @@ export default function Page({
       <div className={containerClassName} style={resolvedContainerStyle}>
         {loadPhase != null && loadPhase !== LoadPhase.ContentIn ? null : content}
       </div>
-      {fabSpacer === 'end' && <div style={pageCss.fabSpacer} />}
+      {showEndFabSpacer && <div style={pageCss.fabSpacer} />}
     </div>
   );
   const quickLinksRail = showQuickLinksRail && isWideDesktop && quickLinks && quickLinksRailPortal

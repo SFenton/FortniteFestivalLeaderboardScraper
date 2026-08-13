@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-13
-last_verified_commit: 3ff9cbc8
+last_verified_commit: 41c3bdb4
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -10,6 +10,8 @@ sources:
   - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
   - packages/core/src/api/serverTypes.ts
   - FortniteFestivalWeb/src/api/client.ts
+  - FSTService/Persistence/InstrumentDatabase.cs
+  - FSTService/Scraping/RankingsCalculator.cs
 update_triggers:
   - A route, payload, auth rule, rate limit, publication classification, or client method changes.
 ---
@@ -74,6 +76,37 @@ remains readable while catalogue regeneration is in progress.
 `AdminPrivate` single-song command. It requires `X-API-Key`, returns `202`, and
 starts the normal atomic generation flow. Omitting `songId` is rejected; the
 endpoint intentionally does not accept a full catalogue.
+
+### Ranking metric semantics
+
+Per-instrument player ranking payloads expose raw values and ranks with these
+production meanings:
+
+- adjusted percentile is the average rank percentile with Bayesian
+  score-count credibility;
+- popularity-weighted percentile uses log2 leaderboard-population weights and
+  the same credibility adjustment;
+- FC Rate is `fullComboCount / totalChartedSongs`; unplayed charts remain in
+  the denominator and no Bayesian adjustment is applied;
+- Total Score is the sum of eligible scores;
+- Max Score % first excludes scores above the configured 105% CHOpt validity
+  cutoff, averages eligible per-song ratios capped at 105%, and applies the
+  score-count credibility adjustment. `rawMaxScorePercent` retains the
+  pre-adjustment average. A valid score on a chart without a computed maximum
+  is omitted from that raw average but remains in the score count used by the
+  credibility adjustment.
+
+Aggregate player scopes intentionally use different formulas:
+
+- combo adjusted and weighted ratings are song-count-weighted averages of the
+  represented per-instrument ratings;
+- combo FC Rate is Full Combos divided by songs played across the combo
+  instruments, and combo Max Score % is the average represented
+  per-instrument adjusted value;
+- solo-family adjusted and weighted ratings use the full family chart catalog,
+  with unplayed charts contributing the worst percentile before credibility;
+- solo-family FC Rate uses the full family chart catalog, while Max Score %
+  treats unplayed charts as 0% before its credibility adjustment.
 
 ## Common behavior
 

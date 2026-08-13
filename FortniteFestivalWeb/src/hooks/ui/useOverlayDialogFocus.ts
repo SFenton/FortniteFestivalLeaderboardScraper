@@ -17,6 +17,7 @@ const FOCUSABLE_SELECTOR = [
 
 export function useOverlayDialogFocus(
   onDismiss: () => void,
+  explicitReturnFocusTarget?: HTMLElement | null,
 ): RefObject<HTMLDivElement | null> {
   const panelRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -24,6 +25,8 @@ export function useOverlayDialogFocus(
   const inheritedReturnFocusTarget = useContext(ModalReturnFocusTargetContext);
   const inheritedReturnFocusTargetRef = useRef(inheritedReturnFocusTarget);
   inheritedReturnFocusTargetRef.current = inheritedReturnFocusTarget;
+  const explicitReturnFocusTargetRef = useRef(explicitReturnFocusTarget);
+  explicitReturnFocusTargetRef.current = explicitReturnFocusTarget;
 
   useLayoutEffect(() => {
     const activeElement = document.activeElement instanceof HTMLElement
@@ -32,7 +35,9 @@ export function useOverlayDialogFocus(
       ? document.activeElement
       : null;
     const inheritedTarget = inheritedReturnFocusTargetRef.current;
-    previousFocusRef.current = activeElement
+    const explicitTarget = explicitReturnFocusTargetRef.current;
+    previousFocusRef.current = (explicitTarget?.isConnected ? explicitTarget : null)
+      ?? activeElement
       ?? (inheritedTarget?.isConnected ? inheritedTarget : null);
     const panel = panelRef.current;
     if (!panel) return;
@@ -73,10 +78,11 @@ export function useOverlayDialogFocus(
 
       const first = focusable[0]!;
       const last = focusable[focusable.length - 1]!;
-      if (event.shiftKey && document.activeElement === first) {
+      const activeElement = document.activeElement;
+      if (event.shiftKey && (activeElement === panel || activeElement === first || !panel.contains(activeElement))) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && (activeElement === panel || activeElement === last || !panel.contains(activeElement))) {
         event.preventDefault();
         first.focus();
       }

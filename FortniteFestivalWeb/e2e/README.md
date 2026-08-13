@@ -26,6 +26,7 @@ e2e/
     flows/              Notifications and cross-page behavior
     ownership/          Request, cache, and storage ownership
     pages/              Page and domain interactions
+    performance/        Deterministic runtime and growth benchmarks
     platform/           Publication, recovery, WebSocket behavior
     responsive/         Breakpoint and constrained-height geometry
     routes/             Route content and guard contracts
@@ -102,7 +103,19 @@ Targeted examples:
 corepack yarn playwright test --project=chromium-desktop e2e/specs/routes
 corepack yarn playwright test --project=webkit-mobile e2e/specs/browser
 corepack yarn playwright test --config=playwright.component.config.ts --project=ct-chromium
+corepack yarn performance:suggestions
 ```
+
+The Suggestions benchmark fixes the generator clock, drives at least 100
+accepted load triggers, attaches JSON metrics for generated/rendered
+categories, DOM nodes, frosted markers, scroll height, heap, long tasks,
+mousemove geometry reads, and back/forward restoration. PR 4 records the
+unvirtualized baseline; PR 5 promotes the final DOM, marker, geometry, and
+long-task targets to enforced assertions. The PR 4 baseline is 540 rendered
+categories, about 22.7k DOM nodes, 1,471 frosted markers, roughly 50.6 MB
+post-GC heap growth, a 1.28 s worst long task, and 1,471 geometry reads.
+The PR runner executes this memory-intensive benchmark in a dedicated
+one-worker pass after the normal Chromium desktop project.
 
 `scripts/run-e2e-project.mjs` accepts:
 

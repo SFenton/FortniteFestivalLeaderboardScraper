@@ -13,6 +13,7 @@ sources:
   - FortniteFestivalWeb/performance-budgets.json
   - FortniteFestivalWeb/scripts/check-performance-budgets.mjs
   - FortniteFestivalWeb/scripts/check-coverage-ignores.mjs
+  - FortniteFestivalWeb/scripts/shared-package-boundary-plugin.mjs
   - FortniteFestivalWeb/e2e/README.md
   - .github/workflows/publish-image.yml
   - .github/workflows/web-performance.yml
@@ -109,6 +110,41 @@ The report records required, active, and Docker Node versions plus zlib, Vite,
 app, core, and theme versions. The check fails when either runtime differs from
 the pinned version, when an existing raw, gzip, Brotli, or largest-chunk ceiling
 is exceeded, or when entry gzip headroom falls below 5,000 bytes.
+
+The production build also enforces the Rank By interaction boundary. Normal
+route and Rank By closures must exclude metric-help definitions,
+`FirstRunCarousel`, `Math.tsx`, KaTeX, and KaTeX CSS. The lazy metric-help
+closure must contain those modules and retain the direct dynamic edge from Rank
+By. Playwright request tests separately prove that KaTeX JS/CSS waits for the
+per-instrument info action, KaTeX fonts wait for a formula slide, and band,
+combo, and solo-family controls never expose the instrument-only help.
+
+## Suggestions performance
+
+The deterministic long-scroll benchmark runs in the primary Chromium desktop
+project and can be invoked directly:
+
+```bash
+cd FortniteFestivalWeb
+corepack yarn performance:suggestions
+```
+
+It fixes the generator clock, drives at least 100 accepted load triggers, and
+records generated/rendered category counts, total DOM nodes, frosted markers,
+scroll height, available JS heap, long tasks, mousemove geometry reads, and
+back/forward scroll restoration. Set `SUGGESTIONS_METRICS_PATH` to persist the
+JSON report outside the repository and `SUGGESTIONS_TRIGGER_TARGET` to run a
+larger manual profile. PR 4 establishes the observer-based baseline; the
+virtualization phase owns enforcement of the final DOM and runtime ceilings.
+CI runs the 100-trigger case in a dedicated one-worker pass after the normal
+Chromium desktop suite so its intentionally unbounded baseline cannot compete
+with another browser worker.
+
+The accepted PR 4 unvirtualized baseline produced 540 generated/rendered
+categories, about 22.7k DOM nodes, 1,471 frosted markers, about 50.6 MB of
+post-GC heap growth, a 1.28 s worst observed long task, and 1,471 frosted-card
+geometry reads for one mousemove. Structural counts and scroll restoration are
+deterministic; heap and long-task observations remain runtime measurements.
 
 ## Merge and release gates
 

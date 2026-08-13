@@ -5,7 +5,7 @@ export const BAND_EXPERIMENTAL_METRICS: BandRankingMetric[] = ['adjusted', 'weig
 export const BAND_RANKING_METRICS: BandRankingMetric[] = [...DEFAULT_METRICS, ...BAND_EXPERIMENTAL_METRICS] as BandRankingMetric[];
 
 export function getEnabledBandRankingMetrics(experimentalRanksEnabled: boolean): BandRankingMetric[] {
-  return experimentalRanksEnabled ? BAND_RANKING_METRICS : DEFAULT_METRICS as BandRankingMetric[];
+  return experimentalRanksEnabled ? BAND_RANKING_METRICS : [...DEFAULT_METRICS] as BandRankingMetric[];
 }
 
 export function coerceBandRankingMetric(metric: string | RankingMetric | BandRankingMetric | null | undefined, experimentalRanksEnabled: boolean): BandRankingMetric {

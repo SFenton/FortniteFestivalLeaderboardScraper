@@ -3,7 +3,6 @@ import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { IoFunnel } from 'react-icons/io5';
 import { ActionPill } from '../../components/common/ActionPill';
-import InfiniteScroll from 'react-infinite-scroll-component';
 import { useFestival } from '../../contexts/FestivalContext';
 import { usePlayerData } from '../../contexts/PlayerDataContext';
 import { useBandFilterAction } from '../../contexts/BandFilterActionContext';
@@ -30,7 +29,6 @@ import {
 import { LoadPhase } from '@festival/core/runtime';
 import Page from '../Page';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
-import { clearScrollCache } from '../../hooks/ui/useScrollRestore';
 import EmptyState from '../../components/common/EmptyState';
 import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import PageHeader from '../../components/common/PageHeader';
@@ -42,6 +40,7 @@ import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { useModalState } from '../../hooks/ui/useModalState';
 import FadeIn from '../../components/page/FadeIn';
 import { CategoryCard } from './components/CategoryCard';
+import { SuggestionsLoadSentinel } from './components/SuggestionsLoadSentinel';
 import {
   loadSuggestionsFilter,
   saveSuggestionsFilter,
@@ -52,6 +51,8 @@ import {
   getCardDelay,
   buildAlbumArtMap,
 } from './suggestionsHelpers';
+
+export { beginSuggestionsScrollRestoration } from './suggestionsScrollRestoration';
 
 type SuggestionsPageProps = {
   accountId?: string;
@@ -136,6 +137,10 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
   const bandIdentity = selectedBand
     ? `${selectedBand.bandType}|${selectedBand.teamKey}|${activeBandComboId ?? 'overall'}`
     : 'solo';
+  const suggestionCacheKey = mode === 'band' ? `band:${bandIdentity}` : `solo:${accountId ?? ''}`;
+  const stableSuggestionCacheKey = mode === 'band'
+    ? (selectedBand ? suggestionCacheKey : null)
+    : (accountId ? suggestionCacheKey : null);
   const suggestionSongs = mode === 'band' ? (bandSource?.songs ?? []) : coreSongs;
   const scoresIndex = mode === 'band' ? (bandSource?.scoresIndex ?? {}) : soloScoresIndex;
   const suggestions = useSuggestions(
@@ -145,12 +150,20 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
     effectiveSeason,
     {
       mode,
-      cacheKey: mode === 'band' ? `band:${bandIdentity}` : `solo:${accountId ?? ''}`,
-      sourceReady: mode === 'band' ? !isLoading && !bandSongRowsQuery.isLoading : true,
+      cacheKey: suggestionCacheKey,
+      sourceReady: mode === 'band'
+        ? !isLoading && !bandSongRowsQuery.isLoading
+        : !!accountId && !!playerData,
       bandComboId: activeBandComboId,
     },
   );
-  const { categories, loadMore, hasMore } = suggestions;
+  const {
+    categories,
+    loadMore,
+    hasMore,
+    loadTriggerCount,
+    resetScrollPosition,
+  } = suggestions;
 
   // Suggestions filter state
   const [filterSettings, setFilterSettings] = useState<SuggestionsFilterDraft>(loadSuggestionsFilter);
@@ -206,10 +219,9 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
   }, [categories, filterSettings, appSettings]);
   
 
-  // When filters hide most generated content, InfiniteScroll fires loadMore
-  // once, the new categories all get filtered out, visible-count and scroll
-  // height don't change, so InfiniteScroll never fires again -- "Loading more"
-  // gets stuck.
+  // When filters hide most generated content, an observer batch may add raw
+  // categories without moving the sentinel or increasing visible scroll
+  // height.
   //
   // Solution: track consecutive batches that produce zero new visible
   // categories.  After each render where raw categories grew but visible
@@ -219,19 +231,27 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
   const prevRawRef = useRef(categories.length);
   const prevVisibleRef = useRef(visibleCategories.length);
   const staleCountRef = useRef(0);
+  const previousFilterSettingsRef = useRef(filterSettings);
+  const previousSuggestionCacheKeyRef = useRef(suggestionCacheKey);
   const MAX_STALE = 15;
   const MIN_VISIBLE = 4;
 
   useEffect(() => {
+    const filterChanged = previousFilterSettingsRef.current !== filterSettings;
+    const identityChanged = previousSuggestionCacheKeyRef.current !== suggestionCacheKey;
+    previousFilterSettingsRef.current = filterSettings;
+    previousSuggestionCacheKeyRef.current = suggestionCacheKey;
+    if (!filterChanged && !identityChanged) return;
+
     setFilterExhausted(false);
     staleCountRef.current = 0;
     prevRawRef.current = categories.length;
     prevVisibleRef.current = 0;
     revealedCountRef.current = 0;
+    resetScrollPosition();
     scrollContainerRef.current?.scrollTo(0, 0);
-    clearScrollCache('suggestions');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterSettings, bandIdentity]);
+  }, [filterSettings, resetScrollPosition, suggestionCacheKey]);
 
   
   useEffect(() => {
@@ -260,20 +280,6 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
   
 
   const effectiveHasMore = hasMore && !filterExhausted;
-
-  
-  useEffect(() => {
-    if (!effectiveHasMore) return;
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    const id = setTimeout(() => {
-      if (el.scrollHeight <= el.clientHeight) {
-        loadMore();
-      }
-    }, 100);
-    return () => clearTimeout(id);
-  }, [visibleCategories.length, effectiveHasMore, loadMore]);
-  
 
   
   const filteredLoadMore = useCallback(() => {
@@ -348,7 +354,6 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
 
   return (
     <Page
-      scrollRestoreKey="suggestions"
       scrollDeps={[phase, visibleCategories]}
       firstRun={{ key: 'suggestions', label: t('nav.suggestions'), slides: suggestionsSlides, gateContext: firstRunGateCtx }}
       loadPhase={phase}
@@ -396,16 +401,14 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
             onAnimationEnd={clearStaggerStyle}
           />
         ) : (
-          <InfiniteScroll
-            dataLength={visibleCategories.length}
-            next={filteredLoadMore}
-            hasMore={effectiveHasMore}
-            loader={phase === LoadPhase.ContentIn ? <div style={suggestionsStyles.loader}><div style={suggestionsStyles.loaderSpinner} /></div> : <></>}
-            scrollThreshold={`${SCROLL_PREFETCH_PX}px`}
-            scrollableTarget={scrollContainerRef.current as unknown as React.ReactNode ?? undefined}
-            style={{ overflow: 'visible' }}
+          <div
+            ref={listRef}
+            data-testid="suggestions-list"
+            data-generated-category-count={categories.length}
+            data-visible-category-count={visibleCategories.length}
+            data-load-trigger-count={loadTriggerCount}
+            data-suggestions-cache-key={stableSuggestionCacheKey ?? undefined}
           >
-            <div ref={listRef}>
             {visibleCategories.map((cat, idx) => {
               const delay = computeDelay(idx);
               return (
@@ -414,9 +417,19 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
                 </FadeIn>
               );
             })}
-            </div>
-          </InfiniteScroll>
+          </div>
         )}
+        {effectiveHasMore && phase === LoadPhase.ContentIn && (
+          <div style={suggestionsStyles.loader}><div style={suggestionsStyles.loaderSpinner} /></div>
+        )}
+        <SuggestionsLoadSentinel
+          rootRef={scrollContainerRef}
+          disabled={!effectiveHasMore || phase !== LoadPhase.ContentIn}
+          triggerKey={categories.length}
+          prefetchPx={SCROLL_PREFETCH_PX}
+          onLoadMore={filteredLoadMore}
+          fallbackLabel={t('suggestions.loadMore')}
+        />
     </Page>
   );
 }
