@@ -128,12 +128,18 @@ import { InstrumentIcon } from './components/display/InstrumentIcons';
 import LazyModalBoundary from './components/common/LazyModalBoundary';
 import {
   LazyBandInstrumentFilterModal,
+  LazyChangelogModal,
+  LazyConfirmAlert,
   LazyMobileNotificationsModal,
   LazySearchModal,
   isBandInstrumentFilterModalLoaded,
+  isChangelogModalLoaded,
+  isConfirmAlertLoaded,
   isMobileNotificationsModalLoaded,
   isSearchModalLoaded,
   loadBandInstrumentFilterModal,
+  loadChangelogModal,
+  loadConfirmAlert,
   loadMobileNotificationsModal,
   loadSearchModal,
   preloadBandInstrumentFilterModal,
@@ -148,12 +154,10 @@ import { notificationFeedKeyForProfile, useNotificationSeenState } from './compo
 import { NotificationFeedWebSocketBridge, useProfileNotificationsFeed } from './components/notifications/useProfileNotificationsFeed';
 import type { SearchTarget } from './types/search';
 import { IS_IOS, IS_ANDROID, IS_PWA, IS_PAGE_RELOAD } from '@festival/ui-utils';
-import ChangelogModal from './components/modals/ChangelogModal';
-import ConfirmAlert from './components/modals/ConfirmAlert';
 import { DEFAULT_INSTRUMENT, SERVER_INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey } from '@festival/core/api';
 import type { AppliedBandComboFilter, BandInstrumentFilterApplyPayload, BandInstrumentFilterAssignment } from './types/bandFilter';
 import { APP_VERSION } from './hooks/data/useVersions';
-import { changelogHash } from './changelog';
+import { changelogHash } from './changelogHash';
 import ErrorBoundary from './components/page/ErrorBoundary';
 import SuspenseFallback from './components/common/SuspenseFallback';
 import RouteErrorFallback from './components/page/RouteErrorFallback';
@@ -417,14 +421,16 @@ function AppShell() {
   });
   const { settings } = useSettings();
   const notificationIds = notificationFeed.notificationIds;
-  const notificationFeedReadyForHeader = useNotificationMockData || notificationFeed.status !== 'loading';
+  const notificationFeedReadyForHeader = notificationFeed.status !== 'loading';
   const notificationFeedKey = notificationFeed.feedKey;
   const notificationRequestMatchesSelection = selectedProfile != null && selectedNotificationFeedKey === requestedNotificationFeedKey;
-  const notificationFeedAuthoritative = useNotificationMockData || (
-    notificationRequestMatchesSelection
-    && notificationFeed.status === 'ready'
-    && notificationFeed.generationStatus === 'generated'
-  );
+  const notificationFeedAuthoritative = useNotificationMockData
+    ? notificationFeed.status === 'ready'
+    : (
+        notificationRequestMatchesSelection
+        && notificationFeed.status === 'ready'
+        && notificationFeed.generationStatus === 'generated'
+      );
   const { unreadNotificationIds, markNotificationsSeen } = useNotificationSeenState(notificationFeedKey, notificationIds, {
     isCurrentFeedLoaded: notificationFeedAuthoritative,
   });
@@ -499,6 +505,10 @@ function AppShell() {
   const dismissChangelog = useCallback(() => {
     localStorage.setItem(CHANGELOG_STORAGE_KEY, JSON.stringify({ version: APP_VERSION, hash: changelogHash() }));
   }, []);
+  const closeChangelog = useCallback(() => {
+    dismissChangelog();
+    setChangelogDismissed(true);
+  }, [dismissChangelog]);
   /* v8 ignore stop */
   const navigate = useNavigate();
   const navType = useNavigationType();
@@ -590,9 +600,10 @@ function AppShell() {
     if (validationOpenedNotificationsRef.current) return;
     if (import.meta.env.MODE !== 'e2e') return;
     if (!shouldAutoOpenNotifications) return;
+    if (!notificationFeedReadyForHeader) return;
     validationOpenedNotificationsRef.current = true;
     setNotificationsOpen(true);
-  }, [shouldAutoOpenNotifications]);
+  }, [notificationFeedReadyForHeader, shouldAutoOpenNotifications]);
 
   useEffect(() => {
     if (selectedProfile || useNotificationMockData) return;
@@ -1352,16 +1363,41 @@ function AppShell() {
           onReset={handleResetBandFilter}
         />
       </LazyModalBoundary>
-      {showChangelog && <ChangelogModal onDismiss={dismissChangelog} onExitComplete={() => setChangelogDismissed(true)} />}
-      {showDeselectConfirm && (
-        <ConfirmAlert
-          title={t('common.deselectConfirmTitle')}
-          message={t('common.deselectConfirmMessage')}
-          onNo={() => setShowDeselectConfirm(false)}
-          onYes={confirmDeselect}
-          onExitComplete={() => setShowDeselectConfirm(false)}
-        />
-      )}
+      <LazyModalBoundary
+        visible={showChangelog}
+        title={t('changelog.title')}
+        boundaryName="changelog-modal"
+        onClose={closeChangelog}
+        load={loadChangelogModal}
+        isLoaded={isChangelogModalLoaded}
+        initialFocus="panel"
+      >
+        {showChangelog && (
+          <LazyChangelogModal
+            onDismiss={dismissChangelog}
+            onExitComplete={() => setChangelogDismissed(true)}
+          />
+        )}
+      </LazyModalBoundary>
+      <LazyModalBoundary
+        visible={showDeselectConfirm}
+        title={t('common.deselectConfirmTitle')}
+        boundaryName="deselect-confirm"
+        onClose={() => setShowDeselectConfirm(false)}
+        load={loadConfirmAlert}
+        isLoaded={isConfirmAlertLoaded}
+        initialFocus="panel"
+      >
+        {showDeselectConfirm && (
+          <LazyConfirmAlert
+            title={t('common.deselectConfirmTitle')}
+            message={t('common.deselectConfirmMessage')}
+            onNo={() => setShowDeselectConfirm(false)}
+            onYes={confirmDeselect}
+            onExitComplete={() => setShowDeselectConfirm(false)}
+          />
+        )}
+      </LazyModalBoundary>
       {/* v8 ignore stop */}
     </div>
     </>

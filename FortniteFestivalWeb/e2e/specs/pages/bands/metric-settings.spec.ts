@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from '../../../fixtures/test';
-import { changelogHash } from '../../../../src/changelog';
+import { changelogHash } from '../../../../src/changelogHash';
 import { createPopulatedScenario, E2E_BAND } from '../../../fixtures/scenarios';
 
 test.use({ scenario: createPopulatedScenario() });

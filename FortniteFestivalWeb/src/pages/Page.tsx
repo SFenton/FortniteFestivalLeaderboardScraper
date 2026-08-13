@@ -13,7 +13,7 @@
  * Pages that need direct access to the scroll element (virtualizers, auto-scroll)
  * use `usePageScroll()` which returns `{ scrollRef, scrollTo }`.
  */
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject, type CSSProperties } from 'react';
+import { createContext, lazy, Suspense, useContext, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigationType } from 'react-router-dom';
 import { Colors, ZIndex, MaxWidth, Layout, Position, Size, Spinner, Border, flexColumn, flexCenter, fixedFill, CssValue, Opacity, BorderStyle, BoxSizing, PointerEvents, padding, Gap, SPINNER_FADE_MS } from '@festival/theme';
@@ -26,11 +26,13 @@ import { SONGS_FAB_KEYBOARD_INSET_VAR } from '../constants/keyboardLayoutVars';
 import { usePageQuickLinksController } from '../contexts/PageQuickLinksContext';
 import { useRegisterFirstRun } from '../hooks/ui/useRegisterFirstRun';
 import { useFirstRun } from '../hooks/ui/useFirstRun';
-import FirstRunCarousel from '../components/firstRun/FirstRunCarousel';
 import type { FirstRunSlideDef, FirstRunGateContext } from '../firstRun/types';
 import { LoadPhase } from '@festival/core/runtime';
 import ArcSpinner from '../components/common/ArcSpinner';
+import ErrorBoundary from '../components/page/ErrorBoundary';
 import { PageQuickLinksRail, PageQuickLinksModal, type PageQuickLinksConfig } from '../components/page/PageQuickLinks';
+
+const FirstRunCarousel = lazy(() => import('../components/firstRun/FirstRunCarousel'));
 
 /** Page-level style objects — importable by SuspenseFallback, PlayerPage consumers, etc. */
 export const pageCss = {
@@ -356,7 +358,13 @@ function PageFirstRun({ config }: { config: NonNullable<PageProps['firstRun']> }
   useRegisterFirstRun(config.key, config.label, config.slides);
   const firstRun = useFirstRun(config.key, config.gateContext, config.slides);
   if (!firstRun.show) return null;
-  return <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />;
+  return (
+    <ErrorBoundary fallback={null}>
+      <Suspense fallback={null}>
+        <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />
+      </Suspense>
+    </ErrorBoundary>
+  );
 }
 
 import BackgroundImage from '../components/page/BackgroundImage';

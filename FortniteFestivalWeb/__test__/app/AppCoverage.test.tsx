@@ -77,11 +77,11 @@ vi.mock('../../src/api/client', () => ({ api: mockApi }));
 
 import App, { getBackFallback } from '../../src/App';
 import { APP_VERSION } from '../../src/hooks/data/useVersions';
-import { changelogHash } from '../../src/changelog';
+import { changelogHash } from '../../src/changelogHash';
 import { songSlides } from '../../src/pages/songs/firstRun';
 import { contentHash } from '../../src/firstRun/types';
 import { queryClient } from '../../src/api/queryClient';
-import { loadSearchModal } from '../../src/components/lazy/secondaryControls';
+import { loadChangelogModal, loadSearchModal } from '../../src/components/lazy/secondaryControls';
 
 vi.setConfig({ testTimeout: 15_000 });
 configure({ asyncUtilTimeout: 5_000 });
@@ -93,7 +93,10 @@ function render(ui: ReactElement) {
 }
 
 beforeAll(async () => {
-  await loadSearchModal();
+  await Promise.all([
+    loadChangelogModal(),
+    loadSearchModal(),
+  ]);
   stubScrollTo();
   stubResizeObserver();
   stubElementDimensions();
@@ -213,13 +216,15 @@ describe('App — coverage: changelog modal', () => {
     });
 
     // Changelog should be showing (no version stored yet)
-    expect(screen.getByRole('dialog', { name: /What's New/ })).toBeTruthy();
+    const changelogDialog = await screen.findByRole('dialog', { name: /What's New/ });
+    expect(await within(changelogDialog).findByText('ITEM SHOP')).toBeTruthy();
+    expect(screen.queryByTestId('changelog-modal-lazy-loading')).toBeNull();
 
     // localStorage should NOT be written until the user dismisses
     expect(localStorage.getItem('fst:changelog')).toBeNull();
 
     // Dismiss the changelog
-    fireEvent.click(screen.getByLabelText('Close'));
+    fireEvent.click(within(changelogDialog).getByRole('button', { name: 'Close' }));
 
     // Now localStorage should be written
     await waitFor(() => {

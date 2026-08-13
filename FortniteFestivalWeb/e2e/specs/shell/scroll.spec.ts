@@ -1,6 +1,6 @@
 import { test, expect } from '../../fixtures/fre';
 import type { Page } from '@playwright/test';
-import { changelogHash } from '../../../src/changelog';
+import { changelogHash } from '../../../src/changelogHash';
 import { isPrimaryDesktopProject } from '../../support/projects';
 
 // Scroll tests are designed for desktop viewports only
