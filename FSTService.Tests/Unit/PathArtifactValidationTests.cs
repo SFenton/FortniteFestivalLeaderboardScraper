@@ -376,7 +376,7 @@ public sealed class PathArtifactValidationTests
                     Chunk("IDAT", Compress([0])),
                     Chunk("IEND", [])),
                 ["too-wide"] = BuildPng(
-                    Chunk("IHDR", PngHeader(16_385, 1, 8, 6)),
+                    Chunk("IHDR", PngHeader(32_769, 1, 8, 6)),
                     Chunk("IDAT", Compress([0])),
                     Chunk("IEND", [])),
                 ["invalid-compression-method"] = BuildPng(
@@ -411,7 +411,7 @@ public sealed class PathArtifactValidationTests
                     Chunk("IDAT", Compress([0, 0])),
                     Chunk("IEND", [])),
                 ["decoded-image-too-large"] = BuildPng(
-                    Chunk("IHDR", PngHeader(16_384, 16_384, 16, 6)),
+                    Chunk("IHDR", PngHeader(32_768, 32_768, 16, 6)),
                     Chunk("IDAT", Compress([0])),
                     Chunk("IEND", [])),
             };
@@ -424,6 +424,27 @@ public sealed class PathArtifactValidationTests
                     PathArtifactValidator.IsValidPng(path),
                     name);
             }
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void PngValidation_AcceptsTallFestivalPathWithinDecodedBudget()
+    {
+        var directory = CreateTestDirectory("path-png-tall");
+        try
+        {
+            var path = Path.Combine(directory, "tall.png");
+            File.WriteAllBytes(
+                path,
+                BuildValidPng(
+                    width: 1,
+                    height: 17_965));
+
+            Assert.True(PathArtifactValidator.IsValidPng(path));
         }
         finally
         {
