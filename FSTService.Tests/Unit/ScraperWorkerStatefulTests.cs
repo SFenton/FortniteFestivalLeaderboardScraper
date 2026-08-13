@@ -1946,13 +1946,13 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         {
             fakeChopt = Path.Combine(_tempDir, "fake_chopt.bat");
             File.WriteAllText(fakeChopt,
-                "@echo off\nif \"%~1\"==\"--version\" echo CHOpt 1.10.3& exit /b 0\nset \"out=\"\n:p\nif \"%~1\"==\"\" goto d\nif \"%~1\"==\"-o\" set \"out=%~2\"\nshift\ngoto p\n:d\nif defined out powershell -NoProfile -Command \"[IO.File]::WriteAllBytes('%out%', [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='))\"\necho {\"songName\":\"Song\",\"artist\":\"Artist\",\"charter\":\"Charter\",\"difficulty\":\"expert\",\"totalScore\":99999,\"pathSummary\":\"\",\"activations\":[],\"notes\":[],\"spPhrases\":[],\"measures\":[],\"bpms\":[],\"timeSignatures\":[]}\n");
+                "@echo off\nif \"%~1\"==\"--version\" echo CHOpt 1.10.3& exit /b 0\nset \"out=\"\n:p\nif \"%~1\"==\"\" goto d\nif \"%~1\"==\"-o\" set \"out=%~2\"\nshift\ngoto p\n:d\nif defined out powershell -NoProfile -Command \"[IO.File]::WriteAllBytes('%out%', [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='))\"\necho {\"schemaVersion\":2,\"songName\":\"Song\",\"artist\":\"Artist\",\"charter\":\"Charter\",\"difficulty\":\"expert\",\"totalScore\":99999,\"pathSummary\":\"\",\"activations\":[],\"notes\":[],\"spPhrases\":[],\"measures\":[],\"bpms\":[],\"timeSignatures\":[]}\n");
         }
         else
         {
             fakeChopt = Path.Combine(_tempDir, "fake_chopt.sh");
             File.WriteAllText(fakeChopt,
-                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'CHOpt 1.10.3'; exit 0; fi\no=\"\"\nwhile [ \"$#\" -gt 0 ]; do case \"$1\" in -o) o=\"$2\"; shift ;; esac; shift; done\n[ -n \"$o\" ] && printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' | base64 -d > \"$o\"\necho '{\"songName\":\"Song\",\"artist\":\"Artist\",\"charter\":\"Charter\",\"difficulty\":\"expert\",\"totalScore\":99999,\"pathSummary\":\"\",\"activations\":[],\"notes\":[],\"spPhrases\":[],\"measures\":[],\"bpms\":[],\"timeSignatures\":[]}'\n");
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'CHOpt 1.10.3'; exit 0; fi\no=\"\"\nwhile [ \"$#\" -gt 0 ]; do case \"$1\" in -o) o=\"$2\"; shift ;; esac; shift; done\n[ -n \"$o\" ] && printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' | base64 -d > \"$o\"\necho '{\"schemaVersion\":2,\"songName\":\"Song\",\"artist\":\"Artist\",\"charter\":\"Charter\",\"difficulty\":\"expert\",\"totalScore\":99999,\"pathSummary\":\"\",\"activations\":[],\"notes\":[],\"spPhrases\":[],\"measures\":[],\"bpms\":[],\"timeSignatures\":[]}'\n");
             File.SetUnixFileMode(fakeChopt,
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }

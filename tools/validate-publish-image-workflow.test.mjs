@@ -145,6 +145,25 @@ test('ui-utils cannot be removed from web-affecting classification', () => {
   assert.ok(validatePublishImageWorkflow(nonWebMutation, dockerfile).some(error => error.includes('web-affecting')));
 });
 
+test('bundled CHOpt changes rebuild the service image', () => {
+  const result = classifyChangedPaths([
+    'tools/chopt-cli-linux/CHOpt',
+    'tools/chopt-cli-linux/libs/libQt6Core.so.6',
+    'tools/chopt-cli-linux/README.md',
+  ]);
+  assert.equal(result.service, true);
+  assert.equal(result.web, false);
+
+  const mutated = workflow.replace(
+    '^(FSTService/|FortniteFestival\\.Core/|tools/chopt-cli-linux/)',
+    '^(FSTService/|FortniteFestival\\.Core/)',
+  );
+  assert.ok(
+    validatePublishImageWorkflow(mutated, dockerfile)
+      .some(error => error.includes('bundled CHOpt changes')),
+  );
+});
+
 test('moving a ui-utils file outside its root still classifies the source package', () => {
   const result = classifyChangedPaths([
     'packages/ui-utils/src/stagger.ts',

@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-11
-last_verified_commit: 453fd9b6
+last_verified: 2026-08-12
+last_verified_commit: 3ff9cbc8
 sources:
   - FortniteFestival.Core/FortniteFestival.Core.csproj
   - FortniteFestival.Core/Config/InstrumentType.cs
@@ -43,6 +43,9 @@ dependencies. Package exports are the public boundary.
 API types in `packages/core/src/api/serverTypes.ts` are manually mirrored from
 the service contract; they are not generated from OpenAPI. The HTTP client
 lives in `FortniteFestivalWeb/src/api/client.ts`.
+
+The mirrored contract includes path JSON notes, activations, legacy start-note
+metadata, and schema-v2 activation fields consumed by the path modal.
 
 When a service DTO, route payload, feature response, or publication response
 changes, review all three surfaces rather than type-asserting around a mismatch.

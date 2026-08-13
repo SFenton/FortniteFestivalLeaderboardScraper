@@ -2,7 +2,7 @@
 status: canonical
 owner: web
 last_verified: 2026-08-12
-last_verified_commit: 9f343376
+last_verified_commit: 3ff9cbc8
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
@@ -104,6 +104,13 @@ The request implementation lives in `src/api/client.ts`. Shared response and
 domain types come from `@festival/core`; that package is not itself the HTTP
 client. API changes must keep the service endpoint files, shared types, and
 client aligned.
+
+The path modal can display the generated PNG or a text table. Text mode renders
+one row per activation, not one row per optional start note. Schema-v2
+artifacts supply authoritative per-activation instructions and trigger
+metadata; legacy artifacts use their one-to-one `pathSummary` instructions and
+show unavailable legacy metrics explicitly. See
+[Path generation](path-generation.md).
 
 `src/changelog.ts` is current in-app announcement content. The eager shell reads
 only the checked hash metadata in `src/changelogHash.ts`; a unit test requires

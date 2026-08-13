@@ -384,7 +384,7 @@ public sealed class ScraperOptions
     /// Versioned identity for the CHOpt arguments and artifact contract.
     /// Change this value whenever path-generation semantics change.
     /// </summary>
-    public string PathGenerationProfile { get; set; } = "chopt-fnf-ew0-s20-json-png-v1";
+    public string PathGenerationProfile { get; set; } = "chopt-fnf-ew0-s20-json-png-v2";
 
     /// <summary>
     /// Maximum pages to fetch per leaderboard (100 entries per page).

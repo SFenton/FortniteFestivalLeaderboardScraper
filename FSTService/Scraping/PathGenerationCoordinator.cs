@@ -713,7 +713,10 @@ public sealed partial class PathGenerationCoordinator
         if (!PathArtifactValidator.TryParseJson(
                 result.StandardOutput,
                 requirePositiveScore,
-                out var totalScore))
+                out var totalScore,
+                requiredSchemaVersion:
+                    PathArtifactValidator.RequiredSchemaVersion(
+                        _options.Value.PathGenerationProfile)))
         {
             throw new PathGenerationException(
                 "artifact_validation",
