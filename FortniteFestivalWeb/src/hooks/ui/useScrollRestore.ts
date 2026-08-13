@@ -34,6 +34,7 @@ export function useScrollRestore(
 
   // Restore scroll position on mount when revisiting a page.
   useEffect(() => {
+    if (!cacheKey) return;
     const saved = scrollStore.get(cacheKey);
     if (saved == null || saved <= 0) return;
     const container = scrollContainerRef.current;
@@ -51,6 +52,7 @@ export function useScrollRestore(
 
   // Persist scroll position on every scroll.
   useEffect(() => {
+    if (!cacheKey) return;
     const container = scrollContainerRef.current;
     if (!container) return;
     const handler = () => { scrollStore.set(cacheKey, container.scrollTop); };
@@ -60,6 +62,7 @@ export function useScrollRestore(
 
   // Return a manual save function for imperative use.
   const saveScroll = useCallback(() => {
+    if (!cacheKey) return;
     scrollStore.set(cacheKey, scrollContainerRef.current?.scrollTop ?? 0);
   }, [cacheKey, scrollContainerRef]);
 

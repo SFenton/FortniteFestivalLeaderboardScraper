@@ -77,4 +77,18 @@ describe('useScrollRestore', () => {
     renderHook(() => useScrollRestore('key-a', 'POP'), { wrapper });
     expect(scrollToSpy).not.toHaveBeenCalledWith(0, 200);
   });
+
+  it('does not persist or restore an anonymous empty key', () => {
+    const { wrapper, mockEl } = createScrollContainerWrapper();
+    const scrollToSpy = vi.fn();
+    mockEl.scrollTo = scrollToSpy;
+
+    const { result } = renderHook(() => useScrollRestore('', ''), { wrapper });
+    Object.defineProperty(mockEl, 'scrollTop', { value: 300, writable: true, configurable: true });
+    act(() => { result.current(); });
+
+    scrollToSpy.mockClear();
+    renderHook(() => useScrollRestore('', ''), { wrapper });
+    expect(scrollToSpy).not.toHaveBeenCalled();
+  });
 });

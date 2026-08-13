@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
 import { SuggestionGenerator } from '@festival/core/suggestions';
 import type { SuggestionCategory } from '@festival/core/types';
 import type { Song as CoreSong, LeaderboardData } from '@festival/core/types';
@@ -7,6 +7,10 @@ import { api } from '../../api/client';
 import { buildRivalDataIndexFromRivalsAll } from '../../utils/suggestionAdapter';
 import { deriveComboFromSettings } from '../../pages/rivals/helpers/comboUtils';
 import { useSettings } from '../../contexts/SettingsContext';
+import {
+  initializeSuggestionsScrollState,
+  updateSuggestionsScrollY,
+} from '../../pages/suggestions/suggestionsSessionCache';
 
 const BATCH_SIZE = 6;
 const INITIAL_BATCH = 10;
@@ -20,12 +24,12 @@ type UseSuggestionsOptions = {
   bandComboId?: string | null;
 };
 
-// Module-level cache so suggestions survive navigation
-let _cache: {
+// Module-level cache so generated categories survive route navigation.
+let suggestionsCache: {
   cacheKey: string;
   categories: SuggestionCategory[];
   generator: SuggestionGenerator;
-  scrollY: number;
+  loadTriggerCount: number;
 } | null = null;
 
 export function useSuggestions(
@@ -41,7 +45,9 @@ export function useSuggestions(
   const sourceReady = options.sourceReady ?? true;
 
   // Restore from cache if same suggestion identity
-  const cached = _cache?.cacheKey === cacheKey ? _cache : null;
+  const cached = suggestionsCache?.cacheKey === cacheKey
+    ? suggestionsCache
+    : null;
 
   const [categories, setCategories] = useState<SuggestionCategory[]>(
     () => cached?.categories ?? [],
@@ -52,53 +58,52 @@ export function useSuggestions(
   const initializedRef = useRef(!!cached);
   const cacheKeyRef = useRef(cacheKey);
   const rivalDataInjectedRef = useRef(false);
+  const loadMorePendingRef = useRef(false);
+  const loadTriggerCountRef = useRef(cached?.loadTriggerCount ?? 0);
 
   useEffect(() => {
     if (cacheKeyRef.current === cacheKey) return;
 
     cacheKeyRef.current = cacheKey;
-    const nextCached = _cache?.cacheKey === cacheKey ? _cache : null;
+    const nextCached = suggestionsCache?.cacheKey === cacheKey
+      ? suggestionsCache
+      : null;
     setCategories(nextCached?.categories ?? []);
     setHasMore(true);
     generatorRef.current = nextCached?.generator ?? null;
     readyRef.current = !!nextCached;
     initializedRef.current = !!nextCached;
     rivalDataInjectedRef.current = false;
-  }, [cacheKey]);
-
-  // Restore scroll position after mount — read from _cache directly
-  // so it picks up the latest value even after StrictMode double-render
-  const scrollContainerRef = useScrollContainer();
-  useEffect(() => {
-    const scrollY = _cache?.cacheKey === cacheKey ? _cache.scrollY : 0;
-    if (scrollY > 0) {
-      /* v8 ignore start */
-      const t1 = setTimeout(() => scrollContainerRef.current?.scrollTo(0, scrollY), 0);
-      const t2 = setTimeout(() => scrollContainerRef.current?.scrollTo(0, scrollY), 100);
-      return () => { clearTimeout(t1); clearTimeout(t2); };
-      /* v8 ignore stop */
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    loadMorePendingRef.current = false;
+    loadTriggerCountRef.current = nextCached?.loadTriggerCount ?? 0;
   }, [cacheKey]);
 
   // Continuously save scroll position so browser back works
-  useEffect(() => {
+  const scrollContainerRef = useScrollContainer();
+  useLayoutEffect(() => {
     const scrollEl = scrollContainerRef.current;
     if (!scrollEl) return;
     /* v8 ignore start — scroll position tracking */
     const onScroll = () => {
-      if (_cache?.cacheKey === cacheKey && scrollEl.scrollTop > 0) {
-        _cache.scrollY = scrollEl.scrollTop;
-      /* v8 ignore stop */
-      }
+      const hashPath = window.location.hash.slice(1).split('?')[0];
+      if (hashPath !== '/suggestions') return;
+      updateSuggestionsScrollY(cacheKey, scrollEl.scrollTop);
     };
+    /* v8 ignore stop */
     scrollEl.addEventListener('scroll', onScroll, { passive: true });
-    return () => scrollEl.removeEventListener('scroll', onScroll);
+    return () => {
+      onScroll();
+      scrollEl.removeEventListener('scroll', onScroll);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cacheKey]);
 
   // Initialize generator once when source data is ready
   useEffect(() => {
+    if (mode === 'solo' && !accountId) {
+      if (!initializedRef.current) readyRef.current = false;
+      return;
+    }
     if (!sourceReady) {
       if (!initializedRef.current) readyRef.current = false;
       return;
@@ -125,7 +130,13 @@ export function useSuggestions(
     setCategories(first);
     setHasMore(true);
 
-    _cache = { cacheKey, categories: first, generator: gen, scrollY: 0 };
+    suggestionsCache = {
+      cacheKey,
+      categories: first,
+      generator: gen,
+      loadTriggerCount: 0,
+    };
+    initializeSuggestionsScrollState(cacheKey);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- currentSeason/options only needed at init
   }, [accountId, cacheKey, coreSongs, scoresIndex, sourceReady]);
 
@@ -156,6 +167,12 @@ export function useSuggestions(
   const loadMore = useCallback(() => {
     const gen = generatorRef.current;
     if (!gen || !readyRef.current) return;
+    if (loadMorePendingRef.current) return;
+    loadMorePendingRef.current = true;
+    loadTriggerCountRef.current += 1;
+    if (suggestionsCache?.cacheKey === cacheKey) {
+      suggestionsCache.loadTriggerCount = loadTriggerCountRef.current;
+    }
 
     let next = gen.getNext(BATCH_SIZE);
     if (next.length === 0) {
@@ -168,10 +185,26 @@ export function useSuggestions(
     }
     setCategories((prev) => {
       const updated = [...prev, ...next];
-      if (_cache) _cache.categories = updated;
+      if (suggestionsCache?.cacheKey === cacheKey) {
+        suggestionsCache.categories = updated;
+      }
       return updated;
     });
-  }, []);
+  }, [cacheKey]);
 
-  return { categories, loadMore, hasMore };
+  useEffect(() => {
+    loadMorePendingRef.current = false;
+  }, [cacheKey, categories.length, hasMore]);
+
+  const resetScrollPosition = useCallback(() => {
+    updateSuggestionsScrollY(cacheKey, 0);
+  }, [cacheKey]);
+
+  return {
+    categories,
+    loadMore,
+    hasMore,
+    loadTriggerCount: loadTriggerCountRef.current,
+    resetScrollPosition,
+  };
 }
