@@ -1,11 +1,11 @@
 import { type Page } from '@playwright/test';
-import { Layout } from '@festival/theme';
 import { test, expect } from '../../fixtures/test';
 import { createScrollableShopScenario } from '../../fixtures/scenarios';
 import { gotoAppRoute } from '../../support/drivers/app';
 import { isMobileProject, isPrimaryDesktopProject } from '../../support/projects';
 
 const SHOP_ITEM_SELECTOR = '[data-testid="scroll-area"] a[href^="https://example.invalid/shop/"]';
+const EXPECTED_DESKTOP_FAB_CLEARANCE_PX = 96;
 
 test.use({ scenario: createScrollableShopScenario() });
 
@@ -65,7 +65,7 @@ test('desktop Item Shop retains its existing trailing FAB clearance', async ({ p
   const spacerHeight = await page.locator('[data-testid="scroll-area"] > :last-child').evaluate(
     element => Number.parseFloat(getComputedStyle(element).height),
   );
-  expect(spacerHeight).toBe(Layout.fabPaddingBottom);
+  expect(spacerHeight).toBe(EXPECTED_DESKTOP_FAB_CLEARANCE_PX);
 });
 
 async function scrollToLastShopItem(page: Page) {
