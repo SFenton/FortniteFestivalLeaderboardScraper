@@ -10,6 +10,7 @@ using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
@@ -41,6 +42,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     private readonly SoloCurrentProjectionBuilder _soloCurrentProjectionBuilder;
     private readonly IDatabasePressureMonitor _databasePressureMonitor;
     private readonly WorkerStatusPublisher _workerStatus;
+    private readonly DurablePhaseProgressSink _phaseProgress;
 
     private readonly PostScrapeOrchestrator _sut;
 
@@ -127,9 +129,14 @@ public class PostScrapeOrchestratorTests : IDisposable
         _databasePressureMonitor = Substitute.For<IDatabasePressureMonitor>();
         _databasePressureMonitor.GetPressureSnapshotAsync(Arg.Any<DatabaseMaintenanceOptions>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(DatabasePressureSnapshot.None));
+        _phaseProgress = new DurablePhaseProgressSink(
+            _metaDb,
+            new ConfigurationBuilder().Build(),
+            NullLogger<DurablePhaseProgressSink>.Instance);
         _workerStatus = new WorkerStatusPublisher(
             _metaDb,
-            NullLogger<WorkerStatusPublisher>.Instance);
+            NullLogger<WorkerStatusPublisher>.Instance,
+            _phaseProgress);
 
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), _progress, new UserSyncProgressTracker(new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), new Api.ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
@@ -161,7 +168,8 @@ public class PostScrapeOrchestratorTests : IDisposable
             }), _log, null,
             soloCurrentProjectionBuilder: _soloCurrentProjectionBuilder,
             databasePressureMonitor: _databasePressureMonitor,
-            workerStatus: _workerStatus);
+            workerStatus: _workerStatus,
+            phaseProgress: _phaseProgress);
     }
 
     public void Dispose()
@@ -3137,6 +3145,70 @@ public class PostScrapeOrchestratorTests : IDisposable
         Assert.Equal("Checkpoint", after.SubOperation);
         Assert.Equal("Completed Checkpoint", after.Detail);
         Assert.True(after.UpdatedAtUtc >= before.UpdatedAtUtc);
+    }
+
+    [Fact]
+    public async Task ClassifiedPhasePersistsDurableAttemptTerminalState()
+    {
+        var scrapeId = _metaDb.StartScrapeRun();
+        _workerStatus.BeginOperation(
+            "scrape.post_process",
+            "Post-processing leaderboard update",
+            phase: "PostScrapeEnrichment");
+        _workerStatus.AttachScrape(scrapeId);
+
+        await _sut.RunClassifiedPhaseForTestAsync(
+            CreateContext(scrapeId),
+            "Checkpoint",
+            () => Task.CompletedTask);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT phase_id, attempt, status, warning_message, error_message
+            FROM scrape_phase_attempts
+            WHERE scrape_id = @scrapeId
+              AND phase_id = 'post.checkpoint'
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal("post.checkpoint", reader.GetString(0));
+        Assert.Equal(1, reader.GetInt32(1));
+        Assert.Equal("completed", reader.GetString(2));
+        Assert.True(reader.IsDBNull(3));
+        Assert.True(reader.IsDBNull(4));
+    }
+
+    [Fact]
+    public async Task ClassifiedBestEffortFailurePersistsWarningWithoutChangingPublicationBehavior()
+    {
+        var scrapeId = _metaDb.StartScrapeRun();
+        _workerStatus.BeginOperation(
+            "scrape.post_process",
+            "Post-processing leaderboard update",
+            phase: "PostScrapeEnrichment");
+        _workerStatus.AttachScrape(scrapeId);
+
+        await _sut.RunClassifiedPhaseForTestAsync(
+            CreateContext(scrapeId),
+            "Checkpoint",
+            () => throw new InvalidOperationException("checkpoint failed"));
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT status, warning_message, error_message
+            FROM scrape_phase_attempts
+            WHERE scrape_id = @scrapeId
+              AND phase_id = 'post.checkpoint'
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal("failed", reader.GetString(0));
+        Assert.Equal("checkpoint failed", reader.GetString(1));
+        Assert.True(reader.IsDBNull(2));
     }
 
     [Fact]

@@ -954,6 +954,7 @@ public sealed class ScrapeRunInfo
 /// </summary>
 public sealed class WorkerOperationInfo
 {
+    public int ContractVersion { get; init; } = 1;
     public string OperationKey { get; init; } = "";
     public string OperationLabel { get; init; } = "";
     public string Status { get; init; } = "running";
@@ -966,6 +967,124 @@ public sealed class WorkerOperationInfo
     public double? ProgressPercent { get; init; }
     public double? ElapsedSeconds { get; init; }
     public double? EstimatedRemainingSeconds { get; init; }
+    public string? OperationId { get; init; }
+    public string? PhaseId { get; init; }
+    public string? PhaseStatus { get; init; }
+    public string? SubphaseId { get; init; }
+    public string? PhasePlanVersion { get; init; }
+    public int? PhaseOrdinal { get; init; }
+    public int? PhaseAttempt { get; init; }
+    public string? UnitsKind { get; init; }
+    public long? UnitsCompleted { get; init; }
+    public long? UnitsTotal { get; init; }
+    public bool? UnitsTotalFinal { get; init; }
+    public double? PhasePercent { get; init; }
+    public string? OverallPercentKind { get; init; }
+    public double? OverallPercent { get; init; }
+    public string? OverallModelVersion { get; init; }
+    public double? EtaLowerSeconds { get; init; }
+    public double? EtaUpperSeconds { get; init; }
+    public string? EtaConfidence { get; init; }
+    public int? EtaSampleCount { get; init; }
+    public DateTime? LastProgressAtUtc { get; init; }
+    public DateTime? HeartbeatAtUtc { get; init; }
+}
+
+public sealed record ScrapePhaseAttemptStart(
+    long ScrapeId,
+    string PhaseId,
+    string OperationId,
+    int PhaseOrdinal,
+    string PlanVersion,
+    string WorkerInstanceId,
+    string? CurrentSubphaseId,
+    string Status,
+    string? UnitsKind,
+    long? UnitsCompleted,
+    long? UnitsTotal,
+    bool UnitsTotalFinal,
+    double? PhasePercent,
+    string OverallPercentKind,
+    double? OverallPercent,
+    string? OverallModelVersion,
+    double? EtaLowerSeconds,
+    double? EtaUpperSeconds,
+    string? EtaConfidence,
+    int? EtaSampleCount,
+    DateTime StartedAtUtc,
+    DateTime LastProgressAtUtc,
+    DateTime HeartbeatAtUtc,
+    string? BuildId,
+    string? ConfigId);
+
+public sealed record ScrapePhaseAttemptProgress(
+    long ScrapeId,
+    string PhaseId,
+    int Attempt,
+    string? CurrentSubphaseId,
+    string? UnitsKind,
+    long? UnitsCompleted,
+    long? UnitsTotal,
+    bool UnitsTotalFinal,
+    double? PhasePercent,
+    string OverallPercentKind,
+    double? OverallPercent,
+    string? OverallModelVersion,
+    double? EtaLowerSeconds,
+    double? EtaUpperSeconds,
+    string? EtaConfidence,
+    int? EtaSampleCount,
+    DateTime LastProgressAtUtc,
+    DateTime HeartbeatAtUtc);
+
+public sealed record ScrapePhaseAttemptCompletion(
+    long ScrapeId,
+    string PhaseId,
+    int Attempt,
+    string Status,
+    DateTime LastProgressAtUtc,
+    DateTime HeartbeatAtUtc,
+    DateTime CompletedAtUtc,
+    string? WarningMessage,
+    string? ErrorMessage);
+
+public sealed record PhaseDurationSample(
+    long DurationMs,
+    string? UnitsKind,
+    long? UnitsTotal,
+    bool UnitsTotalFinal);
+
+public sealed class ScrapePhaseAttemptInfo
+{
+    public long ScrapeId { get; init; }
+    public string PhaseId { get; init; } = "";
+    public int Attempt { get; init; }
+    public string OperationId { get; init; } = "";
+    public int PhaseOrdinal { get; init; }
+    public string PlanVersion { get; init; } = "";
+    public string WorkerInstanceId { get; init; } = "";
+    public string? CurrentSubphaseId { get; init; }
+    public string Status { get; init; } = "running";
+    public string? UnitsKind { get; init; }
+    public long? UnitsCompleted { get; init; }
+    public long? UnitsTotal { get; init; }
+    public bool UnitsTotalFinal { get; init; }
+    public double? PhasePercent { get; init; }
+    public string OverallPercentKind { get; init; } = "indeterminate";
+    public double? OverallPercent { get; init; }
+    public string? OverallModelVersion { get; init; }
+    public double? EtaLowerSeconds { get; init; }
+    public double? EtaUpperSeconds { get; init; }
+    public string? EtaConfidence { get; init; }
+    public int? EtaSampleCount { get; init; }
+    public DateTime StartedAtUtc { get; init; }
+    public DateTime LastProgressAtUtc { get; init; }
+    public DateTime HeartbeatAtUtc { get; init; }
+    public DateTime? CompletedAtUtc { get; init; }
+    public string? BuildId { get; init; }
+    public string? ConfigId { get; init; }
+    public string? WarningMessage { get; init; }
+    public string? ErrorMessage { get; init; }
 }
 
 /// <summary>
@@ -995,6 +1114,7 @@ public sealed class ServiceRuntimeState
     public DateTime? PublishedAtUtc { get; init; }
     public PublicReadFreezeState PublicReadFreeze { get; init; } = PublicReadFreezeState.NotFrozen;
     public WorkerStatusInfo? WorkerStatus { get; init; }
+    public ScrapePhaseAttemptInfo? CurrentPhaseAttempt { get; init; }
 }
 
 /// <summary>

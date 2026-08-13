@@ -77,6 +77,7 @@ public sealed class PostScrapeOrchestrator
     private readonly ILogger<PostScrapeOrchestrator> _log;
     private readonly IPostScrapePhaseFaultInjector? _phaseFaultInjector;
     private readonly WorkerStatusPublisher? _workerStatus;
+    private readonly DurablePhaseProgressSink? _phaseProgress;
 
     public PostScrapeOrchestrator(
         GlobalLeaderboardPersistence persistence,
@@ -114,7 +115,8 @@ public sealed class PostScrapeOrchestrator
         IDatabaseRetentionMaintenanceService? retentionMaintenanceService = null,
         IPostScrapePhaseFaultInjector? phaseFaultInjector = null,
         WorkerStatusPublisher? workerStatus = null,
-        ImprovementNotificationRecoveryService? improvementNotificationRecovery = null)
+        ImprovementNotificationRecoveryService? improvementNotificationRecovery = null,
+        DurablePhaseProgressSink? phaseProgress = null)
     {
         _persistence = persistence;
         _firstSeenCalculator = firstSeenCalculator;
@@ -152,6 +154,7 @@ public sealed class PostScrapeOrchestrator
         _log = log;
         _phaseFaultInjector = phaseFaultInjector;
         _workerStatus = workerStatus;
+        _phaseProgress = phaseProgress;
     }
 
     /// <summary>
@@ -1977,6 +1980,7 @@ public sealed class PostScrapeOrchestrator
         var heapBefore = GC.GetTotalMemory(false);
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var startedAt = DateTime.UtcNow;
+        StartDurablePhase(phaseName);
         UpdatePostProcessOperation(phaseName, $"Running {phaseName}");
         try
         {
@@ -1985,12 +1989,22 @@ public sealed class PostScrapeOrchestrator
         }
         catch (OperationCanceledException)
         {
+            CompleteDurablePhase(phaseName, "cancelled");
             UpdatePostProcessOperation(phaseName, $"Cancelled {phaseName}");
             throw;
         }
         catch (Exception ex)
         {
             sw.Stop();
+            CompleteDurablePhase(
+                phaseName,
+                "failed",
+                criticality == PostScrapePhaseCriticality.BestEffort
+                    ? ex.Message
+                    : null,
+                criticality == PostScrapePhaseCriticality.PublicationCritical
+                    ? ex.Message
+                    : null);
             UpdatePostProcessOperation(phaseName, $"Failed {phaseName}: {ex.Message}");
             RecordPhaseOutcome(ctx, phaseName, criticality, false, startedAt, sw.Elapsed, ex.Message);
             _log.LogWarning(
@@ -2012,6 +2026,7 @@ public sealed class PostScrapeOrchestrator
         sw.Stop();
         UpdatePostProcessOperation(phaseName, $"Completed {phaseName}");
         RecordPhaseOutcome(ctx, phaseName, criticality, true, startedAt, sw.Elapsed, null);
+        CompleteDurablePhase(phaseName, "completed");
         var heapAfter = GC.GetTotalMemory(false);
         _log.LogInformation(
             "PostScrape phase [{Phase}] completed in {Elapsed}. Heap: {Before:N0} → {After:N0} ({Delta:+#,0;-#,0;0} bytes).",
@@ -2033,6 +2048,7 @@ public sealed class PostScrapeOrchestrator
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var startedAt = DateTime.UtcNow;
         T result = defaultValue;
+        StartDurablePhase(phaseName);
         UpdatePostProcessOperation(phaseName, $"Running {phaseName}");
         try
         {
@@ -2041,12 +2057,22 @@ public sealed class PostScrapeOrchestrator
         }
         catch (OperationCanceledException)
         {
+            CompleteDurablePhase(phaseName, "cancelled");
             UpdatePostProcessOperation(phaseName, $"Cancelled {phaseName}");
             throw;
         }
         catch (Exception ex)
         {
             sw.Stop();
+            CompleteDurablePhase(
+                phaseName,
+                "failed",
+                criticality == PostScrapePhaseCriticality.BestEffort
+                    ? ex.Message
+                    : null,
+                criticality == PostScrapePhaseCriticality.PublicationCritical
+                    ? ex.Message
+                    : null);
             UpdatePostProcessOperation(phaseName, $"Failed {phaseName}: {ex.Message}");
             RecordPhaseOutcome(ctx, phaseName, criticality, false, startedAt, sw.Elapsed, ex.Message);
             _log.LogWarning(
@@ -2068,11 +2094,46 @@ public sealed class PostScrapeOrchestrator
         sw.Stop();
         UpdatePostProcessOperation(phaseName, $"Completed {phaseName}");
         RecordPhaseOutcome(ctx, phaseName, criticality, true, startedAt, sw.Elapsed, null);
+        CompleteDurablePhase(phaseName, "completed");
         var heapAfter = GC.GetTotalMemory(false);
         _log.LogInformation(
             "PostScrape phase [{Phase}] completed in {Elapsed}. Heap: {Before:N0} → {After:N0} ({Delta:+#,0;-#,0;0} bytes).",
             phaseName, sw.Elapsed, heapBefore, heapAfter, heapAfter - heapBefore);
         return result;
+    }
+
+    private void StartDurablePhase(string phaseName)
+    {
+        var descriptor = PhaseProgressCatalog.FindPostScrape(phaseName);
+        if (descriptor is null)
+            return;
+        var view = _phaseProgress?.StartPhase(descriptor);
+        if (view is not null)
+            _workerStatus?.ApplyDurableProgress(view);
+    }
+
+    private void CompleteDurablePhase(
+        string phaseName,
+        string status,
+        string? warningMessage = null,
+        string? errorMessage = null)
+    {
+        var descriptor = PhaseProgressCatalog.FindPostScrape(phaseName);
+        if (descriptor is null)
+            return;
+        foreach (var progressView in _phaseProgress?.ObserveTracker(
+                     _progress.GetProgressResponse().Current)
+                 ?? [])
+        {
+            _workerStatus?.ApplyDurableProgress(progressView);
+        }
+        var view = _phaseProgress?.CompletePhase(
+            descriptor.Id,
+            status,
+            warningMessage,
+            errorMessage);
+        if (view is not null)
+            _workerStatus?.ApplyDurableProgress(view);
     }
 
     private void UpdatePostProcessOperation(

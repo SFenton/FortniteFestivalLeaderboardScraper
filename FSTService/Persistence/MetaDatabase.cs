@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using FortniteFestival.Core.Persistence;
 using FSTService.Scraping;
 using Microsoft.Extensions.Options;
@@ -14,6 +15,11 @@ namespace FSTService.Persistence;
 /// </summary>
 public sealed partial class MetaDatabase : IMetaDatabase
 {
+    private static readonly JsonSerializerOptions WorkerOperationJsonOptions =
+        new()
+        {
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        };
     private static readonly AsyncLocal<long?> PublicationCacheBuildTarget = new();
     private static readonly AsyncLocal<long?> PublicationMaintenanceTarget = new();
     private readonly NpgsqlDataSource _ds;
@@ -1730,6 +1736,17 @@ public sealed partial class MetaDatabase : IMetaDatabase
                   )
                 ORDER BY id DESC
                 LIMIT 1
+            ),
+            active_attempt AS (
+                SELECT attempt.*
+                FROM scrape_phase_attempts attempt
+                JOIN latest_scrape latest
+                  ON latest.id = attempt.scrape_id
+                WHERE attempt.status = 'running'
+                ORDER BY attempt.last_progress_at DESC,
+                         attempt.phase_ordinal DESC,
+                         attempt.attempt DESC
+                LIMIT 1
             )
             SELECT
                 latest.id, latest.started_at, latest.completed_at, latest.songs_scraped,
@@ -1753,12 +1770,26 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 publication.public_reads_frozen_reason,
                 worker.worker_key, worker.status, worker.mode, worker.instance_id, worker.started_at,
                 worker.last_heartbeat_at, worker.last_status_change_at, worker.message,
-                worker.current_operation_json, worker.last_operation_json
+                worker.current_operation_json, worker.last_operation_json,
+                attempt.scrape_id, attempt.phase_id, attempt.attempt,
+                attempt.operation_id, attempt.phase_ordinal, attempt.plan_version,
+                attempt.worker_instance_id, attempt.current_subphase_id,
+                attempt.status, attempt.units_kind, attempt.units_completed,
+                attempt.units_total, attempt.units_total_final,
+                attempt.phase_percent, attempt.overall_percent_kind,
+                attempt.overall_percent, attempt.overall_model_version,
+                attempt.eta_lower_seconds, attempt.eta_upper_seconds,
+                attempt.eta_confidence, attempt.eta_sample_count,
+                attempt.started_at, attempt.last_progress_at,
+                attempt.heartbeat_at, attempt.completed_at,
+                attempt.build_id, attempt.config_id,
+                attempt.warning_message, attempt.error_message
             FROM (SELECT TRUE) singleton
             LEFT JOIN latest_scrape latest ON TRUE
             LEFT JOIN publication ON TRUE
             LEFT JOIN published_scrape published ON TRUE
             LEFT JOIN service_worker_status worker ON worker.worker_key = @workerKey
+            LEFT JOIN active_attempt attempt ON TRUE
             """;
         cmd.Parameters.AddWithValue("workerKey", workerKey);
 
@@ -1798,13 +1829,18 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     reader.IsDBNull(32) ? null : reader.GetString(32))
                 : PublicReadFreezeState.NotFrozen,
             WorkerStatus = workerStatus,
+            CurrentPhaseAttempt = ReadScrapePhaseAttempt(reader, 43),
         };
     }
 
     private static void AddJsonbParameter(NpgsqlCommand cmd, string name, WorkerOperationInfo? operation)
     {
         var parameter = cmd.Parameters.Add(name, NpgsqlDbType.Jsonb);
-        parameter.Value = operation is null ? DBNull.Value : JsonSerializer.Serialize(operation);
+        parameter.Value = operation is null
+            ? DBNull.Value
+            : JsonSerializer.Serialize(
+                operation,
+                WorkerOperationJsonOptions);
     }
 
     private static WorkerOperationInfo? DeserializeOperation(NpgsqlDataReader reader, int ordinal)
