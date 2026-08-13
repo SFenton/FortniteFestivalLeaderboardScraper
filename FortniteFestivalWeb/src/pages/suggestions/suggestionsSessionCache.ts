@@ -31,6 +31,7 @@ function getSuggestionsScrollStore(): SuggestionsScrollStore {
 
 export function initializeSuggestionsScrollState(cacheKey: string): void {
   const store = getSuggestionsScrollStore();
+  store.byCacheKey.clear();
   store.activeCacheKey = cacheKey;
   store.byCacheKey.set(cacheKey, {
     cacheKey,
