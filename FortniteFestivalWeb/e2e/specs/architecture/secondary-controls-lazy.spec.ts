@@ -88,6 +88,7 @@ test('desktop profile selection and notifications load only on interaction', asy
   await page.reload({ waitUntil: 'load' });
   await dismissOverlays(page);
   expect(moduleRequests.some(url => url.includes('/components/notifications/MobileNotificationsModal.tsx'))).toBe(false);
+  expect(moduleRequests.some(url => url.includes('/components/notifications/notificationMocks.ts'))).toBe(false);
 
   const notificationsButton = page.getByTestId('desktop-header-notifications');
   await expect(notificationsButton).toBeVisible();
@@ -96,6 +97,7 @@ test('desktop profile selection and notifications load only on interaction', asy
   await expect(notificationsDialog).toBeVisible();
   await expect(page.getByText('No notifications available')).toBeVisible();
   expect(moduleRequests.some(url => url.includes('/components/notifications/MobileNotificationsModal.tsx'))).toBe(true);
+  expect(moduleRequests.some(url => url.includes('/components/notifications/notificationMocks.ts'))).toBe(false);
 
   await notificationsDialog.getByRole('button', { name: 'Close' }).click();
   await expect(notificationsButton).toBeFocused();

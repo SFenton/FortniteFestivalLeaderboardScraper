@@ -1,6 +1,6 @@
 import type { Locator, Page, TestInfo } from '@playwright/test';
 import { test, expect } from '../../fixtures/fre';
-import { changelogHash } from '../../../src/changelog';
+import { changelogHash } from '../../../src/changelogHash';
 import { getTapDiagnosticsDump, gotoWithTapDiagnostics, tapAndExpect } from '../../fixtures/tapDiagnostics';
 import { isPrimaryMobileProject } from '../../support/projects';
 

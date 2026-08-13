@@ -10,7 +10,15 @@ const loaderFile = path.join(webRoot, 'src/components/lazy/secondaryControls.ts'
 const targetFiles = [
   'src/components/search/SearchModal.tsx',
   'src/components/notifications/MobileNotificationsModal.tsx',
+  'src/components/notifications/notificationMocks.ts',
   'src/components/notifications/notificationText.ts',
+  'src/components/modals/ChangelogModal.tsx',
+  'src/components/modals/ConfirmAlert.tsx',
+  'src/components/icons/PwaIconCapture.tsx',
+  'src/components/firstRun/FirstRunCarousel.tsx',
+  'src/diagnostics/ModalAccessibilityFixture.tsx',
+  'src/diagnostics/scrollFadeTestMode.ts',
+  'src/diagnostics/tapDiagnostics.ts',
   'src/pages/band/modals/BandInstrumentFilterModal.tsx',
   'src/pages/songs/modals/SortModal.tsx',
   'src/pages/songs/modals/FilterModal.tsx',
@@ -22,7 +30,7 @@ const targetFiles = [
 ].map(fileName => path.join(webRoot, fileName));
 
 describe('secondary control import boundaries', () => {
-  it('keeps modal implementations, DnD Kit, and KaTeX outside the initial Songs graph', () => {
+  it('keeps diagnostic and interaction-only implementations outside the initial Songs graph', () => {
     const mainGraph = collectStaticGraph(mainEntry);
 
     for (const target of targetFiles) {
@@ -39,6 +47,8 @@ describe('secondary control import boundaries', () => {
       '../../pages/band/modals/BandInstrumentFilterModal',
       '../../pages/songs/modals/FilterModal',
       '../../pages/songs/modals/SortModal',
+      '../modals/ChangelogModal',
+      '../modals/ConfirmAlert',
       '../notifications/MobileNotificationsModal',
       '../search/SearchModal',
     ]);

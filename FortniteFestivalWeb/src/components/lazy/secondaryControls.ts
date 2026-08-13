@@ -5,6 +5,8 @@ const notificationsModal = lazyWithPreload(() => import('../notifications/Mobile
 const bandInstrumentFilterModal = lazyWithPreload(() => import('../../pages/band/modals/BandInstrumentFilterModal'));
 const songsSortModal = lazyWithPreload(() => import('../../pages/songs/modals/SortModal'));
 const songsFilterModal = lazyWithPreload(() => import('../../pages/songs/modals/FilterModal'));
+const changelogModal = lazyWithPreload(() => import('../modals/ChangelogModal'));
+const confirmAlert = lazyWithPreload(() => import('../modals/ConfirmAlert'));
 
 export const LazySearchModal = searchModal.Component;
 export const preloadSearchModal = searchModal.preload;
@@ -30,3 +32,11 @@ export const LazySongsFilterModal = songsFilterModal.Component;
 export const preloadSongsFilterModal = songsFilterModal.preload;
 export const loadSongsFilterModal = songsFilterModal.load;
 export const isSongsFilterModalLoaded = songsFilterModal.isLoaded;
+
+export const LazyChangelogModal = changelogModal.Component;
+export const loadChangelogModal = changelogModal.load;
+export const isChangelogModalLoaded = changelogModal.isLoaded;
+
+export const LazyConfirmAlert = confirmAlert.Component;
+export const loadConfirmAlert = confirmAlert.load;
+export const isConfirmAlertLoaded = confirmAlert.isLoaded;

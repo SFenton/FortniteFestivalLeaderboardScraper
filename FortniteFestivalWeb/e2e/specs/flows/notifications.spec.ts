@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from '../../fixtures/fre';
-import { changelogHash } from '../../../src/changelog';
+import { changelogHash } from '../../../src/changelogHash';
 import { contentHash, type FirstRunStorage } from '../../../src/firstRun/types';
 import { isMobileProject, isPrimaryDesktopProject, isPrimaryMobileProject } from '../../support/projects';
 
@@ -64,6 +64,12 @@ test.describe('Notification seen state', () => {
 
   test('desktop validation mode exercises the same modal seen-state lifecycle', async ({ page }, testInfo) => {
     test.skip(!isPrimaryDesktopProject(testInfo.project.name), 'desktop validation is covered by the desktop project');
+    const moduleRequests: string[] = [];
+    page.on('request', request => {
+      if (request.url().includes('/components/notifications/notificationMocks.ts')) {
+        moduleRequests.push(request.url());
+      }
+    });
 
     await page.goto(`/?validation=${NOTIFICATIONS_VALIDATION_TOKEN}#/songs`, { waitUntil: 'load' });
     await dismissFirstRunIfVisible(page);
@@ -77,6 +83,7 @@ test.describe('Notification seen state', () => {
     await expectRowsNewestFirst(rows);
     await expectSoloInstrumentNotificationCopy(page);
     await expect(page.getByTestId('notification-unread-dot')).toHaveCount(EXPECTED_NOTIFICATION_COUNT);
+    expect(moduleRequests).toHaveLength(1);
 
     await revealEveryNotification(page);
 

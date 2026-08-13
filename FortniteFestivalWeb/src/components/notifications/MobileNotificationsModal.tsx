@@ -14,10 +14,8 @@ import MarqueeText from '../common/MarqueeText';
 import PressableButton from '../common/PressableButton';
 import { getNotificationDestination } from './notificationDestination';
 import { formatNotificationPresentation, type NotificationFlagGroup, type NotificationFlagKind, type NotificationMessagePart, type NotificationPresentation } from './notificationText';
-import { mockMobileNotifications } from './notificationMocks';
 import type { MobileNotification, NotificationMedia } from './notificationTypes';
 
-export { mockEmptyMobileNotifications, mockMobileNotifications } from './notificationMocks';
 export {
   filterSurfaceNotifications,
   notificationSurfaceInstrument,
@@ -54,6 +52,7 @@ const LIST_TOP_PADDING = LIST_FADE_EDGE_SIZE + Gap.sm;
 const LIST_SCROLL_FADE = `linear-gradient(to bottom, transparent 0, #000 ${LIST_FADE_EDGE_SIZE}px, #000 calc(100% - ${LIST_FADE_EDGE_SIZE}px), transparent 100%)`;
 const LIST_PADDING = `${LIST_TOP_PADDING}px 0 calc(${Gap.section}px + env(safe-area-inset-bottom, 0px))`;
 const VISIBLE_SEEN_THRESHOLD = 0.9;
+const EMPTY_NOTIFICATIONS: readonly MobileNotification[] = [];
 const EMPTY_UNREAD_IDS = new Set<string>();
 const EMPTY_NEW_IDS = new Set<string>();
 const NOOP_SEEN_HANDLER = () => {};
@@ -87,7 +86,7 @@ export default function MobileNotificationsModal({
   visible,
   onClose,
   presentation = 'mobileModal',
-  notifications = mockMobileNotifications,
+  notifications = EMPTY_NOTIFICATIONS,
   unreadNotificationIds = EMPTY_UNREAD_IDS,
   newNotificationIds = EMPTY_NEW_IDS,
   notificationsGenerated = true,

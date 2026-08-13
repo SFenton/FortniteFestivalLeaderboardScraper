@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mockMobileNotifications } from '../../../src/components/notifications/MobileNotificationsModal';
+import { mockMobileNotifications } from '../../../src/components/notifications/notificationMocks';
 import { getNotificationDestination, type NotificationDestinationInput } from '../../../src/components/notifications/notificationDestination';
 import { getNotificationRankingMetric } from '../../../src/components/notifications/notificationRanking';
 

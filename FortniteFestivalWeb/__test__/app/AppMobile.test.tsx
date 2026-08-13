@@ -288,7 +288,7 @@ import App, { getEmptyBandFilterActionLabel, getFabQuickLinksActionLabel, mergeP
 import { queryClient } from '../../src/api/queryClient';
 import type { SelectedProfile } from '../../src/hooks/data/useSelectedProfile';
 import { APP_VERSION } from '../../src/hooks/data/useVersions';
-import { changelogHash } from '../../src/changelog';
+import { changelogHash } from '../../src/changelogHash';
 import { contentHash } from '../../src/firstRun/types';
 import { shopSlides } from '../../src/pages/shop/firstRun';
 import { NOTIFICATION_SEEN_STORAGE_KEY } from '../../src/components/notifications/notificationSeenState';
@@ -2107,7 +2107,7 @@ describe('App — mobile FAB branches', () => {
     expect(await within(await screen.findByTestId('page-root')).findByRole('heading', { name: 'OtherP' })).toBeDefined();
     expect(screen.queryByTestId('player-header-actions')).toBeNull();
     expect(screen.queryByTestId('player-select-profile-slot')).toBeNull();
-    const sideActions = screen.getByTestId('fab-side-actions');
+    const sideActions = await screen.findByTestId('fab-side-actions');
     const selectButton = within(sideActions).getByRole('button', { name: 'Select OtherP' });
     expect(within(selectButton).getByText('Select OtherP')).toBeDefined();
     expect(screen.queryByLabelText('Actions')).toBeNull();
@@ -2130,7 +2130,7 @@ describe('App — mobile FAB branches', () => {
     expect(await within(await screen.findByTestId('page-root')).findByRole('heading', { name: 'TrackedP + BandMate' })).toBeDefined();
     expect(screen.queryByTestId('band-select-profile-slot')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Select Band Profile' })).toBeNull();
-    const sideActions = screen.getByTestId('fab-side-actions');
+    const sideActions = await screen.findByTestId('fab-side-actions');
     const selectButton = within(sideActions).getByRole('button', { name: 'Select Band' });
     expect(within(selectButton).getByText('Select Band')).toBeDefined();
     expect(screen.queryByLabelText('Actions')).toBeNull();

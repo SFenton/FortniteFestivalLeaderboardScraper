@@ -2,6 +2,7 @@
   "bundle": {
     "entryJsRawMaxBytes": 870000,
     "entryJsGzipMaxBytes": 260000,
+    "entryJsGzipMinHeadroomBytes": 5000,
     "entryJsBrotliMaxBytes": 220000,
     "largestChunkGzipMaxBytes": 120000
   },

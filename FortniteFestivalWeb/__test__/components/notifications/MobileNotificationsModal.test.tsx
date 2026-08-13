@@ -3,13 +3,12 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import type { ServerInstrumentKey } from '@festival/core/api';
 import MobileNotificationsModal, {
   filterSurfaceNotifications,
-  mockEmptyMobileNotifications,
-  mockMobileNotifications,
   notificationSurfaceInstrument,
   shouldSurfaceNotification,
   sortNotificationsNewestFirst,
   type MobileNotification,
 } from '../../../src/components/notifications/MobileNotificationsModal';
+import { mockEmptyMobileNotifications, mockMobileNotifications } from '../../../src/components/notifications/notificationMocks';
 
 const mockIsMobile = vi.fn(() => true);
 const BRIGHT_WHITE = 'rgb(255, 255, 255)';
@@ -381,7 +380,7 @@ describe('MobileNotificationsModal', () => {
   });
 
   it('renders hardcoded coalesced notification rows', () => {
-    render(<MobileNotificationsModal visible={true} onClose={() => {}} onNotificationOpen={() => {}} />);
+    render(<MobileNotificationsModal visible={true} onClose={() => {}} notifications={mockMobileNotifications} onNotificationOpen={() => {}} />);
 
     expect(screen.getByRole('dialog', { name: 'Notifications' })).toBeTruthy();
     expect(screen.queryByText('Latest')).toBeNull();
@@ -517,7 +516,7 @@ describe('MobileNotificationsModal', () => {
 
   it('opens actionable notification rows from the whole card surface', () => {
     const onNotificationOpen = vi.fn();
-    render(<MobileNotificationsModal visible={true} onClose={() => {}} onNotificationOpen={onNotificationOpen} />);
+    render(<MobileNotificationsModal visible={true} onClose={() => {}} notifications={mockMobileNotifications} onNotificationOpen={onNotificationOpen} />);
 
     const firstRow = screen.getAllByTestId('mock-notification-row')[0]!;
     expect(firstRow.tagName).toBe('BUTTON');
@@ -530,7 +529,7 @@ describe('MobileNotificationsModal', () => {
   it('renders desktop presentation as a right-side drawer', () => {
     mockIsMobile.mockReturnValue(false);
 
-    render(<MobileNotificationsModal visible={true} onClose={() => {}} presentation="desktopDrawer" onNotificationOpen={() => {}} />);
+    render(<MobileNotificationsModal visible={true} onClose={() => {}} presentation="desktopDrawer" notifications={mockMobileNotifications} onNotificationOpen={() => {}} />);
 
     const drawer = screen.getByTestId('desktop-notifications-drawer');
     expect(drawer).toBe(screen.getByRole('dialog', { name: 'Notifications' }));
@@ -581,7 +580,7 @@ describe('MobileNotificationsModal', () => {
   it('keeps unread dots stable for the current modal session', () => {
     const unreadNotificationIds = new Set([mockMobileNotifications[0]!.notificationGuid]);
     const { rerender } = render(
-      <MobileNotificationsModal visible={true} onClose={() => {}} unreadNotificationIds={unreadNotificationIds} onNotificationOpen={() => {}} />,
+      <MobileNotificationsModal visible={true} onClose={() => {}} notifications={mockMobileNotifications} unreadNotificationIds={unreadNotificationIds} onNotificationOpen={() => {}} />,
     );
 
     expect(screen.getAllByTestId('notification-unread-dot')).toHaveLength(1);
@@ -591,12 +590,12 @@ describe('MobileNotificationsModal', () => {
     expect(screen.getByTestId('notification-unread-dot').style.position).toBe('absolute');
     expect(screen.getAllByTestId('mock-notification-row')[0]!.getAttribute('data-unread')).toBe('true');
 
-    rerender(<MobileNotificationsModal visible={true} onClose={() => {}} unreadNotificationIds={new Set()} onNotificationOpen={() => {}} />);
+    rerender(<MobileNotificationsModal visible={true} onClose={() => {}} notifications={mockMobileNotifications} unreadNotificationIds={new Set()} onNotificationOpen={() => {}} />);
 
     expect(screen.getAllByTestId('notification-unread-dot')).toHaveLength(1);
 
-    rerender(<MobileNotificationsModal visible={false} onClose={() => {}} unreadNotificationIds={new Set()} onNotificationOpen={() => {}} />);
-    rerender(<MobileNotificationsModal visible={true} onClose={() => {}} unreadNotificationIds={new Set()} onNotificationOpen={() => {}} />);
+    rerender(<MobileNotificationsModal visible={false} onClose={() => {}} notifications={mockMobileNotifications} unreadNotificationIds={new Set()} onNotificationOpen={() => {}} />);
+    rerender(<MobileNotificationsModal visible={true} onClose={() => {}} notifications={mockMobileNotifications} unreadNotificationIds={new Set()} onNotificationOpen={() => {}} />);
 
     expect(screen.queryByTestId('notification-unread-dot')).toBeNull();
   });

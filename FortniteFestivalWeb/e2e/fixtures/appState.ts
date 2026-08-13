@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { changelogHash } from '../../src/changelog';
+import { changelogHash } from '../../src/changelogHash';
 import { E2E_BAND, E2E_PLAYER } from './scenarios';
 
 export class AppState {
