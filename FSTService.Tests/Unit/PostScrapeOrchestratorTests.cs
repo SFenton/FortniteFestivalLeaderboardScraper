@@ -1833,6 +1833,325 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task BandMaintenance_records_exact_three_stable_subphase_timings()
+    {
+        const long scrapeId = 90_001;
+        var ctx = CreateContext(scrapeId: scrapeId);
+
+        await _sut.RunBandMaintenanceForTestAsync(
+            ctx,
+            BandExtractionResult.Empty,
+            runFullMaintenance: false,
+            CancellationToken.None);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT phase, subphase, item_key, rows_read, rows_written,
+                   rows_deleted, scope_count, success, error_message
+            FROM scrape_phase_timings
+            WHERE scrape_id = @scrapeId
+            ORDER BY id
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        using var reader = cmd.ExecuteReader();
+
+        foreach (var expected in new[]
+                 {
+                     (
+                         Subphase:
+                             PostScrapeOrchestrator.BandMaintenancePruneSubphase,
+                         RowsRead: (long?)null,
+                         RowsWritten: (long?)null),
+                     (
+                         Subphase:
+                             PostScrapeOrchestrator.BandMaintenanceSearchProjectionSubphase,
+                         RowsRead: (long?)null,
+                         RowsWritten: (long?)0),
+                     (
+                         Subphase:
+                             PostScrapeOrchestrator.BandMaintenanceCurrentProjectionSubphase,
+                         RowsRead: (long?)0,
+                         RowsWritten: (long?)0),
+                 })
+        {
+            Assert.True(reader.Read());
+            Assert.Equal(
+                PostScrapeOrchestrator.BandMaintenanceTimingPhase,
+                reader.GetString(0));
+            Assert.Equal(expected.Subphase, reader.GetString(1));
+            Assert.True(reader.IsDBNull(2));
+            if (expected.RowsRead.HasValue)
+                Assert.Equal(expected.RowsRead.Value, reader.GetInt64(3));
+            else
+                Assert.True(reader.IsDBNull(3));
+            if (expected.RowsWritten.HasValue)
+                Assert.Equal(expected.RowsWritten.Value, reader.GetInt64(4));
+            else
+                Assert.True(reader.IsDBNull(4));
+            Assert.Equal(0, reader.GetInt64(5));
+            Assert.Equal(0, reader.GetInt64(6));
+            Assert.True(reader.GetBoolean(7));
+            Assert.True(reader.IsDBNull(8));
+        }
+
+        Assert.False(reader.Read());
+    }
+
+    [Fact]
+    public void BandMaintenance_timing_metrics_use_existing_result_counts()
+    {
+        var scopes = new[]
+        {
+            new BandCurrentProjectionScopeKey(
+                "song-1",
+                "Band_Duets",
+                "overall",
+                ""),
+            new BandCurrentProjectionScopeKey(
+                "song-2",
+                "Band_Trios",
+                "combo",
+                "combo-1"),
+        };
+        var prune = PostScrapeOrchestrator.GetBandPruneTimingMetrics(
+            new BandPruneResult(
+                DeletedEntries: 2,
+                DeletedMemberStats: 3,
+                DeletedMemberLookups: 5,
+                AffectedTeamsByBandType:
+                    new Dictionary<string, IReadOnlyCollection<string>>(
+                        StringComparer.OrdinalIgnoreCase),
+                AffectedCurrentProjectionScopes: scopes));
+        Assert.Null(prune.RowsRead);
+        Assert.Null(prune.RowsWritten);
+        Assert.Equal(10, prune.RowsDeleted);
+        Assert.Equal(2, prune.ScopeCount);
+
+        var search = PostScrapeOrchestrator.GetBandSearchProjectionTimingMetrics(
+            new BandSearchProjectionIncrementalResult(
+                ProjectionAvailable: true,
+                ImpactedTeams: 3,
+                ProvidedTeams: 2,
+                ChangedSourceTeams: 1,
+                DeletedTeamRows: 5,
+                InsertedTeamRows: 7,
+                DeletedMemberRows: 7,
+                InsertedMemberRows: 16,
+                TotalElapsedMs: 25));
+        Assert.Null(search.RowsRead);
+        Assert.Equal(23, search.RowsWritten);
+        Assert.Equal(12, search.RowsDeleted);
+        Assert.Equal(3, search.ScopeCount);
+
+        var current = PostScrapeOrchestrator.GetBandCurrentProjectionTimingMetrics(
+            new BandCurrentProjectionIncrementalRefreshResult(
+                ScopeCount: 7,
+                SuccessfulScopes: 7,
+                FailedScopes: 0,
+                InsertedRows: 17,
+                DeletedRows: 19,
+                CandidateRowsDeleted: 0,
+                PublishResult:
+                    BandCurrentProjectionPublishResult.NotPublished(
+                        generation: 1,
+                        scopeCount: 7,
+                        readyScopes: 7,
+                        missingScopes: 0,
+                        failedScopes: 0,
+                        publishedRows: 17),
+                TotalElapsedMs: 30,
+                Scopes: []),
+            consideredScopeCount: 9);
+        Assert.Equal(9, current.RowsRead);
+        Assert.Equal(17, current.RowsWritten);
+        Assert.Equal(19, current.RowsDeleted);
+        Assert.Equal(7, current.ScopeCount);
+
+        var unchanged = PostScrapeOrchestrator.GetBandCurrentProjectionTimingMetrics(
+            new BandCurrentProjectionIncrementalRefreshResult(
+                ScopeCount: 0,
+                SuccessfulScopes: 0,
+                FailedScopes: 0,
+                InsertedRows: 0,
+                DeletedRows: 0,
+                CandidateRowsDeleted: 0,
+                PublishResult:
+                    BandCurrentProjectionPublishResult.NotPublished(
+                        generation: 2,
+                        scopeCount: 0,
+                        readyScopes: 0,
+                        missingScopes: 0,
+                        failedScopes: 0,
+                        publishedRows: 0),
+                TotalElapsedMs: 5,
+                Scopes: []),
+            consideredScopeCount: 9);
+        Assert.Equal(9, unchanged.RowsRead);
+        Assert.Equal(0, unchanged.RowsWritten);
+        Assert.Equal(0, unchanged.RowsDeleted);
+        Assert.Equal(0, unchanged.ScopeCount);
+
+        Assert.Equal(0, PostScrapeOrchestrator.BandMaintenanceTimingMetrics.NoWork.RowsRead);
+        Assert.Equal(0, PostScrapeOrchestrator.BandMaintenanceTimingMetrics.NoWork.ScopeCount);
+    }
+
+    [Fact]
+    public async Task BandMaintenance_current_projection_timing_distinguishes_considered_from_refreshed()
+    {
+        const long scrapeId = 90_005;
+        var ctx = CreateContext(scrapeId: scrapeId);
+        var unchangedResult = new BandCurrentProjectionIncrementalRefreshResult(
+            ScopeCount: 0,
+            SuccessfulScopes: 0,
+            FailedScopes: 0,
+            InsertedRows: 0,
+            DeletedRows: 0,
+            CandidateRowsDeleted: 0,
+            PublishResult:
+                BandCurrentProjectionPublishResult.NotPublished(
+                    generation: 2,
+                    scopeCount: 0,
+                    readyScopes: 0,
+                    missingScopes: 0,
+                    failedScopes: 0,
+                    publishedRows: 0),
+            TotalElapsedMs: 5,
+            Scopes: []);
+
+        await _sut.RunTimedBandMaintenanceSubphaseAsync(
+            ctx,
+            PostScrapeOrchestrator.BandMaintenanceCurrentProjectionSubphase,
+            () => Task.FromResult(unchangedResult),
+            result =>
+                PostScrapeOrchestrator.GetBandCurrentProjectionTimingMetrics(
+                    result,
+                    consideredScopeCount: 9));
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT rows_read, rows_written, rows_deleted, scope_count, success
+            FROM scrape_phase_timings
+            WHERE scrape_id = @scrapeId
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(9, reader.GetInt64(0));
+        Assert.Equal(0, reader.GetInt64(1));
+        Assert.Equal(0, reader.GetInt64(2));
+        Assert.Equal(0, reader.GetInt64(3));
+        Assert.True(reader.GetBoolean(4));
+        Assert.False(reader.Read());
+    }
+
+    [Fact]
+    public async Task BandMaintenance_subphase_failure_is_recorded_and_rethrown()
+    {
+        const long scrapeId = 90_002;
+        var ctx = CreateContext(scrapeId: scrapeId);
+        var failure = new InvalidOperationException("search projection failed");
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _sut.RunTimedBandMaintenanceSubphaseAsync(
+                ctx,
+                PostScrapeOrchestrator.BandMaintenanceSearchProjectionSubphase,
+                () => Task.FromException<int>(failure),
+                static _ =>
+                    PostScrapeOrchestrator.BandMaintenanceTimingMetrics.NoWork));
+        Assert.Same(failure, thrown);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT phase, subphase, rows_read, rows_written, rows_deleted,
+                   scope_count, success, error_message
+            FROM scrape_phase_timings
+            WHERE scrape_id = @scrapeId
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(
+            PostScrapeOrchestrator.BandMaintenanceTimingPhase,
+            reader.GetString(0));
+        Assert.Equal(
+            PostScrapeOrchestrator.BandMaintenanceSearchProjectionSubphase,
+            reader.GetString(1));
+        Assert.True(reader.IsDBNull(2));
+        Assert.True(reader.IsDBNull(3));
+        Assert.True(reader.IsDBNull(4));
+        Assert.True(reader.IsDBNull(5));
+        Assert.False(reader.GetBoolean(6));
+        Assert.Equal(failure.Message, reader.GetString(7));
+        Assert.False(reader.Read());
+    }
+
+    [Fact]
+    public async Task BandMaintenance_subphase_cancellation_is_recorded_and_rethrown()
+    {
+        const long scrapeId = 90_003;
+        var ctx = CreateContext(scrapeId: scrapeId);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var cancellation = new OperationCanceledException(cts.Token);
+
+        var thrown = await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            _sut.RunTimedBandMaintenanceSubphaseAsync(
+                ctx,
+                PostScrapeOrchestrator.BandMaintenanceCurrentProjectionSubphase,
+                () => Task.FromException<int>(cancellation),
+                static _ =>
+                    PostScrapeOrchestrator.BandMaintenanceTimingMetrics.NoWork));
+        Assert.Equal(cts.Token, thrown.CancellationToken);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT subphase, rows_read, rows_written, rows_deleted,
+                   scope_count, success, error_message
+            FROM scrape_phase_timings
+            WHERE scrape_id = @scrapeId
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(
+            PostScrapeOrchestrator.BandMaintenanceCurrentProjectionSubphase,
+            reader.GetString(0));
+        Assert.True(reader.IsDBNull(1));
+        Assert.True(reader.IsDBNull(2));
+        Assert.True(reader.IsDBNull(3));
+        Assert.True(reader.IsDBNull(4));
+        Assert.False(reader.GetBoolean(5));
+        Assert.Equal(cancellation.Message, reader.GetString(6));
+        Assert.False(reader.Read());
+    }
+
+    [Fact]
+    public async Task BandMaintenance_timing_persistence_failure_does_not_fail_subphase()
+    {
+        using (var conn = _metaFixture.DataSource.OpenConnection())
+        using (var drop = conn.CreateCommand())
+        {
+            drop.CommandText = "DROP TABLE scrape_phase_timings";
+            drop.ExecuteNonQuery();
+        }
+
+        var result = await _sut.RunTimedBandMaintenanceSubphaseAsync(
+            CreateContext(scrapeId: 90_004),
+            PostScrapeOrchestrator.BandMaintenancePruneSubphase,
+            () => Task.FromResult(42),
+            static _ =>
+                new PostScrapeOrchestrator.BandMaintenanceTimingMetrics(
+                    RowsDeleted: 1,
+                    ScopeCount: 1));
+
+        Assert.Equal(42, result);
+    }
+
+    [Fact]
     public async Task RunImprovementNotificationsAfterPublicationAsync_RunsWhenSoloScrapeCoverageIsHealthy()
     {
         var sut = CreateOrchestratorWithImprovementNotifications();

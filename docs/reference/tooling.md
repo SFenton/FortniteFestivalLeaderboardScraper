@@ -24,7 +24,7 @@ implementation fragments into ad hoc commands.
 
 | Area | Entry points |
 |---|---|
-| Compose/deployment | `deploy/fst-compose.sh`, `tools/fst-worker-compose-guard.sh`, `tools/scripts/gluetun-manage.sh` |
+| Compose/deployment | `deploy/fst-compose.sh`, `tools/fst-worker-compose-guard.sh`, `tools/fst-worker-dual-lane-runonce.sh`, `tools/scripts/gluetun-manage.sh` |
 | PostgreSQL maintenance/evidence | `tools/postgres-*.sh`, `tools/sql/`, living database runbooks |
 | Documentation | `tools/check-docs.mjs` |
 | Secret/encoding/license checks | `tools/secret-scan.mjs`, `tools/check-encoding.mjs`, `tools/generate-license-manifest.mjs` |
@@ -75,6 +75,14 @@ worker-targeted `up`; proxy-only recreates remain effective-name-only. Output
 reports stages and counts without resolved endpoints, IPs, credentials, or
 environment values.
 
+Full-scrape run-once data profiles that enforce scope manifests and published
+scope sources also require
+`Features__UseLeaderboardScopeFingerprints=true`. Positive scopes receive
+their current-scrape coverage identity from those fingerprints; the guard
+rejects a profile that disables them instead of allowing a candidate to fail
+after network collection. The dual-lane wrapper sets this invariant
+explicitly, while snapshot reuse remains a separate opt-in.
+
 If post-start readiness fails, cleanup stops the worker only while
 `currentUpdate` remains idle and public reads remain unfrozen. Otherwise it
 leaves the worker running and directs the operator to
@@ -86,6 +94,7 @@ The action's host-side controls are documented in
 
 ```bash
 bash -n tools/fst-worker-compose-guard.sh
+bash -n tools/fst-worker-dual-lane-runonce.sh
 node --test tools/fst-worker-compose-guard.test.mjs
 ```
 

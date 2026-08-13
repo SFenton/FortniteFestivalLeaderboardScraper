@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-11
-last_verified_commit: 2bdf7287
+last_verified: 2026-08-12
+last_verified_commit: 042f9686
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -94,6 +94,45 @@ The pipeline has two useful abstractions:
 `ScrapePhaseResolver` expands `--solo-scrape`, `--solo-leaderboards`, and
 `--band-scrape`, and fills intermediate solo phases. Selective flags affect the
 first launch pass only; later scheduled cycles use the full pipeline.
+
+## Post-scrape timing
+
+Terminal phase names and publication criticality remain recorded through
+`scrape_phase_outcomes`.
+
+Band maintenance additionally records three stable timing subphases under the
+`BandMaintenance` phase:
+
+- `prune`;
+- `search_projection_refresh`;
+- `current_projection_refresh`.
+
+The timing rows reuse counts already returned by those operations: deleted
+band/member rows and affected scopes for prune, inserted/deleted projection
+rows and impacted teams for search, and inserted/deleted rows and refreshed
+scopes for the current projection. For `current_projection_refresh`,
+`rows_read` is the number of impacted scopes presented to the builder, while
+`scope_count` is the number selected for refresh after unchanged-scope
+filtering. This distinguishes no impacted scopes (`0`/`0`) from impacted but
+unchanged scopes (`N`/`0`). They add no discovery query.
+
+Timing persistence is best effort. A timing-write failure cannot replace a
+phase exception or cancellation and cannot change candidate publication.
+`success=false` means the subphase did not complete successfully, including
+cancellation. Row/scope metrics are null on exception or cancellation because
+partial work may have occurred; a successful no-work subphase records zero.
+BandExtraction membership/configuration work is not part of these
+BandMaintenance timings. Durable live progress, API fields, and Settings
+changes remain future roadmap work.
+
+Corrected live candidate scrape `1293` accepted this contract. It emitted
+exactly the three successful rows above, with no extras, and published normally.
+BandMaintenance took `7,939,927 ms`; the subphases accounted for
+`7,939,670 ms`, leaving `257 ms` (`0.00324%`) for all orchestration including
+timing persistence. `current_projection_refresh` dominated at `6,049,933 ms`
+(`76.20%`), followed by prune at `1,144,264 ms` and search refresh at
+`745,473 ms`. The current refresh considered `53,543` scopes, selected `8,020`,
+wrote `14,179,946` rows, and deleted `14,189,655`.
 
 ## Publication safety
 

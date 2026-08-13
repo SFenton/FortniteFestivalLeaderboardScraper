@@ -560,6 +560,7 @@ if data_profile == "publication-cache-generation":
         "Features__EnforcePublicationCriticalPhases",
         "Features__EnforceScopeCompletenessManifests",
         "Features__RequireSuccessfulScrapeWriters",
+        "Features__UseLeaderboardScopeFingerprints",
         "Features__WritePublishedScopeSources",
     ):
         if not boolean(name):
@@ -579,6 +580,7 @@ if data_profile == "registered-refresh-repair":
         "Features__EnforcePublicationCriticalPhases",
         "Features__EnforceScopeCompletenessManifests",
         "Features__RequireSuccessfulScrapeWriters",
+        "Features__UseLeaderboardScopeFingerprints",
         "Features__WritePublishedScopeSources",
     ):
         if not boolean(name):
@@ -599,6 +601,7 @@ if data_profile == "catalog-path-notification-source-cut":
         "Features__EnforcePublicationCriticalPhases",
         "Features__EnforceScopeCompletenessManifests",
         "Features__RequireSuccessfulScrapeWriters",
+        "Features__UseLeaderboardScopeFingerprints",
         "Features__WritePublishedScopeSources",
         "ImprovementNotifications__Enabled",
         "ImprovementNotifications__IncludePlayers",

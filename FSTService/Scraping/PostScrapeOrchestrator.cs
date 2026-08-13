@@ -22,8 +22,24 @@ public sealed class PostScrapeOrchestrator
         TimeSpan.FromSeconds(15);
 
     private const int PlayerStatsTierAccountChunkSize = 512;
+    internal const string BandMaintenanceTimingPhase = "BandMaintenance";
+    internal const string BandMaintenancePruneSubphase = "prune";
+    internal const string BandMaintenanceSearchProjectionSubphase = "search_projection_refresh";
+    internal const string BandMaintenanceCurrentProjectionSubphase = "current_projection_refresh";
     private static readonly IReadOnlyDictionary<string, IReadOnlyCollection<string>> EmptyImpactedTeams =
         new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.OrdinalIgnoreCase);
+
+    internal readonly record struct BandMaintenanceTimingMetrics(
+        long? RowsRead = null,
+        long? RowsWritten = null,
+        long? RowsDeleted = null,
+        long? ScopeCount = null)
+    {
+        public static BandMaintenanceTimingMetrics NoWork { get; } =
+            new(RowsRead: 0, RowsWritten: 0, RowsDeleted: 0, ScopeCount: 0);
+
+        public static BandMaintenanceTimingMetrics Unknown { get; } = new();
+    }
 
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly FirstSeenSeasonCalculator _firstSeenCalculator;
@@ -1593,9 +1609,14 @@ public sealed class PostScrapeOrchestrator
         bool runFullMaintenance,
         CancellationToken ct)
     {
-        var pruneResult = runFullMaintenance
-            ? PruneBandEntries(ctx)
-            : BandPruneResult.Empty;
+        var pruneResult = await RunTimedBandMaintenanceSubphaseAsync(
+            ctx,
+            BandMaintenancePruneSubphase,
+            () => Task.FromResult(
+                runFullMaintenance
+                    ? PruneBandEntries(ctx)
+                    : BandPruneResult.Empty),
+            GetBandPruneTimingMetrics);
         var impactedTeams = MergeImpactedTeams(
             extractionResult.ImpactedTeamsByBandType,
             pruneResult.AffectedTeamsByBandType);
@@ -1603,10 +1624,26 @@ public sealed class PostScrapeOrchestrator
             extractionResult.ImpactedCurrentProjectionScopes,
             pruneResult.AffectedCurrentProjectionScopes);
 
+        var searchRefreshResult = await RunTimedBandMaintenanceSubphaseAsync(
+            ctx,
+            BandMaintenanceSearchProjectionSubphase,
+            async () =>
+            {
+                if (_bandSearchProjectionBuilder is null)
+                {
+                    return new BandSearchProjectionIncrementalResult(
+                        false, 0, 0, 0, 0, 0, 0, 0, 0);
+                }
+
+                return await _bandSearchProjectionBuilder.RefreshIncrementalAsync(
+                    impactedTeams,
+                    ct);
+            },
+            GetBandSearchProjectionTimingMetrics);
+
         if (_bandSearchProjectionBuilder is not null)
         {
-            var refreshResult = await _bandSearchProjectionBuilder.RefreshIncrementalAsync(impactedTeams, ct);
-            if (!refreshResult.ProjectionAvailable)
+            if (!searchRefreshResult.ProjectionAvailable)
             {
                 _log.LogDebug("Band search projection refresh skipped because no published projection state exists.");
             }
@@ -1615,26 +1652,149 @@ public sealed class PostScrapeOrchestrator
                 _log.LogInformation(
                     "Band search projection maintenance complete: {ImpactedTeams:N0} impacted team(s), " +
                     "teams {DeletedTeams:N0}->{InsertedTeams:N0}, members {DeletedMembers:N0}->{InsertedMembers:N0}.",
-                    refreshResult.ImpactedTeams,
-                    refreshResult.DeletedTeamRows,
-                    refreshResult.InsertedTeamRows,
-                    refreshResult.DeletedMemberRows,
-                    refreshResult.InsertedMemberRows);
+                    searchRefreshResult.ImpactedTeams,
+                    searchRefreshResult.DeletedTeamRows,
+                    searchRefreshResult.InsertedTeamRows,
+                    searchRefreshResult.DeletedMemberRows,
+                    searchRefreshResult.InsertedMemberRows);
             }
         }
 
-        if (_bandCurrentProjectionBuilder is not null)
-            await RefreshBandCurrentProjectionScopesAsync(impactedCurrentProjectionScopes, ct);
+        await RunTimedBandMaintenanceSubphaseAsync(
+            ctx,
+            BandMaintenanceCurrentProjectionSubphase,
+            () => _bandCurrentProjectionBuilder is null
+                ? Task.FromResult(new BandMaintenanceTimingMetrics(
+                    RowsRead: impactedCurrentProjectionScopes.Count,
+                    RowsWritten: 0,
+                    RowsDeleted: 0,
+                    ScopeCount: 0))
+                : RefreshBandCurrentProjectionScopesAsync(
+                    impactedCurrentProjectionScopes,
+                    ct),
+            static metrics => metrics);
     }
 
-    private async Task RefreshBandCurrentProjectionScopesAsync(
+    internal Task RunBandMaintenanceForTestAsync(
+        ScrapePassContext ctx,
+        BandExtractionResult extractionResult,
+        bool runFullMaintenance,
+        CancellationToken ct) =>
+        RunBandMaintenanceAsync(
+            ctx,
+            extractionResult,
+            runFullMaintenance,
+            ct);
+
+    internal async Task<T> RunTimedBandMaintenanceSubphaseAsync<T>(
+        ScrapePassContext ctx,
+        string subphase,
+        Func<Task<T>> operation,
+        Func<T, BandMaintenanceTimingMetrics> getMetrics)
+    {
+        var startedAt = DateTime.UtcNow;
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var result = await operation();
+            stopwatch.Stop();
+            RecordBandMaintenanceSubphaseTiming(
+                ctx,
+                subphase,
+                startedAt,
+                stopwatch.Elapsed,
+                true,
+                getMetrics(result),
+                null);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            RecordBandMaintenanceSubphaseTiming(
+                ctx,
+                subphase,
+                startedAt,
+                stopwatch.Elapsed,
+                false,
+                BandMaintenanceTimingMetrics.Unknown,
+                ex.Message);
+            throw;
+        }
+    }
+
+    internal static BandMaintenanceTimingMetrics GetBandPruneTimingMetrics(
+        BandPruneResult result) =>
+        new(
+            RowsDeleted:
+                (long)result.DeletedEntries
+                + result.DeletedMemberStats
+                + result.DeletedMemberLookups,
+            ScopeCount: result.AffectedCurrentProjectionScopes.Count);
+
+    internal static BandMaintenanceTimingMetrics GetBandSearchProjectionTimingMetrics(
+        BandSearchProjectionIncrementalResult result) =>
+        new(
+            RowsWritten: result.InsertedTeamRows + result.InsertedMemberRows,
+            RowsDeleted: result.DeletedTeamRows + result.DeletedMemberRows,
+            ScopeCount: result.ImpactedTeams);
+
+    internal static BandMaintenanceTimingMetrics GetBandCurrentProjectionTimingMetrics(
+        BandCurrentProjectionIncrementalRefreshResult result,
+        int consideredScopeCount) =>
+        new(
+            RowsRead: consideredScopeCount,
+            RowsWritten: result.InsertedRows,
+            RowsDeleted: result.DeletedRows,
+            ScopeCount: result.ScopeCount);
+
+    private void RecordBandMaintenanceSubphaseTiming(
+        ScrapePassContext ctx,
+        string subphase,
+        DateTime startedAt,
+        TimeSpan duration,
+        bool success,
+        BandMaintenanceTimingMetrics metrics,
+        string? errorMessage)
+    {
+        if (ctx.ScrapeId <= 0)
+            return;
+
+        try
+        {
+            _persistence.Meta.RecordScrapePhaseTiming(
+                new ScrapePhaseTimingRecord(
+                    ctx.ScrapeId,
+                    BandMaintenanceTimingPhase,
+                    subphase,
+                    null,
+                    startedAt,
+                    startedAt + duration,
+                    (long)duration.TotalMilliseconds,
+                    metrics.RowsRead,
+                    metrics.RowsWritten,
+                    metrics.RowsDeleted,
+                    metrics.ScopeCount,
+                    success,
+                    errorMessage));
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(
+                ex,
+                "Failed to persist BandMaintenance timing for subphase {Subphase}.",
+                subphase);
+        }
+    }
+
+    private async Task<BandMaintenanceTimingMetrics> RefreshBandCurrentProjectionScopesAsync(
         IReadOnlyCollection<BandCurrentProjectionScopeKey> scopes,
         CancellationToken ct)
     {
         const int FallbackChunkSize = 128;
 
         if (scopes.Count == 0)
-            return;
+            return BandMaintenanceTimingMetrics.NoWork;
 
         _log.LogInformation("Refreshing band current projection for {ScopeCount:N0} impacted scope(s).", scopes.Count);
 
@@ -1646,8 +1806,10 @@ public sealed class PostScrapeOrchestrator
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(ex, "Band current projection maintenance hit a batch-level failure. Retrying in chunks of {ChunkSize:N0} scope(s).", FallbackChunkSize);
-            await RefreshBandCurrentProjectionScopesInChunksAsync(scopes, FallbackChunkSize, ct);
-            return;
+            return await RefreshBandCurrentProjectionScopesInChunksAsync(
+                scopes,
+                FallbackChunkSize,
+                ct);
         }
 
         _log.LogInformation(
@@ -1663,9 +1825,11 @@ public sealed class PostScrapeOrchestrator
             throw new InvalidOperationException(
                 $"Band current projection failed for {result.FailedScopes}/{result.ScopeCount} scope(s).");
         }
+
+        return GetBandCurrentProjectionTimingMetrics(result, scopes.Count);
     }
 
-    private async Task RefreshBandCurrentProjectionScopesInChunksAsync(
+    private async Task<BandMaintenanceTimingMetrics> RefreshBandCurrentProjectionScopesInChunksAsync(
         IReadOnlyCollection<BandCurrentProjectionScopeKey> scopes,
         int chunkSize,
         CancellationToken ct)
@@ -1682,6 +1846,7 @@ public sealed class PostScrapeOrchestrator
 
         var successfulScopes = 0;
         var failedScopes = 0;
+        var refreshedScopes = 0;
         long insertedRows = 0;
         long deletedRows = 0;
         long candidateRowsDeleted = 0;
@@ -1693,6 +1858,7 @@ public sealed class PostScrapeOrchestrator
             try
             {
                 var result = await _bandCurrentProjectionBuilder!.RefreshScopesAsync(chunk, ct: ct);
+                refreshedScopes += result.ScopeCount;
                 successfulScopes += result.SuccessfulScopes;
                 failedScopes += result.FailedScopes;
                 insertedRows += result.InsertedRows;
@@ -1725,6 +1891,12 @@ public sealed class PostScrapeOrchestrator
             throw new InvalidOperationException(
                 $"Band current projection fallback failed for {failedScopes}/{scopes.Count} scope(s).");
         }
+
+        return new BandMaintenanceTimingMetrics(
+            RowsRead: scopes.Count,
+            RowsWritten: insertedRows,
+            RowsDeleted: deletedRows,
+            ScopeCount: refreshedScopes);
     }
 
     private static IReadOnlyDictionary<string, IReadOnlyCollection<string>> MergeImpactedTeams(
