@@ -118,6 +118,7 @@ test('desktop filters defer both Songs and selected-band controls', async ({ pag
   await expect(filterDialog).toBeVisible();
   expect(moduleRequests.some(url => url.includes('/pages/songs/modals/FilterModal.tsx'))).toBe(true);
   await filterDialog.getByRole('button', { name: 'Close' }).click();
+  await expect(filterDialog).toHaveCount(0, { timeout: 10_000 });
   await expect(filterButton).toBeFocused();
 
   await seedState(page, BAND);
@@ -132,6 +133,7 @@ test('desktop filters defer both Songs and selected-band controls', async ({ pag
   await expect(bandFilterDialog.getByText('Instrument #1')).toBeVisible();
   expect(moduleRequests.some(url => url.includes('/pages/band/modals/BandInstrumentFilterModal.tsx'))).toBe(true);
   await bandFilterDialog.getByRole('button', { name: 'Close' }).click();
+  await expect(bandFilterDialog).toHaveCount(0, { timeout: 10_000 });
   await expect(bandFilterButton).toBeFocused();
 });
 

@@ -422,14 +422,11 @@ export default function RivalsPage() {
     />
   );
 
-  /* v8 ignore start -- JSX render tree */
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: true }), []);
 
-  /* v8 ignore start -- guard + computed state */
   if (!accountId) {
     return <div style={styles.center}>{t('rivals.noPlayer')}</div>;
   }
-  /* v8 ignore stop */
 
   return (
     <Page
@@ -627,5 +624,3 @@ export default function RivalsPage() {
     </Page>
   );
 }
-
-/* v8 ignore stop */

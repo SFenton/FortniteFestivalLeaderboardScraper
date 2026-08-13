@@ -16,7 +16,6 @@ const ROW_H_MOBILE = Layout.demoRowMobileHeight;
  * Demo for the Songs FRE shop-highlight slide.
  * Builds an alternating shop/not/shop/not pattern from real data.
  */
-/* v8 ignore start -- demo component requires FestivalContext + ShopContext + SlideHeightContext */
 export default function ShopHighlightDemo() {
   const isMobile = useIsMobile();
   const { state: { songs } } = useFestival();
@@ -53,7 +52,6 @@ export default function ShopHighlightDemo() {
     const id = setTimeout(() => setInitialDone(true), ms);
     return () => clearTimeout(id);
   }, [rows.length]);
-  /* v8 ignore stop */
 
   if (rows.length === 0) return null;
 

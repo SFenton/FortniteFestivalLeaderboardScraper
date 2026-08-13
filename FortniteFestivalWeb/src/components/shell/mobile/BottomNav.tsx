@@ -60,6 +60,9 @@ export default function BottomNav({ player, selectedProfile = null, activeTab, o
   const isTabVisuallyActive = useCallback((tab: BottomNavTab) => (
     visualActiveTab === tab.key || (visualActiveTab != null && tab.activeKeys?.includes(visualActiveTab))
   ), [visualActiveTab]);
+  const isTabCurrent = useCallback((tab: BottomNavTab) => (
+    activeTab === tab.key || (activeTab != null && tab.activeKeys?.includes(activeTab))
+  ), [activeTab]);
 
   useEffect(() => {
     if (pendingTab && pendingTab === activeTab) setPendingTab(null);
@@ -114,7 +117,7 @@ export default function BottomNav({ player, selectedProfile = null, activeTab, o
           data-testid={`bottom-nav-${tab.key}`}
           data-tab-key={tab.key}
           data-pending={pendingTab === tab.key ? 'true' : undefined}
-          aria-current={isTabVisuallyActive(tab) ? 'page' : undefined}
+          aria-current={isTabCurrent(tab) ? 'page' : undefined}
           style={isTabVisuallyActive(tab) ? s.tabActive : s.tab}
         >
           <span style={s.tabIcon}>{tab.icon}</span>

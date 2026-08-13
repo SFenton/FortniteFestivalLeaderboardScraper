@@ -331,7 +331,6 @@ function isAnimatedBgRoute(pathname: string) {
 }
 /* v8 ignore stop */
 
-/* v8 ignore start — wide desktop layout wrapper with overlay architecture */
 function WideDesktopLayout({
   shellScrollRef,
   shellPortalRefCallback,
@@ -388,8 +387,6 @@ function WideDesktopLayout({
     </div>
   );
 }
-/* v8 ignore stop */
-
 function AppShell() {
   const { t } = useTranslation();
   const { profile: selectedProfile, player, clearPlayer } = useTrackedPlayer();
@@ -499,7 +496,6 @@ function AppShell() {
   });
   const [changelogDismissed, setChangelogDismissed] = useState(false);
   const { activeCarouselKey } = useFirstRunContext();
-  /* v8 ignore next — activeCarouselKey suppression tested via FirstRunContext tests */
   const showChangelog = hasNewChangelog && !changelogDismissed && !activeCarouselKey;
   /* v8 ignore start — modal dismiss callback */
   const dismissChangelog = useCallback(() => {
@@ -643,7 +639,6 @@ function AppShell() {
   // --- Per-tab stack (mobile only) ---
   const { activeTab, handleTabClick } = useTabNavigation();
 
-  /* v8 ignore start — deep AppInner: deselect callback */
   const [showDeselectConfirm, setShowDeselectConfirm] = useState(false);
   useTapDiagnostics({
     pathname: location.pathname,
@@ -726,11 +721,9 @@ function AppShell() {
   }, []);
   /* v8 ignore stop */
 
-  /* v8 ignore next — deep AppInner rendering */
   const showAnimatedBg = isAnimatedBgRoute(location.pathname);
 
   // Page title for mobile header
-  /* v8 ignore next 6 — deep AppInner rendering */
   const NAV_TITLES: Record<string, string> = {
     [AppRoutes.songs]: t('nav.songs'),
     [AppRoutes.suggestions]: t('nav.suggestions'),
@@ -987,7 +980,6 @@ function AppShell() {
         )}
       {/* v8 ignore stop */}
 
-      {/* v8 ignore start — wideDesktop layout tested via PinnedSidebar.test */}
       {wideDesktop ? (
         <WideDesktopLayout
           shellScrollRef={shellScrollRef}
@@ -1011,7 +1003,6 @@ function AppShell() {
         </>
       )}
 
-      {/* v8 ignore start — mobile FAB configuration tested via MobileFabController + FloatingActionButton tests */}
       {isMobile && <BottomNav player={player} selectedProfile={selectedProfile} activeTab={activeTab} onTabClick={handleTabClick} />}
       {showMobileFab && location.pathname === AppRoutes.suggestions && fabSearch.suggestionsActionsReady && (
         <MobileFloatingActionButton
@@ -1398,7 +1389,6 @@ function AppShell() {
           />
         )}
       </LazyModalBoundary>
-      {/* v8 ignore stop */}
     </div>
     </>
     </FabVisibilityProvider>

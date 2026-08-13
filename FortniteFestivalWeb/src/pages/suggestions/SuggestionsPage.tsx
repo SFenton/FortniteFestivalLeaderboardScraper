@@ -61,7 +61,6 @@ type SuggestionsMode = 'solo' | 'band';
 const noopBandComboApply = () => {};
 const noopBandComboReset = () => {};
 
-/* v8 ignore start — render orchestrator; business logic tested in suggestionsHelpers.ts (35 unit tests), component exercised by 42 integration tests */
 export default function SuggestionsPage({ accountId, selectedBand = null }: SuggestionsPageProps) {
   const { t } = useTranslation();
   const { settings: appSettings } = useSettings();
@@ -421,7 +420,6 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
     </Page>
   );
 }
-/* v8 ignore stop */
 
 const suggestionsStyles = {
   center: {

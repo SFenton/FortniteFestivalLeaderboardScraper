@@ -107,7 +107,6 @@ class SharedWebSocket {
     }
   }
 
-  /* v8 ignore start -- WebSocket lifecycle */
   private connect() {
     if (!this.alive) return;
     // Guard: don't create a second socket while one is CONNECTING or OPEN
@@ -163,8 +162,6 @@ class SharedWebSocket {
       ws.close();
     };
   }
-  /* v8 ignore stop */
-
   private readonly handleVisibilityChange = () => {
     if (typeof document === 'undefined') return;
     if (document.hidden) {
@@ -380,7 +377,6 @@ class SharedWebSocket {
  * Shared WebSocket hook. All consumers share a single connection.
  * Returns `connected` state and a `subscribe` function to register message handlers.
  */
-/* v8 ignore start -- WebSocket lifecycle cannot be exercised in jsdom */
 export function useAppWebSocket(): AppWebSocketState {
   const [connected, setConnected] = useState(false);
 
@@ -434,4 +430,3 @@ export function useAppWebSocket(): AppWebSocketState {
 
   return { connected, subscribe, send, subscribeOpen };
 }
-/* v8 ignore stop */

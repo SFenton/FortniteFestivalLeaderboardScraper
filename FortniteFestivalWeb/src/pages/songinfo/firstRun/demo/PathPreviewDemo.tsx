@@ -165,13 +165,12 @@ export default function PathPreviewDemo() {
 
   return (
     <div ref={wrapperRef} style={h ? { ...s.wrapper, height: h } : s.wrapper}>
-      {/* v8 ignore start -- showInstruments/showDifficulty depend on wrapperWidth (ResizeObserver); phase booleans depend on async image loading state machine */}
       {showInstruments && (
         <FadeIn delay={0}>
           <InstrumentSelector
             instruments={selectorItems}
             selected={selectedInst}
-            onSelect={(key) => { /* v8 ignore next -- guard for null key from InstrumentSelector */ if (key) setSelectedInst(key); }}
+            onSelect={(key) => { if (key) setSelectedInst(key); }}
             required
             styles={selectorStyleOverrides}
           />
@@ -218,7 +217,6 @@ export default function PathPreviewDemo() {
           )}
         </div>
       </FadeIn>
-      {/* v8 ignore stop */}
     </div>
   );
 }

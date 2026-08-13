@@ -154,6 +154,7 @@ describe('BottomNav', () => {
     expect(settingsBtn.style.fontWeight).toBe('700');
     expect(settingsBtn.style.color).toBe('rgb(76, 125, 255)');
     expect(settingsBtn).toHaveAttribute('aria-current', 'page');
+    expect(screen.getAllByRole('button').filter(button => button.getAttribute('aria-current') === 'page')).toEqual([settingsBtn]);
   });
 
   it('applies active style to split rivals tab', () => {
@@ -209,7 +210,8 @@ describe('BottomNav', () => {
 
     expect(settingsBtn.style.fontWeight).toBe('700');
     expect(settingsBtn.style.color).toBe('rgb(76, 125, 255)');
-    expect(settingsBtn).toHaveAttribute('aria-current', 'page');
+    expect(settingsBtn).not.toHaveAttribute('aria-current');
+    expect(screen.getByTestId('bottom-nav-songs')).toHaveAttribute('aria-current', 'page');
     expect(settingsBtn.dataset.pending).toBe('true');
   });
 
@@ -241,6 +243,7 @@ describe('BottomNav', () => {
     for (const button of screen.getAllByRole('button')) {
       expect(button.style.fontWeight).not.toBe('700');
       expect(button.style.color).toBe('rgb(154, 166, 178)');
+      expect(button).not.toHaveAttribute('aria-current');
     }
   });
 

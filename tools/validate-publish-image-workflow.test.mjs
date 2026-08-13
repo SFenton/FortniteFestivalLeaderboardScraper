@@ -112,6 +112,19 @@ test('web validation cannot drop Playwright runners', () => {
   );
 });
 
+test('web validation cannot drop coverage-ignore integrity', () => {
+  const mutated = mutateStep(
+    workflow,
+    'test-web',
+    'Check coverage ignore directives',
+    block => block.replace('run: yarn check:coverage-ignores', 'run: echo skipped'),
+  );
+  assert.ok(
+    validatePublishImageWorkflow(mutated, dockerfile)
+      .some(error => error.includes('Check coverage ignore directives must run exactly yarn check:coverage-ignores')),
+  );
+});
+
 test('multi-commit push range cannot regress to HEAD~1', () => {
   const mutated = workflow.replace(
     'git diff --no-renames --name-only "$BEFORE_SHA" "$EVENT_SHA"',

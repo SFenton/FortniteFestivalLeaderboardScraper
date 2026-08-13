@@ -98,15 +98,13 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
           onExitComplete={() => setConfirmOpen(false)}
         />
       ) : null}>
-      {/* v8 ignore start -- sort mode Accordion with hideItemShop */}
       {hasPlayer ? (
         <ModalSection>
-          <Accordion title={t('sort.mode')} hint={t('sort.modeHint')} defaultOpen={!instrumentFilter}>
+          <Accordion title={t('sort.mode')} hint={t('sort.modeHint')} defaultOpen={!instrumentFilter} panelLandmark>
             <RadioRow label={t('sort.title')} selected={draft.sortMode === 'title'} onSelect={() => setMode('title')} />
             <RadioRow label={t('sort.artist')} selected={draft.sortMode === 'artist'} onSelect={() => setMode('artist')} />
             <RadioRow label={t('sort.year')} selected={draft.sortMode === 'year'} onSelect={() => setMode('year')} />
             <RadioRow label={t('sort.duration')} selected={draft.sortMode === 'duration'} onSelect={() => setMode('duration')} />
-            {/* v8 ignore next -- hideItemShop branch */}
             {!hideItemShop && <RadioRow label={t('sort.itemShop')} selected={draft.sortMode === 'shop'} onSelect={() => setMode('shop')} />}
             <RadioRow label={t('sort.hasFC')} selected={draft.sortMode === 'hasfc'} onSelect={() => setMode('hasfc')} />
             <RadioRow label={t('sort.lastPlayed')} selected={draft.sortMode === 'lastplayed'} onSelect={() => setMode('lastplayed')} />
@@ -128,7 +126,7 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
       {/* Instrument-specific sort modes (only when an instrument is selected) */}
       {instrumentFilter != null && visibleInstrumentSortModes.length > 0 && (
         <ModalSection>
-          <Accordion title={t('sort.filteredInstrumentMode')} hint={t('sort.filteredInstrumentHint')}>
+          <Accordion title={t('sort.filteredInstrumentMode')} hint={t('sort.filteredInstrumentHint')} panelLandmark>
             {visibleInstrumentSortModes.map(({ mode, label }) => (
               <RadioRow key={mode} label={label} selected={draft.sortMode === mode} onSelect={() => setMode(mode)} />
             ))}
@@ -186,7 +184,6 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
       {instrumentFilter != null && anyMetadataVisible && (
         <ModalSection title={t('sort.metadataPriority')} hint={<>{t('sort.metadataPriorityHint')}{!songRowVisualOrderEnabled && <><br /><br />{t('sort.metadataPriorityHintVisualOrder')}</>}</>}>
           <ReorderList
-          /* v8 ignore next -- nullish coalescing for display label */
             items={visibleMetadataOrder.map(k => ({ key: k, label: METADATA_SORT_DISPLAY[k] ?? k }))}
             /* v8 ignore start -- DnD reorder callback; can't fire in jsdom (DnD handler is v8-ignored) */
             onReorder={(items) => {
@@ -202,7 +199,7 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
       {/* Primary Instrument Order (only when NO instrument is selected and sorting by Has FC) */}
       {instrumentFilter == null && draft.sortMode === 'hasfc' && (
         <ModalSection>
-          <Accordion title={t('sort.instrumentOrder')} hint={t('sort.instrumentOrderHint')} defaultOpen>
+          <Accordion title={t('sort.instrumentOrder')} hint={t('sort.instrumentOrderHint')} defaultOpen panelLandmark>
             <ReorderList
               items={draft.instrumentOrder.map(k => ({ key: k, label: INSTRUMENT_LABELS[k] }))}
               /* v8 ignore start -- DnD reorder callback; can't fire in jsdom */
@@ -269,4 +266,3 @@ const directionStyles: Record<string, React.CSSProperties> = {
     transform: 'scale(1)',
   },
 };
-

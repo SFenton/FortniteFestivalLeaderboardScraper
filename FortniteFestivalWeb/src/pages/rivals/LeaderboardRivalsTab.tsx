@@ -157,7 +157,6 @@ export default function LeaderboardRivalsTab({
   };
   /* v8 ignore stop */
 
-  /* v8 ignore start -- JSX render tree */
   return (
     <div style={{ ...flexColumn, gap: Gap.section }}>
       {allReady && !hasAnyRivals && (
@@ -218,5 +217,4 @@ export default function LeaderboardRivalsTab({
       })}
     </div>
   );
-  /* v8 ignore stop */
 }

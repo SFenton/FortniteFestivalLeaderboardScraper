@@ -2,7 +2,7 @@
 status: canonical
 owner: web
 last_verified: 2026-08-12
-last_verified_commit: 3ff9cbc8
+last_verified_commit: 41c3bdb4
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
@@ -10,6 +10,8 @@ sources:
   - FortniteFestivalWeb/src/main.tsx
   - FortniteFestivalWeb/src/App.tsx
   - FortniteFestivalWeb/src/components/lazy/secondaryControls.ts
+  - FortniteFestivalWeb/src/components/common/Accordion.tsx
+  - FortniteFestivalWeb/src/components/shell/mobile/BottomNav.tsx
   - FortniteFestivalWeb/performance-budgets.json
   - FortniteFestivalWeb/scripts/check-performance-budgets.mjs
   - .github/workflows/web-performance.yml
@@ -85,6 +87,13 @@ query/context split cannot model.
 The application has mobile and wide-desktop shells around one shared route
 tree. Pages use shared shell, loading, empty, error, modal, card, navigation,
 and action primitives, but not every route has an identical component shape.
+
+Accordion triggers own stable panel relationships through `aria-expanded` and
+`aria-controls`. Collapsed panels remain mounted for their grid-row transition
+but are `inert` and `aria-hidden`, so hidden controls never enter the tab order.
+Sort and Suggestions accordions expose named regions; dense instrument filter
+groups avoid excessive landmarks. Mobile BottomNav uses pending state only for
+visual feedback and assigns `aria-current="page"` solely to the committed route.
 
 Current styling combines:
 

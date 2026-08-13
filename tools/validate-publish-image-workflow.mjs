@@ -76,6 +76,7 @@ export function validatePublishImageWorkflow(workflow, webDockerfile) {
       ['Check bundle budgets', 'node scripts/check-performance-budgets.mjs --out performance-artifacts/bundle.json'],
       ['Check source encoding', 'yarn check:encoding'],
       ['Run unit tests', 'yarn test:unit'],
+      ['Check coverage ignore directives', 'yarn check:coverage-ignores'],
       ['Enforce unit coverage', 'yarn test:coverage'],
       ['Run shared package tests', 'yarn test:shared'],
       ['Enforce shared package coverage', 'yarn test:shared:coverage'],

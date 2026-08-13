@@ -46,7 +46,6 @@ export default function SongDetailHeader({
   const s = useStyles(collapsed, noTransition);
 
   return (
-    /* v8 ignore start — collapsed ternary styling */
     <div style={s.header}>
       {song?.albumArt ? (
         <img src={song.albumArt} alt="" style={s.headerArt} />
@@ -82,7 +81,6 @@ export default function SongDetailHeader({
         /* v8 ignore stop */
       )}
     </div>
-    /* v8 ignore stop */
   );
 }
 

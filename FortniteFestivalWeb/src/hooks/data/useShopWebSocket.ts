@@ -32,7 +32,6 @@ export type ShopState = {
  * @param initialShopIds - Song IDs from the shared initial /api/shop query.
  *                         Used as the starting set before the first WS snapshot arrives.
  */
-/* v8 ignore start -- WebSocket lifecycle cannot be exercised in jsdom */
 export function useShopWebSocket(
   initialShopIds: ReadonlySet<string> | null,
   initialLeavingIds: ReadonlySet<string> | null = null,
@@ -121,4 +120,3 @@ export function useShopWebSocket(
 
   return { shopSongIds, leavingTomorrowIds, newShopIds, shopSongsMap, connected };
 }
-/* v8 ignore stop */

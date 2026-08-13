@@ -730,7 +730,6 @@ export default function SongDetailPage() {
           )}
         </div>
       )}
-      {/* v8 ignore stop */}
     </Page>
   );
 }

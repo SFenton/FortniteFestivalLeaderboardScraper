@@ -23,6 +23,7 @@ const defaultProps = () => ({
   savedDraft: baseDraft(),
   instrumentFilter: null as InstrumentKey | null,
   hasPlayer: true,
+  hideItemShop: false,
   bandComboInstruments: undefined as readonly InstrumentKey[] | undefined,
   metadataVisibility: undefined as MetadataVisibility | undefined,
   onChange: vi.fn(),
@@ -59,12 +60,23 @@ describe('SortModal', () => {
 
   it('shows mode radio rows inside accordion when hasPlayer is true', () => {
     renderModal({ hasPlayer: true });
-    // Accordion defaultOpen=false when instrumentFilter is null, so expand it
-    fireEvent.click(screen.getByText('Mode'));
+    expect(screen.getByRole('button', { name: /Mode/ })).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('Title')).toBeDefined();
     expect(screen.getByText('Artist')).toBeDefined();
     expect(screen.getByText('Year')).toBeDefined();
     expect(screen.getByText('Has FC')).toBeDefined();
+  });
+
+  it('hides Item Shop sorting in both player and flat mode sections', () => {
+    const { rerender } = renderModal({ hasPlayer: true, hideItemShop: true });
+    expect(screen.queryByText('Item Shop')).toBeNull();
+
+    rerender(
+      <TestProviders>
+        <SortModal {...defaultProps()} hasPlayer={false} hideItemShop />
+      </TestProviders>,
+    );
+    expect(screen.queryByText('Item Shop')).toBeNull();
   });
 
   it('shows mode radio rows as flat section when hasPlayer is false', () => {

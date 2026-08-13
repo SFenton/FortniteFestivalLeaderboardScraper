@@ -424,7 +424,7 @@ export default function LeaderboardPage() {
 
         {!error && (
           <>
-            {/* v8 ignore start ? entry rendering via shared component */}
+
               <PaginatedLeaderboard<LeaderboardEntryType>
                 entries={entries}
                 page={page + 1}
@@ -517,7 +517,6 @@ export default function LeaderboardPage() {
                 emptyMessage={t('leaderboard.noEntriesOnPage')}
                 staggerRushRef={staggerRushRef}
               />
-            {/* v8 ignore stop */}
           </>
         )}
     </Page>
