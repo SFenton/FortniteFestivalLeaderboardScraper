@@ -45,10 +45,12 @@ API types in `packages/core/src/api/serverTypes.ts` are manually mirrored from
 the service contract; they are not generated from OpenAPI. The HTTP client
 lives in `FortniteFestivalWeb/src/api/client.ts`.
 
-`ServiceInfoResponse` includes the additive durable-progress v2 phase-plan,
-attempt, units, exact-phase-percent, conservative overall/ETA, heartbeat, and
-last-progress fields. They remain optional in TypeScript so an accepted older
-service response stays consumable during rolling deployment.
+PR #15 adds candidate `ServiceInfoResponse` fields for the durable-progress v2
+phase plan, attempt, units, exact-phase-percent, conservative overall/ETA,
+heartbeat, and last-progress contract. The PR is implemented and tested but
+remains unaccepted, unmerged, undeployed, and not live-validated. Fields stay
+optional so the accepted production service response remains consumable
+during any later rolling deployment.
 
 When a service DTO, route payload, feature response, or publication response
 changes, review all three surfaces rather than type-asserting around a mismatch.

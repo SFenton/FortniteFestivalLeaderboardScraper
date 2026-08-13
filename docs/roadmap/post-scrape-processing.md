@@ -95,10 +95,10 @@ resolved through repository and bounded runtime evidence.
 | Historical correctness and publication safety | Great: candidate isolation, exact catalog binding, complete-scope manifests, critical-phase gates, atomic generation publication, and fail-closed reads are strong | High |
 | Test posture | Good: extensive Postgres, worker, API, publication, web, and browser coverage; CI enforces 94% service line coverage | High |
 | Modularity | Okay: phases are testable, but `PostScrapeOrchestrator.cs` is 2,748 lines and still contains dormant or PostgreSQL-no-op paths | High |
-| Live progress observability | Okay: normalized durable phase attempts and additive service-info v2 fields now bridge worker progress into the API process; the Settings UI still consumes legacy presentation | High |
+| Live progress observability | Poor in accepted production: the API still relies on the lossy worker summary. PR #15 implements a durable candidate, but it is unaccepted and has not completed live validation | High |
 | Performance | Poor: recent full-scrape p50 is about 8.58 hours and recorded post-processing consumes about 5.6 hours on scrape 1290 | High |
 | Storage sustainability | Poor and urgent: the database is about 3.3 TB on a 3.6 TB drive with roughly 299 GB free | High |
-| Overall | Correctness-first and operationally dependable, with a durable backend progress contract now available but substantial performance, storage, replay, and UI work unresolved | High |
+| Overall | Correctness-first and operationally dependable, but accepted production remains expensive and insufficiently observable; PR #15 is only a candidate for the backend progress gap | High |
 
 ## Evidence rules
 
@@ -677,6 +677,29 @@ Each iteration below is a separate branch/PR.
 - Execution remains `parity-gated-maintenance` and blocked until statistics,
   exact-count, parity, and workspace evidence all agree.
 
+### PR-2: durable progress and additive API
+
+**Class:** `full-scrape-ab`
+
+**Candidate state:** PR #15 is implemented and repository-tested, but remains
+unaccepted, unmerged, undeployed, and not live-validated. Production and
+continuity scrape `1294` remain on the previously accepted image; that scrape
+is not PR-2 candidate evidence.
+
+The candidate adds stable phase descriptors, the normalized
+`scrape_phase_attempts` ledger, bounded progress/heartbeat separation,
+additive service-info v2 fields, conservative ETA suppression, and normalized
+watchdog preference with fallback compatibility. Acceptance still requires a
+guarded matched full-scrape A/B with exact scrape/publication/API parity,
+bounded telemetry writes and WAL, resource gates, and exact rollback evidence.
+Only the later acceptance change may move this item out of the roadmap and
+describe it as accepted production behavior.
+
+**L3 follow-up:** evaluate whether phase-attempt rows need an FK and explicit
+retention lifecycle after real row-growth, scrape-log retention, delete-lock,
+and rollback evidence exists. PR #15 deliberately adds neither a locking FK
+nor cleanup behavior.
+
 ### PR-3: Settings progress experience
 
 **Class:** `continuous-safe`
@@ -859,9 +882,10 @@ This tandem plan is accepted for implementation after local outbox rendering.
 - Approval of this roadmap is not authorization to bypass the current
   live-safety, parity, publication, provider, storage, rollback, or maintenance
   gate for any later action.
-- PR-3 remains the next progress/UI boundary and must consume the additive v2
-  contract without removing version-1 fallback behavior.
+- PR-2 candidate acceptance remains the next progress boundary. PR-3 stays
+  blocked until the additive v2 contract is accepted and must retain
+  version-1 fallback behavior during browser migration.
 - Current-projection optimization is a separate future full-scrape A/B; it
-  cannot be combined with PR-3 Settings work.
+  cannot be combined with PR-2 validation or PR-3 Settings work.
 - Snapshot-retention execution remains a separate parity- and capacity-gated
   maintenance task.

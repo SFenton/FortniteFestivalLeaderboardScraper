@@ -138,6 +138,10 @@ wrote `14,179,946` rows, and deleted `14,189,655`.
 
 ## Durable phase progress
 
+> **PR #15 candidate status:** implemented and repository-tested, but
+> unaccepted, unmerged, undeployed, and not live-validated. Production
+> continues to use the previously accepted worker behavior.
+
 Plan `fst.scrape-plan.v2` assigns 28 test-locked IDs to the existing
 leaderboard scrape, named post-scrape phases, and publication commit. The
 catalog does not add a DAG, reorder work, or replace legacy labels; descriptors
@@ -149,6 +153,8 @@ The worker writes additive `scrape_phase_attempts` rows:
   completion persist immediately;
 - active counters persist only after meaningful advancement and at most once
   per five seconds;
+- persisted `last_progress_at` is monotonic even if the worker clock moves
+  backward;
 - the 15-second liveness heartbeat updates `heartbeat_at` without advancing
   `last_progress_at`;
 - exact `phase_percent` exists only when the denominator is final; totals that

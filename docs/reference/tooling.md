@@ -113,6 +113,10 @@ leaves the worker running and directs the operator to
 
 ### No-progress watchdog progress source
 
+> **PR #15 candidate status:** implemented and repository-tested, but
+> unaccepted, unmerged, undeployed, and not live-validated. The production
+> watchdog retains its previously accepted fallback behavior.
+
 `tools/fst-worker-no-progress-watchdog.mjs` detects the normalized
 `scrape_phase_attempts` relation once at startup. When a running attempt
 exists, its `last_progress_at` and start time take precedence over

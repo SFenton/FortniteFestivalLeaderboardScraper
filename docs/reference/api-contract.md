@@ -69,6 +69,11 @@ do not maintain a second hand-written 80-row table here.
 
 ## Service-info durable progress contract
 
+> **PR #15 candidate status:** implemented and repository-tested, but
+> unaccepted, unmerged, undeployed, and not live-validated. The accepted
+> production service-info contract remains version 1 until the required
+> full-scrape A/B accepts this candidate.
+
 `GET /api/service-info` remains an `OperationalLive` endpoint and retains every
 version-1 field. Contract version 2 adds:
 

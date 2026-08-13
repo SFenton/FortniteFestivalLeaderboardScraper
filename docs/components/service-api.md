@@ -79,6 +79,10 @@ instead of silently reading candidate state.
 
 ## Operational progress
 
+> **PR #15 candidate status:** implemented and repository-tested, but
+> unaccepted, unmerged, undeployed, and not live-validated. Production remains
+> on the previously accepted service-info behavior.
+
 `GET /api/service-info` remains operational-live and exposes additive contract
 version 2 phase-plan, normalized attempt, units, progress, ETA-confidence, and
 separate heartbeat/last-progress fields. It preserves the version-1 labels and

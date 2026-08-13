@@ -99,7 +99,9 @@ public sealed partial class MetaDatabase
                 eta_upper_seconds = @etaUpperSeconds,
                 eta_confidence = @etaConfidence,
                 eta_sample_count = @etaSampleCount,
-                last_progress_at = @lastProgressAt,
+                last_progress_at = GREATEST(
+                    last_progress_at,
+                    @lastProgressAt),
                 heartbeat_at = GREATEST(heartbeat_at, @heartbeatAt)
             WHERE scrape_id = @scrapeId
               AND phase_id = @phaseId

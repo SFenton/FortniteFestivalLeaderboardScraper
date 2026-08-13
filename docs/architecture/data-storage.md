@@ -98,6 +98,10 @@ for timing-persistence overhead and well below the `1%` acceptance gate.
 
 ## Durable phase-attempt ledger
 
+> **PR #15 candidate status:** implemented and repository-tested, but
+> unaccepted, unmerged, undeployed, and not live-validated. Accepted production
+> does not yet own this ledger.
+
 `scrape_phase_attempts` complements rather than replaces
 `scrape_phase_outcomes`, `scrape_phase_timings`, and
 `service_worker_status.current_operation_json`.
@@ -108,7 +112,9 @@ subphase, terminal/running status, units and denominator-final flag, exact
 phase percent, conservative overall/ETA fields, start/progress/heartbeat/end
 timestamps, safe build/config hashes, and warning/error text. It intentionally
 has no foreign key so startup is additive and rollback does not couple scrape
-history deletion to telemetry.
+history deletion to telemetry. An FK and explicit row-retention lifecycle are
+an L3 follow-up requiring measured growth, scrape-log retention, delete-lock,
+and rollback evidence; they are not part of PR #15.
 
 Indexes follow the actual paths:
 
@@ -120,7 +126,9 @@ Indexes follow the actual paths:
 The current row is updated rather than appended for every progress tick.
 Expected writes are one start and terminal update per phase, subphase
 transitions, a maximum one meaningful progress update per five seconds, and
-one heartbeat-only update per worker heartbeat interval.
+one heartbeat-only update per worker heartbeat interval. Progress updates use
+the greater of the stored and observed progress timestamps, so a backwards
+clock step cannot regress `last_progress_at` or violate its start-time check.
 
 ## Snapshot retention planning evidence
 

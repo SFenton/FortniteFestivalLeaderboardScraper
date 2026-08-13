@@ -1817,6 +1817,112 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public void Scrape_phase_attempt_progress_timestamp_remains_monotonic_across_clock_regression()
+    {
+        var scrapeId = _metaFixture.Db.StartScrapeRun();
+        var startedAt = DateTime.UtcNow;
+        var attempt = _metaFixture.Db.StartScrapePhaseAttempt(new ScrapePhaseAttemptStart(
+            scrapeId,
+            "scrape.leaderboards",
+            "scrape.update",
+            100,
+            PhaseProgressCatalog.PlanVersion,
+            "clock-regression-test",
+            "fetching_leaderboards",
+            "running",
+            "leaderboards",
+            0,
+            10,
+            true,
+            0,
+            "indeterminate",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            startedAt,
+            startedAt,
+            startedAt,
+            "build-test",
+            "config-test"));
+
+        var regressedAt = startedAt.AddMinutes(-1);
+        Assert.True(_metaFixture.Db.UpdateScrapePhaseAttemptProgress(
+            new ScrapePhaseAttemptProgress(
+                scrapeId,
+                "scrape.leaderboards",
+                attempt,
+                "persisting_scores",
+                "leaderboards",
+                1,
+                10,
+                true,
+                10,
+                "indeterminate",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                regressedAt,
+                regressedAt)));
+
+        var afterRegression = Assert.IsType<ScrapePhaseAttemptInfo>(
+            _metaFixture.Db.GetServiceRuntimeState(
+                WorkerStatusPublisher.ScraperWorkerKey).CurrentPhaseAttempt);
+        Assert.InRange(
+            Math.Abs((startedAt - afterRegression.LastProgressAtUtc).TotalMilliseconds),
+            0,
+            0.001);
+        Assert.Equal(1, afterRegression.UnitsCompleted);
+
+        var subsequentAt = startedAt.AddSeconds(5);
+        Assert.True(_metaFixture.Db.UpdateScrapePhaseAttemptProgress(
+            new ScrapePhaseAttemptProgress(
+                scrapeId,
+                "scrape.leaderboards",
+                attempt,
+                "persisting_scores",
+                "leaderboards",
+                2,
+                10,
+                true,
+                20,
+                "indeterminate",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                subsequentAt,
+                subsequentAt)));
+
+        var afterRecovery = Assert.IsType<ScrapePhaseAttemptInfo>(
+            _metaFixture.Db.GetServiceRuntimeState(
+                WorkerStatusPublisher.ScraperWorkerKey).CurrentPhaseAttempt);
+        Assert.InRange(
+            Math.Abs((subsequentAt - afterRecovery.LastProgressAtUtc).TotalMilliseconds),
+            0,
+            0.001);
+        Assert.Equal(2, afterRecovery.UnitsCompleted);
+        Assert.True(_metaFixture.Db.CompleteScrapePhaseAttempt(
+            new ScrapePhaseAttemptCompletion(
+                scrapeId,
+                "scrape.leaderboards",
+                attempt,
+                "completed",
+                subsequentAt,
+                subsequentAt,
+                subsequentAt,
+                null,
+                null)));
+    }
+
+    [Fact]
     public void Scrape_phase_attempt_restart_marks_orphan_interrupted()
     {
         var scrapeId = _metaFixture.Db.StartScrapeRun();
