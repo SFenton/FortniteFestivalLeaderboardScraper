@@ -4,7 +4,12 @@ import { useTranslation } from 'react-i18next';
 import { IoAlertCircleOutline, IoWarning } from 'react-icons/io5';
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import { Colors, InstrumentSize, GeneralSize, Cursor, flexCenter } from '@festival/theme';
-import ConfirmAlert from '../../../components/modals/ConfirmAlert';
+import LazyModalBoundary from '../../../components/common/LazyModalBoundary';
+import {
+  LazyConfirmAlert,
+  isConfirmAlertLoaded,
+  loadConfirmAlert,
+} from '../../../components/lazy/secondaryControls';
 import { usePressAction } from '../../../hooks/ui/usePressAction';
 import anim from '../../../styles/animations.module.css';
 
@@ -143,17 +148,27 @@ export default function InvalidScoreIcon({
           ? <IoWarning size={InstrumentSize.chip} />
           : <IoAlertCircleOutline size={InstrumentSize.chip} />}
       </span>
-      {showAlert && (
-        <ConfirmAlert
-          title={t('songs.invalidScoreTitle')}
-          message={alertMessage}
-          onNo={handleDismiss}
-          onYes={handleGoSettings}
-          onExitComplete={handleDismiss}
-          noLabel={t('common.ok')}
-          yesLabel={t('songs.goToSettings')}
-        />
-      )}
+      <LazyModalBoundary
+        visible={showAlert}
+        title={t('songs.invalidScoreTitle')}
+        boundaryName="invalid-score-confirm"
+        onClose={handleDismiss}
+        load={loadConfirmAlert}
+        isLoaded={isConfirmAlertLoaded}
+        initialFocus="panel"
+      >
+        {showAlert && (
+          <LazyConfirmAlert
+            title={t('songs.invalidScoreTitle')}
+            message={alertMessage}
+            onNo={handleDismiss}
+            onYes={handleGoSettings}
+            onExitComplete={handleDismiss}
+            noLabel={t('common.ok')}
+            yesLabel={t('songs.goToSettings')}
+          />
+        )}
+      </LazyModalBoundary>
     </>
   );
 }

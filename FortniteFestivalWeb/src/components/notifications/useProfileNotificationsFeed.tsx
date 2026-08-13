@@ -17,7 +17,6 @@ import {
   type ServerSong,
   type WsNotificationMessage,
 } from '@festival/core/api';
-import { mockEmptyMobileNotifications, mockMobileNotifications } from './notificationMocks';
 import type { MobileNotification } from './notificationTypes';
 import { notificationFeedKeyForProfile } from './notificationSeenState';
 import type { NotificationNavigationContext } from './notificationDestination';
@@ -71,32 +70,51 @@ export function useProfileNotificationsFeed(
     enabled: Boolean(profile) && !useMockData,
     staleTime: 60_000,
   });
+  const mockQuery = useQuery({
+    queryKey: [NOTIFICATION_QUERY_ROOT, 'mock', useEmptyMock ? 'empty' : 'populated'],
+    queryFn: async ({ signal }) => {
+      signal.throwIfAborted();
+      const mocks = await import('./notificationMocks');
+      signal.throwIfAborted();
+      return useEmptyMock ? mocks.mockEmptyMobileNotifications : mocks.mockMobileNotifications;
+    },
+    enabled: useMockData,
+    networkMode: 'always',
+    staleTime: Infinity,
+    gcTime: Infinity,
+  });
 
   const songsById = useMemo(() => new Map(songs.map(song => [song.songId, song])), [songs]);
 
   const notifications = useMemo(() => {
-    if (useMockData) return useEmptyMock ? mockEmptyMobileNotifications : mockMobileNotifications;
+    if (useMockData) return mockQuery.data ?? [];
     if (!profile || !query.data) return [];
     return query.data.items.map(item => mapNotificationDto(item, profile, songsById));
-  }, [profile, query.data, songsById, useEmptyMock, useMockData]);
+  }, [mockQuery.data, profile, query.data, songsById, useMockData]);
 
   const sourceVersion = useMemo(() => {
-    if (useMockData) return options?.mockSourceVersion ?? null;
+    if (useMockData) return mockQuery.isSuccess ? options?.mockSourceVersion ?? null : null;
     return notificationSourceVersion(query.data);
-  }, [options?.mockSourceVersion, query.data, useMockData]);
+  }, [mockQuery.isSuccess, options?.mockSourceVersion, query.data, useMockData]);
 
   const generationStatus = useMemo<NotificationGenerationStatus>(() => {
-    if (useMockData) return 'generated';
+    if (useMockData) return mockQuery.isSuccess ? 'generated' : 'notGenerated';
     return notificationsGenerated(query.data) ? 'generated' : 'notGenerated';
-  }, [query.data, useMockData]);
+  }, [mockQuery.isSuccess, query.data, useMockData]);
 
-  const status: NotificationFeedStatus = !profile && !useMockData
-    ? 'idle'
-    : query.isLoading && !useMockData
+  const status: NotificationFeedStatus = useMockData
+    ? mockQuery.isLoading
       ? 'loading'
-      : query.isError && !useMockData
+      : mockQuery.isError
         ? 'error'
-        : 'ready';
+        : 'ready'
+    : !profile
+      ? 'idle'
+      : query.isLoading
+        ? 'loading'
+        : query.isError
+          ? 'error'
+          : 'ready';
 
   return useMemo(() => ({
     feedKey,

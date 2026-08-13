@@ -24,10 +24,24 @@ const SECONDARY_CONTROL_BOUNDARIES = [
     label: 'Songs FilterModal',
     suffix: '/FortniteFestivalWeb/src/pages/songs/modals/FilterModal.tsx',
   },
+  {
+    label: 'ChangelogModal',
+    suffix: '/FortniteFestivalWeb/src/components/modals/ChangelogModal.tsx',
+  },
+  {
+    label: 'ConfirmAlert',
+    suffix: '/FortniteFestivalWeb/src/components/modals/ConfirmAlert.tsx',
+  },
 ];
 const INITIAL_FORBIDDEN_MODULE_SUFFIXES = [
   ...SECONDARY_CONTROL_BOUNDARIES.map(boundary => boundary.suffix),
   '/FortniteFestivalWeb/src/components/notifications/notificationText.ts',
+  '/FortniteFestivalWeb/src/components/notifications/notificationMocks.ts',
+  '/FortniteFestivalWeb/src/diagnostics/ModalAccessibilityFixture.tsx',
+  '/FortniteFestivalWeb/src/diagnostics/scrollFadeTestMode.ts',
+  '/FortniteFestivalWeb/src/diagnostics/tapDiagnostics.ts',
+  '/FortniteFestivalWeb/src/components/icons/PwaIconCapture.tsx',
+  '/FortniteFestivalWeb/src/components/firstRun/FirstRunCarousel.tsx',
   '/FortniteFestivalWeb/src/components/sort/ReorderList.tsx',
   '/FortniteFestivalWeb/src/components/sort/SortableRow.tsx',
   '/FortniteFestivalWeb/src/pages/songinfo/components/path/PathDataTable.tsx',
@@ -98,6 +112,10 @@ export function sharedPackageBoundaryPlugin({ webRoot, graphOutput }) {
       const sortModules = modulesForFiles(secondaryControlFiles['Songs SortModal'], chunksByFile);
       if (!sortModules.some(id => normalizeId(id).includes('/node_modules/@dnd-kit/'))) {
         this.error('DnD Kit must remain reachable from the lazy Songs SortModal chunk graph.');
+      }
+      const notificationModules = modulesForFiles(secondaryControlFiles.MobileNotificationsModal, chunksByFile);
+      if (notificationModules.some(id => normalizeId(id).endsWith('/FortniteFestivalWeb/src/components/notifications/notificationMocks.ts'))) {
+        this.error('Notification mock data must load only through its explicit validation boundary.');
       }
 
       if (graphOutput) {

@@ -1,5 +1,5 @@
 # ── Stage 1: Build React web app ──────────────────────────────
-FROM node:20-slim AS webapp
+FROM node:20.20.2-slim AS webapp
 WORKDIR /src
 COPY packages/core/ packages/core/
 COPY packages/theme/ packages/theme/

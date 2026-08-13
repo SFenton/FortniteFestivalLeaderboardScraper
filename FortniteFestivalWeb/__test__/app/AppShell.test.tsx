@@ -165,7 +165,7 @@ describe('AppShell', () => {
 
   it('does not show changelog when stored version matches', async () => {
     // Set the changelog as already seen
-    const { changelogHash } = await import('../../src/changelog');
+    const { changelogHash } = await import('../../src/changelogHash');
     const { APP_VERSION } = await import('../../src/hooks/data/useVersions');
     localStorage.setItem('fst:changelog', JSON.stringify({ version: APP_VERSION, hash: changelogHash() }));
     const { container } = render(<App />);

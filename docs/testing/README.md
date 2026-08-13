@@ -2,15 +2,19 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-12
-last_verified_commit: 02039c9c
+last_verified_commit: 9f343376
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/playwright.config.ts
   - FortniteFestivalWeb/playwright.component.config.ts
   - FortniteFestivalWeb/playwright.publication.config.ts
+  - FortniteFestivalWeb/.node-version
+  - FortniteFestivalWeb/performance-budgets.json
+  - FortniteFestivalWeb/scripts/check-performance-budgets.mjs
   - FortniteFestivalWeb/e2e/README.md
   - .github/workflows/publish-image.yml
+  - .github/workflows/web-performance.yml
   - .github/workflows/web-playwright-nightly.yml
   - tools/check-docs.mjs
   - tools/fst-worker-compose-guard.test.mjs
@@ -72,6 +76,22 @@ The scheduled engine/component tier runs:
 ```bash
 corepack yarn e2e:nightly
 ```
+
+## Web bundle budgets
+
+Web bundle measurements use the exact Node patch in
+`FortniteFestivalWeb/.node-version`. Run the budget check with that runtime:
+
+```bash
+cd FortniteFestivalWeb
+corepack yarn build
+node scripts/check-performance-budgets.mjs --out performance-artifacts/bundle.json
+```
+
+The report records required, active, and Docker Node versions plus zlib, Vite,
+app, core, and theme versions. The check fails when either runtime differs from
+the pinned version, when an existing raw, gzip, Brotli, or largest-chunk ceiling
+is exceeded, or when entry gzip headroom falls below 5,000 bytes.
 
 ## Merge and release gates
 

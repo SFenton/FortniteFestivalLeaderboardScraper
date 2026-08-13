@@ -2,11 +2,17 @@
 status: canonical
 owner: web
 last_verified: 2026-08-12
-last_verified_commit: 02039c9c
+last_verified_commit: 9f343376
 sources:
   - FortniteFestivalWeb/package.json
+  - FortniteFestivalWeb/.node-version
+  - FortniteFestivalWeb/Dockerfile
   - FortniteFestivalWeb/src/main.tsx
   - FortniteFestivalWeb/src/App.tsx
+  - FortniteFestivalWeb/src/components/lazy/secondaryControls.ts
+  - FortniteFestivalWeb/performance-budgets.json
+  - FortniteFestivalWeb/scripts/check-performance-budgets.mjs
+  - .github/workflows/web-performance.yml
   - FortniteFestivalWeb/src/routes.ts
   - FortniteFestivalWeb/src/api/
   - FortniteFestivalWeb/src/contexts/
@@ -34,6 +40,14 @@ renders:
 2. `PublicationBoundary`
 3. `BackendAvailabilityGate`
 4. the application or a diagnostic fixture
+
+Diagnostic fixtures, persisted scroll-fade test mode, tap-diagnostics runtime,
+and notification sample data stay outside the normal entry graph. They load
+only when their explicit query, validation, or stored diagnostic preference is
+present. Root diagnostic fixtures render independently of publication and
+backend-availability gates. Conditional shell dialogs and the first-run
+carousel also load through interaction/visibility boundaries rather than the
+normal returning-user entry.
 
 `PublicationBoundary` blocks the normal application until `/api/publication`
 resolves. A publication-change event clears query/song caches, resets the
@@ -91,13 +105,18 @@ domain types come from `@festival/core`; that package is not itself the HTTP
 client. API changes must keep the service endpoint files, shared types, and
 client aligned.
 
-`src/changelog.ts` is current in-app announcement content detected by a content
-hash. It is not a durable release history or a source of implementation status.
+`src/changelog.ts` is current in-app announcement content. The eager shell reads
+only the checked hash metadata in `src/changelogHash.ts`; a unit test requires
+that metadata to match the lazy announcement content. The changelog is not a
+durable release history or a source of implementation status.
 
 ## Build and deployment
 
-The preferred production image builds the SPA with Node and serves static files
-through Nginx. Nginx re-resolves the `fstservice` container name, proxies
+The web build runtime is pinned by `FortniteFestivalWeb/.node-version`; CI,
+nightly browser runs, performance measurement, and the production web image use
+that exact Node patch. The preferred production image builds the SPA with Node
+and serves static files through Nginx. Nginx re-resolves the `fstservice`
+container name, proxies
 `/api`, `/healthz`, and `/readyz`, supports WebSockets, applies immutable asset
 caching, and falls back to `index.html` for client routes.
 

@@ -2,6 +2,7 @@ import { lazy, useMemo, useState } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import LazyModalBoundary from '../../../src/components/common/LazyModalBoundary';
+import ConfirmAlert from '../../../src/components/modals/ConfirmAlert';
 import ModalShell from '../../../src/components/modals/components/ModalShell';
 
 type Deferred<T> = {
@@ -24,6 +25,36 @@ function LoadedModal({ visible, onClose }: { visible: boolean; onClose: () => vo
   return (
     <ModalShell visible={visible} title="Deferred Control" onClose={onClose}>
       <div>Loaded control</div>
+    </ModalShell>
+  );
+}
+
+function LoadedOverlay({ onClose }: { onClose: () => void }) {
+  return (
+    <ConfirmAlert
+      title="Deferred confirmation"
+      message="Confirm the deferred action."
+      onNo={onClose}
+      onYes={onClose}
+    />
+  );
+}
+
+function LoadedModalWithConfirm({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  const [confirmVisible, setConfirmVisible] = useState(false);
+  return (
+    <ModalShell visible={visible} title="Deferred Control" onClose={onClose}>
+      <button type="button" data-testid="nested-confirm-opener" onClick={() => setConfirmVisible(true)}>
+        Open confirmation
+      </button>
+      {confirmVisible && (
+        <ConfirmAlert
+          title="Nested confirmation"
+          message="Keep focus inside the loaded modal."
+          onNo={() => setConfirmVisible(false)}
+          onYes={() => setConfirmVisible(false)}
+        />
+      )}
     </ModalShell>
   );
 }
@@ -51,6 +82,29 @@ function Harness({
         initialFocus={initialFocus}
       >
         <LazyModal visible={visible} onClose={() => setVisible(false)} />
+      </LazyModalBoundary>
+    </>
+  );
+}
+
+function OverlayHarness({
+  loader,
+}: {
+  loader: () => Promise<{ default: typeof LoadedOverlay }>;
+}) {
+  const [visible, setVisible] = useState(false);
+  const LazyOverlay = useMemo(() => lazy(loader), [loader]);
+  return (
+    <>
+      <button type="button" data-testid="overlay-opener" onClick={() => setVisible(true)}>Open overlay</button>
+      <LazyModalBoundary
+        visible={visible}
+        title="Deferred confirmation"
+        boundaryName="deferred-overlay"
+        onClose={() => setVisible(false)}
+        initialFocus="panel"
+      >
+        {visible && <LazyOverlay onClose={() => setVisible(false)} />}
       </LazyModalBoundary>
     </>
   );
@@ -103,6 +157,42 @@ describe('LazyModalBoundary', () => {
     fireEvent.click(opener);
     expect(await screen.findByText('Loaded control')).toBeVisible();
     expect(loader).toHaveBeenCalledOnce();
+  });
+
+  it('restores the launcher when a cold custom overlay replaces the loading shell', async () => {
+    const deferred = createDeferred<{ default: typeof LoadedOverlay }>();
+    render(<OverlayHarness loader={() => deferred.promise} />);
+    const opener = screen.getByTestId('overlay-opener');
+
+    opener.focus();
+    fireEvent.click(opener);
+    expect(screen.getByTestId('deferred-overlay-lazy-loading')).toHaveFocus();
+
+    await act(async () => deferred.resolve({ default: LoadedOverlay }));
+    expect(await screen.findByRole('alertdialog', { name: 'Deferred confirmation' })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'No' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it('restores an in-modal launcher when a nested overlay closes', async () => {
+    const deferred = createDeferred<{ default: typeof LoadedModal }>();
+    render(<Harness loader={() => deferred.promise} />);
+    const opener = screen.getByTestId('opener');
+
+    opener.focus();
+    fireEvent.click(opener);
+    await act(async () => deferred.resolve({ default: LoadedModalWithConfirm }));
+    const nestedOpener = await screen.findByTestId('nested-confirm-opener');
+    nestedOpener.focus();
+    fireEvent.click(nestedOpener);
+    expect(await screen.findByRole('alertdialog', { name: 'Nested confirmation' })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'No' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(document.activeElement).toBe(nestedOpener);
+    expect(screen.getByRole('dialog', { name: 'Deferred Control' })).toBeVisible();
   });
 
   it('fails closed with reload and close actions when a lazy chunk rejects', async () => {

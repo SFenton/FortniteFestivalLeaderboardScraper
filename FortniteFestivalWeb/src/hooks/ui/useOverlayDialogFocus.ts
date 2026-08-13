@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
+import { useContext, useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
 import {
   isTopModalLayer,
+  ModalReturnFocusTargetContext,
   registerModalLayer,
   unregisterModalLayer,
 } from '../../components/modals/components/ModalShell';
@@ -20,11 +21,19 @@ export function useOverlayDialogFocus(
   const panelRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const modalTokenRef = useRef(Symbol('overlay-dialog'));
+  const inheritedReturnFocusTarget = useContext(ModalReturnFocusTargetContext);
+  const inheritedReturnFocusTargetRef = useRef(inheritedReturnFocusTarget);
+  inheritedReturnFocusTargetRef.current = inheritedReturnFocusTarget;
 
   useLayoutEffect(() => {
-    previousFocusRef.current = document.activeElement instanceof HTMLElement
+    const activeElement = document.activeElement instanceof HTMLElement
+      && document.activeElement !== document.body
+      && document.activeElement.isConnected
       ? document.activeElement
       : null;
+    const inheritedTarget = inheritedReturnFocusTargetRef.current;
+    previousFocusRef.current = activeElement
+      ?? (inheritedTarget?.isConnected ? inheritedTarget : null);
     const panel = panelRef.current;
     if (!panel) return;
     const token = modalTokenRef.current;
