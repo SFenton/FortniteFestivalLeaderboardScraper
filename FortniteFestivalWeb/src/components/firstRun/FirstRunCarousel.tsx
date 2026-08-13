@@ -11,15 +11,18 @@ import { useIsMobile } from '../../hooks/ui/useIsMobile';
 import { usePressAction } from '../../hooks/ui/usePressAction';
 import { paddingWithSafeAreaBottom } from '../../utils/safeAreaStyles';
 import { useSwipeNavigation } from '../../hooks/ui/useSwipeNavigation';
+import { useOverlayDialogFocus } from '../../hooks/ui/useOverlayDialogFocus';
 
 type FirstRunCarouselProps = {
   slides: FirstRunSlideDef[];
   onDismiss: () => void;
   /** Called after the exit animation completes. When provided, enables exit animation. */
   onExitComplete?: () => void;
+  ariaLabel?: string;
+  returnFocusTarget?: HTMLElement | null;
 };
 
-export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: FirstRunCarouselProps) {
+export default function FirstRunCarousel({ slides, onDismiss, onExitComplete, ariaLabel, returnFocusTarget }: FirstRunCarouselProps) {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
   const S = useCarouselStyles();
@@ -69,13 +72,12 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
   const goForward = useCallback(() => {
     navigateTo(currentIndex + 1);
   }, [navigateTo, currentIndex]);
+  const panelRef = useOverlayDialogFocus(handleDismiss, returnFocusTarget);
   const keyboardActionsRef = useRef({
-    dismiss: handleDismiss,
     back: goBack,
     forward: goForward,
   });
   keyboardActionsRef.current = {
-    dismiss: handleDismiss,
     back: goBack,
     forward: goForward,
   };
@@ -84,9 +86,15 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
   useEffect(() => {
     /* v8 ignore start -- keyboard handler branches */
     const handleKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') keyboardActionsRef.current.dismiss();
-      else if (event.key === 'ArrowLeft') keyboardActionsRef.current.back();
-      else if (event.key === 'ArrowRight') keyboardActionsRef.current.forward();
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        event.stopPropagation();
+        keyboardActionsRef.current.back();
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        event.stopPropagation();
+        keyboardActionsRef.current.forward();
+      }
     };
     /* v8 ignore stop */
     document.addEventListener('keydown', handleKey);
@@ -157,9 +165,15 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
       style={{ ...S.overlay, opacity: overlayOpacity, transition: `opacity ${TRANSITION_MS}ms ease`, pointerEvents: overlayPointerEvents }}
       {...overlayPressHandlers}
       data-glow-scope=""
+      data-modal-root=""
       data-testid="fre-overlay"
     >
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={ariaLabel ?? t('firstRun.carouselLabel')}
+        tabIndex={-1}
         style={{ ...cardBase, ...cardStyle }}
         onPointerDown={e => e.stopPropagation()}
         onPointerUp={e => e.stopPropagation()}

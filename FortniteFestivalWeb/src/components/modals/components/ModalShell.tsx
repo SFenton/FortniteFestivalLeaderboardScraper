@@ -274,10 +274,10 @@ export default function ModalShell({
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
       const activeElement = document.activeElement;
-      if (event.shiftKey && (activeElement === first || !panel.contains(activeElement))) {
+      if (event.shiftKey && (activeElement === panel || activeElement === first || !panel.contains(activeElement))) {
         event.preventDefault();
         last?.focus();
-      } else if (!event.shiftKey && (activeElement === last || !panel.contains(activeElement))) {
+      } else if (!event.shiftKey && (activeElement === panel || activeElement === last || !panel.contains(activeElement))) {
         event.preventDefault();
         first?.focus();
       }

@@ -3,6 +3,12 @@ import path from 'node:path';
 
 const CORE_GENERATOR_SUFFIX = '/packages/core/src/suggestions/suggestionGenerator.ts';
 const SUGGESTIONS_PAGE_SUFFIX = '/FortniteFestivalWeb/src/pages/suggestions/SuggestionsPage.tsx';
+const RANK_BY_MODAL_SUFFIX = '/FortniteFestivalWeb/src/pages/leaderboards/modals/RankByModal.tsx';
+const METRIC_INFO_CAROUSEL_SUFFIX = '/FortniteFestivalWeb/src/pages/leaderboards/firstRun/metricInfo/MetricInfoCarousel.tsx';
+const METRIC_INFO_INDEX_SUFFIX = '/FortniteFestivalWeb/src/pages/leaderboards/firstRun/metricInfo/index.ts';
+const FIRST_RUN_CAROUSEL_SUFFIX = '/FortniteFestivalWeb/src/components/firstRun/FirstRunCarousel.tsx';
+const MATH_SUFFIX = '/FortniteFestivalWeb/src/components/common/Math.tsx';
+const KATEX_MARKER = '/node_modules/katex/';
 const SECONDARY_CONTROL_BOUNDARIES = [
   {
     label: 'SearchModal',
@@ -45,12 +51,12 @@ const INITIAL_FORBIDDEN_MODULE_SUFFIXES = [
   '/FortniteFestivalWeb/src/components/sort/ReorderList.tsx',
   '/FortniteFestivalWeb/src/components/sort/SortableRow.tsx',
   '/FortniteFestivalWeb/src/pages/songinfo/components/path/PathDataTable.tsx',
-  '/FortniteFestivalWeb/src/pages/leaderboards/modals/RankByModal.tsx',
-  '/FortniteFestivalWeb/src/components/common/Math.tsx',
+  RANK_BY_MODAL_SUFFIX,
+  MATH_SUFFIX,
 ];
 const INITIAL_FORBIDDEN_MODULE_MARKERS = [
   '/node_modules/@dnd-kit/',
-  '/node_modules/katex/',
+  KATEX_MARKER,
 ];
 
 export function sharedPackageBoundaryPlugin({ webRoot, graphOutput }) {
@@ -67,9 +73,15 @@ export function sharedPackageBoundaryPlugin({ webRoot, graphOutput }) {
       const suggestionsFiles = suggestionsChunk
         ? staticClosure([suggestionsChunk.fileName], chunksByFile)
         : new Set();
+      const rankByChunk = findChunkContainingModule(chunks, RANK_BY_MODAL_SUFFIX);
+      const metricInfoChunk = findChunkContainingModule(chunks, METRIC_INFO_CAROUSEL_SUFFIX);
+      const rankByFiles = rankByChunk ? staticClosure([rankByChunk.fileName], chunksByFile) : new Set();
+      const metricInfoFiles = metricInfoChunk ? staticClosure([metricInfoChunk.fileName], chunksByFile) : new Set();
 
       const initialModules = modulesForFiles(initialFiles, chunksByFile);
       const suggestionsModules = modulesForFiles(suggestionsFiles, chunksByFile);
+      const rankByModules = modulesForFiles(rankByFiles, chunksByFile);
+      const metricInfoModules = modulesForFiles(metricInfoFiles, chunksByFile);
       const generatorChunks = chunks.filter(chunk =>
         Object.keys(chunk.modules).some(id => normalizeId(id).endsWith(CORE_GENERATOR_SUFFIX)),
       );
@@ -88,6 +100,37 @@ export function sharedPackageBoundaryPlugin({ webRoot, graphOutput }) {
       }
       if (!suggestionsModules.some(id => normalizeId(id).endsWith(CORE_GENERATOR_SUFFIX))) {
         this.error('SuggestionGenerator must remain reachable from the lazy SuggestionsPage chunk graph.');
+      }
+      if (!rankByChunk) {
+        this.error('Unable to locate the shared RankByModal chunk.');
+      }
+      if (!metricInfoChunk) {
+        this.error('Unable to locate the lazy metric-info chunk.');
+      }
+      for (const suffix of [METRIC_INFO_CAROUSEL_SUFFIX, METRIC_INFO_INDEX_SUFFIX, FIRST_RUN_CAROUSEL_SUFFIX, MATH_SUFFIX]) {
+        if (rankByModules.some(id => normalizeId(id).endsWith(suffix))) {
+          this.error(`${path.basename(suffix)} must not be reachable from the static RankByModal chunk graph.`);
+        }
+      }
+      if (rankByModules.some(id => normalizeId(id).includes(KATEX_MARKER))) {
+        this.error('KaTeX must not be reachable from the static RankByModal chunk graph.');
+      }
+      if (rankByChunk && !rankByChunk.dynamicImports.some(fileName => {
+        const modules = modulesForFiles(staticClosure([fileName], chunksByFile), chunksByFile);
+        return modules.some(id => normalizeId(id).endsWith(METRIC_INFO_CAROUSEL_SUFFIX));
+      })) {
+        this.error('RankByModal must retain a dynamic edge to MetricInfoCarousel.');
+      }
+      for (const suffix of [METRIC_INFO_CAROUSEL_SUFFIX, METRIC_INFO_INDEX_SUFFIX, FIRST_RUN_CAROUSEL_SUFFIX, MATH_SUFFIX]) {
+        if (!metricInfoModules.some(id => normalizeId(id).endsWith(suffix))) {
+          this.error(`${path.basename(suffix)} must remain reachable from the lazy metric-info chunk graph.`);
+        }
+      }
+      if (!metricInfoModules.some(id => normalizeId(id).includes(KATEX_MARKER))) {
+        this.error('KaTeX must remain reachable from the lazy metric-info chunk graph.');
+      }
+      if (!metricInfoModules.some(id => normalizeId(id).endsWith('/node_modules/katex/dist/katex.min.css'))) {
+        this.error('KaTeX CSS must remain reachable only from the lazy metric-info chunk graph.');
       }
       for (const suffix of INITIAL_FORBIDDEN_MODULE_SUFFIXES) {
         if (initialModules.some(id => normalizeId(id).endsWith(suffix))) {
@@ -126,6 +169,8 @@ export function sharedPackageBoundaryPlugin({ webRoot, graphOutput }) {
           capturedAtUtc: new Date().toISOString(),
           entryFiles: [...initialFiles],
           suggestionsFiles: [...suggestionsFiles],
+          rankByFiles: [...rankByFiles],
+          metricInfoFiles: [...metricInfoFiles],
           secondaryControlFiles,
           generatorChunks: generatorChunks.map(chunk => chunk.fileName),
           chunks: chunks.map(chunk => ({
@@ -169,6 +214,12 @@ function staticClosure(startFiles, chunksByFile) {
 
 function modulesForFiles(files, chunksByFile) {
   return [...files].flatMap(fileName => Object.keys(chunksByFile.get(fileName)?.modules ?? {}));
+}
+
+function findChunkContainingModule(chunks, suffix) {
+  return chunks.find(chunk =>
+    Object.keys(chunk.modules).some(id => normalizeId(id).endsWith(suffix)),
+  );
 }
 
 function normalizeId(id) {

@@ -1,11 +1,20 @@
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import Modal from '../../../components/modals/Modal';
 import { ModalSection } from '../../../components/modals/components/ModalSection';
 import { RadioRow } from '../../../components/common/RadioRow';
-import FirstRunCarousel from '../../../components/firstRun/FirstRunCarousel';
-import { getEnabledRankingMetrics, isExperimentalRankingMetric } from '../helpers/rankingHelpers';
-import { getMetricInfoSlides } from '../firstRun/metricInfo';
+import LazyModalBoundary from '../../../components/common/LazyModalBoundary';
+import {
+  LazyMetricInfoCarousel,
+  isMetricInfoCarouselLoaded,
+  loadMetricInfoCarousel,
+  preloadMetricInfoCarousel,
+} from '../firstRun/metricInfo/lazyMetricInfo';
+import {
+  getEnabledRankingMetrics,
+  isExperimentalRankingMetric,
+  type ExperimentalRankingMetric,
+} from '../helpers/rankingHelpers';
 import type { RankingMetric } from '@festival/core/api';
 
 type RankByModalProps = {
@@ -18,13 +27,53 @@ type RankByModalProps = {
   experimentalRanksEnabled: boolean;
   metrics?: RankingMetric[];
   subject?: 'players' | 'bands';
+  playerScope?: 'instrument' | 'combo' | 'family';
 };
 
-export default function RankByModal({ visible, draft, onDraftChange, onClose, onApply, onReset, experimentalRanksEnabled, metrics, subject = 'players' }: RankByModalProps) {
+export default function RankByModal({
+  visible,
+  draft,
+  onDraftChange,
+  onClose,
+  onApply,
+  onReset,
+  experimentalRanksEnabled,
+  metrics,
+  subject = 'players',
+  playerScope = 'instrument',
+}: RankByModalProps) {
   const { t } = useTranslation();
-  const [infoMetric, setInfoMetric] = useState<RankingMetric | null>(null);
+  const [infoMetric, setInfoMetric] = useState<ExperimentalRankingMetric | null>(null);
+  const infoReturnFocusRef = useRef<HTMLElement | null>(null);
+  const pendingInfoFocusRef = useRef<HTMLElement | null>(null);
   const metricOptions = metrics ?? getEnabledRankingMetrics(experimentalRanksEnabled);
   const usesBandCopy = subject === 'bands';
+  const metricDescriptionGroup = usesBandCopy
+    ? 'bandMetric'
+    : playerScope === 'instrument'
+      ? 'metric'
+      : `${playerScope}Metric`;
+  const closeMetricInfo = () => {
+    pendingInfoFocusRef.current = infoReturnFocusRef.current;
+    setInfoMetric(null);
+  };
+  const openMetricInfo = (metric: ExperimentalRankingMetric) => {
+    infoReturnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    preloadMetricInfoCarousel();
+    setInfoMetric(metric);
+  };
+  const infoMetricLabel = infoMetric
+    ? t('rankings.metricInfoAriaLabel', { metric: t(`rankings.metric.${infoMetric}`) })
+    : t('rankings.rankBy');
+
+  useLayoutEffect(() => {
+    if (infoMetric != null) return;
+    const target = pendingInfoFocusRef.current;
+    pendingInfoFocusRef.current = null;
+    if (target?.isConnected) target.focus({ preventScroll: true });
+  }, [infoMetric]);
 
   return (
     <>
@@ -38,19 +87,44 @@ export default function RankByModal({ visible, draft, onDraftChange, onClose, on
         resetHint={t('rankings.rankByResetHint')}
       >
         <ModalSection title={t('rankings.rankBy')} hint={t(usesBandCopy ? 'rankings.rankByBandHint' : 'rankings.rankByHint')}>
-          {metricOptions.map((m) => (
-            <RadioRow
-              key={m}
-              label={t(`rankings.metric.${m}`)}
-              hint={t(usesBandCopy ? `rankings.bandMetric.${m}Desc` : `rankings.metric.${m}Desc`)}
-              selected={draft === m}
-              onSelect={() => onDraftChange(m)}
-              onInfo={!usesBandCopy && isExperimentalRankingMetric(m) ? () => setInfoMetric(m) : undefined}
-            />
-          ))}
+          {metricOptions.map((metric) => {
+            const hasInfo = !usesBandCopy
+              && playerScope === 'instrument'
+              && isExperimentalRankingMetric(metric);
+            return (
+              <RadioRow
+                key={metric}
+                label={t(`rankings.metric.${metric}`)}
+                hint={t(`rankings.${metricDescriptionGroup}.${metric}Desc`)}
+                selected={draft === metric}
+                onSelect={() => onDraftChange(metric)}
+                onInfo={hasInfo ? () => openMetricInfo(metric) : undefined}
+                infoLabel={hasInfo ? t('rankings.metricInfoButton', {
+                  metric: t(`rankings.metric.${metric}`),
+                }) : undefined}
+              />
+            );
+          })}
         </ModalSection>
       </Modal>
-      {infoMetric && <FirstRunCarousel slides={getMetricInfoSlides(infoMetric)} onDismiss={() => {}} onExitComplete={() => setInfoMetric(null)} />}
+      <LazyModalBoundary
+        visible={infoMetric != null}
+        title={infoMetricLabel}
+        boundaryName="rank-metric-info"
+        onClose={closeMetricInfo}
+        load={loadMetricInfoCarousel}
+        isLoaded={isMetricInfoCarouselLoaded}
+        initialFocus="panel"
+      >
+        {infoMetric && (
+          <LazyMetricInfoCarousel
+            metric={infoMetric}
+            ariaLabel={infoMetricLabel}
+            onClose={closeMetricInfo}
+            returnFocusTarget={infoReturnFocusRef.current}
+          />
+        )}
+      </LazyModalBoundary>
     </>
   );
 }

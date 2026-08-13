@@ -48,7 +48,7 @@ export default function ExperimentalMetricsDemo() {
   const budget = h || 320;
   let showHints = true;
   let showHeaderHint = true;
-  let maxRows = metrics.length;
+  let maxRows: number = metrics.length;
 
   // Try with hints
   const withHintsHeight = HEADER_WITH_HINT + metrics.length * ROW_WITH_HINT;

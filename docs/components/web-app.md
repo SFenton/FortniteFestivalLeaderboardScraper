@@ -12,6 +12,8 @@ sources:
   - FortniteFestivalWeb/src/components/lazy/secondaryControls.ts
   - FortniteFestivalWeb/src/components/common/Accordion.tsx
   - FortniteFestivalWeb/src/components/shell/mobile/BottomNav.tsx
+  - FortniteFestivalWeb/src/pages/leaderboards/modals/RankByModal.tsx
+  - FortniteFestivalWeb/src/pages/leaderboards/firstRun/metricInfo/
   - FortniteFestivalWeb/performance-budgets.json
   - FortniteFestivalWeb/scripts/check-performance-budgets.mjs
   - .github/workflows/web-performance.yml
@@ -94,6 +96,14 @@ but are `inert` and `aria-hidden`, so hidden controls never enter the tab order.
 Sort and Suggestions accordions expose named regions; dense instrument filter
 groups avoid excessive landmarks. Mobile BottomNav uses pending state only for
 visual feedback and assigns `aria-current="page"` solely to the committed route.
+
+Rank By keeps its normal radio controls in the shared secondary-control chunk.
+Per-instrument player metric-help content is a nested interaction boundary: the
+accessible info button loads the metric carousel, formulas, KaTeX JS/CSS, and
+formula fonts only after activation. The parent modal becomes inert while help
+owns focus; Escape closes only help and returns focus to the exact info
+trigger. Band, combo, and solo-family Rank By controls use scope-specific
+descriptions and intentionally expose no per-instrument metric-help action.
 
 Current styling combines:
 

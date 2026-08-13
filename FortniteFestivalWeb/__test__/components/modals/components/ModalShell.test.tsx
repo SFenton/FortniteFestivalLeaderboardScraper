@@ -395,8 +395,18 @@ describe('ModalShell', () => {
       </ModalShell>,
     );
 
-    expect(screen.getByRole('dialog')).toHaveFocus();
-    expect(screen.getByRole('button', { name: /close/i })).not.toHaveFocus();
+    const dialog = screen.getByRole('dialog');
+    const close = screen.getByRole('button', { name: /close/i });
+    const contentAction = screen.getByRole('button', { name: 'Content action' });
+    expect(dialog).toHaveFocus();
+    expect(close).not.toHaveFocus();
+
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
+    expect(contentAction).toHaveFocus();
+
+    dialog.focus();
+    fireEvent.keyDown(document, { key: 'Tab' });
+    expect(close).toHaveFocus();
   });
 
   it('completes a zero-offset mobile entrance through opacity', () => {

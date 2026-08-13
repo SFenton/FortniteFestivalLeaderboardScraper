@@ -11,6 +11,7 @@ import { useEffect } from 'react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../helpers/browserStubs';
 import { TestProviders } from '../../helpers/TestProviders';
+import { seedAllFirstRunSeen } from '../../helpers/firstRunState';
 import { usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
 import { useSettings, type AppSettings } from '../../../src/contexts/SettingsContext';
 import { useTrackedPlayer } from '../../../src/hooks/data/useTrackedPlayer';
@@ -96,6 +97,7 @@ beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   mockIsMobileChromeOverride.value = null;
   localStorage.clear();
+  seedAllFirstRunSeen();
   // Set tracked player so page components have an accountId
   localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-1', displayName: 'TestPlayer' }));
   // Reset module-level caches by clearing mock state

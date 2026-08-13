@@ -1,6 +1,6 @@
 /**
  * FC Rate "How it works" demo: multiple frosted stat cards showing
- * randomised FC records that follow the Bayesian formula.
+ * randomised FC records over the complete chart catalog.
  * Cards auto-swap on a timer with fade animation.
  */
 import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from 'react';
@@ -16,22 +16,17 @@ import {
 const FADE_MS = 300;
 const CARD_HEIGHT = 80;
 const PARA_HEIGHT = 48;
-const M = 50;
-const C = 0.5;
-
-/** Generate a random FC record and its Bayesian-adjusted rating. */
-function randomFcStat(): { songs: number; fcs: number; rawPct: string; adjusted: string; label: string; value: string } {
-  const songs = Math.floor(Math.random() * 180) + 5;
+/** Generate a random FC record using the production total-chart denominator. */
+function randomFcStat(): { chartedSongs: number; fcs: number; value: string; label: string } {
+  const chartedSongs = Math.floor(Math.random() * 180) + 5;
   const rawRate = Math.random() * 0.85 + 0.1; // 10%-95%
-  const fcs = Math.round(rawRate * songs);
-  const actual = fcs / songs;
-  const adjusted = (songs * actual + M * C) / (songs + M);
-  const rawPct = `${(actual * 100).toFixed(1)}%`;
-  const adjPct = `${(adjusted * 100).toFixed(1)}%`;
+  const fcs = Math.round(rawRate * chartedSongs);
+  const value = `${((fcs / chartedSongs) * 100).toFixed(1)}%`;
   return {
-    songs, fcs, rawPct, adjusted: adjPct,
-    value: adjPct,
-    label: `${fcs} FCs out of ${songs} songs · Raw: ${rawPct}`,
+    chartedSongs,
+    fcs,
+    value,
+    label: `${fcs} FCs out of ${chartedSongs} charted songs`,
   };
 }
 
@@ -89,7 +84,7 @@ export default function FcRateHowDemo() {
   return (
     <div style={s.wrapper}>
       <FadeIn delay={0} style={s.para}>
-        FC Rate is the percentage of your played songs where you hit every single note without breaking your streak — a Full Combo.
+        FC Rate is the percentage of all charted songs where you earned a Full Combo. Unplayed songs remain in the denominator.
       </FadeIn>
       {stats.slice(0, maxCards).map((stat, i) => {
         const animStyle: CSSProperties = initialDone
