@@ -236,6 +236,10 @@ jobs:
         working-directory: FortniteFestivalWeb
         run: yarn test:unit
 
+      - name: Check coverage ignore directives
+        working-directory: FortniteFestivalWeb
+        run: yarn check:coverage-ignores
+
       - name: Enforce unit coverage
         working-directory: FortniteFestivalWeb
         run: yarn test:coverage

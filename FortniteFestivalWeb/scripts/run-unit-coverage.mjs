@@ -16,6 +16,15 @@ const blobsDirectory = resolve(reportsDirectory, 'blobs');
 const finalCoverageDirectory = resolve(process.cwd(), 'coverage');
 const startedAt = performance.now();
 
+const ignoreCheck = spawnSync(process.execPath, [resolve(process.cwd(), 'scripts/check-coverage-ignores.mjs')], {
+  cwd: process.cwd(),
+  stdio: 'inherit',
+});
+if (ignoreCheck.error || ignoreCheck.status !== 0) {
+  console.error(`[coverage] Coverage-ignore validation failed${ignoreCheck.error ? `: ${ignoreCheck.error.message}` : '.'}`);
+  process.exit(ignoreCheck.status ?? 1);
+}
+
 rmSync(reportsDirectory, { recursive: true, force: true });
 rmSync(finalCoverageDirectory, { recursive: true, force: true });
 mkdirSync(blobsDirectory, { recursive: true });

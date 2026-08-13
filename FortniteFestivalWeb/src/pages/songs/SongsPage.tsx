@@ -417,7 +417,6 @@ export default function SongsPage() {
   );
   
   // Filter metadata keys by visibility settings (computed early for container-width detection)
-  /* v8 ignore start � metadata visibility: settings-dependent presentation filter */
   const visibleMetadataOrder = useMemo(() => {
     const hidden = new Set<string>();
     if (!appSettings.metadataShowScore) hidden.add('score');
@@ -474,7 +473,6 @@ export default function SongsPage() {
     appSettings.metadataShowStars,
     appSettings.metadataShowLastPlayed,
   ]);
-  /* v8 ignore stop */
   
   // Container-width-aware compact row detection.
   // Keep the breakpoint decision stable with hysteresis so the virtualized list
@@ -694,7 +692,6 @@ export default function SongsPage() {
   // Apply invalid-score substitution/dropping (same logic as filterPlayerScores but
   // also builds an invalidity map for the UI indicator, and exempts instruments where
   // the overThreshold filter is active so the user can inspect the raw values).
-  /* v8 ignore start � effectiveScores: invalid-score substitution */
   type InvalidReason = 'fallback' | 'no-fallback' | 'over-threshold';
   const { effectiveScores, invalidScoreMap } = useMemo(() => {
     const empty = { effectiveScores: [] as PlayerScore[], invalidScoreMap: new Map<string, Map<InstrumentKey, InvalidReason>>() };
@@ -764,8 +761,6 @@ export default function SongsPage() {
     }
     return { effectiveScores: scores, invalidScoreMap: invalids };
   }, [playerData, scoreFilterEnabled, isScoreValid, userLeeway, getFilteredRank, getFilteredTotal, scopedFilters.overThreshold]);
-  /* v8 ignore stop */
-
   // Build lookup: songId ? PlayerScore for the selected instrument
   /* v8 ignore start � scoreMap: instrument filter loop */
   const scoreMap = useMemo(() => {
@@ -917,7 +912,6 @@ export default function SongsPage() {
   const settingsKey = `${effectiveSortMode}|${settings.sortAscending}|${displayInstrumentFilter ?? ''}|${activeBandComboId ?? ''}|${JSON.stringify(scopedFilters)}|${debouncedSearch}`;
   const prevSettingsKeyRef = useRef(settingsKey);
 
-  /* v8 ignore start � animation: stagger/re-stagger effects */
   useEffect(() => {
     if (prevSettingsKeyRef.current === settingsKey) return;
     prevSettingsKeyRef.current = settingsKey;
@@ -985,8 +979,6 @@ export default function SongsPage() {
     const id = setTimeout(() => setShouldStagger(false), totalAnimTime);
     return () => clearTimeout(id);
   }, [loadPhase, shouldStagger, staggerRetireDelayMs]);
-  /* v8 ignore stop */
-
   const scrollContainerRef = useScrollContainer();
 
   // Scroll to top when content transitions in after a settings change (not on initial mount or back nav)

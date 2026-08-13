@@ -493,7 +493,6 @@ export default function SettingsPage() {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // Register first-run slides so replay is always available from Settings
-  /* v8 ignore next */
   const songsSlidesMemo = useMemo(() => songSlides(isMobileChrome), [isMobileChrome]);
   const songInfoSlidesMemo = useMemo(() => songInfoSlides(isMobileChrome), [isMobileChrome]);
   const playerHistorySlidesMemo = useMemo(() => playerHistorySlides(isMobileChrome), [isMobileChrome]);
@@ -539,7 +538,6 @@ export default function SettingsPage() {
   const selectedBandType = selectedProfile?.type === 'band' ? selectedProfile.bandType : null;
   const selectedBandTeamKey = selectedProfile?.type === 'band' ? selectedProfile.teamKey : null;
 
-  /* v8 ignore start — version fetch + settings callbacks */
   useEffect(() => {
     const controller = new AbortController();
     api.getVersion({ signal: controller.signal })
@@ -596,8 +594,6 @@ export default function SettingsPage() {
       if (timer) clearTimeout(timer);
     };
   }, [selectedBandTeamKey, selectedBandType, selectedPlayerAccountId, selectedProfile]);
-  /* v8 ignore stop */
-
   const serviceInfoFallback = serviceInfoLoadFailed ? t('common.failedToLoad') : serviceInfo ? t('settings.serviceInfo.unavailable') : t('common.loading');
   const selectedProfileFallback = selectedProfileSyncLoadFailed ? t('common.failedToLoad') : (trackedPlayerSyncStatus || selectedBandSyncStatus) ? t('settings.serviceInfo.unavailable') : t('common.loading');
 

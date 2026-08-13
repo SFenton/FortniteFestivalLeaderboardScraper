@@ -17,7 +17,6 @@ const ROW_H_MOBILE = Layout.demoRowMobileHeight;
  * Demo for the Songs FRE "leaving tomorrow" slide.
  * Shows three states: red-pulsing (leaving), green-pulsing (in shop), and plain (not in shop).
  */
-/* v8 ignore start -- demo component requires FestivalContext + ShopContext + SlideHeightContext */
 export default function LeavingTomorrowDemo() {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
@@ -103,4 +102,3 @@ export default function LeavingTomorrowDemo() {
     </div>
   );
 }
-/* v8 ignore stop */

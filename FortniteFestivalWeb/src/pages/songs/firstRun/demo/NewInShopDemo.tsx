@@ -13,7 +13,6 @@ import { songRow, songRowMobile, mobileTopRow } from '../../../../styles/songRow
 const ROW_H = Layout.demoRowHeight;
 const ROW_H_MOBILE = Layout.demoRowMobileHeight;
 
-/* v8 ignore start -- demo component requires FestivalContext + ShopContext + SlideHeightContext */
 export default function NewInShopDemo() {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
@@ -89,4 +88,3 @@ export default function NewInShopDemo() {
     </div>
   );
 }
-/* v8 ignore stop */

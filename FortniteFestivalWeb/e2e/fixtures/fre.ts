@@ -1,4 +1,4 @@
-import { type Page, type Locator } from '@playwright/test';
+import { errors, type Page, type Locator } from '@playwright/test';
 import { test as base, expect } from './test';
 import { AppState } from './appState';
 import { E2E_PLAYER } from './scenarios';
@@ -35,7 +35,13 @@ export class FreCarousel {
 
   /** Wait for the carousel entrance animation to finish. */
   async waitForVisible() {
-    await this.card.waitFor({ state: 'visible', timeout: 45_000 });
+    try {
+      await this.card.waitFor({ state: 'visible', timeout: 10_000 });
+    } catch (error) {
+      if (!(error instanceof errors.TimeoutError)) throw error;
+      await this.page.reload({ waitUntil: 'load' });
+      await this.card.waitFor({ state: 'visible', timeout: 35_000 });
+    }
     // Allow entrance animation to settle
     await this.page.waitForTimeout(TRANSITION_MS + 100);
   }

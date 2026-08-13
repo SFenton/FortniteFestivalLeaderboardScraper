@@ -37,6 +37,7 @@
     "icons:generate": "node scripts/generate-pwa-icons.mjs",
     "licenses:generate": "node ../tools/generate-license-manifest.mjs",
     "licenses:check": "node ../tools/generate-license-manifest.mjs --check",
+    "check:coverage-ignores": "node --test ../tools/check-coverage-ignores.test.mjs && node scripts/check-coverage-ignores.mjs",
     "check:encoding": "node ../tools/check-encoding.mjs"
   },
   "dependencies": {

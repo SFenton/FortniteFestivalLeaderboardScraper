@@ -38,7 +38,6 @@ const MOTION_PRESETS: MotionPreset[] = [
 ];
 /* eslint-enable no-magic-numbers */
 
-/* v8 ignore start — animation DOM code */
 function randomMotion(): MotionPreset {
   return MOTION_PRESETS[Math.floor(Math.random() * MOTION_PRESETS.length)]!;
 }
@@ -192,8 +191,6 @@ export function AnimatedBackground({
       requestAnimationFrame(() => requestAnimationFrame(() => setContainerVisible(true)));
     }
   }, [imageUris.length, containerVisible]);
-  /* v8 ignore stop */
-
   if (imageUris.length === 0) return null;
   /* v8 ignore start -- defensive guard; imageUris.length > 0 checked above */
   if (!uriA) return null;

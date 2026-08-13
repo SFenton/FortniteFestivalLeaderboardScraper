@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-13
-last_verified_commit: 3ff9cbc8
+last_verified_commit: 41c3bdb4
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
@@ -11,6 +11,8 @@ sources:
   - tools/fst-worker-no-progress-watchdog.mjs
   - deploy/fst-compose.sh
   - FortniteFestivalWeb/package.json
+  - FortniteFestivalWeb/scripts/check-coverage-ignores.mjs
+  - tools/check-coverage-ignores.test.mjs
   - .github/skills/
 update_triggers:
   - A repository tool, wrapper, generated-artifact command, MCP surface, or agent skill is added, removed, or changes purpose.
@@ -28,7 +30,7 @@ implementation fragments into ad hoc commands.
 | Compose/deployment | `deploy/fst-compose.sh`, `tools/fst-worker-compose-guard.sh`, `tools/fst-worker-dual-lane-runonce.sh`, `tools/scripts/gluetun-manage.sh` |
 | PostgreSQL maintenance/evidence | `tools/postgres-*.sh`, `tools/sql/`, living database runbooks |
 | Documentation | `tools/check-docs.mjs` |
-| Secret/encoding/license checks | `tools/secret-scan.mjs`, `tools/check-encoding.mjs`, `tools/generate-license-manifest.mjs` |
+| Secret/encoding/license/coverage checks | `tools/secret-scan.mjs`, `tools/check-encoding.mjs`, `tools/generate-license-manifest.mjs`, `FortniteFestivalWeb/scripts/check-coverage-ignores.mjs` |
 | Autonomous reports | `tools/agent-report-email.mjs` |
 | Production MCP adapters | `tools/mcp/` |
 | Pak extraction | `tools/FortnitePakExtractor/` |
@@ -49,6 +51,12 @@ profile invalidation, canaries, and regeneration gates.
 `FortniteFestivalWeb/package.json` is the command inventory for unit/shared
 tests, coverage, Playwright, linting, manual screenshots/images, embedded
 bundle checks, performance capture, icons, licenses, and encoding.
+
+`corepack yarn check:coverage-ignores` runs the repository mutation tests and
+then validates every web V8 ignore directive against the installed coverage
+parser contract. It rejects non-comment markers, nesting, orphan/EOF ranges,
+ranges over 50 lines, unsupported counted-next syntax, and stale verified-next
+allowlist entries before coverage cleanup or shard execution begins.
 
 Yarn 4 is authoritative for the web app. Standalone tools such as `tools/mcp/`
 may use their own npm lockfile and commands.

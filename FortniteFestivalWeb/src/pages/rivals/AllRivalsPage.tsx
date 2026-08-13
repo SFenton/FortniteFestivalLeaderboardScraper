@@ -32,7 +32,6 @@ const VALID_INSTRUMENTS = new Set<string>([
   'Solo_PeripheralVocals', 'Solo_PeripheralCymbals', 'Solo_PeripheralDrums',
 ]);
 
-/* v8 ignore start -- page component with multiple context/hook dependencies */
 export default function AllRivalsPage() {
   const { t } = useTranslation();
   const [searchParams] = useSearchParams();
@@ -257,4 +256,3 @@ export default function AllRivalsPage() {
     </Page>
   );
 }
-/* v8 ignore stop */

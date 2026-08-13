@@ -32,7 +32,6 @@ function barFill(accuracy: number, isFullCombo: boolean): string {
 const RAD = 4;
 function CustomBar(props: { x: number; y: number; width: number; height: number; payload: ChartPoint }) {
   const { x, y, width: w, height: h, payload } = props;
-  /* v8 ignore next -- Recharts shape guard; bars always have positive height when data is valid */
   if (!h || h <= 0) return null;
   const fill = barFill(payload.accuracy, payload.isFullCombo);
   const path = `M${x + RAD},${y + h} Q${x},${y + h} ${x},${y + h - RAD} L${x},${y + RAD} Q${x},${y} ${x + RAD},${y} L${x + w - RAD},${y} Q${x + w},${y} ${x + w},${y + RAD} L${x + w},${y + h - RAD} Q${x + w},${y + h} ${x + w - RAD},${y + h} Z`;
