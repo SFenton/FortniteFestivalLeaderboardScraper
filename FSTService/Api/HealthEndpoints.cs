@@ -84,6 +84,7 @@ public static partial class ApiEndpoints
             var localCurrent = progress.Current;
             var runtime = metaDb.GetServiceRuntimeState(WorkerStatusPublisher.ScraperWorkerKey);
             var storedWorker = runtime.WorkerStatus;
+            var currentAttempt = runtime.CurrentPhaseAttempt;
             var effectiveWorkerStatus = storedWorker is null
                 ? "unknown"
                 : GetEffectiveWorkerStatus(storedWorker, nowUtc);
@@ -132,6 +133,8 @@ public static partial class ApiEndpoints
                 : Math.Max(
                     durableCurrent.ElapsedSeconds ?? 0,
                     Math.Max(0, (nowUtc - durableCurrent.StartedAtUtc).TotalSeconds));
+            var durableV2Operation = durableCurrent
+                ?? (currentStatus == "failed" ? lastFailedOperation : null);
             var nextScheduledUpdateAt = GetNextScheduledUpdateAt(
                 runtime,
                 currentStatus,
@@ -142,6 +145,19 @@ public static partial class ApiEndpoints
 
             return Results.Ok(new
             {
+                contractVersion = 2,
+                phasePlan = new
+                {
+                    version = PhaseProgressCatalog.PlanVersion,
+                    phases = PhaseProgressCatalog.All.Select(descriptor => new
+                    {
+                        id = descriptor.Id,
+                        label = descriptor.Label,
+                        legacyPhase = descriptor.LegacyPhase,
+                        ordinal = descriptor.Ordinal,
+                        defaultUnitsKind = descriptor.DefaultUnitsKind,
+                    }),
+                },
                 lastCompletedUpdate = publishedScrape is null ? null : new
                 {
                     scrapeId = publishedScrape.Id,
@@ -170,6 +186,32 @@ public static partial class ApiEndpoints
                     elapsedSeconds = currentElapsedSeconds,
                     estimatedRemainingSeconds = durableCurrent?.EstimatedRemainingSeconds ?? localCurrent?.EstimatedRemainingSeconds,
                     branches = localCurrent?.Branches,
+                    contractVersion = 2,
+                    operationId = currentAttempt?.OperationId ?? durableV2Operation?.OperationId,
+                    phaseId = currentAttempt?.PhaseId ?? durableV2Operation?.PhaseId,
+                    phaseStatus = currentAttempt?.Status ?? durableV2Operation?.PhaseStatus,
+                    subphaseId = currentAttempt?.CurrentSubphaseId ?? durableV2Operation?.SubphaseId,
+                    phasePlanVersion = currentAttempt?.PlanVersion ?? durableV2Operation?.PhasePlanVersion,
+                    phaseOrdinal = currentAttempt?.PhaseOrdinal ?? durableV2Operation?.PhaseOrdinal,
+                    phaseAttempt = currentAttempt?.Attempt ?? durableV2Operation?.PhaseAttempt,
+                    unitsKind = currentAttempt?.UnitsKind ?? durableV2Operation?.UnitsKind,
+                    unitsCompleted = currentAttempt?.UnitsCompleted ?? durableV2Operation?.UnitsCompleted,
+                    unitsTotal = currentAttempt?.UnitsTotal ?? durableV2Operation?.UnitsTotal,
+                    unitsTotalFinal = currentAttempt?.UnitsTotalFinal ?? durableV2Operation?.UnitsTotalFinal,
+                    phasePercent = currentAttempt?.PhasePercent ?? durableV2Operation?.PhasePercent,
+                    overallPercentKind = currentAttempt?.OverallPercentKind
+                        ?? durableV2Operation?.OverallPercentKind
+                        ?? "indeterminate",
+                    overallPercent = currentAttempt?.OverallPercent ?? durableV2Operation?.OverallPercent,
+                    overallModelVersion = currentAttempt?.OverallModelVersion ?? durableV2Operation?.OverallModelVersion,
+                    etaLowerSeconds = currentAttempt?.EtaLowerSeconds ?? durableV2Operation?.EtaLowerSeconds,
+                    etaUpperSeconds = currentAttempt?.EtaUpperSeconds ?? durableV2Operation?.EtaUpperSeconds,
+                    etaConfidence = currentAttempt?.EtaConfidence ?? durableV2Operation?.EtaConfidence,
+                    etaSampleCount = currentAttempt?.EtaSampleCount ?? durableV2Operation?.EtaSampleCount,
+                    heartbeatAt = FormatUtc(storedWorker?.LastHeartbeatAtUtc),
+                    lastProgressAt = FormatUtc(currentAttempt?.LastProgressAtUtc)
+                        ?? FormatUtc(durableV2Operation?.LastProgressAtUtc)
+                        ?? FormatUtc(durableV2Operation?.UpdatedAtUtc),
                 },
                 activeScrapeId = activeScrape?.Id,
                 publishedScrapeId = publishedScrape?.Id,
@@ -236,8 +278,12 @@ public static partial class ApiEndpoints
             heartbeatAgeSeconds,
             staleAfterSeconds = 90,
             message = stored.Message,
-            currentOperation = FormatWorkerOperation(stored.CurrentOperation),
-            lastOperation = FormatWorkerOperation(stored.LastOperation),
+            currentOperation = FormatWorkerOperation(
+                stored.CurrentOperation,
+                stored.LastHeartbeatAtUtc),
+            lastOperation = FormatWorkerOperation(
+                stored.LastOperation,
+                heartbeatAtUtc: null),
         };
     }
 
@@ -314,13 +360,16 @@ public static partial class ApiEndpoints
         return next > nowUtc ? next.ToString("o") : null;
     }
 
-    private static object? FormatWorkerOperation(WorkerOperationInfo? operation)
+    private static object? FormatWorkerOperation(
+        WorkerOperationInfo? operation,
+        DateTime? heartbeatAtUtc)
     {
         if (operation is null)
             return null;
 
         return new
         {
+            contractVersion = operation.ContractVersion,
             operationKey = operation.OperationKey,
             operationLabel = operation.OperationLabel,
             status = operation.Status,
@@ -333,6 +382,29 @@ public static partial class ApiEndpoints
             progressPercent = operation.ProgressPercent,
             elapsedSeconds = operation.ElapsedSeconds,
             estimatedRemainingSeconds = operation.EstimatedRemainingSeconds,
+            operationId = operation.OperationId,
+            phaseId = operation.PhaseId,
+            phaseStatus = operation.PhaseStatus,
+            subphaseId = operation.SubphaseId,
+            phasePlanVersion = operation.PhasePlanVersion,
+            phaseOrdinal = operation.PhaseOrdinal,
+            phaseAttempt = operation.PhaseAttempt,
+            unitsKind = operation.UnitsKind,
+            unitsCompleted = operation.UnitsCompleted,
+            unitsTotal = operation.UnitsTotal,
+            unitsTotalFinal = operation.UnitsTotalFinal,
+            phasePercent = operation.PhasePercent,
+            overallPercentKind = operation.OverallPercentKind ?? "indeterminate",
+            overallPercent = operation.OverallPercent,
+            overallModelVersion = operation.OverallModelVersion,
+            etaLowerSeconds = operation.EtaLowerSeconds,
+            etaUpperSeconds = operation.EtaUpperSeconds,
+            etaConfidence = operation.EtaConfidence,
+            etaSampleCount = operation.EtaSampleCount,
+            heartbeatAt = FormatUtc(operation.HeartbeatAtUtc)
+                ?? FormatUtc(heartbeatAtUtc),
+            lastProgressAt = FormatUtc(operation.LastProgressAtUtc)
+                ?? FormatUtc(operation.UpdatedAtUtc),
         };
     }
 

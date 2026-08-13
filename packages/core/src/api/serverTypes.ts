@@ -577,6 +577,11 @@ export type FeatureFlagsResponse = {
 };
 
 export type ServiceInfoResponse = {
+  contractVersion?: 2 | number;
+  phasePlan?: {
+    version: string;
+    phases: ServiceInfoPhaseDescriptor[];
+  };
   lastCompletedUpdate: {
     scrapeId?: number;
     startedAt: string;
@@ -597,6 +602,28 @@ export type ServiceInfoResponse = {
     progressPercent?: number | null;
     elapsedSeconds?: number | null;
     estimatedRemainingSeconds?: number | null;
+    contractVersion?: 2 | number;
+    operationId?: string | null;
+    phaseId?: string | null;
+    phaseStatus?: string | null;
+    subphaseId?: string | null;
+    phasePlanVersion?: string | null;
+    phaseOrdinal?: number | null;
+    phaseAttempt?: number | null;
+    unitsKind?: string | null;
+    unitsCompleted?: number | null;
+    unitsTotal?: number | null;
+    unitsTotalFinal?: boolean | null;
+    phasePercent?: number | null;
+    overallPercentKind?: 'indeterminate' | 'historical_phase_durations' | string;
+    overallPercent?: number | null;
+    overallModelVersion?: string | null;
+    etaLowerSeconds?: number | null;
+    etaUpperSeconds?: number | null;
+    etaConfidence?: 'low' | 'medium' | 'high' | string | null;
+    etaSampleCount?: number | null;
+    heartbeatAt?: string | null;
+    lastProgressAt?: string | null;
     branches?: Array<{
       id: string;
       status: string;
@@ -651,7 +678,16 @@ export type ServiceInfoResponse = {
   nextScheduledUpdateAt: string | null;
 };
 
+export type ServiceInfoPhaseDescriptor = {
+  id: string;
+  label: string;
+  legacyPhase: string;
+  ordinal: number;
+  defaultUnitsKind?: string | null;
+};
+
 export type ServiceInfoWorkerOperation = {
+  contractVersion?: 2 | number;
   operationKey: string;
   operationLabel: string;
   status: 'running' | 'completed' | 'failed' | 'cancelled' | 'skipped' | string;
@@ -664,6 +700,27 @@ export type ServiceInfoWorkerOperation = {
   progressPercent?: number | null;
   elapsedSeconds?: number | null;
   estimatedRemainingSeconds?: number | null;
+  operationId?: string | null;
+  phaseId?: string | null;
+  phaseStatus?: string | null;
+  subphaseId?: string | null;
+  phasePlanVersion?: string | null;
+  phaseOrdinal?: number | null;
+  phaseAttempt?: number | null;
+  unitsKind?: string | null;
+  unitsCompleted?: number | null;
+  unitsTotal?: number | null;
+  unitsTotalFinal?: boolean | null;
+  phasePercent?: number | null;
+  overallPercentKind?: 'indeterminate' | 'historical_phase_durations' | string;
+  overallPercent?: number | null;
+  overallModelVersion?: string | null;
+  etaLowerSeconds?: number | null;
+  etaUpperSeconds?: number | null;
+  etaConfidence?: 'low' | 'medium' | 'high' | string | null;
+  etaSampleCount?: number | null;
+  heartbeatAt?: string | null;
+  lastProgressAt?: string | null;
 };
 
 /** Score history entry as returned by /api/player/{id}/history. */

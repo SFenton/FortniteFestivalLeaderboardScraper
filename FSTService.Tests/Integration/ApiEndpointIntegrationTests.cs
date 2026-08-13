@@ -840,6 +840,123 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task ApiServiceInfo_AddsDurableProgressV2WithoutRemovingV1Fields()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var scrapeId = metaDb.StartScrapeRun();
+        var now = DateTime.UtcNow;
+        metaDb.UpsertWorkerHeartbeat(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            "running",
+            "scraper",
+            "durable-progress-v2",
+            now.AddMinutes(-1),
+            now);
+        metaDb.UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            new WorkerOperationInfo
+            {
+                ContractVersion = 2,
+                OperationKey = "scrape.post_process",
+                OperationLabel = "Post-processing leaderboard update",
+                Status = "running",
+                Phase = "PostScrapeEnrichment",
+                SubOperation = "BandMaintenance",
+                StartedAtUtc = now.AddMinutes(-1),
+                UpdatedAtUtc = now.AddSeconds(-10),
+            },
+            updatedAtUtc: now.AddSeconds(-10));
+        var attempt = metaDb.StartScrapePhaseAttempt(new ScrapePhaseAttemptStart(
+            scrapeId,
+            "post.band_maintenance",
+            "scrape.update",
+            300,
+            PhaseProgressCatalog.PlanVersion,
+            "durable-progress-v2",
+            "current_projection_refresh",
+            "running",
+            "scopes",
+            25,
+            100,
+            true,
+            25,
+            "indeterminate",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            now.AddMinutes(-1),
+            now.AddSeconds(-10),
+            now,
+            "build-test",
+            "config-test"));
+
+        try
+        {
+            var response = await _client.GetAsync("/api/service-info");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+            Assert.Equal(2, json.GetProperty("contractVersion").GetInt32());
+            var phasePlan = json.GetProperty("phasePlan");
+            Assert.Equal(PhaseProgressCatalog.PlanVersion, phasePlan.GetProperty("version").GetString());
+            Assert.Equal(
+                PhaseProgressCatalog.All.Count,
+                phasePlan.GetProperty("phases").GetArrayLength());
+
+            var current = json.GetProperty("currentUpdate");
+            Assert.Equal("updating", current.GetProperty("status").GetString());
+            Assert.Equal("PostScrapeEnrichment", current.GetProperty("phase").GetString());
+            Assert.Equal("BandMaintenance", current.GetProperty("subOperation").GetString());
+            Assert.Equal(2, current.GetProperty("contractVersion").GetInt32());
+            Assert.Equal("post.band_maintenance", current.GetProperty("phaseId").GetString());
+            Assert.Equal("current_projection_refresh", current.GetProperty("subphaseId").GetString());
+            Assert.Equal("scopes", current.GetProperty("unitsKind").GetString());
+            Assert.Equal(25, current.GetProperty("unitsCompleted").GetInt64());
+            Assert.Equal(100, current.GetProperty("unitsTotal").GetInt64());
+            Assert.True(current.GetProperty("unitsTotalFinal").GetBoolean());
+            Assert.Equal(25, current.GetProperty("phasePercent").GetDouble());
+            Assert.Equal("indeterminate", current.GetProperty("overallPercentKind").GetString());
+            Assert.False(current.TryGetProperty("overallPercent", out _));
+            Assert.Equal(JsonValueKind.String, current.GetProperty("heartbeatAt").ValueKind);
+            Assert.Equal(JsonValueKind.String, current.GetProperty("lastProgressAt").ValueKind);
+
+            var operation = json.GetProperty("workerStatus").GetProperty("currentOperation");
+            Assert.Equal("Post-processing leaderboard update", operation.GetProperty("operationLabel").GetString());
+            Assert.Equal(2, operation.GetProperty("contractVersion").GetInt32());
+            Assert.Equal(JsonValueKind.String, operation.GetProperty("heartbeatAt").ValueKind);
+        }
+        finally
+        {
+            var completedAt = DateTime.UtcNow;
+            metaDb.CompleteScrapePhaseAttempt(new ScrapePhaseAttemptCompletion(
+                scrapeId,
+                "post.band_maintenance",
+                attempt,
+                "completed",
+                completedAt,
+                completedAt,
+                completedAt,
+                null,
+                null));
+            metaDb.CompleteScrapeRun(
+                scrapeId,
+                songsScraped: 0,
+                totalEntries: 0,
+                totalRequests: 0,
+                totalBytes: 0);
+            metaDb.PublishScrapeRun(scrapeId, promoteCachedResponses: false);
+            metaDb.UpdateWorkerActivity(
+                WorkerStatusPublisher.ScraperWorkerKey,
+                currentOperation: null,
+                status: "running",
+                updatedAtUtc: completedAt);
+        }
+    }
+
+    [Fact]
     public async Task ApiServiceInfo_UsesLastCompletedScrapeForDurableTiming()
     {
         var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
