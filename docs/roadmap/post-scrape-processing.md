@@ -2,7 +2,7 @@
 status: roadmap
 owner: worker
 last_verified: 2026-08-13
-last_verified_commit: 3ff9cbc8
+last_verified_commit: 0af25b3f
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -18,6 +18,9 @@ sources:
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
   - FSTService/Api/HealthEndpoints.cs
   - FortniteFestivalWeb/src/pages/settings/SettingsPage.tsx
+  - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.tsx
+  - FortniteFestivalWeb/src/pages/settings/serviceProgress.ts
+  - /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/pr27-settings-live-ab-20260814T062455Z
   - packages/core/src/api/serverTypes.ts
   - docs/architecture/data-publication-flow.md
   - docs/architecture/data-storage.md
@@ -95,10 +98,10 @@ resolved through repository and bounded runtime evidence.
 | Historical correctness and publication safety | Great: candidate isolation, exact catalog binding, complete-scope manifests, critical-phase gates, atomic generation publication, and fail-closed reads are strong | High |
 | Test posture | Good: extensive Postgres, worker, API, publication, web, and browser coverage; CI enforces 94% service line coverage | High |
 | Modularity | Okay: phases are testable, but `PostScrapeOrchestrator.cs` is 2,748 lines and still contains dormant or PostgreSQL-no-op paths | High |
-| Live progress observability | Good backend foundation: normalized durable attempts, service-info v2, and watchdog progress/liveness separation are accepted; the Settings UI still needs PR-3 presentation work | High |
+| Live progress observability | Good: normalized durable attempts, service-info v2, watchdog progress/liveness separation, and the responsive Settings progress experience are accepted | High |
 | Performance | Poor: recent full-scrape p50 is about 8.58 hours and recorded post-processing consumes about 5.6 hours on scrape 1290 | High |
 | Storage sustainability | Poor and urgent: the 3.6 TB drive is 96% used with roughly 170 GB free after scrape 1296 | High |
-| Overall | Correctness-first and operationally dependable, with durable backend progress accepted; performance, storage, replay, and UI work remain unresolved | High |
+| Overall | Correctness-first and operationally dependable, with durable backend and browser progress accepted; performance, storage, and replay remain unresolved | High |
 
 ## Evidence rules
 
@@ -677,18 +680,6 @@ Each iteration below is a separate branch/PR.
 - Execution remains `parity-gated-maintenance` and blocked until statistics,
   exact-count, parity, and workspace evidence all agree.
 
-### PR-3: Settings progress experience
-
-**Class:** `continuous-safe`
-
-- three primary visual groups;
-- technical details disclosure;
-- selected-profile sync card;
-- determinate/indeterminate progress;
-- overall estimate and ETA range/confidence;
-- polling/background behavior;
-- unit, contract, responsive, accessibility, and browser acceptance.
-
 ### PR-4: Tier 0 evidence package and replay contract
 
 **Class:** `continuous-safe`
@@ -699,6 +690,14 @@ Each iteration below is a separate branch/PR.
 - config/build/schema fingerprinting;
 - no production capture or phase mutation;
 - corruption, mismatch, resume, and determinism tests.
+
+**Starting note:** branch from the accepted official PR-3 master state after
+image/deployment verification. The first slice is repository-only: define the
+canonical package/phase manifest, deterministic serialization, stable phase
+descriptor references, checksum/root lineage, and corruption/mismatch tests.
+It must not capture production payloads, invoke phases, write PostgreSQL,
+publish, add retention work, or assume Tier 1 artifacts exist. Keep any
+generated fixture evidence bounded and on the FST drive.
 
 ### PR-5: same-binary isolated replay
 
@@ -860,8 +859,7 @@ This tandem plan is accepted for implementation after local outbox rendering.
 - Approval of this roadmap is not authorization to bypass the current
   live-safety, parity, publication, provider, storage, rollback, or maintenance
   gate for any later action.
-- PR-3 is the next progress boundary and must retain version-1 fallback
-  behavior during browser migration.
+- PR-4 Tier 0 manifests are the next continuous-safe implementation boundary.
 - Current-projection optimization is a separate future full-scrape A/B; it
   cannot be combined with PR-3 Settings work.
 - Snapshot-retention execution remains a separate parity- and capacity-gated
