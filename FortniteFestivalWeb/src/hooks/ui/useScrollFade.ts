@@ -9,6 +9,8 @@ export interface ScrollFadeOptions {
    * Position is 0 (clip edge) to 1 (fully opaque). Default: exponential curve.
    */
   stops?: ReadonlyArray<readonly [number, number]>;
+  /** Observe direct-child replacement for virtualized lists. Default: false. */
+  dynamicChildren?: boolean;
 }
 
 const DEFAULT_DISTANCE = 36;
@@ -42,6 +44,7 @@ export function useScrollFade(
 ): () => void {
   const distance = options.distance ?? DEFAULT_DISTANCE;
   const stops = options.stops ?? DEFAULT_STOPS;
+  const dynamicChildren = options.dynamicChildren ?? false;
   const rafId = useRef(0);
   const viewportTimeoutsRef = useRef<number[]>([]);
   const scrollContainerRef = useScrollContainer();
@@ -145,6 +148,7 @@ export function useScrollFade(
     const listEl = listRef.current;
     const scrollEl = getScrollElement();
     if (!listEl) return;
+    const edgeChildren = edgeChildrenRef.current;
 
     // Observe with margin that extends the "near edge" zone
     const observer = new IntersectionObserver(
@@ -152,9 +156,9 @@ export function useScrollFade(
         for (const entry of entries) {
           const el = entry.target as HTMLElement;
           if (entry.isIntersecting) {
-            edgeChildrenRef.current.add(el);
+            edgeChildren.add(el);
           } else {
-            edgeChildrenRef.current.delete(el);
+            edgeChildren.delete(el);
             // Clear mask when fully out of view
             if (el.style.maskImage) {
               el.style.maskImage = '';
@@ -172,13 +176,47 @@ export function useScrollFade(
       },
     );
 
+    const observeChild = (child: Element) => {
+      if (child instanceof HTMLElement) observer.observe(child);
+    };
+    const removeChild = (child: Element) => {
+      if (!(child instanceof HTMLElement)) return;
+      observer.unobserve(child);
+      edgeChildren.delete(child);
+      child.style.maskImage = '';
+      child.style.webkitMaskImage = '';
+    };
+
     for (let i = 0; i < listEl.children.length; i++) {
-      observer.observe(listEl.children[i]!);
+      observeChild(listEl.children[i]!);
     }
 
-    return () => observer.disconnect();
+    const childObserver = dynamicChildren
+      ? new MutationObserver((records) => {
+          for (const record of records) {
+            for (const child of record.removedNodes) {
+              if (child instanceof Element) removeChild(child);
+            }
+            for (const child of record.addedNodes) {
+              if (child instanceof Element) observeChild(child);
+            }
+          }
+          throttledUpdate();
+        })
+      : null;
+    childObserver?.observe(listEl, { childList: true });
+
+    return () => {
+      childObserver?.disconnect();
+      observer.disconnect();
+      for (const child of edgeChildren) {
+        child.style.maskImage = '';
+        child.style.webkitMaskImage = '';
+      }
+      edgeChildren.clear();
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [distance, throttledUpdate, getScrollElement, ...deps]);
+  }, [distance, dynamicChildren, throttledUpdate, getScrollElement, ...deps]);
 
   // Listen to scroll container for mask updates on tracked elements
   useEffect(() => {

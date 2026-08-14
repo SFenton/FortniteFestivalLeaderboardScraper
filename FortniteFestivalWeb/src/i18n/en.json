@@ -591,7 +591,9 @@
     "loadingMore": "Loading more suggestions…",
     "noSuggestionsFiltered": "Try changing your filters to see more suggestions.",
     "playSongsFirst": "Play some songs first!",
-    "serviceDown": "The service may be down unexpectedly. Please refresh to try again."
+    "serviceDown": "The service may be down unexpectedly. Please refresh to try again.",
+    "mixLimitReached": "You've reached 1,000 suggestions in this mix.",
+    "startNewMix": "Start a new mix"
   },
   "suggestionCategory": {
     "near_fc_any": { "title": "FC These Next!", "desc": "If you can get gold stars, you can FC it!" },
@@ -1659,8 +1661,8 @@
         "description": "Select an instrument to fine-tune which suggestion types appear for that specific instrument."
       },
       "infiniteScroll": {
-        "title": "Endless Suggestions",
-        "description": "Scroll down to load an endless rotation of personalized suggestions."
+        "title": "More Suggestions",
+        "description": "Scroll down to keep loading personalized suggestions. Start a new mix when you reach the session limit."
       },
       "demo": {
         "unfcTitle": "Finish the Lead FCs",
