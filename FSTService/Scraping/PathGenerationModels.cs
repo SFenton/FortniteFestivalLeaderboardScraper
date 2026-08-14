@@ -4,6 +4,26 @@ using FSTService.Persistence;
 
 namespace FSTService.Scraping;
 
+internal static class PathGenerationProfiles
+{
+    internal const string InvalidPlasticDrumsV3 =
+        "chopt-fnf-ew0-s20-json-png-prodrums-v3";
+    internal const string PlasticDrumsV4 =
+        "chopt-fnf-ew0-s20-json-png-prodrums-v4";
+
+    internal static bool HasInvalidPlasticDrumsScores(string? profile)
+        => string.Equals(
+            profile,
+            InvalidPlasticDrumsV3,
+            StringComparison.Ordinal);
+
+    internal static bool RequiresAuthoredDrumFills(string? profile)
+        => string.Equals(
+            profile,
+            PlasticDrumsV4,
+            StringComparison.Ordinal);
+}
+
 public sealed record PathInstrumentDefinition(
     string ProviderProperty,
     string Instrument,
@@ -21,12 +41,12 @@ public static class PathGenerationInstruments
         new("vl", "Solo_Vocals", "og", "vocals"),
         new("pg", "Solo_PeripheralGuitar", "pro", "guitar"),
         new("pb", "Solo_PeripheralBass", "pro", "bass"),
-        // CHOpt's FNF prodrums mode reads PLASTIC DRUMS from the original MIDI.
-        new("pd", "Solo_PeripheralCymbals", "og", "prodrums"),
+        // Promote PLASTIC DRUMS to PART DRUMS for CHOpt's dedicated FNF engine.
+        new("pd", "Solo_PeripheralCymbals", "drums", "prodrums"),
         new(
             "pd",
             "Solo_PeripheralDrums",
-            "og",
+            "drums",
             "prodrums",
             DisableProDrums: true),
     ];
@@ -41,6 +61,11 @@ public static class PathGenerationInstruments
         => ByInstrument.TryGetValue(instrument, out var definition)
             ? definition
             : throw new ArgumentOutOfRangeException(nameof(instrument), instrument, "Unsupported path instrument.");
+
+    public static bool IsPlasticDrumsInstrument(string instrument)
+        => instrument is
+            "Solo_PeripheralCymbals" or
+            "Solo_PeripheralDrums";
 
     public static string[] NormalizeExpected(IEnumerable<string> instruments)
     {

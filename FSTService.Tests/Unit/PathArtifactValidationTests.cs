@@ -53,6 +53,7 @@ public sealed class PathArtifactValidationTests
             }
           ],
           "spPhrases": [],
+          "drumFills": [{ "startBeat": 0, "endBeat": 1 }],
           "measures": [],
           "bpms": [],
           "timeSignatures": []
@@ -146,12 +147,33 @@ public sealed class PathArtifactValidationTests
             requiredSchemaVersion: 2));
     }
 
+    [Fact]
+    public void JsonValidation_RequiresAuthoredDrumFillsWhenRequested()
+    {
+        Assert.True(PathArtifactValidator.TryParseJson(
+            RichPathJson,
+            requirePositiveScore: true,
+            out _,
+            requiredSchemaVersion: 2,
+            requireNonEmptyDrumFills: true));
+        Assert.False(PathArtifactValidator.TryParseJson(
+            RichPathJson.Replace(
+                """[{ "startBeat": 0, "endBeat": 1 }]""",
+                "[]",
+                StringComparison.Ordinal),
+            requirePositiveScore: true,
+            out _,
+            requiredSchemaVersion: 2,
+            requireNonEmptyDrumFills: true));
+    }
+
     [Theory]
     [InlineData(null, null)]
     [InlineData("chopt-fnf-ew0-s20-json-png-v1", null)]
     [InlineData("chopt-fnf-ew0-s20-json-png-v2", 2)]
     [InlineData("custom-profile-v2", 2)]
     [InlineData("chopt-fnf-ew0-s20-json-png-prodrums-v3", 2)]
+    [InlineData("chopt-fnf-ew0-s20-json-png-prodrums-v4", 2)]
     public void JsonValidation_MapsProfilesToRequiredSchema(
         string? profile,
         int? expected)

@@ -61,10 +61,10 @@ public sealed class PathArtifactResolver
                 ? currentGenerationId
                 : null;
         if (currentGenerationId is not null &&
-            generationId is null &&
-            instrument is
-                "Solo_PeripheralCymbals" or
-                "Solo_PeripheralDrums")
+            PathGenerationInstruments.IsPlasticDrumsInstrument(instrument) &&
+            (generationId is null ||
+             PathGenerationProfiles.HasInvalidPlasticDrumsScores(
+                 state!.GenerationProfile)))
         {
             return null;
         }
@@ -83,8 +83,7 @@ public sealed class PathArtifactResolver
         string instrument,
         string? requestedGenerationId)
     {
-        if (instrument is not
-            ("Solo_PeripheralCymbals" or "Solo_PeripheralDrums"))
+        if (!PathGenerationInstruments.IsPlasticDrumsInstrument(instrument))
         {
             return false;
         }
@@ -96,9 +95,11 @@ public sealed class PathArtifactResolver
                     requestedGenerationId,
                     currentGenerationId,
                     StringComparison.Ordinal)) &&
-               !state.ExpectedInstruments.Contains(
-                   instrument,
-                   StringComparer.Ordinal);
+               (PathGenerationProfiles.HasInvalidPlasticDrumsScores(
+                    state.GenerationProfile) ||
+                !state.ExpectedInstruments.Contains(
+                    instrument,
+                    StringComparer.Ordinal));
     }
 
     internal static ResolvedPathArtifact? Resolve(
@@ -366,7 +367,14 @@ public sealed class PathArtifactResolver
                         out var score,
                         requiredSchemaVersion:
                             PathArtifactValidator.RequiredSchemaVersion(
-                                manifest.GenerationProfile)) ||
+                                manifest.GenerationProfile),
+                        requireNonEmptyDrumFills:
+                            difficulty == "expert" &&
+                            PathGenerationInstruments
+                                .IsPlasticDrumsInstrument(instrument) &&
+                            PathGenerationProfiles
+                                .RequiresAuthoredDrumFills(
+                                    manifest.GenerationProfile)) ||
                     (difficulty == "expert" && score != expertMaximum))
                 {
                     throw new InvalidOperationException(
@@ -623,7 +631,8 @@ internal static class PathArtifactValidator
         string path,
         bool requirePositiveScore,
         out int? totalScore,
-        int? requiredSchemaVersion = null)
+        int? requiredSchemaVersion = null,
+        bool requireNonEmptyDrumFills = false)
     {
         totalScore = null;
         try
@@ -632,7 +641,8 @@ internal static class PathArtifactValidator
                 File.ReadAllText(path),
                 requirePositiveScore,
                 out totalScore,
-                requiredSchemaVersion);
+                requiredSchemaVersion,
+                requireNonEmptyDrumFills);
         }
         catch (IOException)
         {
@@ -648,7 +658,8 @@ internal static class PathArtifactValidator
         string json,
         bool requirePositiveScore,
         out int? totalScore,
-        int? requiredSchemaVersion = null)
+        int? requiredSchemaVersion = null,
+        bool requireNonEmptyDrumFills = false)
     {
         totalScore = null;
         try
@@ -679,6 +690,8 @@ internal static class PathArtifactValidator
                 !HasArray(root, "measures") ||
                 !HasArray(root, "bpms") ||
                 !HasArray(root, "timeSignatures") ||
+                (requireNonEmptyDrumFills &&
+                 !HasNonEmptyArray(root, "drumFills")) ||
                 !root.TryGetProperty("totalScore", out var score) ||
                 score.ValueKind != JsonValueKind.Number ||
                 !score.TryGetInt32(out var parsed))
@@ -713,6 +726,13 @@ internal static class PathArtifactValidator
         return validateElement is null ||
                property.EnumerateArray().All(validateElement);
     }
+
+    private static bool HasNonEmptyArray(
+        JsonElement root,
+        string propertyName)
+        => root.TryGetProperty(propertyName, out var property) &&
+           property.ValueKind == JsonValueKind.Array &&
+           property.GetArrayLength() > 0;
 
     private static bool ValidateNote(JsonElement note)
     {
@@ -811,7 +831,9 @@ internal static class PathArtifactValidator
 
     internal static int? RequiredSchemaVersion(string? generationProfile)
         => generationProfile?.EndsWith("-v2", StringComparison.Ordinal) == true ||
-           generationProfile == "chopt-fnf-ew0-s20-json-png-prodrums-v3"
+           generationProfile is
+               PathGenerationProfiles.InvalidPlasticDrumsV3 or
+               PathGenerationProfiles.PlasticDrumsV4
                 ? CurrentSchemaVersion
                 : null;
 
