@@ -126,7 +126,31 @@ export class SuggestionGenerator {
 
   /** Inject rival data for rivalry-aware suggestion strategies. Pass null to disable. */
   setRivalData(data: RivalDataIndex | null): void {
+    if (this.rivalData === data) return;
     this.rivalData = data;
+    if (!data) return;
+    if (!this.initialized || this.mode !== 'solo') return;
+
+    const additions = this.rivalPipelines(data);
+    this.shuffleInPlace(additions);
+    this.pipelines = [...additions, ...this.pipelines];
+  }
+
+  private rivalPipelines(data: RivalDataIndex): Array<() => SuggestionCategory[]> {
+    return [
+      () => this.songRivalBattleground(),
+      () => this.songRivalNearFc(),
+      () => this.songRivalStale(),
+      () => this.songRivalStarGains(),
+      () => this.songRivalPctPush(),
+      ...data.songRivals.flatMap(rival => [
+        () => this.songRivalGap(rival.accountId),
+        () => this.songRivalProtect(rival.accountId),
+        () => this.songRivalSpotlight(rival.accountId),
+        () => this.songRivalSlipping(rival.accountId),
+        () => this.songRivalDominate(rival.accountId),
+      ]),
+    ];
   }
 
   private shuffleInPlace<T>(arr: T[]): void {
@@ -582,19 +606,9 @@ export class SuggestionGenerator {
       () => this.nearMaxScoreDecade(5000, 10000, '10k'),
       () => this.nearMaxScore(10000, 15000, '15k'),
       () => this.nearMaxScoreDecade(10000, 15000, '15k'),
-      // ─── Rival strategies (no-op when rivalData is null) ─────
-      () => this.songRivalBattleground(),
-      () => this.songRivalNearFc(),
-      () => this.songRivalStale(),
-      () => this.songRivalStarGains(),
-      () => this.songRivalPctPush(),
-      ...(this.rivalData?.songRivals ?? []).flatMap(r => [
-        () => this.songRivalGap(r.accountId),
-        () => this.songRivalProtect(r.accountId),
-        () => this.songRivalSpotlight(r.accountId),
-        () => this.songRivalSlipping(r.accountId),
-        () => this.songRivalDominate(r.accountId),
-      ]),
+      ...(this.rivalData
+        ? this.rivalPipelines(this.rivalData)
+        : []),
     ];
     this.shuffleInPlace(list);
     this.pipelines = list;
@@ -1987,7 +2001,7 @@ export class SuggestionGenerator {
   private songRivalSlipping(rivalId: string): SuggestionCategory[] {
     if (!this.rivalData) return [];
     const matches = this.rivalData.byRival.get(rivalId);
-    if (!matches) return [];
+    if (!matches || matches.length === 0) return [];
     const rival = matches[0]!.rival;
 
     const pool: SongPair[] = [];
@@ -2023,7 +2037,7 @@ export class SuggestionGenerator {
   private songRivalDominate(rivalId: string): SuggestionCategory[] {
     if (!this.rivalData) return [];
     const matches = this.rivalData.byRival.get(rivalId);
-    if (!matches) return [];
+    if (!matches || matches.length === 0) return [];
     const rival = matches[0]!.rival;
 
     const pool: SongPair[] = [];

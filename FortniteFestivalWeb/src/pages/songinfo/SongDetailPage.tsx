@@ -51,6 +51,7 @@ import {
   keepPreviousSongLeaderboards,
   remoteDataQueryPolicy,
 } from '../../api/queryPolicy';
+import { playerHistoryQueryOptions } from '../../api/remoteDataQueries';
 import type { InstrumentData, SongBandData } from './songDetailTypes';
 export { clearSongDetailCache } from '../../api/pageCache';
 
@@ -176,10 +177,8 @@ export default function SongDetailPage() {
   const location = useLocation();
   const cached = songId ? songDetailCache.get(songId) : undefined;
   const scoreHistoryQuery = useQuery({
-    queryKey: queryKeys.playerHistory(selectedAccountId ?? '', songId),
-    queryFn: ({ signal }) => api.getPlayerHistory(selectedAccountId!, songId, undefined, { signal }).then(response => response.history),
+    ...playerHistoryQueryOptions(selectedAccountId ?? '', songId ?? ''),
     enabled: !!selectedAccountId && !!songId,
-    ...remoteDataQueryPolicy,
   });
   const leaderboardsQuery = useQuery<Awaited<ReturnType<typeof api.getAllLeaderboards>>>({
     queryKey: queryKeys.allLeaderboards(songId ?? '', 10, leewayParam),

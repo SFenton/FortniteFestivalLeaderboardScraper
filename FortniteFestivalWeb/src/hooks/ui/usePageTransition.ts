@@ -1,5 +1,6 @@
-import { useRef } from 'react';
-import { useLoadPhase, type LoadPhase } from '../data/useLoadPhase';
+import { useEffect, useRef } from 'react';
+import { LoadPhase } from '@festival/core/runtime';
+import { useLoadPhase } from '../data/useLoadPhase';
 
 /**
  * Module-level set tracking which page cache keys have been rendered.
@@ -31,14 +32,29 @@ export function usePageTransition(
   // Determine skip at mount time — skip if we've visited this key before
   // and cached data exists. This covers back-navigation, layout remounts
   // (mobile↔desktop resize), and re-visits to the same page.
-  const skipAnim = useRef(
-    visitedKeys.has(cacheKey) && hasCachedData,
-  ).current;
+  const visitRef = useRef({
+    cacheKey,
+    skipAnimation: visitedKeys.has(cacheKey) && hasCachedData,
+  });
+  if (visitRef.current.cacheKey !== cacheKey) {
+    visitRef.current = {
+      cacheKey,
+      skipAnimation: visitedKeys.has(cacheKey) && hasCachedData,
+    };
+  }
 
-  // Mark as visited after the skip decision
-  visitedKeys.add(cacheKey);
+  const transition = useLoadPhase(isReady, {
+    skipAnimation: visitRef.current.skipAnimation,
+    resetKey: cacheKey,
+  });
 
-  return useLoadPhase(isReady, { skipAnimation: skipAnim });
+  useEffect(() => {
+    if (isReady && transition.phase === LoadPhase.ContentIn) {
+      visitedKeys.add(cacheKey);
+    }
+  }, [cacheKey, isReady, transition.phase]);
+
+  return transition;
 }
 
 /**

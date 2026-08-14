@@ -12,8 +12,9 @@ export const queryKeys = {
   playerScope: (accountId: string) => ['player', accountId] as const,
   player: (accountId: string, songId?: string, instruments?: string[], leeway?: number) =>
     [...queryKeys.playerScope(accountId), { songId, instruments, leeway }] as const,
-  playerHistory: (accountId: string, songId?: string, instrument?: string) =>
-    ['playerHistory', accountId, { songId, instrument }] as const,
+  playerHistoryScope: (accountId: string) => ['playerHistory', accountId] as const,
+  playerHistory: (accountId: string, songId?: string) =>
+    [...queryKeys.playerHistoryScope(accountId), { songId }] as const,
   syncStatus: (accountId: string) => ['syncStatus', accountId] as const,
   leaderboardRoot: () => ['leaderboard'] as const,
   leaderboardScope: (songId: string, instrument: string) =>
@@ -46,6 +47,8 @@ export const queryKeys = {
     [...queryKeys.rivalsScope(accountId), 'overview'] as const,
   rivalsList: (accountId: string, combo: string) =>
     [...queryKeys.rivalsScope(accountId), 'list', combo] as const,
+  rivalsAll: (accountId: string) =>
+    [...queryKeys.rivalsScope(accountId), 'all'] as const,
   leaderboardRivals: (accountId: string, instrument: string, rankBy: string) =>
     [...queryKeys.rivalsScope(accountId), 'leaderboard', instrument, { rankBy }] as const,
   rivalDetail: (

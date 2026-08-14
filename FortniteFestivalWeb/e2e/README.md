@@ -11,6 +11,11 @@ reduced-motion, Save-Data, and image-label behavior. These specs run in the
 focused WebKit project as well as Chromium; Firefox and desktop WebKit retain
 the same surface in the nightly matrix.
 
+Route contracts also own selected-player/band guard behavior, replace-history
+semantics, malformed deep-link resilience, and the intentional Not Found
+surface. Ownership specs verify that full-song history and Suggestions
+rivals-all requests remain account-scoped and reusable across route remounts.
+
 ## Layout
 
 ```text

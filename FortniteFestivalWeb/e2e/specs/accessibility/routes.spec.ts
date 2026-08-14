@@ -16,7 +16,7 @@ test.use({ scenario: createPopulatedScenario() });
 
 const blockingImpacts = new Set(['moderate', 'serious', 'critical']);
 
-for (const route of ['/songs', '/suggestions', '/leaderboards', '/settings', '/manual']) {
+for (const route of ['/songs', '/suggestions', '/leaderboards', '/settings', '/manual', '/missing/deep-link']) {
   test(`${route} has no moderate, serious, or critical axe violations`, async ({ page, appState }) => {
     await appState.reset();
     await appState.selectPlayer();

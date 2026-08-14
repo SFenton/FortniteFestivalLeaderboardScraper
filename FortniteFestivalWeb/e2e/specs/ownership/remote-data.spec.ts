@@ -147,7 +147,24 @@ async function installApi(page: Page, counts: RequestCounts, options: ApiInstall
       });
     }
     const historyMatch = /^\/api\/player\/([^/]+)\/history$/.exec(url.pathname);
-    if (historyMatch) return json(route, { accountId: historyMatch[1], count: 0, history: [] });
+    if (historyMatch) {
+      return json(route, {
+        accountId: historyMatch[1],
+        count: 1,
+        history: [{
+          songId: SONG_ID,
+          instrument: 'Solo_Guitar',
+          newScore: 123_456,
+          newRank: 2,
+          accuracy: 980_000,
+          isFullCombo: true,
+          stars: 5,
+          season: 1,
+          scoreAchievedAt: '2026-07-25T00:00:00Z',
+          changedAt: '2026-07-25T00:00:00Z',
+        }],
+      });
+    }
     const statsMatch = /^\/api\/player\/([^/]+)\/stats$/.exec(url.pathname);
     if (statsMatch) {
       return json(route, {
@@ -185,6 +202,14 @@ async function installApi(page: Page, counts: RequestCounts, options: ApiInstall
         instrument: leaderboardRivalsMatch[2],
         above: [],
         below: [],
+      });
+    }
+    const rivalsAllMatch = /^\/api\/player\/([^/]+)\/rivals\/all$/.exec(url.pathname);
+    if (rivalsAllMatch) {
+      return json(route, {
+        accountId: rivalsAllMatch[1],
+        songs: [],
+        combos: [],
       });
     }
     const rivalsMatch = /^\/api\/player\/([^/]+)\/rivals\/([^/]+)$/.exec(url.pathname);
@@ -350,6 +375,23 @@ test('React Query owns remote data across Player, Leaderboard, Rivals, and Compe
   await expect(page.getByText(PROFILE_A.displayName).first()).toBeVisible({ timeout: 15_000 });
   const playerRequestsAfterPlayerRoute = counts.get(`/api/player/${PROFILE_A.accountId}`) ?? 0;
   expect(playerRequestsAfterPlayerRoute).toBeGreaterThan(0);
+  const historyPath = `/api/player/${PROFILE_A.accountId}/history?songId=${SONG_ID}`;
+  await navigate(page, `/songs/${SONG_ID}`);
+  await expect.poll(() => counts.get(historyPath) ?? 0).toBe(1);
+  await navigate(page, `/songs/${SONG_ID}/Solo_Guitar/history`);
+  await expect(page.getByText('123,456')).toBeVisible();
+  expect(counts.get(historyPath)).toBe(1);
+  await page.goBack();
+  await expect(page).toHaveURL(new RegExp(`#\\/songs\\/${SONG_ID}$`));
+  expect(counts.get(historyPath)).toBe(1);
+
+  const rivalsAllPath = `/api/player/${PROFILE_A.accountId}/rivals/all`;
+  await navigate(page, '/suggestions');
+  await expect.poll(() => counts.get(rivalsAllPath) ?? 0).toBe(1);
+  await navigate(page, '/songs');
+  await navigate(page, '/suggestions');
+  await expect.poll(() => counts.get(rivalsAllPath) ?? 0).toBe(1);
+
   await navigate(page, `/songs/${SONG_ID}/Solo_Guitar`);
   await expect(page.getByText('Top Player')).toBeVisible();
   await page.getByRole('button', { name: 'Next' }).click();

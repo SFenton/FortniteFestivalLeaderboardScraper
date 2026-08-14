@@ -45,15 +45,13 @@ import { useServiceInfo } from '../../hooks/data/useServiceInfo';
 import { SelectedProfileSyncCard, SettingsServiceProgressCard } from './SettingsServiceProgress';
 import { IoBagHandle, IoChevronForward, IoCompass, IoDocumentText, IoDownload, IoInformationCircle, IoList, IoMusicalNotes, IoPersonCircle, IoServer, IoSettings, IoSparkles, IoTrash } from 'react-icons/io5';
 import { Routes as AppRoutes } from '../../routes';
+import { hasVisitedPage, markPageVisited } from '../../hooks/ui/usePageTransition';
 
 import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVersions';
 
 const PROFILE_SYNC_STATUS_POLL_MS = 5_000;
 const SETTINGS_ACTION_BUTTON_WIDTH = 212;
 const QUICK_LINK_GLYPH_ICON_SIZE = 20;
-
-/** Track whether settings page has rendered at least once to skip stagger on re-visit. */
-let _hasRendered = false;
 
 type SettingsQuickLinkId = 'app-settings' | 'diagnostics' | 'item-shop' | 'show-instruments' | 'show-metadata' | 'version' | 'service-info' | 'profile-sync' | 'first-run' | 'licenses' | 'refresh-profile-name' | 'export' | 'reset';
 
@@ -250,8 +248,10 @@ export default function SettingsPage() {
   const [tapDiagnosticsEnabled, setTapDiagnosticsEnabled] = useState(() => getTapDiagnosticsPreference('diagnostics'));
   const [tapTelemetryEnabled, setTapTelemetryEnabled] = useState(() => getTapDiagnosticsPreference('telemetry'));
   // Skip stagger on revisit
-  const skipAnimRef = useRef(_hasRendered);
-  _hasRendered = true;
+  const skipAnimRef = useRef(hasVisitedPage('settings'));
+  useEffect(() => {
+    markPageVisited('settings');
+  }, []);
 
   const st = useSettingsStyles(isMobile, settings.filterInvalidScores, settings.songRowVisualOrderEnabled);
   const selectedPlayerAccountId = selectedProfile?.type === 'player' ? selectedProfile.accountId : null;

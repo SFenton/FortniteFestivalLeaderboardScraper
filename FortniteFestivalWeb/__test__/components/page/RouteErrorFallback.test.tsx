@@ -6,7 +6,7 @@ import RouteErrorFallback from '../../../src/components/page/RouteErrorFallback'
 describe('RouteErrorFallback', () => {
   it('renders error message', () => {
     render(<RouteErrorFallback />);
-    expect(screen.getByText('Something went wrong')).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1, name: 'Something went wrong' })).toBeTruthy();
   });
 
   it('renders Go to Songs link', () => {

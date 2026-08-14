@@ -1,10 +1,22 @@
 import { describe, it, expect } from 'vitest';
-import { Routes, RoutePatterns } from '../../src/routes';
+import {
+  isKnownRoutePath,
+  normalizeRoutePathname,
+  Routes,
+  RoutePatterns,
+} from '../../src/routes';
 import { matchRouteMetadata } from '../../src/routeMetadata';
 
 describe('Routes', () => {
   it('has songs route', () => {
     expect(Routes.songs).toBe('/songs');
+  });
+
+  it('has root and shared route roots', () => {
+    expect(Routes.root).toBe('/');
+    expect(Routes.allRivalsRoot).toBe('/rivals/all');
+    expect(Routes.fullRankingsRoot).toBe('/leaderboards/all');
+    expect(Routes.bands).toBe('/bands');
   });
 
   it('has statistics route', () => {
@@ -144,6 +156,20 @@ describe('Routes', () => {
 });
 
 describe('RoutePatterns', () => {
+  it('classifies rendered paths without accepting malformed descendants', () => {
+    expect(isKnownRoutePath('/songs/song-1/Solo_Guitar/history')).toBe(true);
+    expect(isKnownRoutePath('/leaderboards/bands/Band_Duets')).toBe(true);
+    expect(isKnownRoutePath('/settings/')).toBe(true);
+    expect(isKnownRoutePath('/missing/deep-link')).toBe(false);
+    expect(isKnownRoutePath('/bands/player/account/extra')).toBe(false);
+  });
+
+  it('normalizes trailing slashes without changing the root', () => {
+    expect(normalizeRoutePathname('/')).toBe('/');
+    expect(normalizeRoutePathname('/settings/')).toBe('/settings');
+    expect(normalizeRoutePathname('/songs/song-1///')).toBe('/songs/song-1');
+  });
+
   describe('songDetail', () => {
     it('matches /songs/abc-123', () => {
       expect(RoutePatterns.songDetail.test('/songs/abc-123')).toBe(true);
@@ -181,9 +207,14 @@ describe('RoutePatterns', () => {
         expect(matchRouteMetadata(pathname)[0]).toBe(expectedKeys[expectedTitleKey]);
       });
 
-      it('uses the Songs metadata for the root redirect and unknown paths', () => {
+      it('uses Songs metadata for the root redirect and Not Found for unknown paths', () => {
         expect(matchRouteMetadata('/')[0]).toBe('nav.songs');
-        expect(matchRouteMetadata('/not-found')[0]).toBe('nav.songs');
+        expect(matchRouteMetadata('/not-found')[0]).toBe('apiError.notFound');
+      });
+
+      it('normalizes trailing slashes before matching metadata', () => {
+        expect(matchRouteMetadata('/settings/')[0]).toBe('settings.title');
+        expect(matchRouteMetadata('/leaderboards/bands/Band_Duets/')[1]).toBe('Band Rankings');
       });
 
       it('distinguishes band detail metadata from player band lists', () => {
@@ -233,6 +264,10 @@ describe('RoutePatterns', () => {
     it('does not match paths not ending with /history', () => {
       expect(RoutePatterns.history.test('/songs/abc/Solo_Guitar')).toBe(false);
     });
+
+    it('does not match unrelated history suffixes', () => {
+      expect(RoutePatterns.history.test('/settings/history')).toBe(false);
+    });
   });
 
   describe('player', () => {
@@ -244,8 +279,9 @@ describe('RoutePatterns', () => {
       expect(RoutePatterns.player.test('/songs/abc')).toBe(false);
     });
 
-    it('matches /player/ prefix', () => {
-      expect(RoutePatterns.player.test('/player/')).toBe(true);
+    it('requires an account id and no extra segments', () => {
+      expect(RoutePatterns.player.test('/player/')).toBe(false);
+      expect(RoutePatterns.player.test('/player/account/extra')).toBe(false);
     });
   });
 
@@ -264,12 +300,8 @@ describe('RoutePatterns', () => {
       expect(RoutePatterns.allRivals.test('/rivals/all')).toBe(true);
     });
 
-    it('matches /rivals/all?category=common', () => {
-      expect(RoutePatterns.allRivals.test('/rivals/all?category=common')).toBe(true);
-    });
-
-    it('matches /rivals/all?category=Solo_Guitar', () => {
-      expect(RoutePatterns.allRivals.test('/rivals/all?category=Solo_Guitar')).toBe(true);
+    it('does not classify malformed descendants as all-rivals', () => {
+      expect(RoutePatterns.allRivals.test('/rivals/all/extra')).toBe(false);
     });
 
     it('does not match /rivals', () => {
@@ -296,12 +328,16 @@ describe('RoutePatterns', () => {
       expect(RoutePatterns.rivalry.test('/rivals/rival-id/rivalry')).toBe(true);
     });
 
-    it('matches /rivals/rival-id/rivalry?mode=closest_battles', () => {
-      expect(RoutePatterns.rivalry.test('/rivals/rival-id/rivalry?mode=closest_battles')).toBe(true);
+    it('matches pathnames rather than path-and-query strings', () => {
+      expect(RoutePatterns.rivalry.test('/rivals/rival-id/rivalry?mode=closest_battles')).toBe(false);
     });
 
     it('does not match /rivals/rival-id', () => {
       expect(RoutePatterns.rivalry.test('/rivals/rival-id')).toBe(false);
+    });
+
+    it('does not match rivalry descendants', () => {
+      expect(RoutePatterns.rivalry.test('/rivals/rival-id/rivalry/extra')).toBe(false);
     });
   });
 
@@ -312,6 +348,11 @@ describe('RoutePatterns', () => {
 
     it('does not match band detail routes', () => {
       expect(RoutePatterns.playerBands.test('/bands/band-id')).toBe(false);
+    });
+
+    it('requires an account id and no extra segments', () => {
+      expect(RoutePatterns.playerBands.test('/bands/player/')).toBe(false);
+      expect(RoutePatterns.playerBands.test('/bands/player/account-id/extra')).toBe(false);
     });
   });
 });

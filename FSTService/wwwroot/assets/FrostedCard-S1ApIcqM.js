@@ -1,1 +1,0 @@
-import{r as a,j as e,m as d}from"./index-OCIXGZ1a.js";const x=a.forwardRef(function({children:r,className:s,style:t},o){return e.jsx("div",{ref:o,className:s,style:{...d,...t},children:r})});export{x as F};
