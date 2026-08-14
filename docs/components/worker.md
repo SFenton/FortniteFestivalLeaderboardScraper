@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-13
-last_verified_commit: 53c11043
+last_verified: 2026-08-14
+last_verified_commit: 099fd6fa
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -10,6 +10,7 @@ sources:
   - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Scraping/DurablePhaseProgressSink.cs
+  - FSTService/Scraping/Replay/
   - FSTService/HostedWorkerMode.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
   - deploy/config/fstworker-role.env
@@ -195,6 +196,24 @@ complete with a truthful observed fraction below 100%; browser code must not
 rewrite those counters to 100 or interpret them as remaining publication work.
 Ready-publication deferral also creates distinct failed attempts followed by a
 successful retry, preserving the actual retry history.
+
+## Tier-0 replay evidence contract
+
+The accepted PR-4 library adds versioned Tier-0 package, canonical JSON,
+hashing, sealing, resume-journal, path-safety, configuration-fingerprint, and
+verification contracts under `FSTService.Scraping.Replay`.
+
+The phase-plan projection calls `PhaseProgressCatalog` directly; it does not
+duplicate or reorder the 28 stable descriptors. The manifest can describe
+scope/fingerprint and phase outcome/timing summaries, but the current worker
+does not create packages, capture a scrape, export PostgreSQL, import an
+isolated database, invoke replay, or alter publication.
+
+Future worker capture must remain a separately gated change with explicit FST
+drive capacity/retention ownership and must preserve PostgreSQL authority,
+historical correctness, Epic provenance, freeze/publication semantics, and
+rollback. See
+[Replay evidence artifacts](../architecture/replay-artifacts.md).
 
 ## Publication safety
 
