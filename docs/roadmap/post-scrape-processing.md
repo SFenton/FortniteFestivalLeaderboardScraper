@@ -2,7 +2,7 @@
 status: roadmap
 owner: worker
 last_verified: 2026-08-13
-last_verified_commit: a7899955
+last_verified_commit: 0af25b3f
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -20,6 +20,7 @@ sources:
   - FortniteFestivalWeb/src/pages/settings/SettingsPage.tsx
   - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.tsx
   - FortniteFestivalWeb/src/pages/settings/serviceProgress.ts
+  - /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/pr27-settings-live-ab-20260814T062455Z
   - packages/core/src/api/serverTypes.ts
   - docs/architecture/data-publication-flow.md
   - docs/architecture/data-storage.md
@@ -97,10 +98,10 @@ resolved through repository and bounded runtime evidence.
 | Historical correctness and publication safety | Great: candidate isolation, exact catalog binding, complete-scope manifests, critical-phase gates, atomic generation publication, and fail-closed reads are strong | High |
 | Test posture | Good: extensive Postgres, worker, API, publication, web, and browser coverage; CI enforces 94% service line coverage | High |
 | Modularity | Okay: phases are testable, but `PostScrapeOrchestrator.cs` is 2,748 lines and still contains dormant or PostgreSQL-no-op paths | High |
-| Live progress observability | Good backend foundation: normalized durable attempts, service-info v2, and watchdog progress/liveness separation are accepted; the PR-3 Settings presentation candidate is implemented and locally tested but remains unaccepted and undeployed | High |
+| Live progress observability | Good: normalized durable attempts, service-info v2, watchdog progress/liveness separation, and the responsive Settings progress experience are accepted | High |
 | Performance | Poor: recent full-scrape p50 is about 8.58 hours and recorded post-processing consumes about 5.6 hours on scrape 1290 | High |
 | Storage sustainability | Poor and urgent: the 3.6 TB drive is 96% used with roughly 170 GB free after scrape 1296 | High |
-| Overall | Correctness-first and operationally dependable, with durable backend progress accepted; performance, storage, replay, and UI work remain unresolved | High |
+| Overall | Correctness-first and operationally dependable, with durable backend and browser progress accepted; performance, storage, and replay remain unresolved | High |
 
 ## Evidence rules
 
@@ -679,30 +680,6 @@ Each iteration below is a separate branch/PR.
 - Execution remains `parity-gated-maintenance` and blocked until statistics,
   exact-count, parity, and workspace evidence all agree.
 
-### PR-3: Settings progress experience
-
-**Class:** `continuous-safe`
-
-- three primary visual groups;
-- technical details disclosure;
-- selected-profile sync card;
-- determinate/indeterminate progress;
-- overall estimate and ETA range/confidence;
-- polling/background behavior;
-- unit, contract, responsive, accessibility, and browser acceptance.
-
-**Candidate state:** implementation on `copilot/settings-progress-ui` is
-locally tested but unaccepted, unmerged, undeployed, and not production
-validated. It consumes the accepted service-info v2 contract through the
-existing shared request, removes browser-owned phase weighting, preserves safe
-version-1 indeterminate fallback, separates selected-profile sync, and keeps
-technical diagnostics collapsed. Unit tests and Chromium browser evidence cover
-320, 375, 768, and 1440 pixel widths plus determinate, unknown-total, failure,
-restart, warning, ETA, accessibility, and request-ownership behavior. PR review,
-CI, and candidate web-image deployment/public-path evidence remain required
-before this item can leave the roadmap. No worker scrape or backend A/B is
-required for this web-only candidate.
-
 ### PR-4: Tier 0 evidence package and replay contract
 
 **Class:** `continuous-safe`
@@ -713,6 +690,14 @@ required for this web-only candidate.
 - config/build/schema fingerprinting;
 - no production capture or phase mutation;
 - corruption, mismatch, resume, and determinism tests.
+
+**Starting note:** branch from the accepted official PR-3 master state after
+image/deployment verification. The first slice is repository-only: define the
+canonical package/phase manifest, deterministic serialization, stable phase
+descriptor references, checksum/root lineage, and corruption/mismatch tests.
+It must not capture production payloads, invoke phases, write PostgreSQL,
+publish, add retention work, or assume Tier 1 artifacts exist. Keep any
+generated fixture evidence bounded and on the FST drive.
 
 ### PR-5: same-binary isolated replay
 
@@ -874,8 +859,7 @@ This tandem plan is accepted for implementation after local outbox rendering.
 - Approval of this roadmap is not authorization to bypass the current
   live-safety, parity, publication, provider, storage, rollback, or maintenance
   gate for any later action.
-- The PR-3 candidate is the active progress boundary and must remain explicitly
-  unaccepted until PR review, CI, and web-image/public-path validation pass.
+- PR-4 Tier 0 manifests are the next continuous-safe implementation boundary.
 - Current-projection optimization is a separate future full-scrape A/B; it
   cannot be combined with PR-3 Settings work.
 - Snapshot-retention execution remains a separate parity- and capacity-gated

@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-13
-last_verified_commit: a7899955
+last_verified_commit: 0af25b3f
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -143,14 +143,20 @@ Initial overall progress is normally `indeterminate`. Existing `phase`,
 `subOperation`, `progressPercent`, labels, branches, and worker-operation fields
 remain available for version-1 browser fallback.
 
-The unaccepted PR-3 web candidate consumes this additive payload through the
-existing shared service-info React Query request. It uses stable IDs for
-translated labels, renders exact phase percentage only when
-`unitsTotalFinal=true`, and shows server-owned overall/ETA evidence only when
-present and trustworthy. It does not derive an overall percentage from browser
-weights or promote legacy `progressPercent` into an exact value. The candidate
-is not merged, deployed, or production validated; this paragraph records
-candidate consumption behavior, not current production UI behavior.
+The Settings client consumes this additive payload through the existing shared
+service-info React Query request. It uses stable IDs for translated labels,
+renders exact phase percentage only when `unitsTotalFinal=true`, and shows
+server-owned overall/ETA evidence only when present and trustworthy. It does
+not derive an overall percentage from browser weights or promote legacy
+`progressPercent` into an exact value.
+
+Live web validation of commit `0af25b3f` accepted this browser consumption
+contract while publication `1296` stayed idle and unfrozen. Across
+320/375/768/1440 px, service-info polling remained one request in flight,
+version-1/unknown totals remained indeterminate in automated coverage, and the
+idle live payload rendered without fabricated progress or visible `N/A`
+diagnostics. The measured evidence is under
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/pr27-settings-live-ab-20260814T062455Z`.
 
 `service_worker_status.current_operation_json` carries the same additive v2
 summary. PostgreSQL `scrape_phase_attempts` is authoritative for normalized
