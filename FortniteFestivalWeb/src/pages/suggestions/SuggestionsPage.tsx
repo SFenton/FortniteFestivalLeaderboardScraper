@@ -6,7 +6,10 @@ import { ActionPill } from '../../components/common/ActionPill';
 import { useFestival } from '../../contexts/FestivalContext';
 import { usePlayerData } from '../../contexts/PlayerDataContext';
 import { useBandFilterAction } from '../../contexts/BandFilterActionContext';
-import { useSuggestions } from '../../hooks/data/useSuggestions';
+import {
+  SUGGESTIONS_CATEGORY_LIMIT,
+  useSuggestions,
+} from '../../hooks/data/useSuggestions';
 import { suggestionsSlides } from './firstRun';
 import { serverSongToCore, buildScoresIndex } from '../../utils/suggestionAdapter';
 import SuggestionsFilterModal from './modals/SuggestionsFilterModal';
@@ -14,16 +17,15 @@ import type { SuggestionsFilterDraft } from './modals/SuggestionsFilterModal';
 import { defaultSuggestionsFilterDraft, isSuggestionsFilterActive } from './modals/SuggestionsFilterModal';
 import { buildBandSuggestionSource } from './bandSuggestions';
 import { shouldShowCategory, filterCategoryForInstruments } from '@festival/core/config';
-import type { SuggestionCategory } from '@festival/core/types';
 import { useSettings } from '../../contexts/SettingsContext';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import { isBandFilterForSelectedProfile } from '../../state/bandFilter';
 import type { SelectedBandProfile } from '../../state/selectedProfile';
 import {
-  Size, Gap, Layout, MaxWidth, Colors, Spinner, SpinnerSize,
+  Size, Gap, Layout, MaxWidth, Colors, Font, Weight, Radius, Spinner, SpinnerSize,
   CssValue,
-  fixedFill, flexCenter, padding,
+  fixedFill, flexCenter, flexColumn, padding,
   FADE_DURATION, SCROLL_PREFETCH_PX,
 } from '@festival/theme';
 import { LoadPhase } from '@festival/core/runtime';
@@ -34,13 +36,15 @@ import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerS
 import PageHeader from '../../components/common/PageHeader';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useFabSearch } from '../../contexts/FabSearchContext';
-import { useScrollFade } from '../../hooks/ui/useScrollFade';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
 import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { useModalState } from '../../hooks/ui/useModalState';
-import FadeIn from '../../components/page/FadeIn';
-import { CategoryCard } from './components/CategoryCard';
+import PressableButton from '../../components/common/PressableButton';
 import { SuggestionsLoadSentinel } from './components/SuggestionsLoadSentinel';
+import {
+  VirtualizedSuggestionsList,
+  type VisibleSuggestionRow,
+} from './components/VirtualizedSuggestionsList';
 import {
   loadSuggestionsFilter,
   saveSuggestionsFilter,
@@ -48,7 +52,6 @@ import {
   shouldShowCategoryType,
   filterCategoryForInstrumentTypes,
   computeEffectiveSeason,
-  getCardDelay,
   buildAlbumArtMap,
 } from './suggestionsHelpers';
 
@@ -89,7 +92,6 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
 
   const albumArtMap = useMemo(() => buildAlbumArtMap(songs), [songs]);
 
-  const listRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useScrollContainer();
 
   // Use server-provided season, fall back to highest season in player scores
@@ -138,9 +140,6 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
     ? `${selectedBand.bandType}|${selectedBand.teamKey}|${activeBandComboId ?? 'overall'}`
     : 'solo';
   const suggestionCacheKey = mode === 'band' ? `band:${bandIdentity}` : `solo:${accountId ?? ''}`;
-  const stableSuggestionCacheKey = mode === 'band'
-    ? (selectedBand ? suggestionCacheKey : null)
-    : (accountId ? suggestionCacheKey : null);
   const suggestionSongs = mode === 'band' ? (bandSource?.songs ?? []) : coreSongs;
   const scoresIndex = mode === 'band' ? (bandSource?.scoresIndex ?? {}) : soloScoresIndex;
   const suggestions = useSuggestions(
@@ -159,9 +158,12 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
   );
   const {
     categories,
+    mixKey,
     loadMore,
     hasMore,
+    limitReached,
     loadTriggerCount,
+    startNewMix,
     resetScrollPosition,
   } = suggestions;
 
@@ -207,85 +209,89 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
     showPeripheralDrums: appSettings.showPeripheralDrums,
   }), [appSettings.showLead, appSettings.showBass, appSettings.showDrums, appSettings.showVocals, appSettings.showProLead, appSettings.showProBass, appSettings.showPeripheralVocals, appSettings.showPeripheralCymbals, appSettings.showPeripheralDrums]);
   
-  const visibleCategories = useMemo(() => {
-    const instSettings = buildEffectiveInstrumentSettings(filterSettings, appSettings);
-    return categories
-      .filter(c => shouldShowCategory(c.key, instSettings))
-      .filter(c => shouldShowCategoryType(c.key, filterSettings))
-      .map(c => filterCategoryForInstruments(c, instSettings))
-      .filter((c): c is SuggestionCategory => c !== null)
-      .map(c => filterCategoryForInstrumentTypes(c, filterSettings))
-      .filter((c): c is SuggestionCategory => c !== null);
-  }, [categories, filterSettings, appSettings]);
+  const effectiveInstrumentSettings = useMemo(
+    () => buildEffectiveInstrumentSettings(filterSettings, appSettings),
+    [appSettings, filterSettings],
+  );
+  const virtualizationMeasurementKey = useMemo(
+    () => JSON.stringify([filterSettings, effectiveInstrumentSettings]),
+    [effectiveInstrumentSettings, filterSettings],
+  );
+  const visibilityCacheRef = useRef<{
+    key: string;
+    sourceLength: number;
+    rows: VisibleSuggestionRow[];
+  }>({ key: '', sourceLength: 0, rows: [] });
+  const visibilityCacheKey = `${mixKey ?? suggestionCacheKey}:${virtualizationMeasurementKey}`;
+  const visibleCategories = useMemo<VisibleSuggestionRow[]>(() => {
+    const cachedVisibility = visibilityCacheRef.current;
+    const canAppend = cachedVisibility.key === visibilityCacheKey
+      && cachedVisibility.sourceLength <= categories.length;
+    const rows = canAppend ? [...cachedVisibility.rows] : [];
+    const startIndex = canAppend ? cachedVisibility.sourceLength : 0;
+    for (let sourceIndex = startIndex; sourceIndex < categories.length; sourceIndex += 1) {
+      const category = categories[sourceIndex]!;
+      if (!shouldShowCategory(category.key, effectiveInstrumentSettings)) continue;
+      if (!shouldShowCategoryType(category.key, filterSettings)) continue;
+      const instrumentFiltered = filterCategoryForInstruments(
+        category,
+        effectiveInstrumentSettings,
+      );
+      if (!instrumentFiltered) continue;
+      const typeFiltered = filterCategoryForInstrumentTypes(instrumentFiltered, filterSettings);
+      if (!typeFiltered) continue;
+      rows.push({
+        id: `${mixKey ?? suggestionCacheKey}:${sourceIndex}:${category.key}`,
+        sourceIndex,
+        category: typeFiltered,
+      });
+    }
+    visibilityCacheRef.current = {
+      key: visibilityCacheKey,
+      sourceLength: categories.length,
+      rows,
+    };
+    return rows;
+  }, [
+    categories,
+    effectiveInstrumentSettings,
+    filterSettings,
+    visibilityCacheKey,
+  ]);
   
 
-  // When filters hide most generated content, an observer batch may add raw
-  // categories without moving the sentinel or increasing visible scroll
-  // height.
-  //
-  // Solution: track consecutive batches that produce zero new visible
-  // categories.  After each render where raw categories grew but visible
-  // didn't, schedule another loadMore.  Stop after MAX_STALE consecutive
-  // empty batches and hide the loader.
-  const [filterExhausted, setFilterExhausted] = useState(false);
-  const prevRawRef = useRef(categories.length);
-  const prevVisibleRef = useRef(visibleCategories.length);
-  const staleCountRef = useRef(0);
+  // Track how many category cards have already been revealed so that newly
+  // loaded batches get their own stagger starting from delay 0.
+  const revealedCountRef = useRef(0);
   const previousFilterSettingsRef = useRef(filterSettings);
-  const previousSuggestionCacheKeyRef = useRef(suggestionCacheKey);
-  const MAX_STALE = 15;
+  const previousMixKeyRef = useRef(mixKey);
   const MIN_VISIBLE = 4;
 
   useEffect(() => {
     const filterChanged = previousFilterSettingsRef.current !== filterSettings;
-    const identityChanged = previousSuggestionCacheKeyRef.current !== suggestionCacheKey;
+    const identityChanged = previousMixKeyRef.current !== mixKey;
     previousFilterSettingsRef.current = filterSettings;
-    previousSuggestionCacheKeyRef.current = suggestionCacheKey;
+    previousMixKeyRef.current = mixKey;
     if (!filterChanged && !identityChanged) return;
 
-    setFilterExhausted(false);
-    staleCountRef.current = 0;
-    prevRawRef.current = categories.length;
-    prevVisibleRef.current = 0;
     revealedCountRef.current = 0;
     resetScrollPosition();
     scrollContainerRef.current?.scrollTo(0, 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterSettings, resetScrollPosition, suggestionCacheKey]);
+  }, [filterSettings, mixKey, resetScrollPosition]);
 
   
   useEffect(() => {
-    if (!hasMore || filterExhausted || categories.length === 0) return;
-
-    const rawGrew = categories.length > prevRawRef.current;
-    const visibleGrew = visibleCategories.length > prevVisibleRef.current;
-    prevRawRef.current = categories.length;
-    if (visibleGrew) {
-      staleCountRef.current = 0;
-      prevVisibleRef.current = visibleCategories.length;
-      if (visibleCategories.length >= MIN_VISIBLE) return;
-    } else if (rawGrew) {
-      staleCountRef.current++;
-      if (staleCountRef.current >= MAX_STALE) {
-        setFilterExhausted(true);
-        return;
-      }
-    } else {
-      return;
-    }
+    if (!hasMore || categories.length === 0 || visibleCategories.length >= MIN_VISIBLE) return;
 
     const id = setTimeout(() => loadMore(), 100);
     return () => clearTimeout(id);
-  }, [categories.length, visibleCategories.length, hasMore, filterExhausted, loadMore]);
-  
-
-  const effectiveHasMore = hasMore && !filterExhausted;
+  }, [categories.length, filterSettings, hasMore, loadMore, mixKey, visibleCategories.length]);
 
   
   const filteredLoadMore = useCallback(() => {
-    if (filterExhausted) return;
     loadMore();
-  }, [loadMore, filterExhausted]);
+  }, [loadMore]);
 
   const dataReady = mode === 'band'
     ? (!isLoading && !bandSongRowsQuery.isLoading) || categories.length > 0
@@ -294,24 +300,16 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
   const { phase, shouldStagger } = usePageTransition(`suggestions:${mode}:${accountId ?? ''}:${bandIdentity}`, dataReady, hasCachedData);
   useSetPageReady(phase === LoadPhase.ContentIn);
   const skipAnim = !shouldStagger;
-
-  // Per-card scroll fade
-  useScrollFade(scrollContainerRef, listRef, [phase, visibleCategories]);
-  
-
-  // Track how many category cards have already been revealed so that newly
-  // loaded batches get their own stagger starting from delay 0.
-  const revealedCountRef = useRef(0);
-
-  
-  const computeDelay = (index: number) => getCardDelay(index, skipAnim, phase, revealedCountRef.current);
-
   
   useEffect(() => {
     if (phase === LoadPhase.ContentIn) {
       revealedCountRef.current = visibleCategories.length;
     }
   }, [visibleCategories.length, phase]);
+  const handleStartNewMix = useCallback(() => {
+    revealedCountRef.current = 0;
+    startNewMix();
+  }, [startNewMix]);
   
 
   
@@ -351,10 +349,11 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
     ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out forwards` }
     : skipAnim ? {} : { opacity: 0 };
   const bandTypeForCards = mode === 'band' ? selectedBand?.bandType : undefined;
+  const showEmptyState = visibleCategories.length === 0 && (categories.length > 0 || !hasMore);
 
   return (
     <Page
-      scrollDeps={[phase, visibleCategories]}
+      scrollDeps={[phase, visibleCategories.length, mixKey]}
       firstRun={{ key: 'suggestions', label: t('nav.suggestions'), slides: suggestionsSlides, gateContext: firstRunGateCtx }}
       loadPhase={phase}
       before={<>
@@ -390,9 +389,9 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
         />
       </>}
     >
-        {visibleCategories.length === 0 && (categories.length > 0 || !effectiveHasMore) ? (
+        {showEmptyState && (
           <EmptyState
-            fullPage
+            fullPage={!limitReached}
             title={t('suggestions.noSuggestions')}
             subtitle={filtersActive
               ? t('suggestions.noSuggestionsFiltered')
@@ -400,32 +399,43 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
             style={buildStaggerStyle(skipAnim ? null : 200)}
             onAnimationEnd={clearStaggerStyle}
           />
-        ) : (
-          <div
-            ref={listRef}
-            data-testid="suggestions-list"
-            data-generated-category-count={categories.length}
-            data-visible-category-count={visibleCategories.length}
-            data-load-trigger-count={loadTriggerCount}
-            data-suggestions-cache-key={stableSuggestionCacheKey ?? undefined}
-          >
-            {visibleCategories.map((cat, idx) => {
-              const delay = computeDelay(idx);
-              return (
-                <FadeIn key={`${idx}-${cat.key}`} delay={delay === -1 ? undefined : (delay ?? 0)} hidden={delay === null}>
-                  <CategoryCard category={cat} albumArtMap={albumArtMap} scoresIndex={scoresIndex} bandType={bandTypeForCards} />
-                </FadeIn>
-              );
-            })}
+        )}
+        <VirtualizedSuggestionsList
+          rows={visibleCategories}
+          phase={phase}
+          skipAnimation={skipAnim}
+          revealedCount={revealedCountRef.current}
+          identity={mixKey}
+          measurementKey={virtualizationMeasurementKey}
+          categoryLimit={SUGGESTIONS_CATEGORY_LIMIT}
+          generatedCategoryCount={categories.length}
+          loadTriggerCount={loadTriggerCount}
+          scrollContainerRef={scrollContainerRef}
+          albumArtMap={albumArtMap}
+          scoresIndex={scoresIndex}
+          bandType={bandTypeForCards}
+        />
+        {limitReached && (
+          <div data-testid="suggestions-mix-limit" style={suggestionsStyles.mixLimit}>
+            <div style={suggestionsStyles.mixLimitMessage}>
+              {t('suggestions.mixLimitReached')}
+            </div>
+            <PressableButton
+              data-testid="suggestions-start-new-mix"
+              style={suggestionsStyles.mixLimitButton}
+              onPress={handleStartNewMix}
+            >
+              {t('suggestions.startNewMix')}
+            </PressableButton>
           </div>
         )}
-        {effectiveHasMore && phase === LoadPhase.ContentIn && (
+        {hasMore && phase === LoadPhase.ContentIn && (
           <div style={suggestionsStyles.loader}><div style={suggestionsStyles.loaderSpinner} /></div>
         )}
         <SuggestionsLoadSentinel
           rootRef={scrollContainerRef}
-          disabled={!effectiveHasMore || phase !== LoadPhase.ContentIn}
-          triggerKey={categories.length}
+          disabled={!hasMore || phase !== LoadPhase.ContentIn}
+          triggerKey={`${mixKey ?? suggestionCacheKey}:${categories.length}`}
           prefetchPx={SCROLL_PREFETCH_PX}
           onLoadMore={filteredLoadMore}
           fallbackLabel={t('suggestions.loadMore')}
@@ -463,5 +473,27 @@ const suggestionsStyles = {
     borderTopColor: Colors.accentPurple,
     borderRadius: CssValue.circle,
     animation: `spin ${Spinner.duration} linear infinite`,
+  } as CSSProperties,
+  mixLimit: {
+    ...flexColumn,
+    alignItems: 'center',
+    gap: Gap.lg,
+    padding: padding(Gap.section, Gap.xl),
+    textAlign: 'center',
+  } as CSSProperties,
+  mixLimitMessage: {
+    color: Colors.textSecondary,
+    fontSize: Font.md,
+    fontWeight: Weight.semibold,
+  } as CSSProperties,
+  mixLimitButton: {
+    border: 0,
+    borderRadius: Radius.full,
+    padding: padding(Gap.md, Gap.xl),
+    backgroundColor: Colors.accentPurple,
+    color: Colors.textPrimary,
+    fontSize: Font.md,
+    fontWeight: Weight.bold,
+    cursor: 'pointer',
   } as CSSProperties,
 };

@@ -4,7 +4,7 @@ import { Colors, Font, Gap, Radius, CssValue, padding } from '@festival/theme';
 type SuggestionsLoadSentinelProps = {
   rootRef: RefObject<HTMLElement | null>;
   disabled: boolean;
-  triggerKey: number;
+  triggerKey: string | number;
   prefetchPx: number;
   onLoadMore: () => void;
   fallbackLabel: string;

@@ -109,7 +109,7 @@ describe('Suggestions scroll restoration', () => {
     cleanup();
   });
 
-  it('corrects one late zero restore and then releases scrolling', () => {
+  it('corrects late shifts until the restored position is stable', () => {
     initializeSuggestionsScrollState('solo:top');
     markCurrentSuggestionsScrollRestorable();
     const scrollElement = createScrollElement('solo:top');
@@ -119,6 +119,11 @@ describe('Suggestions scroll restoration', () => {
     scrollElement.dispatchEvent(new Event('scroll'));
     expect(scrollElement.scrollTop).toBe(0);
 
+    scrollElement.scrollTop = 400;
+    scrollElement.dispatchEvent(new Event('scroll'));
+    expect(scrollElement.scrollTop).toBe(0);
+
+    vi.advanceTimersByTime(1_000);
     scrollElement.scrollTop = 400;
     scrollElement.dispatchEvent(new Event('scroll'));
     expect(scrollElement.scrollTop).toBe(400);

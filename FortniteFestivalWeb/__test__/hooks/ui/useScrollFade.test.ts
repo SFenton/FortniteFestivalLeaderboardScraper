@@ -155,4 +155,64 @@ describe('useScrollFade', () => {
     unmount();
     expect(disconnectSpy).toHaveBeenCalled();
   });
+
+  it('observes and cleans up replaced virtual children', () => {
+    const originalIntersectionObserver = globalThis.IntersectionObserver;
+    const originalMutationObserver = globalThis.MutationObserver;
+    const observe = vi.fn();
+    const unobserve = vi.fn();
+    const disconnectIntersection = vi.fn();
+    const disconnectMutation = vi.fn();
+    let mutationCallback: MutationCallback = () => {};
+
+    class MockIntersectionObserver {
+      readonly root = null;
+      readonly rootMargin = '';
+      readonly thresholds = [] as readonly number[];
+      observe = observe;
+      unobserve = unobserve;
+      disconnect = disconnectIntersection;
+      takeRecords(): IntersectionObserverEntry[] { return []; }
+    }
+    class MockMutationObserver {
+      constructor(callback: MutationCallback) {
+        mutationCallback = callback;
+      }
+      observe() {}
+      disconnect = disconnectMutation;
+      takeRecords(): MutationRecord[] { return []; }
+    }
+    globalThis.IntersectionObserver = MockIntersectionObserver as unknown as typeof globalThis.IntersectionObserver;
+    globalThis.MutationObserver = MockMutationObserver as unknown as typeof globalThis.MutationObserver;
+
+    try {
+      const { wrapper } = createScrollContainerWrapper();
+      const listEl = makeListEl(1);
+      const originalChild = listEl.firstElementChild!;
+      const replacementChild = document.createElement('div');
+      const scrollRef = { current: document.createElement('div') };
+      const listRef = { current: listEl };
+      const { unmount } = renderHook(
+        () => useScrollFade(scrollRef as any, listRef as any, [], { dynamicChildren: true }),
+        { wrapper },
+      );
+
+      expect(observe).toHaveBeenCalledWith(originalChild);
+      mutationCallback([
+        {
+          addedNodes: [replacementChild],
+          removedNodes: [originalChild],
+        } as unknown as MutationRecord,
+      ], {} as MutationObserver);
+
+      expect(unobserve).toHaveBeenCalledWith(originalChild);
+      expect(observe).toHaveBeenCalledWith(replacementChild);
+      unmount();
+      expect(disconnectIntersection).toHaveBeenCalled();
+      expect(disconnectMutation).toHaveBeenCalled();
+    } finally {
+      globalThis.IntersectionObserver = originalIntersectionObserver;
+      globalThis.MutationObserver = originalMutationObserver;
+    }
+  });
 });
