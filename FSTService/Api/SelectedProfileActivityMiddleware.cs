@@ -22,18 +22,26 @@ public sealed class SelectedProfileActivityMiddleware
         var metaDatabase =
             context.RequestServices
                 .GetRequiredService<IMetaDatabase>();
+        var maxScoreMaintenance =
+            context.RequestServices
+                .GetService<PublicReadGateService>()
+                ?.GetState()
+                .MaxScoreMaintenance == true;
         RecordActivityIfNeeded(
             context,
             metaDatabase,
-            _rolloutReadOnly);
+            _rolloutReadOnly,
+            maxScoreMaintenance);
     }
 
     internal static void RecordActivityIfNeeded(
         HttpContext context,
         IMetaDatabase metaDatabase,
-        bool rolloutReadOnly)
+        bool rolloutReadOnly,
+        bool maxScoreMaintenance = false)
     {
         if (rolloutReadOnly
+            || maxScoreMaintenance
             || context.WebSockets.IsWebSocketRequest
             || !context.Request.Path.StartsWithSegments("/api")
             || context.Response.StatusCode >=

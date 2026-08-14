@@ -54,6 +54,20 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
     }
 
     [Fact]
+    public void Parser_ignores_notification_recovery_shared_scrape_id()
+    {
+        var command = MaxScoreMaintenanceCommand.Parse(
+        [
+            "--recover-improvement-notifications",
+            "--published-scrape-id",
+            "1296",
+            "--notification-dry-run",
+        ]);
+
+        Assert.Null(command);
+    }
+
+    [Fact]
     public void Stage_parser_requires_exactly_one_input_form()
     {
         var error = Assert.Throws<ArgumentException>(() =>

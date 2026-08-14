@@ -520,6 +520,30 @@ public sealed class RetiredMaintenanceCommandGuardTests
             StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task ProgramStartupRoutesSharedScrapeIdToNotificationRecovery()
+    {
+        var result = await RunProgramAsync(
+            "--recover-improvement-notifications",
+            "--published-scrape-id",
+            "1296",
+            "--notification-dry-run");
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.DoesNotContain(
+            "Specify exactly one of --max-score-maintenance",
+            result.Output,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "Max-score maintenance cannot run with another one-shot",
+            result.Output,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "ConnectionStrings:PostgreSQL is required.",
+            result.Output,
+            StringComparison.Ordinal);
+    }
+
     private static async Task<ProgramResult> RunProgramAsync(
         params string[] arguments)
     {

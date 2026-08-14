@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-08-13
-last_verified_commit: 53c11043
+last_verified: 2026-08-14
+last_verified_commit: 69322a3e
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -10,6 +10,7 @@ sources:
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
   - FSTService/Persistence/MaxScoreMaintenanceSchema.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
+  - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
   - FSTService/Persistence/MetaDatabase.PhaseProgress.cs
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
@@ -73,13 +74,23 @@ clear its phase or freeze.
 and all eight maxima for every manifest song. It complements the canonical
 same-drive rollback JSON. Database triggers reject workflow-identity changes
 and rollback-row updates/deletes; neither surface deletes historical
-generations.
+generations. Rollback JSON timestamps use the immutable run `created_at`, so a
+file-first/database-checkpoint retry validates identical canonical bytes.
 
 `improvement_notification_maintenance_runs` and
 `improvement_notification_maintenance_candidates` retain historical
 `maintenance_pro_lead_max_score_repair_v1` rows and accept new
 `maintenance_max_score_correction_v1` audit rows. Both purposes remain
 quarantine-only with a compile/schema-enforced visible delivery count of zero.
+Maintenance candidate parity counts only routine-emittable player-rank kinds;
+max-score-percent rank changes remain in quarantine and state alignment.
+Missing current band subjects and their song/rank state are created inside the
+same repeatable-read quarantine transaction before candidate collection.
+
+The max-score lease takes `SHARE` locks in fixed order on
+`leaderboard_entries_overlay`, `leaderboard_entries`, and
+`band_member_stats`. This protects both solo score identity and the member
+source used by band threshold/projection rebuilds.
 
 ## Publication ownership
 

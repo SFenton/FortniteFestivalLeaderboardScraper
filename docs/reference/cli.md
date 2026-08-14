@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-13
-last_verified_commit: 9d11111e
+last_verified: 2026-08-14
+last_verified_commit: 69322a3e
 sources:
   - FSTService/Program.cs
   - FSTService/ScrapePhase.cs
@@ -79,6 +79,10 @@ Maintenance commands are mutually exclusive where enforced by `Program.cs`.
 Use the matching living runbook; CLI availability is not authorization to run
 against production.
 
+`--published-scrape-id` is shared with improvement-notification recovery. It
+does not activate max-score parsing by itself; at least one
+`--max-score-maintenance-*` or `--expected-max-score-*` option must be present.
+
 ### Max-score correction
 
 All max-score files must be `.json` paths below `Scraper:DataDirectory`.
@@ -95,7 +99,10 @@ rejected.
 
 Every action writes a versioned report. Apply/resume exit `2` with
 `resumable=true` after a post-freeze failure. Do not manually clear the freeze;
-rerun `--max-score-maintenance-resume` with the same manifest and digests.
+rerun `--max-score-maintenance-resume` with the same manifest and digests. The
+rollback snapshot timestamp comes from the persisted maintenance run, so a
+crash after file creation but before its database checkpoint reproduces and
+validates the same canonical bytes.
 
 The retired `--path-repair-*` and
 `--notification-maintenance-pro-lead-max-score-repair` families remain startup

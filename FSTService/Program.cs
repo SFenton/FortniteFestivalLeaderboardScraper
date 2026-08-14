@@ -365,7 +365,8 @@ builder.Services.AddSingleton<GlobalLeaderboardScraper>(sp =>
         log,
         festivalService: festival,
         trafficCoordinator: trafficCoordinator,
-        proxyHealth: proxyHealth);
+        proxyHealth: proxyHealth,
+        pathDataStore: sp.GetRequiredService<IPathDataStore>());
 });
 
 builder.Services.AddHttpClient<AccountNameResolver>()
@@ -449,7 +450,14 @@ builder.Services.AddSingleton<
     FSTService.Persistence.MaxScoreMaintenanceNotificationService>();
 builder.Services.AddSingleton<
     FSTService.Persistence.MaxScoreMaintenanceService>();
-builder.Services.AddSingleton<SoloFamilyRankingBackfillService>();
+builder.Services.AddSingleton<SoloFamilyRankingBackfillService>(sp =>
+    new SoloFamilyRankingBackfillService(
+        sp.GetRequiredService<GlobalLeaderboardPersistence>(),
+        sp.GetRequiredService<IMetaDatabase>(),
+        sp.GetRequiredService<NpgsqlDataSource>(),
+        sp.GetRequiredService<
+            ILogger<SoloFamilyRankingBackfillService>>(),
+        sp.GetRequiredService<IPathDataStore>()));
 
 // ─── Shared services ────────────────────────────────────────
 

@@ -118,7 +118,8 @@ public sealed class PublicApiResponseCacheMiddleware
                                 Microsoft.Extensions.Options
                                     .IOptions<ScraperOptions>>()
                             ?.Value.RolloutReadOnlyStartup
-                        == true);
+                        == true,
+                        gate.GetState().MaxScoreMaintenance);
                 return;
             }
 

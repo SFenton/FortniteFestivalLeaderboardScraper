@@ -57,6 +57,14 @@ public sealed record MaxScoreMaintenanceCommand(
         PublishedScrapeIdFlag,
     ];
 
+    private static readonly HashSet<string> ActivationFlags =
+        KnownFlags
+            .Where(flag => !string.Equals(
+                flag,
+                PublishedScrapeIdFlag,
+                StringComparison.OrdinalIgnoreCase))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
     public static MaxScoreMaintenanceCommand? Parse(
         IReadOnlyList<string> args)
     {
@@ -81,7 +89,7 @@ public sealed record MaxScoreMaintenanceCommand(
         }
 
         var values = Tokenize(args);
-        if (!values.Keys.Any(KnownFlags.Contains))
+        if (!values.Keys.Any(ActivationFlags.Contains))
             return null;
 
         var actions = new[]

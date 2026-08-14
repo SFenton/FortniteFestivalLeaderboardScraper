@@ -1,13 +1,15 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-13
-last_verified_commit: 53c11043
+last_verified: 2026-08-14
+last_verified_commit: 69322a3e
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
+  - FSTService/Scraping/GlobalLeaderboardScraper.cs
+  - FSTService/Scraping/RankingsCalculator.cs
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Scraping/DurablePhaseProgressSink.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
@@ -106,6 +108,13 @@ skips solo/composite/band rank-history snapshots. See the
 The worker's scrape, pruning, ranking, and statistics paths consume distinct
 CHOpt maxima for all eight generated instruments, including separate Pro Drums
 and Pro Drums + Cymbals thresholds.
+
+Solo scrape admission and ranking denominators use the union of charted
+provider properties and current promoted `path_expected_instruments`.
+Path-derived support is admitted only when the immutable generation is
+complete, non-pending, and bound to the same song/catalog timestamp. This
+preserves MIDI-inferred charts when provider metadata omitted them without
+turning path state into a second song catalog.
 
 ## Two phase views
 

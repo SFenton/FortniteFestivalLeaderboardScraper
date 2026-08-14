@@ -1915,6 +1915,23 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void Max_score_maintenance_locks_solo_and_band_sources_in_fixed_order()
+    {
+        var statements = MetaDatabase.MaxScoreMaintenanceSourceLockSql
+            .Split(
+                ';',
+                StringSplitOptions.RemoveEmptyEntries
+                | StringSplitOptions.TrimEntries);
+
+        Assert.Equal(
+        [
+            "LOCK TABLE leaderboard_entries_overlay IN SHARE MODE",
+            "LOCK TABLE leaderboard_entries IN SHARE MODE",
+            "LOCK TABLE band_member_stats IN SHARE MODE",
+        ], statements);
+    }
+
+    [Fact]
     public void PublishScrapeRun_rejects_empty_cache_staging_and_preserves_published_state()
     {
         var oldId = Db.StartScrapeRun();

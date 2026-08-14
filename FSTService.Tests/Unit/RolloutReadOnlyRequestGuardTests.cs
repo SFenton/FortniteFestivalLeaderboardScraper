@@ -2,6 +2,7 @@ using FSTService.Api;
 using FSTService.Persistence;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using NSubstitute;
@@ -50,6 +51,73 @@ public sealed class RolloutReadOnlyRequestGuardTests
         await middleware.InvokeAsync(context);
 
         metaDatabase.Received(1).TouchWebRegistrationActivity("account");
+    }
+
+    [Fact]
+    public async Task SelectedProfiles_DoNotChangeRegistrationsDuringMaxScoreResumeFreeze()
+    {
+        var metaDatabase = Substitute.For<IMetaDatabase>();
+        metaDatabase.GetPublicReadFreezeState().Returns(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1296,
+                PublicReadFreezeState
+                    .MaxScoreMaintenanceReasonPrefix
+                + new string('a', 64)));
+        var gate = new PublicReadGateService(
+            metaDatabase,
+            NullLogger<PublicReadGateService>.Instance);
+        var services = new ServiceCollection()
+            .AddSingleton(metaDatabase)
+            .AddSingleton(gate)
+            .BuildServiceProvider();
+        var middleware = new SelectedProfileActivityMiddleware(
+            next: context =>
+            {
+                context.Response.StatusCode =
+                    StatusCodes.Status200OK;
+                return Task.CompletedTask;
+            },
+            Options.Create(new ScraperOptions()));
+
+        var playerContext = new DefaultHttpContext
+        {
+            RequestServices = services,
+        };
+        playerContext.Request.Path = "/api/version";
+        playerContext.Request.Headers[
+            SelectedProfileHeaders.LegacySelectedPlayerHeader] =
+            "account";
+        await middleware.InvokeAsync(playerContext);
+
+        var bandContext = new DefaultHttpContext
+        {
+            RequestServices = services,
+        };
+        bandContext.Request.Path = "/api/version";
+        bandContext.Request.Headers[
+            SelectedProfileHeaders.SelectedProfileTypeHeader] =
+            "band";
+        bandContext.Request.Headers[
+            SelectedProfileHeaders.SelectedBandIdHeader] =
+            "band-id";
+        bandContext.Request.Headers[
+            SelectedProfileHeaders.SelectedBandTypeHeader] =
+            "Band_Duets";
+        bandContext.Request.Headers[
+            SelectedProfileHeaders.SelectedBandTeamKeyHeader] =
+            "account:mate";
+        await middleware.InvokeAsync(bandContext);
+
+        metaDatabase.DidNotReceive()
+            .TouchWebRegistrationActivity(
+                Arg.Any<string>());
+        metaDatabase.DidNotReceive()
+            .RegisterSelectedBandActivity(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<string?>());
     }
 
     [Theory]

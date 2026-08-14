@@ -72,7 +72,8 @@ public sealed class MaxScoreMaintenanceNotificationService
             CreateDryRunOptions(
                 normalizedManifest.ExpectedPublishedScrapeId));
         var candidates = await LoadPlayerRankCandidatesAsync(ct);
-        if (candidates.Count != routineReport.PlayerRankEventsInserted)
+        if (CountRoutinePlayerRankEvents(candidates)
+            != routineReport.PlayerRankEventsInserted)
         {
             throw new InvalidOperationException(
                 "Routine player-rank candidate detail count changed during max-score inspection.");
@@ -165,13 +166,43 @@ public sealed class MaxScoreMaintenanceNotificationService
         var targetSongIds = normalizedManifest.Songs
             .Select(song => song.SongId)
             .ToHashSet(StringComparer.Ordinal);
+
+        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(
+            IsolationLevel.RepeatableRead,
+            ct);
+        await ConfigureTransactionAsync(conn, tx, ct);
+        await LockAndValidateOwnedPublicationAsync(
+            conn,
+            tx,
+            normalizedManifest.ExpectedPublishedScrapeId,
+            normalizedManifest.ExpectedPublicationId,
+            freezeReason,
+            ct);
+        await BaselineMissingBandSubjectsAsync(
+            conn,
+            tx,
+            ct);
+
         var playerRankCandidates =
-            await LoadPlayerRankCandidatesAsync(ct);
+            await LoadCandidatesAsync(
+                conn,
+                tx,
+                PlayerRankCandidatesSql,
+                ct);
         var bandSongCandidates =
-            await LoadBandSongCandidatesAsync(ct);
+            await LoadCandidatesAsync(
+                conn,
+                tx,
+                BandSongCandidatesSql,
+                ct);
         var bandRankCandidates =
-            await LoadBandRankCandidatesAsync(ct);
-        if (playerRankCandidates.Count
+            await LoadCandidatesAsync(
+                conn,
+                tx,
+                BandRankCandidatesSql,
+                ct);
+        if (CountRoutinePlayerRankEvents(playerRankCandidates)
                 != routineReport.PlayerRankEventsInserted
             || bandSongCandidates.Count
                 != routineReport.BandSongEventsInserted
@@ -207,19 +238,6 @@ public sealed class MaxScoreMaintenanceNotificationService
         var candidateDigest = Convert.ToHexStringLower(
             SHA256.HashData(
                 Encoding.UTF8.GetBytes(canonicalCandidateData)));
-
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
-        await using var tx = await conn.BeginTransactionAsync(
-            IsolationLevel.RepeatableRead,
-            ct);
-        await ConfigureTransactionAsync(conn, tx, ct);
-        await LockAndValidateOwnedPublicationAsync(
-            conn,
-            tx,
-            normalizedManifest.ExpectedPublishedScrapeId,
-            normalizedManifest.ExpectedPublicationId,
-            freezeReason,
-            ct);
 
         var existingRun = await FindExistingMaintenanceRunAsync(
             conn,
@@ -353,6 +371,25 @@ public sealed class MaxScoreMaintenanceNotificationService
             candidates,
             affectedInstruments,
             new HashSet<string>(StringComparer.Ordinal));
+    }
+
+    internal static int CountRoutinePlayerRankEvents(
+        IReadOnlyList<MaxScoreMaintenanceCandidate> candidates)
+    {
+        ArgumentNullException.ThrowIfNull(candidates);
+        return candidates
+            .Where(candidate => candidate.CandidateKind is
+                "player_adjusted_skill_rank_improved"
+                or "player_weighted_rank_improved"
+                or "player_total_score_rank_improved"
+                or "player_fc_rate_rank_improved"
+                or "player_total_score_improved"
+                or "player_fc_count_improved")
+            .Select(candidate => (
+                candidate.SubjectKey,
+                candidate.Instrument))
+            .Distinct()
+            .Count();
     }
 
     internal static MaxScoreMaintenanceCandidate[]
@@ -542,7 +579,22 @@ public sealed class MaxScoreMaintenanceNotificationService
             CancellationToken ct)
     {
         await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        return await LoadCandidatesAsync(
+            conn,
+            transaction: null,
+            sql,
+            ct);
+    }
+
+    private async Task<IReadOnlyList<MaxScoreMaintenanceCandidate>>
+        LoadCandidatesAsync(
+            NpgsqlConnection conn,
+            NpgsqlTransaction? transaction,
+            string sql,
+            CancellationToken ct)
+    {
         await using var cmd = conn.CreateCommand();
+        cmd.Transaction = transaction;
         cmd.CommandTimeout = _options.CommandTimeoutSeconds > 0
             ? _options.CommandTimeoutSeconds
             : DefaultCommandTimeoutSeconds;
@@ -584,6 +636,26 @@ public sealed class MaxScoreMaintenanceNotificationService
             .ThenBy(candidate => candidate.CandidateKind, StringComparer.Ordinal)
             .ThenBy(candidate => candidate.Metric, StringComparer.Ordinal)
             .ToArray();
+    }
+
+    private async Task BaselineMissingBandSubjectsAsync(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        CancellationToken ct)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandTimeout = _options.CommandTimeoutSeconds > 0
+            ? _options.CommandTimeoutSeconds
+            : DefaultCommandTimeoutSeconds;
+        cmd.CommandText = BaselineMissingBandSubjectsSql;
+        cmd.Parameters.AddWithValue(
+            "registeredOnly",
+            !string.Equals(
+                _options.Scope,
+                "all",
+                StringComparison.OrdinalIgnoreCase));
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 
     private async Task<string> ComputePublishedScoreSourceFingerprintAsync(
@@ -1591,6 +1663,240 @@ public sealed class MaxScoreMaintenanceNotificationService
                 "Notification maintenance must not alter the completed publication marker.");
         }
     }
+
+    private const string BaselineMissingBandSubjectsSql = """
+        WITH band_rankings AS (
+            SELECT band_type,
+                   ranking_scope,
+                   combo_id,
+                   team_key,
+                   team_members,
+                   adjusted_skill_rank,
+                   weighted_rank,
+                   fc_rate_rank,
+                   total_score_rank,
+                   total_score,
+                   full_combo_count,
+                   computed_at
+            FROM band_team_rankings_current_band_duets
+            UNION ALL
+            SELECT band_type,
+                   ranking_scope,
+                   combo_id,
+                   team_key,
+                   team_members,
+                   adjusted_skill_rank,
+                   weighted_rank,
+                   fc_rate_rank,
+                   total_score_rank,
+                   total_score,
+                   full_combo_count,
+                   computed_at
+            FROM band_team_rankings_current_band_trios
+            UNION ALL
+            SELECT band_type,
+                   ranking_scope,
+                   combo_id,
+                   team_key,
+                   team_members,
+                   adjusted_skill_rank,
+                   weighted_rank,
+                   fc_rate_rank,
+                   total_score_rank,
+                   total_score,
+                   full_combo_count,
+                   computed_at
+            FROM band_team_rankings_current_band_quad
+        ), source_rows AS (
+            SELECT current.band_type,
+                   current.team_key,
+                   current.team_members,
+                   MIN(current.first_seen_at) AS first_seen_at,
+                   MAX(current.last_updated_at) AS last_seen_at
+            FROM current_band_leaderboard_entries current
+            JOIN band_current_projection_scope published_scope
+              ON published_scope.song_id = current.song_id
+             AND published_scope.band_type = current.band_type
+             AND published_scope.ranking_scope =
+                   current.ranking_scope
+             AND published_scope.scope_combo_id =
+                   current.scope_combo_id
+             AND published_scope.published_generation =
+                   current.projection_generation
+            WHERE NOT @registeredOnly
+               OR EXISTS (
+                   SELECT 1
+                   FROM registered_bands registered
+                   WHERE registered.band_type =
+                           current.band_type
+                     AND registered.team_key =
+                           current.team_key
+               )
+            GROUP BY current.band_type,
+                     current.team_key,
+                     current.team_members
+            UNION ALL
+            SELECT ranking.band_type,
+                   ranking.team_key,
+                   ranking.team_members,
+                   MIN(ranking.computed_at) AS first_seen_at,
+                   MAX(ranking.computed_at) AS last_seen_at
+            FROM band_rankings ranking
+            WHERE NOT @registeredOnly
+               OR EXISTS (
+                   SELECT 1
+                   FROM registered_bands registered
+                   WHERE registered.band_type =
+                           ranking.band_type
+                     AND registered.team_key =
+                           ranking.team_key
+               )
+            GROUP BY ranking.band_type,
+                     ranking.team_key,
+                     ranking.team_members
+        ), collapsed AS (
+            SELECT band_type,
+                   team_key,
+                   string_to_array(
+                       MIN(COALESCE(
+                           array_to_string(
+                               team_members,
+                               chr(31)),
+                           '')),
+                       chr(31)) AS team_members,
+                   MIN(first_seen_at) AS first_seen_at,
+                   MAX(last_seen_at) AS last_seen_at
+            FROM source_rows
+            GROUP BY band_type,
+                     team_key
+        ), inserted_subjects AS (
+            INSERT INTO band_improvement_subjects (
+                band_type,
+                team_key,
+                team_members,
+                first_seen_at,
+                last_seen_at,
+                created_at,
+                updated_at)
+            SELECT collapsed.band_type,
+                   collapsed.team_key,
+                   collapsed.team_members,
+                   collapsed.first_seen_at,
+                   collapsed.last_seen_at,
+                   now(),
+                   now()
+            FROM collapsed
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM band_improvement_subjects existing
+                WHERE existing.band_type =
+                        collapsed.band_type
+                  AND existing.team_key =
+                        collapsed.team_key
+            )
+            ON CONFLICT (band_type, team_key) DO NOTHING
+            RETURNING band_subject_id,
+                      band_type,
+                      team_key
+        ), song_state_inserted AS (
+            INSERT INTO band_improvement_state (
+                band_subject_id,
+                song_id,
+                ranking_scope,
+                scope_combo_id,
+                entry_combo_id,
+                entry_instrument_combo,
+                score,
+                rank,
+                stars,
+                is_full_combo,
+                difficulty,
+                percentile,
+                season,
+                total_entries,
+                first_seen_at,
+                last_updated_at,
+                observed_at,
+                updated_at)
+            SELECT subject.band_subject_id,
+                   current.song_id,
+                   current.ranking_scope,
+                   COALESCE(current.scope_combo_id, ''),
+                   current.entry_combo_id,
+                   current.entry_instrument_combo,
+                   current.score,
+                   current.rank,
+                   current.stars,
+                   current.is_full_combo,
+                   current.difficulty,
+                   current.percentile,
+                   current.season,
+                   current.total_entries,
+                   current.first_seen_at,
+                   current.last_updated_at,
+                   now(),
+                   now()
+            FROM current_band_leaderboard_entries current
+            JOIN band_current_projection_scope published_scope
+              ON published_scope.song_id = current.song_id
+             AND published_scope.band_type = current.band_type
+             AND published_scope.ranking_scope =
+                   current.ranking_scope
+             AND published_scope.scope_combo_id =
+                   current.scope_combo_id
+             AND published_scope.published_generation =
+                   current.projection_generation
+            JOIN inserted_subjects subject
+              ON subject.band_type = current.band_type
+             AND subject.team_key = current.team_key
+            ON CONFLICT (
+                band_subject_id,
+                song_id,
+                ranking_scope,
+                scope_combo_id)
+            DO NOTHING
+            RETURNING 1
+        ), rank_state_inserted AS (
+            INSERT INTO band_rank_improvement_state (
+                band_subject_id,
+                ranking_scope,
+                combo_id,
+                adjusted_skill_rank,
+                weighted_rank,
+                fc_rate_rank,
+                total_score_rank,
+                total_score,
+                full_combo_count,
+                computed_at,
+                observed_at,
+                updated_at)
+            SELECT subject.band_subject_id,
+                   ranking.ranking_scope,
+                   COALESCE(ranking.combo_id, ''),
+                   ranking.adjusted_skill_rank,
+                   ranking.weighted_rank,
+                   ranking.fc_rate_rank,
+                   ranking.total_score_rank,
+                   ranking.total_score,
+                   ranking.full_combo_count,
+                   ranking.computed_at,
+                   now(),
+                   now()
+            FROM band_rankings ranking
+            JOIN inserted_subjects subject
+              ON subject.band_type = ranking.band_type
+             AND subject.team_key = ranking.team_key
+            ON CONFLICT (
+                band_subject_id,
+                ranking_scope,
+                combo_id)
+            DO NOTHING
+            RETURNING 1
+        )
+        SELECT (SELECT COUNT(*) FROM inserted_subjects),
+               (SELECT COUNT(*) FROM song_state_inserted),
+               (SELECT COUNT(*) FROM rank_state_inserted)
+        """;
 
     private const string PlayerRankCandidatesSql = """
         WITH subjects AS (

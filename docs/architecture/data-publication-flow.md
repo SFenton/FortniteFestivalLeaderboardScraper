@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-13
-last_verified_commit: 96ed9680
+last_verified: 2026-08-14
+last_verified_commit: 69322a3e
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -10,7 +10,10 @@ sources:
   - FSTService/Scraping/ScrapeLifecycleNotifier.cs
   - FSTService/Api/PublicationRouteSurfaceContract.cs
   - FSTService/Api/PublicReadGateService.cs
+  - FSTService/Api/PublicReadGateMiddleware.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
+  - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
+  - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
 update_triggers:
   - Scrape allocation, phase ordering, failure isolation, publication, freeze, recovery, or client notification changes.
 ---
@@ -85,11 +88,15 @@ derived rows while retaining the same published scrape/publication ID.
    family, and combo dependencies. Target-song band over-threshold flags are
    recalculated, prior/current affected band projection scopes are refreshed,
    and dependent band rankings are rebuilt. Solo/composite/band rank history is
-   not written. Affected player-stat tiers and registered-player leaderboard
-   rivals follow.
+   not written. Chart denominators include matching promoted path-expected
+   instruments when provider metadata omitted the real MIDI chart. Affected
+   player-stat tiers and registered-player leaderboard rivals follow.
 6. Routine notification dry-run candidates are accepted only for player ranks
    in changed instruments, target-song band rows, and their dependent band
-   ranks. They are persisted in the maintenance quarantine, relevant state is
+   ranks. Routine-emittable player-rank counts are compared separately from
+   max-score-percent alignment-only changes. Missing band subjects and their
+   current state are baselined transactionally before candidate collection.
+   Candidates are persisted in the maintenance quarantine, relevant state is
    aligned, visible delivery remains zero, and the publication's completed
    notification marker is not reopened.
 7. A complete current-publication API cache is built in staging. Final
@@ -102,8 +109,11 @@ derived rows while retaining the same published scrape/publication ID.
 
 During this maintenance freeze, publication-bound path and song routes that
 have no safe published response cache return `503`; cacheable ranking/player/
-band routes serve the prior published cache or return `503`. A failure after
-freeze records a resumable checkpoint and leaves reads frozen.
+band routes serve the prior published cache or return `503`. Exact solo
+leaderboards follow this rule rather than falling through to current
+max-score/leeway reads. Player tracking, selected-profile registration
+activity, and band sync registration are paused across resume attempts. A
+failure after freeze records a resumable checkpoint and leaves reads frozen.
 
 ## Publication-aware API and browser
 

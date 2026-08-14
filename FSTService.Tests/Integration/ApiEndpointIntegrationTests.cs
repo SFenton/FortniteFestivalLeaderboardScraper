@@ -371,6 +371,219 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task MaxScoreMaintenanceFreeze_ServesStableSongsAndLeaderboardCachesAndBlocksColdReads()
+    {
+        const string songId = "maxScoreGateSong";
+        var metaDb =
+            _factory.Services.GetRequiredService<MetaDatabase>();
+        var pointers = EnsureCurrentPublication(metaDb);
+        var gate =
+            _factory.Services
+                .GetRequiredService<PublicReadGateService>();
+        var songsCache =
+            _factory.Services
+                .GetRequiredService<SongsCacheService>();
+        songsCache.Invalidate();
+        var warmSongs = await _client.GetAsync("/api/songs");
+        Assert.Equal(HttpStatusCode.OK, warmSongs.StatusCode);
+        var warmSongsJson =
+            await warmSongs.Content.ReadAsByteArrayAsync();
+
+        var cachedLeaderboard =
+            $"/api/leaderboard/{songId}/Solo_Guitar?leeway=1";
+        SeedRouteCache(
+            metaDb,
+            cachedLeaderboard,
+            $$"""{"songId":"{{songId}}","instrument":"Solo_Guitar","source":"published-cache"}""");
+        var reason =
+            PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
+            + new string('f', 64);
+        metaDb.SetPublicReadFreeze(
+            true,
+            pointers.PublishedScrapeId,
+            reason);
+        gate.Invalidate();
+
+        try
+        {
+            var songs = await _client.GetAsync("/api/songs");
+            Assert.Equal(HttpStatusCode.OK, songs.StatusCode);
+            Assert.Equal(
+                warmSongsJson,
+                await songs.Content.ReadAsByteArrayAsync());
+            songsCache.Invalidate();
+            var coldSongs = await _client.GetAsync("/api/songs");
+            Assert.Equal(
+                HttpStatusCode.ServiceUnavailable,
+                coldSongs.StatusCode);
+
+            var leaderboard =
+                await _client.GetAsync(cachedLeaderboard);
+            Assert.Equal(
+                HttpStatusCode.OK,
+                leaderboard.StatusCode);
+            Assert.Equal(
+                "hit",
+                leaderboard.Headers
+                    .GetValues("X-FST-Public-Cache")
+                    .Single());
+            Assert.Equal(
+                "published-cache",
+                (await leaderboard.Content
+                    .ReadFromJsonAsync<JsonElement>())
+                .GetProperty("source")
+                .GetString());
+
+            var coldLeaderboard = await _client.GetAsync(
+                $"/api/leaderboard/{songId}/Solo_Guitar?leeway=2");
+            Assert.Equal(
+                HttpStatusCode.ServiceUnavailable,
+                coldLeaderboard.StatusCode);
+
+            var coldPath = await _client.GetAsync(
+                $"/api/paths/{songId}/Solo_Guitar/expert");
+            Assert.Equal(
+                HttpStatusCode.ServiceUnavailable,
+                coldPath.StatusCode);
+        }
+        finally
+        {
+            ClearPublicReadFreezeForTest(
+                _factory.Services
+                    .GetRequiredService<NpgsqlDataSource>());
+            gate.Invalidate();
+            songsCache.Invalidate();
+        }
+    }
+
+    [Fact]
+    public async Task MaxScoreMaintenanceFreeze_BlocksLatePlayerBandAndSelectedProfileRegistrationsAcrossResume()
+    {
+        const string accountId = "max-score-late-account";
+        const string teammateId = "max-score-late-mate";
+        const string bandType = "Band_Duets";
+        const string teamKey =
+            accountId + ":" + teammateId;
+        var metaDb =
+            _factory.Services.GetRequiredService<MetaDatabase>();
+        var pointers = EnsureCurrentPublication(metaDb);
+        metaDb.InsertAccountNames(
+        [
+            (accountId, (string?)"Late Account"),
+            (teammateId, (string?)"Late Mate"),
+        ]);
+        using (var conn = _factory.Services
+                   .GetRequiredService<NpgsqlDataSource>()
+                   .OpenConnection())
+        using (var seed = conn.CreateCommand())
+        {
+            seed.CommandText = """
+                INSERT INTO band_members (
+                    account_id,
+                    song_id,
+                    band_type,
+                    team_key,
+                    instrument_combo)
+                VALUES
+                    (@accountId, 'late-song', @bandType, @teamKey, '0:1'),
+                    (@teammateId, 'late-song', @bandType, @teamKey, '0:1')
+                ON CONFLICT DO NOTHING
+                """;
+            seed.Parameters.AddWithValue(
+                "accountId",
+                accountId);
+            seed.Parameters.AddWithValue(
+                "teammateId",
+                teammateId);
+            seed.Parameters.AddWithValue(
+                "bandType",
+                bandType);
+            seed.Parameters.AddWithValue(
+                "teamKey",
+                teamKey);
+            seed.ExecuteNonQuery();
+        }
+
+        var gate =
+            _factory.Services
+                .GetRequiredService<PublicReadGateService>();
+        metaDb.SetPublicReadFreeze(
+            true,
+            pointers.PublishedScrapeId,
+            PublicReadFreezeState
+                .MaxScoreMaintenanceReasonPrefix
+            + new string('a', 64));
+        gate.Invalidate();
+
+        try
+        {
+            for (var resumeAttempt = 0;
+                 resumeAttempt < 2;
+                 resumeAttempt++)
+            {
+                var track = await _client.PostAsync(
+                    $"/api/player/{accountId}/track",
+                    content: null);
+                Assert.Equal(
+                    HttpStatusCode.ServiceUnavailable,
+                    track.StatusCode);
+
+                var bandSync = await _client.GetAsync(
+                    $"/api/bands/{bandType}/{teamKey}/sync-status");
+                Assert.Equal(
+                    HttpStatusCode.ServiceUnavailable,
+                    bandSync.StatusCode);
+
+                using var selectedProfileRequest =
+                    new HttpRequestMessage(
+                        HttpMethod.Get,
+                        "/api/service-info");
+                selectedProfileRequest.Headers.Add(
+                    SelectedProfileHeaders
+                        .SelectedProfileTypeHeader,
+                    "band");
+                selectedProfileRequest.Headers.Add(
+                    SelectedProfileHeaders
+                        .SelectedBandIdHeader,
+                    BandIdentity.CreateBandId(
+                        bandType,
+                        teamKey));
+                selectedProfileRequest.Headers.Add(
+                    SelectedProfileHeaders
+                        .SelectedBandTypeHeader,
+                    bandType);
+                selectedProfileRequest.Headers.Add(
+                    SelectedProfileHeaders
+                        .SelectedBandTeamKeyHeader,
+                    teamKey);
+                var selectedProfile =
+                    await _client.SendAsync(
+                        selectedProfileRequest);
+                Assert.Equal(
+                    HttpStatusCode.OK,
+                    selectedProfile.StatusCode);
+            }
+
+            Assert.DoesNotContain(
+                accountId,
+                metaDb.GetRegisteredAccountIds());
+            Assert.DoesNotContain(
+                metaDb.GetRegisteredBands(),
+                band => string.Equals(
+                    band.TeamKey,
+                    teamKey,
+                    StringComparison.Ordinal));
+        }
+        finally
+        {
+            ClearPublicReadFreezeForTest(
+                _factory.Services
+                    .GetRequiredService<NpgsqlDataSource>());
+            gate.Invalidate();
+        }
+    }
+
+    [Fact]
     public async Task PublicationCommitIntent_ServesPrecomputedClientRankingAliases()
     {
         using var factory =
@@ -7682,6 +7895,23 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 ETag: ResponseCacheService.ComputeETag(
                     jsonBytes)),
         ]);
+    }
+
+    private static void ClearPublicReadFreezeForTest(
+        NpgsqlDataSource dataSource)
+    {
+        using var conn = dataSource.OpenConnection();
+        using var command = conn.CreateCommand();
+        command.CommandText = """
+            UPDATE scrape_publication_state
+            SET public_reads_frozen = FALSE,
+                public_reads_frozen_at = NULL,
+                public_reads_frozen_scrape_id = NULL,
+                public_reads_frozen_reason = NULL,
+                updated_at = now()
+            WHERE id = TRUE
+            """;
+        Assert.Equal(1, command.ExecuteNonQuery());
     }
 
     private static void ConfigureReadyPublicationMeta(

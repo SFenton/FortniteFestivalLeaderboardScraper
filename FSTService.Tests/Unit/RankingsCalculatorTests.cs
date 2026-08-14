@@ -222,6 +222,56 @@ public sealed class RankingsCalculatorTests : IDisposable
     }
 
     [Fact]
+    public void RunIt_MidiPromotedInstrumentCountsWhenProviderMetadataIsOmitted()
+    {
+        var svc = CreateFestivalServiceWithSongs(1);
+        var song = svc.Songs[0];
+        song.track.tt = "Run It";
+        song.track.@in = new In { gr = 3 };
+        song.lastModified = new DateTime(
+            2026,
+            8,
+            1,
+            0,
+            0,
+            0,
+            DateTimeKind.Utc);
+        var pathStates =
+            new Dictionary<string, PathGenerationState>(
+                StringComparer.OrdinalIgnoreCase)
+            {
+                [song.track.su!] = new PathGenerationState(
+                    song.track.su!,
+                    Revision: 1,
+                    DatFileHash: new string('a', 64),
+                    SongLastModified:
+                        song.lastModified.ToString("O"),
+                    GeneratedAtUtc:
+                        song.lastModified.AddHours(1),
+                    ChoptVersion: "1.16.3",
+                    ChoptBinarySha256: new string('b', 64),
+                    GenerationProfile: "profile-v3",
+                    ArtifactGenerationId: "generation-run-it",
+                    ExpectedInstruments:
+                        ["Solo_PeripheralGuitar"],
+                    MaxScores: new SongMaxScores
+                    {
+                        MaxProLeadScore = 123_456,
+                    },
+                    CatalogLastModified:
+                        song.lastModified.ToString("O"),
+                    PathGenerationPending: false),
+            };
+
+        Assert.Equal(
+            1,
+            RankingsCalculator.CountChartedSongs(
+                svc.Songs,
+                "Solo_PeripheralGuitar",
+                pathStates));
+    }
+
+    [Fact]
     public void CountChartedSongs_ZeroForEmptySongs()
     {
         var svc = new FestivalService((IFestivalPersistence?)null);

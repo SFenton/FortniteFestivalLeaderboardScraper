@@ -186,13 +186,18 @@ public sealed class RankingsCalculator
         _activeScrapeId = includeRankHistory ? scrapeId : 0;
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var allMaxScores = _pathStore.GetAllMaxScores();
+        var pathGenerationStates =
+            _pathStore.GetPathGenerationStates();
         var instruments = GlobalLeaderboardScraper.AllInstruments;
         instrumentsToRebuild ??= instruments;
         var bandTypes = BandInstrumentMapping.AllBandTypes;
         var allPopulation = _metaDb.GetAllLeaderboardPopulation();
         var totalChartedByInstrument = instruments.ToDictionary(
             instrument => instrument,
-            instrument => CountChartedSongs(festivalService, instrument),
+            instrument => CountChartedSongs(
+                festivalService.Songs,
+                instrument,
+                pathGenerationStates),
             StringComparer.OrdinalIgnoreCase);
 
         // ── Phase 1+2: SongStats + AccountRankings per instrument (parallel) ──
@@ -1118,7 +1123,19 @@ public sealed class RankingsCalculator
     internal static int CountChartedSongs(
         IEnumerable<Song> songs,
         string instrument)
+        => CountChartedSongs(
+            songs,
+            instrument,
+            new Dictionary<string, PathGenerationState>(
+                StringComparer.OrdinalIgnoreCase));
+
+    internal static int CountChartedSongs(
+        IEnumerable<Song> songs,
+        string instrument,
+        IReadOnlyDictionary<string, PathGenerationState>
+            pathGenerationStates)
     {
+        ArgumentNullException.ThrowIfNull(pathGenerationStates);
         if (!GlobalLeaderboardScraper.AllInstruments.Contains(
                 instrument,
                 StringComparer.OrdinalIgnoreCase))
@@ -1127,9 +1144,25 @@ public sealed class RankingsCalculator
         }
 
         return songs.Count(song =>
-            GlobalLeaderboardScraper.TrackSupportsInstrument(
-                song.track,
-                instrument));
+        {
+            if (GlobalLeaderboardScraper.TrackSupportsInstrument(
+                    song.track,
+                    instrument))
+            {
+                return true;
+            }
+
+            var songId = song.track?.su;
+            return songId is not null
+                && pathGenerationStates.TryGetValue(
+                    songId,
+                    out var pathState)
+                && GlobalLeaderboardScraper
+                    .PathStateSupportsInstrument(
+                        song,
+                        pathState,
+                        instrument);
+        });
     }
 
     private static double? GetInstrumentSkill(Dictionary<string, AccountMetrics> data, string instrument)

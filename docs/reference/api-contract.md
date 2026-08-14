@@ -1,13 +1,15 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-13
-last_verified_commit: 53c11043
+last_verified: 2026-08-14
+last_verified_commit: 69322a3e
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
   - FSTService/Api/PublicationRouteSurfaceContract.cs
   - FSTService/Api/PublicReadGateService.cs
+  - FSTService/Api/PublicReadGateMiddleware.cs
+  - FSTService/Api/SelectedProfileActivityMiddleware.cs
   - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
   - packages/core/src/api/serverTypes.ts
   - FortniteFestivalWeb/src/api/client.ts
@@ -124,8 +126,16 @@ Aggregate player scopes intentionally use different formulas:
   publication-bound route may serve only an existing published cache hit.
   Otherwise affected song/path/ranking/player/band surfaces return `503` with
   `Retry-After`; path and `/api/songs` are explicitly included even though
-  they normally use live endpoint code. Freeze release invalidates path-maxima,
-  song, and response caches and forces a WebSocket same-publication refresh.
+  they normally use live endpoint code. `/api/songs` may serve its existing
+  stable process cache; exact solo leaderboard routes, especially leeway
+  queries, use the outer published cache or return `503`.
+- During that exact freeze, `POST /api/player/{accountId}/track` and
+  `GET /api/bands/{bandType}/{teamKey}/sync-status` return `503` before their
+  registration side effects. Selected-profile headers never touch player
+  activity or register a selected band/member set until maintenance releases
+  the freeze.
+- Freeze release invalidates path-maxima, song, and response caches and forces
+  a WebSocket same-publication refresh.
 - Operational-live endpoints expose current process/coordination state.
 - Admin/private endpoints must not be reclassified as public data accidentally.
 

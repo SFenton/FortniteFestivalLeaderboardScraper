@@ -43,6 +43,11 @@ public sealed partial class MetaDatabase : IMetaDatabase
     internal const string LeaderboardStagingTable = "leaderboard_staging_v2";
     internal const string FailedCandidateReadIsolationFailurePhase = "capacity_watchdog_abandoned";
     internal const string NoProgressReadIsolationFailurePhase = "post_process_no_progress_abandoned";
+    internal const string MaxScoreMaintenanceSourceLockSql = """
+        LOCK TABLE leaderboard_entries_overlay IN SHARE MODE;
+        LOCK TABLE leaderboard_entries IN SHARE MODE;
+        LOCK TABLE band_member_stats IN SHARE MODE;
+        """;
     internal const string PostProcessReadIsolationFailurePhase = "post_process";
     internal const string PublicationReadIsolationFailurePhase = "publication";
     internal const string StalePublicationCommitIntentFailurePhase =
@@ -11106,10 +11111,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
             using (var sourceLocks = conn.CreateCommand())
             {
                 sourceLocks.Transaction = sourceLockTransaction;
-                sourceLocks.CommandText = """
-                    LOCK TABLE leaderboard_entries_overlay IN SHARE MODE;
-                    LOCK TABLE leaderboard_entries IN SHARE MODE;
-                    """;
+                sourceLocks.CommandText =
+                    MaxScoreMaintenanceSourceLockSql;
                 sourceLocks.ExecuteNonQuery();
             }
 

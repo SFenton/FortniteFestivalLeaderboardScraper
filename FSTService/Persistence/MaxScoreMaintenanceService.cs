@@ -528,6 +528,7 @@ public sealed class MaxScoreMaintenanceService
                         manifestDigest,
                         normalizedPlanDigest,
                         resolvedRollbackPath,
+                        run.CreatedAtUtc,
                         ct);
                     run = await LoadRequiredRunAsync(
                         manifestDigest,
@@ -1297,28 +1298,18 @@ public sealed class MaxScoreMaintenanceService
         string manifestDigest,
         string planDigest,
         string rollbackOutputPath,
+        DateTime runCreatedAtUtc,
         CancellationToken ct)
     {
         ValidatePathPhase(
             manifest,
             postPromotion: false,
             throwOnMismatch: true);
-        var snapshot = new MaxScoreMaintenanceRollbackSnapshot(
-            MaxScoreMaintenanceRollbackSnapshot.CurrentSnapshotVersion,
-            NormalizeDatabaseTimestamp(DateTime.UtcNow),
+        var snapshot = CreateRollbackSnapshot(
+            manifest,
             manifestDigest,
             planDigest,
-            manifest.ExpectedPublishedScrapeId,
-            manifest.ExpectedPublicationId,
-            manifest.CatalogContentHash,
-            manifest.Songs
-                .Select(song =>
-                    new MaxScoreMaintenanceRollbackSong(
-                        song.SongId,
-                        song.ExpectedCatalogLastModified,
-                        song.CurrentPath))
-                .ToArray())
-            .ValidateAndNormalize();
+            runCreatedAtUtc);
         var written = await MaxScoreMaintenanceFileStore
             .WriteCanonicalRollbackSnapshotAsync(
                 _options.DataDirectory,
@@ -1439,6 +1430,29 @@ public sealed class MaxScoreMaintenanceService
             ct);
         await tx.CommitAsync(ct);
     }
+
+    internal static MaxScoreMaintenanceRollbackSnapshot
+        CreateRollbackSnapshot(
+            MaxScoreMaintenanceManifest manifest,
+            string manifestDigest,
+            string planDigest,
+            DateTime runCreatedAtUtc)
+        => new MaxScoreMaintenanceRollbackSnapshot(
+            MaxScoreMaintenanceRollbackSnapshot.CurrentSnapshotVersion,
+            NormalizeDatabaseTimestamp(runCreatedAtUtc),
+            manifestDigest,
+            planDigest,
+            manifest.ExpectedPublishedScrapeId,
+            manifest.ExpectedPublicationId,
+            manifest.CatalogContentHash,
+            manifest.Songs
+                .Select(song =>
+                    new MaxScoreMaintenanceRollbackSong(
+                        song.SongId,
+                        song.ExpectedCatalogLastModified,
+                        song.CurrentPath))
+                .ToArray())
+            .ValidateAndNormalize();
 
     private async Task ValidateCompletedMaintenanceAsync(
         MaxScoreMaintenanceManifest manifest,
@@ -1776,7 +1790,8 @@ public sealed class MaxScoreMaintenanceService
                        visible_delivery_count,
                        staged_cache_entry_count,
                        failure_stage,
-                       failure_detail
+                       failure_detail,
+                       created_at
                 FROM max_score_maintenance_runs
                 WHERE manifest_sha256 = @manifestSha256
                 """;
@@ -1830,7 +1845,8 @@ public sealed class MaxScoreMaintenanceService
             reader.GetInt32(18),
             reader.GetInt64(19),
             reader.IsDBNull(20) ? null : reader.GetString(20),
-            reader.IsDBNull(21) ? null : reader.GetString(21));
+            reader.IsDBNull(21) ? null : reader.GetString(21),
+            reader.GetDateTime(22));
 
     private async Task AdvancePhaseAsync(
         string manifestDigest,
@@ -2626,5 +2642,6 @@ public sealed class MaxScoreMaintenanceService
         int VisibleDeliveryCount,
         long StagedCacheEntryCount,
         string? FailureStage,
-        string? FailureDetail);
+        string? FailureDetail,
+        DateTime CreatedAtUtc);
 }

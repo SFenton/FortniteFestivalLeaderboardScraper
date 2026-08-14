@@ -417,6 +417,25 @@ public class PublicReadGateTests
         Assert.Equal(expected, PublicReadGateMiddleware.RequiresPublishedData(context.Request));
     }
 
+    [Theory]
+    [InlineData("/api/songs", true)]
+    [InlineData("/api/paths/song/Solo_Guitar/expert", true)]
+    [InlineData("/api/leaderboard/song/Solo_Guitar", true)]
+    [InlineData("/api/rankings/Solo_Guitar", false)]
+    public void RequiresMaxScoreMaintenanceData_ClassifiesDependentRoutes(
+        string path,
+        bool expected)
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Path = path;
+
+        Assert.Equal(
+            expected,
+            PublicReadGateMiddleware
+                .RequiresMaxScoreMaintenanceData(
+                    context.Request));
+    }
+
     [Fact]
     public async Task PublicReadGateMiddleware_AllowsClassifiedRoutesDuringScrapeFreeze()
     {
@@ -524,10 +543,12 @@ public class PublicReadGateTests
     }
 
     [Theory]
-    [InlineData("/api/songs", "/api/songs")]
     [InlineData(
         "/api/paths/song/Solo_Guitar/expert",
         "/api/paths/{songId}/{instrument}/{difficulty}")]
+    [InlineData(
+        "/api/leaderboard/song/Solo_Guitar",
+        "/api/leaderboard/{songId}/{instrument}")]
     [InlineData(
         "/api/rankings/Solo_Guitar",
         "/api/rankings/{instrument}")]
@@ -575,6 +596,99 @@ public class PublicReadGateTests
             reason,
             context.Response.Headers[
                 "X-FST-Public-Read-Freeze-Reason"]);
+    }
+
+    [Fact]
+    public async Task PublicReadGateMiddleware_AllowsSongsEndpointToServeCachedMaintenanceRead()
+    {
+        var reason =
+            PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
+            + new string('b', 64);
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1296,
+                reason));
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var nextCalled = false;
+        var middleware = new PublicReadGateMiddleware(context =>
+        {
+            nextCalled = true;
+            context.Response.StatusCode = StatusCodes.Status200OK;
+            return Task.CompletedTask;
+        });
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/songs";
+        SetPublicationEndpoint(context, "/api/songs");
+        context.RequestServices = new ServiceCollection()
+            .AddLogging()
+            .BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context, gate);
+
+        Assert.True(nextCalled);
+        Assert.Equal(
+            StatusCodes.Status200OK,
+            context.Response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(
+        "POST",
+        "/api/player/account-1/track")]
+    [InlineData(
+        "GET",
+        "/api/bands/Band_Duets/account-1:account-2/sync-status")]
+    public async Task PublicReadGateMiddleware_BlocksRegistrationChangesThroughoutMaxScoreResume(
+        string method,
+        string path)
+    {
+        var reason =
+            PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
+            + new string('c', 64);
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1296,
+                reason));
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var nextCalled = false;
+        var middleware = new PublicReadGateMiddleware(_ =>
+        {
+            nextCalled = true;
+            return Task.CompletedTask;
+        });
+
+        for (var resumeAttempt = 0;
+             resumeAttempt < 2;
+             resumeAttempt++)
+        {
+            var context = new DefaultHttpContext();
+            context.Request.Method = method;
+            context.Request.Path = path;
+            context.RequestServices = new ServiceCollection()
+                .AddLogging()
+                .BuildServiceProvider();
+            context.Response.Body = new MemoryStream();
+
+            await middleware.InvokeAsync(context, gate);
+
+            Assert.Equal(
+                StatusCodes.Status503ServiceUnavailable,
+                context.Response.StatusCode);
+        }
+
+        Assert.False(nextCalled);
     }
 
     [Fact]
@@ -928,6 +1042,118 @@ public class PublicReadGateTests
         Assert.Equal("{\"publishedScrapeId\":793}", await reader.ReadToEndAsync());
         Assert.Equal("hit", context.Response.Headers["X-FST-Public-Cache"]);
         Assert.Equal(1, telemetry.Snapshot().Hits);
+    }
+
+    [Fact]
+    public async Task PublicApiResponseCacheMiddleware_ServesExactSoloLeaderboardDuringMaxScoreMaintenance()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1296,
+                PublicReadFreezeState
+                    .MaxScoreMaintenanceReasonPrefix
+                + new string('d', 64)));
+        var json = Encoding.UTF8.GetBytes(
+            "{\"songId\":\"song\",\"instrument\":\"Solo_Guitar\"}");
+        metaDb.GetCachedResponse(Arg.Any<string>())
+            .Returns((
+                json,
+                ResponseCacheService.ComputeETag(json)));
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var middleware = new PublicApiResponseCacheMiddleware(
+            _ => throw new InvalidOperationException(
+                "Cached exact leaderboard continued to live reads."),
+            NullLogger<
+                PublicApiResponseCacheMiddleware>.Instance);
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path =
+            "/api/leaderboard/song/Solo_Guitar";
+        context.Request.QueryString =
+            new QueryString("?leeway=1");
+        SetPublicationEndpoint(
+            context,
+            "/api/leaderboard/{songId}/{instrument}");
+        context.RequestServices = new ServiceCollection()
+            .AddLogging()
+            .BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(
+            context,
+            metaDb,
+            gate,
+            new PublicApiCacheTelemetry());
+
+        Assert.Equal(
+            StatusCodes.Status200OK,
+            context.Response.StatusCode);
+        Assert.Equal(
+            "hit",
+            context.Response.Headers["X-FST-Public-Cache"]);
+    }
+
+    [Fact]
+    public async Task PublicApiResponseCacheMiddleware_DoesNotRegisterSelectedProfileDuringMaxScoreMaintenance()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1296,
+                PublicReadFreezeState
+                    .MaxScoreMaintenanceReasonPrefix
+                + new string('e', 64)));
+        var json = Encoding.UTF8.GetBytes("{\"ok\":true}");
+        metaDb.GetCachedResponse(Arg.Any<string>())
+            .Returns((
+                json,
+                ResponseCacheService.ComputeETag(json)));
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var middleware = new PublicApiResponseCacheMiddleware(
+            _ => Task.CompletedTask,
+            NullLogger<
+                PublicApiResponseCacheMiddleware>.Instance);
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path =
+            "/api/leaderboard/song/Solo_Guitar";
+        context.Request.Headers[
+            SelectedProfileHeaders.SelectedProfileTypeHeader] =
+            "player";
+        context.Request.Headers[
+            SelectedProfileHeaders.SelectedProfileIdHeader] =
+            "account-1";
+        SetPublicationEndpoint(
+            context,
+            "/api/leaderboard/{songId}/{instrument}");
+        context.RequestServices = new ServiceCollection()
+            .AddLogging()
+            .BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(
+            context,
+            metaDb,
+            gate,
+            new PublicApiCacheTelemetry());
+
+        metaDb.DidNotReceive()
+            .TouchWebRegistrationActivity(
+                Arg.Any<string>());
+        metaDb.DidNotReceive()
+            .RegisterSelectedBandActivity(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<string?>());
     }
 
     [Fact]

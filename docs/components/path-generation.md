@@ -1,14 +1,16 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-13
-last_verified_commit: 96ed9680
+last_verified: 2026-08-14
+last_verified_commit: 69322a3e
 sources:
   - FSTService/Scraping/MidiTrackInspector.cs
   - FSTService/Scraping/PathGenerationCoordinator.cs
   - FSTService/Scraping/PathGenerationModels.cs
   - FSTService/Scraping/PathArtifactResolver.cs
   - FSTService/Scraping/PathDataStore.cs
+  - FSTService/Scraping/GlobalLeaderboardScraper.cs
+  - FSTService/Scraping/RankingsCalculator.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Api/SongEndpoints.cs
   - FSTService/Api/AdminEndpoints.cs
@@ -55,6 +57,13 @@ together as an immutable generation.
    `paths/<songId>/generations/<generationId>/` and promoted with a
    compare-and-swap update. Partial or conflicted attempts never replace the
    current generation.
+
+After promotion, `path_expected_instruments` supplements provider intensity
+metadata for scrape admission and ranking chart denominators. This applies only
+to a complete, non-pending immutable generation whose current song ID and
+catalog `lastModified` identity still match the selected provider catalog.
+Provider JSON remains unchanged and authoritative for catalog provenance; a
+stale or identity-mismatched path generation cannot widen scrape scope.
 
 The generation profile is a semantic identity, not a display label. Change it
 whenever CHOpt arguments or the artifact contract change. A version, binary

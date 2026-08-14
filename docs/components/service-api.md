@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-13
-last_verified_commit: 53c11043
+last_verified: 2026-08-14
+last_verified_commit: 69322a3e
 sources:
   - FSTService/Program.cs
   - FSTService/HostedWorkerMode.cs
@@ -10,6 +10,8 @@ sources:
   - FSTService/Api/*Endpoints.cs
   - FSTService/Api/PublicationRouteSurfaceContract.cs
   - FSTService/Api/PublicReadGateService.cs
+  - FSTService/Api/PublicReadGateMiddleware.cs
+  - FSTService/Api/SelectedProfileActivityMiddleware.cs
   - FSTService/Api/PublicationChangeMonitorService.cs
   - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
 update_triggers:
@@ -89,10 +91,18 @@ instead of silently reading candidate state.
 
 A digest-owned max-score maintenance freeze requires published cache hits or
 `503` for affected publication-bound reads. `/api/songs` and both `/api/paths`
-forms are included even though they are normally live endpoint code. When the
-same publication is released, every API process invalidates response caches,
-the path-maxima cache, and `SongsCacheService`, then broadcasts a forced
-publication refresh so browsers do not retain the pre-maintenance maxima.
+forms are included even though they are normally live endpoint code. A warm
+`SongsCacheService` response may serve the prior publication; cold path reads
+and cold exact solo leaderboard reads, including leeway requests, return
+`503`. Outer-cache exact leaderboard hits remain available.
+
+While that freeze is active, the public-read gate rejects player tracking and
+the registration-changing band sync-status route. Selected-profile activity
+tracking performs no player touch or band/member registration, including when
+the outer response cache handles the request. When the same publication is
+released, every API process invalidates response caches, the path-maxima cache,
+and `SongsCacheService`, then broadcasts a forced publication refresh so
+browsers do not retain the pre-maintenance maxima.
 
 ## Operational progress
 

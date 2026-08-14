@@ -1,8 +1,8 @@
 ---
 status: living-runbook
 owner: data
-last_verified: 2026-08-13
-last_verified_commit: 9d11111e
+last_verified: 2026-08-14
+last_verified_commit: 69322a3e
 sources:
   - FSTService/Persistence/MaxScoreMaintenanceCommand.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
@@ -54,7 +54,8 @@ Apply acquires locks in this order:
 
 1. path-generation advisory lock;
 2. global publication advisory lock;
-3. solo source-table and band-member-stat share locks;
+3. `leaderboard_entries_overlay`, `leaderboard_entries`, then
+   `band_member_stats` share locks in that fixed order;
 4. publication and song row locks inside bounded transactions.
 
 Band maintenance is the intentional writer for target-song `band_entries`
@@ -65,7 +66,17 @@ repeated worker-offline checks protect the remaining band boundary.
 It creates a `max-score-maintenance:v1:<manifest-sha256>` freeze. During that
 freeze publication-bound song, path, ranking, player, and band reads use an
 already-built published cache or return `503`; the candidate state is never
-served live.
+served live. Exact solo leaderboard requests, including every leeway/max-score
+query, follow the same cache-or-`503` rule. A warm `SongsCacheService` response
+may be served, but path artifacts without a separately safe published response
+remain blocked.
+
+The same freeze rejects `POST /api/player/{accountId}/track` and the
+registration-changing band `sync-status` request. Selected-profile activity
+tracking also suppresses player touches and band/member registration writes,
+including on outer public-cache hits. These guards remain active across every
+resume attempt so the checkpointed notification, rivals, and cache scope cannot
+grow late.
 
 ## Stage request
 
@@ -179,7 +190,9 @@ docker compose run --rm --no-deps --entrypoint dotnet fstservice \
 
 Apply:
 
-- persists file and PostgreSQL rollback evidence before promotion;
+- persists file and PostgreSQL rollback evidence before promotion; canonical
+  rollback JSON uses the durable run creation timestamp so file-first,
+  checkpoint-second retries reproduce identical bytes;
 - promotes every song in one transaction;
 - rebuilds affected `song_stats` and solo rankings, then composite,
   solo-family, and combo rankings; recalculates target-song band
@@ -188,9 +201,14 @@ Apply:
 - rebuilds affected player-stat tiers and every registered player's
   leaderboard rivals;
 - classifies affected-instrument player-rank and target-song/dependent-band
-  candidates as maintenance, stores them in the immutable quarantine audit,
-  advances matching state, emits no visible event, and leaves publication
-  `1296`'s completed notification marker unchanged;
+  candidates as maintenance, including max-score-percent rank changes that the
+  routine visible lane does not emit. Routine candidate parity compares only
+  routine-emittable coalesced player-rank kinds. Missing band subjects are
+  created and their song/rank state is baselined inside the quarantine
+  transaction before candidate collection, preventing a later visible
+  `band_first_score`. The audit advances matching state, emits no visible
+  event, and leaves publication `1296`'s completed notification marker
+  unchanged;
 - stages a complete current-publication API cache; and
 - validates paths, maxima, rankings, rollback coverage, rank-history
   fingerprint, notification audit, and staged cache before atomically swapping
@@ -221,7 +239,9 @@ Resume rejects a changed digest, publication, catalog, source fingerprint,
 notification state at pre-quarantine phases, rank-history fingerprint, freeze
 owner, rollback path, or phase identity. Completed phases are not deleted;
 idempotent derived work may be rerun when a crash occurred before its durable
-checkpoint.
+checkpoint. A rollback file written before its database phase checkpoint is
+loaded through the same persisted run timestamp and must match byte-for-byte;
+resume never invents a new evidence timestamp.
 
 ## Validation and rollback
 

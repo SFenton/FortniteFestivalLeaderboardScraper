@@ -30,6 +30,29 @@ public sealed class MaxScoreMaintenancePersistenceTests
     }
 
     [Fact]
+    public void Routine_player_rank_count_excludes_alignment_only_percent_changes()
+    {
+        var routine = Candidate("Solo_Guitar") with
+        {
+            CandidateKind =
+                "player_total_score_rank_improved",
+            Metric = "total_score_rank",
+        };
+        var percentOnly = Candidate("Solo_Guitar");
+
+        Assert.Equal(
+            1,
+            MaxScoreMaintenanceNotificationService
+                .CountRoutinePlayerRankEvents(
+                    [routine, percentOnly]));
+        Assert.Equal(
+            0,
+            MaxScoreMaintenanceNotificationService
+                .CountRoutinePlayerRankEvents(
+                    [percentOnly]));
+    }
+
+    [Fact]
     public void Notification_classification_quarantines_target_band_candidates()
     {
         var targetSong = Candidate("Solo_Guitar") with
@@ -293,6 +316,179 @@ public sealed class MaxScoreMaintenancePersistenceTests
         Assert.Equal("running", reader.GetString(3));
         Assert.True(reader.IsDBNull(4));
         Assert.True(reader.IsDBNull(5));
+    }
+
+    [Fact]
+    public async Task Rollback_file_first_checkpoint_crash_reuses_persisted_run_timestamp()
+    {
+        using var dataSource = SharedPostgresContainer.CreateDatabase();
+        var manifest = CreateManifest();
+        var manifestDigest = manifest.ComputeDigest();
+        var planDigest = new string('3', 64);
+        var runCreatedAt = new DateTime(
+            2026,
+            8,
+            14,
+            8,
+            30,
+            0,
+            DateTimeKind.Utc);
+        using (var conn = dataSource.OpenConnection())
+        using (var insert = conn.CreateCommand())
+        {
+            insert.CommandText = """
+                INSERT INTO max_score_maintenance_runs (
+                    manifest_sha256,
+                    manifest_version,
+                    plan_digest,
+                    expected_published_scrape_id,
+                    expected_publication_id,
+                    expected_catalog_hash,
+                    expected_catalog_song_count,
+                    published_score_source_fingerprint,
+                    notification_state_fingerprint,
+                    rank_history_fingerprint,
+                    manifest_json,
+                    freeze_reason,
+                    phase,
+                    status,
+                    created_at,
+                    updated_at)
+                VALUES (
+                    @manifestDigest,
+                    @manifestVersion,
+                    @planDigest,
+                    @scrapeId,
+                    @publicationId,
+                    @catalogHash,
+                    @catalogSongCount,
+                    @fingerprint,
+                    @fingerprint,
+                    @fingerprint,
+                    @manifestJson,
+                    @freezeReason,
+                    'freeze_established',
+                    'failed',
+                    @createdAt,
+                    @createdAt)
+                """;
+            insert.Parameters.AddWithValue(
+                "manifestDigest",
+                manifestDigest);
+            insert.Parameters.AddWithValue(
+                "manifestVersion",
+                manifest.ManifestVersion);
+            insert.Parameters.AddWithValue(
+                "planDigest",
+                planDigest);
+            insert.Parameters.AddWithValue(
+                "scrapeId",
+                manifest.ExpectedPublishedScrapeId);
+            insert.Parameters.AddWithValue(
+                "publicationId",
+                manifest.ExpectedPublicationId);
+            insert.Parameters.AddWithValue(
+                "catalogHash",
+                manifest.CatalogContentHash);
+            insert.Parameters.AddWithValue(
+                "catalogSongCount",
+                manifest.CatalogSongCount);
+            insert.Parameters.AddWithValue(
+                "fingerprint",
+                new string('4', 64));
+            insert.Parameters.Add(
+                "manifestJson",
+                NpgsqlTypes.NpgsqlDbType.Jsonb).Value =
+                System.Text.Encoding.UTF8.GetString(
+                    manifest.SerializeCanonical());
+            insert.Parameters.AddWithValue(
+                "freezeReason",
+                PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
+                + manifestDigest);
+            insert.Parameters.AddWithValue(
+                "createdAt",
+                runCreatedAt);
+            insert.ExecuteNonQuery();
+        }
+
+        var dataDirectory = Path.Combine(
+            Directory.GetCurrentDirectory(),
+            ".test-temp",
+            $"max-score-rollback-resume-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dataDirectory);
+        try
+        {
+            var firstTimestamp = ReadCreatedAt();
+            var firstSnapshot =
+                MaxScoreMaintenanceService.CreateRollbackSnapshot(
+                    manifest,
+                    manifestDigest,
+                    planDigest,
+                    firstTimestamp);
+            var firstWrite = await MaxScoreMaintenanceFileStore
+                .WriteCanonicalRollbackSnapshotAsync(
+                    dataDirectory,
+                    "rollback.json",
+                    firstSnapshot,
+                    CancellationToken.None);
+
+            var resumedTimestamp = ReadCreatedAt();
+            var resumedSnapshot =
+                MaxScoreMaintenanceService.CreateRollbackSnapshot(
+                    manifest,
+                    manifestDigest,
+                    planDigest,
+                    resumedTimestamp);
+            var resumedWrite = await MaxScoreMaintenanceFileStore
+                .WriteCanonicalRollbackSnapshotAsync(
+                    dataDirectory,
+                    "rollback.json",
+                    resumedSnapshot,
+                    CancellationToken.None);
+
+            Assert.Equal(firstWrite.Sha256, resumedWrite.Sha256);
+            Assert.Equal(
+                firstSnapshot.CreatedAtUtc,
+                resumedSnapshot.CreatedAtUtc);
+            using var verifyConnection =
+                dataSource.OpenConnection();
+            using var verify = verifyConnection.CreateCommand();
+            verify.CommandText = """
+                SELECT phase, status
+                FROM max_score_maintenance_runs
+                WHERE manifest_sha256 = @manifestDigest
+                """;
+            verify.Parameters.AddWithValue(
+                "manifestDigest",
+                manifestDigest);
+            using var reader = verify.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.Equal(
+                "freeze_established",
+                reader.GetString(0));
+            Assert.Equal("failed", reader.GetString(1));
+        }
+        finally
+        {
+            if (Directory.Exists(dataDirectory))
+                Directory.Delete(dataDirectory, recursive: true);
+        }
+
+        DateTime ReadCreatedAt()
+        {
+            using var conn = dataSource.OpenConnection();
+            using var command = conn.CreateCommand();
+            command.CommandText = """
+                SELECT created_at
+                FROM max_score_maintenance_runs
+                WHERE manifest_sha256 = @manifestDigest
+                """;
+            command.Parameters.AddWithValue(
+                "manifestDigest",
+                manifestDigest);
+            return Convert.ToDateTime(command.ExecuteScalar())
+                .ToUniversalTime();
+        }
     }
 
     [Fact]
@@ -811,6 +1007,539 @@ public sealed class MaxScoreMaintenancePersistenceTests
         Assert.True(reader.GetBoolean(0));
         Assert.True(reader.GetBoolean(1));
         Assert.True(reader.GetBoolean(2));
+    }
+
+    [Fact]
+    public async Task Rank_change_only_quarantine_aligns_state_and_resume_inspection_is_clear()
+    {
+        using var dataSource = SharedPostgresContainer.CreateDatabase();
+        var manifest = CreateManifest();
+        var manifestDigest = manifest.ComputeDigest();
+        var planDigest = new string('5', 64);
+        SeedNotificationMaintenanceState(
+            dataSource,
+            manifest,
+            manifestDigest,
+            planDigest);
+        using (var conn = dataSource.OpenConnection())
+        using (var seed = conn.CreateCommand())
+        {
+            seed.CommandText = """
+                INSERT INTO registered_users (
+                    device_id,
+                    account_id,
+                    registered_at,
+                    last_activity_at)
+                VALUES (
+                    'web-tracker',
+                    'account-1',
+                    now() - interval '1 day',
+                    now());
+                INSERT INTO account_rankings (
+                    account_id,
+                    instrument,
+                    songs_played,
+                    total_charted_songs,
+                    coverage,
+                    raw_skill_rating,
+                    adjusted_skill_rating,
+                    adjusted_skill_rank,
+                    weighted_rating,
+                    weighted_rank,
+                    fc_rate,
+                    fc_rate_rank,
+                    total_score,
+                    total_score_rank,
+                    max_score_percent,
+                    max_score_percent_rank,
+                    avg_accuracy,
+                    full_combo_count,
+                    avg_stars,
+                    best_rank,
+                    avg_rank,
+                    computed_at)
+                VALUES (
+                    'account-1',
+                    'Solo_Guitar',
+                    1,
+                    1,
+                    1,
+                    100,
+                    100,
+                    1,
+                    100,
+                    1,
+                    1,
+                    1,
+                    1000,
+                    1,
+                    100,
+                    1,
+                    100,
+                    1,
+                    6,
+                    1,
+                    1,
+                    now());
+                INSERT INTO player_rank_improvement_state (
+                    account_id,
+                    instrument,
+                    adjusted_skill_rank,
+                    weighted_rank,
+                    fc_rate_rank,
+                    total_score_rank,
+                    max_score_percent_rank,
+                    total_score,
+                    full_combo_count,
+                    computed_at,
+                    observed_at,
+                    updated_at)
+                VALUES (
+                    'account-1',
+                    'Solo_Guitar',
+                    1,
+                    1,
+                    1,
+                    1,
+                    2,
+                    1000,
+                    1,
+                    now(),
+                    now(),
+                    now())
+                """;
+            seed.ExecuteNonQuery();
+        }
+
+        var (routine, service) =
+            CreateNotificationMaintenanceServices(
+                dataSource);
+        var inspection = await service.InspectRoutineStateAsync(
+            manifest,
+            manifestDigest,
+            requireOwnedFreeze: true,
+            CancellationToken.None);
+        var candidate = Assert.Single(inspection.Candidates);
+        Assert.Equal(
+            "player_max_score_percent_rank_changed",
+            candidate.CandidateKind);
+        Assert.Equal(0, routine.Precompute(
+            CreatePlayerRankDryRunOptions(
+                manifest.ExpectedPublishedScrapeId))
+            .PlayerRankEventsInserted);
+
+        using (var conn = dataSource.OpenConnection())
+        using (var fail = conn.CreateCommand())
+        {
+            fail.CommandText = """
+                UPDATE max_score_maintenance_runs
+                SET status = 'failed',
+                    failure_stage = 'derived_state_rebuilt',
+                    failure_detail = 'injected resume boundary'
+                WHERE manifest_sha256 = @manifestDigest
+                """;
+            fail.Parameters.AddWithValue(
+                "manifestDigest",
+                manifestDigest);
+            Assert.Equal(1, fail.ExecuteNonQuery());
+        }
+        var resumeInspection =
+            await service.InspectRoutineStateAsync(
+                manifest,
+                manifestDigest,
+                requireOwnedFreeze: true,
+                CancellationToken.None);
+        Assert.Single(resumeInspection.Candidates);
+
+        var result = await service.QuarantineAndAlignAsync(
+            manifest,
+            manifestDigest,
+            planDigest,
+            inspection.PublishedScoreSourceFingerprint,
+            CancellationToken.None);
+
+        Assert.Equal(1, result.CandidateCount);
+        Assert.Equal(0, result.VisibleDeliveryCount);
+        var aligned =
+            await service.InspectRoutineStateAsync(
+                manifest,
+                manifestDigest,
+                requireOwnedFreeze: true,
+                CancellationToken.None);
+        Assert.Empty(aligned.Candidates);
+    }
+
+    [Fact]
+    public async Task Previously_over_threshold_band_with_missing_subject_is_baselined_and_never_emits_first_score()
+    {
+        using var dataSource = SharedPostgresContainer.CreateDatabase();
+        var manifest = CreateManifest();
+        var manifestDigest = manifest.ComputeDigest();
+        var planDigest = new string('6', 64);
+        SeedNotificationMaintenanceState(
+            dataSource,
+            manifest,
+            manifestDigest,
+            planDigest);
+        using (var conn = dataSource.OpenConnection())
+        using (var seed = conn.CreateCommand())
+        {
+            seed.CommandText = """
+                INSERT INTO registered_bands (
+                    source_id,
+                    band_type,
+                    team_key,
+                    band_id,
+                    registered_at,
+                    last_activity_at,
+                    last_member_sync_at)
+                VALUES (
+                    'web-band-tracker',
+                    'Band_Duets',
+                    'account-1:account-2',
+                    'band-1',
+                    now() - interval '1 day',
+                    now(),
+                    now());
+                INSERT INTO current_band_leaderboard_entries (
+                    song_id,
+                    band_type,
+                    ranking_scope,
+                    scope_combo_id,
+                    team_key,
+                    entry_combo_id,
+                    entry_instrument_combo,
+                    team_members,
+                    score,
+                    accuracy,
+                    is_full_combo,
+                    stars,
+                    difficulty,
+                    season,
+                    rank,
+                    total_entries,
+                    percentile,
+                    first_seen_at,
+                    last_updated_at,
+                    computed_at,
+                    projection_generation)
+                VALUES (
+                    'song-a',
+                    'Band_Duets',
+                    'overall',
+                    '',
+                    'account-1:account-2',
+                    '0:1',
+                    'Solo_Guitar+Solo_Bass',
+                    ARRAY['account-1', 'account-2'],
+                    1000,
+                    100,
+                    TRUE,
+                    6,
+                    3,
+                    14,
+                    1,
+                    500,
+                    1,
+                    now() - interval '1 day',
+                    now(),
+                    now(),
+                    7);
+                INSERT INTO band_current_projection_scope (
+                    song_id,
+                    band_type,
+                    ranking_scope,
+                    scope_combo_id,
+                    projection_generation,
+                    published_generation,
+                    row_count,
+                    published_row_count,
+                    status,
+                    last_rebuilt_at,
+                    updated_at)
+                VALUES (
+                    'song-a',
+                    'Band_Duets',
+                    'overall',
+                    '',
+                    7,
+                    7,
+                    1,
+                    1,
+                    'ready',
+                    now(),
+                    now())
+                """;
+            seed.ExecuteNonQuery();
+        }
+
+        var (routine, service) =
+            CreateNotificationMaintenanceServices(
+                dataSource);
+        var inspection = await service.InspectRoutineStateAsync(
+            manifest,
+            manifestDigest,
+            requireOwnedFreeze: true,
+            CancellationToken.None);
+        Assert.Empty(inspection.Candidates);
+
+        var result = await service.QuarantineAndAlignAsync(
+            manifest,
+            manifestDigest,
+            planDigest,
+            inspection.PublishedScoreSourceFingerprint,
+            CancellationToken.None);
+        Assert.Equal(0, result.CandidateCount);
+
+        var nextRoutine = routine.Precompute(
+            new ImprovementNotificationPrecomputeOptions(
+                Execute: true,
+                BaselineOnly: false,
+                Scope: "registered",
+                IncludePlayers: false,
+                IncludeBands: true,
+                IncludeSongEvents: true,
+                IncludeRankings: false,
+                PruneExpired: false,
+                PublishedScrapeId:
+                    manifest.ExpectedPublishedScrapeId));
+        Assert.Equal(0, nextRoutine.BandSongEventsInserted);
+        using var verifyConnection = dataSource.OpenConnection();
+        using var verify = verifyConnection.CreateCommand();
+        verify.CommandText = """
+            SELECT
+                (
+                    SELECT COUNT(*)
+                    FROM band_improvement_subjects
+                    WHERE band_type = 'Band_Duets'
+                      AND team_key = 'account-1:account-2'
+                ),
+                (
+                    SELECT COUNT(*)
+                    FROM band_improvement_state state
+                    JOIN band_improvement_subjects subject
+                      ON subject.band_subject_id =
+                           state.band_subject_id
+                    WHERE subject.band_type = 'Band_Duets'
+                      AND subject.team_key =
+                           'account-1:account-2'
+                      AND state.song_id = 'song-a'
+                ),
+                (
+                    SELECT COUNT(*)
+                    FROM band_improvement_events event
+                    JOIN band_improvement_subjects subject
+                      ON subject.band_subject_id =
+                           event.band_subject_id
+                    WHERE subject.band_type = 'Band_Duets'
+                      AND subject.team_key =
+                           'account-1:account-2'
+                      AND event.event_kind =
+                           'band_first_score'
+                      AND event.delivery_state = 'visible'
+                )
+            """;
+        using var reader = verify.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(1, reader.GetInt64(0));
+        Assert.Equal(1, reader.GetInt64(1));
+        Assert.Equal(0, reader.GetInt64(2));
+    }
+
+    private static (
+        ImprovementNotificationService Routine,
+        MaxScoreMaintenanceNotificationService Maintenance)
+        CreateNotificationMaintenanceServices(
+            Npgsql.NpgsqlDataSource dataSource)
+    {
+        var routine = new ImprovementNotificationService(
+            dataSource,
+            NullLogger<ImprovementNotificationService>.Instance);
+        return (
+            routine,
+            new MaxScoreMaintenanceNotificationService(
+                dataSource,
+                routine,
+                Options.Create(
+                    new ImprovementNotificationOptions
+                    {
+                        Scope = "registered",
+                    }),
+                NullLogger<
+                    MaxScoreMaintenanceNotificationService>.Instance));
+    }
+
+    private static ImprovementNotificationPrecomputeOptions
+        CreatePlayerRankDryRunOptions(long publishedScrapeId)
+        => new(
+            Execute: false,
+            BaselineOnly: false,
+            Scope: "registered",
+            IncludePlayers: true,
+            IncludeBands: false,
+            IncludeSongEvents: false,
+            IncludeRankings: true,
+            PruneExpired: false,
+            PublishedScrapeId: publishedScrapeId);
+
+    private static void SeedNotificationMaintenanceState(
+        Npgsql.NpgsqlDataSource dataSource,
+        MaxScoreMaintenanceManifest manifest,
+        string manifestDigest,
+        string planDigest)
+    {
+        var freezeReason =
+            PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
+            + manifestDigest;
+        using var conn = dataSource.OpenConnection();
+        using var seed = conn.CreateCommand();
+        seed.CommandText = """
+            INSERT INTO scrape_log (
+                id, started_at, completed_at, status)
+            VALUES (
+                @scrapeId, now() - interval '1 hour', now(),
+                'completed');
+            INSERT INTO publication_generations (
+                publication_id, scrape_id, status, created_at)
+            VALUES (
+                @publicationId, @scrapeId, 'current', now());
+            INSERT INTO scrape_publication_state (
+                id,
+                current_publication_id,
+                working_publication_id,
+                published_scrape_id,
+                public_reads_frozen,
+                public_reads_frozen_at,
+                public_reads_frozen_scrape_id,
+                public_reads_frozen_reason,
+                improvement_notifications_scrape_id,
+                improvement_notifications_status,
+                improvement_notifications_projection_ready,
+                improvement_notifications_projection_scrape_id,
+                updated_at)
+            VALUES (
+                TRUE,
+                @publicationId,
+                NULL,
+                @scrapeId,
+                TRUE,
+                now(),
+                @scrapeId,
+                @freezeReason,
+                @scrapeId,
+                'completed',
+                TRUE,
+                @scrapeId,
+                now())
+            ON CONFLICT (id) DO UPDATE SET
+                current_publication_id =
+                    EXCLUDED.current_publication_id,
+                working_publication_id = NULL,
+                published_scrape_id =
+                    EXCLUDED.published_scrape_id,
+                public_reads_frozen = TRUE,
+                public_reads_frozen_at = now(),
+                public_reads_frozen_scrape_id =
+                    EXCLUDED.public_reads_frozen_scrape_id,
+                public_reads_frozen_reason =
+                    EXCLUDED.public_reads_frozen_reason,
+                improvement_notifications_scrape_id =
+                    EXCLUDED.improvement_notifications_scrape_id,
+                improvement_notifications_status =
+                    EXCLUDED.improvement_notifications_status,
+                improvement_notifications_projection_ready =
+                    TRUE,
+                improvement_notifications_projection_scrape_id =
+                    EXCLUDED.improvement_notifications_projection_scrape_id,
+                updated_at = now();
+            INSERT INTO improvement_detection_runs (
+                published_scrape_id,
+                completed_at,
+                status,
+                mode,
+                baseline_only,
+                include_players,
+                include_bands,
+                include_song_events,
+                include_rankings,
+                notification_purpose,
+                delivery_state)
+            VALUES (
+                @scrapeId,
+                now(),
+                'completed',
+                'execute',
+                FALSE,
+                TRUE,
+                TRUE,
+                TRUE,
+                TRUE,
+                'routine_score_observation_v1',
+                'visible');
+            INSERT INTO max_score_maintenance_runs (
+                manifest_sha256,
+                manifest_version,
+                plan_digest,
+                expected_published_scrape_id,
+                expected_publication_id,
+                expected_catalog_hash,
+                expected_catalog_song_count,
+                published_score_source_fingerprint,
+                notification_state_fingerprint,
+                rank_history_fingerprint,
+                manifest_json,
+                freeze_reason,
+                phase,
+                status)
+            VALUES (
+                @manifestDigest,
+                @manifestVersion,
+                @planDigest,
+                @scrapeId,
+                @publicationId,
+                @catalogHash,
+                @catalogSongCount,
+                @placeholderFingerprint,
+                @placeholderFingerprint,
+                @placeholderFingerprint,
+                @manifestJson,
+                @freezeReason,
+                'derived_state_rebuilt',
+                'running');
+            """;
+        seed.Parameters.AddWithValue(
+            "scrapeId",
+            manifest.ExpectedPublishedScrapeId);
+        seed.Parameters.AddWithValue(
+            "publicationId",
+            manifest.ExpectedPublicationId);
+        seed.Parameters.AddWithValue(
+            "freezeReason",
+            freezeReason);
+        seed.Parameters.AddWithValue(
+            "manifestDigest",
+            manifestDigest);
+        seed.Parameters.AddWithValue(
+            "manifestVersion",
+            manifest.ManifestVersion);
+        seed.Parameters.AddWithValue(
+            "planDigest",
+            planDigest);
+        seed.Parameters.AddWithValue(
+            "catalogHash",
+            manifest.CatalogContentHash);
+        seed.Parameters.AddWithValue(
+            "catalogSongCount",
+            manifest.CatalogSongCount);
+        seed.Parameters.AddWithValue(
+            "placeholderFingerprint",
+            new string('8', 64));
+        seed.Parameters.Add(
+            "manifestJson",
+            NpgsqlTypes.NpgsqlDbType.Jsonb).Value =
+            System.Text.Encoding.UTF8.GetString(
+                manifest.SerializeCanonical());
+        seed.ExecuteNonQuery();
     }
 
     private static MaxScoreMaintenanceCandidate Candidate(
