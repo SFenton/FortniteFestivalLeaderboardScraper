@@ -9,11 +9,7 @@ import { useFabSearch } from '../../../contexts/FabSearchContext';
 import { useModalState } from '../../../hooks/ui/useModalState';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
 import { clearScrollCache } from '../../../hooks/ui/useScrollRestore';
-import { api } from '../../../api/client';
-import {
-  type ServerInstrumentKey as InstrumentKey,
-  type ServerScoreHistoryEntry as ScoreHistoryEntry,
-} from '@festival/core/api';
+import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import SongInfoHeader from '../../../components/songs/headers/SongInfoHeader';
 import { useNavigateToSongDetail } from '../../../hooks/navigation/useNavigateToSongDetail';
 import { LeaderboardEntry } from '../global/components/LeaderboardEntry';
@@ -34,11 +30,12 @@ import { useSortedScoreHistory } from '../../../hooks/data/useSortedScoreHistory
 import { PlayerScoreSortMode as CoreSortMode } from '@festival/core/runtime';
 import { LoadPhase } from '@festival/core/runtime';
 import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
-import { useLoadPhase } from '../../../hooks/data/useLoadPhase';
 import { useSetPageReady } from '../../../contexts/PageReadyContext';
 import { IS_IOS, IS_ANDROID, IS_PWA } from '@festival/ui-utils';
 import { playerHistorySlides } from './firstRun';
-import { hasVisitedPage, markPageVisited } from '../../../hooks/ui/usePageTransition';
+import { usePageTransition } from '../../../hooks/ui/usePageTransition';
+import { useQuery } from '@tanstack/react-query';
+import { playerHistoryQueryOptions } from '../../../api/remoteDataQueries';
 
 export default function PlayerHistoryPage() {
   const { t } = useTranslation();
@@ -63,14 +60,28 @@ export default function PlayerHistoryPage() {
   const historySlidesMemo = useMemo(() => playerHistorySlides(hasFab), [hasFab]);
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player }), [player]);
 
-  const [history, setHistory] = useState<ScoreHistoryEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const historyQuery = useQuery({
+    ...playerHistoryQueryOptions(player?.accountId ?? '', songId ?? ''),
+    enabled: !!player && !!songId,
+  });
+  const history = useMemo(
+    () => (historyQuery.data ?? []).filter(entry => entry.instrument === instKey),
+    [historyQuery.data, instKey],
+  );
+  const loading = historyQuery.isLoading;
+  const error = historyQuery.data == null && historyQuery.error
+    ? historyQuery.error instanceof Error
+      ? historyQuery.error.message
+      : t('history.failedToLoad')
+    : null;
   const { filterHistory } = useScoreFilter();
   const historyKey = `history:${songId}:${instKey}`;
-  const skipHistoryAnim = hasVisitedPage(historyKey);
-  markPageVisited(historyKey);
-  const { phase: loadPhase } = useLoadPhase(!loading && !error, { skipAnimation: skipHistoryAnim });
+  const { phase: loadPhase, shouldStagger } = usePageTransition(
+    historyKey,
+    !loading && !error,
+    historyQuery.data != null,
+  );
+  const skipHistoryAnim = !shouldStagger;
   useSetPageReady(loadPhase === LoadPhase.ContentIn);
 
   const headerStagger: CSSProperties | undefined = hasFab || skipHistoryAnim
@@ -119,33 +130,6 @@ export default function PlayerHistoryPage() {
 
   const staggerRushRef = useRef<(() => void) | undefined>(undefined);
   const resetRush = useCallback(() => staggerRushRef.current?.(), []);
-
-  /* v8 ignore start — async data fetch with cancellation */
-  useEffect(() => {
-    if (!player || !songId) {
-      setLoading(false);
-      return;
-    }
-    const controller = new AbortController();
-    setLoading(true);
-    setError(null);
-    api.getPlayerHistory(player.accountId, songId, undefined, { signal: controller.signal })
-      .then((res) => {
-        if (controller.signal.aborted) return;
-        const filtered = res.history
-          .filter(h => h.instrument === instKey);
-        setHistory(filtered);
-      })
-      .catch((e) => {
-        if (!controller.signal.aborted) setError(e instanceof Error ? e.message : t('history.failedToLoad'));
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
-      });
-    return () => controller.abort();
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- t is stable i18n fn
-  }, [player, songId, instKey]);
-  /* v8 ignore stop */
 
   const filteredHistory = useMemo(
     () => songId ? filterHistory(songId, instKey, history) : history,

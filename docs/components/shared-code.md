@@ -1,14 +1,15 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-13
-last_verified_commit: 434f6f20
+last_verified: 2026-08-14
+last_verified_commit: 5ec30864
 sources:
   - FortniteFestival.Core/FortniteFestival.Core.csproj
   - FortniteFestival.Core/Config/InstrumentType.cs
   - packages/core/package.json
   - packages/core/src/index.ts
   - packages/core/src/api/serverTypes.ts
+  - packages/core/src/suggestions/suggestionGenerator.ts
   - packages/theme/src/index.ts
   - packages/ui-utils/src/index.ts
   - FSTService/Scraping/Replay/TierOneReplayModels.cs
@@ -45,6 +46,13 @@ consumer exists and compatibility/version-skew requirements are measured.
 
 The web app consumes these packages directly from source through Yarn portal
 dependencies. Package exports are the public boundary.
+
+`@festival/core` owns the stateful suggestion generator. Rival data may arrive
+after a mix has initialized or may refresh later; `setRivalData` queues the
+generic and per-rival pipelines for each new data revision ahead of remaining
+work while preserving emitted-category, song-history, and mix identity state.
+Equivalent data references are ignored, empty rival samples are valid, and
+explicit endless resets rebuild the full pipeline set from current data.
 
 ## Cross-language contract
 

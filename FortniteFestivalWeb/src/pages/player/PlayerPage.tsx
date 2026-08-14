@@ -198,10 +198,11 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
     prevLoadPhase.current = loadPhase;
   }, [loadPhase, accountId, isTrackedPlayer, qc, visibleKeys]);
 
-  if (data) {
-    if (isTrackedPlayer) _renderedTrackedAccount = accountId!;
-    else _renderedPlayerAccount = accountId!;
-  }
+  useEffect(() => {
+    if (!data || !accountId || loadPhase !== LoadPhase.ContentIn) return;
+    if (isTrackedPlayer) _renderedTrackedAccount = accountId;
+    else _renderedPlayerAccount = accountId;
+  }, [accountId, data, isTrackedPlayer, loadPhase]);
 
   const styles = useStyles();
 
