@@ -61,7 +61,6 @@ public static partial class TierZeroConfigurationFingerprinter
         "host=",
         "password=",
         "pwd=",
-        "username=",
         "user id=",
         "account=",
         "authorization:",
@@ -231,7 +230,7 @@ public static partial class TierZeroConfigurationFingerprinter
     private static partial Regex JwtLikeRegex();
 
     [GeneratedRegex(
-        "(?<![A-Za-z0-9_])(?:access[_-]?token|refresh[_-]?token|id[_-]?token|token|api[_-]?key|password|passwd|pwd|client[_-]?secret|proxy|endpoint|authorization|cookie|host|server|data[_ -]?source|port|database|initial[_ ]?catalog|user[_ ]?id)\\s*[\\\"']?\\s*[:=]\\s*[\\\"']?\\S+",
+        "(?<![A-Za-z0-9_])(?:access[_-]?token|refresh[_-]?token|id[_-]?token|token|api[_-]?key|password|passwd|pwd|client[_-]?secret|proxy|endpoint|authorization|cookie|host|server|data[_ -]?source|port|database|initial[_ ]?catalog|username|user[_ ]?id)\\s*[\\\"']?\\s*[:=]\\s*[\\\"']?\\S+",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex CredentialAssignmentRegex();
 

@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: a20b9d89
+last_verified_commit: 099fd6fa
 sources:
   - FSTService/Scraping/Replay/TierZeroEvidenceModels.cs
   - FSTService/Scraping/Replay/TierZeroCanonicalJson.cs
@@ -26,8 +26,8 @@ verification primitives. It does **not** capture a live scrape, export
 PostgreSQL, import into an isolated database, invoke a phase, replay a phase,
 publish data, or grant an artifact authority over public reads.
 
-The PR-4 implementation is a continuous-safe repository candidate until its
-pull request is accepted. PostgreSQL remains the durable source of truth.
+PR-4 is accepted as a continuous-safe library contract. It has no registered
+runtime producer or consumer. PostgreSQL remains the durable source of truth.
 
 ## Ownership and location
 
@@ -40,6 +40,27 @@ No automatic retention policy exists yet. A sealed package must not be
 overwritten or deleted by generic scrape-log cleanup. A future capture or
 replay implementation must define package admission, retention, capacity,
 rollback, and lineage ownership before creating live artifacts.
+
+### Caller-root policy
+
+The PR-4 library confines package-relative operations beneath the root supplied
+by its caller, but it does not choose or authorize that root. This is
+intentional: no CLI or runtime entry point exists yet.
+
+PR-5 must fail closed before package creation unless:
+
+- a runtime root resolves beneath an operator-approved location on the 4 TB
+  FST drive;
+- a test root resolves beneath the repository or the explicitly assigned
+  session-test workspace;
+- the canonical root and every existing ancestor are free of symbolic links,
+  reparse points, traversal, and normalization aliases; and
+- the path is not on an alternate disk, a generic temporary directory, or a
+  PostgreSQL data directory.
+
+PR-5 tests must prove unknown, escaped, and symlinked roots are rejected before
+any database, network, package, or replay action. PR-4 does not implement or
+authorize this root-selection policy.
 
 ## Package layout
 

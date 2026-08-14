@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: a20b9d89
+last_verified_commit: 099fd6fa
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -199,7 +199,7 @@ successful retry, preserving the actual retry history.
 
 ## Tier-0 replay evidence contract
 
-The PR-4 repository candidate adds versioned Tier-0 package, canonical JSON,
+The accepted PR-4 library adds versioned Tier-0 package, canonical JSON,
 hashing, sealing, resume-journal, path-safety, configuration-fingerprint, and
 verification contracts under `FSTService.Scraping.Replay`.
 

@@ -75,6 +75,8 @@ public sealed class TierZeroEvidenceContractTests
     [InlineData("Scraper:Mode", "request to [2001:db8::1] failed", TierZeroConfigurationFailureKind.SecretLikeValue)]
     [InlineData("Scraper:Mode", "Server=postgres;Port=5432;Database=fst", TierZeroConfigurationFailureKind.SecretLikeValue)]
     [InlineData("Scraper:Mode", "Host = postgres;Database = fst;User ID = admin", TierZeroConfigurationFailureKind.SecretLikeValue)]
+    [InlineData("Scraper:Mode", "Username = admin", TierZeroConfigurationFailureKind.SecretLikeValue)]
+    [InlineData("Scraper:Mode", "User ID = admin", TierZeroConfigurationFailureKind.SecretLikeValue)]
     [InlineData("Scraper:Mode", "safe", TierZeroConfigurationFailureKind.KeyNotAllowlisted)]
     public void ConfigurationFingerprintRejectsUnsafeInput(
         string key,

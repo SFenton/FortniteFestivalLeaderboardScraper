@@ -2,7 +2,7 @@
 status: roadmap
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: a20b9d89
+last_verified_commit: 099fd6fa
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -681,35 +681,24 @@ Each iteration below is a separate branch/PR.
 - Execution remains `parity-gated-maintenance` and blocked until statistics,
   exact-count, parity, and workspace evidence all agree.
 
-### PR-4: Tier 0 evidence package and replay contract
-
-**Class:** `continuous-safe`
-
-- package/phase manifest schema;
-- stable phase contract descriptors;
-- checksum/root lineage;
-- config/build/schema fingerprinting;
-- no production capture or phase mutation;
-- corruption, mismatch, resume, and determinism tests.
-
-**Candidate state:** implementation on `copilot/tier0-evidence-contract`
-defines the canonical manifest/package models, deterministic JSON and root
-hashing, allowlisted configuration fingerprint, stable phase-plan projection,
-atomic seal/resume journal with pending-artifact crash recovery, typed
-verifier, and bounded synthetic fixture.
-Targeted contract tests, the full Release service suite, the service coverage
-gate, Release build, secret scan, and documentation checks pass. The candidate
-is still unaccepted, unmerged, undeployed, and has not captured or replayed
-production data. Review, PR CI, and acceptance remain required before this item
-can leave the roadmap.
-
-The candidate deliberately has no CLI, worker registration, database query,
-live export/import, capture, replay invocation, publication binding, or
-retention action. Those remain later gated work.
-
 ### PR-5: same-binary isolated replay
 
 **Class:** `full-scrape-ab` before any production-facing use.
+
+**Mandatory starting and acceptance gate:** PR-4 confines operations within a
+caller-supplied package root but deliberately does not select or authorize that
+root. PR-5 must add a fail-closed root admission policy before any CLI/runtime
+entry point can create a package:
+
+- production-derived roots must resolve beneath an operator-approved location
+  on the 4 TB FST drive;
+- bounded tests may use only repository or explicitly assigned session-test
+  roots;
+- canonical roots and existing ancestors must reject symlinks/reparse points,
+  traversal, normalization aliases, alternate drives, generic temporary
+  directories, and PostgreSQL data directories; and
+- rejection must occur before database, network, package, import, or phase
+  execution.
 
 - guarded FSTService replay mode;
 - isolated connection-target refusal for production;
@@ -867,7 +856,8 @@ This tandem plan is accepted for implementation after local outbox rendering.
 - Approval of this roadmap is not authorization to bypass the current
   live-safety, parity, publication, provider, storage, rollback, or maintenance
   gate for any later action.
-- PR-4 Tier 0 manifests are the next continuous-safe implementation boundary.
+- PR-5 same-binary isolated replay is the next implementation boundary and
+  cannot pass acceptance without the approved FST-root admission gate.
 - Current-projection optimization is a separate future full-scrape A/B; it
   cannot be combined with PR-3 Settings work.
 - Snapshot-retention execution remains a separate parity- and capacity-gated
