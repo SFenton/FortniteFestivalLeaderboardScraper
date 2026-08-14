@@ -1,6 +1,6 @@
 import { HashRouter, Routes, Route, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { IoCompass, IoPerson, IoPersonAdd, IoSwapVerticalSharp, IoFunnel, IoFlash, IoGrid, IoList, IoOptions, IoMusicalNotes, IoTrophy, IoBagHandle, IoPeople, IoSearch } from 'react-icons/io5';
-import { useEffect, useLayoutEffect, useState, useMemo, useRef, useCallback, Suspense, lazy } from 'react';
+import { useEffect, useState, useMemo, useRef, useCallback, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { FestivalProvider, useFestival } from './contexts/FestivalContext';
@@ -186,7 +186,7 @@ import { useNotificationFreshnessState } from './components/notifications/notifi
 import { notificationFeedKeyForProfile, useNotificationSeenState } from './components/notifications/notificationSeenState';
 import { NotificationFeedWebSocketBridge, useProfileNotificationsFeed } from './components/notifications/useProfileNotificationsFeed';
 import type { SearchTarget } from './types/search';
-import { IS_IOS, IS_ANDROID, IS_PWA, IS_PAGE_RELOAD } from '@festival/ui-utils';
+import { IS_IOS, IS_ANDROID, IS_PWA } from '@festival/ui-utils';
 import { DEFAULT_INSTRUMENT, SERVER_INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey } from '@festival/core/api';
 import type { AppliedBandComboFilter, BandInstrumentFilterApplyPayload, BandInstrumentFilterAssignment } from './types/bandFilter';
 import { APP_VERSION } from './hooks/data/useVersions';
@@ -195,7 +195,6 @@ import ErrorBoundary from './components/page/ErrorBoundary';
 import SuspenseFallback from './components/common/SuspenseFallback';
 import RouteBoundary from './components/page/RouteBoundary';
 import { RedirectToSongs, RequirePlayer, RequireSelection } from './components/page/RouteGuards';
-import type { PreserveShellScrollState } from './utils/quietNavigation';
 import { getBandFilterActionLabel } from './utils/bandFilterDisplay';
 import { bandTypeLabel } from './utils/bandTypes';
 import { saveLeaderboardRankBy } from './utils/leaderboardSettings';
@@ -210,16 +209,13 @@ import { writeSelectedProfile } from './state/selectedProfile';
 import { queryClient } from './api/queryClient';
 import { invalidateLeaderboardData } from './api/queryPolicy';
 import { isKnownRoutePath, normalizeRoutePathname, Routes as AppRoutes, RoutePatterns } from './routes';
-import {
-  markCurrentSuggestionsScrollRestorable,
-} from './pages/suggestions/suggestionsSessionCache';
 import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext';
-import { ScrollContainerProvider, useShellRefs, useScrollContainer, HEADER_PORTAL_HEIGHT_VAR } from './contexts/ScrollContainerContext';
+import { ScrollContainerProvider, useShellRefs, HEADER_PORTAL_HEIGHT_VAR } from './contexts/ScrollContainerContext';
 import { useTapDiagnostics } from './diagnostics/useTapDiagnostics';
 import anim from './styles/animations.module.css';
 import { RouteAccessibility, RouteMain } from './components/shell/RouteAccessibility';
+import ShellScrollRestoration from './components/shell/ShellScrollRestoration';
 
-const consumedPreserveShellScrollKeys = new Set<string>();
 const LEADERBOARD_INSTRUMENT_ACTION_ICON_SIZE = 32;
 const NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-open';
 const EMPTY_NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-empty';
@@ -999,7 +995,10 @@ function AppShell() {
         navigationType={navType}
         skipLabel={t('common.skipToContent')}
       />
-      <ScrollToTop layoutKey={wideDesktop ? 'wide' : 'standard'} />
+      <ShellScrollRestoration
+        layoutKey={wideDesktop ? 'wide' : 'standard'}
+        loadSuggestionsPage={loadSuggestionsPage}
+      />
 
       {/* v8 ignore start — sidebar callbacks tested via Sidebar.test / PinnedSidebar.test */}
       {!wideDesktop && (
@@ -1485,86 +1484,4 @@ function AppShell() {
     </PlayerDataProvider>
     </BandFilterActionProvider>
   );
-}
-
-function ScrollToTop({ layoutKey }: { layoutKey: 'standard' | 'wide' }) {
-  const location = useLocation();
-  const { key: locationKey, pathname } = location;
-  const routePathname = normalizeRoutePathname(pathname);
-  const preserveShellScrollKey = (location.state as PreserveShellScrollState | null)?.preserveShellScrollKey;
-  const scrollContainerRef = useScrollContainer();
-  const previousLayoutKeyRef = useRef(layoutKey);
-  const previousPathnameRef = useRef(routePathname);
-  const suggestionsRestoreCleanupRef = useRef<(() => void) | null>(null);
-  const suggestionsRestoreFrameRef = useRef(0);
-  const suggestionsRestoreRequestRef = useRef(0);
-  const stopSuggestionsRestoration = useCallback(() => {
-    suggestionsRestoreRequestRef.current += 1;
-    cancelAnimationFrame(suggestionsRestoreFrameRef.current);
-    suggestionsRestoreFrameRef.current = 0;
-    suggestionsRestoreCleanupRef.current?.();
-    suggestionsRestoreCleanupRef.current = null;
-  }, []);
-  const startSuggestionsRestoration = useCallback(() => {
-    stopSuggestionsRestoration();
-    const request = suggestionsRestoreRequestRef.current;
-    void loadSuggestionsPage().then(({ beginSuggestionsScrollRestoration }) => {
-      if (request !== suggestionsRestoreRequestRef.current) return;
-      const scrollElement = scrollContainerRef.current;
-      if (scrollElement) {
-        suggestionsRestoreCleanupRef.current = beginSuggestionsScrollRestoration(scrollElement);
-        return;
-      }
-      suggestionsRestoreFrameRef.current = requestAnimationFrame(() => {
-        suggestionsRestoreFrameRef.current = 0;
-        if (request !== suggestionsRestoreRequestRef.current) return;
-        const nextScrollElement = scrollContainerRef.current;
-        if (nextScrollElement) {
-          suggestionsRestoreCleanupRef.current = beginSuggestionsScrollRestoration(nextScrollElement);
-        }
-      });
-    });
-  }, [scrollContainerRef, stopSuggestionsRestoration]);
-  useEffect(() => {
-    if ('scrollRestoration' in history) {
-      history.scrollRestoration = 'manual';
-    }
-  }, []);
-  useLayoutEffect(() => {
-    const layoutChanged = previousLayoutKeyRef.current !== layoutKey;
-    previousLayoutKeyRef.current = layoutKey;
-    if (layoutChanged && routePathname === AppRoutes.suggestions) {
-      markCurrentSuggestionsScrollRestorable();
-    }
-  }, [layoutKey, routePathname]);
-  useLayoutEffect(() => {
-    const previousPathname = previousPathnameRef.current;
-    previousPathnameRef.current = routePathname;
-    if (previousPathname === AppRoutes.suggestions && routePathname !== AppRoutes.suggestions) {
-      markCurrentSuggestionsScrollRestorable();
-    }
-  }, [routePathname]);
-  useEffect(() => {
-    if (preserveShellScrollKey && !consumedPreserveShellScrollKeys.has(preserveShellScrollKey)) {
-      consumedPreserveShellScrollKeys.add(preserveShellScrollKey);
-      return;
-    }
-    if (routePathname === AppRoutes.suggestions) return;
-    // On browser refresh, always scroll to top — page exemptions only apply to in-app navigation
-    if (!IS_PAGE_RELOAD) {
-      if (routePathname === AppRoutes.songs) return;
-      // Song detail pages manage their own scroll restoration
-      if (RoutePatterns.songDetail.test(routePathname)) return;
-    }
-    scrollContainerRef.current?.scrollTo(0, 0);
-  }, [routePathname, preserveShellScrollKey, scrollContainerRef]);
-
-  useLayoutEffect(() => {
-    if (routePathname === AppRoutes.suggestions && !preserveShellScrollKey) {
-      startSuggestionsRestoration();
-    } else {
-      stopSuggestionsRestoration();
-    }
-  }, [layoutKey, locationKey, routePathname, preserveShellScrollKey, startSuggestionsRestoration, stopSuggestionsRestoration]);
-  return null;
 }

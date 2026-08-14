@@ -43,7 +43,8 @@ import InstrumentCard from './components/InstrumentCard';
 import SongBandLeaderboardPreview from './components/SongBandLeaderboardPreview';
 import IntensityCard from './components/IntensityCard';
 import { songInfoSlides } from './firstRun';
-import { SONG_BAND_TYPES, songBandTypeLabel } from '../../utils/songBandLeaderboards';
+import { SONG_BAND_TYPES } from '../../utils/songBandLeaderboards';
+import { bandTypeLabel } from '../../utils/bandTypes';
 
 import { songDetailCache } from '../../api/pageCache';
 import { queryKeys } from '../../api/queryKeys';
@@ -546,7 +547,7 @@ export default function SongDetailPage() {
     }
 
     if (promotedSongBandType) {
-      const bandLabel = songBandTypeLabel(promotedSongBandType, t);
+      const bandLabel = bandTypeLabel(promotedSongBandType, t);
       items.push({
         id: songDetailBandQuickLinkId(promotedSongBandType),
         label: bandLabel,
@@ -566,7 +567,7 @@ export default function SongDetailPage() {
     }
 
     for (const bandType of trailingSongBandTypes) {
-      const bandLabel = songBandTypeLabel(bandType, t);
+      const bandLabel = bandTypeLabel(bandType, t);
       items.push({
         id: songDetailBandQuickLinkId(bandType),
         label: bandLabel,

@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-14
-last_verified_commit: a20b9d89
+last_verified_commit: 76ddfd59
 sources:
   - FortniteFestival.Core/FortniteFestival.Core.csproj
   - FortniteFestival.Core/Config/InstrumentType.cs
@@ -10,7 +10,10 @@ sources:
   - packages/core/src/index.ts
   - packages/core/src/api/serverTypes.ts
   - packages/core/src/suggestions/suggestionGenerator.ts
+  - packages/theme/package.json
   - packages/theme/src/index.ts
+  - packages/theme/src/colorHelpers.ts
+  - packages/ui-utils/package.json
   - packages/ui-utils/src/index.ts
 update_triggers:
   - Shared project targets, package exports, instrument/song types, API types, theme tokens, or utilities change.
@@ -38,7 +41,16 @@ the service host.
 | `@festival/ui-utils` | Small platform and stagger utilities shared across UI code |
 
 The web app consumes these packages directly from source through Yarn portal
-dependencies. Package exports are the public boundary.
+dependencies. Package exports are the public boundary. `@festival/theme` and
+`@festival/ui-utils` expose only their root barrels and package metadata, and
+declare their audited modules side-effect-free. Web TypeScript and Vite
+resolution use those portal/package contracts rather than source aliases;
+static tests reject deep imports and direct package-source traversal.
+
+`@festival/theme` is also the source for the generated global CSS custom
+properties. The explicit generator mapping preserves stable CSS names while
+making token drift a build failure. Accuracy interpolation and its shared
+gradient derive from the same low/high endpoints for charts and demos.
 
 `@festival/core` owns the stateful suggestion generator. Rival data may arrive
 after a mix has initialized or may refresh later; `setRivalData` queues the

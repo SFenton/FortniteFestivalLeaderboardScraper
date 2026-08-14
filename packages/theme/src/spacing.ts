@@ -46,6 +46,7 @@ export const LineHeight = {
   sm: 16,
   md: 18,
   lg: 20,
+  tight: 1.2,
   snug: 1.4,
   relaxed: 1.5,
   loose: 1.6,
@@ -157,6 +158,10 @@ export const ChartSize = {
 
 export const GeneralSize = {
   thumb: 44,
+  profileCircle: 64,
+  album: 100,
+  glow: 125,
+  settingsSliderPadding: 48,
 } as const;
 
 /** @deprecated Use IconSize, InstrumentSize, StarSize, AlbumArtSize, MetadataSize, ChartSize, GeneralSize instead. */
@@ -191,8 +196,8 @@ export const Size = {
   dotRadiusActive: MetadataSize.dotRadiusActive,
   barSelectionStroke: ChartSize.barSelectionStroke,
   instrumentBtn: InstrumentSize.button,
-  profileCircleSize: 64,
-  settingsSliderPadding: 48,
+  profileCircleSize: GeneralSize.profileCircle,
+  settingsSliderPadding: GeneralSize.settingsSliderPadding,
 } as const;
 
 export const MaxWidth = {

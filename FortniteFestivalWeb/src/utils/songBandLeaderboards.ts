@@ -1,18 +1,11 @@
 import type { PlayerBandEntry, PlayerBandType, ServerInstrumentKey, SongBandLeaderboardEntry } from '@festival/core/api';
 import { resolveBandComboDisplayedMembers } from './bandComboMemberDisplay';
+import { BAND_TYPES, coerceBandType } from './bandTypes';
 
-export const SONG_BAND_TYPES: PlayerBandType[] = ['Band_Duets', 'Band_Trios', 'Band_Quad'];
+export const SONG_BAND_TYPES: readonly PlayerBandType[] = BAND_TYPES;
 
 export function coerceSongBandType(value: string | undefined): PlayerBandType | null {
-  return SONG_BAND_TYPES.includes(value as PlayerBandType) ? (value as PlayerBandType) : null;
-}
-
-export function songBandTypeLabel(type: PlayerBandType, t: (key: string) => string): string {
-  switch (type) {
-    case 'Band_Duets': return t('bandList.groups.duos');
-    case 'Band_Trios': return t('bandList.groups.trios');
-    case 'Band_Quad': return t('bandList.groups.quads');
-  }
+  return coerceBandType(value) as PlayerBandType | null;
 }
 
 export function songBandToPlayerBandEntry(entry: SongBandLeaderboardEntry, activeFilterInstruments?: readonly ServerInstrumentKey[]): PlayerBandEntry {

@@ -8,11 +8,16 @@ import { Colors, Gap, Radius, Layout, MaxWidth, Shadow, ZIndex, Align, Position,
 import { safeAreaBottomOffset } from '../../../utils/safeAreaStyles';
 import { useIOSKeyboardPanGuard } from '../../../hooks/ui/useIOSKeyboardPanGuard';
 import { usePressAction } from '../../../hooks/ui/usePressAction';
-import { SONGS_FAB_KEYBOARD_INSET_VAR, SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR } from '../../../constants/keyboardLayoutVars';
+import { KEYBOARD_VIEWPORT_CLEARANCE, SONGS_FAB_KEYBOARD_INSET_VAR, SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR } from '../../../constants/keyboardLayoutVars';
 import SearchBar, { type SearchBarRef } from '../../common/SearchBar';
 import FABMenu from './FABMenu';
+import {
+  DEFAULT_DOCK_LABEL_LAYOUT,
+  areDockLabelLayoutsEqual,
+  calculateDockLabelLayout,
+  type DockLabelLayout,
+} from './fabDockLayout';
 
-const KEYBOARD_CLEARANCE = 12;
 const DOCK_ACTION_FADE_MS = 280;
 const DOCK_SEARCH_EXPAND_MS = 360;
 const DOCK_LABEL_MIN_GAP = Gap.sm;
@@ -81,20 +86,6 @@ interface Props {
 
 type SearchGestureEvent = ReactPointerEvent<HTMLDivElement> | ReactTouchEvent<HTMLDivElement> | ReactMouseEvent<HTMLDivElement>;
 type DockActionsPhase = 'visible' | 'fadingOut' | 'collapsed' | 'expandingIn';
-
-interface DockLabelLayout {
-  showLabels: boolean;
-  searchWidth: number;
-  searchTargetWidth: number;
-  actionWidths: number[];
-}
-
-const DEFAULT_DOCK_LABEL_LAYOUT: DockLabelLayout = {
-  showLabels: false,
-  searchWidth: Layout.fabSize,
-  searchTargetWidth: Layout.fabSize,
-  actionWidths: [],
-};
 
 export default function FloatingActionButton({
   mode,
@@ -281,36 +272,19 @@ export default function FloatingActionButton({
     }
 
     const measuredWidths = measuredControls.map(control => Math.ceil(control.getBoundingClientRect().width || control.offsetWidth || Layout.fabSize));
-    const searchWidth = Math.max(Layout.fabSize, measuredWidths[0] ?? Layout.fabSize);
-    const actionWidths = (dockActions ?? []).map((action, index) => (
-      action.iconAccessory ? Math.max(Layout.fabSize, measuredWidths[index + 1] ?? Layout.fabSize) : Layout.fabSize
-    ));
-    const visibleControlCount = 1 + actionWidths.length;
-    const actionWidthsTotal = actionWidths.reduce((total, width) => total + width, 0);
-    const labelGapTotal = DOCK_LABEL_MIN_GAP * visibleControlCount;
-    const availableSearchWidth = stageWidth
-      - actionWidthsTotal
-      - (hasDockMainFab ? Layout.fabSize : 0)
-      - labelGapTotal;
-    const showLabels = availableSearchWidth >= searchWidth;
-    const nextLayout = {
-      showLabels,
-      searchWidth,
-      searchTargetWidth: Math.max(Layout.fabSize, availableSearchWidth),
-      actionWidths,
-    };
+    const nextLayout = calculateDockLabelLayout({
+      stageWidth,
+      measuredWidths,
+      actionHasAccessory: (dockActions ?? []).map(
+        action => !!action.iconAccessory,
+      ),
+      hasMainFab: hasDockMainFab,
+    });
 
     setDockLabelLayout(previous => {
-      if (
-        previous.showLabels === nextLayout.showLabels
-        && previous.searchWidth === nextLayout.searchWidth
-        && previous.searchTargetWidth === nextLayout.searchTargetWidth
-        && previous.actionWidths.length === nextLayout.actionWidths.length
-        && previous.actionWidths.every((width, index) => width === nextLayout.actionWidths[index])
-      ) {
-        return previous;
-      }
-      return nextLayout;
+      return areDockLabelLayoutsEqual(previous, nextLayout)
+        ? previous
+        : nextLayout;
     });
     revealDockLayout();
   }, [dockActionCount, dockMeasurementSignature, hasDockMainFab, revealDockLayout, useSongsDock]);
@@ -481,7 +455,7 @@ export default function FloatingActionButton({
     const visualViewportLoss = baseline - visibleBottom;
     const innerHeightLoss = baseline - window.innerHeight;
     const viewportLoss = Math.max(0, Math.round(visualViewportLoss), Math.round(innerHeightLoss));
-    const desiredBottom = visibleBottom - KEYBOARD_CLEARANCE;
+    const desiredBottom = visibleBottom - KEYBOARD_VIEWPORT_CLEARANCE;
     const currentInset = keyboardInsetRef.current;
     const rawBottoms = [searchOuterRef.current, fabContainerRef.current]
       .map(el => {

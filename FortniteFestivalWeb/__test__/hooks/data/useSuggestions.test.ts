@@ -264,6 +264,31 @@ describe('useSuggestions', () => {
     expect(mockGeneratorInstances[0]!.setRivalData).toHaveBeenCalledTimes(1);
   });
 
+  it('discards a cached mix when a different source commits before it is ready', () => {
+    const batch = [{ key: 'cached', title: 'Cached', songs: [] }];
+    mockGetNext.mockReturnValue(batch);
+    const songs = [{ _title: 'S', track: { su: 's1', tt: 'S', an: 'A' } }] as any[];
+
+    const first = renderHook(() => useSuggestions('acc-first', songs, {}, 1), { wrapper });
+    expect(first.result.current.mixKey).toMatch(/^solo:acc-first:mix:/);
+    first.unmount();
+
+    const second = renderHook(
+      () => useSuggestions('acc-second', songs, {}, 1, { sourceReady: false }),
+      { wrapper },
+    );
+    expect(second.result.current.mixKey).toBeNull();
+    second.unmount();
+
+    const returning = renderHook(
+      () => useSuggestions('acc-first', songs, {}, 1, { sourceReady: false }),
+      { wrapper },
+    );
+    expect(returning.result.current.mixKey).toBeNull();
+    expect(returning.result.current.categories).toEqual([]);
+    expect(mockGeneratorOptions).toHaveBeenCalledTimes(1);
+  });
+
   it('injects cached rival data before a fresh mix generates categories', async () => {
     mockGetNext.mockReturnValue([{ key: 'cat', title: 'Category', songs: [] }]);
     const songs = [{ _title: 'S', track: { su: 's1', tt: 'S', an: 'A' } }] as any[];

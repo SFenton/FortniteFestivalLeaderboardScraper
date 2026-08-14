@@ -29,12 +29,6 @@ export default defineConfig(({ mode }) => {
       __CORE_VERSION__: JSON.stringify(corePkg.version),
       __THEME_VERSION__: JSON.stringify(themePkg.version),
     },
-    resolve: {
-      alias: {
-        '@festival/theme': path.resolve(__dirname, '../packages/theme/src'),
-        '@festival/ui-utils': path.resolve(__dirname, '../packages/ui-utils/src'),
-      },
-    },
     test: {
       environment: 'jsdom',
       globals: true,
