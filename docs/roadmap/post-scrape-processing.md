@@ -2,7 +2,7 @@
 status: roadmap
 owner: worker
 last_verified: 2026-08-13
-last_verified_commit: aa33576e
+last_verified_commit: a7899955
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs

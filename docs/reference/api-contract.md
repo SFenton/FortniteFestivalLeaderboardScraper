@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-13
-last_verified_commit: aa33576e
+last_verified_commit: a7899955
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
