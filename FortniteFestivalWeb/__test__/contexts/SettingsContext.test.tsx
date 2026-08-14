@@ -90,10 +90,10 @@ describe('SettingsContext', () => {
   describe('visiblePathInstruments', () => {
     it('filters out unsupported path instruments even when they are visible in settings', () => {
       const visible = visiblePathInstruments(defaultAppSettings());
-      expect(visible).toHaveLength(6);
+      expect(visible).toHaveLength(8);
       expect(visible).not.toContain('Solo_PeripheralVocals');
-      expect(visible).not.toContain('Solo_PeripheralDrums');
-      expect(visible).not.toContain('Solo_PeripheralCymbals');
+      expect(visible).toContain('Solo_PeripheralDrums');
+      expect(visible).toContain('Solo_PeripheralCymbals');
     });
 
     it('still respects normal instrument visibility settings', () => {
@@ -102,7 +102,7 @@ describe('SettingsContext', () => {
         showDrums: false,
         showProBass: false,
       });
-      expect(visible).toHaveLength(4);
+      expect(visible).toHaveLength(6);
       expect(visible).not.toContain('Solo_Drums');
       expect(visible).not.toContain('Solo_PeripheralBass');
     });
@@ -117,8 +117,6 @@ describe('SettingsContext', () => {
       expect(hasUnavailablePathInstrumentsEnabled({
         ...defaultAppSettings(),
         showPeripheralVocals: false,
-        showPeripheralDrums: false,
-        showPeripheralCymbals: false,
       })).toBe(false);
     });
   });

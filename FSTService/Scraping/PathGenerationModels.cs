@@ -8,7 +8,8 @@ public sealed record PathInstrumentDefinition(
     string ProviderProperty,
     string Instrument,
     string MidiVariant,
-    string ChoptInstrument);
+    string ChoptInstrument,
+    bool DisableProDrums = false);
 
 public static class PathGenerationInstruments
 {
@@ -20,6 +21,14 @@ public static class PathGenerationInstruments
         new("vl", "Solo_Vocals", "og", "vocals"),
         new("pg", "Solo_PeripheralGuitar", "pro", "guitar"),
         new("pb", "Solo_PeripheralBass", "pro", "bass"),
+        // CHOpt's FNF prodrums mode reads PLASTIC DRUMS from the original MIDI.
+        new("pd", "Solo_PeripheralCymbals", "og", "prodrums"),
+        new(
+            "pd",
+            "Solo_PeripheralDrums",
+            "og",
+            "prodrums",
+            DisableProDrums: true),
     ];
 
     public static readonly IReadOnlyList<string> Difficulties =

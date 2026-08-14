@@ -319,8 +319,8 @@ describe('SongDetailPage', () => {
       showProLead: false,
       showProBass: false,
       showPeripheralVocals: true,
-      showPeripheralCymbals: true,
-      showPeripheralDrums: true,
+      showPeripheralCymbals: false,
+      showPeripheralDrums: false,
     }));
 
     renderSongDetail();
@@ -328,6 +328,26 @@ describe('SongDetailPage', () => {
       expect(screen.getByText('Test Song')).toBeDefined();
     });
     expect(screen.queryByText('View Paths')).toBeNull();
+  });
+
+  it('shows View Paths when only plastic drum path instruments are enabled', async () => {
+    localStorage.setItem('fst:appSettings', JSON.stringify({
+      showLead: false,
+      showBass: false,
+      showDrums: false,
+      showVocals: false,
+      showProLead: false,
+      showProBass: false,
+      showPeripheralVocals: false,
+      showPeripheralCymbals: true,
+      showPeripheralDrums: true,
+    }));
+
+    renderSongDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('View Paths')).toBeDefined();
+    });
   });
 
   it('renders instrument cards after loading', async () => {

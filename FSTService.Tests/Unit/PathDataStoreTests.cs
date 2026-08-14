@@ -126,6 +126,8 @@ public sealed class PathDataStoreTests : IDisposable
             MaxVocalsScore = 70000,
             MaxProLeadScore = 110000,
             MaxProBassScore = 90000,
+            MaxProCymbalsScore = 130000,
+            MaxProDrumsScore = 125000,
             GeneratedAt = "2026-01-01T00:00:00Z",
             CHOptVersion = "1.10.3",
         };
@@ -138,6 +140,8 @@ public sealed class PathDataStoreTests : IDisposable
         Assert.Equal(100000, all["song1"].MaxLeadScore);
         Assert.Equal(80000, all["song1"].MaxBassScore);
         Assert.Equal(120000, all["song1"].MaxDrumsScore);
+        Assert.Equal(130000, all["song1"].MaxProCymbalsScore);
+        Assert.Equal(125000, all["song1"].MaxProDrumsScore);
         Assert.Equal(70000, all["song1"].MaxVocalsScore);
         Assert.Equal(110000, all["song1"].MaxProLeadScore);
         Assert.Equal(90000, all["song1"].MaxProBassScore);
@@ -449,6 +453,8 @@ public sealed class SongMaxScoresTests
     [InlineData("Solo_Vocals", 400)]
     [InlineData("Solo_PeripheralGuitar", 500)]
     [InlineData("Solo_PeripheralBass", 600)]
+    [InlineData("Solo_PeripheralCymbals", 700)]
+    [InlineData("Solo_PeripheralDrums", 800)]
     public void GetByInstrument_returns_correct_score(string instrument, int score)
     {
         var ms = new SongMaxScores();
@@ -471,5 +477,36 @@ public sealed class SongMaxScoresTests
         // Should not throw and no field should be set
         Assert.Null(ms.MaxLeadScore);
         Assert.Null(ms.MaxBassScore);
+    }
+
+    [Fact]
+    public void Schema_contains_distinct_plastic_drum_max_score_columns()
+    {
+        using var dataSource = SharedPostgresContainer.CreateDatabase();
+        using var conn = dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'songs'
+              AND column_name = ANY(@columns)
+            ORDER BY column_name
+            """;
+        cmd.Parameters.AddWithValue(
+            "columns",
+            new[]
+            {
+                "max_pro_cymbals_score",
+                "max_pro_drums_score",
+            });
+        using var reader = cmd.ExecuteReader();
+        var columns = new List<string>();
+        while (reader.Read())
+            columns.Add(reader.GetString(0));
+
+        Assert.Equal(
+            ["max_pro_cymbals_score", "max_pro_drums_score"],
+            columns);
     }
 }

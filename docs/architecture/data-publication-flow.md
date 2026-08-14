@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-11
-last_verified_commit: 453fd9b6
+last_verified: 2026-08-13
+last_verified_commit: 96ed9680
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -42,6 +42,8 @@ diagnostic or replay data without becoming the published generation.
 6. **Post-processing**
    - `PostScrapeOrchestrator` owns enrichment, registered-user refresh,
      projections, rankings, rivals, statistics, precomputation, and cleanup.
+   - Per-instrument validity, leeway, and ranking calculations consume the
+     eight persisted CHOpt maxima, including distinct plastic-drums modes.
    - Publication-critical outcomes can reject the candidate; best-effort
      failures remain visible without silently changing their classification.
 7. **Prepare publication**

@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-12
-last_verified_commit: 3ff9cbc8
+last_verified: 2026-08-13
+last_verified_commit: 96ed9680
 sources:
   - FSTService/appsettings.json
   - FSTService/Program.cs
@@ -54,7 +54,7 @@ overrides intentionally diverge between the public service and mutation worker.
 | `Scraper:EnablePathGeneration` | `true` | Allows explicit path generation |
 | `Scraper:EnableAutomaticPathGeneration` | `false` | Processes only pending songs from background catalog refresh when enabled |
 | `Scraper:PathGenerationParallelism` | `4` | Maximum concurrent CHOpt processes |
-| `Scraper:PathGenerationProfile` | `chopt-fnf-ew0-s20-json-png-v2` | Semantic identity for arguments and artifact schema |
+| `Scraper:PathGenerationProfile` | `chopt-fnf-ew0-s20-json-png-prodrums-v3` | Semantic identity for arguments, eight-instrument scope, and artifact schema |
 
 The MIDI decryption key is operator-supplied and must not appear in logs,
 documentation, artifacts, or commands. Profile changes invalidate selected

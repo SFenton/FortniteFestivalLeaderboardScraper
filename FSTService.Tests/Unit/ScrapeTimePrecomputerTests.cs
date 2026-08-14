@@ -743,6 +743,8 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
             case "Solo_Vocals": ms.MaxVocalsScore = maxScore; break;
             case "Solo_PeripheralGuitar": ms.MaxProLeadScore = maxScore; break;
             case "Solo_PeripheralBass": ms.MaxProBassScore = maxScore; break;
+            case "Solo_PeripheralCymbals": ms.MaxProCymbalsScore = maxScore; break;
+            case "Solo_PeripheralDrums": ms.MaxProDrumsScore = maxScore; break;
         }
         return ms;
     }

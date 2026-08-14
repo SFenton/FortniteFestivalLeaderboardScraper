@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-12
-last_verified_commit: 3ff9cbc8
+last_verified: 2026-08-13
+last_verified_commit: 96ed9680
 sources:
   - FSTService/Program.cs
   - FSTService/HostedWorkerMode.cs
@@ -57,6 +57,9 @@ Path PNG and JSON routes are publication-bound and resolve one current
 immutable artifact generation. The protected single-song regeneration route
 uses the same atomic promotion path; it is not a full-catalogue bulk endpoint.
 See [Path generation](path-generation.md).
+
+The path route validates the eight generated solo instruments, including the
+two plastic-drums scoring modes backed by Epic's shared `pd` chart.
 
 The current source contains 80 HTTP mappings across 14 route-bearing endpoint
 files, plus `/api/ws`. Integration tests classify each intentional route as:

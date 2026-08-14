@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-12
-last_verified_commit: 41c3bdb4
+last_verified: 2026-08-13
+last_verified_commit: 96ed9680
 sources:
   - FSTService/Scraping/PathGenerationCoordinator.cs
   - FSTService/Scraping/PathArtifactResolver.cs
@@ -31,7 +31,10 @@ together as an immutable generation.
 2. The configured MIDI key decrypts the chart in a private staging directory.
 3. CHOpt runs once for each expected instrument and each of `easy`, `medium`,
    `hard`, and `expert`, using the `fnf` engine, zero early whammy, and 20%
-   squeeze.
+   squeeze. Plastic-drums charts generate two modes from Epic's `pd` chart:
+   `Solo_PeripheralCymbals` uses `-i prodrums` so cymbals score 42 and toms
+   score 36, while `Solo_PeripheralDrums` also passes `--no-pro-drums` so all
+   gems score 36.
 4. FST validates every PNG and JSON artifact. Expert scores must be positive.
    PNGs may be up to 32,768 pixels on either axis, while the independent
    256 MiB decoded-image limit still rejects oversized or compressed-bomb
@@ -49,7 +52,8 @@ hash, or profile mismatch makes a selected song non-skippable.
 
 ## JSON contract
 
-Profile `chopt-fnf-ew0-s20-json-png-v2` requires JSON `schemaVersion: 2`.
+Profile `chopt-fnf-ew0-s20-json-png-prodrums-v3` requires JSON
+`schemaVersion: 2`.
 Every `activations[]` entry has one authoritative `instruction` plus:
 
 - image-range `startBeat`/`endBeat` and seconds;
@@ -81,8 +85,9 @@ The publication-bound routes are:
 - `GET /api/paths/{songId}/{instrument}/{difficulty}/data` for JSON.
 
 An optional `generationId` query must equal the song's current generation.
-The browser's Text view renders exactly one row per activation, using schema-v2
-structured fields when present and the legacy `pathSummary` fallback otherwise.
+The browser's Text view renders exactly one row per activation. It shows the
+structured fret cue, beat, time, Overdrive, and score fields without exposing
+raw CHOpt instruction notation.
 
 `POST /api/admin/regenerate-paths` is protected by `X-API-Key` and requires one
 `songId`. `force=true` is for bounded canaries. Catalogue regeneration must
@@ -96,10 +101,16 @@ The Linux CLI and runtime libraries are pinned under
 FSTService image. Update the bundled README, source commit, version, SHA, and
 license manifest together.
 
-Deploy the schema-v2 binary and the `-v2` profile in the same service image.
-The profile-derived validator accepts legacy `-v1` output only when the
-configured profile remains `-v1`; switching the profile is the atomic
-fail-closed contract and regeneration trigger.
+The profile-derived validator accepts both the prior v2 profile and the
+eight-instrument v3 profile as schema-v2 JSON. Switching to v3 changes the
+expected instrument set and is the atomic fail-closed regeneration trigger.
+While an immutable v2 song is pending v3 regeneration, the two plastic-drums
+routes return unavailable rather than falling back to stale legacy artifacts.
+
+Before deploying the v3 service, run the existing
+`--initialize-schema-only` one-shot with that image. It adds the nullable,
+idempotent `max_pro_cymbals_score` and `max_pro_drums_score` columns before any
+role queries or promotes the expanded path state.
 
 Before a canary or full regeneration, apply
 [Live safety](../operations/live-safety.md):
@@ -112,13 +123,21 @@ Before a canary or full regeneration, apply
    pro strings, drums, multiple difficulties, and known delayed activations;
 5. require one instruction per activation, matching PNG/JSON generation
    identity, the expected CHOpt version/hash/profile, zero generation errors,
-   and accepted expert-score/path parity;
+   and accepted expert-score/path parity. Plastic-drums canaries additionally
+   require observed leaderboard scores to remain below the applicable CHOpt
+   maximum and require the cymbal-mode maximum to be greater than or equal to
+   the no-cymbal maximum;
 6. stop on unexplained maximum-score changes because maxima feed ranking and
    leaderboard validity calculations;
 7. run the catalogue sequentially and preserve a resumable state manifest on
    the 4 TB FST drive;
 8. verify the named canaries and catalogue-wide schema/profile counts before
    returning the worker to normal operation.
+
+All current songs expose `pd`, so v3 adds 5,616 JSON and 5,616 PNG artifacts
+across the two plastic-drums modes and four difficulties. Atomic generations
+still rebuild the complete expected set, approximately 22,448 CHOpt
+invocations for the current 702-song catalogue.
 
 Rollback keeps the prior immutable generation directories. Do not delete them
 until the new catalogue, rankings implications, and browser parity are

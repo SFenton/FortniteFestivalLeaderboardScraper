@@ -150,6 +150,8 @@ public sealed class PathArtifactValidationTests
     [InlineData(null, null)]
     [InlineData("chopt-fnf-ew0-s20-json-png-v1", null)]
     [InlineData("chopt-fnf-ew0-s20-json-png-v2", 2)]
+    [InlineData("custom-profile-v2", 2)]
+    [InlineData("chopt-fnf-ew0-s20-json-png-prodrums-v3", 2)]
     public void JsonValidation_MapsProfilesToRequiredSchema(
         string? profile,
         int? expected)

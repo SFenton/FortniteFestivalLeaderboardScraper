@@ -264,7 +264,22 @@ public static partial class ApiEndpoints
             extension,
             generationId);
         if (artifact is null)
+        {
+            if (resolver.IsUnavailableInCurrentGeneration(
+                    songId,
+                    instrument,
+                    generationId))
+            {
+                return Results.NotFound(new
+                {
+                    error = extension == "png"
+                        ? "Path image not yet generated for this song/instrument/difficulty."
+                        : "Path data not yet generated for this song/instrument/difficulty.",
+                });
+            }
+
             return Results.BadRequest(new { error = "Invalid path." });
+        }
         if (!File.Exists(artifact.FilePath))
         {
             return Results.NotFound(new

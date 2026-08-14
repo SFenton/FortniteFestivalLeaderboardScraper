@@ -317,6 +317,10 @@ export default function PathsModal({ visible, songId, generationId, sig, onClose
                     onSelect={(key) => { if (key && key === selected) setInstOpen(false); else if (key) setSelected(key); }}
                     hiddenInstruments={PATH_UNAVAILABLE_INSTRUMENTS}
                     required
+                    compactLabels={{
+                      previous: t('paths.previousInstrument'),
+                      next: t('paths.nextInstrument'),
+                    }}
                     sig={sig}
                   />
                 </div>
@@ -394,6 +398,10 @@ export default function PathsModal({ visible, songId, generationId, sig, onClose
                   hiddenInstruments={PATH_UNAVAILABLE_INSTRUMENTS}
                   required
                   compact={false}
+                  compactLabels={{
+                    previous: t('paths.previousInstrument'),
+                    next: t('paths.nextInstrument'),
+                  }}
                   sig={sig}
                 />
               </div>

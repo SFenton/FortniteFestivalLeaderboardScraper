@@ -44,7 +44,6 @@ interface TableRow {
   frets: PathDataNote['frets'];
   beat: number;
   seconds: number;
-  instruction: string;
   odPercent?: number;
   cumulativeScore?: number;
 }
@@ -60,28 +59,6 @@ const FRET_COLORS: Record<FretKey, string> = {
   orange: '#E67E22',
 };
 const FRET_INACTIVE = Colors.surfaceMuted;
-
-const PATH_SUMMARY_METADATA_PREFIXES = [
-  'Path:',
-  'No SP score:',
-  'Total score:',
-  'Average multiplier:',
-  'Optimising',
-  'Optimizing',
-  'Optimisation',
-  'Optimization',
-  'Setting up',
-];
-
-export function extractPathInstructions(pathSummary: string): string[] {
-  return pathSummary
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(line => (
-      line.length > 0
-      && !PATH_SUMMARY_METADATA_PREFIXES.some(prefix => line.startsWith(prefix))
-    ));
-}
 
 export function buildPathRows(data: PathDataResponse): TableRow[] {
   // Build sorted notes array for tolerance-based lookup
@@ -142,9 +119,8 @@ export function buildPathRows(data: PathDataResponse): TableRow[] {
         : undefined;
   }
 
-  const instructions = extractPathInstructions(data.pathSummary);
   const rows: TableRow[] = [];
-  for (const [index, act] of data.activations.entries()) {
+  for (const act of data.activations) {
     const startNote = act.startNotes?.[0];
     const beat = act.activationBeat ?? startNote?.beat ?? act.startBeat;
     const anchorBeat = act.anchorBeat ?? startNote?.beat ?? findAnchorBeat(beat);
@@ -155,7 +131,6 @@ export function buildPathRows(data: PathDataResponse): TableRow[] {
         ?? startNote?.seconds
         ?? act.startSeconds
         ?? 0,
-      instruction: act.instruction ?? instructions[index] ?? '',
       odPercent: act.odAtActivation === undefined
         ? startNote === undefined ? undefined : startNote.odPercent * 100
         : act.odAtActivation * 100,
@@ -177,7 +152,7 @@ const scoreFormatter = new Intl.NumberFormat('en-US');
 // ── Column ordering ──────────────────────────────────────────
 
 const COLUMN_WIDTHS: Record<ColumnKey, string> = {
-  note: 'minmax(260px, 1.6fr)',
+  note: 'minmax(190px, 1fr)',
   beat: '80px',
   time: '110px',
   od: '1fr',
@@ -374,7 +349,6 @@ export default memo(function PathDataTable({ data, isMobile, columnOrder = DEFAU
       case 'note':
         return (
           <div key={col} style={s.cellNote}>
-            {row.instruction && <span style={s.instruction}>{row.instruction}</span>}
             <div style={s.fretRow}>
               {FRET_KEYS.map(fk => (
                 <FretPill key={fk} fretKey={fk} active={row.frets[fk] !== undefined} />
@@ -414,7 +388,6 @@ export default memo(function PathDataTable({ data, isMobile, columnOrder = DEFAU
               <>
                 <div>
                   <div style={s.mobileLabelNote}>{t('paths.colNote')}</div>
-                  {row.instruction && <div style={s.mobileInstruction}>{row.instruction}</div>}
                   <div style={s.fretRow}>
                     {FRET_KEYS.map(fk => (
                       <FretPill key={fk} fretKey={fk} active={row.frets[fk] !== undefined} />
@@ -525,7 +498,7 @@ function useTableStyles(isMobile: boolean, columnOrder: ColumnKey[] = DEFAULT_CO
         fontWeight: Weight.semibold,
         textTransform: 'uppercase' as const,
         letterSpacing: Font.letterSpacingWide,
-        marginBottom: Gap.md,
+        marginBottom: Gap.sm,
       } as CSSProperties,
       mobileLabelOd: {
         fontSize: Font.xs,
@@ -538,31 +511,13 @@ function useTableStyles(isMobile: boolean, columnOrder: ColumnKey[] = DEFAULT_CO
       cellNote: {
         ...cellBase,
         alignItems: isMobile ? 'flex-start' : 'center',
-        flexDirection: 'column',
         justifyContent: 'center',
-        gap: Gap.sm,
         minWidth: 0,
-        whiteSpace: 'normal',
       } as CSSProperties,
       cell: { ...cellBase, justifyContent: isMobile ? 'flex-start' : 'center' } as CSSProperties,
       cellMono: { ...cellBase, justifyContent: isMobile ? 'flex-start' : 'center' } as CSSProperties,
       cellOd: { ...cellBase, justifyContent: isMobile ? 'flex-start' : 'center', minWidth: 0, width: '100%' } as CSSProperties,
       cellScore: { ...cellBase, justifyContent: isMobile ? 'flex-start' : 'center', fontVariantNumeric: 'tabular-nums', fontWeight: Weight.semibold } as CSSProperties,
-      instruction: {
-        width: '100%',
-        color: Colors.textPrimary,
-        fontSize: Font.sm,
-        fontWeight: Weight.semibold,
-        lineHeight: 1.35,
-        textAlign: TextAlign.left,
-      } as CSSProperties,
-      mobileInstruction: {
-        color: Colors.textPrimary,
-        fontSize: Font.sm,
-        fontWeight: Weight.semibold,
-        lineHeight: 1.35,
-        marginBottom: Gap.md,
-      } as CSSProperties,
       missingValue: {
         ...cellBase,
         justifyContent: isMobile ? 'flex-start' : 'center',
