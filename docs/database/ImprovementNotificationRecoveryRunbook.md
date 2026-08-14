@@ -5,9 +5,12 @@ last_verified: 2026-08-11
 last_verified_commit: 453fd9b6
 sources:
   - FSTService/Persistence/ImprovementNotificationRecoveryService.cs
+  - FSTService/Persistence/ImprovementNotificationService.cs
   - FSTService/Program.cs
+  - FSTService/Scraping/PathGenerationCoordinator.cs
+  - FSTService/Scraping/RankingsCalculator.cs
 update_triggers:
-  - Notification recovery commands, markers, projection plans, gates, validation, or rollback change.
+  - Notification recovery commands, markers, projection plans, max-score correction safety, gates, validation, or rollback change.
 ---
 
 # Improvement Notification Recovery Runbook
@@ -75,6 +78,27 @@ single-song administration remains available through
 `POST /api/admin/regenerate-paths`; it uses the normal atomic generation and
 compare-and-swap path and is not a replacement for the retired exact-four
 workflow.
+
+### Future max-score corrections
+
+A new provider-metadata or CHOpt maximum defect is a new maintenance event, not
+authorization to restore the retired exact-four commands. Make the recurring
+generation rule correct first, then use a separately reviewed maintenance path
+that:
+
+1. stages and validates the affected immutable generations;
+2. freezes public reads before promotion;
+3. promotes the complete path metadata atomically;
+4. rebuilds affected song statistics and all ranking families that consume the
+   maxima;
+5. evaluates notification candidates as maintenance effects rather than normal
+   player improvements; and
+6. validates paths, maxima, rankings, caches, notification state, and rollback
+   evidence before unfreezing.
+
+The generic single-song regeneration endpoint alone is not completion evidence
+for a maximum-score correction because derived rankings and notification
+semantics are outside that command.
 
 ### Retained audit and delivery safety
 

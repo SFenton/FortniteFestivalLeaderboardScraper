@@ -29,19 +29,25 @@ together as an immutable generation.
 1. FST downloads the encrypted Festival MIDI `.dat` file and verifies its
    content hash.
 2. The configured MIDI key decrypts the chart in a private staging directory.
-3. CHOpt runs once for each expected instrument and each of `easy`, `medium`,
+3. Expected instruments normally come from property presence in Epic's raw
+   intensity object. Stable song-ID corrections add Lead and Pro Lead for
+   `Run It` and `Show Them Who We Are`: Epic omits both `gr` and `pg` even
+   though each MIDI contains `PART GUITAR` and `PLASTIC GUITAR` and both
+   leaderboards are populated. This correction is part of normal generation
+   so a later regeneration cannot silently remove those maxima.
+4. CHOpt runs once for each expected instrument and each of `easy`, `medium`,
    `hard`, and `expert`, using the `fnf` engine, zero early whammy, and 20%
    squeeze. Plastic-drums charts generate two modes from Epic's `pd` chart:
    `Solo_PeripheralCymbals` uses `-i prodrums` so cymbals score 42 and toms
    score 36, while `Solo_PeripheralDrums` also passes `--no-pro-drums` so all
    gems score 36.
-4. FST validates every PNG and JSON artifact. Expert scores must be positive.
+5. FST validates every PNG and JSON artifact. Expert scores must be positive.
    PNGs may be up to 32,768 pixels on either axis, while the independent
    256 MiB decoded-image limit still rejects oversized or compressed-bomb
    payloads. This accommodates the longest current Festival charts.
-5. A manifest records the song identity, `.dat` hash, CHOpt version and binary
+6. A manifest records the song identity, `.dat` hash, CHOpt version and binary
    SHA-256, generation profile, expected instruments, and expert maxima.
-6. The complete directory is moved into
+7. The complete directory is moved into
    `paths/<songId>/generations/<generationId>/` and promoted with a
    compare-and-swap update. Partial or conflicted attempts never replace the
    current generation.
@@ -93,6 +99,11 @@ raw CHOpt instruction notation.
 `songId`. `force=true` is for bounded canaries. Catalogue regeneration must
 submit songs sequentially with `force=false`; the v2 profile makes the run
 idempotent and resumable while already-promoted v2 songs skip.
+
+After deploying a new stable instrument correction, regenerate each affected
+song sequentially with `force=false`. Do not update nullable maximum columns
+directly: the normal path promotes the complete immutable generation and keeps
+the manifest, maxima, expected instruments, and revision coherent.
 
 ## Deployment and regeneration
 

@@ -80,6 +80,46 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
             request!.ExpectedInstruments);
     }
 
+    [Theory]
+    [InlineData("3d7901c9-7ae2-4adb-9393-4ec4c54c2e3b")]
+    [InlineData("ddd5447c-b5d7-4fe4-8f22-c9854168d11b")]
+    public void Song_request_restores_known_missing_guitar_intensities(
+        string songId)
+    {
+        var song = CreateSong(songId, new In());
+        using var provider = JsonDocument.Parse(
+            """
+            {
+              "track": {
+                "in": {
+                  "ba": 1,
+                  "ds": 2,
+                  "vl": 3,
+                  "pb": 1,
+                  "pd": 2
+                }
+              }
+            }
+            """);
+        song.providerJson = provider.RootElement.Clone();
+
+        var request = SongPathRequest.FromSong(song);
+
+        Assert.NotNull(request);
+        Assert.Equal(
+            [
+                "Solo_Guitar",
+                "Solo_Bass",
+                "Solo_Drums",
+                "Solo_Vocals",
+                "Solo_PeripheralGuitar",
+                "Solo_PeripheralBass",
+                "Solo_PeripheralCymbals",
+                "Solo_PeripheralDrums",
+            ],
+            request!.ExpectedInstruments);
+    }
+
     [Fact]
     public void Plastic_drum_path_definitions_use_distinct_scoring_modes()
     {

@@ -60,6 +60,16 @@ public sealed record SongPathRequest(
     string? LastModified,
     IReadOnlyList<string> ExpectedInstruments)
 {
+    private static readonly HashSet<string> MissingGuitarIntensitySongIds =
+        new(StringComparer.Ordinal)
+        {
+            "3d7901c9-7ae2-4adb-9393-4ec4c54c2e3b",
+            "ddd5447c-b5d7-4fe4-8f22-c9854168d11b",
+        };
+
+    private static readonly string[] MissingGuitarIntensityInstruments =
+        ["Solo_Guitar", "Solo_PeripheralGuitar"];
+
     public static SongPathRequest? FromSong(Song song)
     {
         if (string.IsNullOrWhiteSpace(song.track?.su) ||
@@ -82,22 +92,34 @@ public sealed record SongPathRequest(
 
     internal static string[] GetExpectedInstruments(Song song)
     {
+        IEnumerable<string> expected;
         if (TryGetRawIntensity(song, out var intensity))
         {
-            return PathGenerationInstruments.Definitions
+            expected = PathGenerationInstruments.Definitions
                 .Where(definition => intensity.TryGetProperty(definition.ProviderProperty, out _))
-                .Select(definition => definition.Instrument)
-                .ToArray();
+                .Select(definition => definition.Instrument);
+        }
+        else
+        {
+            var typedIntensity = song.track?.@in;
+            expected = typedIntensity is null
+                ? []
+                : PathGenerationInstruments.Definitions
+                    .Where(definition =>
+                        typedIntensity.HasProviderProperty(
+                            definition.ProviderProperty))
+                    .Select(definition => definition.Instrument);
         }
 
-        var typedIntensity = song.track?.@in;
-        if (typedIntensity is null)
-            return [];
+        // Epic omits gr/pg for these charts even though both guitar tracks
+        // exist in the MIDI and their live leaderboards are populated.
+        if (song.track?.su is { } songId &&
+            MissingGuitarIntensitySongIds.Contains(songId))
+        {
+            expected = expected.Concat(MissingGuitarIntensityInstruments);
+        }
 
-        return PathGenerationInstruments.Definitions
-            .Where(definition => typedIntensity.HasProviderProperty(definition.ProviderProperty))
-            .Select(definition => definition.Instrument)
-            .ToArray();
+        return PathGenerationInstruments.NormalizeExpected(expected);
     }
 
     private static bool TryGetRawIntensity(Song song, out JsonElement intensity)
