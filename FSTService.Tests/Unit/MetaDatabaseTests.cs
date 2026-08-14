@@ -4973,7 +4973,9 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Throws<RegistrationMutationBlockedException>(
             Db.AcquireRegistrationMutationLease);
 
-        Db.SetPublicReadFreeze(false, reason: reason);
+        Assert.Throws<InvalidOperationException>(() =>
+            Db.SetPublicReadFreeze(false, reason: reason));
+        ClearPublicReadFreezeForTest();
         Assert.False(Db.AreRegistrationMutationsBlocked());
         using var lease = Db.AcquireRegistrationMutationLease();
         Assert.True(Db.RegisterUser("web-tracker", "acct1"));
@@ -5034,6 +5036,292 @@ public sealed class MetaDatabaseTests : IDisposable
         await using var maintenanceLease =
             await maintenanceTask.WaitAsync(
                 TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task RegistrationMutationGate_isolates_more_than_pool_capacity_waiters_and_bounds_try_requests()
+    {
+        var connectionString =
+            new NpgsqlConnectionStringBuilder(
+                DataSource.ConnectionString)
+            {
+                MinPoolSize = 0,
+                MaxPoolSize = 15,
+            };
+        using var boundedDataSource =
+            NpgsqlDataSource.Create(
+                connectionString.ConnectionString);
+        using var boundedDb = new MetaDatabase(
+            boundedDataSource,
+            Substitute.For<ILogger<MetaDatabase>>(),
+            unpooledConnections:
+                new PostgresUnpooledConnectionFactory(
+                    connectionString.ConnectionString));
+        await using var maintenanceLease =
+            await boundedDb
+                .AcquireMaxScoreMaintenanceLeaseAsync(1);
+        using var waiterCancellation =
+            new CancellationTokenSource(
+                TimeSpan.FromSeconds(10));
+        var waiters = Enumerable.Range(0, 20)
+            .Select(_ => boundedDb
+                .AcquireRegistrationMutationLeaseAsync(
+                    waiterCancellation.Token))
+            .ToArray();
+
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        var waitingSessions = 0L;
+        while (DateTime.UtcNow < deadline)
+        {
+            await using var probe =
+                await boundedDataSource.OpenConnectionAsync();
+            await using var count = probe.CreateCommand();
+            count.CommandText = """
+                SELECT COUNT(*)
+                FROM pg_stat_activity
+                WHERE datname = current_database()
+                  AND application_name =
+                      'fst-registration-mutation'
+                  AND wait_event_type = 'Lock'
+                """;
+            waitingSessions = Convert.ToInt64(
+                await count.ExecuteScalarAsync());
+            if (waitingSessions > 15)
+                break;
+            await Task.Delay(25);
+        }
+        Assert.True(
+            waitingSessions > 15,
+            $"Expected more than 15 isolated waiters, observed {waitingSessions}.");
+
+        var stopwatch =
+            System.Diagnostics.Stopwatch.StartNew();
+        var tryRequests = Enumerable.Range(0, 32)
+            .Select(async _ =>
+                await Assert.ThrowsAsync<
+                    RegistrationMutationBlockedException>(
+                    () => boundedDb
+                        .TryAcquireRegistrationMutationLeaseAsync()))
+            .ToArray();
+        await Task.WhenAll(tryRequests)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        stopwatch.Stop();
+        Assert.True(
+            stopwatch.Elapsed < TimeSpan.FromSeconds(5));
+
+        await using (var health =
+                     await boundedDataSource.OpenConnectionAsync()
+                         .AsTask()
+                         .WaitAsync(TimeSpan.FromSeconds(2)))
+        await using (var command = health.CreateCommand())
+        {
+            command.CommandText = "SELECT 1";
+            Assert.Equal(
+                1,
+                Convert.ToInt32(
+                    await command.ExecuteScalarAsync()));
+        }
+
+        waiterCancellation.Cancel();
+        foreach (var waiter in waiters)
+        {
+            await Assert.ThrowsAnyAsync<
+                OperationCanceledException>(
+                async () => await waiter);
+        }
+    }
+
+    [Fact]
+    public async Task RegistrationMutationTryGate_does_not_barge_past_exclusive_waiter()
+    {
+        var sharedLease =
+            await Db.AcquireRegistrationMutationLeaseAsync();
+        var maintenanceTask =
+            Db.AcquireMaxScoreMaintenanceLeaseAsync(1);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        var exclusiveWaiting = false;
+        while (DateTime.UtcNow < deadline)
+        {
+            using var connection = DataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_stat_activity
+                    WHERE datname = current_database()
+                      AND application_name =
+                          'fst-max-score-maintenance'
+                      AND wait_event_type = 'Lock'
+                )
+                """;
+            exclusiveWaiting =
+                command.ExecuteScalar() is true;
+            if (exclusiveWaiting)
+                break;
+            await Task.Delay(25);
+        }
+        Assert.True(exclusiveWaiting);
+
+        await Assert.ThrowsAsync<
+            RegistrationMutationBlockedException>(
+            () => Db
+                .TryAcquireRegistrationMutationLeaseAsync());
+
+        await sharedLease.DisposeAsync();
+        await using var maintenanceLease =
+            await maintenanceTask.WaitAsync(
+                TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task RegistrationMutationGate_backend_loss_is_fenced_before_followup_write()
+    {
+        await using var sharedLease =
+            await Db.AcquireRegistrationMutationLeaseAsync();
+        await sharedLease.VerifyHeldAsync();
+
+        using (var terminator = DataSource.OpenConnection())
+        using (var terminate = terminator.CreateCommand())
+        {
+            terminate.CommandText =
+                "SELECT pg_terminate_backend(@backendProcessId)";
+            terminate.Parameters.AddWithValue(
+                "backendProcessId",
+                sharedLease.BackendProcessId);
+            Assert.True(terminate.ExecuteScalar() is true);
+        }
+
+        await Assert.ThrowsAsync<
+            RegistrationMutationBlockedException>(
+            () => sharedLease.VerifyHeldAsync());
+
+        await using (var maintenanceLease =
+                     await Db
+                         .AcquireMaxScoreMaintenanceLeaseAsync(1)
+                         .WaitAsync(TimeSpan.FromSeconds(5)))
+        {
+            await maintenanceLease.VerifyHeldAsync(
+                requireSourceLocks: false);
+            Assert.True(Db.AreRegistrationMutationsBlocked());
+            var blockedWrite =
+                Assert.Throws<PostgresException>(() =>
+                    Db.RegisterUser(
+                        "lost-lease-device",
+                        "lost-lease-account"));
+            Assert.Equal("55000", blockedWrite.SqlState);
+            var blockedScoreWrite =
+                Assert.Throws<PostgresException>(() =>
+                    Db.InsertScoreChange(
+                        "lost-lease-song",
+                        "Solo_Guitar",
+                        "lost-lease-account",
+                        oldScore: null,
+                        newScore: 100_000,
+                        oldRank: null,
+                        newRank: 1));
+            Assert.Equal(
+                "55000",
+                blockedScoreWrite.SqlState);
+            using var bandConnection =
+                DataSource.OpenConnection();
+            using var bandWrite =
+                bandConnection.CreateCommand();
+            bandWrite.CommandText = """
+                INSERT INTO band_member_stats (
+                    song_id,
+                    band_type,
+                    team_key,
+                    instrument_combo,
+                    member_index,
+                    account_id)
+                VALUES (
+                    'lost-lease-song',
+                    'Band_Duets',
+                    'lost-lease-account:mate',
+                    '0:1',
+                    0,
+                    'lost-lease-account')
+                """;
+            var blockedBandWrite =
+                Assert.Throws<PostgresException>(
+                    () => bandWrite.ExecuteNonQuery());
+            Assert.Equal(
+                "55000",
+                blockedBandWrite.SqlState);
+        }
+
+        await using var resumedLease =
+            await Db.TryAcquireRegistrationMutationLeaseAsync();
+        await resumedLease.VerifyHeldAsync();
+        Assert.True(
+            Db.RegisterUser(
+                "resumed-lease-device",
+                "resumed-lease-account"));
+    }
+
+    [Fact]
+    public async Task MaxScoreMaintenance_backend_loss_rejects_ambient_cache_phase_before_mutation()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(scrapeId, 1, 1, 1, 1);
+        Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var publicationId =
+            Db.GetPublicationPointerState()
+                .CurrentPublicationId!.Value;
+        var lease =
+            await Db.AcquireMaxScoreMaintenanceLeaseAsync(
+                publicationId);
+        using (lease.EnterAmbientScope())
+        {
+            await lease.AcquireSourceLocksAsync();
+            using var terminator =
+                DataSource.OpenConnection();
+            using var terminate =
+                terminator.CreateCommand();
+            terminate.CommandText =
+                "SELECT pg_terminate_backend(@backendProcessId)";
+            terminate.Parameters.AddWithValue(
+                "backendProcessId",
+                lease.BackendProcessId);
+            Assert.True(terminate.ExecuteScalar() is true);
+
+            Assert.Throws<
+                MaxScoreMaintenanceLeaseLostException>(() =>
+                Db.BulkSetCachedResponsesStaging(
+                [
+                    (
+                        Key: "lost-session-cache",
+                        Json: new byte[] { 1 },
+                        ETag: "\"lost\""),
+                ],
+                publicationId));
+        }
+        await lease.DisposeAsync();
+
+        using (var connection = DataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                SELECT COUNT(*)
+                FROM publication_api_response_cache_staging
+                WHERE publication_id = @publicationId
+                  AND cache_key = 'lost-session-cache'
+                """;
+            command.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            Assert.Equal(
+                0L,
+                Convert.ToInt64(command.ExecuteScalar()));
+        }
+
+        await using var recoveryLease =
+            await Db.AcquireMaxScoreMaintenanceLeaseAsync(
+                publicationId);
+        await recoveryLease.VerifyHeldAsync(
+            requireSourceLocks: false);
     }
 
     [Fact]
@@ -5195,9 +5483,7 @@ public sealed class MetaDatabaseTests : IDisposable
                 freezeReason,
                 Db.GetPublicReadFreezeState().Reason);
             await resumeLease.AcquireSourceLocksAsync();
-            Db.SetPublicReadFreeze(
-                false,
-                reason: freezeReason);
+            ClearPublicReadFreezeForTest();
 
             resumedRegistration = Task.Run(async () =>
             {
@@ -5338,7 +5624,7 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
-    public void Promoted_path_admission_retries_only_negative_target_pairs()
+    public async Task Promoted_path_admission_retries_only_negative_target_pairs()
     {
         Db.RegisterUser("web-tracker", "acct1");
         Db.EnqueueBackfill("acct1", 4);
@@ -5367,7 +5653,12 @@ public sealed class MetaDatabaseTests : IDisposable
         var reason =
             PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
             + new string('d', 64);
+        await using var maintenanceLease =
+            await Db.AcquireMaxScoreMaintenanceLeaseAsync(1);
+        using var ambientLease =
+            maintenanceLease.EnterAmbientScope();
         Db.SetPublicReadFreeze(true, reason: reason);
+        await maintenanceLease.AcquireSourceLocksAsync();
 
         var result =
             Db.ResetRegistrationProgressForAdmittedPairs(
@@ -5413,7 +5704,7 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
-    public void Promoted_path_admission_retries_successful_empty_history_across_current_and_max_season_fingerprints()
+    public async Task Promoted_path_admission_retries_successful_empty_history_across_current_and_max_season_fingerprints()
     {
         var currentSeasonFingerprint =
             HistoryReconstructor.ComputeWindowFingerprint(
@@ -5516,7 +5807,12 @@ public sealed class MetaDatabaseTests : IDisposable
         var reason =
             PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
             + new string('e', 64);
+        await using var maintenanceLease =
+            await Db.AcquireMaxScoreMaintenanceLeaseAsync(1);
+        using var ambientLease =
+            maintenanceLease.EnterAmbientScope();
         Db.SetPublicReadFreeze(true, reason: reason);
+        await maintenanceLease.AcquireSourceLocksAsync();
 
         var result =
             Db.ResetRegistrationProgressForAdmittedPairs(
@@ -6642,6 +6938,22 @@ public sealed class MetaDatabaseTests : IDisposable
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT COUNT(*) FROM scrape_log";
         return (long)cmd.ExecuteScalar()!;
+    }
+
+    private void ClearPublicReadFreezeForTest()
+    {
+        using var connection = DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE scrape_publication_state
+            SET public_reads_frozen = FALSE,
+                public_reads_frozen_at = NULL,
+                public_reads_frozen_scrape_id = NULL,
+                public_reads_frozen_reason = NULL,
+                updated_at = now()
+            WHERE id = TRUE
+            """;
+        Assert.Equal(1, command.ExecuteNonQuery());
     }
 
     private static Song CreateCatalogSong(string songId, string title) =>

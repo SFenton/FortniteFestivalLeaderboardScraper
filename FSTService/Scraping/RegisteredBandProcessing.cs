@@ -149,6 +149,7 @@ public sealed class RegisteredBandProcessingOrchestrator
         await using var registrationLease =
             await _registrationMutations
                 .AcquireLeaseAsync(ct);
+        await registrationLease.VerifyHeldAsync(ct);
         var registeredBands = _metaDb.GetRegisteredBands();
         if (registeredBands.Count == 0)
             return RegisteredBandProcessingResult.Empty;

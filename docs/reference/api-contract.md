@@ -129,12 +129,16 @@ Aggregate player scopes intentionally use different formulas:
   they normally use live endpoint code. `/api/songs` may serve its existing
   stable process cache; exact solo leaderboard routes, especially leeway
   queries, use the outer published cache or return `503`.
-- During that exact freeze, `POST /api/player/{accountId}/track` and
+- While the exclusive max-score mutation gate or its exact freeze is active,
+  `POST /api/player/{accountId}/track`,
   `POST /api/backfill/{accountId}`, and
   `GET /api/bands/{bandType}/{teamKey}/sync-status` return `503` with
-  `Retry-After` before their registration or score-history side effects. The
-  manual backfill endpoint holds the shared session advisory mutation gate
-  across both all-time backfill and optional history reconstruction, including
+  `Retry-After: 30` before their registration or score-history side effects.
+  HTTP admission is a pool-capacity-bounded, nonblocking shared advisory
+  try-lock on an isolated unpooled session, so the production 100-request/s
+  limit cannot fill the normal 15-connection database pool with maintenance
+  waiters. The manual backfill endpoint holds the shared session across both
+  all-time backfill and optional history reconstruction, including
   cancellation cleanup. Player tracking, band sync, and selected-profile
   activity use the same gate, so an exclusive maintenance holder prevents
   their writes even before freeze-state caches observe the transition.

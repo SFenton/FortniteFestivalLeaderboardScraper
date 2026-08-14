@@ -177,6 +177,9 @@ public interface IMetaDatabase : IDisposable
     Task<IRegistrationMutationLease>
         AcquireRegistrationMutationLeaseAsync(
             CancellationToken ct = default);
+    Task<IRegistrationMutationLease>
+        TryAcquireRegistrationMutationLeaseAsync(
+            CancellationToken ct = default);
     bool IsAccountRegistered(string accountId);
     bool RegisterUser(string deviceId, string accountId);
     bool UnregisterUser(string deviceId, string accountId);
@@ -393,12 +396,6 @@ public interface IMetaDatabase : IDisposable
         => Task.FromException<IMaxScoreMaintenanceLease>(
             new NotSupportedException(
                 "Max-score maintenance leases are not supported by this metadata store."));
-    void SwapCachedResponsesFromStagingAndReleaseMaxScoreMaintenance(
-        long publicationId,
-        long publishedScrapeId,
-        string manifestSha256)
-        => throw new NotSupportedException(
-            "Max-score maintenance cache publication is not supported by this metadata store.");
     void BulkSetCachedResponses(
         IEnumerable<(string Key, byte[] Json, string ETag)> entries,
         long? publicationId = null);

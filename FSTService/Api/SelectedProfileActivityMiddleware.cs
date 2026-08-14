@@ -75,7 +75,8 @@ public sealed class SelectedProfileActivityMiddleware
         {
             await using var registrationLease =
                 await registrationMutations
-                    .AcquireWriteLeaseAsync(ct);
+                    .TryAcquireWriteLeaseAsync(ct);
+            await registrationLease.VerifyHeldAsync(ct);
             switch (selection)
             {
                 case SelectedPlayerSelection player:
@@ -91,6 +92,11 @@ public sealed class SelectedProfileActivityMiddleware
             }
         }
         catch (RegistrationMutationBlockedException)
+        {
+        }
+        catch (Npgsql.PostgresException ex)
+            when (RegistrationMutationGate
+                .IsDatabaseFenceRejection(ex))
         {
         }
         catch (OperationCanceledException)

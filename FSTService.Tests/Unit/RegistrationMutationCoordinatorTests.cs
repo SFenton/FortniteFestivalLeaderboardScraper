@@ -86,4 +86,33 @@ public sealed class RegistrationMutationCoordinatorTests
 
         await durableLease.Received(1).DisposeAsync();
     }
+
+    [Fact]
+    public async Task TryAcquireWriteLease_UsesBoundedDatabaseAdmissionAndVerifiesSession()
+    {
+        var metaDatabase = Substitute.For<IMetaDatabase>();
+        var durableLease =
+            Substitute.For<IRegistrationMutationLease>();
+        metaDatabase
+            .TryAcquireRegistrationMutationLeaseAsync(
+                Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(durableLease));
+        var coordinator = new RegistrationMutationCoordinator(
+            metaDatabase,
+            Substitute.For<IPathDataStore>(),
+            Substitute.For<ISongInstrumentSupportCache>());
+
+        await using (await coordinator
+                         .TryAcquireWriteLeaseAsync())
+        {
+        }
+
+        _ = metaDatabase.Received(1)
+            .TryAcquireRegistrationMutationLeaseAsync(
+                Arg.Any<CancellationToken>());
+        await durableLease.Received(1)
+            .VerifyHeldAsync(
+                Arg.Any<CancellationToken>());
+        await durableLease.Received(1).DisposeAsync();
+    }
 }

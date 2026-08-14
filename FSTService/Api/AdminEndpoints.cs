@@ -295,7 +295,8 @@ public static partial class ApiEndpoints
             {
                 await using var registrationLease =
                     await registrationMutations
-                        .AcquireLeaseAsync(ct);
+                        .TryAcquireLeaseAsync(ct);
+                await registrationLease.VerifyHeldAsync(ct);
 
                 // ── Step 1: Backfill missing scores ──
                 var found = await backfiller.BackfillAccountAsync(
@@ -308,6 +309,7 @@ public static partial class ApiEndpoints
                 var reconStatus = metaDb.GetHistoryReconStatus(accountId);
                 if (reconStatus?.Status != "complete")
                 {
+                    await registrationLease.VerifyHeldAsync(ct);
                     var seasonWindows = await historyReconstructor.DiscoverSeasonWindowsAsync(
                         accessToken, callerAccountId, ct);
 
@@ -336,6 +338,18 @@ public static partial class ApiEndpoints
                 return Results.Problem(
                     title: "Registration temporarily unavailable",
                     detail: ex.Message,
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            catch (Npgsql.PostgresException ex)
+                when (RegistrationMutationGate
+                    .IsDatabaseFenceRejection(ex))
+            {
+                httpContext.Response.Headers.CacheControl = "no-store";
+                httpContext.Response.Headers["Retry-After"] = "30";
+                return Results.Problem(
+                    title: "Registration temporarily unavailable",
+                    detail: new RegistrationMutationBlockedException()
+                        .Message,
                     statusCode: StatusCodes.Status503ServiceUnavailable);
             }
         })

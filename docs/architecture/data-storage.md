@@ -100,33 +100,52 @@ Registration, backfill, registered-user refresh, score-history reconstruction,
 tracked-band discovery/processing, selected-profile activity, and stale
 registration pruning share one PostgreSQL session advisory mutation gate.
 Each complete external async mutation lifecycle holds the shared form on a
-dedicated checked-out session before its first write. The lease owns no
-transaction or publication-row lock, so
+dedicated unpooled, non-multiplexed session before its first write; gate
+holders and waiters therefore do not consume the normal 15-connection service
+pool. The lease owns no transaction or publication-row lock, so
 `idle_in_transaction_session_timeout` cannot expire it while Epic/history work
-uses other connections. Cancellation or disposal explicitly unlocks the
-session; an uncertain release evicts that physical pooled connection.
+uses ordinary pooled connections. Background/manual workers may wait with
+cancellation on the isolated session. HTTP tracking, manual backfill, and band
+sync use a pool-capacity-bounded `pg_try_advisory_lock_shared` admission and
+return `503`/`Retry-After: 30` instead of queueing behind maintenance.
+Cancellation or disposal explicitly unlocks and physically closes the
+isolated session.
 
 Max-score plan/apply takes the exclusive form of the same gate first. It waits
 for every admitted shared lifecycle to finish and prevents later registration
-work from starting. Apply then takes the path-generation and publication
-advisory locks, establishes or revalidates its digest-owned freeze, and only
-then opens the source-lock transaction. That transaction takes `SHARE` locks
-in fixed order on `leaderboard_entries_overlay`, `leaderboard_entries`, and
-`band_member_stats`. This removes publication-row/source-table lock inversion
-while protecting solo score identity and the member source used by band
-threshold/projection rebuilds. The exclusive gate remains held through atomic
-cache swap/unfreeze and the final in-process cache transition.
+work from starting. The lock-owning unpooled session immediately records an
+opaque random owner token, publication ID, backend PID/start, and acquisition
+time in `scrape_publication_state`; this durable fence also blocks HTTP before
+a public-read freeze exists. Apply then takes the path-generation and
+publication advisory locks, establishes or revalidates its digest-owned
+freeze, and only then opens the source-lock transaction. That transaction
+takes `SHARE` locks in fixed order on `leaderboard_entries_overlay`,
+`leaderboard_entries`, and `band_member_stats`. This removes
+publication-row/source-table lock inversion while protecting solo score
+identity and the member source used by band threshold/projection rebuilds.
 
 Row triggers remain a fail-closed second line on registered users/bands,
 registered-user refresh progress, registered-band status/progress,
 registered-player band-discovery progress, backfill status/progress, and
-history-reconstruction status/progress. They lock the publication singleton
-only for their bounded write transaction and reject mutations when its reason
-is `max-score-maintenance:v1:<digest>`. Shared-gate acquisition synchronously
-invalidates cached path maxima and refreshes scraper instrument support before
-lookup-bearing backfill/history/band work; metadata-only HTTP activity and
-pruning take the same gate without that extra cache churn. The maintenance
-owner has one transaction-local, exact-freeze
+history-reconstruction status/progress. Statement triggers apply the same
+fence to `leaderboard_entries`, `leaderboard_entries_overlay`, and
+`score_history`, plus the locked band source `band_member_stats`. Each trigger
+locks the publication singleton only for its bounded write transaction and
+rejects either the active durable mutation-gate token or a
+`max-score-maintenance:v1:<digest>` freeze. This row lock orders a surviving
+write from a lost shared session before a newly claimed exclusive gate,
+without taking a second advisory lock on a pooled connection.
+
+Both lease types set an independent random session token and capture the
+backend PID. Every guarded phase verifies the token, backend, expected
+advisory locks, and durable gate state; exclusive phases additionally verify
+the owner token and, after acquisition, all three source table locks
+immediately before mutation. `AsyncLocal` carries only the current lease
+reference for cache routing; it is not accepted as lock proof. Shared-gate
+acquisition synchronously invalidates cached path maxima and refreshes scraper
+instrument support before lookup-bearing backfill/history/band work;
+metadata-only HTTP activity and pruning take the same gate without that extra
+cache churn. The maintenance owner has one transaction-local owner-token
 bypass used only to remove stale negative backfill checks and matching successful
 `history_recon_progress` rows for newly promoted path-backed pairs. Matching
 history status rows move to `pending`, clear the completion timestamp,
@@ -136,6 +155,13 @@ progress to that revision.
 Only affected accounts are requeued; positive backfill checks and unrelated
 history pairs are preserved. Ordinary scrape/publication freezes retain their
 existing registration behavior.
+
+Final cache swap, completed checkpoint, durable-gate clear, and unfreeze run
+inside the source-lock transaction on the live lock-owning session. If that
+backend is terminated or the token/locks disappear, phase/final mutations
+fail closed: the cache is not published, the durable freeze and gate owner
+remain, and resume must acquire and validate a new lease before it can replace
+the stale owner token and continue.
 
 ## Publication ownership
 

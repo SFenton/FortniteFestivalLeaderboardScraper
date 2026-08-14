@@ -290,7 +290,8 @@ public static partial class ApiEndpoints
             {
                 await using var registrationLease =
                     await registrationMutations
-                        .AcquireWriteLeaseAsync(ct);
+                        .TryAcquireWriteLeaseAsync(ct);
+                await registrationLease.VerifyHeldAsync(ct);
 
                 // Register with a synthetic device ID for web tracking
                 const string webDeviceId = "web-tracker";
@@ -359,6 +360,21 @@ public static partial class ApiEndpoints
                 return Results.Problem(
                     title: "Registration temporarily unavailable",
                     detail: ex.Message,
+                    statusCode:
+                        StatusCodes.Status503ServiceUnavailable);
+            }
+            catch (Npgsql.PostgresException ex)
+                when (RegistrationMutationGate
+                    .IsDatabaseFenceRejection(ex))
+            {
+                httpContext.Response.Headers.CacheControl =
+                    "no-store";
+                httpContext.Response.Headers["Retry-After"] =
+                    "30";
+                return Results.Problem(
+                    title: "Registration temporarily unavailable",
+                    detail: new RegistrationMutationBlockedException()
+                        .Message,
                     statusCode:
                         StatusCodes.Status503ServiceUnavailable);
             }

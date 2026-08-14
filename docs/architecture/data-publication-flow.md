@@ -87,8 +87,9 @@ derived rows while retaining the same published scrape/publication ID.
 2. Plan binds the exact current publication/catalog/path revisions and
    fingerprints published score sources, notification state, and rank history.
 3. Apply first acquires the exclusive registration mutation advisory gate and
-   waits for active registration/backfill/history lifecycles to drain. It then
-   takes path-generation and publication locks, creates or revalidates the
+   waits for active registration/backfill/history lifecycles to drain. Its
+   isolated lock session records a durable random owner token/backend identity,
+   then takes path-generation and publication locks, creates or revalidates the
    manifest-digest-owned public-read freeze, and only afterward takes source
    table locks and persists subsequent checkpoints in fixed order.
 4. One transaction promotes every listed song generation. The in-process
@@ -119,9 +120,10 @@ derived rows while retaining the same published scrape/publication ID.
    validation requires unchanged rank-history and source fingerprints, exact
    paths/maxima/song stats, rollback coverage, zero visible delivery, and the
    expected staged-cache count.
-8. Cache swap, workflow completion, and freeze release commit atomically while
-   the exclusive mutation gate is still held. No queued registration write can
-   commit between that cache cutover and lease release.
+8. Cache swap, workflow completion, durable-gate clear, and freeze release
+   commit atomically in the source-lock transaction on the live advisory-lock
+   session. No queued registration write can commit between that cache cutover
+   and lease release.
    Service processes invalidate path/song/response and scraper-admission caches
    and force connected clients to refresh the unchanged publication ID.
    Registration lease acquisition independently refreshes path/instrument
@@ -138,12 +140,21 @@ registration/backfill scope writes, while registration-only workers and the
 manual all-time/history workflow, registered-user refresh, registered-band
 discovery/processing, HTTP tracking/activity, and stale-registration pruning
 hold the shared session advisory gate for their complete mutation lifetime.
-The lease has no transaction or publication-row lock and remains valid across
-long external async work under the production idle-transaction timeout. A
-freeze that wins the race returns `503` before score mutation; cancellation
-releases a waiting/held session safely, normal scrape freezes are unchanged,
-and a post-freeze failure leaves reads and registration mutation frozen for
-resume.
+Gate holders and waiters use unpooled, non-multiplexed sessions rather than
+normal service-pool slots. Background/manual workers may wait with
+cancellation; HTTP tracking, manual backfill, and band sync use a bounded
+shared try-lock and return `503`/`Retry-After: 30` as soon as exclusive
+maintenance owns the gate, including before freeze creation. The lease has no
+transaction or publication-row lock and remains valid across long external
+async work under the production idle-transaction timeout.
+
+Each guarded phase revalidates the random session token, backend PID,
+advisory/durable owner, and source locks immediately before mutation.
+Registration/source-table triggers also reject the durable exclusive owner so
+a write surviving shared-backend loss cannot cross a new exclusive claim.
+Backend loss during maintenance leaves the durable gate/freeze in place and
+refuses final cache publication/unfreeze; only a newly validated resume lease
+may replace the stale owner and continue. Normal scrape freezes are unchanged.
 
 ## Publication-aware API and browser
 

@@ -37,6 +37,11 @@ public static class DatabaseInitializer
             publication_commit_intent_heartbeat_at TIMESTAMPTZ,
             publication_commit_intent_owner TEXT,
             band_projection_generation BIGINT,
+            max_score_mutation_gate_token TEXT,
+            max_score_mutation_gate_publication_id BIGINT,
+            max_score_mutation_gate_backend_pid INTEGER,
+            max_score_mutation_gate_backend_start TIMESTAMPTZ,
+            max_score_mutation_gate_acquired_at TIMESTAMPTZ,
             updated_at          TIMESTAMPTZ NOT NULL
         );
         """;
@@ -1003,6 +1008,11 @@ public static class DatabaseInitializer
             publication_commit_intent_heartbeat_at TIMESTAMPTZ,
             publication_commit_intent_owner TEXT,
             band_projection_generation BIGINT,
+            max_score_mutation_gate_token TEXT,
+            max_score_mutation_gate_publication_id BIGINT,
+            max_score_mutation_gate_backend_pid INTEGER,
+            max_score_mutation_gate_backend_start TIMESTAMPTZ,
+            max_score_mutation_gate_acquired_at TIMESTAMPTZ,
             updated_at          TIMESTAMPTZ NOT NULL
         );
 
@@ -1014,6 +1024,11 @@ public static class DatabaseInitializer
         ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS publication_commit_intent_heartbeat_at TIMESTAMPTZ;
         ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS publication_commit_intent_owner TEXT;
         ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS band_projection_generation BIGINT;
+        ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS max_score_mutation_gate_token TEXT;
+        ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS max_score_mutation_gate_publication_id BIGINT;
+        ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS max_score_mutation_gate_backend_pid INTEGER;
+        ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS max_score_mutation_gate_backend_start TIMESTAMPTZ;
+        ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS max_score_mutation_gate_acquired_at TIMESTAMPTZ;
 
         CREATE TABLE IF NOT EXISTS leaderboard_published_scope_source (
             published_scrape_id    BIGINT      NOT NULL REFERENCES scrape_log(id) ON DELETE CASCADE,
@@ -1083,6 +1098,14 @@ public static class DatabaseInitializer
             LIMIT 1
         ) latest
         WHERE NOT EXISTS (SELECT 1 FROM scrape_publication_state WHERE id = TRUE);
+
+        INSERT INTO scrape_publication_state (
+            id,
+            updated_at)
+        VALUES (
+            TRUE,
+            now())
+        ON CONFLICT (id) DO NOTHING;
 
         -- =====================================================================
         -- SCORE HISTORY (from fst-meta.db)
@@ -1290,32 +1313,20 @@ public static class DatabaseInitializer
         DECLARE
             reads_frozen BOOLEAN;
             freeze_reason TEXT;
+            mutation_gate_token TEXT;
+            guard_bypass TEXT;
+            gate_bypass_allowed BOOLEAN;
+            freeze_bypass_allowed BOOLEAN;
         BEGIN
             SELECT public_reads_frozen,
-                   public_reads_frozen_reason
+                   public_reads_frozen_reason,
+                   max_score_mutation_gate_token
             INTO reads_frozen,
-                 freeze_reason
+                 freeze_reason,
+                 mutation_gate_token
             FROM scrape_publication_state
             WHERE id = TRUE
             FOR SHARE;
-
-            IF NOT FOUND THEN
-                INSERT INTO scrape_publication_state (
-                    id,
-                    updated_at)
-                VALUES (
-                    TRUE,
-                    now())
-                ON CONFLICT (id) DO NOTHING;
-
-                SELECT public_reads_frozen,
-                       public_reads_frozen_reason
-                INTO reads_frozen,
-                     freeze_reason
-                FROM scrape_publication_state
-                WHERE id = TRUE
-                FOR SHARE;
-            END IF;
 
             IF NOT FOUND THEN
                 RAISE EXCEPTION
@@ -1324,12 +1335,31 @@ public static class DatabaseInitializer
                               'Registration mutation rejected because publication state is unavailable.';
             END IF;
 
+            guard_bypass := current_setting(
+                'fst.max_score_registration_guard_bypass',
+                TRUE);
+            gate_bypass_allowed :=
+                guard_bypass IS NOT NULL
+                AND guard_bypass = mutation_gate_token;
+            freeze_bypass_allowed :=
+                gate_bypass_allowed
+                OR (
+                    guard_bypass IS NOT NULL
+                    AND guard_bypass = freeze_reason
+                );
+
+            IF mutation_gate_token IS NOT NULL
+               AND NOT gate_bypass_allowed
+            THEN
+                RAISE EXCEPTION
+                    USING ERRCODE = '55000',
+                          MESSAGE =
+                              'Registration mutation rejected while max-score maintenance owns the mutation gate.';
+            END IF;
+
             IF reads_frozen
                AND freeze_reason LIKE 'max-score-maintenance:v1:%'
-               AND current_setting(
-                       'fst.max_score_registration_guard_bypass',
-                       TRUE)
-                   IS DISTINCT FROM freeze_reason
+               AND NOT freeze_bypass_allowed
             THEN
                 RAISE EXCEPTION
                     USING ERRCODE = '55000',
@@ -1337,12 +1367,45 @@ public static class DatabaseInitializer
                               'Registration mutation rejected while max-score maintenance owns the publication.';
             END IF;
 
+            IF TG_LEVEL = 'STATEMENT' THEN
+                RETURN NULL;
+            END IF;
             IF TG_OP = 'DELETE' THEN
                 RETURN OLD;
             END IF;
             RETURN NEW;
         END
         $$;
+
+        DROP TRIGGER IF EXISTS
+            trg_leaderboard_entries_registration_mutation_guard
+            ON leaderboard_entries;
+        CREATE TRIGGER
+            trg_leaderboard_entries_registration_mutation_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON leaderboard_entries
+            FOR EACH STATEMENT
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
+        DROP TRIGGER IF EXISTS
+            trg_leaderboard_entries_overlay_registration_mutation_guard
+            ON leaderboard_entries_overlay;
+        CREATE TRIGGER
+            trg_leaderboard_entries_overlay_registration_mutation_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON leaderboard_entries_overlay
+            FOR EACH STATEMENT
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
+        DROP TRIGGER IF EXISTS
+            trg_score_history_registration_mutation_guard
+            ON score_history;
+        CREATE TRIGGER
+            trg_score_history_registration_mutation_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON score_history
+            FOR EACH STATEMENT
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
 
         DROP TRIGGER IF EXISTS trg_registered_users_maintenance_guard
             ON registered_users;
@@ -2334,6 +2397,16 @@ public static class DatabaseInitializer
             difficulty          INT,
             PRIMARY KEY (song_id, band_type, team_key, instrument_combo, member_index)
         );
+
+        DROP TRIGGER IF EXISTS
+            trg_band_member_stats_registration_mutation_guard
+            ON band_member_stats;
+        CREATE TRIGGER
+            trg_band_member_stats_registration_mutation_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON band_member_stats
+            FOR EACH STATEMENT
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
 
         -- ix_bms_account removed 2026-04-23 (Phase 2): idx_scan=0 forever.
         -- Reverse lookup "get stats for all bands player X played" is not in use;

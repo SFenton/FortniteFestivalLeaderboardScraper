@@ -113,6 +113,7 @@ public sealed class BackfillOrchestrator
 
         await using var registrationLease =
             await _registrationMutations.AcquireLeaseAsync(ct);
+        await registrationLease.VerifyHeldAsync(ct);
 
         var opts = _options.Value;
         var foregroundRegistration = opts.RegistrationBackfillMode == RegistrationBackfillMode.ForegroundEpicExclusive;
@@ -351,6 +352,7 @@ public sealed class BackfillOrchestrator
     {
         await using var registrationLease =
             await _registrationMutations.AcquireLeaseAsync(ct);
+        await registrationLease.VerifyHeldAsync(ct);
         var queued = _backfillQueue.DrainAll();
         var pending = _persistence.Meta.GetPendingBackfills();
 
@@ -551,6 +553,7 @@ public sealed class BackfillOrchestrator
     {
         await using var registrationLease =
             await _registrationMutations.AcquireLeaseAsync(ct);
+        await registrationLease.VerifyHeldAsync(ct);
         var registeredIds = _persistence.Meta.GetRegisteredAccountIds();
         if (registeredIds.Count == 0) return;
 

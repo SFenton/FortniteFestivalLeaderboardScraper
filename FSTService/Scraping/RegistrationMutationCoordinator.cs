@@ -28,6 +28,7 @@ public sealed class RegistrationMutationCoordinator
         AcquireLeaseAsync(CancellationToken ct = default)
         => AcquireLeaseCoreAsync(
             refreshPathAdmission: true,
+            tryOnly: false,
             ct);
 
     public Task<IRegistrationMutationLease>
@@ -35,19 +36,40 @@ public sealed class RegistrationMutationCoordinator
             CancellationToken ct = default)
         => AcquireLeaseCoreAsync(
             refreshPathAdmission: false,
+            tryOnly: false,
+            ct);
+
+    public Task<IRegistrationMutationLease>
+        TryAcquireLeaseAsync(
+            CancellationToken ct = default)
+        => AcquireLeaseCoreAsync(
+            refreshPathAdmission: true,
+            tryOnly: true,
+            ct);
+
+    public Task<IRegistrationMutationLease>
+        TryAcquireWriteLeaseAsync(
+            CancellationToken ct = default)
+        => AcquireLeaseCoreAsync(
+            refreshPathAdmission: false,
+            tryOnly: true,
             ct);
 
     private async Task<IRegistrationMutationLease>
         AcquireLeaseCoreAsync(
             bool refreshPathAdmission,
+            bool tryOnly,
             CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        var lease =
-            await _metaDatabase
+        var lease = tryOnly
+            ? await _metaDatabase
+                .TryAcquireRegistrationMutationLeaseAsync(ct)
+            : await _metaDatabase
                 .AcquireRegistrationMutationLeaseAsync(ct);
         try
         {
+            await lease.VerifyHeldAsync(ct);
             ct.ThrowIfCancellationRequested();
             if (refreshPathAdmission)
             {

@@ -97,8 +97,14 @@ its first account/seasonal lookup or persistence mutation. Registered-user
 refresh, registered-band discovery/processing, and stale registration pruning
 use the same gate. Immediately after acquisition it invalidates path-maxima
 state and synchronously refreshes the singleton scraper's song/instrument
-support. The gate holds no transaction, so long Epic/history waits cannot be
-expired by `idle_in_transaction_session_timeout`. This covers
+support. Gate holders and cancellable waiters use isolated unpooled,
+non-multiplexed PostgreSQL sessions, leaving the normal service pool available
+for the guarded work itself. The gate holds no transaction, so long
+Epic/history waits cannot be expired by
+`idle_in_transaction_session_timeout`. Before each guarded mutation the
+worker verifies the owning backend/session token; database triggers fence
+registration, leaderboard, and score-history writes if a lost shared backend
+allows exclusive maintenance to claim its durable owner token. This covers
 registration-only hosting, including the interval before a publication monitor
 observes a same-publication release. Exclusive maintenance admission waits for
 active holders, blocks later holders, and remains fail-closed across
@@ -123,6 +129,9 @@ dependencies, recalculates target-song band validity, refreshes affected band
 current-projection scopes, rebuilds dependent band rankings, and explicitly
 skips solo/composite/band rank-history snapshots. See the
 [max-score correction runbook](../database/MaxScoreCorrectionMaintenanceRunbook.md).
+The final cache swap, completed checkpoint, durable-gate clear, and unfreeze
+commit through the live source-lock-owning session; backend loss leaves the
+freeze/gate durable and requires a new validated resume lease.
 
 The worker's scrape, pruning, ranking, and statistics paths consume distinct
 CHOpt maxima for all eight generated instruments, including separate Pro Drums

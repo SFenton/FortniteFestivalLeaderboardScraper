@@ -55,14 +55,18 @@ Before plan or apply:
 Stage acquires the distributed path-generation lease, creates complete
 immutable generations serially, and never changes a `songs` pointer. Plan
 briefly acquires the exclusive mutation gate, path-generation lock, publication
-lock, and fixed-order source locks. It validates the manifest and immutable
-artifacts, fingerprints score sources, notification state, and rank history,
-and requires zero unexplained routine candidates without creating a freeze.
+lock, and fixed-order source locks on one isolated unpooled session. It records
+a durable random gate-owner token/backend identity while admitted, validates
+the manifest and immutable artifacts, fingerprints score sources, notification
+state, and rank history, and requires zero unexplained routine candidates
+without creating a freeze.
 
 Apply acquires locks in this order:
 
 1. exclusive registration/backfill/history mutation advisory gate, waiting for
-   every active shared lifecycle to drain and blocking later admissions;
+   every active shared lifecycle to drain and blocking later admissions, then
+   persist its random owner token, publication, backend PID/start, and
+   acquisition time in `scrape_publication_state`;
 2. path-generation advisory lock;
 3. global publication advisory lock;
 4. establish a new digest-owned freeze or revalidate the exact resume freeze;
@@ -97,18 +101,30 @@ complete mutation lifecycle. The gate owns no transaction or publication-row
 lock, so the production `idle_in_transaction_session_timeout=60000` cannot
 release it during long Epic/history work. Exclusive acquisition drains active
 score/history writers before freeze or source locks and prevents later writers
-until final release. A freeze that wins the race returns `503` before score
-mutation. Cancellation and failures explicitly unlock or physically retire an
-uncertain pooled session. Immediately after acquiring the shared gate,
+until final release.
+
+All advisory holders and waiters use unpooled, non-multiplexed sessions, not
+the 15-slot normal service pool. Background/manual workers may wait with
+cancellation. HTTP player tracking, manual backfill, and band sync use a
+pool-capacity-bounded `pg_try_advisory_lock_shared`; while plan/apply owns the
+exclusive gate they return `503` with `Retry-After: 30` immediately, including
+before the freeze exists. Cancellation and failures physically close the
+isolated session. Immediately after acquiring the shared gate,
 lookup-bearing backfill/history/band work invalidates path-maxima state and
 synchronously refreshes scraper song/instrument support before any account or
 seasonal lookup; metadata-only tracking/activity/pruning does not incur that
-cache churn. A failed or
-resumed maintenance run remains blocked until its exact freeze is released.
-Cache swap, completed checkpoint, and unfreeze commit while the exclusive gate
-is still held, so no registration commit can land after cache cutover but
-before lease release. Normal scrape/publication freezes do not activate this
-registration guard.
+cache churn.
+
+The random session token, backend PID, three advisory locks, durable owner, and
+source relation locks are revalidated before every dependent mutation.
+Registration plus leaderboard/score-history and `band_member_stats` triggers
+lock the publication row for each bounded write and reject the durable
+owner/freeze, closing the race if a shared backend is terminated. `AsyncLocal`
+routing is never accepted as lock proof. Final cache swap, completed
+checkpoint, durable-owner clear, and unfreeze commit in the source-lock
+transaction on the live lock-owning session, so no registration commit can
+land after cache cutover but before lease release. Normal scrape/publication
+freezes do not activate this registration guard.
 
 ## Stage request
 
@@ -289,6 +305,14 @@ idempotent derived work may be rerun when a crash occurred before its durable
 checkpoint. A rollback file written before its database phase checkpoint is
 loaded through the same persisted run timestamp and must match byte-for-byte;
 resume never invents a new evidence timestamp.
+
+If `pg_terminate_backend`, network loss, or session failure removes the
+advisory/source locks, the old lease is invalid even if its process-local scope
+still exists. Phase writes fail their live-session check; final cache
+publication and unfreeze are refused. The durable freeze and owner token remain
+fail-closed. A new plan/resume lease must reacquire the fixed lock order,
+replace the stale owner token only after exclusive admission, revalidate the
+checkpoint/fingerprints, and then continue. Do not clear either field manually.
 
 ## Validation and rollback
 

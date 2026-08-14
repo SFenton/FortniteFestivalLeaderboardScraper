@@ -3,6 +3,7 @@ using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace FSTService.Tests.Unit;
 
@@ -857,8 +858,7 @@ public sealed class MaxScoreMaintenancePersistenceTests
             await Task.Delay(150);
             Assert.False(queuedRegistration.IsCompleted);
 
-            meta.SwapCachedResponsesFromStagingAndReleaseMaxScoreMaintenance(
-                publicationId,
+            await maintenanceLease.CompleteAsync(
                 scrapeId,
                 manifestDigest);
             Assert.False(queuedRegistration.IsCompleted);
@@ -905,6 +905,128 @@ public sealed class MaxScoreMaintenancePersistenceTests
         Assert.True(
             meta.IsAccountRegistered(
                 "post-cache-account"));
+    }
+
+    [Fact]
+    public async Task Lost_maintenance_backend_refuses_final_publish_and_unfreeze_until_new_lease_resumes()
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        const long scrapeId = 1297;
+        const long publicationId = 501;
+        var manifestDigest = new string('7', 64);
+        SeedValidatedCompletionState(
+            dataSource,
+            scrapeId,
+            publicationId,
+            manifestDigest);
+        using var meta = new MetaDatabase(
+            dataSource,
+            Microsoft.Extensions.Logging.Abstractions
+                .NullLogger<MetaDatabase>.Instance);
+
+        var lostLease =
+            await meta.AcquireMaxScoreMaintenanceLeaseAsync(
+                publicationId);
+        using (lostLease.EnterAmbientScope())
+        {
+            await lostLease.AcquireSourceLocksAsync();
+            using var terminator =
+                dataSource.OpenConnection();
+            using var terminate =
+                terminator.CreateCommand();
+            terminate.CommandText =
+                "SELECT pg_terminate_backend(@backendProcessId)";
+            terminate.Parameters.AddWithValue(
+                "backendProcessId",
+                lostLease.BackendProcessId);
+            Assert.True(terminate.ExecuteScalar() is true);
+
+            await Assert.ThrowsAsync<
+                MaxScoreMaintenanceLeaseLostException>(
+                () => lostLease.CompleteAsync(
+                    scrapeId,
+                    manifestDigest));
+        }
+        await lostLease.DisposeAsync();
+
+        using (var failedConnection =
+               dataSource.OpenConnection())
+        using (var failed = failedConnection.CreateCommand())
+        {
+            failed.CommandText = """
+                SELECT
+                    public_reads_frozen,
+                    max_score_mutation_gate_token IS NOT NULL,
+                    (
+                        SELECT phase = 'validated'
+                           AND status = 'running'
+                        FROM max_score_maintenance_runs
+                        WHERE manifest_sha256 = @manifestDigest
+                    ),
+                    (
+                        SELECT etag = 'old-etag'
+                        FROM api_response_cache
+                        WHERE cache_key = 'route'
+                    )
+                FROM scrape_publication_state
+                WHERE id = TRUE
+                """;
+            failed.Parameters.AddWithValue(
+                "manifestDigest",
+                manifestDigest);
+            using var reader = failed.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.True(reader.GetBoolean(0));
+            Assert.True(reader.GetBoolean(1));
+            Assert.True(reader.GetBoolean(2));
+            Assert.True(reader.GetBoolean(3));
+        }
+
+        await using (var resumedLease =
+                     await meta
+                         .AcquireMaxScoreMaintenanceLeaseAsync(
+                             publicationId)
+                         .WaitAsync(TimeSpan.FromSeconds(5)))
+        {
+            using var ambient =
+                resumedLease.EnterAmbientScope();
+            await resumedLease.AcquireSourceLocksAsync();
+            await resumedLease.CompleteAsync(
+                scrapeId,
+                manifestDigest);
+        }
+
+        using var verifyConnection =
+            dataSource.OpenConnection();
+        using var verify = verifyConnection.CreateCommand();
+        verify.CommandText = """
+            SELECT
+                NOT public_reads_frozen,
+                max_score_mutation_gate_token IS NULL,
+                (
+                    SELECT phase = 'completed'
+                       AND status = 'completed'
+                    FROM max_score_maintenance_runs
+                    WHERE manifest_sha256 = @manifestDigest
+                ),
+                (
+                    SELECT etag = 'new-etag'
+                    FROM api_response_cache
+                    WHERE cache_key = 'route'
+                )
+            FROM scrape_publication_state
+            WHERE id = TRUE
+            """;
+        verify.Parameters.AddWithValue(
+            "manifestDigest",
+            manifestDigest);
+        using var verifyReader = verify.ExecuteReader();
+        Assert.True(verifyReader.Read());
+        Assert.True(verifyReader.GetBoolean(0));
+        Assert.True(verifyReader.GetBoolean(1));
+        Assert.True(verifyReader.GetBoolean(2));
+        Assert.True(verifyReader.GetBoolean(3));
     }
 
     [Fact]
@@ -2070,6 +2192,168 @@ public sealed class MaxScoreMaintenancePersistenceTests
             NpgsqlTypes.NpgsqlDbType.Jsonb).Value =
             System.Text.Encoding.UTF8.GetString(
                 manifest.SerializeCanonical());
+        seed.ExecuteNonQuery();
+    }
+
+    private static void SeedValidatedCompletionState(
+        NpgsqlDataSource dataSource,
+        long scrapeId,
+        long publicationId,
+        string manifestDigest)
+    {
+        var freezeReason =
+            PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
+            + manifestDigest;
+        using var connection = dataSource.OpenConnection();
+        using var seed = connection.CreateCommand();
+        seed.CommandText = """
+            INSERT INTO scrape_log (
+                id, started_at, completed_at, status)
+            VALUES (
+                @scrapeId,
+                now() - interval '1 hour',
+                now(),
+                'completed')
+            ON CONFLICT (id) DO UPDATE SET
+                completed_at = EXCLUDED.completed_at,
+                status = EXCLUDED.status;
+
+            INSERT INTO publication_generations (
+                publication_id, scrape_id, status, created_at)
+            VALUES (
+                @publicationId,
+                @scrapeId,
+                'current',
+                now())
+            ON CONFLICT (publication_id) DO UPDATE SET
+                scrape_id = EXCLUDED.scrape_id,
+                status = EXCLUDED.status;
+
+            INSERT INTO scrape_publication_state (
+                id,
+                current_publication_id,
+                working_publication_id,
+                published_scrape_id,
+                public_reads_frozen,
+                public_reads_frozen_at,
+                public_reads_frozen_scrape_id,
+                public_reads_frozen_reason,
+                updated_at)
+            VALUES (
+                TRUE,
+                @publicationId,
+                NULL,
+                @scrapeId,
+                TRUE,
+                now(),
+                @scrapeId,
+                @freezeReason,
+                now())
+            ON CONFLICT (id) DO UPDATE SET
+                current_publication_id =
+                    EXCLUDED.current_publication_id,
+                working_publication_id = NULL,
+                published_scrape_id =
+                    EXCLUDED.published_scrape_id,
+                public_reads_frozen = TRUE,
+                public_reads_frozen_at = now(),
+                public_reads_frozen_scrape_id =
+                    EXCLUDED.public_reads_frozen_scrape_id,
+                public_reads_frozen_reason =
+                    EXCLUDED.public_reads_frozen_reason,
+                updated_at = now();
+
+            INSERT INTO max_score_maintenance_runs (
+                manifest_sha256,
+                manifest_version,
+                plan_digest,
+                expected_published_scrape_id,
+                expected_publication_id,
+                expected_catalog_hash,
+                expected_catalog_song_count,
+                published_score_source_fingerprint,
+                notification_state_fingerprint,
+                rank_history_fingerprint,
+                manifest_json,
+                freeze_reason,
+                phase,
+                status,
+                staged_cache_entry_count)
+            VALUES (
+                @manifestDigest,
+                1,
+                @planDigest,
+                @scrapeId,
+                @publicationId,
+                @catalogHash,
+                700,
+                @scoreFingerprint,
+                @notificationFingerprint,
+                @historyFingerprint,
+                '{}'::jsonb,
+                @freezeReason,
+                'validated',
+                'running',
+                1);
+
+            INSERT INTO api_response_cache (
+                cache_key, json_data, etag, cached_at)
+            VALUES (
+                'route',
+                decode('7b226f6c64223a747275657d', 'hex'),
+                'old-etag',
+                now())
+            ON CONFLICT (cache_key) DO UPDATE SET
+                json_data = EXCLUDED.json_data,
+                etag = EXCLUDED.etag,
+                cached_at = EXCLUDED.cached_at;
+
+            INSERT INTO api_response_cache_staging (
+                cache_key, json_data, etag, cached_at)
+            VALUES (
+                'route',
+                decode('7b226e6577223a747275657d', 'hex'),
+                'new-etag',
+                now());
+
+            INSERT INTO publication_api_response_cache_staging (
+                publication_id,
+                cache_key,
+                json_data,
+                etag,
+                cached_at)
+            VALUES (
+                @publicationId,
+                'route',
+                decode('7b226e6577223a747275657d', 'hex'),
+                'new-etag',
+                now());
+            """;
+        seed.Parameters.AddWithValue("scrapeId", scrapeId);
+        seed.Parameters.AddWithValue(
+            "publicationId",
+            publicationId);
+        seed.Parameters.AddWithValue(
+            "manifestDigest",
+            manifestDigest);
+        seed.Parameters.AddWithValue(
+            "planDigest",
+            new string('8', 64));
+        seed.Parameters.AddWithValue(
+            "catalogHash",
+            new string('9', 64));
+        seed.Parameters.AddWithValue(
+            "scoreFingerprint",
+            new string('a', 64));
+        seed.Parameters.AddWithValue(
+            "notificationFingerprint",
+            new string('b', 64));
+        seed.Parameters.AddWithValue(
+            "historyFingerprint",
+            new string('c', 64));
+        seed.Parameters.AddWithValue(
+            "freezeReason",
+            freezeReason);
         seed.ExecuteNonQuery();
     }
 

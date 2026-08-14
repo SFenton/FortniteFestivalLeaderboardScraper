@@ -98,16 +98,20 @@ forms are included even though they are normally live endpoint code. A warm
 and cold exact solo leaderboard reads, including leeway requests, return
 `503`. Outer-cache exact leaderboard hits remain available.
 
-While that freeze is active, the public-read gate rejects player tracking,
-manual `POST /api/backfill/{accountId}`, and the registration-changing band
-sync-status route. The manual endpoint also acquires the durable registration
-shared session advisory gate before its first all-time write and holds it
-through optional history reconstruction; player tracking, band sync, and
-selected-profile activity use the same gate around their registration writes.
-A maintenance exclusive waiter drains admitted work and prevents any later
-mutation from starting. A freeze that wins the middleware/gate race returns
-`503` with `Retry-After`, while cancellation safely closes the held/waiting
-session without relying on an idle transaction. Selected-profile activity
+While the exclusive maintenance gate or its freeze is active, the public-read
+gate rejects player tracking, manual `POST /api/backfill/{accountId}`, and the
+registration-changing band sync-status route. The manual endpoint holds the
+shared advisory gate through all-time backfill and optional history
+reconstruction; player tracking, band sync, and selected-profile activity use
+the same gate around their registration writes. HTTP admission uses a
+pool-capacity-bounded, nonblocking shared try-lock on an isolated unpooled
+session, so requests return consistent `503` with `Retry-After: 30` rather
+than consuming or queueing behind the normal PostgreSQL pool. Background
+workers retain cancellable waiting admission on isolated sessions.
+
+Each holder verifies its live backend/session token before guarded writes, and
+database triggers fence registration plus leaderboard/score-history writes
+against the durable exclusive owner. Selected-profile activity
 tracking performs no player touch or band/member registration, including when
 the outer response cache handles the request. When the same publication is
 released, every API process invalidates response caches, the path-maxima cache,

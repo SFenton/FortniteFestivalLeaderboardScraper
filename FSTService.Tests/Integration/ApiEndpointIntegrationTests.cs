@@ -371,6 +371,89 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task MaxScoreExclusiveGate_MoreThanPoolCapacityHttpMutationsFailFastWithoutStarvingDatabase()
+    {
+        const string accountId = "max-score-pool-account";
+        const string teammateId = "max-score-pool-mate";
+        const string bandType = "Band_Duets";
+        var teamKey = accountId + ":" + teammateId;
+        using var factory = new FstWebApplicationFactory(
+            useStoredProjectionRanks: false,
+            usePublishedScopeSources: false,
+            rolloutReadOnly: false,
+            maxPoolSize: 15);
+        using var client = factory.CreateClient();
+        var metaDb =
+            factory.Services.GetRequiredService<MetaDatabase>();
+        var dataSource =
+            factory.Services.GetRequiredService<NpgsqlDataSource>();
+        var pointers = EnsureCurrentPublication(metaDb);
+        metaDb.InsertAccountNames(
+        [
+            (accountId, (string?)"Pool Account"),
+            (teammateId, (string?)"Pool Mate"),
+        ]);
+
+        await using var maintenanceLease =
+            await metaDb.AcquireMaxScoreMaintenanceLeaseAsync(
+                pointers.CurrentPublicationId!.Value);
+        await maintenanceLease.VerifyHeldAsync(
+            requireSourceLocks: false);
+        Assert.False(
+            metaDb.GetPublicReadFreezeState().IsFrozen);
+
+        var stopwatch =
+            System.Diagnostics.Stopwatch.StartNew();
+        var requests = Enumerable.Range(0, 32)
+            .Select(index =>
+                index % 2 == 0
+                    ? client.PostAsync(
+                        $"/api/player/{accountId}/track",
+                        content: null)
+                    : client.GetAsync(
+                        $"/api/bands/{bandType}/{teamKey}/sync-status"))
+            .ToArray();
+
+        await using (var health =
+                     await dataSource.OpenConnectionAsync()
+                         .AsTask()
+                         .WaitAsync(TimeSpan.FromSeconds(2)))
+        await using (var command = health.CreateCommand())
+        {
+            command.CommandText = "SELECT 1";
+            Assert.Equal(
+                1,
+                Convert.ToInt32(
+                    await command.ExecuteScalarAsync()));
+        }
+
+        var responses = await Task.WhenAll(requests)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        stopwatch.Stop();
+        Assert.True(
+            stopwatch.Elapsed < TimeSpan.FromSeconds(5));
+        foreach (var response in responses)
+        {
+            Assert.Equal(
+                HttpStatusCode.ServiceUnavailable,
+                response.StatusCode);
+            Assert.Equal(
+                TimeSpan.FromSeconds(30),
+                response.Headers.RetryAfter?.Delta);
+            var problem =
+                await response.Content
+                    .ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(
+                "Registration temporarily unavailable",
+                problem.GetProperty("title").GetString());
+            response.Dispose();
+        }
+
+        Assert.False(
+            metaDb.IsAccountRegistered(accountId));
+    }
+
+    [Fact]
     public async Task MaxScoreMaintenanceFreeze_ServesStableSongsAndLeaderboardCachesAndBlocksColdReads()
     {
         const string songId = "maxScoreGateSong";
@@ -3133,12 +3216,9 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
-    public async Task Backfill_FreezeWinsLeaseRace_Returns503WithoutScoreMutation()
+    public async Task Backfill_ExclusiveGateBeforeFreeze_Returns503WithoutScoreMutation()
     {
         const string accountId = "backfill-freeze-wins";
-        var freezeReason =
-            PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
-            + new string('f', 64);
         using var factory = _factory.WithWebHostBuilder(builder =>
         {
             builder.ConfigureServices(services =>
@@ -3194,33 +3274,23 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 .CurrentPublicationId
             ?? 1;
 
-        Task<HttpResponseMessage> responseTask;
+        HttpResponseMessage response;
         await using (var maintenanceLease =
                      await metaDb
                          .AcquireMaxScoreMaintenanceLeaseAsync(
                              publicationId))
         {
-            using var ambientLease =
-                maintenanceLease.EnterAmbientScope();
-            responseTask =
-                client.PostAsync(
+            await maintenanceLease.VerifyHeldAsync(
+                requireSourceLocks: false);
+            response =
+                await client.PostAsync(
                     $"/api/backfill/{accountId}",
-                    content: null);
-            await Task.Delay(150);
-            Assert.False(responseTask.IsCompleted);
+                    content: null)
+                    .WaitAsync(TimeSpan.FromSeconds(5));
             Assert.False(
                 metaDb.GetPublicReadFreezeState()
                     .IsFrozen);
-
-            metaDb.SetPublicReadFreeze(
-                true,
-                reason: freezeReason);
-            await maintenanceLease
-                .AcquireSourceLocksAsync();
         }
-        var response =
-            await responseTask.WaitAsync(
-                TimeSpan.FromSeconds(5));
 
         Assert.Equal(
             HttpStatusCode.ServiceUnavailable,
@@ -3238,9 +3308,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             persistence
                 .GetOrCreateInstrumentDb("Solo_Guitar")
                 .GetEntry("testSong1", accountId));
-        metaDb.SetPublicReadFreeze(
-            false,
-            reason: freezeReason);
     }
 
     [Fact]
@@ -3341,9 +3408,9 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(1, history.CallCount);
         Assert.Empty(metaDb.GetScoreHistory(accountId));
 
-        metaDb.SetPublicReadFreeze(
-            false,
-            reason: freezeReason);
+        ClearPublicReadFreezeForTest(
+            factory.Services
+                .GetRequiredService<NpgsqlDataSource>());
     }
 
 
@@ -8423,6 +8490,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         private readonly NpgsqlDataSource? _writableDataSource;
         private readonly string _serviceConnectionString;
         private readonly bool _rolloutReadOnly;
+        private readonly int _maxPoolSize;
         public bool UseStoredProjectionRanks { get; }
         public bool UsePublishedScopeSources { get; }
         internal NpgsqlDataSource WritableDataSource =>
@@ -8440,11 +8508,14 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         internal FstWebApplicationFactory(
             bool useStoredProjectionRanks,
             bool usePublishedScopeSources = false,
-            bool rolloutReadOnly = false)
+            bool rolloutReadOnly = false,
+            int? maxPoolSize = null)
         {
             UseStoredProjectionRanks = useStoredProjectionRanks;
             UsePublishedScopeSources = usePublishedScopeSources;
             _rolloutReadOnly = rolloutReadOnly;
+            _maxPoolSize =
+                maxPoolSize ?? (rolloutReadOnly ? 16 : 10);
             if (rolloutReadOnly)
             {
                 _writableDataSource = SharedPostgresContainer.CreateDatabase();
@@ -8456,7 +8527,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 {
                     Database = databaseName,
                     MinPoolSize = 0,
-                    MaxPoolSize = 16,
+                    MaxPoolSize = _maxPoolSize,
+                    PersistSecurityInfo = true,
                 };
                 connectionBuilder.Options = "-c default_transaction_read_only=on";
                 _serviceConnectionString = connectionBuilder.ConnectionString;
@@ -8507,8 +8579,14 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 services.RemoveAll<NpgsqlDataSource>();
                 var testDs = _rolloutReadOnly
                     ? NpgsqlDataSource.Create(_serviceConnectionString)
-                    : SharedPostgresContainer.CreateDatabase();
+                    : SharedPostgresContainer.CreateDatabase(
+                        _maxPoolSize);
                 services.AddSingleton(testDs);
+                services.RemoveAll<
+                    PostgresUnpooledConnectionFactory>();
+                services.AddSingleton(
+                    new PostgresUnpooledConnectionFactory(
+                        testDs.ConnectionString));
                 services.RemoveAll<PublicationReadLockDataSource>();
                 services.AddSingleton(
                     new PublicationReadLockDataSource(testDs));

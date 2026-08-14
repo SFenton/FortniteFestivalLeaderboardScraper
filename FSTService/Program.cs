@@ -433,6 +433,9 @@ if (rolloutPostgresReadOnlyRequested)
 }
 var pgDataSource = NpgsqlDataSource.Create(pgConnectionStringBuilder.ConnectionString);
 builder.Services.AddSingleton(pgDataSource);
+builder.Services.AddSingleton(
+    new PostgresUnpooledConnectionFactory(
+        pgConnectionStringBuilder.ConnectionString));
 builder.Services.AddSingleton(sp =>
     PostgresRuntimeTarget.FromConnectionString(
         sp.GetRequiredService<NpgsqlDataSource>().ConnectionString));
@@ -441,7 +444,8 @@ builder.Services.AddSingleton<IMetaDatabase>(sp =>
     new FSTService.Persistence.MetaDatabase(sp.GetRequiredService<NpgsqlDataSource>(),
         sp.GetRequiredService<ILogger<FSTService.Persistence.MetaDatabase>>(),
         sp.GetRequiredService<IOptions<BandRankHistoryOptions>>(),
-        sp.GetRequiredService<IOptions<PublicationCommitOptions>>()));
+        sp.GetRequiredService<IOptions<PublicationCommitOptions>>(),
+        sp.GetRequiredService<PostgresUnpooledConnectionFactory>()));
 builder.Services.AddSingleton(sp => (FSTService.Persistence.MetaDatabase)sp.GetRequiredService<IMetaDatabase>());
 
 builder.Services.AddSingleton<IPathDataStore>(sp =>

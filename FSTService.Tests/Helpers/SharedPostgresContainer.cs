@@ -35,7 +35,8 @@ public static class SharedPostgresContainer
     /// Each data source uses a minimal connection pool to avoid exhausting the container.
     /// Safe to call from synchronous test constructors.
     /// </summary>
-    public static NpgsqlDataSource CreateDatabase()
+    public static NpgsqlDataSource CreateDatabase(
+        int maxPoolSize = 10)
     {
         var connStr = ConnectionString;
         var dbName = $"fst_{Guid.NewGuid():N}";
@@ -52,8 +53,9 @@ public static class SharedPostgresContainer
         {
             Database = dbName,
             MinPoolSize = 0,
-            MaxPoolSize = 10,
+            MaxPoolSize = maxPoolSize,
             ConnectionIdleLifetime = 10,
+            PersistSecurityInfo = true,
         };
         var ds = NpgsqlDataSource.Create(builder.ConnectionString);
 

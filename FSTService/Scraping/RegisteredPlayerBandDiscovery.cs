@@ -133,6 +133,7 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestrator
         await using var registrationLease =
             await _registrationMutations
                 .AcquireLeaseAsync(ct);
+        await registrationLease.VerifyHeldAsync(ct);
         var accounts = _metaDb.GetRegisteredAccountIdsForBandDiscovery();
         if (accounts.Count == 0)
             return RegisteredPlayerBandDiscoveryResult.Empty;

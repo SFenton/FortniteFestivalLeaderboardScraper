@@ -2466,6 +2466,7 @@ public sealed class PostScrapeOrchestrator
             await using var registrationLease =
                 await _registrationMutations
                     .AcquireLeaseAsync(refreshCt);
+            await registrationLease.VerifyHeldAsync(refreshCt);
             var chartedSongIds = ctx.ScrapeRequests
                 .Select(static request => request.SongId)
                 .Distinct(StringComparer.Ordinal)

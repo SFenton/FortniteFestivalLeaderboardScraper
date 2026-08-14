@@ -42,6 +42,22 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public void Schema_initialization_creates_publication_singleton_without_scrape()
+    {
+        using var connection =
+            _metaFixture.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(*)
+            FROM scrape_publication_state
+            WHERE id = TRUE
+            """;
+        Assert.Equal(
+            1L,
+            Convert.ToInt64(command.ExecuteScalar()));
+    }
+
+    [Fact]
     public async Task CheckHealthAsync_BeforeInit_ReturnsUnhealthy()
     {
         var festivalService = new FestivalService((IFestivalPersistence?)null);

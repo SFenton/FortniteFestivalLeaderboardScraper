@@ -1952,6 +1952,7 @@ public sealed class ScraperWorker : BackgroundService
         await using var registrationLease =
             await _registrationMutations
                 .AcquireWriteLeaseAsync(ct);
+        await registrationLease.VerifyHeldAsync(ct);
         var pruned = _persistence.Meta.PruneStaleWebRegistrations(staleBeforeUtc);
         if (pruned > 0)
         {
