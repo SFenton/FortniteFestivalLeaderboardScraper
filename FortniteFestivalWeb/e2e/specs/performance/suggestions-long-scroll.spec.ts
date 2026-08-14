@@ -646,14 +646,20 @@ async function driveSuggestionsToCategoryLimit(
     const currentCount = await readGeneratedCategoryCount(list);
     if (currentCount >= categoryLimit) return;
 
-    await expect(sentinel).toHaveAttribute('data-observer-ready', 'true');
+    await expect.poll(async () => (
+      await readGeneratedCategoryCount(list) >= categoryLimit
+      || await sentinel.getAttribute('data-observer-ready') === 'true'
+    )).toBe(true);
+    const readyCount = await readGeneratedCategoryCount(list);
+    if (readyCount >= categoryLimit) return;
+
     await scrollContainer.evaluate((element) => {
       element.scrollTo(0, element.scrollHeight);
     });
     await expect.poll(
       () => readGeneratedCategoryCount(list),
-      { timeout: 5_000, message: `Suggestions category ${currentCount + 1} did not commit` },
-    ).toBeGreaterThan(currentCount);
+      { timeout: 5_000, message: `Suggestions category ${readyCount + 1} did not commit` },
+    ).toBeGreaterThan(readyCount);
   }
   throw new Error(`Suggestions did not reach the ${categoryLimit}-category limit`);
 }
