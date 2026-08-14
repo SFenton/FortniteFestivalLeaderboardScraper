@@ -1,12 +1,13 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-12
-last_verified_commit: 3ff9cbc8
+last_verified: 2026-08-14
+last_verified_commit: a20b9d89
 sources:
   - README.md
   - AGENTS.md
   - .github/instructions/documentation.instructions.md
+  - docs/architecture/replay-artifacts.md
 update_triggers:
   - Any canonical document is added, moved, or removed.
 ---
@@ -24,6 +25,7 @@ evidence remain the behavioral sources of truth.
 | Understand the whole system | [System overview](architecture/system-overview.md) |
 | Follow data from Epic to the browser | [Scrape and publication flow](architecture/data-publication-flow.md) |
 | Understand PostgreSQL ownership and data shapes | [Data storage](architecture/data-storage.md) |
+| Understand immutable replay evidence packages | [Replay evidence artifacts](architecture/replay-artifacts.md) |
 | Work on the React application | [Web app](components/web-app.md) |
 | Work on HTTP serving and API behavior | [Service and API](components/service-api.md) |
 | Work on scheduled scraping and derived data | [Worker](components/worker.md) |

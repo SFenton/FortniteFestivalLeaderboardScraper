@@ -1,8 +1,8 @@
 ---
 status: roadmap
 owner: worker
-last_verified: 2026-08-13
-last_verified_commit: 0af25b3f
+last_verified: 2026-08-14
+last_verified_commit: a20b9d89
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -12,6 +12,7 @@ sources:
   - FSTService/Scraping/WorkerStatusPublisher.cs
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Scraping/DurablePhaseProgressSink.cs
+  - FSTService/Scraping/Replay/
   - FSTService/Scraping/OnlineBoundedPageWriter.cs
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -691,13 +692,20 @@ Each iteration below is a separate branch/PR.
 - no production capture or phase mutation;
 - corruption, mismatch, resume, and determinism tests.
 
-**Starting note:** branch from the accepted official PR-3 master state after
-image/deployment verification. The first slice is repository-only: define the
-canonical package/phase manifest, deterministic serialization, stable phase
-descriptor references, checksum/root lineage, and corruption/mismatch tests.
-It must not capture production payloads, invoke phases, write PostgreSQL,
-publish, add retention work, or assume Tier 1 artifacts exist. Keep any
-generated fixture evidence bounded and on the FST drive.
+**Candidate state:** implementation on `copilot/tier0-evidence-contract`
+defines the canonical manifest/package models, deterministic JSON and root
+hashing, allowlisted configuration fingerprint, stable phase-plan projection,
+atomic seal/resume journal with pending-artifact crash recovery, typed
+verifier, and bounded synthetic fixture.
+Targeted contract tests, the full Release service suite, the service coverage
+gate, Release build, secret scan, and documentation checks pass. The candidate
+is still unaccepted, unmerged, undeployed, and has not captured or replayed
+production data. Review, PR CI, and acceptance remain required before this item
+can leave the roadmap.
+
+The candidate deliberately has no CLI, worker registration, database query,
+live export/import, capture, replay invocation, publication binding, or
+retention action. Those remain later gated work.
 
 ### PR-5: same-binary isolated replay
 

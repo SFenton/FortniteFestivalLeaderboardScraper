@@ -2,9 +2,10 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-14
-last_verified_commit: 3fbfc9f2
+last_verified_commit: a20b9d89
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
+  - FSTService/Scraping/Replay/TierZeroRegularFile.cs
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/playwright.config.ts
   - FortniteFestivalWeb/playwright.component.config.ts
@@ -39,6 +40,13 @@ dotnet build FSTService/FSTService.csproj -c Release
 The service suite uses xUnit. Integration coverage includes hosted-role
 selection, API route classification, publication contracts, persistence, and
 worker behavior. CI enforces the repository's service coverage gate.
+
+The Tier-0 native filesystem syscall shim is excluded from the aggregate line
+denominator because its branches are operating-system ABI specific. Focused
+contract tests execute the supported Linux no-follow/openat2 behavior,
+special-file rejection, lock contention, atomic moves, and ancestor-symlink
+guards; the package, manifest, lifecycle, and verifier logic remains in the
+normal coverage gate.
 
 ## Web and shared TypeScript packages
 
