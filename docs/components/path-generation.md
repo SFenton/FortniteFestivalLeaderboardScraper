@@ -4,7 +4,9 @@ owner: service
 last_verified: 2026-08-13
 last_verified_commit: 96ed9680
 sources:
+  - FSTService/Scraping/MidiTrackInspector.cs
   - FSTService/Scraping/PathGenerationCoordinator.cs
+  - FSTService/Scraping/PathGenerationModels.cs
   - FSTService/Scraping/PathArtifactResolver.cs
   - FSTService/Scraping/PathDataStore.cs
   - FSTService/Api/SongEndpoints.cs
@@ -29,12 +31,13 @@ together as an immutable generation.
 1. FST downloads the encrypted Festival MIDI `.dat` file and verifies its
    content hash.
 2. The configured MIDI key decrypts the chart in a private staging directory.
-3. Expected instruments normally come from property presence in Epic's raw
-   intensity object. Stable song-ID corrections add Lead and Pro Lead for
-   `Run It` and `Show Them Who We Are`: Epic omits both `gr` and `pg` even
-   though each MIDI contains `PART GUITAR` and `PLASTIC GUITAR` and both
-   leaderboards are populated. This correction is part of normal generation
-   so a later regeneration cannot silently remove those maxima.
+3. Expected instruments begin with property presence in Epic's raw intensity
+   object. When any supported property is absent, FST decrypts and parses each
+   named MIDI track, then augments only omitted instruments whose track contains
+   a positive-velocity Note On event. Empty placeholder tracks and zero-velocity
+   Note On events do not count. This inspection occurs before the
+   unchanged-generation skip decision, so a prior generation cannot remain
+   current after an omitted real chart is discovered.
 4. CHOpt runs once for each expected instrument and each of `easy`, `medium`,
    `hard`, and `expert`, using the `fnf` engine, zero early whammy, and 20%
    squeeze. Plastic-drums charts generate two modes from Epic's `pd` chart:

@@ -266,8 +266,9 @@ public sealed partial class PathGenerationCoordinator
         var songLock = _songLocks.GetOrAdd(
             request.SongId,
             static _ => new SemaphoreSlim(1, 1));
-        var expected = PathGenerationInstruments.NormalizeExpected(
+        var metadataExpected = PathGenerationInstruments.NormalizeExpected(
             request.ExpectedInstruments);
+        var expected = metadataExpected;
         var acquiredImmediately = false;
         var lockAcquired = false;
         try
@@ -314,13 +315,6 @@ public sealed partial class PathGenerationCoordinator
                     "The exact catalog last-modified identity changed before path generation.");
             }
 
-            if (expected.Length == 0)
-            {
-                throw new PathGenerationException(
-                    "request_validation",
-                    "The raw chart metadata contains none of gr/ba/ds/vl/pg/pb.");
-            }
-
             byte[] datBytes;
             try
             {
@@ -337,6 +331,52 @@ public sealed partial class PathGenerationCoordinator
                     "download",
                     $"Failed to download the encrypted chart: {ex.Message}",
                     innerException: ex);
+            }
+
+            byte[]? decryptedMidi = null;
+            if (metadataExpected.Length <
+                PathGenerationInstruments.Definitions.Count)
+            {
+                try
+                {
+                    decryptedMidi = MidiCryptor.Decrypt(
+                        datBytes,
+                        execution.MidiKey);
+                    var midiExpected =
+                        MidiTrackInspector.GetNonEmptyInstruments(
+                            decryptedMidi);
+                    expected = PathGenerationInstruments.NormalizeExpected(
+                        metadataExpected.Concat(midiExpected));
+                    var recovered = expected
+                        .Except(metadataExpected, StringComparer.Ordinal)
+                        .ToArray();
+                    if (recovered.Length > 0)
+                    {
+                        _log.LogWarning(
+                            "Chart metadata omitted non-empty MIDI instruments for {SongId}: {Instruments}.",
+                            request.SongId,
+                            string.Join(", ", recovered));
+                    }
+
+                    request = request with
+                    {
+                        ExpectedInstruments = expected,
+                    };
+                }
+                catch (Exception ex)
+                {
+                    throw new PathGenerationException(
+                        "decrypt",
+                        $"Failed to decrypt or inspect the chart: {ex.Message}",
+                        innerException: ex);
+                }
+            }
+
+            if (expected.Length == 0)
+            {
+                throw new PathGenerationException(
+                    "request_validation",
+                    "The chart metadata and decrypted MIDI contain no supported non-empty instrument tracks.");
             }
 
             if (!force &&
@@ -364,14 +404,17 @@ public sealed partial class PathGenerationCoordinator
             MidiTrackRenamer.MidiVariants variants;
             try
             {
+                decryptedMidi ??= MidiCryptor.Decrypt(
+                    datBytes,
+                    execution.MidiKey);
                 variants = MidiTrackRenamer.ProduceVariants(
-                    MidiCryptor.Decrypt(datBytes, execution.MidiKey));
+                    decryptedMidi);
             }
             catch (Exception ex)
             {
                 throw new PathGenerationException(
                     "decrypt",
-                    $"Failed to decrypt or transform the chart: {ex.Message}",
+                    $"Failed to transform the chart: {ex.Message}",
                     innerException: ex);
             }
 

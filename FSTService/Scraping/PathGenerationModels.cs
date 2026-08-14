@@ -6,6 +6,7 @@ namespace FSTService.Scraping;
 
 public sealed record PathInstrumentDefinition(
     string ProviderProperty,
+    string MidiTrackName,
     string Instrument,
     string MidiVariant,
     string ChoptInstrument,
@@ -15,16 +16,32 @@ public static class PathGenerationInstruments
 {
     public static readonly IReadOnlyList<PathInstrumentDefinition> Definitions =
     [
-        new("gr", "Solo_Guitar", "og", "guitar"),
-        new("ba", "Solo_Bass", "og", "bass"),
-        new("ds", "Solo_Drums", "og", "drums"),
-        new("vl", "Solo_Vocals", "og", "vocals"),
-        new("pg", "Solo_PeripheralGuitar", "pro", "guitar"),
-        new("pb", "Solo_PeripheralBass", "pro", "bass"),
+        new("gr", "PART GUITAR", "Solo_Guitar", "og", "guitar"),
+        new("ba", "PART BASS", "Solo_Bass", "og", "bass"),
+        new("ds", "PART DRUMS", "Solo_Drums", "og", "drums"),
+        new("vl", "PART VOCALS", "Solo_Vocals", "og", "vocals"),
+        new(
+            "pg",
+            "PLASTIC GUITAR",
+            "Solo_PeripheralGuitar",
+            "pro",
+            "guitar"),
+        new(
+            "pb",
+            "PLASTIC BASS",
+            "Solo_PeripheralBass",
+            "pro",
+            "bass"),
         // CHOpt's FNF prodrums mode reads PLASTIC DRUMS from the original MIDI.
-        new("pd", "Solo_PeripheralCymbals", "og", "prodrums"),
         new(
             "pd",
+            "PLASTIC DRUMS",
+            "Solo_PeripheralCymbals",
+            "og",
+            "prodrums"),
+        new(
+            "pd",
+            "PLASTIC DRUMS",
             "Solo_PeripheralDrums",
             "og",
             "prodrums",
@@ -60,16 +77,6 @@ public sealed record SongPathRequest(
     string? LastModified,
     IReadOnlyList<string> ExpectedInstruments)
 {
-    private static readonly HashSet<string> MissingGuitarIntensitySongIds =
-        new(StringComparer.Ordinal)
-        {
-            "3d7901c9-7ae2-4adb-9393-4ec4c54c2e3b",
-            "ddd5447c-b5d7-4fe4-8f22-c9854168d11b",
-        };
-
-    private static readonly string[] MissingGuitarIntensityInstruments =
-        ["Solo_Guitar", "Solo_PeripheralGuitar"];
-
     public static SongPathRequest? FromSong(Song song)
     {
         if (string.IsNullOrWhiteSpace(song.track?.su) ||
@@ -92,34 +99,24 @@ public sealed record SongPathRequest(
 
     internal static string[] GetExpectedInstruments(Song song)
     {
-        IEnumerable<string> expected;
         if (TryGetRawIntensity(song, out var intensity))
         {
-            expected = PathGenerationInstruments.Definitions
+            return PathGenerationInstruments.Definitions
                 .Where(definition => intensity.TryGetProperty(definition.ProviderProperty, out _))
-                .Select(definition => definition.Instrument);
-        }
-        else
-        {
-            var typedIntensity = song.track?.@in;
-            expected = typedIntensity is null
-                ? []
-                : PathGenerationInstruments.Definitions
-                    .Where(definition =>
-                        typedIntensity.HasProviderProperty(
-                            definition.ProviderProperty))
-                    .Select(definition => definition.Instrument);
+                .Select(definition => definition.Instrument)
+                .ToArray();
         }
 
-        // Epic omits gr/pg for these charts even though both guitar tracks
-        // exist in the MIDI and their live leaderboards are populated.
-        if (song.track?.su is { } songId &&
-            MissingGuitarIntensitySongIds.Contains(songId))
-        {
-            expected = expected.Concat(MissingGuitarIntensityInstruments);
-        }
+        var typedIntensity = song.track?.@in;
+        if (typedIntensity is null)
+            return [];
 
-        return PathGenerationInstruments.NormalizeExpected(expected);
+        return PathGenerationInstruments.Definitions
+            .Where(definition =>
+                typedIntensity.HasProviderProperty(
+                    definition.ProviderProperty))
+            .Select(definition => definition.Instrument)
+            .ToArray();
     }
 
     private static bool TryGetRawIntensity(Song song, out JsonElement intensity)

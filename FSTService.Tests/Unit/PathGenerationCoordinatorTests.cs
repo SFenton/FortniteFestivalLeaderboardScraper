@@ -80,13 +80,10 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
             request!.ExpectedInstruments);
     }
 
-    [Theory]
-    [InlineData("3d7901c9-7ae2-4adb-9393-4ec4c54c2e3b")]
-    [InlineData("ddd5447c-b5d7-4fe4-8f22-c9854168d11b")]
-    public void Song_request_restores_known_missing_guitar_intensities(
-        string songId)
+    [Fact]
+    public void Song_request_keeps_omitted_instruments_out_until_midi_inspection()
     {
-        var song = CreateSong(songId, new In());
+        var song = CreateSong("metadata-only", new In());
         using var provider = JsonDocument.Parse(
             """
             {
@@ -108,11 +105,9 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
         Assert.NotNull(request);
         Assert.Equal(
             [
-                "Solo_Guitar",
                 "Solo_Bass",
                 "Solo_Drums",
                 "Solo_Vocals",
-                "Solo_PeripheralGuitar",
                 "Solo_PeripheralBass",
                 "Solo_PeripheralCymbals",
                 "Solo_PeripheralDrums",
@@ -913,6 +908,134 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
     }
 
     [Fact]
+    public async Task Complete_metadata_can_skip_without_midi_inspection()
+    {
+        byte[] opaqueDat = [1, 2, 3, 4];
+        var chopt = CreateChoptScript();
+        var store = new FakePathDataStore();
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            new StaticDatHandler(opaqueDat));
+        var runtime = await coordinator.DetectRuntimeIdentityAsync(
+            chopt,
+            CancellationToken.None);
+        var expected = PathGenerationInstruments.Definitions
+            .Select(definition => definition.Instrument)
+            .ToArray();
+        SeedCompleteGeneration(
+            store,
+            "complete-metadata",
+            "old-generation",
+            runtime,
+            expected,
+            MidiCryptor.ComputeHash(opaqueDat),
+            "2026-08-01T00:00:00.0000000Z");
+
+        var result = await coordinator.GeneratePathsAsync(
+            [
+                CreateSong(
+                    "complete-metadata",
+                    new In
+                    {
+                        gr = 0,
+                        ba = 0,
+                        ds = 0,
+                        vl = 0,
+                        pg = 0,
+                        pb = 0,
+                        pd = 0,
+                    },
+                    UtcDate(1)),
+            ],
+            false,
+            CancellationToken.None);
+
+        Assert.Equal(1, result.Skipped);
+        Assert.Equal(
+            "old-generation",
+            store.GetPathGenerationState(
+                "complete-metadata")!.ArtifactGenerationId);
+    }
+
+    [Fact]
+    public async Task Same_dat_regenerates_when_non_empty_midi_tracks_restore_metadata_omissions()
+    {
+        var midi = BuildMidiWithInstrumentTracks(
+            ("PART BASS", true),
+            ("PART GUITAR", true),
+            ("PLASTIC GUITAR", true));
+        var encryptedDat = EncryptMidi(midi, _midiKey);
+        var chopt = CreateChoptScript();
+        var store = new FakePathDataStore();
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            new StaticDatHandler(encryptedDat));
+        var runtime = await coordinator.DetectRuntimeIdentityAsync(
+            chopt,
+            CancellationToken.None);
+        var lastModified = "2026-08-01T00:00:00.0000000Z";
+        SeedCompleteGeneration(
+            store,
+            "midi-expected-change",
+            "old-generation",
+            runtime,
+            ["Solo_Bass"],
+            MidiCryptor.ComputeHash(encryptedDat),
+            lastModified);
+
+        var result = await coordinator.GeneratePathsAsync(
+            [
+                CreateSong(
+                    "midi-expected-change",
+                    new In { ba = 0 },
+                    UtcDate(1)),
+            ],
+            false,
+            CancellationToken.None);
+
+        Assert.Equal(1, result.Promoted);
+        var state = store.GetPathGenerationState(
+            "midi-expected-change")!;
+        Assert.Equal(
+            [
+                "Solo_Guitar",
+                "Solo_Bass",
+                "Solo_PeripheralGuitar",
+            ],
+            state.ExpectedInstruments);
+        Assert.Equal(123_456, state.MaxScores.MaxLeadScore);
+        Assert.Equal(123_456, state.MaxScores.MaxBassScore);
+        Assert.Equal(123_456, state.MaxScores.MaxProLeadScore);
+    }
+
+    [Fact]
+    public async Task Non_empty_midi_track_allows_generation_without_supported_metadata()
+    {
+        var midi = BuildMidiWithInstrumentTracks(
+            ("PART GUITAR", true));
+        var encryptedDat = EncryptMidi(midi, _midiKey);
+        var chopt = CreateChoptScript();
+        var store = new FakePathDataStore();
+        store.EnsureSong("midi-only");
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            new StaticDatHandler(encryptedDat));
+
+        var result = await coordinator.GeneratePathsAsync(
+            [CreateSong("midi-only", new In())],
+            false,
+            CancellationToken.None);
+
+        Assert.Equal(1, result.Promoted);
+        var state = store.GetPathGenerationState("midi-only")!;
+        Assert.Equal(["Solo_Guitar"], state.ExpectedInstruments);
+        Assert.Equal(123_456, state.MaxScores.MaxLeadScore);
+    }
+
+    [Fact]
     public async Task Same_dat_regenerates_when_current_artifact_set_is_incomplete()
     {
         var chopt = CreateChoptScript();
@@ -1392,6 +1515,44 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
         stream.Write("MTrk"u8);
         WriteBigEndian32(stream, track.Length);
         stream.Write(track);
+        return stream.ToArray();
+    }
+
+    private static byte[] BuildMidiWithInstrumentTracks(
+        params (string Name, bool HasNotes)[] tracks)
+    {
+        using var stream = new MemoryStream();
+        stream.Write("MThd"u8);
+        WriteBigEndian32(stream, 6);
+        WriteBigEndian16(stream, 1);
+        WriteBigEndian16(stream, tracks.Length);
+        WriteBigEndian16(stream, 480);
+
+        foreach (var (name, hasNotes) in tracks)
+        {
+            using var track = new MemoryStream();
+            var nameBytes = Encoding.ASCII.GetBytes(name);
+            track.WriteByte(0x00);
+            track.WriteByte(0xFF);
+            track.WriteByte(0x03);
+            track.WriteByte((byte)nameBytes.Length);
+            track.Write(nameBytes);
+            if (hasNotes)
+            {
+                track.Write(
+                [
+                    0x00, 0x90, 60, 100,
+                    0x60, 0x80, 60, 0,
+                ]);
+            }
+            track.Write([0x00, 0xFF, 0x2F, 0x00]);
+
+            stream.Write("MTrk"u8);
+            WriteBigEndian32(stream, checked((int)track.Length));
+            track.Position = 0;
+            track.CopyTo(stream);
+        }
+
         return stream.ToArray();
     }
 
