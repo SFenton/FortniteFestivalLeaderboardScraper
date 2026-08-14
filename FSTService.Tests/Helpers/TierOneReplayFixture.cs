@@ -172,7 +172,7 @@ internal sealed record TierOneReplayFixture(
             .ToArray();
         var phaseInput = new TierOnePhaseInputManifest(
             TierOneReplayFormat.InputFormatId,
-            TierOneReplayFormat.Version,
+            TierOneReplayFormat.InputVersion,
             replayId,
             parent.PackageRootHash!,
             PhaseProgressCatalog.OperationId,

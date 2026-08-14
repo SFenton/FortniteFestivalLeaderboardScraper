@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-14
-last_verified_commit: 434f6f20
+last_verified_commit: faaa6d73
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService/Scraping/Replay/TierZeroRegularFile.cs
@@ -65,6 +65,10 @@ source/production target refusal, canonical marker/object inventory, typed
 bounded import, direct production-builder reuse, no publication tables,
 deterministic output parity, corrupt/parent mismatch rejection, stale-attempt
 refusal, cancellation evidence, and incomplete-output comparison failure.
+Tests also require output/comparison version `2`,
+`productionComparableTiming=false`, the exact deterministic-override reason,
+canonical hash sensitivity to the field, and rejection of a relabeled
+production-comparable package.
 
 The separate FST-drive drill is the no-published-port/process-isolation proof.
 It runs baseline/candidate images in network-none PostgreSQL namespaces and

@@ -2,7 +2,7 @@
 status: decision
 owner: worker
 last_verified: 2026-08-12
-last_verified_commit: 434f6f20
+last_verified_commit: faaa6d73
 sources:
   - FSTService/FSTService.csproj
   - FSTService/Program.cs
@@ -44,6 +44,10 @@ BandMaintenance: stable phase `post.band_maintenance`, adapter
 isolated PostgreSQL only. This is sufficient to iterate the dominant
 current-projection SQL/algorithm while prune, search projection, provider
 capture, publication, and notification coupling remain unsupported.
+Replay forces unchanged-scope skipping off, one band-type worker, synchronous
+commit, and candidate cleanup off. Its timing is explicitly non-comparable to
+production; option-parity replay or a separate bounded probe is required for
+production optimization claims.
 
 ## Context
 

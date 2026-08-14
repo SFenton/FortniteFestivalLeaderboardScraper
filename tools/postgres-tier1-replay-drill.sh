@@ -124,6 +124,7 @@ parent_package="$input_root/tier0-parent"
 input_package="$input_root/tier1-input"
 replay_id=$(jq -er '.replayId' "$input_package/tier1/phase-input.json")
 input_hash=$(jq -er '.packageRootHash' "$input_package/manifest.json")
+timing_reason="Deterministic replay overrides differ from production: SkipUnchangedScopes=false, one band-type worker, synchronous commit enabled, and candidate cleanup disabled."
 
 active_containers=()
 active_pgdata=()
@@ -340,7 +341,12 @@ docker run --rm \
   --no-publication \
   >"$root/comparison-command.jsonl"
 
-jq -e '.exactParity == true' "$comparison_work/comparison.json" >/dev/null
+jq -e \
+  --arg reason "$timing_reason" \
+  '.exactParity == true
+   and .productionComparableTiming == false
+   and .timingComparisonReason == $reason' \
+  "$comparison_work/comparison.json" >/dev/null
 cp "$comparison_work/comparison.json" "$root/comparison.json"
 rm -rf "$baseline_view" "$candidate_view" "$comparison_view"
 [[ -z "$(find "$scratch_root" -mindepth 1 -print -quit)" ]] || {
@@ -358,9 +364,10 @@ jq -n \
   --arg baselineRevision "$baseline_revision" \
   --arg candidateRevision "$candidate_revision" \
   --arg inputRoot "$input_hash" \
+  --arg timingReason "$timing_reason" \
   '{
     format: "fst.tier1.replay-drill",
-    version: 1,
+    version: 2,
     replayId: $replayId,
     baseline: {
       image: $baselineImage,
@@ -374,6 +381,8 @@ jq -n \
     },
     inputRootHash: $inputRoot,
     exactParity: true,
+    productionComparableTiming: false,
+    timingComparisonReason: $timingReason,
     networkMode: "isolated-container-namespace",
     publishedPorts: false,
     dockerSocketMounted: false,
@@ -388,6 +397,8 @@ cat >"$root/report.md" <<EOF
 - Baseline image: \`$baseline_image\` / \`$baseline_digest\` / \`$baseline_revision\`
 - Candidate image: \`$candidate_image\` / \`$candidate_digest\` / \`$candidate_revision\`
 - Exact output parity: accepted
+- Production-comparable timing: false
+- Timing reason: $timing_reason
 - PostgreSQL: two fresh PostgreSQL 17 containers, no published ports, network-none namespaces
 - Cleanup: both containers and PGDATA directories removed
 - Production database/API/provider access: none

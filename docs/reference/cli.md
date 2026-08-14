@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-14
-last_verified_commit: 434f6f20
+last_verified_commit: faaa6d73
 sources:
   - FSTService/Program.cs
   - FSTService/ScrapePhase.cs
@@ -77,9 +77,11 @@ revision, attempt number for both lanes, and `--no-publication`:
 ```
 
 Exit codes distinguish usage, root, package, target, import, phase, output,
-comparison, cancellation, and unexpected failures. CLI availability does not
-authorize production-derived capture or replay; PR-5 remains an unaccepted
-candidate.
+comparison, cancellation, and unexpected failures. Output/comparison format
+version `2` always emits `productionComparableTiming=false` with the
+deterministic-override reason. CLI availability does not authorize
+production-derived capture, full BandMaintenance, provider access, live
+replay, or deployment.
 
 ## Focused execution
 

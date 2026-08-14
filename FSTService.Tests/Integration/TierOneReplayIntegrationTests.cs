@@ -61,6 +61,14 @@ public sealed class TierOneReplayIntegrationTests
                 CancellationToken.None);
 
         Assert.True(comparison.ExactParity);
+        Assert.Equal(
+            TierOneReplayFormat.ComparisonVersion,
+            comparison.Version);
+        Assert.False(
+            comparison.ProductionComparableTiming);
+        Assert.Equal(
+            ReplayTimingSemantics.TimingComparisonReason,
+            comparison.TimingComparisonReason);
         Assert.All(
             comparison.Datasets,
             static dataset => Assert.True(dataset.ExactParity));
@@ -79,6 +87,61 @@ public sealed class TierOneReplayIntegrationTests
             projection.Select(static row => row.TeamKey));
         Assert.Equal([1, 2], projection.Select(static row => row.Rank));
         Assert.Equal([1000, 900], projection.Select(static row => row.Score));
+        var outputManifest = await ReadOutputManifestAsync(
+            baselineOutput);
+        Assert.Equal(
+            TierOneReplayFormat.OutputVersion,
+            outputManifest.Version);
+        Assert.False(
+            outputManifest.ProductionComparableTiming);
+        Assert.Equal(
+            ReplayTimingSemantics.TimingComparisonReason,
+            outputManifest.TimingComparisonReason);
+        var productionComparableBytes =
+            TierOneReplayCanonical.SerializeOutput(
+                outputManifest with
+                {
+                    ProductionComparableTiming = true,
+                    TimingComparisonReason =
+                        "production comparable",
+                    ManifestRootHash = null,
+                });
+        var productionComparable =
+            TierZeroCanonicalJson
+                .Deserialize<TierOnePhaseOutputManifest>(
+                    productionComparableBytes);
+        Assert.NotEqual(
+            outputManifest.ManifestRootHash,
+            productionComparable.ManifestRootHash);
+        var mislabeledOutput = Path.Combine(
+            directory.Path,
+            "mislabeled-output");
+        await CloneOutputWithTimingSemanticsAsync(
+            baselineOutput,
+            mislabeledOutput,
+            productionComparable);
+        var mislabeledReport = Path.Combine(
+            directory.Path,
+            "mislabeled-comparison.json");
+        var mislabeled = await Assert.ThrowsAsync<ReplayException>(
+            () => new ReplayComparisonService().CompareAsync(
+                mislabeledOutput,
+                candidateOutput,
+                mislabeledReport,
+                new ReplayComparisonExpectations(
+                    TierOneReplayFixture.Build.OciImageDigest,
+                    TierOneReplayFixture.Build.GitCommit,
+                    TierOneReplayFixture.Build.OciImageRevision,
+                    1,
+                    TierOneReplayFixture.Build.OciImageDigest,
+                    TierOneReplayFixture.Build.GitCommit,
+                    TierOneReplayFixture.Build.OciImageRevision,
+                    2),
+                CancellationToken.None));
+        Assert.Equal(
+            ReplayFailureKind.ComparisonFailed,
+            mislabeled.Kind);
+        Assert.False(File.Exists(mislabeledReport));
 
         var entryPointConnection =
             SharedPostgresContainer
@@ -698,6 +761,74 @@ public sealed class TierOneReplayIntegrationTests
             .ToArray();
     }
 
+    private static async Task<TierOnePhaseOutputManifest>
+        ReadOutputManifestAsync(string output)
+    {
+        var verification = await TierZeroPackageVerifier.VerifyAsync(
+            output);
+        var envelope = Assert.IsType<TierZeroEvidenceManifest>(
+            verification.Manifest);
+        var artifact = TierOneReplayPackageReader.RequireArtifact(
+            envelope,
+            TierOneReplayFormat.OutputManifestPath);
+        var bytes = await TierOneReplayPackageReader.ReadArtifactAsync(
+            output,
+            artifact,
+            CancellationToken.None);
+        return TierZeroCanonicalJson
+            .Deserialize<TierOnePhaseOutputManifest>(bytes);
+    }
+
+    private static async Task CloneOutputWithTimingSemanticsAsync(
+        string source,
+        string destination,
+        TierOnePhaseOutputManifest replacementManifest)
+    {
+        var verification = await TierZeroPackageVerifier.VerifyAsync(
+            source);
+        var envelope = Assert.IsType<TierZeroEvidenceManifest>(
+            verification.Manifest);
+        var replacementBytes =
+            TierOneReplayCanonical.SerializeOutput(
+                replacementManifest);
+        var writer = await TierZeroPackageWriter.CreateAsync(
+            destination,
+            new TierZeroPackageDraft(
+                envelope.PackageId,
+                envelope.Source,
+                envelope.Build,
+                envelope.Database,
+                envelope.Configuration,
+                envelope.SummaryReferences,
+                envelope.ParentRootHashes,
+                envelope.Attempt,
+                envelope.ProducerIdentity,
+                envelope.CreatedAtUtc));
+        foreach (var artifact in envelope.Artifacts)
+        {
+            var bytes = string.Equals(
+                artifact.Path,
+                TierOneReplayFormat.OutputManifestPath,
+                StringComparison.Ordinal)
+                ? replacementBytes
+                : await TierOneReplayPackageReader.ReadArtifactAsync(
+                    source,
+                    artifact,
+                    CancellationToken.None);
+            await writer.AddArtifactAsync(
+                new TierZeroArtifactRegistration(
+                    artifact.LogicalOwner,
+                    artifact.Path,
+                    artifact.MediaType,
+                    artifact.SchemaVersion,
+                    artifact.RowCount,
+                    bytes.LongLength,
+                    artifact.Ranges),
+                bytes);
+        }
+        await writer.SealAsync(envelope.SealedAtUtc);
+    }
+
     private static async Task<string> ReadMarkerStatusAsync(
         string connectionString)
     {
@@ -748,7 +879,7 @@ public sealed class TierOneReplayIntegrationTests
             TierOneReplayDatabaseSchema.Fingerprint);
         var outputManifest = new TierOnePhaseOutputManifest(
             TierOneReplayFormat.OutputFormatId,
-            TierOneReplayFormat.Version,
+            TierOneReplayFormat.OutputVersion,
             fixture.ReplayId,
             1,
             ReplayPhaseCatalog.BandMaintenancePhaseId,
@@ -761,6 +892,8 @@ public sealed class TierOneReplayIntegrationTests
             TierOneReplayFixture.Build,
             database,
             [],
+            ReplayTimingSemantics.ProductionComparableTiming,
+            ReplayTimingSemantics.TimingComparisonReason,
             metrics,
             TierOneReplayFixture.CreatedAt,
             TierOneReplayFixture.CreatedAt.AddSeconds(1),

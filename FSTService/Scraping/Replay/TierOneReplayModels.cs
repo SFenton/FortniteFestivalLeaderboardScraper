@@ -6,7 +6,9 @@ public static class TierOneReplayFormat
 {
     public const string InputFormatId = "fst.tier1.phase-input";
     public const string OutputFormatId = "fst.tier1.phase-output";
-    public const int Version = 1;
+    public const int InputVersion = 1;
+    public const int OutputVersion = 2;
+    public const int ComparisonVersion = 2;
     public const string InputManifestPath = "tier1/phase-input.json";
     public const string OutputManifestPath = "replay/output-manifest.json";
     public const string ScopesDatasetId = "band-current.requested-scopes";
@@ -230,6 +232,8 @@ public sealed record TierOnePhaseOutputManifest(
     TierZeroBuildIdentity Implementation,
     ReplayDatabaseIdentity Database,
     IReadOnlyList<TierOneOutputDatasetReference> Outputs,
+    bool ProductionComparableTiming,
+    string TimingComparisonReason,
     ReplayPhaseMetrics Metrics,
     DateTimeOffset StartedAtUtc,
     DateTimeOffset CompletedAtUtc,
@@ -311,6 +315,8 @@ public sealed record ReplayComparisonReport(
     string SubphaseId,
     IReadOnlyList<ReplayDatasetComparison> Datasets,
     bool ExactParity,
+    bool ProductionComparableTiming,
+    string TimingComparisonReason,
     double BaselineElapsedMilliseconds,
     double CandidateElapsedMilliseconds,
     double ElapsedDeltaMilliseconds,
@@ -321,6 +327,15 @@ public sealed record ReplayComparisonReport(
     long BaselinePeakWorkingSetBytes,
     long CandidatePeakWorkingSetBytes,
     long PeakWorkingSetDeltaBytes);
+
+public static class ReplayTimingSemantics
+{
+    public const bool ProductionComparableTiming = false;
+    public const string TimingComparisonReason =
+        "Deterministic replay overrides differ from production: " +
+        "SkipUnchangedScopes=false, one band-type worker, " +
+        "synchronous commit enabled, and candidate cleanup disabled.";
+}
 
 public sealed record ReplayComparisonExpectations(
     string BaselineImageDigest,

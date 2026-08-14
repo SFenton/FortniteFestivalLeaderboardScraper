@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-14
-last_verified_commit: 434f6f20
+last_verified_commit: faaa6d73
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -205,12 +205,13 @@ production-derived packages and replay workspace must stay on the 4 TB FST
 drive and receive explicit capacity/retention ownership. See
 [Replay evidence artifacts](replay-artifacts.md).
 
-The PR-5 candidate adds only a synthetic/bounded Tier-1 import into a fresh
-marker-owned isolated PostgreSQL database. The importer owns three typed input
-datasets and the BandMaintenance current-projection output tables; it rejects
-all pre-existing public objects, source/production cluster identity, arbitrary
-SQL, publication tables, and unlisted datasets. Isolated replay databases are
-ephemeral experimental workspaces, never source-of-truth or restore targets.
+The accepted PR-5 repository capability adds only a synthetic/bounded Tier-1
+import into a fresh marker-owned isolated PostgreSQL database. The importer
+owns three typed input datasets and the BandMaintenance current-projection
+output tables; it rejects all pre-existing public objects, source/production
+cluster identity, arbitrary SQL, publication tables, and unlisted datasets.
+Isolated replay databases are ephemeral experimental workspaces, never
+source-of-truth or restore targets.
 
 ## Storage and maintenance rules
 

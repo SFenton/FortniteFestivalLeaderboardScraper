@@ -27,6 +27,8 @@ test("Tier-1 replay drill keeps Docker and storage isolated", async () => {
   assert.match(source, /"\$baseline_digest" \\\n  --replay-compare-baseline/);
   assert.match(source, /pgdata="\$scratch_root\//);
   assert.match(source, /NOSUPERUSER/);
+  assert.match(source, /productionComparableTiming == false/);
+  assert.match(source, /SkipUnchangedScopes=false/);
   assert.doesNotMatch(source, /(?:^|\s)-p\s+[0-9]/m);
   assert.doesNotMatch(source, /--publish/);
   assert.doesNotMatch(source, /docker\.sock/);

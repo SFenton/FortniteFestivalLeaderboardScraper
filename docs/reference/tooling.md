@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-13
-last_verified_commit: 434f6f20
+last_verified_commit: faaa6d73
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
@@ -91,6 +91,9 @@ is the comparator, every image reference is resolved once to its immutable ID,
 and comparison enforces each lane's expected digest, Git commit, OCI revision,
 and attempt before parity. Preserve the emitted sealed packages,
 `comparison.json`, `run.json`, report, and checksums on the FST drive.
+Drill/report format version `2` also requires
+`productionComparableTiming=false`; its elapsed/resource deltas are diagnostic
+only because replay forces deterministic options that differ from production.
 
 Validate tool structure with:
 

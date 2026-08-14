@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: 434f6f20
+last_verified_commit: faaa6d73
 sources:
   - FSTService/Scraping/Replay/TierZeroEvidenceModels.cs
   - FSTService/Scraping/Replay/TierZeroCanonicalJson.cs
@@ -32,10 +32,9 @@ verification primitives. It does **not** capture a live scrape, export
 PostgreSQL, import into an isolated database, invoke a phase, replay a phase,
 publish data, or grant an artifact authority over public reads.
 
-PR-4 is accepted as a continuous-safe library contract. It has no registered
-runtime producer or consumer in accepted production. PR-5 adds an unaccepted,
-repository-only same-binary replay candidate. PostgreSQL remains the durable
-source of truth.
+PR-4 and PR-5 are accepted repository contracts. No replay producer or
+consumer is deployed in production. PostgreSQL remains the durable source of
+truth.
 
 ## Ownership and location
 
@@ -55,7 +54,7 @@ The PR-4 library confines package-relative operations beneath the root supplied
 by its caller, but it does not choose or authorize that root. This is
 intentional: no CLI or runtime entry point exists yet.
 
-The PR-5 candidate now fails closed before package creation unless:
+The accepted PR-5 root policy fails closed before package creation unless:
 
 - a runtime root resolves beneath an operator-approved location on the 4 TB
   FST drive;
@@ -94,12 +93,26 @@ truncated.
 
 The current replay adapter calls the production
 `BandCurrentProjectionBuilder.RefreshScopesAsync` implementation directly with
-unchanged-scope skipping disabled, one band-type worker, local isolated
-generation publication enabled, and candidate cleanup disabled. This is a
-useful current-projection refresh kernel, not full BandMaintenance parity:
-prune, search projection refresh, incremental unchanged detection, old
-candidate cleanup, global publication, freeze, cache, notifications, and
-provider behavior remain unsupported.
+`SkipUnchangedScopes=false`, one band-type worker, synchronous commit enabled,
+local isolated generation publication enabled, and candidate cleanup disabled.
+This is a deterministic current-projection refresh kernel, not full
+BandMaintenance parity: prune, search projection refresh, incremental
+unchanged detection, old candidate cleanup, global publication, freeze, cache,
+notifications, and provider behavior remain unsupported.
+
+These overrides intentionally differ from production. Output and comparison
+format version `2` therefore require:
+
+```json
+{
+  "productionComparableTiming": false,
+  "timingComparisonReason": "Deterministic replay overrides differ from production: SkipUnchangedScopes=false, one band-type worker, synchronous commit enabled, and candidate cleanup disabled."
+}
+```
+
+The fields are part of canonical hashing and verification. Replay elapsed/WAL/
+resource deltas are drill diagnostics only and cannot be cited as production
+wall-clock evidence.
 
 ## Isolated PostgreSQL target
 
@@ -122,16 +135,18 @@ the isolated attempt failed and retain an unsealed failure package.
 ## Tier-1 output and comparison
 
 A successful replay seals a Tier-0 output envelope parented to both Tier-0 and
-Tier-1 input roots. Its canonical Tier-1 output manifest records phase/adapter,
+Tier-1 input roots. Output format version `2` records phase/adapter,
 implementation commit/image/config/schema identity, isolated database
 identity, exact output datasets, row counts/hashes, timing, CPU/allocation/RSS,
-WAL/temp deltas, and `noPublication=true`.
+WAL/temp deltas, `noPublication=true`, and the mandatory non-production timing
+semantics above.
 
 Output datasets are canonical projections, scope state, and projection-global
 state with volatile timestamps excluded from parity. The trusted comparison
-requires exact expected digest, Git commit, OCI revision, and attempt for each
-lane. It reports row/hash parity and resource deltas, and fails even when
-performance improves if any output differs.
+format version `2` requires exact expected digest, Git commit, OCI revision,
+attempt, and `productionComparableTiming=false` for each lane. It reports
+row/hash parity and diagnostic resource deltas, and fails even when replay
+timing improves if any output differs.
 
 `tools/postgres-tier1-replay-drill.sh` runs baseline and candidate against
 separate fresh PostgreSQL 17 containers with no published ports, no provider

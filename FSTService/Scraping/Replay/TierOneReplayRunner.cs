@@ -612,7 +612,7 @@ public sealed class TierOneReplayRunner(
                     ["Replay:Phase"] =
                         "post_band_maintenance",
                     ["Replay:ProtocolVersion"] =
-                        TierOneReplayFormat.Version.ToString(),
+                        TierOneReplayFormat.OutputVersion.ToString(),
                 },
                 [
                     "Replay:Adapter",
@@ -653,7 +653,7 @@ public sealed class TierOneReplayRunner(
         DateTimeOffset completedAt) =>
         new(
             TierOneReplayFormat.OutputFormatId,
-            TierOneReplayFormat.Version,
+            TierOneReplayFormat.OutputVersion,
             command.ReplayId!,
             command.Attempt,
             command.PhaseId!,
@@ -676,6 +676,8 @@ public sealed class TierOneReplayRunner(
                     static artifact => artifact.DatasetId,
                     StringComparer.Ordinal)
                 .ToArray(),
+            ReplayTimingSemantics.ProductionComparableTiming,
+            ReplayTimingSemantics.TimingComparisonReason,
             metrics,
             startedAt,
             completedAt,
@@ -857,7 +859,7 @@ public sealed class ReplayComparisonService(
             baseline.Manifest.Metrics.ElapsedMilliseconds;
         var report = new ReplayComparisonReport(
             "fst.tier1.phase-comparison",
-            1,
+            TierOneReplayFormat.ComparisonVersion,
             baseline.Envelope.PackageRootHash!,
             candidate.Envelope.PackageRootHash!,
             baseline.Manifest.TierOneInputRootHash,
@@ -865,6 +867,8 @@ public sealed class ReplayComparisonService(
             baseline.Manifest.SubphaseId,
             datasets,
             datasets.All(static dataset => dataset.ExactParity),
+            ReplayTimingSemantics.ProductionComparableTiming,
+            ReplayTimingSemantics.TimingComparisonReason,
             baseline.Manifest.Metrics.ElapsedMilliseconds,
             candidate.Manifest.Metrics.ElapsedMilliseconds,
             Math.Round(elapsedDelta, 3),
@@ -939,7 +943,7 @@ public sealed class ReplayComparisonService(
                 manifest.FormatId,
                 TierOneReplayFormat.OutputFormatId,
                 StringComparison.Ordinal) ||
-            manifest.Version != TierOneReplayFormat.Version ||
+            manifest.Version != TierOneReplayFormat.OutputVersion ||
             manifest.Attempt != envelope.Attempt ||
             manifest.Attempt != expectedAttempt ||
             manifest.StartedAtUtc == default ||
@@ -951,6 +955,11 @@ public sealed class ReplayComparisonService(
             !string.Equals(
                 manifest.PhasePlanVersion,
                 envelope.PhasePlan.Version,
+                StringComparison.Ordinal) ||
+            manifest.ProductionComparableTiming ||
+            !string.Equals(
+                manifest.TimingComparisonReason,
+                ReplayTimingSemantics.TimingComparisonReason,
                 StringComparison.Ordinal))
         {
             throw ComparisonRejected("Replay output manifest is invalid.");

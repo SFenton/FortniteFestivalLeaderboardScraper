@@ -202,7 +202,7 @@ public sealed class TierOneReplayPackageReader
                 manifest.FormatId,
                 TierOneReplayFormat.InputFormatId,
                 StringComparison.Ordinal) ||
-            manifest.Version != TierOneReplayFormat.Version ||
+            manifest.Version != TierOneReplayFormat.InputVersion ||
             string.IsNullOrWhiteSpace(manifest.ReplayId) ||
             manifest.SourceCutUtc == default ||
             manifest.SourceCutUtc.Offset != TimeSpan.Zero ||
