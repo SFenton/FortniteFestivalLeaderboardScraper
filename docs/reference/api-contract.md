@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-13
-last_verified_commit: 41c3bdb4
+last_verified_commit: af62aeef
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -120,11 +120,6 @@ Aggregate player scopes intentionally use different formulas:
 
 ## Service-info durable progress contract
 
-> **PR #15 candidate status:** implemented and repository-tested, but
-> unaccepted, unmerged, undeployed, and not live-validated. The accepted
-> production service-info contract remains version 1 until the required
-> full-scrape A/B accepts this candidate.
-
 `GET /api/service-info` remains an `OperationalLive` endpoint and retains every
 version-1 field. Contract version 2 adds:
 
@@ -147,6 +142,12 @@ rendered Settings UI.
 summary. PostgreSQL `scrape_phase_attempts` is authoritative for normalized
 attempt/progress timestamps when present; service-info falls back to the
 backward-compatible operation JSON for rolling upgrades.
+
+Matched scrape `1296` accepted this additive contract with complete
+publication parity and `0.0696%` end-to-end wall-clock overhead. Null-valued
+compatibility fields may be omitted by JSON serialization. The brief external
+service reset/502 in that window is separately attributed and excluded from
+latency claims.
 
 ## Change checklist
 

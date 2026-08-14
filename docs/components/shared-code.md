@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-13
-last_verified_commit: 3ff9cbc8
+last_verified_commit: af62aeef
 sources:
   - FortniteFestival.Core/FortniteFestival.Core.csproj
   - FortniteFestival.Core/Config/InstrumentType.cs
@@ -45,12 +45,10 @@ API types in `packages/core/src/api/serverTypes.ts` are manually mirrored from
 the service contract; they are not generated from OpenAPI. The HTTP client
 lives in `FortniteFestivalWeb/src/api/client.ts`.
 
-PR #15 adds candidate `ServiceInfoResponse` fields for the durable-progress v2
-phase plan, attempt, units, exact-phase-percent, conservative overall/ETA,
-heartbeat, and last-progress contract. The PR is implemented and tested but
-remains unaccepted, unmerged, undeployed, and not live-validated. Fields stay
-optional so the accepted production service response remains consumable
-during any later rolling deployment.
+`ServiceInfoResponse` includes the accepted durable-progress v2 phase plan,
+attempt, units, exact-phase-percent, conservative overall/ETA, heartbeat, and
+last-progress contract. Fields stay optional so an older service response
+remains consumable during rolling deployment.
 
 The mirrored contract includes path JSON notes, activations, legacy start-note
 metadata, and schema-v2 activation fields consumed by the path modal.

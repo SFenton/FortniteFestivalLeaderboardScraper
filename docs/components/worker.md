@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-13
-last_verified_commit: 3ff9cbc8
+last_verified_commit: af62aeef
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -144,10 +144,6 @@ wrote `14,179,946` rows, and deleted `14,189,655`.
 
 ## Durable phase progress
 
-> **PR #15 candidate status:** implemented and repository-tested, but
-> unaccepted, unmerged, undeployed, and not live-validated. Production
-> continues to use the previously accepted worker behavior.
-
 Plan `fst.scrape-plan.v2` assigns 28 test-locked IDs to the existing
 leaderboard scrape, named post-scrape phases, and publication commit. The
 catalog does not add a DAG, reorder work, or replace legacy labels; descriptors
@@ -180,6 +176,21 @@ ranges are monotonic and carry model version, confidence, and sample count.
 The configuration fingerprint covers an allowlist of phase, network,
 persistence, publication, ranking, notification, and retention controls; it
 never stores credentials or resolved provider endpoints.
+
+Matched control scrape `1295` and accepted candidate `1296` validated the
+contract under identical `800/32/4` network enforcement. Candidate wall time
+was `+16.383 seconds` (`+0.0696%`), and summed terminal phase outcomes were
+`+0.736%`. The ledger used 24 inserts and 2,068 updates over 6.54 hours
+(about one update per 11.39 seconds including heartbeats), and occupied
+212,992 bytes. All attempts reached a terminal state with no timestamp or
+percentage regression, no exact percentage for an unknown denominator, and no
+false ETA/overall precision.
+
+Terminal status is authoritative. Some bounded or parent-tracker phases
+complete with a truthful observed fraction below 100%; browser code must not
+rewrite those counters to 100 or interpret them as remaining publication work.
+Ready-publication deferral also creates distinct failed attempts followed by a
+successful retry, preserving the actual retry history.
 
 ## Publication safety
 

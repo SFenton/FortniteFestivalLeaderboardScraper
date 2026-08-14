@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-13
-last_verified_commit: 3ff9cbc8
+last_verified_commit: af62aeef
 sources:
   - FSTService/Program.cs
   - FSTService/HostedWorkerMode.cs
@@ -84,13 +84,20 @@ instead of silently reading candidate state.
 
 ## Operational progress
 
-> **PR #15 candidate status:** implemented and repository-tested, but
-> unaccepted, unmerged, undeployed, and not live-validated. Production remains
-> on the previously accepted service-info behavior.
-
 `GET /api/service-info` remains operational-live and exposes additive contract
 version 2 phase-plan, normalized attempt, units, progress, ETA-confidence, and
 separate heartbeat/last-progress fields. It preserves the version-1 labels and
 summary fields for rolling worker and browser compatibility. The normalized
 PostgreSQL ledger is authoritative when a running attempt exists; the worker
 operation JSON remains the fallback summary.
+
+The production API role runs with `--api-only`, which deliberately skips global
+schema initialization. A first deployment to a database without
+`scrape_phase_attempts` must run the existing `--initialize-schema-only`
+command before starting the v2 API. Existing deployments remain idempotent.
+
+Live acceptance observed contract v2 during network collection and verified
+the normalized ledger throughout every later phase. An unrelated service
+deployment caused one explicit 502 and replaced the candidate API for the rest
+of scrape `1296`; it is excluded from service-latency attribution, not hidden
+as candidate behavior.

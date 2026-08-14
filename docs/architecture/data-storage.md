@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-13
-last_verified_commit: 3ff9cbc8
+last_verified_commit: af62aeef
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -98,10 +98,6 @@ for timing-persistence overhead and well below the `1%` acceptance gate.
 
 ## Durable phase-attempt ledger
 
-> **PR #15 candidate status:** implemented and repository-tested, but
-> unaccepted, unmerged, undeployed, and not live-validated. Accepted production
-> does not yet own this ledger.
-
 `scrape_phase_attempts` complements rather than replaces
 `scrape_phase_outcomes`, `scrape_phase_timings`, and
 `service_worker_status.current_operation_json`.
@@ -129,6 +125,12 @@ transitions, a maximum one meaningful progress update per five seconds, and
 one heartbeat-only update per worker heartbeat interval. Progress updates use
 the greater of the stored and observed progress timestamps, so a backwards
 clock step cannot regress `last_progress_at` or violate its start-time check.
+
+Accepted scrape `1296` produced 24 attempt rows across 22 phase IDs, 2,068
+updates, and a 212,992-byte relation (106,496-byte heap and 65,536-byte
+indexes). It ended with zero running, interrupted, cancelled, orphaned, or
+null-completion rows. The matched wall-clock upper bound for all PR-2 overhead
+was `0.0696%`; summed terminal phase outcomes differed by `0.736%`.
 
 ## Snapshot retention planning evidence
 
