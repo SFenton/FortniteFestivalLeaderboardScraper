@@ -28,12 +28,13 @@ export function getManualScreenshotAsset(slug: string, viewport: ManualScreensho
 
   const config = MANUAL_SCREENSHOT_VIEWPORTS[viewport];
   const baseUrl = `${import.meta.env.BASE_URL}manual/screenshots/`;
+  const fallbackWidth = config.variants[config.variants.length - 1];
   const webpSrcSet = config.variants
     .map(width => `${baseUrl}optimized/${key}-${sourceHash.slice(0, 12)}-${width}.webp ${width}w`)
     .join(', ');
 
   return {
-    fallbackSrc: `${baseUrl}${key}.png`,
+    fallbackSrc: `${baseUrl}optimized/${key}-${sourceHash.slice(0, 12)}-${fallbackWidth}.webp?fallback=1`,
     height: config.height,
     sizes: config.sizes,
     sourceHash,

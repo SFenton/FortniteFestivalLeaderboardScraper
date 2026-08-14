@@ -218,7 +218,7 @@ describe('ManualPage', () => {
     expect(within(target).queryByRole('img')).toBeNull();
   });
 
-  it('uses responsive WebP sources with a PNG fallback, explicit dimensions, and translated alt text', () => {
+  it('uses responsive WebP sources with a full-resolution WebP fallback, explicit dimensions, and translated alt text', () => {
     autoIntersectManualCarousels = false;
     stubMatchMedia(false);
     renderManualPage();
@@ -230,7 +230,9 @@ describe('ManualPage', () => {
     expect(source.srcset).toContain('-240.webp 240w');
     expect(source.srcset).toContain('-390.webp 390w');
     expect(source.sizes).toBe('(max-width: 600px) 100px, 250px');
-    expect(image.getAttribute('src')).toBe('/manual/screenshots/navigation-overview-mobile.png');
+    expect(image.getAttribute('src')).toMatch(
+      /^\/manual\/screenshots\/optimized\/navigation-overview-mobile-[a-f0-9]{12}-390\.webp\?fallback=1$/,
+    );
     expect(image.getAttribute('width')).toBe('390');
     expect(image.getAttribute('height')).toBe('844');
     expect(image.getAttribute('loading')).toBe('eager');
@@ -241,7 +243,7 @@ describe('ManualPage', () => {
 
     expect(carousel.querySelector('source[type="image/webp"]')).toBeNull();
     expect(within(carousel).getByRole('img', { name: 'Navigation overview screenshot for Mobile' }).getAttribute('src'))
-      .toBe('/manual/screenshots/navigation-overview-mobile.png');
+      .toMatch(/^\/manual\/screenshots\/optimized\/navigation-overview-mobile-[a-f0-9]{12}-390\.webp\?fallback=1$/);
   });
 
   it('keeps a mounted carousel and its selected viewport state after it leaves the near-viewport range', async () => {
