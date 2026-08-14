@@ -2,7 +2,7 @@
 status: roadmap
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: 099fd6fa
+last_verified_commit: 434f6f20
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -707,6 +707,28 @@ entry point can create a package:
 - phase-scoped import/output manifest;
 - bounded Tier 1 dataset;
 - baseline/candidate runner against the same parent.
+
+**Candidate state:** `copilot/isolated-phase-replay` implements the same-binary
+early-dispatch CLI, approved-root/device policy, source/production PostgreSQL
+refusal, canonical marker/object inventory, versioned Tier-1 input/output
+manifests, typed bounded import, explicit phase registry, immutable attempts,
+trusted comparison, and an isolated no-published-port PostgreSQL drill.
+
+The first replayable slice is intentionally
+`post.band_maintenance/current_projection_refresh`. It calls the production
+`BandCurrentProjectionBuilder` directly for one band type and bounded overall
+scopes. It does **not** claim full BandMaintenance replay. The following remain
+inside PR-5 acceptance scope or explicit later inserts:
+
+- production-derived Tier-1 capture/export and its source-system identifier;
+- prune and search-projection adapters;
+- incremental unchanged-scope and prior-generation input contracts;
+- candidate cleanup parity;
+- broader phase ranges/dependency execution;
+- production-scale resource evidence and a full-scrape promotion decision.
+
+The repository candidate and synthetic drill are unaccepted, unmerged, and
+undeployed. No live production data package or replay has been created.
 
 ### PR-6: verified dead/no-op path cleanup
 

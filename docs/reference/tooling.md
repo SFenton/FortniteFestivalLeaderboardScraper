@@ -2,13 +2,15 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-13
-last_verified_commit: af62aeef
+last_verified_commit: 434f6f20
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
   - tools/fst-worker-compose-guard.sh
   - tools/fst-worker-compose-guard.test.mjs
   - tools/fst-worker-no-progress-watchdog.mjs
+  - tools/postgres-tier1-replay-drill.sh
+  - tools/postgres-tier1-replay-drill.test.mjs
   - deploy/fst-compose.sh
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/scripts/check-coverage-ignores.mjs
@@ -67,6 +69,35 @@ Database scripts are not generic production authorization. Use the matching
 runbook and live-safety gates. The worker Compose guard validates the standard
 PIA overlay, role flags, aligned proxy arrays, dependencies, and supported data
 profiles before a guarded recreate.
+
+### Tier-1 isolated replay drill
+
+`tools/postgres-tier1-replay-drill.sh` compares two immutable FSTService images
+against the same sealed synthetic Tier-1 parent. It accepts only a new root
+beneath the 4 TB FST evidence/replay directories.
+
+Each lane receives:
+
+- a separate fresh PostgreSQL 17 container with no published ports;
+- a network-none namespace shared only with that lane's FSTService process;
+- a non-superuser replay role rather than bootstrap-administrator credentials;
+- read-only parent/input mounts and one lane-specific writable output mount;
+- no Docker socket, provider credentials, normal production configuration, or
+  access to the other lane's writable evidence.
+
+PGDATA lives in a candidate-inaccessible sibling scratch directory and is
+removed through the retained container/host-controlled path. The baseline image
+is the comparator, every image reference is resolved once to its immutable ID,
+and comparison enforces each lane's expected digest, Git commit, OCI revision,
+and attempt before parity. Preserve the emitted sealed packages,
+`comparison.json`, `run.json`, report, and checksums on the FST drive.
+
+Validate tool structure with:
+
+```bash
+bash -n tools/postgres-tier1-replay-drill.sh
+node --test tools/postgres-tier1-replay-drill.test.mjs
+```
 
 ### Snapshot retention evidence
 

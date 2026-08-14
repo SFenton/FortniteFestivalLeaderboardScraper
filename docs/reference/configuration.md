@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-13
-last_verified_commit: 96ed9680
+last_verified: 2026-08-14
+last_verified_commit: 434f6f20
 sources:
   - FSTService/appsettings.json
   - FSTService/Program.cs
@@ -13,6 +13,7 @@ sources:
   - deploy/config/fstworker-role.env
   - deploy/.env.example
   - tools/fst-worker-compose-guard.sh
+  - FSTService/Scraping/Replay/ReplaySecurity.cs
 update_triggers:
   - An appsettings section, environment key, secret, role file, or configuration precedence rule changes.
 ---
@@ -94,6 +95,30 @@ The production Compose project is
 `/home/sfenton/Docker/FestivalServiceTracker`; repository Compose files are
 templates. Document key names and behavior, never resolved values, private
 endpoints, or provider account data.
+
+## Isolated replay environment
+
+Replay mode does not load `.env` or normal appsettings. Its process receives a
+small explicit environment:
+
+| Variable | Requirement |
+|---|---|
+| `FST_REPLAY_APPROVED_ROOT` | Existing canonical child of the production FST evidence/replay roots |
+| `FST_REPLAY_APPROVED_DEVICE` | Exact filesystem device identity (`major:minor` on Linux) for the 4 TB FST drive |
+| `FST_REPLAY_ROLLBACK_RESERVE_BYTES` | Non-negative disk reserve; defaults to 1 GiB |
+| `FST_REPLAY_POSTGRES_CONNECTION` | Secret isolated PostgreSQL connection; single loopback host and `fst_replay_*` database |
+| `FST_REPLAY_GIT_COMMIT` | Exact implementation commit |
+| `FST_REPLAY_IMAGE_DIGEST` | Exact OCI SHA-256 digest |
+| `FST_REPLAY_IMAGE_REVISION` | Exact OCI revision |
+
+The replay connection is never serialized or printed. Normal production
+`ConnectionStrings__PostgreSQL`, when present, is used only as a rejection
+reference; matching its host/port is forbidden regardless of database name.
+The sealed Tier-1 input also carries the source PostgreSQL system identifier,
+which the isolated target must not match.
+
+Tests inject their root/target policy directly; there is no environment flag
+that weakens production root, device, marker, cluster, or publication refusal.
 
 ## Environment naming
 

@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: 099fd6fa
+last_verified_commit: 434f6f20
 sources:
   - FSTService/Scraping/Replay/TierZeroEvidenceModels.cs
   - FSTService/Scraping/Replay/TierZeroCanonicalJson.cs
@@ -13,6 +13,12 @@ sources:
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService.Tests/Unit/TierZeroEvidenceContractTests.cs
   - FSTService.Tests/Unit/TierZeroPackageTests.cs
+  - FSTService/Scraping/Replay/ReplayCommand.cs
+  - FSTService/Scraping/Replay/ReplaySecurity.cs
+  - FSTService/Scraping/Replay/TierOneReplayModels.cs
+  - FSTService/Scraping/Replay/TierOneReplayPackage.cs
+  - FSTService/Scraping/Replay/TierOneReplayRunner.cs
+  - tools/postgres-tier1-replay-drill.sh
 update_triggers:
   - Evidence package format, canonicalization, hashing, path safety, artifact ownership, capture, import, replay, retention, or promotion behavior changes.
 ---
@@ -27,7 +33,9 @@ PostgreSQL, import into an isolated database, invoke a phase, replay a phase,
 publish data, or grant an artifact authority over public reads.
 
 PR-4 is accepted as a continuous-safe library contract. It has no registered
-runtime producer or consumer. PostgreSQL remains the durable source of truth.
+runtime producer or consumer in accepted production. PR-5 adds an unaccepted,
+repository-only same-binary replay candidate. PostgreSQL remains the durable
+source of truth.
 
 ## Ownership and location
 
@@ -47,7 +55,7 @@ The PR-4 library confines package-relative operations beneath the root supplied
 by its caller, but it does not choose or authorize that root. This is
 intentional: no CLI or runtime entry point exists yet.
 
-PR-5 must fail closed before package creation unless:
+The PR-5 candidate now fails closed before package creation unless:
 
 - a runtime root resolves beneath an operator-approved location on the 4 TB
   FST drive;
@@ -58,9 +66,79 @@ PR-5 must fail closed before package creation unless:
 - the path is not on an alternate disk, a generic temporary directory, or a
   PostgreSQL data directory.
 
-PR-5 tests must prove unknown, escaped, and symlinked roots are rejected before
-any database, network, package, or replay action. PR-4 does not implement or
-authorize this root-selection policy.
+The root policy also binds every input/output path to the configured filesystem
+device, rejects generic temporary and PostgreSQL-data paths, and requires
+non-overlapping immutable attempts. Tests inject isolated roots directly; the
+runtime path has no weakening flag.
+
+## Tier-1 phase input
+
+Format `fst.tier1.phase-input`, version `1`, is stored as a canonical artifact
+inside a sealed Tier-0 envelope. It binds:
+
+- a separately verified sealed Tier-0 parent root;
+- the current stable phase-plan ID/version;
+- stable phase `post.band_maintenance`;
+- subphase adapter `current_projection_refresh`, version `1`;
+- captured source PostgreSQL system identifier;
+- dependency `post.band_extraction`;
+- exact dataset IDs, paths, schema versions, row/byte counts, completeness
+  statements, and SHA-256 hashes; and
+- package, row, output, statement-timeout, and lock-timeout limits.
+
+Protocol v1 accepts one band type and at most 16 unique overall scopes. The
+typed allowlist contains only requested scopes, complete `band_entries`, and
+complete `band_member_stats`. JSON Lines must be canonical UTF-8, keys must be
+unique, member rows must be complete, and the package is rejected rather than
+truncated.
+
+The current replay adapter calls the production
+`BandCurrentProjectionBuilder.RefreshScopesAsync` implementation directly with
+unchanged-scope skipping disabled, one band-type worker, local isolated
+generation publication enabled, and candidate cleanup disabled. This is a
+useful current-projection refresh kernel, not full BandMaintenance parity:
+prune, search projection refresh, incremental unchanged detection, old
+candidate cleanup, global publication, freeze, cache, notifications, and
+provider behavior remain unsupported.
+
+## Isolated PostgreSQL target
+
+Replay uses only `FST_REPLAY_POSTGRES_CONNECTION`. Before import and again
+before output it verifies:
+
+- one configured loopback endpoint and `fst_replay_*` database;
+- a PostgreSQL system identifier different from the captured source cluster;
+- absence of production publication, worker-status, and scrape-log tables;
+- an exact bootstrap marker table, constraints, object allowlist, single row,
+  package root, replay ID, database name, system identifier, and state; and
+- writable default transactions for the bounded import/phase path.
+
+Import is static parameterized DDL plus typed binary COPY. The package cannot
+provide SQL, shell, table names, schema names, or configuration execution.
+Only the marker bootstrap may exist before import. Marker states move through
+`created`, `imported`, `phase-completed`, and `completed`; output failures mark
+the isolated attempt failed and retain an unsealed failure package.
+
+## Tier-1 output and comparison
+
+A successful replay seals a Tier-0 output envelope parented to both Tier-0 and
+Tier-1 input roots. Its canonical Tier-1 output manifest records phase/adapter,
+implementation commit/image/config/schema identity, isolated database
+identity, exact output datasets, row counts/hashes, timing, CPU/allocation/RSS,
+WAL/temp deltas, and `noPublication=true`.
+
+Output datasets are canonical projections, scope state, and projection-global
+state with volatile timestamps excluded from parity. The trusted comparison
+requires exact expected digest, Git commit, OCI revision, and attempt for each
+lane. It reports row/hash parity and resource deltas, and fails even when
+performance improves if any output differs.
+
+`tools/postgres-tier1-replay-drill.sh` runs baseline and candidate against
+separate fresh PostgreSQL 17 containers with no published ports, no provider
+network, no Docker socket, non-superuser replay roles, candidate-inaccessible
+PGDATA, read-only input/baseline mounts, lane-specific writable outputs, and an
+immutable baseline comparator. It removes containers and PGDATA while
+preserving only sealed evidence.
 
 ## Package layout
 
