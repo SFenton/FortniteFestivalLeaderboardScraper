@@ -33,11 +33,20 @@ internal static class MaxScoreMaintenanceFileStore
                 ex);
         }
 
-        return (request
+        var normalized = (request
                 ?? throw new ArgumentException(
                     "Max-score maintenance stage request cannot be JSON null.",
                     nameof(requestedPath)))
             .ValidateAndNormalize();
+        var canonical = normalized.SerializeCanonical();
+        if (!payload.AsSpan().SequenceEqual(canonical))
+        {
+            throw new ArgumentException(
+                "Max-score maintenance stage request must use the canonical versioned JSON encoding.",
+                nameof(requestedPath));
+        }
+
+        return normalized;
     }
 
     internal static async Task<MaxScoreMaintenanceManifest>

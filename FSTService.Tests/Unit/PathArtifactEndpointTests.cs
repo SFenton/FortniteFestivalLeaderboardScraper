@@ -264,6 +264,103 @@ public sealed class PathArtifactEndpointTests : IDisposable
                 .StatusCode);
     }
 
+    [Theory]
+    [InlineData("Solo_PeripheralCymbals")]
+    [InlineData("Solo_PeripheralDrums")]
+    public void Plastic_drum_v3_generation_is_rejected(
+        string instrument)
+    {
+        const string songId = "plastic-drums-v3";
+        const string generationId = "generation-v3";
+        var state = CreateState(songId, generationId) with
+        {
+            GenerationProfile =
+                "chopt-fnf-ew0-s20-json-png-prodrums-v3",
+            ExpectedInstruments = [instrument],
+        };
+        var resolver = new PathArtifactResolver(
+            new ResolverStore(state),
+            Options.Create(
+                new ScraperOptions
+                {
+                    DataDirectory = _dataDirectory,
+                }));
+        WriteGenerationArtifact(
+            songId,
+            generationId,
+            instrument,
+            """{"schemaVersion":2,"totalScore":123}""");
+
+        var result = ApiEndpoints.GetPathArtifactResult(
+            songId,
+            instrument,
+            "expert",
+            "json",
+            generationId,
+            resolver);
+
+        Assert.Equal(
+            StatusCodes.Status404NotFound,
+            Assert.IsAssignableFrom<IStatusCodeHttpResult>(result)
+                .StatusCode);
+    }
+
+    [Theory]
+    [InlineData("Solo_PeripheralCymbals")]
+    [InlineData("Solo_PeripheralDrums")]
+    public void Plastic_drum_v4_generation_is_served(
+        string instrument)
+    {
+        const string songId = "plastic-drums-v4";
+        const string generationId = "generation-v4";
+        var state = CreateState(songId, generationId) with
+        {
+            GenerationProfile =
+                "chopt-fnf-ew0-s20-json-png-prodrums-v4",
+            ExpectedInstruments = [instrument],
+        };
+        var resolver = new PathArtifactResolver(
+            new ResolverStore(state),
+            Options.Create(
+                new ScraperOptions
+                {
+                    DataDirectory = _dataDirectory,
+                }));
+        WriteGenerationArtifact(
+            songId,
+            generationId,
+            instrument,
+            """{"schemaVersion":2,"totalScore":456}""");
+
+        var result = ApiEndpoints.GetPathArtifactResult(
+            songId,
+            instrument,
+            "expert",
+            "json",
+            generationId,
+            resolver);
+
+        Assert.IsType<PhysicalFileHttpResult>(result);
+    }
+
+    private void WriteGenerationArtifact(
+        string songId,
+        string generationId,
+        string instrument,
+        string contents)
+    {
+        var instrumentDirectory = Path.Combine(
+            PathArtifactResolver.GetGenerationDirectory(
+                _dataDirectory,
+                songId,
+                generationId),
+            instrument);
+        Directory.CreateDirectory(instrumentDirectory);
+        File.WriteAllText(
+            Path.Combine(instrumentDirectory, "expert.json"),
+            contents);
+    }
+
     private static PathGenerationState CreateState(
         string songId,
         string? generationId)

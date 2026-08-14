@@ -1,10 +1,12 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-13
-last_verified_commit: 96ed9680
+last_verified: 2026-08-14
+last_verified_commit: f8cf6f02
 sources:
   - FSTService/appsettings.json
+  - FSTService/ScraperOptions.cs
+  - FSTService/Scraping/PathGenerationModels.cs
   - FSTService/Program.cs
   - docker-compose.yml
   - .env.example
@@ -54,7 +56,7 @@ overrides intentionally diverge between the public service and mutation worker.
 | `Scraper:EnablePathGeneration` | `true` | Allows explicit path generation |
 | `Scraper:EnableAutomaticPathGeneration` | `false` | Processes only pending songs from background catalog refresh when enabled |
 | `Scraper:PathGenerationParallelism` | `4` | Maximum concurrent CHOpt processes |
-| `Scraper:PathGenerationProfile` | `chopt-fnf-ew0-s20-json-png-prodrums-v3` | Semantic identity for arguments, eight-instrument scope, and artifact schema |
+| `Scraper:PathGenerationProfile` | `chopt-fnf-ew0-s20-json-png-prodrums-v4` | Semantic identity for the dedicated plastic-drums MIDI variant, authored activation-window contract, eight-instrument scope, and artifact schema |
 
 The MIDI decryption key is operator-supplied and must not appear in logs,
 documentation, artifacts, or commands. Profile changes invalidate selected

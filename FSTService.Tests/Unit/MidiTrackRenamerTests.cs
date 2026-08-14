@@ -75,12 +75,13 @@ public sealed class MidiTrackRenamerTests
     }
 
     [Fact]
-    public void ProduceVariants_returns_two_variants()
+    public void ProduceVariants_returns_three_variants()
     {
         var midi = BuildMidiWithTrackName("PART GUITAR");
         var variants = MidiTrackRenamer.ProduceVariants(midi);
 
         Assert.NotNull(variants.ProMidi);
+        Assert.NotNull(variants.PlasticDrumsMidi);
         Assert.NotNull(variants.OgMidi);
     }
 
@@ -113,6 +114,37 @@ public sealed class MidiTrackRenamerTests
         var trackNames = ExtractTrackNames(variants.ProMidi);
         Assert.Contains("PART BASS_FNF", trackNames);  // original hidden
         Assert.Contains("PART BASS", trackNames);       // plastic promoted
+    }
+
+    [Theory]
+    [InlineData("PLASTIC DRUM")]
+    [InlineData("PLASTIC DRUMS")]
+    public void PlasticDrumsVariant_promotes_plastic_track(
+        string plasticTrackName)
+    {
+        var midi = BuildMidiWithMultipleTracks(
+            "PART DRUMS",
+            plasticTrackName);
+        var variants = MidiTrackRenamer.ProduceVariants(midi);
+
+        var trackNames = ExtractTrackNames(
+            variants.PlasticDrumsMidi);
+        Assert.Contains("PART DRUMS_FNF", trackNames);
+        Assert.Contains("PART DRUMS", trackNames);
+        Assert.DoesNotContain(plasticTrackName, trackNames);
+        Assert.True(variants.PlasticDrumsTrackPromoted);
+    }
+
+    [Fact]
+    public void PlasticDrumsVariant_reports_missing_plastic_track()
+    {
+        var midi = BuildMidiWithTrackName("PART DRUMS");
+        var variants = MidiTrackRenamer.ProduceVariants(midi);
+
+        Assert.False(variants.PlasticDrumsTrackPromoted);
+        Assert.Contains(
+            "PART DRUMS_FNF",
+            ExtractTrackNames(variants.PlasticDrumsMidi));
     }
 
     [Fact]

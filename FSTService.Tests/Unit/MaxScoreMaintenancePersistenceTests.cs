@@ -1548,10 +1548,18 @@ public sealed class MaxScoreMaintenancePersistenceTests
     }
 
     [Fact]
-    public async Task Notification_quarantine_preserves_completed_marker_and_zero_visible_delivery()
+    public async Task Four_instrument_notification_quarantine_preserves_marker_and_zero_visible_delivery()
     {
         using var dataSource = SharedPostgresContainer.CreateDatabase();
-        var manifest = CreateManifest();
+        var manifest = CreateFourInstrumentManifest();
+        Assert.Equal(
+            [
+                "Solo_Guitar",
+                "Solo_PeripheralGuitar",
+                "Solo_PeripheralCymbals",
+                "Solo_PeripheralDrums",
+            ],
+            manifest.Scope.ExpectedChangedInstruments);
         var manifestDigest = manifest.ComputeDigest();
         var planDigest = new string('9', 64);
         var freezeReason =
@@ -2927,6 +2935,70 @@ public sealed class MaxScoreMaintenancePersistenceTests
             MaintenanceInduced: false,
             BlocksMaintenance: true);
 
+    private static MaxScoreMaintenanceManifest
+        CreateFourInstrumentManifest()
+    {
+        var template = CreateManifest();
+        var runtime = new PathGenerationRuntimeIdentity(
+            PathGenerationProfiles.PlasticDrumsV4ChoptVersion,
+            PathGenerationProfiles.PlasticDrumsV4BinarySha256,
+            PathGenerationProfiles.PlasticDrumsV4);
+        var song = template.Songs[0];
+        var current = song.CurrentPath with
+        {
+            GenerationProfile =
+                "chopt-fnf-ew0-s20-json-png-v2",
+        };
+        var staged = song.StagedPath with
+        {
+            ChoptVersion = runtime.Version,
+            ChoptBinarySha256 = runtime.BinarySha256,
+            GenerationProfile = runtime.Profile,
+            ExpectedInstruments =
+                MaxScoreMaintenanceManifest.AllInstruments,
+            Maxima = current.Maxima with
+            {
+                Lead = 51_573,
+                ProLead = 51_573,
+                ProCymbals = 60_000,
+                ProDrums = 58_000,
+            },
+            ArtifactTreeSha256 = new string('7', 64),
+            ArtifactFileCount = 65,
+        };
+        var changed = new[]
+        {
+            "Solo_Guitar",
+            "Solo_PeripheralGuitar",
+            "Solo_PeripheralCymbals",
+            "Solo_PeripheralDrums",
+        };
+        return (template with
+        {
+            Scope = new MaxScoreMaintenanceScope(
+                MaxScoreMaintenanceStagePurposes.Promotion,
+                new string('6', 64),
+                MaxScoreMaintenanceManifest.AllInstruments,
+                changed),
+            Runtime = runtime,
+            Songs =
+            [
+                new MaxScoreMaintenanceManifestSong(
+                    song.SongId,
+                    song.ExpectedCatalogLastModified,
+                    current,
+                    staged,
+                    changed,
+                    new MaxScoreMaintenancePlasticDrumsEvidence(
+                        2,
+                        2,
+                        new string('1', 64),
+                        new string('2', 64),
+                        new string('3', 64))),
+            ],
+        }).ValidateAndNormalize();
+    }
+
     private static MaxScoreMaintenanceManifest CreateManifest()
     {
         var runtime = new PathGenerationRuntimeIdentity(
@@ -2935,17 +3007,39 @@ public sealed class MaxScoreMaintenancePersistenceTests
             "profile-v3");
         var current = new MaxScoreMaintenancePathIdentity(
             Revision: 0,
-            DatFileHash: null,
-            SongLastModified: null,
-            GeneratedAtUtc: null,
-            ChoptVersion: null,
-            ChoptBinarySha256: null,
-            GenerationProfile: null,
-            ArtifactGenerationId: null,
-            ExpectedInstruments: [],
+            DatFileHash: new string('c', 64),
+            SongLastModified: "2026-08-01T00:00:00Z",
+            GeneratedAtUtc: new DateTime(
+                2026,
+                8,
+                1,
+                0,
+                0,
+                0,
+                DateTimeKind.Utc),
+            ChoptVersion: "1.16.2",
+            ChoptBinarySha256: new string('d', 64),
+            GenerationProfile: "profile-v2",
+            ArtifactGenerationId: "generation-current",
+            ExpectedInstruments:
+            [
+                "Solo_Bass",
+                "Solo_Drums",
+                "Solo_Vocals",
+                "Solo_PeripheralBass",
+            ],
             Maxima: new MaxScoreMaintenanceMaxima(
-                null, null, null, null, null, null, null, null),
-            PathGenerationPending: false);
+                null,
+                25_000,
+                30_000,
+                40_000,
+                null,
+                60_000,
+                null,
+                null),
+            PathGenerationPending: false,
+            ArtifactTreeSha256: new string('e', 64),
+            ArtifactFileCount: 33);
         var staged = new MaxScoreMaintenancePathIdentity(
             Revision: 0,
             DatFileHash: new string('b', 64),
@@ -2962,9 +3056,18 @@ public sealed class MaxScoreMaintenancePersistenceTests
             ChoptBinarySha256: runtime.BinarySha256,
             GenerationProfile: runtime.Profile,
             ArtifactGenerationId: "generation-a",
-            ExpectedInstruments: ["Solo_Guitar"],
+            ExpectedInstruments:
+            [
+                "Solo_Guitar",
+                "Solo_Bass",
+                "Solo_Drums",
+                "Solo_Vocals",
+                "Solo_PeripheralBass",
+            ],
             Maxima: current.Maxima with { Lead = 51_573 },
-            PathGenerationPending: false);
+            PathGenerationPending: false,
+            ArtifactTreeSha256: new string('f', 64),
+            ArtifactFileCount: 41);
         return new MaxScoreMaintenanceManifest(
             MaxScoreMaintenanceManifest.CurrentManifestVersion,
             ExpectedPublishedScrapeId: 1296,
@@ -2990,6 +3093,17 @@ public sealed class MaxScoreMaintenancePersistenceTests
                 0,
                 0,
                 DateTimeKind.Utc),
+            Scope: new MaxScoreMaintenanceScope(
+                MaxScoreMaintenanceStagePurposes.Promotion,
+                new string('8', 64),
+                [
+                    "Solo_Guitar",
+                    "Solo_Bass",
+                    "Solo_Drums",
+                    "Solo_Vocals",
+                    "Solo_PeripheralBass",
+                ],
+                ["Solo_Guitar"]),
             Runtime: runtime,
             Songs:
             [

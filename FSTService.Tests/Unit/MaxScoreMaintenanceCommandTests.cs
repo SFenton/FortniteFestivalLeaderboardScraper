@@ -7,6 +7,20 @@ namespace FSTService.Tests.Unit;
 
 public sealed class MaxScoreMaintenanceCommandTests : IDisposable
 {
+    private const string ShowThemWhoWeAreSongId =
+        "3d7901c9-7ae2-4adb-9393-4ec4c54c2e3b";
+    private const string RunItSongId =
+        "ddd5447c-b5d7-4fe4-8f22-c9854168d11b";
+    private static readonly string[] ExpectedChangedInstruments =
+    [
+        "Solo_Guitar",
+        "Solo_PeripheralGuitar",
+        "Solo_PeripheralCymbals",
+        "Solo_PeripheralDrums",
+    ];
+    private const string ValidPngBase64 =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
     private readonly string _dataDirectory = Path.Combine(
         Directory.GetCurrentDirectory(),
         ".test-temp",
@@ -30,17 +44,15 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
     }
 
     [Fact]
-    public void Stage_parser_accepts_bounded_explicit_song_ids()
+    public void Stage_parser_requires_scoped_request_file()
     {
         var command = MaxScoreMaintenanceCommand.Parse(
         [
             MaxScoreMaintenanceCommand.StageFlag,
             MaxScoreMaintenanceCommand.PublishedScrapeIdFlag,
             "1296",
-            MaxScoreMaintenanceCommand.SongIdFlag,
-            "song-b",
-            MaxScoreMaintenanceCommand.SongIdFlag,
-            "song-a",
+            MaxScoreMaintenanceCommand.StageRequestFlag,
+            "maintenance/request.json",
             MaxScoreMaintenanceCommand.ManifestOutputFlag,
             "maintenance/manifest.json",
             MaxScoreMaintenanceCommand.ReportOutputFlag,
@@ -49,8 +61,10 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
 
         Assert.NotNull(command);
         Assert.Equal(MaxScoreMaintenanceAction.Stage, command.Action);
-        Assert.Equal(["song-a", "song-b"], command.SongIds);
-        Assert.Null(command.StageRequestPath);
+        Assert.Empty(command.SongIds);
+        Assert.Equal(
+            "maintenance/request.json",
+            command.StageRequestPath);
     }
 
     [Fact]
@@ -155,8 +169,8 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
             case MaxScoreMaintenanceAction.Stage:
                 args.AddRange(
                 [
-                    MaxScoreMaintenanceCommand.SongIdFlag,
-                    "song-a",
+                    MaxScoreMaintenanceCommand.StageRequestFlag,
+                    "request.json",
                     MaxScoreMaintenanceCommand.ManifestOutputFlag,
                     "manifest.json",
                 ]);
@@ -212,7 +226,7 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
     }
 
     [Fact]
-    public void Stage_parser_requires_exactly_one_input_form()
+    public void Stage_parser_rejects_unscoped_song_ids()
     {
         var error = Assert.Throws<ArgumentException>(() =>
             MaxScoreMaintenanceCommand.Parse(
@@ -230,7 +244,9 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
                 "report.json",
             ]));
 
-        Assert.Contains("exactly one", error.Message);
+        Assert.Contains(
+            MaxScoreMaintenanceCommand.SongIdFlag,
+            error.Message);
     }
 
     [Fact]
@@ -349,55 +365,263 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
     }
 
     [Fact]
-    public void Publication1296_manifest_binds_the_two_approved_maxima()
+    public async Task Stage_request_is_canonical_and_binds_discovery_or_promotion_scope()
     {
-        var template = CreateManifest();
-        MaxScoreMaintenanceManifestSong Song(
-            string songId,
-            string generationId,
-            int lead,
-            int proLead)
+        foreach (var purpose in new[]
+                 {
+                     MaxScoreMaintenanceStagePurposes.Discovery,
+                     MaxScoreMaintenanceStagePurposes.Promotion,
+                 })
         {
-            var current = template.Songs[0].CurrentPath with
-            {
-                ArtifactGenerationId =
-                    $"old-{generationId}",
-            };
-            var staged = template.Songs[0].StagedPath with
-            {
-                ArtifactGenerationId = generationId,
-                Maxima = current.Maxima with
-                {
-                    Lead = lead,
-                    ProLead = proLead,
-                },
-            };
-            return new MaxScoreMaintenanceManifestSong(
-                songId,
-                template.Songs[0].ExpectedCatalogLastModified,
-                current,
-                staged,
-                ["Solo_Guitar", "Solo_PeripheralGuitar"]);
-        }
+            var request = CreateStageRequest(purpose);
+            var path = Path.Combine(
+                _dataDirectory,
+                $"{purpose}-request.json");
+            await File.WriteAllBytesAsync(
+                path,
+                request.SerializeCanonical());
 
-        var manifest = (template with
+            var loaded =
+                await MaxScoreMaintenanceFileStore
+                    .LoadStageRequestAsync(
+                        _dataDirectory,
+                        path,
+                        CancellationToken.None);
+
+            Assert.Equal(purpose, loaded.Purpose);
+            Assert.Equal(
+                MaxScoreMaintenanceManifest.AllInstruments,
+                loaded.ExpectedPathInstruments);
+            Assert.Equal(
+                ExpectedChangedInstruments,
+                loaded.ExpectedChangedInstruments);
+            Assert.Equal(
+                request.ComputeDigest(),
+                loaded.ComputeDigest());
+            Assert.All(
+                loaded.Songs,
+                song =>
+                {
+                    if (purpose
+                        == MaxScoreMaintenanceStagePurposes.Discovery)
+                    {
+                        Assert.Null(song.ExpectedOldMaxima);
+                        Assert.Null(song.ExpectedNewMaxima);
+                        Assert.Equal(
+                            ExpectedChangedInstruments,
+                            song.ExpectedOldConstraints!
+                                .Select(constraint =>
+                                    constraint.Instrument));
+                        Assert.Equal(
+                            [
+                                "Solo_Guitar",
+                                "Solo_PeripheralGuitar",
+                            ],
+                            song.ExpectedNewConstraints!
+                                .Select(constraint =>
+                                    constraint.Instrument));
+                    }
+                    else
+                    {
+                        Assert.NotNull(song.ExpectedOldMaxima);
+                        Assert.NotNull(song.ExpectedNewMaxima);
+                        Assert.Empty(
+                            song.ExpectedOldConstraints!);
+                        Assert.Empty(
+                            song.ExpectedNewConstraints!);
+                    }
+                });
+        }
+    }
+
+    [Fact]
+    public async Task Stage_request_loader_rejects_noncanonical_scope()
+    {
+        var request = CreateStageRequest(
+            MaxScoreMaintenanceStagePurposes.Discovery);
+        var path = Path.Combine(
+            _dataDirectory,
+            "noncanonical-request.json");
+        await File.WriteAllTextAsync(
+            path,
+            JsonSerializer.Serialize(
+                request,
+                MaxScoreMaintenanceJson.Report));
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            MaxScoreMaintenanceFileStore.LoadStageRequestAsync(
+                _dataDirectory,
+                path,
+                CancellationToken.None));
+    }
+
+    [Fact]
+    public void Discovery_manifest_is_never_promotion_ready()
+    {
+        var promotion = CreateManifest();
+        var discovery = (promotion with
         {
-            Songs =
-            [
-                Song(
-                    "3d7901c9-7ae2-4adb-9393-4ec4c54c2e3b",
-                    "generation-3d7901c9",
-                    63_750,
-                    65_367),
-                Song(
-                    "ddd5447c-b5d7-4fe4-8f22-c9854168d11b",
-                    "generation-ddd5447c",
-                    51_573,
-                    51_573),
-            ],
+            Scope = promotion.Scope with
+            {
+                Purpose =
+                    MaxScoreMaintenanceStagePurposes.Discovery,
+            },
         }).ValidateAndNormalize();
 
+        var error = Assert.Throws<InvalidOperationException>(
+            discovery.RequirePromotionReady);
+
+        Assert.Contains("Discovery", error.Message);
+    }
+
+    [Fact]
+    public void Plastic_drums_manifest_rejects_staged_v3()
+    {
+        var manifest = CreateManifest();
+        var invalid = manifest with
+        {
+            Runtime = new PathGenerationRuntimeIdentity(
+                "1.16.3",
+                new string('a', 64),
+                PathGenerationProfiles.InvalidPlasticDrumsV3),
+            Songs = manifest.Songs
+                .Select(song => song with
+                {
+                    StagedPath = song.StagedPath with
+                    {
+                        ChoptVersion = "1.16.3",
+                        ChoptBinarySha256 = new string('a', 64),
+                        GenerationProfile =
+                            PathGenerationProfiles
+                                .InvalidPlasticDrumsV3,
+                    },
+                })
+                .ToArray(),
+        };
+
+        Assert.Throws<ArgumentException>(
+            invalid.ValidateAndNormalize);
+    }
+
+    [Fact]
+    public void Plastic_drums_manifest_rejects_current_v3()
+    {
+        var manifest = CreateManifest();
+        var invalid = manifest with
+        {
+            Songs = manifest.Songs
+                .Select(song => song with
+                {
+                    CurrentPath = song.CurrentPath with
+                    {
+                        GenerationProfile =
+                            PathGenerationProfiles
+                                .InvalidPlasticDrumsV3,
+                    },
+                })
+                .ToArray(),
+        };
+
+        Assert.Throws<ArgumentException>(
+            invalid.ValidateAndNormalize);
+    }
+
+    [Theory]
+    [InlineData(60_000, null, true)]
+    [InlineData(60_000, 59_999, true)]
+    [InlineData(60_000, 60_000, true)]
+    [InlineData(60_000, 60_001, false)]
+    public void Observed_score_gate_rejects_maximum_below_live_score(
+        int newMaximum,
+        int? highestObservedScore,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            MaxScoreMaintenanceService
+                .IsObservedScoreCompatible(
+                    newMaximum,
+                    highestObservedScore));
+    }
+
+    [Fact]
+    public void Current_v2_artifact_tree_is_required_for_plan_and_rollback_identity()
+    {
+        var template = CreateManifest();
+        var song = template.Songs[0];
+        WriteGeneration(song.SongId, song.CurrentPath);
+        WriteGeneration(song.SongId, song.StagedPath);
+        var currentValidated =
+            PathArtifactResolver.ValidateImmutableGeneration(
+                _dataDirectory,
+                song.SongId,
+                song.CurrentPath.ArtifactGenerationId!);
+        var stagedValidated =
+            PathArtifactResolver.ValidateImmutableGeneration(
+                _dataDirectory,
+                song.SongId,
+                song.StagedPath.ArtifactGenerationId!);
+        var boundSong = (song with
+        {
+            CurrentPath = song.CurrentPath with
+            {
+                ArtifactTreeSha256 =
+                    currentValidated.ArtifactTreeSha256,
+                ArtifactFileCount =
+                    currentValidated.ArtifactFileCount,
+            },
+            StagedPath = song.StagedPath with
+            {
+                ArtifactTreeSha256 =
+                    stagedValidated.ArtifactTreeSha256,
+                ArtifactFileCount =
+                    stagedValidated.ArtifactFileCount,
+            },
+            PlasticDrumsEvidence =
+                MaxScoreMaintenanceArtifactValidator
+                    .CapturePlasticDrumsEvidence(
+                        stagedValidated),
+        }).ValidateAndNormalize();
+
+        var evidence =
+            MaxScoreMaintenanceArtifactValidator
+                .ValidateManifestSong(
+                    _dataDirectory,
+                    boundSong);
+
+        Assert.Equal(
+            currentValidated.ArtifactTreeSha256,
+            evidence.CurrentArtifactTreeSha256);
+        Assert.Equal(
+            currentValidated.ArtifactFileCount,
+            evidence.CurrentArtifactFileCount);
+
+        File.Delete(Path.Combine(
+            currentValidated.GenerationDirectory,
+            "Solo_Bass",
+            "expert.json"));
+        Assert.Throws<InvalidOperationException>(() =>
+            MaxScoreMaintenanceArtifactValidator
+                .ValidateManifestSong(
+                    _dataDirectory,
+                    boundSong));
+    }
+
+    [Fact]
+    public void Publication1296_manifest_binds_exact_four_changes_and_eight_instruments()
+    {
+        var manifest = CreateManifest();
+
         Assert.Equal(1296, manifest.ExpectedPublishedScrapeId);
+        Assert.Equal(
+            MaxScoreMaintenanceStagePurposes.Promotion,
+            manifest.Scope.Purpose);
+        Assert.Equal(
+            MaxScoreMaintenanceManifest.AllInstruments,
+            manifest.Scope.ExpectedPathInstruments);
+        Assert.Equal(
+            ExpectedChangedInstruments,
+            manifest.Scope.ExpectedChangedInstruments);
         Assert.Equal(
             63_750,
             manifest.Songs[0].StagedPath.Maxima.Lead);
@@ -416,13 +640,26 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
             {
                 Assert.Null(song.CurrentPath.Maxima.Lead);
                 Assert.Null(song.CurrentPath.Maxima.ProLead);
+                Assert.Null(song.CurrentPath.Maxima.ProCymbals);
+                Assert.Null(song.CurrentPath.Maxima.ProDrums);
+                Assert.Equal(
+                    ExpectedChangedInstruments,
+                    song.ChangedInstruments);
+                Assert.Equal(
+                    MaxScoreMaintenanceManifest.AllInstruments,
+                    song.StagedPath.ExpectedInstruments);
+                Assert.NotNull(song.PlasticDrumsEvidence);
             });
     }
 
     [Fact]
-    public void Promotion_admission_includes_newly_usable_lead_paths_only()
+    public void Promotion_admission_includes_exact_four_live_shaped_pairs()
     {
-        var manifest = CreateManifest();
+        var template = CreateManifest();
+        var manifest = (template with
+        {
+            Songs = [template.Songs[0]],
+        }).ValidateAndNormalize();
 
         var pairs =
             MaxScoreMaintenanceService
@@ -431,11 +668,17 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
         Assert.Equal(
             [
                 new SoloCurrentProjectionScopeKey(
-                    "song-a",
+                    ShowThemWhoWeAreSongId,
                     "Solo_Guitar"),
                 new SoloCurrentProjectionScopeKey(
-                    "song-a",
+                    ShowThemWhoWeAreSongId,
                     "Solo_PeripheralGuitar"),
+                new SoloCurrentProjectionScopeKey(
+                    ShowThemWhoWeAreSongId,
+                    "Solo_PeripheralCymbals"),
+                new SoloCurrentProjectionScopeKey(
+                    ShowThemWhoWeAreSongId,
+                    "Solo_PeripheralDrums"),
             ],
             pairs);
     }
@@ -491,63 +734,280 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
             await MaxScoreMaintenanceFileStore.ComputeSha256Async(
                 path,
                 CancellationToken.None));
+        Assert.Equal(2, loaded.Songs.Count);
+        Assert.All(
+            loaded.Songs,
+            song =>
+            {
+                Assert.NotNull(song.Path.ArtifactTreeSha256);
+                Assert.True(song.Path.ArtifactFileCount > 0);
+                Assert.Equal(
+                    MaxScoreMaintenanceStagePurposes.Promotion,
+                    manifest.Scope.Purpose);
+            });
     }
+
+    private static MaxScoreMaintenanceStageRequest CreateStageRequest(
+        string purpose)
+    {
+        var manifest = CreateManifest();
+        return new MaxScoreMaintenanceStageRequest(
+            MaxScoreMaintenanceStageRequest.CurrentRequestVersion,
+            purpose,
+            manifest.ExpectedPublishedScrapeId,
+            manifest.Scope.ExpectedPathInstruments,
+            manifest.Scope.ExpectedChangedInstruments,
+            manifest.Songs
+                .Select(song =>
+                    new MaxScoreMaintenanceStageRequestSong(
+                        song.SongId,
+                        purpose
+                            == MaxScoreMaintenanceStagePurposes
+                                .Promotion
+                            ? song.CurrentPath.Maxima
+                            : null,
+                        purpose
+                            == MaxScoreMaintenanceStagePurposes
+                                .Promotion
+                            ? song.StagedPath.Maxima
+                            : null,
+                        purpose
+                            == MaxScoreMaintenanceStagePurposes
+                                .Discovery
+                            ? ExpectedChangedInstruments
+                                .Select(instrument =>
+                                    new MaxScoreMaintenanceMaximaConstraint(
+                                        instrument,
+                                        null))
+                                .ToArray()
+                            : null,
+                        purpose
+                            == MaxScoreMaintenanceStagePurposes
+                                .Discovery
+                            ?
+                            [
+                                new(
+                                    "Solo_Guitar",
+                                    song.StagedPath.Maxima.Lead),
+                                new(
+                                    "Solo_PeripheralGuitar",
+                                    song.StagedPath.Maxima.ProLead),
+                            ]
+                            : null))
+                .ToArray(),
+            manifest.Runtime.Version,
+            manifest.Runtime.BinarySha256,
+            manifest.Runtime.Profile)
+            .ValidateAndNormalize();
+    }
+
+    private void WriteGeneration(
+        string songId,
+        MaxScoreMaintenancePathIdentity identity)
+    {
+        var generationDirectory =
+            PathArtifactResolver.GetGenerationDirectory(
+                _dataDirectory,
+                songId,
+                identity.ArtifactGenerationId!);
+        Directory.CreateDirectory(generationDirectory);
+        var expertScores = identity.ExpectedInstruments
+            .ToDictionary(
+                instrument => instrument,
+                instrument => identity.Maxima
+                    .GetByInstrument(instrument)!.Value,
+                StringComparer.Ordinal);
+        var manifest = new PathArtifactManifest(
+            identity.ArtifactGenerationId!,
+            songId,
+            identity.DatFileHash!,
+            identity.SongLastModified,
+            identity.ChoptVersion!,
+            identity.ChoptBinarySha256!,
+            identity.GenerationProfile!,
+            identity.ExpectedInstruments.ToArray(),
+            expertScores,
+            identity.GeneratedAtUtc!.Value);
+        File.WriteAllText(
+            Path.Combine(
+                generationDirectory,
+                PathArtifactResolver.ManifestFileName),
+            JsonSerializer.Serialize(
+                manifest,
+                PathArtifactManifest.JsonOptions));
+
+        var png = Convert.FromBase64String(ValidPngBase64);
+        foreach (var instrument in identity.ExpectedInstruments)
+        {
+            var instrumentDirectory = Path.Combine(
+                generationDirectory,
+                instrument);
+            Directory.CreateDirectory(instrumentDirectory);
+            foreach (var difficulty in
+                     PathGenerationInstruments.Difficulties)
+            {
+                File.WriteAllBytes(
+                    Path.Combine(
+                        instrumentDirectory,
+                        $"{difficulty}.png"),
+                    png);
+                File.WriteAllText(
+                    Path.Combine(
+                        instrumentDirectory,
+                        $"{difficulty}.json"),
+                    BuildPathJson(
+                        difficulty,
+                        difficulty == "expert"
+                            ? expertScores[instrument]
+                            : 0,
+                        instrument,
+                        identity.GenerationProfile!));
+            }
+        }
+    }
+
+    private static string BuildPathJson(
+        string difficulty,
+        int totalScore,
+        string instrument,
+        string generationProfile)
+        => JsonSerializer.Serialize(new
+        {
+            schemaVersion = 2,
+            songName = "Song",
+            artist = "Artist",
+            charter = "Charter",
+            difficulty,
+            totalScore,
+            pathSummary = string.Empty,
+            activations = Array.Empty<object>(),
+            notes = new[]
+            {
+                new
+                {
+                    beat = 1,
+                    seconds = 0.5,
+                    isSpNote = false,
+                    frets = new Dictionary<string, int>
+                    {
+                        [instrument] = 1,
+                    },
+                },
+            },
+            spPhrases = Array.Empty<object>(),
+            measures = Array.Empty<object>(),
+            bpms = Array.Empty<object>(),
+            timeSignatures = Array.Empty<object>(),
+            drumFills =
+                difficulty == "expert"
+                && PathGenerationProfiles.RequiresAuthoredDrumFills(
+                    generationProfile)
+                && PathGenerationInstruments
+                    .IsPlasticDrumsInstrument(instrument)
+                    ? new object[]
+                    {
+                        new
+                        {
+                            startBeat = 1,
+                            endBeat = 2,
+                        },
+                    }
+                    : Array.Empty<object>(),
+        });
 
     private static MaxScoreMaintenanceManifest CreateManifest()
     {
         var runtime = new PathGenerationRuntimeIdentity(
-            "1.16.3",
-            new string('b', 64),
-            "profile-v3");
-        var current = new MaxScoreMaintenancePathIdentity(
-            Revision: 4,
-            DatFileHash: new string('c', 64),
-            SongLastModified: "2026-08-01T00:00:00Z",
-            GeneratedAtUtc: new DateTime(
-                2026,
-                8,
-                1,
-                0,
-                0,
-                0,
-                DateTimeKind.Utc),
-            ChoptVersion: "1.16.2",
-            ChoptBinarySha256: new string('a', 64),
-            GenerationProfile: "profile-v2",
-            ArtifactGenerationId: "generation-old",
-            ExpectedInstruments:
-                ["Solo_Guitar", "Solo_PeripheralGuitar"],
-            Maxima: new MaxScoreMaintenanceMaxima(
-                null,
-                20,
-                30,
-                40,
-                null,
-                60,
-                70,
-                80),
-            PathGenerationPending: false);
-        var staged = current with
+            PathGenerationProfiles.PlasticDrumsV4ChoptVersion,
+            PathGenerationProfiles.PlasticDrumsV4BinarySha256,
+            PathGenerationProfiles.PlasticDrumsV4);
+        var oldMaxima = new MaxScoreMaintenanceMaxima(
+            null,
+            20_000,
+            30_000,
+            40_000,
+            null,
+            60_000,
+            null,
+            null);
+        MaxScoreMaintenanceManifestSong Song(
+            string songId,
+            string generationSuffix,
+            int lead,
+            int proLead,
+            int proCymbals,
+            int proDrums)
         {
-            DatFileHash = new string('e', 64),
-            GeneratedAtUtc = new DateTime(
-                2026,
-                8,
-                14,
-                0,
-                0,
-                0,
-                DateTimeKind.Utc),
-            ChoptVersion = runtime.Version,
-            ChoptBinarySha256 = runtime.BinarySha256,
-            GenerationProfile = runtime.Profile,
-            ArtifactGenerationId = "generation-new",
-            Maxima = current.Maxima with
+            var current = new MaxScoreMaintenancePathIdentity(
+                Revision: 4,
+                DatFileHash: new string('c', 64),
+                SongLastModified: "2026-08-01T00:00:00Z",
+                GeneratedAtUtc: new DateTime(
+                    2026,
+                    8,
+                    1,
+                    0,
+                    0,
+                    0,
+                    DateTimeKind.Utc),
+                ChoptVersion: "1.16.3",
+                ChoptBinarySha256: new string('a', 64),
+                GenerationProfile:
+                    "chopt-fnf-ew0-s20-json-png-v2",
+                ArtifactGenerationId:
+                    $"generation-{generationSuffix}-v2",
+                ExpectedInstruments:
+                [
+                    "Solo_Bass",
+                    "Solo_Drums",
+                    "Solo_Vocals",
+                    "Solo_PeripheralBass",
+                ],
+                Maxima: oldMaxima,
+                PathGenerationPending: false,
+                ArtifactTreeSha256: new string('4', 64),
+                ArtifactFileCount: 33);
+            var staged = current with
             {
-                Lead = 51_573,
-                ProLead = 51_573,
-            },
-        };
+                DatFileHash = new string('e', 64),
+                GeneratedAtUtc = new DateTime(
+                    2026,
+                    8,
+                    14,
+                    0,
+                    0,
+                    0,
+                    DateTimeKind.Utc),
+                ChoptVersion = runtime.Version,
+                ChoptBinarySha256 = runtime.BinarySha256,
+                GenerationProfile = runtime.Profile,
+                ArtifactGenerationId =
+                    $"generation-{generationSuffix}-v4",
+                ExpectedInstruments =
+                    MaxScoreMaintenanceManifest.AllInstruments,
+                Maxima = oldMaxima with
+                {
+                    Lead = lead,
+                    ProLead = proLead,
+                    ProCymbals = proCymbals,
+                    ProDrums = proDrums,
+                },
+                ArtifactTreeSha256 = new string('5', 64),
+                ArtifactFileCount = 65,
+            };
+            return new MaxScoreMaintenanceManifestSong(
+                songId,
+                "2026-08-01T00:00:00Z",
+                current,
+                staged,
+                ExpectedChangedInstruments,
+                new MaxScoreMaintenancePlasticDrumsEvidence(
+                    2,
+                    2,
+                    new string('1', 64),
+                    new string('2', 64),
+                    new string('3', 64)));
+        }
         return new MaxScoreMaintenanceManifest(
             MaxScoreMaintenanceManifest.CurrentManifestVersion,
             ExpectedPublishedScrapeId: 1296,
@@ -573,15 +1033,28 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
                 0,
                 0,
                 DateTimeKind.Utc),
+            Scope: new MaxScoreMaintenanceScope(
+                MaxScoreMaintenanceStagePurposes.Promotion,
+                new string('d', 64),
+                MaxScoreMaintenanceManifest.AllInstruments,
+                ExpectedChangedInstruments),
             Runtime: runtime,
             Songs:
             [
-                new MaxScoreMaintenanceManifestSong(
-                    "song-a",
-                    "2026-08-01T00:00:00Z",
-                    current,
-                    staged,
-                    ["Solo_Guitar", "Solo_PeripheralGuitar"]),
+                Song(
+                    ShowThemWhoWeAreSongId,
+                    "show",
+                    63_750,
+                    65_367,
+                    70_000,
+                    68_000),
+                Song(
+                    RunItSongId,
+                    "run-it",
+                    51_573,
+                    51_573,
+                    60_000,
+                    58_000),
             ])
             .ValidateAndNormalize();
     }

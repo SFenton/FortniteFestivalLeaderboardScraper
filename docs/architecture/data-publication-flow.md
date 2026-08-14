@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: bb739119
+last_verified_commit: f8cf6f02
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -12,6 +12,7 @@ sources:
   - FSTService/Api/PublicReadGateService.cs
   - FSTService/Api/PublicReadGateMiddleware.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
+  - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
   - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
   - FSTService/Persistence/RegistrationMutationGuard.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -87,10 +88,15 @@ diagnostic or replay data without becoming the published generation.
 The CLI-only max-score workflow changes path metadata and maximum-dependent
 derived rows while retaining the same published scrape/publication ID.
 
-1. Stage writes complete immutable path directories only.
-2. Plan binds the exact current publication/catalog/path revisions and
-   fingerprints published score sources, notification state, and rank history.
-3. Apply first acquires the exclusive registration mutation advisory gate and
+1. Discovery stage writes complete immutable path directories only and emits a
+   non-promotable manifest bound to exact v4 runtime and instrument constraints.
+2. Promotion stage requires complete old/new eight-field maxima copied from
+   discovery and emits the only manifest class accepted by plan/apply.
+3. Plan binds the exact current publication/catalog/path revisions, validates
+   current rollback and staged artifact trees/hashes plus observed-score
+   bounds, and fingerprints published score sources, notification state, and
+   rank history.
+4. Apply first acquires the exclusive registration mutation advisory gate and
    waits for active registration/backfill/history lifecycles to drain. Its
    isolated lock session records a durable random owner token/backend identity,
    then takes path-generation and publication locks, creates or revalidates the
@@ -98,20 +104,20 @@ derived rows while retaining the same published scrape/publication ID.
    and checkpoint through bounded transactions on that same session. Each
    dependent transaction takes source table locks in fixed order and verifies
    the lease again immediately before commit.
-4. One lock-session transaction promotes every listed song generation. The in-process
+5. One lock-session transaction promotes every listed song generation. The in-process
    scraper admission cache refreshes immediately. Prior negative backfill
    checks and matching successful history-reconstruction checkpoints are
    removed only for newly usable path-backed pairs. Affected history status is
    fenced and returned to `pending`; unrelated pairs remain complete and only
    affected accounts are requeued.
-5. Maintenance ranking mode rebuilds affected instruments plus composite,
+6. Maintenance ranking mode rebuilds affected instruments plus composite,
    family, and combo dependencies. Target-song band over-threshold flags are
    recalculated, prior/current affected band projection scopes are refreshed,
    and dependent band rankings are rebuilt. Solo/composite/band rank history is
    not written. Chart denominators include matching promoted path-expected
    instruments when provider metadata omitted the real MIDI chart. Affected
    player-stat tiers and registered-player leaderboard rivals follow.
-6. Routine notification dry-run candidates are accepted only for player ranks
+7. Routine notification dry-run candidates are accepted only for player ranks
    in changed instruments, target-song band rows, and their dependent band
    ranks. Parity uses routine delivery grouping: player ranks per
    player/instrument, band songs per play, and rank metrics per band
@@ -122,11 +128,11 @@ derived rows while retaining the same published scrape/publication ID.
    collection. Candidates are persisted in the maintenance quarantine,
    relevant state is aligned, visible delivery remains zero, and the
    publication's completed notification marker is not reopened.
-7. A complete current-publication API cache is built in staging. Final
+8. A complete current-publication API cache is built in staging. Final
    validation requires unchanged rank-history and source fingerprints, exact
    paths/maxima/song stats, rollback coverage, zero visible delivery, and the
    expected staged-cache count.
-8. Cache swap, workflow completion, and freeze release commit atomically in a
+9. Cache swap, workflow completion, and freeze release commit atomically in a
    source-locked transaction on the live advisory-lock session while its
    durable mutation token remains set. Disposal releases the publication,
    path-generation, and exclusive mutation advisory locks before clearing the

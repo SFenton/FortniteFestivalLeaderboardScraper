@@ -4,6 +4,44 @@ using FSTService.Persistence;
 
 namespace FSTService.Scraping;
 
+internal static class PathGenerationProfiles
+{
+    internal const string InvalidPlasticDrumsV3 =
+        "chopt-fnf-ew0-s20-json-png-prodrums-v3";
+    internal const string PlasticDrumsV4 =
+        "chopt-fnf-ew0-s20-json-png-prodrums-v4";
+    internal const string PlasticDrumsV4ChoptVersion = "1.16.4";
+    internal const string PlasticDrumsV4BinarySha256 =
+        "4c3f9d55c50e8406080191a138580e377413ecc9b2edb60a877281f97018205f";
+
+    internal static bool HasInvalidPlasticDrumsScores(string? profile)
+        => string.Equals(
+            profile,
+            InvalidPlasticDrumsV3,
+            StringComparison.Ordinal);
+
+    internal static bool RequiresAuthoredDrumFills(string? profile)
+        => string.Equals(
+            profile,
+            PlasticDrumsV4,
+            StringComparison.Ordinal);
+
+    internal static bool IsApprovedPlasticDrumsV4(
+        PathGenerationRuntimeIdentity runtime)
+        => string.Equals(
+               runtime.Version,
+               PlasticDrumsV4ChoptVersion,
+               StringComparison.Ordinal)
+           && string.Equals(
+               runtime.BinarySha256,
+               PlasticDrumsV4BinarySha256,
+               StringComparison.Ordinal)
+           && string.Equals(
+               runtime.Profile,
+               PlasticDrumsV4,
+               StringComparison.Ordinal);
+}
+
 public sealed record PathInstrumentDefinition(
     string ProviderProperty,
     string MidiTrackName,
@@ -32,18 +70,18 @@ public static class PathGenerationInstruments
             "Solo_PeripheralBass",
             "pro",
             "bass"),
-        // CHOpt's FNF prodrums mode reads PLASTIC DRUMS from the original MIDI.
+        // Promote PLASTIC DRUMS to PART DRUMS for CHOpt's dedicated FNF engine.
         new(
             "pd",
             "PLASTIC DRUMS",
             "Solo_PeripheralCymbals",
-            "og",
+            "drums",
             "prodrums"),
         new(
             "pd",
             "PLASTIC DRUMS",
             "Solo_PeripheralDrums",
-            "og",
+            "drums",
             "prodrums",
             DisableProDrums: true),
     ];
@@ -58,6 +96,11 @@ public static class PathGenerationInstruments
         => ByInstrument.TryGetValue(instrument, out var definition)
             ? definition
             : throw new ArgumentOutOfRangeException(nameof(instrument), instrument, "Unsupported path instrument.");
+
+    public static bool IsPlasticDrumsInstrument(string instrument)
+        => instrument is
+            "Solo_PeripheralCymbals" or
+            "Solo_PeripheralDrums";
 
     public static string[] NormalizeExpected(IEnumerable<string> instruments)
     {

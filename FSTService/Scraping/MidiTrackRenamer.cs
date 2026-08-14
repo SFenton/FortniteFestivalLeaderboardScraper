@@ -8,10 +8,13 @@ namespace FSTService.Scraping;
 /// Port of FNFpaths download.py's replace_tracks_in_midi.
 ///
 /// CHOpt expects standard Rock Band track naming (PART GUITAR, PART BASS, etc.)
-/// but Fortnite Festival uses different track names. We produce two MIDI variants:
+/// but Fortnite Festival uses different track names. We produce three MIDI variants:
 ///
 ///   _pro.mid:     PLASTIC GUITAR → PART GUITAR, PLASTIC BASS → PART BASS
 ///                 (original PART GUITAR/BASS get _FNF suffix to avoid conflicts)
+///
+///   _drums.mid:   PLASTIC DRUMS → PART DRUMS
+///                 (original PART DRUMS gets _FNF suffix to avoid conflicts)
 ///
 ///   _og.mid:      Unchanged (Lead/Bass/Drums/Vocals use native CHOpt FNF support)
 /// </summary>
@@ -20,7 +23,15 @@ public static class MidiTrackRenamer
     /// <summary>
     /// Results of producing the MIDI variants.
     /// </summary>
-    public sealed record MidiVariants(byte[] ProMidi, byte[] OgMidi);
+    public sealed record MidiVariants(
+        byte[] ProMidi,
+        byte[] PlasticDrumsMidi,
+        byte[] OgMidi,
+        bool PlasticDrumsTrackPromoted);
+
+    private sealed record RenameResult(
+        byte[] Midi,
+        IReadOnlySet<string> RenamedTracks);
 
     /// <summary>
     /// Produce MIDI variants from a decrypted MIDI file.
@@ -28,8 +39,14 @@ public static class MidiTrackRenamer
     public static MidiVariants ProduceVariants(byte[] midiData)
     {
         var proMidi = RenameTracksForPro(midiData);
+        var plasticDrums = RenameTracksForPlasticDrums(midiData);
         // OG is unchanged — Lead, Bass, Drums, and Vocals use native CHOpt FNF instrument support
-        return new MidiVariants(proMidi, (byte[])midiData.Clone());
+        return new MidiVariants(
+            proMidi,
+            plasticDrums.Midi,
+            (byte[])midiData.Clone(),
+            plasticDrums.RenamedTracks.Contains("PLASTIC DRUM") ||
+            plasticDrums.RenamedTracks.Contains("PLASTIC DRUMS"));
     }
 
     /// <summary>
@@ -47,6 +64,16 @@ public static class MidiTrackRenamer
             ["PLASTIC GUITAR"] = "PART GUITAR",
             ["PART BASS"] = "PART BASS_FNF",
             ["PLASTIC BASS"] = "PART BASS",
+        }).Midi;
+    }
+
+    private static RenameResult RenameTracksForPlasticDrums(byte[] midiData)
+    {
+        return RenameTrackNames(midiData, new Dictionary<string, string>
+        {
+            ["PART DRUMS"] = "PART DRUMS_FNF",
+            ["PLASTIC DRUM"] = "PART DRUMS",
+            ["PLASTIC DRUMS"] = "PART DRUMS",
         });
     }
 
@@ -61,9 +88,12 @@ public static class MidiTrackRenamer
     /// When a rename changes the text length, we adjust the VLQ length field and
     /// the MTrk chunk length accordingly.
     /// </summary>
-    private static byte[] RenameTrackNames(byte[] midiData, Dictionary<string, string> renames)
+    private static RenameResult RenameTrackNames(
+        byte[] midiData,
+        Dictionary<string, string> renames)
     {
         using var output = new MemoryStream(midiData.Length + 256);
+        var renamedTracks = new HashSet<string>(StringComparer.Ordinal);
         int pos = 0;
 
         // Copy MThd header: 'MThd' (4) + length (4) + header data (typically 6) = 14 bytes
@@ -97,7 +127,9 @@ public static class MidiTrackRenamer
 
             // Process track data, looking for Track Name meta events (FF 03)
             var trackData = ProcessTrackData(
-                midiData.AsSpan(chunkDataStart, chunkDataEnd - chunkDataStart), renames);
+                midiData.AsSpan(chunkDataStart, chunkDataEnd - chunkDataStart),
+                renames,
+                renamedTracks);
 
             // Write MTrk header with updated length
             output.WriteByte((byte)'M');
@@ -110,13 +142,16 @@ public static class MidiTrackRenamer
             pos = chunkDataEnd;
         }
 
-        return output.ToArray();
+        return new RenameResult(output.ToArray(), renamedTracks);
     }
 
     /// <summary>
     /// Scan track data for Track Name meta events (FF 03) and apply renames.
     /// </summary>
-    private static byte[] ProcessTrackData(ReadOnlySpan<byte> data, Dictionary<string, string> renames)
+    private static byte[] ProcessTrackData(
+        ReadOnlySpan<byte> data,
+        Dictionary<string, string> renames,
+        HashSet<string> renamedTracks)
     {
         using var output = new MemoryStream(data.Length + 64);
         int pos = 0;
@@ -151,6 +186,7 @@ public static class MidiTrackRenamer
 
                     if (renames.TryGetValue(trackName, out var newName))
                     {
+                        renamedTracks.Add(trackName);
                         byte[] newNameBytes = Encoding.ASCII.GetBytes(newName);
 
                         // Write delta time unchanged

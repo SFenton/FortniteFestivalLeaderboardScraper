@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-14
-last_verified_commit: bb739119
+last_verified_commit: f8cf6f02
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -10,6 +10,7 @@ sources:
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
   - FSTService/Persistence/MaxScoreMaintenanceSchema.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
+  - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
   - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
   - FSTService/Persistence/RegistrationMutationGuard.cs
   - FSTService/Persistence/MetaDatabase.PhaseProgress.cs
@@ -80,10 +81,13 @@ failure detail. A post-freeze failure changes status to `failed` only while
 the lock-owning backend can commit that checkpoint; backend loss leaves the
 last durable status/phase unchanged and never clears the freeze.
 
-`max_score_maintenance_rollback_songs` stores every pre-promotion path field
-and all eight maxima for every manifest song. It complements the canonical
-same-drive rollback JSON. Database triggers reject workflow-identity changes
-and rollback-row updates/deletes; neither surface deletes historical
+`max_score_maintenance_rollback_songs` stores every pre-promotion path field,
+all eight maxima, the immutable generation file count, and the exact artifact
+tree SHA-256 for every manifest song. It complements the canonical same-drive
+rollback JSON. Plan and apply revalidate both current rollback and staged
+generation trees, including every JSON/PNG hash; missing, extra, symlinked, or
+changed artifacts fail closed. Database triggers reject workflow-identity
+changes and rollback-row updates/deletes; neither surface deletes historical
 generations. Rollback JSON timestamps use the immutable run `created_at`, so a
 file-first/database-checkpoint retry validates identical canonical bytes.
 

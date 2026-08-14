@@ -5772,7 +5772,7 @@ public sealed class MetaDatabaseTests : IDisposable
     public async Task Promoted_path_admission_retries_only_negative_target_pairs()
     {
         Db.RegisterUser("web-tracker", "acct1");
-        Db.EnqueueBackfill("acct1", 4);
+        Db.EnqueueBackfill("acct1", 6);
         Db.MarkBackfillSongChecked(
             "acct1",
             "song-a",
@@ -5786,6 +5786,16 @@ public sealed class MetaDatabaseTests : IDisposable
         Db.MarkBackfillSongChecked(
             "acct1",
             "song-a",
+            "Solo_PeripheralCymbals",
+            entryFound: false);
+        Db.MarkBackfillSongChecked(
+            "acct1",
+            "song-a",
+            "Solo_PeripheralDrums",
+            entryFound: false);
+        Db.MarkBackfillSongChecked(
+            "acct1",
+            "song-a",
             "Solo_Bass",
             entryFound: false);
         Db.MarkBackfillSongChecked(
@@ -5793,7 +5803,7 @@ public sealed class MetaDatabaseTests : IDisposable
             "song-b",
             "Solo_Drums",
             entryFound: true);
-        Db.UpdateBackfillProgress("acct1", 4, 1);
+        Db.UpdateBackfillProgress("acct1", 6, 1);
         Db.CompleteBackfill("acct1");
         var reason =
             PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
@@ -5816,13 +5826,19 @@ public sealed class MetaDatabaseTests : IDisposable
                                 new SoloCurrentProjectionScopeKey(
                                     "song-a",
                                     "Solo_PeripheralGuitar"),
+                                new SoloCurrentProjectionScopeKey(
+                                    "song-a",
+                                    "Solo_PeripheralCymbals"),
+                                new SoloCurrentProjectionScopeKey(
+                                    "song-a",
+                                    "Solo_PeripheralDrums"),
                             ],
                             reason,
                             connection,
                             transaction)));
 
         Assert.Equal(
-            2,
+            4,
             result.RemovedNegativeBackfillPairChecks);
         Assert.Equal(
             1,
@@ -5836,6 +5852,12 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.DoesNotContain(
             ("song-a", "Solo_PeripheralGuitar"),
             checkedPairs);
+        Assert.DoesNotContain(
+            ("song-a", "Solo_PeripheralCymbals"),
+            checkedPairs);
+        Assert.DoesNotContain(
+            ("song-a", "Solo_PeripheralDrums"),
+            checkedPairs);
         Assert.Contains(
             ("song-a", "Solo_Bass"),
             checkedPairs);
@@ -5846,7 +5868,7 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal("deferred", status?.Status);
         Assert.Equal(2, status?.SongsChecked);
         Assert.Equal(1, status?.EntriesFound);
-        Assert.Equal(4, status?.TotalSongsToCheck);
+        Assert.Equal(6, status?.TotalSongsToCheck);
         Assert.Equal(
             BackfillDeferredReasons.PathAdmissionRefresh,
             status?.DeferredReason);
@@ -5878,13 +5900,13 @@ public sealed class MetaDatabaseTests : IDisposable
 
         long SeedCompletedHistory(
             string accountId,
-            string targetInstrument,
+            IReadOnlyList<string> targetInstruments,
             string fingerprint)
         {
             Db.RegisterUser("web-tracker", accountId);
             var revision = Db.AdmitHistoryRecon(
                 accountId,
-                2,
+                targetInstruments.Count + 1,
                 HistoryReconstructor.CurrentReconstructionVersion,
                 fingerprint);
             Db.StartHistoryRecon(
@@ -5892,13 +5914,16 @@ public sealed class MetaDatabaseTests : IDisposable
                 HistoryReconstructor.CurrentReconstructionVersion,
                 fingerprint,
                 revision);
-            Db.MarkHistoryReconSongProcessed(
-                accountId,
-                "song-a",
-                targetInstrument,
-                HistoryReconstructor.CurrentReconstructionVersion,
-                fingerprint,
-                revision);
+            foreach (var targetInstrument in targetInstruments)
+            {
+                Db.MarkHistoryReconSongProcessed(
+                    accountId,
+                    "song-a",
+                    targetInstrument,
+                    HistoryReconstructor.CurrentReconstructionVersion,
+                    fingerprint,
+                    revision);
+            }
             Db.MarkHistoryReconSongProcessed(
                 accountId,
                 "song-b",
@@ -5908,7 +5933,7 @@ public sealed class MetaDatabaseTests : IDisposable
                 revision);
             Db.UpdateHistoryReconProgress(
                 accountId,
-                2,
+                targetInstruments.Count + 1,
                 20,
                 0,
                 HistoryReconstructor.CurrentReconstructionVersion,
@@ -5924,11 +5949,17 @@ public sealed class MetaDatabaseTests : IDisposable
 
         var currentRevision = SeedCompletedHistory(
             "acct-current",
-            "Solo_Guitar",
+            [
+                "Solo_Guitar",
+                "Solo_PeripheralCymbals",
+            ],
             currentSeasonFingerprint);
         var maxSeasonRevision = SeedCompletedHistory(
             "acct-max-season",
-            "Solo_PeripheralGuitar",
+            [
+                "Solo_PeripheralGuitar",
+                "Solo_PeripheralDrums",
+            ],
             maxSeasonFingerprint);
         Assert.Empty(Db.GetScoreHistory("acct-current"));
         Assert.Empty(
@@ -5974,6 +6005,12 @@ public sealed class MetaDatabaseTests : IDisposable
                                 new SoloCurrentProjectionScopeKey(
                                     "song-a",
                                     "Solo_PeripheralGuitar"),
+                                new SoloCurrentProjectionScopeKey(
+                                    "song-a",
+                                    "Solo_PeripheralCymbals"),
+                                new SoloCurrentProjectionScopeKey(
+                                    "song-a",
+                                    "Solo_PeripheralDrums"),
                             ],
                             reason,
                             connection,
@@ -5985,7 +6022,7 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal(
             0,
             result.RequeuedBackfillAccountCount);
-        Assert.Equal(2, result.RemovedHistoryPairChecks);
+        Assert.Equal(4, result.RemovedHistoryPairChecks);
         Assert.Equal(2, result.RequeuedHistoryAccountCount);
 
         var currentStatus =
@@ -6006,6 +6043,9 @@ public sealed class MetaDatabaseTests : IDisposable
                 currentStatus!.AdmissionRevision);
         Assert.DoesNotContain(
             ("song-a", "Solo_Guitar"),
+            currentPairs);
+        Assert.DoesNotContain(
+            ("song-a", "Solo_PeripheralCymbals"),
             currentPairs);
         Assert.Contains(
             ("song-b", "Solo_Bass"),
@@ -6030,6 +6070,9 @@ public sealed class MetaDatabaseTests : IDisposable
                 maxSeasonStatus!.AdmissionRevision);
         Assert.DoesNotContain(
             ("song-a", "Solo_PeripheralGuitar"),
+            maxSeasonPairs);
+        Assert.DoesNotContain(
+            ("song-a", "Solo_PeripheralDrums"),
             maxSeasonPairs);
         Assert.Contains(
             ("song-b", "Solo_Bass"),

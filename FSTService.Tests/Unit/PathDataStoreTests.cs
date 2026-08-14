@@ -179,6 +179,36 @@ public sealed class PathDataStoreTests : IDisposable
     }
 
     [Fact]
+    public void V3_plastic_drum_scores_are_masked_from_runtime_reads()
+    {
+        EnsureSongRow("v3-plastic-drums");
+        var scores = new SongMaxScores
+        {
+            MaxLeadScore = 100000,
+            MaxProCymbalsScore = 130000,
+            MaxProDrumsScore = 125000,
+            GenerationProfile =
+                PathGenerationProfiles.InvalidPlasticDrumsV3,
+        };
+        _store.UpdateMaxScores(
+            "v3-plastic-drums",
+            scores,
+            "hash");
+
+        var allScores =
+            _store.GetAllMaxScores()["v3-plastic-drums"];
+        var state =
+            _store.GetPathGenerationState("v3-plastic-drums");
+
+        Assert.Equal(100000, allScores.MaxLeadScore);
+        Assert.Null(allScores.MaxProCymbalsScore);
+        Assert.Null(allScores.MaxProDrumsScore);
+        Assert.NotNull(state);
+        Assert.Null(state.MaxScores.MaxProCymbalsScore);
+        Assert.Null(state.MaxScores.MaxProDrumsScore);
+    }
+
+    [Fact]
     public async Task TryPromoteGenerationAsync_updates_all_fields_atomically_and_rejects_stale_revision()
     {
         EnsureSongRow("atomic");

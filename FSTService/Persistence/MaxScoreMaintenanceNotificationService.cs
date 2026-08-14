@@ -194,11 +194,9 @@ public sealed class MaxScoreMaintenanceNotificationService
                 "Maintenance overlapped routine player-song notification candidates; reads remain frozen.");
         }
 
-        var affectedInstruments = normalizedManifest.Songs
-            .SelectMany(song => song.ChangedInstruments)
-            .Distinct(StringComparer.Ordinal)
-            .OrderBy(instrument => instrument, StringComparer.Ordinal)
-            .ToArray();
+        var affectedInstruments =
+            normalizedManifest.Scope
+                .ExpectedChangedInstruments.ToArray();
         var targetSongIds = normalizedManifest.Songs
             .Select(song => song.SongId)
             .ToHashSet(StringComparer.Ordinal);
@@ -765,11 +763,8 @@ public sealed class MaxScoreMaintenanceNotificationService
         MaxScoreMaintenanceManifest manifest,
         CancellationToken ct)
     {
-        var instruments = manifest.Songs
-            .SelectMany(song => song.ChangedInstruments)
-            .Distinct(StringComparer.Ordinal)
-            .OrderBy(instrument => instrument, StringComparer.Ordinal)
-            .ToArray();
+        var instruments =
+            manifest.Scope.ExpectedChangedInstruments.ToArray();
         await using var conn = await _dataSource.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
         cmd.CommandTimeout = DefaultCommandTimeoutSeconds;

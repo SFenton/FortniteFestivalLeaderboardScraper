@@ -59,32 +59,17 @@ public sealed class MaxScoreMaintenanceService
         CancellationToken ct)
     {
         RequirePathGenerationConfiguration();
-        MaxScoreMaintenanceStageRequest request;
-        if (stageRequestPath is not null)
+        if (stageRequestPath is null || explicitSongIds.Count > 0)
         {
-            request =
-                await MaxScoreMaintenanceFileStore.LoadStageRequestAsync(
-                    _options.DataDirectory,
-                    stageRequestPath,
-                    ct);
-            if (explicitSongIds.Count > 0)
-            {
-                throw new ArgumentException(
-                    "Stage request file and explicit song IDs are mutually exclusive.");
-            }
+            throw new ArgumentException(
+                "Max-score maintenance staging requires one strict request file and does not accept unscoped song IDs.");
         }
-        else
-        {
-            request = new MaxScoreMaintenanceStageRequest(
-                MaxScoreMaintenanceStageRequest.CurrentRequestVersion,
-                expectedPublishedScrapeId,
-                explicitSongIds
-                    .OrderBy(songId => songId, StringComparer.Ordinal)
-                    .Select(songId =>
-                        new MaxScoreMaintenanceStageRequestSong(songId))
-                    .ToArray())
-                .ValidateAndNormalize();
-        }
+        var request =
+            await MaxScoreMaintenanceFileStore.LoadStageRequestAsync(
+                _options.DataDirectory,
+                stageRequestPath,
+                ct);
+        var stageRequestDigest = request.ComputeDigest();
         if (request.ExpectedPublishedScrapeId
             != expectedPublishedScrapeId)
         {
@@ -103,6 +88,9 @@ public sealed class MaxScoreMaintenanceService
         var requestBySong = request.Songs.ToDictionary(
             song => song.SongId,
             StringComparer.Ordinal);
+        var currentIdentityBySong =
+            new Dictionary<string, MaxScoreMaintenancePathIdentity>(
+                StringComparer.Ordinal);
         foreach (var requestSong in request.Songs)
         {
             var song = context.SongsById[requestSong.SongId];
@@ -110,13 +98,21 @@ public sealed class MaxScoreMaintenanceService
                 requestSong.SongId,
                 requestSong.SongId,
                 context.CatalogLastModifiedBySong[requestSong.SongId]);
-            if (requestSong.ExpectedOldMaxima is not null
-                && requestSong.ExpectedOldMaxima
-                    != MaxScoreMaintenanceMaxima.From(state.MaxScores))
+            requestSong.ValidateOldMaxima(
+                MaxScoreMaintenanceMaxima.From(state.MaxScores));
+            if (request.ExpectedChangedInstruments.Any(
+                    PathGenerationInstruments.IsPlasticDrumsInstrument)
+                && PathGenerationProfiles.HasInvalidPlasticDrumsScores(
+                    state.GenerationProfile))
             {
                 throw new InvalidOperationException(
-                    $"Expected old maxima do not match current state for {requestSong.SongId}.");
+                    $"Current generation for {requestSong.SongId} uses known-invalid plastic-drums v3.");
             }
+            currentIdentityBySong[requestSong.SongId] =
+                MaxScoreMaintenanceArtifactValidator
+                    .CaptureCurrentIdentity(
+                        _options.DataDirectory,
+                        state);
 
             var pathRequest = SongPathRequest.FromSong(song)
                 ?? throw new InvalidOperationException(
@@ -182,6 +178,13 @@ public sealed class MaxScoreMaintenanceService
                     promotion.SongId,
                     promotion.ArtifactGenerationId);
             ValidateStagedPromotion(promotion, validated);
+            if (!promotion.ExpectedInstruments.SequenceEqual(
+                    request.ExpectedPathInstruments,
+                    StringComparer.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Staged generation for {pathRequest.SongId} differs from the approved exact instrument scope.");
+            }
             runtime ??= promotion.Runtime;
             if (runtime != promotion.Runtime)
             {
@@ -193,25 +196,22 @@ public sealed class MaxScoreMaintenanceService
                 MaxScoreMaintenanceMaxima.From(state.MaxScores);
             var newMaxima =
                 MaxScoreMaintenanceMaxima.From(validated.MaxScores);
-            if (requestSong.ExpectedNewMaxima is not null
-                && requestSong.ExpectedNewMaxima != newMaxima)
-            {
-                throw new InvalidOperationException(
-                    $"Expected new maxima do not match staged generation for {pathRequest.SongId}.");
-            }
+            requestSong.ValidateNewMaxima(newMaxima);
             var changed = MaxScoreMaintenanceManifest.AllInstruments
                 .Where(instrument =>
                     oldMaxima.GetByInstrument(instrument)
                     != newMaxima.GetByInstrument(instrument))
                 .ToArray();
-            if (changed.Length == 0)
+            if (!changed.SequenceEqual(
+                    request.ExpectedChangedInstruments,
+                    StringComparer.Ordinal))
             {
                 throw new InvalidOperationException(
-                    $"Staged generation for {pathRequest.SongId} does not change any maximum.");
+                    $"Staged generation for {pathRequest.SongId} does not change exactly the approved instruments.");
             }
 
             var currentIdentity =
-                MaxScoreMaintenancePathIdentity.From(state);
+                currentIdentityBySong[pathRequest.SongId];
             var stagedIdentity = new MaxScoreMaintenancePathIdentity(
                 state.Revision,
                 promotion.DatFileHash,
@@ -223,7 +223,15 @@ public sealed class MaxScoreMaintenanceService
                 promotion.ArtifactGenerationId,
                 promotion.ExpectedInstruments.ToArray(),
                 newMaxima,
-                PathGenerationPending: false);
+                PathGenerationPending: false,
+                validated.ArtifactTreeSha256,
+                validated.ArtifactFileCount);
+            var plasticDrumsEvidence =
+                changed.Any(
+                    PathGenerationInstruments.IsPlasticDrumsInstrument)
+                    ? MaxScoreMaintenanceArtifactValidator
+                        .CapturePlasticDrumsEvidence(validated)
+                    : null;
             manifestSongs.Add(
                 new MaxScoreMaintenanceManifestSong(
                     pathRequest.SongId,
@@ -231,7 +239,8 @@ public sealed class MaxScoreMaintenanceService
                         pathRequest.SongId],
                     currentIdentity,
                     stagedIdentity,
-                    changed)
+                    changed,
+                    plasticDrumsEvidence)
                 .ValidateAndNormalize());
             reports.Add(new MaxScoreMaintenanceStageSongReport(
                 pathRequest.SongId,
@@ -252,6 +261,9 @@ public sealed class MaxScoreMaintenanceService
                 new MaxScoreMaintenanceStageReport(
                     MaxScoreMaintenanceStageReport.CurrentReportVersion,
                     Succeeded: false,
+                    request.Purpose,
+                    Promotable: false,
+                    stageRequestDigest,
                     expectedPublishedScrapeId,
                     context.Catalog.PublicationId,
                     MaxScoreMaintenanceFileStore.ResolveNewJsonOutputPath(
@@ -279,6 +291,11 @@ public sealed class MaxScoreMaintenanceService
             context.Catalog.SongCount,
             context.Catalog.SourceCapturedAtUtc,
             now,
+            new MaxScoreMaintenanceScope(
+                request.Purpose,
+                stageRequestDigest,
+                request.ExpectedPathInstruments,
+                request.ExpectedChangedInstruments),
             runtime,
             manifestSongs
                 .OrderBy(song => song.SongId, StringComparer.Ordinal)
@@ -302,6 +319,13 @@ public sealed class MaxScoreMaintenanceService
                 "Published catalog changed during serial staging; no manifest was written.");
         }
         EnsureStageSourceUnchanged(manifest);
+        foreach (var song in manifest.Songs)
+        {
+            MaxScoreMaintenanceArtifactValidator
+                .ValidateManifestSong(
+                    _options.DataDirectory,
+                    song);
+        }
         var writtenManifest =
             await MaxScoreMaintenanceFileStore
                 .WriteCanonicalManifestAsync(
@@ -321,6 +345,11 @@ public sealed class MaxScoreMaintenanceService
         var report = new MaxScoreMaintenanceStageReport(
             MaxScoreMaintenanceStageReport.CurrentReportVersion,
             Succeeded: true,
+            request.Purpose,
+            Promotable:
+                request.Purpose
+                == MaxScoreMaintenanceStagePurposes.Promotion,
+            stageRequestDigest,
             expectedPublishedScrapeId,
             context.Catalog.PublicationId,
             writtenManifest.FullPath,
@@ -346,6 +375,7 @@ public sealed class MaxScoreMaintenanceService
                 _options.DataDirectory,
                 manifestPath,
                 ct);
+        manifest = manifest.RequirePromotionReady();
         var manifestDigest = manifest.ComputeDigest();
         ValidateManifestCliIdentity(
             manifest,
@@ -367,9 +397,11 @@ public sealed class MaxScoreMaintenanceService
             report = await lease.ExecuteTransactionAsync(
                 "plan-inspection",
                 requireSourceLocks: true,
-                (_, _, token) => BuildPlanAsync(
+                (connection, transaction, token) => BuildPlanAsync(
                     manifest,
                     manifestDigest,
+                    connection,
+                    transaction,
                     token),
                 IsolationLevel.RepeatableRead,
                 ct);
@@ -387,11 +419,8 @@ public sealed class MaxScoreMaintenanceService
                 PublishedScoreSourceFingerprint: new string('0', 64),
                 NotificationStateFingerprint: new string('0', 64),
                 RankHistoryFingerprint: new string('0', 64),
-                AffectedInstruments: manifest.Songs
-                    .SelectMany(song => song.ChangedInstruments)
-                    .Distinct(StringComparer.Ordinal)
-                    .OrderBy(instrument => instrument, StringComparer.Ordinal)
-                    .ToArray(),
+                AffectedInstruments:
+                    manifest.Scope.ExpectedChangedInstruments,
                 RoutineCandidateCount: -1,
                 Checks:
                 [
@@ -400,7 +429,10 @@ public sealed class MaxScoreMaintenanceService
                         Passed: false,
                         BoundDetail(ex.Message)),
                 ],
-                RoutineCandidates: []);
+                RoutineCandidates: [],
+                ArtifactEvidence:
+                    CreateArtifactEvidence(manifest),
+                ObservedScoreChecks: []);
         }
 
         await MaxScoreMaintenanceFileStore.WriteNewReportAsync(
@@ -426,6 +458,7 @@ public sealed class MaxScoreMaintenanceService
                 _options.DataDirectory,
                 manifestPath,
                 ct);
+        manifest = manifest.RequirePromotionReady();
         var manifestDigest = manifest.ComputeDigest();
         ValidateManifestCliIdentity(
             manifest,
@@ -481,9 +514,11 @@ public sealed class MaxScoreMaintenanceService
                         await lease.ExecuteTransactionAsync(
                             "apply-plan-validation",
                             requireSourceLocks: true,
-                            (_, _, token) => BuildPlanAsync(
+                            (connection, transaction, token) => BuildPlanAsync(
                                 manifest,
                                 manifestDigest,
+                                connection,
+                                transaction,
                                 token),
                             IsolationLevel.RepeatableRead,
                             ct);
@@ -933,8 +968,11 @@ public sealed class MaxScoreMaintenanceService
     private async Task<MaxScoreMaintenancePlanReport> BuildPlanAsync(
         MaxScoreMaintenanceManifest manifest,
         string manifestDigest,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
         CancellationToken ct)
     {
+        manifest = manifest.RequirePromotionReady();
         if (_options.EnableAutomaticPathGeneration)
         {
             throw new InvalidOperationException(
@@ -952,6 +990,15 @@ public sealed class MaxScoreMaintenanceService
             manifest,
             postPromotion: false,
             throwOnMismatch: true);
+        var artifactEvidence = CreateArtifactEvidence(manifest);
+        var observedScoreChecks =
+            await LoadObservedScoreChecksAsync(
+                manifest,
+                connection,
+                transaction,
+                ct);
+        var observedScoresClear =
+            observedScoreChecks.All(check => check.Passed);
         var notificationInspection =
             await _notifications.InspectRoutineStateAsync(
                 manifest,
@@ -963,20 +1010,21 @@ public sealed class MaxScoreMaintenanceService
 
         var rankHistoryFingerprint =
             await ComputeRankHistoryFingerprintAsync(ct);
-        var affectedInstruments = manifest.Songs
-            .SelectMany(song => song.ChangedInstruments)
-            .Distinct(StringComparer.Ordinal)
-            .OrderBy(instrument => instrument, StringComparer.Ordinal)
-            .ToArray();
+        var affectedInstruments =
+            manifest.Scope.ExpectedChangedInstruments.ToArray();
         var planDigest = ComputePlanDigest(
             manifestDigest,
             context,
             notificationInspection,
             rankHistoryFingerprint,
-            affectedInstruments);
+            affectedInstruments,
+            artifactEvidence,
+            observedScoreChecks);
         return new MaxScoreMaintenancePlanReport(
             MaxScoreMaintenancePlanReport.CurrentReportVersion,
-            CanApply: routineCandidatesClear,
+            CanApply:
+                routineCandidatesClear
+                && observedScoresClear,
             manifestDigest,
             planDigest,
             manifest.ExpectedPublishedScrapeId,
@@ -1009,7 +1057,18 @@ public sealed class MaxScoreMaintenanceService
                 new(
                     "paths",
                     true,
-                    $"{manifest.Songs.Count} current/staged immutable path identities validated"),
+                    $"{manifest.Songs.Count} current rollback and staged immutable artifact trees/hashes validated"),
+                new(
+                    "observed-scores",
+                    observedScoresClear,
+                    observedScoresClear
+                        ? $"{observedScoreChecks.Count} changed song/instrument maxima are at or above every observed score"
+                        : string.Join(
+                            "; ",
+                            observedScoreChecks
+                                .Where(check => !check.Passed)
+                                .Select(check =>
+                                    $"{check.SongId}/{check.Instrument}: observed={check.HighestObservedScore}, newMaximum={check.NewMaximum}"))),
                 new(
                     "notifications",
                     routineCandidatesClear,
@@ -1021,7 +1080,9 @@ public sealed class MaxScoreMaintenanceService
                     true,
                     $"baseline fingerprint {rankHistoryFingerprint}"),
             ],
-            RoutineCandidates: notificationInspection.Candidates);
+            RoutineCandidates: notificationInspection.Candidates,
+            ArtifactEvidence: artifactEvidence,
+            ObservedScoreChecks: observedScoreChecks);
     }
 
     private PublishedContext LoadPublishedContext(
@@ -1191,12 +1252,10 @@ public sealed class MaxScoreMaintenanceService
                         $"{(postPromotion ? "Post-promotion" : "Current")} path identity mismatch for {song.SongId}.");
                 }
 
-                var validated =
-                    PathArtifactResolver.ValidateImmutableGeneration(
+                MaxScoreMaintenanceArtifactValidator
+                    .ValidateManifestSong(
                         _options.DataDirectory,
-                        song.SongId,
-                        song.StagedPath.ArtifactGenerationId!);
-                ValidateManifestStagedGeneration(song, validated);
+                        song);
                 if (!postPromotion
                     && string.Equals(
                         state.ArtifactGenerationId,
@@ -1480,6 +1539,8 @@ public sealed class MaxScoreMaintenanceService
                     chopt_binary_sha256,
                     path_generation_profile,
                     path_artifact_generation_id,
+                    path_artifact_tree_sha256,
+                    path_artifact_file_count,
                     path_expected_instruments,
                     max_lead_score,
                     max_bass_score,
@@ -1502,6 +1563,8 @@ public sealed class MaxScoreMaintenanceService
                     @binaryHash,
                     @profile,
                     @generationId,
+                    @artifactTreeSha256,
+                    @artifactFileCount,
                     @expectedInstruments,
                     @lead,
                     @bass,
@@ -1598,6 +1661,14 @@ public sealed class MaxScoreMaintenanceService
         CancellationToken ct)
     {
         RequireOwnedFreeze(manifest, manifestDigest);
+        if (run.PromotedSongCount != manifest.Songs.Count
+            || run.RebuiltInstrumentCount
+                != manifest.Scope.ExpectedChangedInstruments.Count
+            || run.VisibleDeliveryCount != 0)
+        {
+            throw new InvalidOperationException(
+                "Maintenance checkpoint does not cover the exact song/instrument scope or zero-visible notification contract.");
+        }
         ValidatePathPhase(
             manifest,
             postPromotion: true,
@@ -1865,17 +1936,128 @@ public sealed class MaxScoreMaintenanceService
                 "Rank-history fingerprint was unavailable.");
     }
 
+    private static IReadOnlyList<MaxScoreMaintenanceArtifactEvidence>
+        CreateArtifactEvidence(
+            MaxScoreMaintenanceManifest manifest)
+        => manifest.Songs
+            .Select(song =>
+                new MaxScoreMaintenanceArtifactEvidence(
+                    song.SongId,
+                    song.CurrentPath.ArtifactGenerationId!,
+                    song.CurrentPath.ArtifactTreeSha256!,
+                    song.CurrentPath.ArtifactFileCount!.Value,
+                    song.StagedPath.ArtifactGenerationId!,
+                    song.StagedPath.ArtifactTreeSha256!,
+                    song.StagedPath.ArtifactFileCount!.Value,
+                    song.PlasticDrumsEvidence))
+            .ToArray();
+
+    private static async Task<
+        IReadOnlyList<MaxScoreMaintenanceObservedScoreCheck>>
+        LoadObservedScoreChecksAsync(
+            MaxScoreMaintenanceManifest manifest,
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            CancellationToken ct)
+    {
+        var changedPairs = manifest.Songs
+            .SelectMany(song => song.ChangedInstruments.Select(
+                instrument => (
+                    song.SongId,
+                    Instrument: instrument,
+                    NewMaximum: song.StagedPath.Maxima
+                        .GetByInstrument(instrument)!.Value)))
+            .OrderBy(pair => pair.SongId, StringComparer.Ordinal)
+            .ThenBy(pair => pair.Instrument, StringComparer.Ordinal)
+            .ToArray();
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandTimeout = 60;
+        command.CommandText = """
+            WITH expected(song_id, instrument, new_maximum) AS (
+                SELECT *
+                FROM unnest(
+                    @songIds::TEXT[],
+                    @instruments::TEXT[],
+                    @newMaximums::INTEGER[])
+            )
+            SELECT expected.song_id,
+                   expected.instrument,
+                   expected.new_maximum,
+                   MAX(current.score)::INTEGER
+            FROM expected
+            LEFT JOIN current_leaderboard_entries current
+              ON current.song_id = expected.song_id
+             AND current.instrument = expected.instrument
+            GROUP BY expected.song_id,
+                     expected.instrument,
+                     expected.new_maximum
+            ORDER BY expected.song_id,
+                     expected.instrument
+            """;
+        command.Parameters.Add(
+            "songIds",
+            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            changedPairs.Select(pair => pair.SongId).ToArray();
+        command.Parameters.Add(
+            "instruments",
+            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            changedPairs.Select(pair => pair.Instrument).ToArray();
+        command.Parameters.Add(
+            "newMaximums",
+            NpgsqlDbType.Array | NpgsqlDbType.Integer).Value =
+            changedPairs.Select(pair => pair.NewMaximum).ToArray();
+
+        var checks =
+            new List<MaxScoreMaintenanceObservedScoreCheck>(
+                changedPairs.Length);
+        await using var reader =
+            await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var newMaximum = reader.GetInt32(2);
+            var highestObservedScore = reader.IsDBNull(3)
+                ? (int?)null
+                : reader.GetInt32(3);
+            checks.Add(new MaxScoreMaintenanceObservedScoreCheck(
+                reader.GetString(0),
+                reader.GetString(1),
+                newMaximum,
+                highestObservedScore,
+                IsObservedScoreCompatible(
+                    newMaximum,
+                    highestObservedScore)));
+        }
+        if (checks.Count != changedPairs.Length)
+        {
+            throw new InvalidOperationException(
+                "Observed-score validation did not cover every changed song/instrument pair.");
+        }
+
+        return checks;
+    }
+
+    internal static bool IsObservedScoreCompatible(
+        int newMaximum,
+        int? highestObservedScore)
+        => newMaximum > 0
+           && (highestObservedScore is null
+               || highestObservedScore <= newMaximum);
+
     private static string ComputePlanDigest(
         string manifestDigest,
         PublishedContext context,
         MaxScoreMaintenanceNotificationInspection notifications,
         string rankHistoryFingerprint,
-        IReadOnlyList<string> affectedInstruments)
+        IReadOnlyList<string> affectedInstruments,
+        IReadOnlyList<MaxScoreMaintenanceArtifactEvidence> artifactEvidence,
+        IReadOnlyList<MaxScoreMaintenanceObservedScoreCheck>
+            observedScoreChecks)
     {
         var canonical = JsonSerializer.Serialize(
             new
             {
-                contractVersion = 1,
+                contractVersion = 2,
                 manifestDigest,
                 publishedScrapeId =
                     context.Pointers.PublishedScrapeId,
@@ -1889,6 +2071,8 @@ public sealed class MaxScoreMaintenanceService
                 notifications.NotificationStateFingerprint,
                 rankHistoryFingerprint,
                 affectedInstruments,
+                artifactEvidence,
+                observedScoreChecks,
                 routineCandidates = notifications.Candidates,
             },
             MaxScoreMaintenanceJson.Canonical);
@@ -2242,6 +2426,12 @@ public sealed class MaxScoreMaintenanceService
         command.Parameters.AddWithValue(
             "generationId",
             (object?)song.Path.ArtifactGenerationId ?? DBNull.Value);
+        command.Parameters.AddWithValue(
+            "artifactTreeSha256",
+            (object?)song.Path.ArtifactTreeSha256 ?? DBNull.Value);
+        command.Parameters.AddWithValue(
+            "artifactFileCount",
+            (object?)song.Path.ArtifactFileCount ?? DBNull.Value);
         command.Parameters.Add(
             "expectedInstruments",
             NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
@@ -2296,6 +2486,8 @@ public sealed class MaxScoreMaintenanceService
                        chopt_binary_sha256,
                        path_generation_profile,
                        path_artifact_generation_id,
+                       path_artifact_tree_sha256,
+                       path_artifact_file_count,
                        path_expected_instruments,
                        max_lead_score,
                        max_bass_score,
@@ -2337,27 +2529,31 @@ public sealed class MaxScoreMaintenanceService
                     != path.GenerationProfile
                 || ReadNullableString(reader, 8)
                     != path.ArtifactGenerationId
-                || !reader.GetFieldValue<string[]>(9)
+                || ReadNullableString(reader, 9)
+                    != path.ArtifactTreeSha256
+                || ReadNullableInt32(reader, 10)
+                    != path.ArtifactFileCount
+                || !reader.GetFieldValue<string[]>(11)
                     .SequenceEqual(
                         path.ExpectedInstruments,
                         StringComparer.Ordinal)
-                || ReadNullableInt32(reader, 10)
-                    != path.Maxima.Lead
-                || ReadNullableInt32(reader, 11)
-                    != path.Maxima.Bass
                 || ReadNullableInt32(reader, 12)
-                    != path.Maxima.Drums
+                    != path.Maxima.Lead
                 || ReadNullableInt32(reader, 13)
-                    != path.Maxima.Vocals
+                    != path.Maxima.Bass
                 || ReadNullableInt32(reader, 14)
-                    != path.Maxima.ProLead
+                    != path.Maxima.Drums
                 || ReadNullableInt32(reader, 15)
-                    != path.Maxima.ProBass
+                    != path.Maxima.Vocals
                 || ReadNullableInt32(reader, 16)
-                    != path.Maxima.ProCymbals
+                    != path.Maxima.ProLead
                 || ReadNullableInt32(reader, 17)
+                    != path.Maxima.ProBass
+                || ReadNullableInt32(reader, 18)
+                    != path.Maxima.ProCymbals
+                || ReadNullableInt32(reader, 19)
                     != path.Maxima.ProDrums
-                || reader.GetBoolean(18)
+                || reader.GetBoolean(20)
                     != path.PathGenerationPending)
             {
                 throw new InvalidOperationException(
@@ -2427,9 +2623,20 @@ public sealed class MaxScoreMaintenanceService
                             instrument)))
             .Distinct()
             .OrderBy(pair => pair.SongId, StringComparer.Ordinal)
-            .ThenBy(pair => pair.Instrument, StringComparer.Ordinal)
+            .ThenBy(pair => GetInstrumentOrder(pair.Instrument))
             .ToArray();
     }
+
+    private static int GetInstrumentOrder(string instrument)
+        => PathGenerationInstruments.Definitions
+            .Select((definition, index) => (
+                definition.Instrument,
+                Index: index))
+            .Single(item => string.Equals(
+                item.Instrument,
+                instrument,
+                StringComparison.Ordinal))
+            .Index;
 
     private static bool PathIdentityMatches(
         PathGenerationState actual,
@@ -2512,51 +2719,6 @@ public sealed class MaxScoreMaintenanceService
         }
     }
 
-    private static void ValidateManifestStagedGeneration(
-        MaxScoreMaintenanceManifestSong song,
-        ValidatedPathGeneration validated)
-    {
-        var staged = song.StagedPath;
-        if (!string.Equals(
-                validated.Manifest.GenerationId,
-                staged.ArtifactGenerationId,
-                StringComparison.Ordinal)
-            || !string.Equals(
-                validated.Manifest.SongId,
-                song.SongId,
-                StringComparison.Ordinal)
-            || !string.Equals(
-                validated.Manifest.DatFileHash,
-                staged.DatFileHash,
-                StringComparison.Ordinal)
-            || !ProviderTimestampIdentity.Equivalent(
-                validated.Manifest.SongLastModified,
-                song.ExpectedCatalogLastModified)
-            || validated.Manifest.GeneratedAtUtc
-                != staged.GeneratedAtUtc
-            || !string.Equals(
-                validated.Manifest.ChoptVersion,
-                staged.ChoptVersion,
-                StringComparison.Ordinal)
-            || !string.Equals(
-                validated.Manifest.ChoptBinarySha256,
-                staged.ChoptBinarySha256,
-                StringComparison.Ordinal)
-            || !string.Equals(
-                validated.Manifest.GenerationProfile,
-                staged.GenerationProfile,
-                StringComparison.Ordinal)
-            || !validated.Manifest.ExpectedInstruments.SequenceEqual(
-                staged.ExpectedInstruments,
-                StringComparer.Ordinal)
-            || MaxScoreMaintenanceMaxima.From(validated.MaxScores)
-                != staged.Maxima)
-        {
-            throw new InvalidOperationException(
-                $"Immutable staged generation failed manifest identity for {song.SongId}.");
-        }
-    }
-
     private void EnsureStageSourceUnchanged(
         MaxScoreMaintenanceManifest manifest)
     {
@@ -2578,18 +2740,15 @@ public sealed class MaxScoreMaintenanceService
         MaxScoreMaintenanceStageRequest request,
         PathGenerationRuntimeIdentity runtime)
     {
-        if (request.ExpectedChoptVersion is not null
-            && !string.Equals(
+        if (!string.Equals(
                 request.ExpectedChoptVersion,
                 runtime.Version,
                 StringComparison.Ordinal)
-            || request.ExpectedChoptBinarySha256 is not null
-            && !string.Equals(
+            || !string.Equals(
                 request.ExpectedChoptBinarySha256,
                 runtime.BinarySha256,
                 StringComparison.Ordinal)
-            || request.ExpectedGenerationProfile is not null
-            && !string.Equals(
+            || !string.Equals(
                 request.ExpectedGenerationProfile,
                 runtime.Profile,
                 StringComparison.Ordinal))

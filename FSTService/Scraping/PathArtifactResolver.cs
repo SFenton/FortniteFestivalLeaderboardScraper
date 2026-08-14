@@ -1,5 +1,7 @@
 using System.Buffers.Binary;
 using System.IO.Compression;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using FSTService.Persistence;
@@ -15,7 +17,9 @@ public sealed record ResolvedPathArtifact(
 internal sealed record ValidatedPathGeneration(
     string GenerationDirectory,
     PathArtifactManifest Manifest,
-    SongMaxScores MaxScores);
+    SongMaxScores MaxScores,
+    string ArtifactTreeSha256,
+    int ArtifactFileCount);
 
 public sealed class PathArtifactResolver
 {
@@ -61,10 +65,10 @@ public sealed class PathArtifactResolver
                 ? currentGenerationId
                 : null;
         if (currentGenerationId is not null &&
-            generationId is null &&
-            instrument is
-                "Solo_PeripheralCymbals" or
-                "Solo_PeripheralDrums")
+            PathGenerationInstruments.IsPlasticDrumsInstrument(instrument) &&
+            (generationId is null ||
+             PathGenerationProfiles.HasInvalidPlasticDrumsScores(
+                 state!.GenerationProfile)))
         {
             return null;
         }
@@ -83,8 +87,7 @@ public sealed class PathArtifactResolver
         string instrument,
         string? requestedGenerationId)
     {
-        if (instrument is not
-            ("Solo_PeripheralCymbals" or "Solo_PeripheralDrums"))
+        if (!PathGenerationInstruments.IsPlasticDrumsInstrument(instrument))
         {
             return false;
         }
@@ -96,9 +99,11 @@ public sealed class PathArtifactResolver
                     requestedGenerationId,
                     currentGenerationId,
                     StringComparison.Ordinal)) &&
-               !state.ExpectedInstruments.Contains(
-                   instrument,
-                   StringComparer.Ordinal);
+               (PathGenerationProfiles.HasInvalidPlasticDrumsScores(
+                    state.GenerationProfile) ||
+                !state.ExpectedInstruments.Contains(
+                    instrument,
+                    StringComparer.Ordinal));
     }
 
     internal static ResolvedPathArtifact? Resolve(
@@ -366,7 +371,14 @@ public sealed class PathArtifactResolver
                         out var score,
                         requiredSchemaVersion:
                             PathArtifactValidator.RequiredSchemaVersion(
-                                manifest.GenerationProfile)) ||
+                                manifest.GenerationProfile),
+                        requireNonEmptyDrumFills:
+                            difficulty == "expert" &&
+                            PathGenerationInstruments
+                                .IsPlasticDrumsInstrument(instrument) &&
+                            PathGenerationProfiles
+                                .RequiresAuthoredDrumFills(
+                                    manifest.GenerationProfile)) ||
                     (difficulty == "expert" && score != expertMaximum))
                 {
                     throw new InvalidOperationException(
@@ -377,11 +389,151 @@ public sealed class PathArtifactResolver
             scores.SetByInstrument(instrument, expertMaximum);
         }
 
+        var artifactTree = ValidateArtifactTree(
+            dataRoot,
+            generationDirectory,
+            expected);
         return new ValidatedPathGeneration(
             generationDirectory,
             manifest,
-            scores);
+            scores,
+            artifactTree.Sha256,
+            artifactTree.FileCount);
     }
+
+    private static (string Sha256, int FileCount) ValidateArtifactTree(
+        string dataRoot,
+        string generationDirectory,
+        IReadOnlyList<string> expectedInstruments)
+    {
+        var expectedDirectories = expectedInstruments
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        var actualDirectories = Directory
+            .EnumerateDirectories(
+                generationDirectory,
+                "*",
+                SearchOption.TopDirectoryOnly)
+            .Select(directory =>
+            {
+                EnsureNoReparsePoints(dataRoot, directory);
+                return NormalizeRelativePath(
+                    generationDirectory,
+                    directory);
+            })
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        if (!actualDirectories.SequenceEqual(
+                expectedDirectories,
+                StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Immutable path generation contains an unexpected directory tree.");
+        }
+        foreach (var relativeDirectory in actualDirectories)
+        {
+            var directory = Path.Combine(
+                generationDirectory,
+                relativeDirectory.Replace(
+                    '/',
+                    Path.DirectorySeparatorChar));
+            if (Directory.EnumerateDirectories(
+                    directory,
+                    "*",
+                    SearchOption.TopDirectoryOnly).Any())
+            {
+                throw new InvalidOperationException(
+                    "Immutable path generation contains unexpected nested directories.");
+            }
+        }
+
+        var expectedFiles = new List<string>
+        {
+            ManifestFileName,
+        };
+        foreach (var instrument in expectedInstruments)
+        {
+            foreach (var difficulty in PathGenerationInstruments.Difficulties)
+            {
+                expectedFiles.Add($"{instrument}/{difficulty}.json");
+                expectedFiles.Add($"{instrument}/{difficulty}.png");
+            }
+        }
+        expectedFiles.Sort(StringComparer.Ordinal);
+
+        var actualFiles = Directory
+            .EnumerateFiles(
+                generationDirectory,
+                "*",
+                SearchOption.TopDirectoryOnly)
+            .Concat(actualDirectories.SelectMany(relativeDirectory =>
+                Directory.EnumerateFiles(
+                    Path.Combine(
+                        generationDirectory,
+                        relativeDirectory.Replace(
+                            '/',
+                            Path.DirectorySeparatorChar)),
+                    "*",
+                    SearchOption.TopDirectoryOnly)))
+            .Select(file =>
+            {
+                EnsureNoReparsePoints(dataRoot, file);
+                GetRegularFile(file, "artifact tree entry");
+                return NormalizeRelativePath(
+                    generationDirectory,
+                    file);
+            })
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        if (!actualFiles.SequenceEqual(
+                expectedFiles,
+                StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Immutable path generation contains missing or unexpected files.");
+        }
+
+        using var treeHash = IncrementalHash.CreateHash(
+            HashAlgorithmName.SHA256);
+        foreach (var relativePath in actualFiles)
+        {
+            var fullPath = Path.Combine(
+                generationDirectory,
+                relativePath.Replace(
+                    '/',
+                    Path.DirectorySeparatorChar));
+            var file = GetRegularFile(
+                fullPath,
+                relativePath);
+            using var stream = new FileStream(
+                fullPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                16 * 1024,
+                FileOptions.SequentialScan);
+            var fileHash = SHA256.HashData(stream);
+            var identity = Encoding.UTF8.GetBytes(
+                $"{relativePath}\n{file.Length}\n{Convert.ToHexStringLower(fileHash)}\n");
+            treeHash.AppendData(identity);
+        }
+
+        return (
+            Convert.ToHexStringLower(
+                treeHash.GetHashAndReset()),
+            actualFiles.Length);
+    }
+
+    private static string NormalizeRelativePath(
+        string root,
+        string path)
+        => Path.GetRelativePath(root, path)
+            .Replace(
+                Path.DirectorySeparatorChar,
+                '/')
+            .Replace(
+                Path.AltDirectorySeparatorChar,
+                '/');
 
     internal static bool IsWithin(string root, string candidate)
     {
@@ -623,7 +775,8 @@ internal static class PathArtifactValidator
         string path,
         bool requirePositiveScore,
         out int? totalScore,
-        int? requiredSchemaVersion = null)
+        int? requiredSchemaVersion = null,
+        bool requireNonEmptyDrumFills = false)
     {
         totalScore = null;
         try
@@ -632,7 +785,8 @@ internal static class PathArtifactValidator
                 File.ReadAllText(path),
                 requirePositiveScore,
                 out totalScore,
-                requiredSchemaVersion);
+                requiredSchemaVersion,
+                requireNonEmptyDrumFills);
         }
         catch (IOException)
         {
@@ -648,7 +802,8 @@ internal static class PathArtifactValidator
         string json,
         bool requirePositiveScore,
         out int? totalScore,
-        int? requiredSchemaVersion = null)
+        int? requiredSchemaVersion = null,
+        bool requireNonEmptyDrumFills = false)
     {
         totalScore = null;
         try
@@ -679,6 +834,8 @@ internal static class PathArtifactValidator
                 !HasArray(root, "measures") ||
                 !HasArray(root, "bpms") ||
                 !HasArray(root, "timeSignatures") ||
+                (requireNonEmptyDrumFills &&
+                 !HasNonEmptyArray(root, "drumFills")) ||
                 !root.TryGetProperty("totalScore", out var score) ||
                 score.ValueKind != JsonValueKind.Number ||
                 !score.TryGetInt32(out var parsed))
@@ -713,6 +870,13 @@ internal static class PathArtifactValidator
         return validateElement is null ||
                property.EnumerateArray().All(validateElement);
     }
+
+    private static bool HasNonEmptyArray(
+        JsonElement root,
+        string propertyName)
+        => root.TryGetProperty(propertyName, out var property) &&
+           property.ValueKind == JsonValueKind.Array &&
+           property.GetArrayLength() > 0;
 
     private static bool ValidateNote(JsonElement note)
     {
@@ -811,7 +975,9 @@ internal static class PathArtifactValidator
 
     internal static int? RequiredSchemaVersion(string? generationProfile)
         => generationProfile?.EndsWith("-v2", StringComparison.Ordinal) == true ||
-           generationProfile == "chopt-fnf-ew0-s20-json-png-prodrums-v3"
+           generationProfile is
+               PathGenerationProfiles.InvalidPlasticDrumsV3 or
+               PathGenerationProfiles.PlasticDrumsV4
                 ? CurrentSchemaVersion
                 : null;
 

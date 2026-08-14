@@ -5,6 +5,31 @@ using FSTService.Scraping;
 
 namespace FSTService.Persistence;
 
+public static class MaxScoreMaintenanceStagePurposes
+{
+    public const string Discovery = "discovery";
+    public const string Promotion = "promotion";
+
+    internal static string Normalize(
+        string value,
+        string parameterName)
+    {
+        var normalized = MaxScoreMaintenanceManifest
+            .NormalizeIdentifier(
+                value,
+                parameterName,
+                32);
+        if (normalized is not Discovery and not Promotion)
+        {
+            throw new ArgumentException(
+                $"{parameterName} must be '{Discovery}' or '{Promotion}'.",
+                parameterName);
+        }
+
+        return normalized;
+    }
+}
+
 public sealed record MaxScoreMaintenanceMaxima(
     int? Lead,
     int? Bass,
@@ -73,39 +98,211 @@ public sealed record MaxScoreMaintenanceMaxima(
     }
 }
 
+public sealed record MaxScoreMaintenanceMaximaConstraint(
+    string Instrument,
+    int? ExpectedValue)
+{
+    internal MaxScoreMaintenanceMaximaConstraint
+        ValidateAndNormalize()
+    {
+        var instrument = MaxScoreMaintenanceManifest
+            .NormalizeIdentifier(
+                Instrument,
+                nameof(Instrument),
+                64);
+        if (!MaxScoreMaintenanceManifest.AllInstruments.Contains(
+                instrument,
+                StringComparer.Ordinal))
+        {
+            throw new ArgumentException(
+                $"Unsupported maximum constraint instrument {instrument}.",
+                nameof(Instrument));
+        }
+        if (ExpectedValue is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(ExpectedValue),
+                "A constrained maximum must be null or positive.");
+        }
+
+        return this with { Instrument = instrument };
+    }
+}
+
 public sealed record MaxScoreMaintenanceStageRequestSong(
     string SongId,
     MaxScoreMaintenanceMaxima? ExpectedOldMaxima = null,
-    MaxScoreMaintenanceMaxima? ExpectedNewMaxima = null)
+    MaxScoreMaintenanceMaxima? ExpectedNewMaxima = null,
+    IReadOnlyList<MaxScoreMaintenanceMaximaConstraint>?
+        ExpectedOldConstraints = null,
+    IReadOnlyList<MaxScoreMaintenanceMaximaConstraint>?
+        ExpectedNewConstraints = null)
 {
-    internal MaxScoreMaintenanceStageRequestSong ValidateAndNormalize()
+    internal MaxScoreMaintenanceStageRequestSong ValidateAndNormalize(
+        string purpose,
+        IReadOnlyList<string> expectedChangedInstruments)
     {
         var songId = MaxScoreMaintenanceManifest.NormalizeIdentifier(
             SongId,
             nameof(SongId),
             256);
-        if ((ExpectedOldMaxima is null) != (ExpectedNewMaxima is null))
+        var oldConstraints = NormalizeConstraints(
+            ExpectedOldConstraints,
+            nameof(ExpectedOldConstraints));
+        var newConstraints = NormalizeConstraints(
+            ExpectedNewConstraints,
+            nameof(ExpectedNewConstraints));
+        if (purpose == MaxScoreMaintenanceStagePurposes.Discovery)
         {
-            throw new ArgumentException(
-                "Expected old and new maxima must either both be supplied or both be omitted.",
-                nameof(ExpectedOldMaxima));
+            if (ExpectedOldMaxima is not null
+                || ExpectedNewMaxima is not null)
+            {
+                throw new ArgumentException(
+                    "Discovery requests use explicit partial constraints and must leave complete old/new maxima null.");
+            }
+            if (oldConstraints.Length == 0
+                && newConstraints.Length == 0)
+            {
+                throw new ArgumentException(
+                    "Discovery requests require at least one old or new maximum constraint.");
+            }
+        }
+        else
+        {
+            if (oldConstraints.Length > 0
+                || newConstraints.Length > 0)
+            {
+                throw new ArgumentException(
+                    "Promotion requests use complete old/new maxima and cannot include partial constraints.");
+            }
+            var oldMaxima = ExpectedOldMaxima
+                ?? throw new ArgumentException(
+                    "Promotion requests require complete expected old maxima.",
+                    nameof(ExpectedOldMaxima));
+            oldMaxima.Validate(nameof(ExpectedOldMaxima));
+            var newMaxima = ExpectedNewMaxima
+                ?? throw new ArgumentException(
+                    "Promotion requests require complete expected new maxima.",
+                    nameof(ExpectedNewMaxima));
+            newMaxima.Validate(nameof(ExpectedNewMaxima));
+            var actualChanged = MaxScoreMaintenanceManifest.AllInstruments
+                .Where(instrument =>
+                    oldMaxima.GetByInstrument(instrument)
+                    != newMaxima.GetByInstrument(instrument))
+                .ToArray();
+            if (!actualChanged.SequenceEqual(
+                    expectedChangedInstruments,
+                    StringComparer.Ordinal))
+            {
+                throw new ArgumentException(
+                    "Promotion request maxima must change exactly the approved instruments.",
+                    nameof(ExpectedNewMaxima));
+            }
         }
 
-        ExpectedOldMaxima?.Validate(nameof(ExpectedOldMaxima));
-        ExpectedNewMaxima?.Validate(nameof(ExpectedNewMaxima));
-        return this with { SongId = songId };
+        return this with
+        {
+            SongId = songId,
+            ExpectedOldConstraints = oldConstraints,
+            ExpectedNewConstraints = newConstraints,
+        };
+    }
+
+    internal void ValidateOldMaxima(
+        MaxScoreMaintenanceMaxima actual)
+    {
+        if (ExpectedOldMaxima is not null
+            && ExpectedOldMaxima != actual)
+        {
+            throw new InvalidOperationException(
+                $"Expected old maxima do not match current state for {SongId}.");
+        }
+        ValidateConstraints(
+            actual,
+            ExpectedOldConstraints
+            ?? Array.Empty<MaxScoreMaintenanceMaximaConstraint>(),
+            "old");
+    }
+
+    internal void ValidateNewMaxima(
+        MaxScoreMaintenanceMaxima actual)
+    {
+        if (ExpectedNewMaxima is not null
+            && ExpectedNewMaxima != actual)
+        {
+            throw new InvalidOperationException(
+                $"Expected new maxima do not match staged generation for {SongId}.");
+        }
+        ValidateConstraints(
+            actual,
+            ExpectedNewConstraints
+            ?? Array.Empty<MaxScoreMaintenanceMaximaConstraint>(),
+            "new");
+    }
+
+    private static MaxScoreMaintenanceMaximaConstraint[]
+        NormalizeConstraints(
+            IReadOnlyList<MaxScoreMaintenanceMaximaConstraint>? constraints,
+            string parameterName)
+    {
+        if (constraints is null)
+            return [];
+        var normalized = constraints
+            .Select(constraint =>
+                constraint?.ValidateAndNormalize()
+                ?? throw new ArgumentException(
+                    "Maximum constraints cannot contain null.",
+                    parameterName))
+            .OrderBy(
+                constraint => Array.IndexOf(
+                    MaxScoreMaintenanceManifest.AllInstruments
+                        .ToArray(),
+                    constraint.Instrument))
+            .ToArray();
+        if (normalized.Length != constraints.Count
+            || !normalized.SequenceEqual(constraints)
+            || normalized
+                .Select(constraint => constraint.Instrument)
+                .Distinct(StringComparer.Ordinal)
+                .Count() != normalized.Length)
+        {
+            throw new ArgumentException(
+                "Maximum constraints must be unique and in canonical instrument order.",
+                parameterName);
+        }
+
+        return normalized;
+    }
+
+    private void ValidateConstraints(
+        MaxScoreMaintenanceMaxima actual,
+        IReadOnlyList<MaxScoreMaintenanceMaximaConstraint> constraints,
+        string label)
+    {
+        foreach (var constraint in constraints)
+        {
+            if (actual.GetByInstrument(constraint.Instrument)
+                != constraint.ExpectedValue)
+            {
+                throw new InvalidOperationException(
+                    $"Expected {label} maximum constraint does not match {SongId}/{constraint.Instrument}.");
+            }
+        }
     }
 }
 
 public sealed record MaxScoreMaintenanceStageRequest(
     int RequestVersion,
+    string Purpose,
     long ExpectedPublishedScrapeId,
+    IReadOnlyList<string> ExpectedPathInstruments,
+    IReadOnlyList<string> ExpectedChangedInstruments,
     IReadOnlyList<MaxScoreMaintenanceStageRequestSong> Songs,
-    string? ExpectedChoptVersion = null,
-    string? ExpectedChoptBinarySha256 = null,
-    string? ExpectedGenerationProfile = null)
+    string ExpectedChoptVersion,
+    string ExpectedChoptBinarySha256,
+    string ExpectedGenerationProfile)
 {
-    public const int CurrentRequestVersion = 1;
+    public const int CurrentRequestVersion = 2;
 
     public MaxScoreMaintenanceStageRequest ValidateAndNormalize()
     {
@@ -121,6 +318,49 @@ public sealed record MaxScoreMaintenanceStageRequest(
                 nameof(ExpectedPublishedScrapeId),
                 "Expected published scrape ID must be positive.");
         }
+        var purpose = MaxScoreMaintenanceStagePurposes.Normalize(
+            Purpose,
+            nameof(Purpose));
+        var expectedPathInstruments =
+            MaxScoreMaintenanceManifest.NormalizeInstrumentScope(
+                ExpectedPathInstruments,
+                nameof(ExpectedPathInstruments),
+                requireNonEmpty: true);
+        var expectedChangedInstruments =
+            MaxScoreMaintenanceManifest.NormalizeInstrumentScope(
+                ExpectedChangedInstruments,
+                nameof(ExpectedChangedInstruments),
+                requireNonEmpty: true);
+        if (expectedChangedInstruments.Any(instrument =>
+                !expectedPathInstruments.Contains(
+                    instrument,
+                    StringComparer.Ordinal)))
+        {
+            throw new ArgumentException(
+                "Every changed instrument must be in the exact staged path scope.",
+                nameof(ExpectedChangedInstruments));
+        }
+        var expectedChoptVersion =
+            MaxScoreMaintenanceManifest.NormalizeIdentifier(
+                ExpectedChoptVersion,
+                nameof(ExpectedChoptVersion),
+                256);
+        var expectedChoptBinarySha256 =
+            MaxScoreMaintenanceManifest.NormalizeSha256(
+                ExpectedChoptBinarySha256,
+                nameof(ExpectedChoptBinarySha256));
+        var expectedGenerationProfile =
+            MaxScoreMaintenanceManifest.NormalizeIdentifier(
+                ExpectedGenerationProfile,
+                nameof(ExpectedGenerationProfile),
+                256);
+        MaxScoreMaintenanceManifest.ValidatePlasticDrumsRuntimeScope(
+            expectedChangedInstruments,
+            expectedPathInstruments,
+            new PathGenerationRuntimeIdentity(
+                expectedChoptVersion,
+                expectedChoptBinarySha256,
+                expectedGenerationProfile));
         if (Songs is null
             || Songs.Count is < 1 or > MaxScoreMaintenanceManifest.MaximumSongs)
         {
@@ -130,7 +370,9 @@ public sealed record MaxScoreMaintenanceStageRequest(
         }
 
         var songs = Songs
-            .Select(song => song?.ValidateAndNormalize()
+            .Select(song => song?.ValidateAndNormalize(
+                    purpose,
+                    expectedChangedInstruments)
                 ?? throw new ArgumentException(
                     "Stage request cannot contain a null song.",
                     nameof(Songs)))
@@ -142,29 +384,24 @@ public sealed record MaxScoreMaintenanceStageRequest(
 
         return this with
         {
+            Purpose = purpose,
+            ExpectedPathInstruments = expectedPathInstruments,
+            ExpectedChangedInstruments = expectedChangedInstruments,
             Songs = songs,
-            ExpectedChoptVersion =
-                string.IsNullOrWhiteSpace(ExpectedChoptVersion)
-                ? null
-                : MaxScoreMaintenanceManifest.NormalizeIdentifier(
-                    ExpectedChoptVersion!,
-                    nameof(ExpectedChoptVersion),
-                    256),
-            ExpectedChoptBinarySha256 =
-                string.IsNullOrWhiteSpace(ExpectedChoptBinarySha256)
-                ? null
-                : MaxScoreMaintenanceManifest.NormalizeSha256(
-                    ExpectedChoptBinarySha256!,
-                    nameof(ExpectedChoptBinarySha256)),
-            ExpectedGenerationProfile =
-                string.IsNullOrWhiteSpace(ExpectedGenerationProfile)
-                ? null
-                : MaxScoreMaintenanceManifest.NormalizeIdentifier(
-                    ExpectedGenerationProfile!,
-                    nameof(ExpectedGenerationProfile),
-                    256),
+            ExpectedChoptVersion = expectedChoptVersion,
+            ExpectedChoptBinarySha256 = expectedChoptBinarySha256,
+            ExpectedGenerationProfile = expectedGenerationProfile,
         };
     }
+
+    public byte[] SerializeCanonical()
+        => JsonSerializer.SerializeToUtf8Bytes(
+            ValidateAndNormalize(),
+            MaxScoreMaintenanceJson.Canonical);
+
+    public string ComputeDigest()
+        => Convert.ToHexStringLower(
+            SHA256.HashData(SerializeCanonical()));
 }
 
 public sealed record MaxScoreMaintenancePathIdentity(
@@ -178,7 +415,9 @@ public sealed record MaxScoreMaintenancePathIdentity(
     string? ArtifactGenerationId,
     IReadOnlyList<string> ExpectedInstruments,
     MaxScoreMaintenanceMaxima Maxima,
-    bool PathGenerationPending)
+    bool PathGenerationPending,
+    string? ArtifactTreeSha256 = null,
+    int? ArtifactFileCount = null)
 {
     public static MaxScoreMaintenancePathIdentity From(
         PathGenerationState state)
@@ -197,6 +436,18 @@ public sealed record MaxScoreMaintenancePathIdentity(
                 state.ExpectedInstruments),
             MaxScoreMaintenanceMaxima.From(state.MaxScores),
             state.PathGenerationPending);
+    }
+
+    internal static MaxScoreMaintenancePathIdentity From(
+        PathGenerationState state,
+        ValidatedPathGeneration validated)
+    {
+        ArgumentNullException.ThrowIfNull(validated);
+        return From(state) with
+        {
+            ArtifactTreeSha256 = validated.ArtifactTreeSha256,
+            ArtifactFileCount = validated.ArtifactFileCount,
+        };
     }
 
     internal MaxScoreMaintenancePathIdentity ValidateAndNormalize(
@@ -241,6 +492,21 @@ public sealed record MaxScoreMaintenancePathIdentity(
                 "A staged generation requires a UTC generated timestamp.",
                 parameterName);
         }
+        if (PathGenerationPending)
+        {
+            throw new ArgumentException(
+                "A complete immutable generation cannot be pending.",
+                parameterName);
+        }
+        foreach (var instrument in instruments)
+        {
+            if (Maxima.GetByInstrument(instrument) is not > 0)
+            {
+                throw new ArgumentException(
+                    $"{parameterName}.maxima must be positive for expected instrument {instrument}.",
+                    parameterName);
+            }
+        }
 
         return this with
         {
@@ -268,6 +534,22 @@ public sealed record MaxScoreMaintenancePathIdentity(
                     $"{parameterName}.artifactGenerationId",
                     256),
             ExpectedInstruments = instruments,
+            ArtifactTreeSha256 =
+                MaxScoreMaintenanceManifest.NormalizeSha256(
+                    ArtifactTreeSha256
+                    ?? throw new ArgumentException(
+                        $"{parameterName}.artifactTreeSha256 is required.",
+                        parameterName),
+                    $"{parameterName}.artifactTreeSha256"),
+            ArtifactFileCount = ArtifactFileCount
+                == 1
+                + instruments.Length
+                * PathGenerationInstruments.Difficulties.Count
+                * 2
+                ? ArtifactFileCount
+                : throw new ArgumentException(
+                    $"{parameterName}.artifactFileCount does not match the exact immutable artifact tree.",
+                    parameterName),
         };
     }
 
@@ -288,12 +570,59 @@ public sealed record MaxScoreMaintenancePathIdentity(
     }
 }
 
+public sealed record MaxScoreMaintenancePlasticDrumsEvidence(
+    int ProCymbalsAuthoredActivationWindowCount,
+    int ProDrumsAuthoredActivationWindowCount,
+    string SoloDrumsNoteInventorySha256,
+    string ProCymbalsNoteInventorySha256,
+    string ProDrumsNoteInventorySha256)
+{
+    internal MaxScoreMaintenancePlasticDrumsEvidence ValidateAndNormalize()
+    {
+        if (ProCymbalsAuthoredActivationWindowCount <= 0
+            || ProDrumsAuthoredActivationWindowCount <= 0)
+        {
+            throw new ArgumentException(
+                "Plastic-drums artifacts require non-empty authored activation windows.");
+        }
+        var soloDrums = MaxScoreMaintenanceManifest.NormalizeSha256(
+            SoloDrumsNoteInventorySha256,
+            nameof(SoloDrumsNoteInventorySha256));
+        var proCymbals = MaxScoreMaintenanceManifest.NormalizeSha256(
+            ProCymbalsNoteInventorySha256,
+            nameof(ProCymbalsNoteInventorySha256));
+        var proDrums = MaxScoreMaintenanceManifest.NormalizeSha256(
+            ProDrumsNoteInventorySha256,
+            nameof(ProDrumsNoteInventorySha256));
+        if (string.Equals(
+                soloDrums,
+                proCymbals,
+                StringComparison.Ordinal)
+            || string.Equals(
+                soloDrums,
+                proDrums,
+                StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                "Plastic-drums note inventories must be distinct from Solo_Drums.");
+        }
+
+        return this with
+        {
+            SoloDrumsNoteInventorySha256 = soloDrums,
+            ProCymbalsNoteInventorySha256 = proCymbals,
+            ProDrumsNoteInventorySha256 = proDrums,
+        };
+    }
+}
+
 public sealed record MaxScoreMaintenanceManifestSong(
     string SongId,
     string ExpectedCatalogLastModified,
     MaxScoreMaintenancePathIdentity CurrentPath,
     MaxScoreMaintenancePathIdentity StagedPath,
-    IReadOnlyList<string> ChangedInstruments)
+    IReadOnlyList<string> ChangedInstruments,
+    MaxScoreMaintenancePlasticDrumsEvidence? PlasticDrumsEvidence = null)
 {
     internal MaxScoreMaintenanceManifestSong ValidateAndNormalize()
     {
@@ -307,7 +636,7 @@ public sealed record MaxScoreMaintenanceManifestSong(
                 nameof(ExpectedCatalogLastModified));
         var current = (CurrentPath
             ?? throw new ArgumentNullException(nameof(CurrentPath)))
-            .ValidateAndNormalize(nameof(CurrentPath), false);
+            .ValidateAndNormalize(nameof(CurrentPath), true);
         var staged = (StagedPath
             ?? throw new ArgumentNullException(nameof(StagedPath)))
             .ValidateAndNormalize(nameof(StagedPath), true);
@@ -325,6 +654,14 @@ public sealed record MaxScoreMaintenanceManifestSong(
                 "Staged path timestamp must match the exact catalog timestamp.",
                 nameof(StagedPath));
         }
+        if (!ProviderTimestampIdentity.Equivalent(
+                current.SongLastModified,
+                catalogLastModified))
+        {
+            throw new ArgumentException(
+                "Current rollback path timestamp must match the exact catalog timestamp.",
+                nameof(CurrentPath));
+        }
         if (staged.PathGenerationPending)
         {
             throw new ArgumentException(
@@ -341,6 +678,10 @@ public sealed record MaxScoreMaintenanceManifestSong(
             ChangedInstruments
             ?? throw new ArgumentNullException(nameof(ChangedInstruments)));
         if (normalizedChanged.Length == 0
+            || normalizedChanged.Length != ChangedInstruments.Count
+            || !normalizedChanged.SequenceEqual(
+                ChangedInstruments,
+                StringComparer.Ordinal)
             || !normalizedChanged.SequenceEqual(
                 actualChanged,
                 StringComparer.Ordinal))
@@ -358,6 +699,48 @@ public sealed record MaxScoreMaintenanceManifestSong(
                     nameof(StagedPath));
             }
         }
+        var changesPlasticDrums = normalizedChanged.Any(
+            PathGenerationInstruments.IsPlasticDrumsInstrument);
+        MaxScoreMaintenancePlasticDrumsEvidence? plasticEvidence = null;
+        if (changesPlasticDrums)
+        {
+            if (PathGenerationProfiles.HasInvalidPlasticDrumsScores(
+                    current.GenerationProfile))
+            {
+                throw new ArgumentException(
+                    "Known-invalid plastic-drums v3 cannot be rollback/current maintenance state.",
+                    nameof(CurrentPath));
+            }
+            if (!string.Equals(
+                    staged.GenerationProfile,
+                    PathGenerationProfiles.PlasticDrumsV4,
+                    StringComparison.Ordinal))
+            {
+                throw new ArgumentException(
+                    "Plastic-drums maximum changes require a v4 staged generation.",
+                    nameof(StagedPath));
+            }
+            if (staged.Maxima.ProCymbals is not > 0
+                || staged.Maxima.ProDrums is not > 0
+                || staged.Maxima.ProCymbals
+                    < staged.Maxima.ProDrums)
+            {
+                throw new ArgumentException(
+                    "Plastic-drums maxima must be positive and cymbal mode must be greater than or equal to no-cymbal mode.",
+                    nameof(StagedPath));
+            }
+            plasticEvidence = (PlasticDrumsEvidence
+                ?? throw new ArgumentException(
+                    "Plastic-drums maximum changes require staged artifact evidence.",
+                    nameof(PlasticDrumsEvidence)))
+                .ValidateAndNormalize();
+        }
+        else if (PlasticDrumsEvidence is not null)
+        {
+            throw new ArgumentException(
+                "Plastic-drums evidence is valid only when plastic-drums maxima change.",
+                nameof(PlasticDrumsEvidence));
+        }
 
         return this with
         {
@@ -366,6 +749,51 @@ public sealed record MaxScoreMaintenanceManifestSong(
             CurrentPath = current,
             StagedPath = staged,
             ChangedInstruments = normalizedChanged,
+            PlasticDrumsEvidence = plasticEvidence,
+        };
+    }
+}
+
+public sealed record MaxScoreMaintenanceScope(
+    string Purpose,
+    string StageRequestSha256,
+    IReadOnlyList<string> ExpectedPathInstruments,
+    IReadOnlyList<string> ExpectedChangedInstruments)
+{
+    internal MaxScoreMaintenanceScope ValidateAndNormalize()
+    {
+        var purpose = MaxScoreMaintenanceStagePurposes.Normalize(
+            Purpose,
+            nameof(Purpose));
+        var pathInstruments =
+            MaxScoreMaintenanceManifest.NormalizeInstrumentScope(
+                ExpectedPathInstruments,
+                nameof(ExpectedPathInstruments),
+                requireNonEmpty: true);
+        var changedInstruments =
+            MaxScoreMaintenanceManifest.NormalizeInstrumentScope(
+                ExpectedChangedInstruments,
+                nameof(ExpectedChangedInstruments),
+                requireNonEmpty: true);
+        if (changedInstruments.Any(instrument =>
+                !pathInstruments.Contains(
+                    instrument,
+                    StringComparer.Ordinal)))
+        {
+            throw new ArgumentException(
+                "Every changed instrument must be in the exact staged path scope.",
+                nameof(ExpectedChangedInstruments));
+        }
+
+        return this with
+        {
+            Purpose = purpose,
+            StageRequestSha256 =
+                MaxScoreMaintenanceManifest.NormalizeSha256(
+                    StageRequestSha256,
+                    nameof(StageRequestSha256)),
+            ExpectedPathInstruments = pathInstruments,
+            ExpectedChangedInstruments = changedInstruments,
         };
     }
 }
@@ -380,10 +808,11 @@ public sealed record MaxScoreMaintenanceManifest(
     int CatalogSongCount,
     DateTime CatalogSourceCapturedAtUtc,
     DateTime CreatedAtUtc,
+    MaxScoreMaintenanceScope Scope,
     PathGenerationRuntimeIdentity Runtime,
     IReadOnlyList<MaxScoreMaintenanceManifestSong> Songs)
 {
-    public const int CurrentManifestVersion = 1;
+    public const int CurrentManifestVersion = 2;
     public const int MaximumSongs = 32;
     public const long MaximumManifestBytes = 512 * 1024;
     public static readonly IReadOnlyList<string> AllInstruments =
@@ -414,6 +843,9 @@ public sealed record MaxScoreMaintenanceManifest(
             throw new ArgumentException(
                 "Manifest timestamps must use UTC.");
         }
+        var scope = (Scope
+            ?? throw new ArgumentNullException(nameof(Scope)))
+            .ValidateAndNormalize();
         var runtime = Runtime
             ?? throw new ArgumentNullException(nameof(Runtime));
         runtime = new PathGenerationRuntimeIdentity(
@@ -428,6 +860,10 @@ public sealed record MaxScoreMaintenanceManifest(
                 runtime.Profile,
                 $"{nameof(Runtime)}.{nameof(runtime.Profile)}",
                 256));
+        ValidatePlasticDrumsRuntimeScope(
+            scope.ExpectedChangedInstruments,
+            scope.ExpectedPathInstruments,
+            runtime);
         if (Songs is null || Songs.Count is < 1 or > MaximumSongs)
         {
             throw new ArgumentException(
@@ -454,6 +890,17 @@ public sealed record MaxScoreMaintenanceManifest(
         }
         foreach (var song in songs)
         {
+            if (!song.ChangedInstruments.SequenceEqual(
+                    scope.ExpectedChangedInstruments,
+                    StringComparer.Ordinal)
+                || !song.StagedPath.ExpectedInstruments.SequenceEqual(
+                    scope.ExpectedPathInstruments,
+                    StringComparer.Ordinal))
+            {
+                throw new ArgumentException(
+                    $"Manifest scope differs for {song.SongId}.",
+                    nameof(Songs));
+            }
             if (!string.Equals(
                     song.StagedPath.ChoptVersion,
                     runtime.Version,
@@ -478,9 +925,25 @@ public sealed record MaxScoreMaintenanceManifest(
             CatalogContentHash = NormalizeSha256(
                 CatalogContentHash,
                 nameof(CatalogContentHash)),
+            Scope = scope,
             Runtime = runtime,
             Songs = songs,
         };
+    }
+
+    public MaxScoreMaintenanceManifest RequirePromotionReady()
+    {
+        var normalized = ValidateAndNormalize();
+        if (!string.Equals(
+                normalized.Scope.Purpose,
+                MaxScoreMaintenanceStagePurposes.Promotion,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Discovery manifests cannot be planned, applied, resumed, or promoted.");
+        }
+
+        return normalized;
     }
 
     public byte[] SerializeCanonical()
@@ -528,6 +991,63 @@ public sealed record MaxScoreMaintenanceManifest(
         return normalized;
     }
 
+    internal static string[] NormalizeInstrumentScope(
+        IReadOnlyList<string>? instruments,
+        string parameterName,
+        bool requireNonEmpty)
+    {
+        if (instruments is null)
+            throw new ArgumentNullException(parameterName);
+        var normalized = PathGenerationInstruments.NormalizeExpected(
+            instruments);
+        if (requireNonEmpty && normalized.Length == 0
+            || normalized.Length != instruments.Count
+            || !normalized.SequenceEqual(
+                instruments,
+                StringComparer.Ordinal))
+        {
+            throw new ArgumentException(
+                $"{parameterName} must contain supported instruments exactly once in canonical order.",
+                parameterName);
+        }
+
+        return normalized;
+    }
+
+    internal static void ValidatePlasticDrumsRuntimeScope(
+        IReadOnlyList<string> changedInstruments,
+        IReadOnlyList<string> expectedPathInstruments,
+        PathGenerationRuntimeIdentity runtime)
+    {
+        if (!changedInstruments.Any(
+                PathGenerationInstruments.IsPlasticDrumsInstrument))
+        {
+            return;
+        }
+        foreach (var required in new[]
+                 {
+                     "Solo_Drums",
+                     "Solo_PeripheralCymbals",
+                     "Solo_PeripheralDrums",
+                 })
+        {
+            if (!expectedPathInstruments.Contains(
+                    required,
+                    StringComparer.Ordinal))
+            {
+                throw new ArgumentException(
+                    "Plastic-drums maintenance requires Solo_Drums and both plastic-drums modes in the exact staged path scope.",
+                    nameof(expectedPathInstruments));
+            }
+        }
+        if (!PathGenerationProfiles.IsApprovedPlasticDrumsV4(runtime))
+        {
+            throw new ArgumentException(
+                "Plastic-drums maintenance requires the approved CHOpt 1.16.4 v4 runtime identity.",
+                nameof(runtime));
+        }
+    }
+
     internal static void RequireStrictlySortedUniqueSongIds(
         IEnumerable<string> songIds,
         string parameterName)
@@ -557,7 +1077,7 @@ public sealed record MaxScoreMaintenanceRollbackSnapshot(
     string CatalogContentHash,
     IReadOnlyList<MaxScoreMaintenanceRollbackSong> Songs)
 {
-    public const int CurrentSnapshotVersion = 1;
+    public const int CurrentSnapshotVersion = 2;
 
     public MaxScoreMaintenanceRollbackSnapshot ValidateAndNormalize()
     {
@@ -612,7 +1132,7 @@ public sealed record MaxScoreMaintenanceRollbackSong(
                     ExpectedCatalogLastModified,
                     nameof(ExpectedCatalogLastModified)),
             Path = (Path ?? throw new ArgumentNullException(nameof(Path)))
-                .ValidateAndNormalize(nameof(Path), false),
+                .ValidateAndNormalize(nameof(Path), true),
         };
 }
 
@@ -630,13 +1150,16 @@ public sealed record MaxScoreMaintenanceStageSongReport(
 public sealed record MaxScoreMaintenanceStageReport(
     int ReportVersion,
     bool Succeeded,
+    string Purpose,
+    bool Promotable,
+    string StageRequestSha256,
     long ExpectedPublishedScrapeId,
     long ExpectedPublicationId,
     string ManifestPath,
     string? ManifestSha256,
     IReadOnlyList<MaxScoreMaintenanceStageSongReport> Songs)
 {
-    public const int CurrentReportVersion = 1;
+    public const int CurrentReportVersion = 2;
 }
 
 public sealed record MaxScoreMaintenancePlanCheck(
@@ -662,6 +1185,23 @@ public sealed record MaxScoreMaintenanceCandidate(
     bool BlocksMaintenance,
     string? RoutineEventGroupKey = null);
 
+public sealed record MaxScoreMaintenanceArtifactEvidence(
+    string SongId,
+    string CurrentGenerationId,
+    string CurrentArtifactTreeSha256,
+    int CurrentArtifactFileCount,
+    string StagedGenerationId,
+    string StagedArtifactTreeSha256,
+    int StagedArtifactFileCount,
+    MaxScoreMaintenancePlasticDrumsEvidence? PlasticDrumsEvidence);
+
+public sealed record MaxScoreMaintenanceObservedScoreCheck(
+    string SongId,
+    string Instrument,
+    int NewMaximum,
+    int? HighestObservedScore,
+    bool Passed);
+
 public sealed record MaxScoreMaintenancePlanReport(
     int ReportVersion,
     bool CanApply,
@@ -676,9 +1216,11 @@ public sealed record MaxScoreMaintenancePlanReport(
     IReadOnlyList<string> AffectedInstruments,
     long RoutineCandidateCount,
     IReadOnlyList<MaxScoreMaintenancePlanCheck> Checks,
-    IReadOnlyList<MaxScoreMaintenanceCandidate> RoutineCandidates)
+    IReadOnlyList<MaxScoreMaintenanceCandidate> RoutineCandidates,
+    IReadOnlyList<MaxScoreMaintenanceArtifactEvidence> ArtifactEvidence,
+    IReadOnlyList<MaxScoreMaintenanceObservedScoreCheck> ObservedScoreChecks)
 {
-    public const int CurrentReportVersion = 1;
+    public const int CurrentReportVersion = 2;
 }
 
 public enum MaxScoreMaintenancePhase

@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: bb739119
+last_verified_commit: f8cf6f02
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -16,6 +16,7 @@ sources:
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Scraping/DurablePhaseProgressSink.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
+  - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
   - FSTService/Scraping/ScrapeTimePrecomputer.cs
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/DatabaseInitializer.cs
@@ -124,9 +125,12 @@ remain sequential and resumable. See [Path generation](path-generation.md).
 
 Max-score correction is a separate CLI-only one-shot mode. It registers no
 hosted scraper/background services and requires the real `fstworker` offline.
-Stage shares the path-generation admission lock without promoting. Plan/apply
-take the exclusive mutation gate before the path-generation and global
-publication locks. Apply establishes or revalidates the freeze before taking
+Discovery and promotion stages share the path-generation admission lock
+without promoting; only the second produces a plan/apply-eligible manifest.
+Plan/apply reject plastic-drums v3, revalidate current rollback and staged
+artifact trees/hashes, then take the exclusive mutation gate before the
+path-generation and global publication locks. Apply establishes or revalidates
+the freeze before taking
 solo entry/overlay, band-member-stat, and leaderboard-population share locks,
 then rechecks that the worker remains offline around each mutable phase.
 Maintenance ranking mode suppresses `WorkerStatusPublisher`, rebuilds changed

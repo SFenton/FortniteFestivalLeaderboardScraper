@@ -53,6 +53,7 @@ public sealed class PathArtifactValidationTests
             }
           ],
           "spPhrases": [],
+          "drumFills": [{ "startBeat": 0, "endBeat": 1 }],
           "measures": [],
           "bpms": [],
           "timeSignatures": []
@@ -67,6 +68,26 @@ public sealed class PathArtifactValidationTests
             requirePositiveScore: true,
             out var score));
         Assert.Equal(123456, score);
+    }
+
+    [Fact]
+    public void JsonValidation_RequiresAuthoredDrumFillsWhenRequested()
+    {
+        Assert.True(PathArtifactValidator.TryParseJson(
+            RichPathJson,
+            requirePositiveScore: true,
+            out _,
+            requiredSchemaVersion: 2,
+            requireNonEmptyDrumFills: true));
+        Assert.False(PathArtifactValidator.TryParseJson(
+            RichPathJson.Replace(
+                """[{ "startBeat": 0, "endBeat": 1 }]""",
+                "[]",
+                StringComparison.Ordinal),
+            requirePositiveScore: true,
+            out _,
+            requiredSchemaVersion: 2,
+            requireNonEmptyDrumFills: true));
     }
 
     [Fact]
@@ -152,6 +173,7 @@ public sealed class PathArtifactValidationTests
     [InlineData("chopt-fnf-ew0-s20-json-png-v2", 2)]
     [InlineData("custom-profile-v2", 2)]
     [InlineData("chopt-fnf-ew0-s20-json-png-prodrums-v3", 2)]
+    [InlineData("chopt-fnf-ew0-s20-json-png-prodrums-v4", 2)]
     public void JsonValidation_MapsProfilesToRequiredSchema(
         string? profile,
         int? expected)

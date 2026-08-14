@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-13
-last_verified_commit: 9d11111e
+last_verified: 2026-08-14
+last_verified_commit: f8cf6f02
 sources:
   - AGENTS.md
   - .github/copilot-instructions.md
@@ -138,9 +138,11 @@ authorization.
 Use the
 [max-score correction runbook](../database/MaxScoreCorrectionMaintenanceRunbook.md)
 after the recurring path rule is fixed. Stage is pointer-free. Plan/apply
-require the worker offline, exact publication/catalog/path and notification
-state, the path-generation/publication lock order, same-drive evidence, and a
-reviewed manifest plus plan digest.
+require a promotion-purpose v4 manifest (discovery is never promotable), the
+worker offline, exact publication/catalog/path and notification state,
+validated current rollback and staged artifact trees/hashes, the
+path-generation/publication lock order, same-drive evidence, and a reviewed
+manifest plus plan digest.
 
 Apply owns a `max-score-maintenance:v1:<manifest-sha256>` freeze. Generic
 scrape/publication freeze writers cannot overwrite or clear it. A failure

@@ -61,11 +61,8 @@ public sealed class MaxScoreMaintenanceDerivedStateService
                 "Max-score derived rebuild requires the exact manifest-bound catalog.");
         }
 
-        var affectedInstruments = manifest.Songs
-            .SelectMany(song => song.ChangedInstruments)
-            .Distinct(StringComparer.Ordinal)
-            .OrderBy(instrument => instrument, StringComparer.Ordinal)
-            .ToArray();
+        var affectedInstruments =
+            manifest.Scope.ExpectedChangedInstruments.ToArray();
         if (affectedInstruments.Length == 0)
         {
             throw new InvalidOperationException(

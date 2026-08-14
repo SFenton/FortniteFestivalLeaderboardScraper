@@ -175,11 +175,8 @@ public sealed record MaxScoreMaintenanceCommand(
         switch (actions[0].Action)
         {
             case MaxScoreMaintenanceAction.Stage:
-                if ((stageRequest is null) == (songIds.Length == 0))
-                {
-                    throw new ArgumentException(
-                        $"Stage requires exactly one of {StageRequestFlag} or one or more {SongIdFlag} values.");
-                }
+                Require(stageRequest, StageRequestFlag);
+                RejectSongs(songIds, StageFlag);
                 Require(manifestOutput, ManifestOutputFlag);
                 Reject(manifest, ManifestFlag, StageFlag);
                 Reject(rollbackOutput, RollbackOutputFlag, StageFlag);

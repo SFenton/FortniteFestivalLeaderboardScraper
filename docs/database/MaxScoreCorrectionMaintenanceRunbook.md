@@ -2,11 +2,12 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-14
-last_verified_commit: bb739119
+last_verified_commit: f8cf6f02
 sources:
   - FSTService/Api/AdminEndpoints.cs
   - FSTService/Persistence/MaxScoreMaintenanceCommand.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
+  - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
   - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
   - FSTService/Persistence/RegistrationMutationGuard.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -52,10 +53,14 @@ Before plan or apply:
    unfrozen reads, and no failed-candidate isolation;
 4. require the exact current publication/catalog, completed notification
    marker, and completed visible routine player and band detection lanes;
-5. keep `Scraper__EnableAutomaticPathGeneration=false`.
+5. require each target's current v2 immutable generation directory, manifest,
+   complete expected artifact tree, and hashes to be present and coherent;
+6. keep `Scraper__EnableAutomaticPathGeneration=false`.
 
 Stage acquires the distributed path-generation lease, creates complete
-immutable generations serially, and never changes a `songs` pointer. Plan
+immutable generations serially, and never changes a `songs` pointer. Discovery
+manifests are machine-rejected by plan/apply; promotion manifests require
+complete old/new maxima and exact scope. Plan
 briefly acquires the exclusive mutation gate, path-generation lock, publication
 lock, and fixed-order source locks on one isolated unpooled session. It records
 a durable random gate-owner token/backend identity while admitted, validates
@@ -139,30 +144,92 @@ registration guard.
 
 ## Stage request
 
-The recommended request binds the expected publication and approved CHOpt
-version. Expected old/new maxima may also be supplied as complete eight-field
-objects; when omitted, verify the generated manifest before approving its
-digest.
+Request version 2 is canonical strict JSON. Unknown properties, noncanonical
+bytes, unsupported/duplicate/out-of-order instruments, and more than 32 songs
+are rejected.
 
-```json
-{"requestVersion":1,"expectedPublishedScrapeId":1296,"songs":[{"songId":"3d7901c9-7ae2-4adb-9393-4ec4c54c2e3b"},{"songId":"ddd5447c-b5d7-4fe4-8f22-c9854168d11b"}],"expectedChoptVersion":"1.16.3","expectedChoptBinarySha256":null,"expectedGenerationProfile":null}
-```
-
-The request is strict JSON. Unknown properties are rejected. Song count is
-bounded to `1..32`.
+- `purpose=discovery` permits explicit partial old/new constraints. Its
+  manifest is always non-promotable.
+- `purpose=promotion` forbids partial constraints and requires complete
+  eight-field old/new maxima for every song.
+- Both purposes bind the exact generated and changed instrument arrays plus
+  CHOpt version, binary SHA-256, and profile.
+- Any plastic-drums change requires the approved CHOpt `1.16.4` binary SHA
+  `4c3f9d55c50e8406080191a138580e377413ecc9b2edb60a877281f97018205f`
+  and profile `chopt-fnf-ew0-s20-json-png-prodrums-v4`.
 
 ## Command sequence
 
 Run from the production-owned Compose directory. Host-side request/report
 files belong below the mounted FST data directory; command paths below are
-relative to `Scraper:DataDirectory`.
+relative to `Scraper:DataDirectory`. Replace `1296` only with the exact current
+published scrape confirmed during preflight.
 
 ```bash
 FST_DATA=/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data
-install -d "$FST_DATA/maintenance/max-score-1296"
-cat >"$FST_DATA/maintenance/max-score-1296/request.json" <<'JSON'
-{"requestVersion":1,"expectedPublishedScrapeId":1296,"songs":[{"songId":"3d7901c9-7ae2-4adb-9393-4ec4c54c2e3b"},{"songId":"ddd5447c-b5d7-4fe4-8f22-c9854168d11b"}],"expectedChoptVersion":"1.16.3","expectedChoptBinarySha256":null,"expectedGenerationProfile":null}
-JSON
+PUBLISHED_SCRAPE_ID=1296
+EVIDENCE_REL="maintenance/max-score-${PUBLISHED_SCRAPE_ID}-v4-canary"
+EVIDENCE="$FST_DATA/$EVIDENCE_REL"
+install -d "$EVIDENCE"
+
+jq -cn --argjson scrape "$PUBLISHED_SCRAPE_ID" '
+  {
+    requestVersion: 2,
+    purpose: "discovery",
+    expectedPublishedScrapeId: $scrape,
+    expectedPathInstruments: [
+      "Solo_Guitar",
+      "Solo_Bass",
+      "Solo_Drums",
+      "Solo_Vocals",
+      "Solo_PeripheralGuitar",
+      "Solo_PeripheralBass",
+      "Solo_PeripheralCymbals",
+      "Solo_PeripheralDrums"
+    ],
+    expectedChangedInstruments: [
+      "Solo_Guitar",
+      "Solo_PeripheralGuitar",
+      "Solo_PeripheralCymbals",
+      "Solo_PeripheralDrums"
+    ],
+    songs: [
+      {
+        songId: "3d7901c9-7ae2-4adb-9393-4ec4c54c2e3b",
+        expectedOldMaxima: null,
+        expectedNewMaxima: null,
+        expectedOldConstraints: [
+          {instrument:"Solo_Guitar",expectedValue:null},
+          {instrument:"Solo_PeripheralGuitar",expectedValue:null},
+          {instrument:"Solo_PeripheralCymbals",expectedValue:null},
+          {instrument:"Solo_PeripheralDrums",expectedValue:null}
+        ],
+        expectedNewConstraints: [
+          {instrument:"Solo_Guitar",expectedValue:63750},
+          {instrument:"Solo_PeripheralGuitar",expectedValue:65367}
+        ]
+      },
+      {
+        songId: "ddd5447c-b5d7-4fe4-8f22-c9854168d11b",
+        expectedOldMaxima: null,
+        expectedNewMaxima: null,
+        expectedOldConstraints: [
+          {instrument:"Solo_Guitar",expectedValue:null},
+          {instrument:"Solo_PeripheralGuitar",expectedValue:null},
+          {instrument:"Solo_PeripheralCymbals",expectedValue:null},
+          {instrument:"Solo_PeripheralDrums",expectedValue:null}
+        ],
+        expectedNewConstraints: [
+          {instrument:"Solo_Guitar",expectedValue:51573},
+          {instrument:"Solo_PeripheralGuitar",expectedValue:51573}
+        ]
+      }
+    ],
+    expectedChoptVersion: "1.16.4",
+    expectedChoptBinarySha256: "4c3f9d55c50e8406080191a138580e377413ecc9b2edb60a877281f97018205f",
+    expectedGenerationProfile: "chopt-fnf-ew0-s20-json-png-prodrums-v4"
+  }
+' | tr -d '\n' >"$EVIDENCE/discovery-request.json"
 
 cd /home/sfenton/Docker/FestivalServiceTracker
 
@@ -175,83 +242,164 @@ docker compose run --rm --no-deps \
   --entrypoint dotnet fstservice \
   FSTService.dll \
   --max-score-maintenance-stage \
-  --published-scrape-id 1296 \
-  --max-score-maintenance-stage-request maintenance/max-score-1296/request.json \
-  --max-score-maintenance-manifest-output maintenance/max-score-1296/manifest.json \
-  --max-score-maintenance-report-output maintenance/max-score-1296/stage-report.json
+  --published-scrape-id "$PUBLISHED_SCRAPE_ID" \
+  --max-score-maintenance-stage-request "$EVIDENCE_REL/discovery-request.json" \
+  --max-score-maintenance-manifest-output "$EVIDENCE_REL/discovery-manifest.json" \
+  --max-score-maintenance-report-output "$EVIDENCE_REL/discovery-stage-report.json"
 ```
 
-Read `manifestSha256` from the stage report. Verify the manifest is canonical,
-contains exactly the reviewed songs, uses CHOpt `1.16.3`, changes only the
-approved instruments, and retains every other maximum exactly.
+Discovery does not promote and its manifest cannot enter plan/apply. The
+service already enforces exact scope/runtime, four changed maxima, positive
+plastic values, cymbal mode greater than or equal to no-cymbal mode, non-empty
+authored activation windows, and plastic note inventories distinct from
+`Solo_Drums`. Keep the following operator check as readable evidence:
 
-For the publication-1296 two-song repair, require:
-
-| Song | Old Lead | New Lead | Old Pro Lead | New Pro Lead |
+| Song | Lead | Pro Lead | Pro Cymbals | Pro Drums |
 |---|---:|---:|---:|---:|
-| `ddd5447c-b5d7-4fe4-8f22-c9854168d11b` | `null` | `51573` | `null` | `51573` |
-| `3d7901c9-7ae2-4adb-9393-4ec4c54c2e3b` | `null` | `63750` | `null` | `65367` |
+| Run It (`ddd5447c-...`) | `null → 51573` | `null → 51573` | `null → discovered > 0` | `null → discovered > 0` |
+| Show Them Who We Are (`3d7901c9-...`) | `null → 63750` | `null → 65367` | `null → discovered > 0` | `null → discovered > 0` |
 
 ```bash
 jq -e '
-  .expectedPublishedScrapeId == 1296 and
-  .runtime.version == "1.16.3" and
+  .succeeded == true and
+  .purpose == "discovery" and
+  .promotable == false
+' "$EVIDENCE/discovery-stage-report.json"
+
+jq -e '
+  .scope.purpose == "discovery" and
+  .runtime.version == "1.16.4" and
+  .runtime.binarySha256 == "4c3f9d55c50e8406080191a138580e377413ecc9b2edb60a877281f97018205f" and
+  .runtime.profile == "chopt-fnf-ew0-s20-json-png-prodrums-v4" and
   (.songs | length) == 2 and
   all(.songs[];
-    .changedInstruments == ["Solo_Guitar","Solo_PeripheralGuitar"] and
-    ([.currentPath.maxima.bass,.currentPath.maxima.drums,.currentPath.maxima.vocals,.currentPath.maxima.proBass,.currentPath.maxima.proCymbals,.currentPath.maxima.proDrums] ==
-     [.stagedPath.maxima.bass,.stagedPath.maxima.drums,.stagedPath.maxima.vocals,.stagedPath.maxima.proBass,.stagedPath.maxima.proCymbals,.stagedPath.maxima.proDrums])) and
+    .changedInstruments == ["Solo_Guitar","Solo_PeripheralGuitar","Solo_PeripheralCymbals","Solo_PeripheralDrums"] and
+    .stagedPath.expectedInstruments == ["Solo_Guitar","Solo_Bass","Solo_Drums","Solo_Vocals","Solo_PeripheralGuitar","Solo_PeripheralBass","Solo_PeripheralCymbals","Solo_PeripheralDrums"] and
+    .currentPath.maxima.lead == null and
+    .currentPath.maxima.proLead == null and
+    .currentPath.maxima.proCymbals == null and
+    .currentPath.maxima.proDrums == null and
+    .stagedPath.maxima.proCymbals > 0 and
+    .stagedPath.maxima.proDrums > 0 and
+    .stagedPath.maxima.proCymbals >= .stagedPath.maxima.proDrums and
+    .plasticDrumsEvidence.proCymbalsAuthoredActivationWindowCount > 0 and
+    .plasticDrumsEvidence.proDrumsAuthoredActivationWindowCount > 0 and
+    .plasticDrumsEvidence.soloDrumsNoteInventorySha256 != .plasticDrumsEvidence.proCymbalsNoteInventorySha256 and
+    .plasticDrumsEvidence.soloDrumsNoteInventorySha256 != .plasticDrumsEvidence.proDrumsNoteInventorySha256) and
   ((.songs[] | select(.songId=="ddd5447c-b5d7-4fe4-8f22-c9854168d11b")) |
-    .currentPath.maxima.lead == null and .currentPath.maxima.proLead == null and
     .stagedPath.maxima.lead == 51573 and .stagedPath.maxima.proLead == 51573) and
   ((.songs[] | select(.songId=="3d7901c9-7ae2-4adb-9393-4ec4c54c2e3b")) |
-    .currentPath.maxima.lead == null and .currentPath.maxima.proLead == null and
     .stagedPath.maxima.lead == 63750 and .stagedPath.maxima.proLead == 65367)
-' "$FST_DATA/maintenance/max-score-1296/manifest.json"
+' "$EVIDENCE/discovery-manifest.json"
+
+jq -c '
+  def maxima($m): {
+    lead:$m.lead,
+    bass:$m.bass,
+    drums:$m.drums,
+    vocals:$m.vocals,
+    proLead:$m.proLead,
+    proBass:$m.proBass,
+    proCymbals:$m.proCymbals,
+    proDrums:$m.proDrums
+  };
+  {
+    requestVersion: 2,
+    purpose: "promotion",
+    expectedPublishedScrapeId: .expectedPublishedScrapeId,
+    expectedPathInstruments: .scope.expectedPathInstruments,
+    expectedChangedInstruments: .scope.expectedChangedInstruments,
+    songs: [.songs[] | {
+      songId:.songId,
+      expectedOldMaxima:maxima(.currentPath.maxima),
+      expectedNewMaxima:maxima(.stagedPath.maxima),
+      expectedOldConstraints:[],
+      expectedNewConstraints:[]
+    }],
+    expectedChoptVersion: .runtime.version,
+    expectedChoptBinarySha256: .runtime.binarySha256,
+    expectedGenerationProfile: .runtime.profile
+  }
+' "$EVIDENCE/discovery-manifest.json" |
+  tr -d '\n' >"$EVIDENCE/promotion-request.json"
+
+docker compose run --rm --no-deps \
+  -e Scraper__EnablePathGeneration=true \
+  -e Scraper__EnableAutomaticPathGeneration=false \
+  --entrypoint dotnet fstservice \
+  FSTService.dll \
+  --max-score-maintenance-stage \
+  --published-scrape-id "$PUBLISHED_SCRAPE_ID" \
+  --max-score-maintenance-stage-request "$EVIDENCE_REL/promotion-request.json" \
+  --max-score-maintenance-manifest-output "$EVIDENCE_REL/promotion-manifest.json" \
+  --max-score-maintenance-report-output "$EVIDENCE_REL/promotion-stage-report.json"
+
+jq -e '
+  .succeeded == true and
+  .purpose == "promotion" and
+  .promotable == true
+' "$EVIDENCE/promotion-stage-report.json"
 
 MANIFEST_SHA=$(
   jq -er '.manifestSha256'
-    "$FST_DATA/maintenance/max-score-1296/stage-report.json"
+    "$EVIDENCE/promotion-stage-report.json"
 )
 ```
 
-Then plan:
+The second stage reruns CHOpt and must match every complete old/new maximum
+copied from discovery. Plan then validates observed scores and both artifact
+trees before it can return `canApply=true`:
 
 ```bash
 docker compose run --rm --no-deps --entrypoint dotnet fstservice \
   FSTService.dll \
   --max-score-maintenance-plan \
-  --published-scrape-id 1296 \
-  --max-score-maintenance-manifest maintenance/max-score-1296/manifest.json \
+  --published-scrape-id "$PUBLISHED_SCRAPE_ID" \
+  --max-score-maintenance-manifest "$EVIDENCE_REL/promotion-manifest.json" \
   --expected-max-score-manifest-digest "$MANIFEST_SHA" \
-  --max-score-maintenance-report-output maintenance/max-score-1296/plan-report.json
+  --max-score-maintenance-report-output "$EVIDENCE_REL/plan-report.json"
 
 PLAN_DIGEST=$(
-  jq -er 'select(.canApply == true) | .planDigest'
-    "$FST_DATA/maintenance/max-score-1296/plan-report.json"
+  jq -er '
+    select(
+      .canApply == true and
+      .affectedInstruments == ["Solo_Guitar","Solo_PeripheralGuitar","Solo_PeripheralCymbals","Solo_PeripheralDrums"] and
+      .routineCandidateCount == 0 and
+      all(.checks[]; .passed) and
+      all(.observedScoreChecks[]; .passed) and
+      (.artifactEvidence | length) == 2 and
+      all(.artifactEvidence[];
+        (.currentArtifactTreeSha256 | length) == 64 and
+        .currentArtifactFileCount > 0 and
+        (.stagedArtifactTreeSha256 | length) == 64 and
+        .stagedArtifactFileCount > 0)
+    ) |
+    .planDigest
+  ' "$EVIDENCE/plan-report.json"
 )
 ```
 
-Require `canApply=true`, every check passed, `routineCandidateCount=0`, and
-retain `planDigest`. Apply uses both approved digests:
+Each observed-score row requires `highestObservedScore` to be null or less
+than/equal to `newMaximum`. Apply uses both approved digests:
 
 ```bash
 docker compose run --rm --no-deps --entrypoint dotnet fstservice \
   FSTService.dll \
   --max-score-maintenance-apply \
-  --published-scrape-id 1296 \
-  --max-score-maintenance-manifest maintenance/max-score-1296/manifest.json \
+  --published-scrape-id "$PUBLISHED_SCRAPE_ID" \
+  --max-score-maintenance-manifest "$EVIDENCE_REL/promotion-manifest.json" \
   --expected-max-score-manifest-digest "$MANIFEST_SHA" \
   --expected-max-score-plan-digest "$PLAN_DIGEST" \
-  --max-score-maintenance-rollback-output maintenance/max-score-1296/rollback.json \
-  --max-score-maintenance-report-output maintenance/max-score-1296/apply-report.json
+  --max-score-maintenance-rollback-output "$EVIDENCE_REL/rollback.json" \
+  --max-score-maintenance-report-output "$EVIDENCE_REL/apply-report.json"
 ```
 
 Apply:
 
 - persists file and PostgreSQL rollback evidence before promotion; canonical
   rollback JSON uses the durable run creation timestamp so file-first,
-  checkpoint-second retries reproduce identical bytes;
+  checkpoint-second retries reproduce identical bytes, and each song records
+  the validated current-v2 generation file count and artifact-tree SHA-256;
 - promotes every song in one transaction;
 - refreshes in-process song/instrument admission immediately after promotion,
   removes only prior negative backfill checks for newly usable path-backed
@@ -260,7 +408,7 @@ Apply:
   history status is fenced to a new admission revision and returned to
   `pending`; positive backfill checks and unrelated history pairs remain
   intact;
-- rebuilds affected `song_stats` and solo rankings, then composite,
+- rebuilds all four affected `song_stats`/solo ranking instruments, then composite,
   solo-family, and combo rankings; recalculates target-song band
   over-threshold flags, refreshes affected band current-projection scopes, and
   rebuilds dependent band rankings without rank-history snapshots;
@@ -301,12 +449,12 @@ cause, then rerun with the same manifest, digests, and rollback path:
 docker compose run --rm --no-deps --entrypoint dotnet fstservice \
   FSTService.dll \
   --max-score-maintenance-resume \
-  --published-scrape-id 1296 \
-  --max-score-maintenance-manifest maintenance/max-score-1296/manifest.json \
+--published-scrape-id "$PUBLISHED_SCRAPE_ID" \
+--max-score-maintenance-manifest "$EVIDENCE_REL/promotion-manifest.json" \
   --expected-max-score-manifest-digest "$MANIFEST_SHA" \
   --expected-max-score-plan-digest "$PLAN_DIGEST" \
-  --max-score-maintenance-rollback-output maintenance/max-score-1296/rollback.json \
-  --max-score-maintenance-report-output maintenance/max-score-1296/resume-report-1.json
+--max-score-maintenance-rollback-output "$EVIDENCE_REL/rollback.json" \
+--max-score-maintenance-report-output "$EVIDENCE_REL/resume-report-1.json"
 ```
 
 Resume rejects a changed digest, publication, catalog, source fingerprint,
@@ -330,9 +478,10 @@ and then continue. Do not clear either field manually.
 
 After success, verify:
 
-- publication remains `1296`, reads are unfrozen, and no working publication
-  exists;
-- both path routes for Lead and Pro Lead resolve the manifest generation;
+- publication remains `$PUBLISHED_SCRAPE_ID`, reads are unfrozen, and no
+  working publication exists;
+- all four path routes (Lead, Pro Lead, Pro Cymbals, and Pro Drums) resolve each
+  manifest generation;
 - `songs` and `song_stats` contain the approved maxima and every other maximum
   is unchanged;
 - affected rankings, player stats, rivals, band rankings, and precomputed

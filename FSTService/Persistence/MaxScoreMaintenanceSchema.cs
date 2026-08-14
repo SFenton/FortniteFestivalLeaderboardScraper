@@ -76,6 +76,8 @@ internal static class MaxScoreMaintenanceSchema
             chopt_binary_sha256         TEXT,
             path_generation_profile     TEXT,
             path_artifact_generation_id TEXT,
+            path_artifact_tree_sha256   TEXT,
+            path_artifact_file_count    INTEGER,
             path_expected_instruments   TEXT[]      NOT NULL,
             max_lead_score              INTEGER,
             max_bass_score              INTEGER,
@@ -86,8 +88,55 @@ internal static class MaxScoreMaintenanceSchema
             max_pro_cymbals_score       INTEGER,
             max_pro_drums_score         INTEGER,
             path_generation_pending     BOOLEAN     NOT NULL,
+            CONSTRAINT ck_max_score_rollback_artifact_tree_sha256
+                CHECK (
+                    path_artifact_tree_sha256 IS NULL
+                    OR length(path_artifact_tree_sha256) = 64),
+            CONSTRAINT ck_max_score_rollback_artifact_file_count
+                CHECK (
+                    path_artifact_file_count IS NULL
+                    OR path_artifact_file_count > 0),
             PRIMARY KEY (manifest_sha256, song_id)
         );
+
+        ALTER TABLE max_score_maintenance_rollback_songs
+            ADD COLUMN IF NOT EXISTS path_artifact_tree_sha256 TEXT;
+        ALTER TABLE max_score_maintenance_rollback_songs
+            ADD COLUMN IF NOT EXISTS path_artifact_file_count INTEGER;
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conrelid =
+                        'max_score_maintenance_rollback_songs'::regclass
+                  AND conname =
+                        'ck_max_score_rollback_artifact_tree_sha256'
+            ) THEN
+                ALTER TABLE max_score_maintenance_rollback_songs
+                    ADD CONSTRAINT
+                        ck_max_score_rollback_artifact_tree_sha256
+                    CHECK (
+                        path_artifact_tree_sha256 IS NULL
+                        OR length(path_artifact_tree_sha256) = 64);
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conrelid =
+                        'max_score_maintenance_rollback_songs'::regclass
+                  AND conname =
+                        'ck_max_score_rollback_artifact_file_count'
+            ) THEN
+                ALTER TABLE max_score_maintenance_rollback_songs
+                    ADD CONSTRAINT
+                        ck_max_score_rollback_artifact_file_count
+                    CHECK (
+                        path_artifact_file_count IS NULL
+                        OR path_artifact_file_count > 0);
+            END IF;
+        END
+        $$;
 
         CREATE INDEX IF NOT EXISTS
             ix_max_score_maintenance_runs_status

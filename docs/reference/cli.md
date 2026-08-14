@@ -2,12 +2,14 @@
 status: canonical
 owner: service
 last_verified: 2026-08-14
-last_verified_commit: 00531b19
+last_verified_commit: f8cf6f02
 sources:
   - FSTService/Program.cs
   - FSTService/ScrapePhase.cs
   - FSTService/Persistence/PublishedScrapeIdArgument.cs
   - FSTService/Persistence/MaxScoreMaintenanceCommand.cs
+  - FSTService/Persistence/MaxScoreMaintenanceModels.cs
+  - FSTService/Persistence/MaxScoreMaintenanceFileStore.cs
   - FSTService/Persistence/ScoreHistoryDedupMaintenanceCommand.cs
   - FSTService/Scraping/SoloFamilyRankingBackfillCommand.cs
   - FSTService/Scraping/LeaderboardRivalsRecomputeCommand.cs
@@ -90,14 +92,16 @@ activate max-score parsing by itself.
 ### Max-score correction
 
 All max-score files must be `.json` paths below `Scraper:DataDirectory`.
-Manifests use canonical strict JSON; unknown properties, noncanonical encoding,
-unsupported versions, duplicate/unsorted song IDs, and more than 32 songs are
-rejected.
+Stage requests and manifests use canonical strict JSON; unknown properties,
+noncanonical encoding, unsupported versions, duplicate/unsorted song IDs, and
+more than 32 songs are rejected. Request version 2 binds a discovery or
+promotion purpose, exact runtime, exact generated/changed instrument sets, and
+per-song maximum constraints. Unscoped repeated song IDs are rejected.
 
 | Action | Required flags | Behavior |
 |---|---|---|
-| `--max-score-maintenance-stage` | `--published-scrape-id`, exactly one of `--max-score-maintenance-stage-request` or repeated `--max-score-maintenance-song-id`, `--max-score-maintenance-manifest-output`, `--max-score-maintenance-report-output` | Serially stage complete inferred immutable generations; never mutate a song pointer |
-| `--max-score-maintenance-plan` | `--published-scrape-id`, `--max-score-maintenance-manifest`, `--expected-max-score-manifest-digest`, `--max-score-maintenance-report-output` | Read-only fail-closed preflight; emits the deterministic `planDigest` |
+| `--max-score-maintenance-stage` | `--published-scrape-id`, `--max-score-maintenance-stage-request`, `--max-score-maintenance-manifest-output`, `--max-score-maintenance-report-output` | Serially stage complete immutable generations without pointer mutation; discovery permits explicit partial maximum constraints, while promotion requires complete old/new eight-field maxima |
+| `--max-score-maintenance-plan` | `--published-scrape-id`, promotion-purpose `--max-score-maintenance-manifest`, `--expected-max-score-manifest-digest`, `--max-score-maintenance-report-output` | Read-only fail-closed preflight; rejects discovery/v3 plastic manifests, validates current rollback and staged artifact trees/hashes plus observed-score bounds, and emits the deterministic `planDigest` |
 | `--max-score-maintenance-apply` | plan flags plus `--expected-max-score-plan-digest` and `--max-score-maintenance-rollback-output` | Freeze, persist rollback evidence, atomically promote all songs, rebuild derived state, quarantine notifications, stage/publish caches, validate, and unfreeze |
 | `--max-score-maintenance-resume` | apply manifest/scrape/digest flags and a new report output; rollback output is required only before it has been durably captured | Resume only the same digest/phase identities; any failure after freeze remains frozen |
 

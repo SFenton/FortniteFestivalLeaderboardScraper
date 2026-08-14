@@ -120,6 +120,11 @@ public sealed class PathDataStore : IPathDataStore
             using var r = cmd.ExecuteReader();
             while (r.Read())
             {
+                var generationProfile =
+                    r.IsDBNull(12) ? null : r.GetString(12);
+                var hasInvalidPlasticDrumsScores =
+                    PathGenerationProfiles.HasInvalidPlasticDrumsScores(
+                        generationProfile);
                 result[r.GetString(0)] = new SongMaxScores
                 {
                     MaxLeadScore = r.IsDBNull(1) ? null : r.GetInt32(1),
@@ -129,9 +134,13 @@ public sealed class PathDataStore : IPathDataStore
                     MaxProLeadScore = r.IsDBNull(5) ? null : r.GetInt32(5),
                     MaxProBassScore = r.IsDBNull(6) ? null : r.GetInt32(6),
                     MaxProCymbalsScore =
-                        r.IsDBNull(7) ? null : r.GetInt32(7),
+                        hasInvalidPlasticDrumsScores || r.IsDBNull(7)
+                            ? null
+                            : r.GetInt32(7),
                     MaxProDrumsScore =
-                        r.IsDBNull(8) ? null : r.GetInt32(8),
+                        hasInvalidPlasticDrumsScores || r.IsDBNull(8)
+                            ? null
+                            : r.GetInt32(8),
                     GeneratedAt =
                         r.IsDBNull(9)
                             ? null
@@ -140,8 +149,7 @@ public sealed class PathDataStore : IPathDataStore
                         r.IsDBNull(10) ? null : r.GetString(10),
                     CHOptBinarySha256 =
                         r.IsDBNull(11) ? null : r.GetString(11),
-                    GenerationProfile =
-                        r.IsDBNull(12) ? null : r.GetString(12),
+                    GenerationProfile = generationProfile,
                     ArtifactGenerationId =
                         r.IsDBNull(13) ? null : r.GetString(13),
                     ExpectedInstruments =
@@ -670,6 +678,10 @@ public sealed class PathDataStore : IPathDataStore
 
     private static PathGenerationState ReadPathGenerationState(NpgsqlDataReader r)
     {
+        var generationProfile = r.IsDBNull(7) ? null : r.GetString(7);
+        var hasInvalidPlasticDrumsScores =
+            PathGenerationProfiles.HasInvalidPlasticDrumsScores(
+                generationProfile);
         var scores = new SongMaxScores
         {
             MaxLeadScore = r.IsDBNull(10) ? null : r.GetInt32(10),
@@ -679,13 +691,17 @@ public sealed class PathDataStore : IPathDataStore
             MaxProLeadScore = r.IsDBNull(14) ? null : r.GetInt32(14),
             MaxProBassScore = r.IsDBNull(15) ? null : r.GetInt32(15),
             MaxProCymbalsScore =
-                r.IsDBNull(16) ? null : r.GetInt32(16),
+                hasInvalidPlasticDrumsScores || r.IsDBNull(16)
+                    ? null
+                    : r.GetInt32(16),
             MaxProDrumsScore =
-                r.IsDBNull(17) ? null : r.GetInt32(17),
+                hasInvalidPlasticDrumsScores || r.IsDBNull(17)
+                    ? null
+                    : r.GetInt32(17),
             GeneratedAt = r.IsDBNull(4) ? null : r.GetDateTime(4).ToString("o"),
             CHOptVersion = r.IsDBNull(5) ? null : r.GetString(5),
             CHOptBinarySha256 = r.IsDBNull(6) ? null : r.GetString(6),
-            GenerationProfile = r.IsDBNull(7) ? null : r.GetString(7),
+            GenerationProfile = generationProfile,
             ArtifactGenerationId = r.IsDBNull(8) ? null : r.GetString(8),
             ExpectedInstruments = r.GetFieldValue<string[]>(9),
         };
@@ -698,7 +714,7 @@ public sealed class PathDataStore : IPathDataStore
             r.IsDBNull(4) ? null : r.GetDateTime(4),
             r.IsDBNull(5) ? null : r.GetString(5),
             r.IsDBNull(6) ? null : r.GetString(6),
-            r.IsDBNull(7) ? null : r.GetString(7),
+            generationProfile,
             r.IsDBNull(8) ? null : r.GetString(8),
             r.GetFieldValue<string[]>(9),
             scores,

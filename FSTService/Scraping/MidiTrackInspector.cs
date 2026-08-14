@@ -9,7 +9,11 @@ internal static class MidiTrackInspector
     {
         var trackNames = GetNonEmptyTrackNames(midiData);
         return PathGenerationInstruments.Definitions
-            .Where(definition => trackNames.Contains(definition.MidiTrackName))
+            .Where(definition =>
+                trackNames.Contains(definition.MidiTrackName)
+                || PathGenerationInstruments.IsPlasticDrumsInstrument(
+                    definition.Instrument)
+                && trackNames.Contains("PLASTIC DRUM"))
             .Select(definition => definition.Instrument)
             .ToArray();
     }
