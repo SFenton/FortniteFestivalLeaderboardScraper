@@ -79,6 +79,90 @@ public sealed class TierOneReplayIntegrationTests
             projection.Select(static row => row.TeamKey));
         Assert.Equal([1, 2], projection.Select(static row => row.Rank));
         Assert.Equal([1000, 900], projection.Select(static row => row.Score));
+
+        var entryPointConnection =
+            SharedPostgresContainer
+                .CreateEmptyDatabaseConnectionString();
+        await TierOneReplayFixture.BootstrapDatabaseAsync(
+            entryPointConnection,
+            fixture.ReplayId,
+            fixture.InputManifest.PackageRootHash!);
+        var entryPointOutput = Path.Combine(
+            directory.Path,
+            "entrypoint-output");
+        var entryPointEnvironment =
+            TierOneReplayFixture.Environment(
+                directory.Path,
+                entryPointConnection);
+        var executionExit = await ReplayEntryPoint.RunAsync(
+        [
+            "--replay-parent-package", fixture.ParentPackage,
+            "--replay-package", fixture.InputPackage,
+            "--replay-phase",
+            ReplayPhaseCatalog.BandMaintenancePhaseId,
+            "--replay-subphase",
+            ReplayPhaseCatalog.CurrentProjectionSubphaseId,
+            "--replay-output", entryPointOutput,
+            "--replay-id", fixture.ReplayId,
+            "--replay-attempt", "3",
+            "--no-publication",
+        ],
+            entryPointEnvironment);
+        Assert.Equal(
+            (int)ReplayExitCode.Success,
+            executionExit);
+
+        var entryPointComparison = Path.Combine(
+            directory.Path,
+            "entrypoint-comparison.json");
+        var comparisonExit = await ReplayEntryPoint.RunAsync(
+        [
+            "--replay-compare-baseline", baselineOutput,
+            "--replay-compare-candidate", candidateOutput,
+            "--replay-comparison-output", entryPointComparison,
+            "--replay-baseline-image-digest",
+            TierOneReplayFixture.Build.OciImageDigest,
+            "--replay-candidate-image-digest",
+            TierOneReplayFixture.Build.OciImageDigest,
+            "--replay-baseline-git-commit",
+            TierOneReplayFixture.Build.GitCommit,
+            "--replay-candidate-git-commit",
+            TierOneReplayFixture.Build.GitCommit,
+            "--replay-baseline-revision",
+            TierOneReplayFixture.Build.OciImageRevision,
+            "--replay-candidate-revision",
+            TierOneReplayFixture.Build.OciImageRevision,
+            "--replay-baseline-attempt", "1",
+            "--replay-candidate-attempt", "2",
+            "--no-publication",
+        ],
+            entryPointEnvironment);
+        Assert.Equal(
+            (int)ReplayExitCode.Success,
+            comparisonExit);
+        Assert.True(File.Exists(entryPointComparison));
+
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        var cancelledExit = await ReplayEntryPoint.RunAsync(
+        [
+            "--replay-parent-package", fixture.ParentPackage,
+            "--replay-package", fixture.InputPackage,
+            "--replay-phase",
+            ReplayPhaseCatalog.BandMaintenancePhaseId,
+            "--replay-subphase",
+            ReplayPhaseCatalog.CurrentProjectionSubphaseId,
+            "--replay-output",
+            Path.Combine(directory.Path, "cancelled-entrypoint"),
+            "--replay-id", fixture.ReplayId,
+            "--replay-attempt", "4",
+            "--no-publication",
+        ],
+            entryPointEnvironment,
+            cancelled.Token);
+        Assert.Equal(
+            (int)ReplayExitCode.Cancelled,
+            cancelledExit);
     }
 
     [Fact]
