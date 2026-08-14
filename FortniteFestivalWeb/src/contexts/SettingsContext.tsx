@@ -120,8 +120,6 @@ const SHOW_KEY_FOR_INSTRUMENT: Record<InstrumentKey, ShowKey> = {
 
 export const PATH_UNAVAILABLE_INSTRUMENTS: readonly InstrumentKey[] = [
   'Solo_PeripheralVocals',
-  'Solo_PeripheralDrums',
-  'Solo_PeripheralCymbals',
 ];
 
 const PATH_UNAVAILABLE_INSTRUMENT_SET = new Set<InstrumentKey>(PATH_UNAVAILABLE_INSTRUMENTS);

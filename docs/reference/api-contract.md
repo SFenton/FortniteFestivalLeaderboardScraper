@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-13
-last_verified_commit: af62aeef
+last_verified_commit: 53c11043
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -71,6 +71,10 @@ Path JSON schema v2 is represented by `PathDataResponse` in
 `packages/core/src/api/serverTypes.ts`. Every activation has an authoritative
 instruction and exact trigger score/Overdrive metadata. Legacy schema-v1 JSON
 remains readable while catalogue regeneration is in progress.
+
+Supported path instruments are Lead, Bass, Drums, Tap Vocals, Pro Lead,
+Pro Bass, Pro Drums, and Pro Drums + Cymbals. `/api/songs` exposes distinct
+max-score entries for both plastic-drums modes.
 
 `POST /api/admin/regenerate-paths?songId=<id>&force=<bool>` is an
 `AdminPrivate` single-song command. It requires `X-API-Key`, returns `202`, and

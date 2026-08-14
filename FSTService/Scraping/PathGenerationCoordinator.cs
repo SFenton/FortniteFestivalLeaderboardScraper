@@ -670,6 +670,8 @@ public sealed partial class PathGenerationCoordinator
         startInfo.ArgumentList.Add("0");
         startInfo.ArgumentList.Add("--squeeze");
         startInfo.ArgumentList.Add("20");
+        if (instrument.DisableProDrums)
+            startInfo.ArgumentList.Add("--no-pro-drums");
         startInfo.ArgumentList.Add("--json");
 
         ProcessResult result;

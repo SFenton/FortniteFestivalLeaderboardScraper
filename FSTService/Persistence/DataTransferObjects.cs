@@ -1128,6 +1128,8 @@ public sealed class SongMaxScores
     public int? MaxVocalsScore { get; set; }
     public int? MaxProLeadScore { get; set; }
     public int? MaxProBassScore { get; set; }
+    public int? MaxProCymbalsScore { get; set; }
+    public int? MaxProDrumsScore { get; set; }
     public string? GeneratedAt { get; set; }
     public string? CHOptVersion { get; set; }
     public string? CHOptBinarySha256 { get; set; }
@@ -1146,6 +1148,8 @@ public sealed class SongMaxScores
         "Solo_Vocals" => MaxVocalsScore,
         "Solo_PeripheralGuitar" => MaxProLeadScore,
         "Solo_PeripheralBass" => MaxProBassScore,
+        "Solo_PeripheralCymbals" => MaxProCymbalsScore,
+        "Solo_PeripheralDrums" => MaxProDrumsScore,
         _ => null,
     };
 
@@ -1162,6 +1166,8 @@ public sealed class SongMaxScores
             case "Solo_Vocals": MaxVocalsScore = score; break;
             case "Solo_PeripheralGuitar": MaxProLeadScore = score; break;
             case "Solo_PeripheralBass": MaxProBassScore = score; break;
+            case "Solo_PeripheralCymbals": MaxProCymbalsScore = score; break;
+            case "Solo_PeripheralDrums": MaxProDrumsScore = score; break;
         }
     }
 }

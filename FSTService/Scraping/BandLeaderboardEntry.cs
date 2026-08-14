@@ -88,7 +88,10 @@ public sealed class BandMemberStats
     /// <summary>Account ID from <c>M_{i}_ID_{accountId}</c>.</summary>
     public string AccountId { get; set; } = "";
 
-    /// <summary>Epic numeric instrument ID (0=Guitar, 1=Bass, 2=Vocals, 3=Drums, 4=ProGuitar, 5=ProBass).</summary>
+    /// <summary>
+    /// Epic numeric instrument ID (0=Guitar, 1=Bass, 2=Vocals, 3=Drums,
+    /// 4=ProGuitar, 5=ProBass, 6=ProDrums, 7=ProVocals, 8=ProCymbals).
+    /// </summary>
     public int InstrumentId { get; set; }
 
     /// <summary>Individual contribution score.</summary>

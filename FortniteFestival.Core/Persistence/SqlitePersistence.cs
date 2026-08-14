@@ -175,6 +175,8 @@ CREATE TABLE IF NOT EXISTS Scores (
                         AddColumn("MaxVocalsScore", "INTEGER");
                         AddColumn("MaxProLeadScore", "INTEGER");
                         AddColumn("MaxProBassScore", "INTEGER");
+                        AddColumn("MaxProCymbalsScore", "INTEGER");
+                        AddColumn("MaxProDrumsScore", "INTEGER");
                         AddColumn("DatFileHash", "TEXT");
                         AddColumn("SongLastModified", "TEXT");
                         AddColumn("PathsGeneratedAt", "TEXT");

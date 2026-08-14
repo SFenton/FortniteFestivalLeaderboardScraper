@@ -35,6 +35,7 @@ const mockInstruments = vi.hoisted(() => vi.fn(() => [
 ]));
 const mockPathInstruments = vi.hoisted(() => vi.fn(() => [
   'Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals',
+  'Solo_PeripheralDrums', 'Solo_PeripheralCymbals',
 ]));
 const mockHasUnavailablePathInstrumentsEnabled = vi.hoisted(() => vi.fn(() => false));
 vi.mock('../../../../../src/contexts/SettingsContext', () => ({
@@ -42,7 +43,7 @@ vi.mock('../../../../../src/contexts/SettingsContext', () => ({
   visibleInstruments: (...args: unknown[]) => mockInstruments(...(args as [])),
   visiblePathInstruments: (...args: unknown[]) => mockPathInstruments(...(args as [])),
   hasUnavailablePathInstrumentsEnabled: (...args: unknown[]) => mockHasUnavailablePathInstrumentsEnabled(...(args as [])),
-  PATH_UNAVAILABLE_INSTRUMENTS: ['Solo_PeripheralVocals', 'Solo_PeripheralDrums', 'Solo_PeripheralCymbals'],
+  PATH_UNAVAILABLE_INSTRUMENTS: ['Solo_PeripheralVocals'],
 }));
 
 vi.mock('../../models', () => ({
@@ -105,7 +106,10 @@ beforeEach(() => {
     'Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals',
     'Solo_PeripheralVocals', 'Solo_PeripheralDrums', 'Solo_PeripheralCymbals',
   ]);
-  mockPathInstruments.mockReturnValue(['Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals']);
+  mockPathInstruments.mockReturnValue([
+    'Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals',
+    'Solo_PeripheralDrums', 'Solo_PeripheralCymbals',
+  ]);
   mockHasUnavailablePathInstrumentsEnabled.mockReturnValue(false);
 
   // @ts-expect-error - overriding Image constructor
@@ -268,12 +272,12 @@ describe('PathsModal', () => {
       expect(screen.getByTestId('icon-Solo_Vocals')).toBeDefined();
     });
 
-    it('does not show unsupported path instruments in the selector', () => {
+    it('shows both plastic drum path modes and hides Karaoke', () => {
       render(<PathsModal visible={true} songId="song-1" onClose={vi.fn()} />);
 
       expect(screen.queryByTestId('icon-Solo_PeripheralVocals')).toBeNull();
-      expect(screen.queryByTestId('icon-Solo_PeripheralDrums')).toBeNull();
-      expect(screen.queryByTestId('icon-Solo_PeripheralCymbals')).toBeNull();
+      expect(screen.getByTestId('icon-Solo_PeripheralDrums')).toBeDefined();
+      expect(screen.getByTestId('icon-Solo_PeripheralCymbals')).toBeDefined();
     });
 
     it('shows difficulty buttons', () => {
@@ -425,7 +429,7 @@ describe('PathsModal', () => {
       render(<PathsModal visible={true} songId="song-1" onClose={vi.fn()} />);
 
       expect(screen.getByText('Some Instruments Unavailable')).toBeDefined();
-      expect(screen.getByText('Karaoke, Pro Drums, and Pro Drums + Cymbals are not available for path visualization yet.')).toBeDefined();
+      expect(screen.getByText('Karaoke is not available for path visualization yet.')).toBeDefined();
       expect(screen.getByRole('button', { name: 'OK' })).toBeDefined();
       expect(screen.getByRole('button', { name: "Don't show again" })).toBeDefined();
     });

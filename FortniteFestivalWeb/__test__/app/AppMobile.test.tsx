@@ -2407,8 +2407,8 @@ describe('App — mobile FAB branches', () => {
       showProLead: false,
       showProBass: false,
       showPeripheralVocals: true,
-      showPeripheralCymbals: true,
-      showPeripheralDrums: true,
+      showPeripheralCymbals: false,
+      showPeripheralDrums: false,
     }));
     window.location.hash = '#/songs/s1';
     render(<App />);
@@ -2437,8 +2437,8 @@ describe('App — mobile FAB branches', () => {
       showProLead: false,
       showProBass: false,
       showPeripheralVocals: true,
-      showPeripheralCymbals: true,
-      showPeripheralDrums: true,
+      showPeripheralCymbals: false,
+      showPeripheralDrums: false,
     }));
     window.location.hash = '#/songs/s1';
     render(<App />);

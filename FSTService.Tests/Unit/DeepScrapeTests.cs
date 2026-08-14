@@ -221,6 +221,8 @@ public class DeepScrapeTests
             MaxVocalsScore = 400,
             MaxProLeadScore = 500,
             MaxProBassScore = 600,
+            MaxProCymbalsScore = 700,
+            MaxProDrumsScore = 800,
         };
 
         Assert.Equal(100, ms.GetByInstrument("Solo_Guitar"));
@@ -229,6 +231,8 @@ public class DeepScrapeTests
         Assert.Equal(400, ms.GetByInstrument("Solo_Vocals"));
         Assert.Equal(500, ms.GetByInstrument("Solo_PeripheralGuitar"));
         Assert.Equal(600, ms.GetByInstrument("Solo_PeripheralBass"));
+        Assert.Equal(700, ms.GetByInstrument("Solo_PeripheralCymbals"));
+        Assert.Equal(800, ms.GetByInstrument("Solo_PeripheralDrums"));
         Assert.Null(ms.GetByInstrument("Unknown"));
     }
 

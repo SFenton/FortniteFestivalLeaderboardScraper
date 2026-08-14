@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import PathDataTable, {
  buildPathRows,
- extractPathInstructions,
  type PathDataResponse,
 } from '../../../../../src/pages/songinfo/components/path/PathDataTable';
 
@@ -78,14 +77,12 @@ describe('buildPathRows', () => {
     expect(rows[0]).toMatchObject({
       beat: 98.995,
       seconds: 45.5,
-      instruction: '2: 1 beats after 14th B (R)',
       frets: { red: 2 },
     });
     expect(rows[0]?.odPercent).toBeUndefined();
     expect(rows[0]?.cumulativeScore).toBeUndefined();
     expect(rows[1]).toMatchObject({
       beat: 173.5,
-      instruction: '2: 8th G (O)',
       odPercent: 75,
       cumulativeScore: 40_000,
       frets: { orange: 0 },
@@ -119,7 +116,6 @@ describe('buildPathRows', () => {
       frets: { red: 4 },
       beat: 21,
       seconds: 10.5,
-      instruction: '2: 1 beats after NN (R)',
       odPercent: 50,
       cumulativeScore: 12_345,
     }]);
@@ -140,27 +136,15 @@ describe('buildPathRows', () => {
     }));
 
     expect(rows[0]?.frets).toEqual({});
-    expect(rows[0]?.instruction).toBe('1: 2nd G (B)');
-  });
-});
-
-describe('extractPathInstructions', () => {
-  it('removes progress and score metadata while retaining one instruction per activation', () => {
-    expect(extractPathInstructions(pathData().pathSummary)).toEqual([
-      '2: 1 beats after 14th B (R)',
-      '2: 8th G (O)',
-      '3(+1): 8th R (B)',
-      '1: 4th R (B)',
-    ]);
   });
 });
 
 describe('PathDataTable', () => {
-  it('renders the missing legacy activation instead of dropping the row', () => {
+  it('renders the missing legacy activation without raw CHOpt notation', () => {
     render(
       <PathDataTable
         data={pathData({
-          pathSummary: 'Path: 2\n2: 1 beats after NN (R)',
+          pathSummary: 'Path: 1\n1: 3rd B (B)',
           activations: [{
             startBeat: 20.99,
             endBeat: 36.99,
@@ -176,19 +160,19 @@ describe('PathDataTable', () => {
       />,
     );
 
-    expect(screen.getByText('2: 1 beats after NN (R)')).toBeDefined();
+    expect(screen.queryByText('1: 3rd B (B)')).toBeNull();
     expect(screen.getByText('20.99')).toBeDefined();
     expect(screen.getAllByText('—')).toHaveLength(2);
   });
 
-  it('renders schema-v2 metrics in the mobile layout', () => {
+  it('renders schema-v2 metrics without raw CHOpt notation in the mobile layout', () => {
     render(
       <PathDataTable
         data={pathData({
           schemaVersion: 2,
-          pathSummary: 'Path: 2\n2: NN (R)',
+          pathSummary: 'Path: 1\n1: 3rd B (B)',
           activations: [{
-            instruction: '2: NN (R)',
+            instruction: '1: 3rd B (B)',
             startBeat: 20.99,
             endBeat: 36.99,
             activationBeat: 21,
@@ -207,7 +191,7 @@ describe('PathDataTable', () => {
       />,
     );
 
-    expect(screen.getByText('2: NN (R)')).toBeDefined();
+    expect(screen.queryByText('1: 3rd B (B)')).toBeNull();
     expect(screen.getByText('00:10:500')).toBeDefined();
     expect(screen.getByText('50%')).toBeDefined();
     expect(screen.getByText('12,345')).toBeDefined();

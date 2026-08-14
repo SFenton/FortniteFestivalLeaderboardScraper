@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-13
-last_verified_commit: af62aeef
+last_verified_commit: 53c11043
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -45,6 +45,13 @@ surface is not the production service persistence model.
 | Derived products | Rankings, rivals, statistics, precomputed responses, improvement notifications |
 | Publication state | Published scrape/generation, source bindings, read freeze, commit intent, leases, cache generations |
 | Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, maintenance evidence, dedup/recovery audit state |
+
+The `songs` path-generation state stores distinct theoretical maxima for all
+eight path instruments. Plastic drums use separate
+`max_pro_cymbals_score` and `max_pro_drums_score` columns because cymbal-mode
+gems can score differently from the no-cymbal mode even though both originate
+from Epic's single `pd` chart. Schema initialization adds these nullable
+columns idempotently and includes them in the atomic path-metadata write guard.
 
 The exact relation inventory is intentionally source-driven because it changes
 frequently. `DatabaseInitializer` and its tests are the schema inventory;

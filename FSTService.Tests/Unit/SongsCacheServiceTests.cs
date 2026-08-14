@@ -25,6 +25,21 @@ public class SongsCacheServiceTests
     }
 
     [Fact]
+    public void Public_max_scores_include_both_plastic_drum_modes()
+    {
+        var result = SongsCacheService.BuildPublicMaxScores(
+            new SongMaxScores
+            {
+                MaxProCymbalsScore = 130_000,
+                MaxProDrumsScore = 125_000,
+            });
+
+        Assert.NotNull(result);
+        Assert.Equal(130_000, result["Solo_PeripheralCymbals"]);
+        Assert.Equal(125_000, result["Solo_PeripheralDrums"]);
+    }
+
+    [Fact]
     public void Get_Empty_ReturnsNull()
     {
         var cache = new SongsCacheService();

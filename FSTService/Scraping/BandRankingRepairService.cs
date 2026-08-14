@@ -81,6 +81,8 @@ public sealed class BandRankingRepairService
                         WHEN 3 THEN s.max_drums_score
                         WHEN 4 THEN s.max_pro_lead_score
                         WHEN 5 THEN s.max_pro_bass_score
+                        WHEN 6 THEN s.max_pro_drums_score
+                        WHEN 8 THEN s.max_pro_cymbals_score
                         ELSE NULL
                     END AS max_score
                 ) max_scores

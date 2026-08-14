@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-13
-last_verified_commit: af62aeef
+last_verified_commit: 53c11043
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -89,6 +89,10 @@ generation remains disabled by default and selects only pending songs; the
 protected admin route accepts one song at a time. CHOpt outputs are validated
 and promoted as immutable generations, and complete catalogue migrations must
 remain sequential and resumable. See [Path generation](path-generation.md).
+
+The worker's scrape, pruning, ranking, and statistics paths consume distinct
+CHOpt maxima for all eight generated instruments, including separate Pro Drums
+and Pro Drums + Cymbals thresholds.
 
 ## Two phase views
 
