@@ -1224,7 +1224,9 @@ describe('SettingsPage', () => {
     const bandIdRow = await screen.findByTestId('settings-service-info-row-selected-band-id');
     expect(bandIdRow).toHaveTextContent('Selected band ID');
     expect(bandIdRow).toHaveTextContent('band-1');
-    expect(screen.getByTestId('settings-service-info-row-selected-band-sync-status')).toHaveTextContent('Complete');
+    await waitFor(() => {
+      expect(screen.getByTestId('settings-service-info-row-selected-band-sync-status')).toHaveTextContent('Complete');
+    });
     expect(screen.getByTestId('settings-selected-profile-sync')).toBeDefined();
   });
 
