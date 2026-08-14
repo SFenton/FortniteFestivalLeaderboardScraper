@@ -2471,6 +2471,56 @@ public static class DatabaseInitializer
         CREATE INDEX IF NOT EXISTS ix_btc_band_team
             ON band_team_configurations (band_type, team_key);
 
+        DROP TRIGGER IF EXISTS
+            trg_band_entries_registration_mutation_guard
+            ON band_entries;
+        CREATE TRIGGER
+            trg_band_entries_registration_mutation_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON band_entries
+            FOR EACH STATEMENT
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
+        DROP TRIGGER IF EXISTS
+            trg_band_members_registration_mutation_guard
+            ON band_members;
+        CREATE TRIGGER
+            trg_band_members_registration_mutation_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON band_members
+            FOR EACH STATEMENT
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
+        DROP TRIGGER IF EXISTS
+            trg_band_team_membership_registration_mutation_guard
+            ON band_team_membership;
+        CREATE TRIGGER
+            trg_band_team_membership_registration_mutation_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON band_team_membership
+            FOR EACH STATEMENT
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
+        DROP TRIGGER IF EXISTS
+            trg_band_team_membership_state_registration_mutation_guard
+            ON band_team_membership_state;
+        CREATE TRIGGER
+            trg_band_team_membership_state_registration_mutation_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON band_team_membership_state
+            FOR EACH STATEMENT
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
+        DROP TRIGGER IF EXISTS
+            trg_band_team_configurations_registration_mutation_guard
+            ON band_team_configurations;
+        CREATE TRIGGER
+            trg_band_team_configurations_registration_mutation_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON band_team_configurations
+            FOR EACH STATEMENT
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
         CREATE TABLE IF NOT EXISTS band_identity (
             band_id            TEXT        PRIMARY KEY,
             band_type          TEXT        NOT NULL,

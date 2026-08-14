@@ -1,6 +1,7 @@
 using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FSTService.Tests.Unit;
 
@@ -472,6 +473,12 @@ public sealed class PathDataStoreTests : IDisposable
             gateState.ExecuteNonQuery();
         }
 
+        using var meta = new MetaDatabase(
+            _ds,
+            NullLogger<MetaDatabase>.Instance);
+        await using var maintenanceLease =
+            await meta.AcquireMaxScoreMaintenanceLeaseAsync(
+                500);
         var wrongFreeze =
             await _store.TryPromoteGenerationsAtomicallyAsync(
             [
@@ -482,6 +489,7 @@ public sealed class PathDataStoreTests : IDisposable
                 500,
                 1296,
                 freezeReason + "-wrong"),
+            maintenanceLease,
             CancellationToken.None);
         Assert.Equal(
             PathGenerationPromotionOutcome.Conflict,
@@ -503,6 +511,7 @@ public sealed class PathDataStoreTests : IDisposable
                 500,
                 1296,
                 freezeReason),
+            maintenanceLease,
             CancellationToken.None);
 
         Assert.Equal(

@@ -2357,11 +2357,36 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public int ComputeCurrentStateSongStats(Dictionary<string, int?>? maxScoresByInstrument = null, Dictionary<string, long>? realPopulation = null)
     {
         using var conn = _ds.OpenConnection();
-        var prevCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        using (var c = conn.CreateCommand()) { c.CommandText = "SELECT song_id, entry_count FROM song_stats WHERE instrument = @instrument"; c.Parameters.AddWithValue("instrument", Instrument); using var r = c.ExecuteReader(); while (r.Read()) prevCounts[r.GetString(0)] = r.GetInt32(1); }
-        var freshCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        using (var c = conn.CreateCommand())
+        using var tx = conn.BeginTransaction();
+        var count = ComputeCurrentStateSongStats(
+            maxScoresByInstrument,
+            realPopulation,
+            conn,
+            tx);
+        tx.Commit();
+        return count;
+    }
+
+    public int ComputeCurrentStateSongStats(
+        Dictionary<string, int?>? maxScoresByInstrument,
+        Dictionary<string, long>? realPopulation,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(transaction.Connection, connection))
         {
+            throw new ArgumentException(
+                "The song-stats transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
+        var prevCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        using (var c = connection.CreateCommand()) { c.Transaction = transaction; c.CommandText = "SELECT song_id, entry_count FROM song_stats WHERE instrument = @instrument"; c.Parameters.AddWithValue("instrument", Instrument); using var r = c.ExecuteReader(); while (r.Read()) prevCounts[r.GetString(0)] = r.GetInt32(1); }
+        var freshCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        using (var c = connection.CreateCommand())
+        {
+            c.Transaction = transaction;
             c.CommandText = BuildCurrentStateAllSongCountsSql();
             c.Parameters.AddWithValue("instrument", Instrument);
             using var r = c.ExecuteReader();
@@ -2369,8 +2394,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 freshCounts[r.GetString(0)] = r.GetInt32(1);
         }
         var allSongIds = new HashSet<string>(prevCounts.Keys.Concat(freshCounts.Keys), StringComparer.OrdinalIgnoreCase);
-        using var tx = conn.BeginTransaction();
-        using var cmd = conn.CreateCommand(); cmd.Transaction = tx;
+        using var cmd = connection.CreateCommand(); cmd.Transaction = transaction;
         cmd.CommandText = "INSERT INTO song_stats (song_id, instrument, entry_count, previous_entry_count, log_weight, max_score, computed_at) VALUES (@songId, @instrument, @entryCount, @prevCount, @logWeight, @maxScore, @now) ON CONFLICT(song_id, instrument) DO UPDATE SET previous_entry_count = song_stats.entry_count, entry_count = EXCLUDED.entry_count, log_weight = EXCLUDED.log_weight, max_score = EXCLUDED.max_score, computed_at = EXCLUDED.computed_at";
         var pSong = cmd.Parameters.Add("songId", NpgsqlTypes.NpgsqlDbType.Text); cmd.Parameters.AddWithValue("instrument", Instrument); var pEntry = cmd.Parameters.Add("entryCount", NpgsqlTypes.NpgsqlDbType.Integer); var pPrev = cmd.Parameters.Add("prevCount", NpgsqlTypes.NpgsqlDbType.Integer); var pLog = cmd.Parameters.Add("logWeight", NpgsqlTypes.NpgsqlDbType.Double); var pMax = cmd.Parameters.Add("maxScore", NpgsqlTypes.NpgsqlDbType.Integer); var pNow = cmd.Parameters.Add("now", NpgsqlTypes.NpgsqlDbType.TimestampTz); cmd.Prepare();
         int count = 0; var now = DateTime.UtcNow;
@@ -2384,7 +2408,6 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             pSong.Value = songId; pEntry.Value = entryCount; pPrev.Value = prev; pLog.Value = logWeight; pMax.Value = (object?)maxScore ?? DBNull.Value; pNow.Value = now;
             cmd.ExecuteNonQuery(); count++;
         }
-        tx.Commit();
         return count;
     }
 
@@ -2441,9 +2464,26 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public void PopulateValidScoreOverrides(IReadOnlyList<(string SongId, string AccountId, int Score, int? Accuracy, bool? IsFullCombo, int? Stars)> overrides)
     {
         using var conn = _ds.OpenConnection(); using var tx = conn.BeginTransaction();
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; var pName = GetPartitionName("valid_score_overrides"); c.CommandText = $"TRUNCATE {pName}"; c.ExecuteNonQuery(); }
-        if (overrides.Count > 0) { using var c = conn.CreateCommand(); c.Transaction = tx; c.CommandText = "INSERT INTO valid_score_overrides (song_id, instrument, account_id, score, accuracy, is_full_combo, stars) VALUES (@songId, @instrument, @accountId, @score, @accuracy, @fc, @stars)"; var pSong = c.Parameters.Add("songId", NpgsqlTypes.NpgsqlDbType.Text); c.Parameters.AddWithValue("instrument", Instrument); var pAcct = c.Parameters.Add("accountId", NpgsqlTypes.NpgsqlDbType.Text); var pScore = c.Parameters.Add("score", NpgsqlTypes.NpgsqlDbType.Integer); var pAcc = c.Parameters.Add("accuracy", NpgsqlTypes.NpgsqlDbType.Integer); var pFc = c.Parameters.Add("fc", NpgsqlTypes.NpgsqlDbType.Boolean); var pStars = c.Parameters.Add("stars", NpgsqlTypes.NpgsqlDbType.Integer); c.Prepare(); foreach (var o in overrides) { pSong.Value = o.SongId; pAcct.Value = o.AccountId; pScore.Value = o.Score; pAcc.Value = (object?)o.Accuracy ?? DBNull.Value; pFc.Value = (object?)o.IsFullCombo ?? DBNull.Value; pStars.Value = (object?)o.Stars ?? DBNull.Value; c.ExecuteNonQuery(); } }
+        PopulateValidScoreOverrides(overrides, conn, tx);
         tx.Commit();
+    }
+
+    public void PopulateValidScoreOverrides(
+        IReadOnlyList<(string SongId, string AccountId, int Score, int? Accuracy, bool? IsFullCombo, int? Stars)> overrides,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction)
+    {
+        ArgumentNullException.ThrowIfNull(overrides);
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(transaction.Connection, connection))
+        {
+            throw new ArgumentException(
+                "The score-override transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
+        using (var c = connection.CreateCommand()) { c.Transaction = transaction; var pName = GetPartitionName("valid_score_overrides"); c.CommandText = $"TRUNCATE {pName}"; c.ExecuteNonQuery(); }
+        if (overrides.Count > 0) { using var c = connection.CreateCommand(); c.Transaction = transaction; c.CommandText = "INSERT INTO valid_score_overrides (song_id, instrument, account_id, score, accuracy, is_full_combo, stars) VALUES (@songId, @instrument, @accountId, @score, @accuracy, @fc, @stars)"; var pSong = c.Parameters.Add("songId", NpgsqlTypes.NpgsqlDbType.Text); c.Parameters.AddWithValue("instrument", Instrument); var pAcct = c.Parameters.Add("accountId", NpgsqlTypes.NpgsqlDbType.Text); var pScore = c.Parameters.Add("score", NpgsqlTypes.NpgsqlDbType.Integer); var pAcc = c.Parameters.Add("accuracy", NpgsqlTypes.NpgsqlDbType.Integer); var pFc = c.Parameters.Add("fc", NpgsqlTypes.NpgsqlDbType.Boolean); var pStars = c.Parameters.Add("stars", NpgsqlTypes.NpgsqlDbType.Integer); c.Prepare(); foreach (var o in overrides) { pSong.Value = o.SongId; pAcct.Value = o.AccountId; pScore.Value = o.Score; pAcc.Value = (object?)o.Accuracy ?? DBNull.Value; pFc.Value = (object?)o.IsFullCombo ?? DBNull.Value; pStars.Value = (object?)o.Stars ?? DBNull.Value; c.ExecuteNonQuery(); } }
     }
 
     // ── Account rankings ─────────────────────────────────────────────
@@ -4022,15 +4062,34 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     }
 
     public void MaterializeCurrentStateValidEntries(NpgsqlConnection conn, double baseThreshold)
+        => MaterializeCurrentStateValidEntries(
+            conn,
+            transaction: null,
+            baseThreshold);
+
+    public void MaterializeCurrentStateValidEntries(
+        NpgsqlConnection conn,
+        NpgsqlTransaction? transaction,
+        double baseThreshold)
     {
+        ArgumentNullException.ThrowIfNull(conn);
+        if (transaction is not null
+            && !ReferenceEquals(transaction.Connection, conn))
+        {
+            throw new ArgumentException(
+                "The ranking materialization transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
         using (var c = conn.CreateCommand())
         {
+            c.Transaction = transaction;
             c.CommandText = "DROP TABLE IF EXISTS _valid_entries; DROP TABLE IF EXISTS _valid_entries_overrides";
             c.ExecuteNonQuery();
         }
 
         using (var c = conn.CreateCommand())
         {
+            c.Transaction = transaction;
             c.CommandTimeout = 0;
             c.CommandText = $"""
                 CREATE TEMP TABLE _valid_entries AS
@@ -4051,6 +4110,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
         using (var c = conn.CreateCommand())
         {
+            c.Transaction = transaction;
             c.CommandTimeout = 0;
             c.CommandText = @"
                 CREATE INDEX ON _valid_entries (account_id);
@@ -4060,6 +4120,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
         using (var c = conn.CreateCommand())
         {
+            c.Transaction = transaction;
             c.CommandText = $"""
                 CREATE TEMP TABLE _valid_entries_overrides AS
                 WITH current_rows AS (
@@ -4092,6 +4153,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
         using (var c = conn.CreateCommand())
         {
+            c.Transaction = transaction;
             c.CommandTimeout = 0;
             c.CommandText = "ANALYZE _valid_entries; ANALYZE _valid_entries_overrides";
             c.ExecuteNonQuery();
@@ -4107,6 +4169,33 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         int credibilityThreshold, double populationMedian, double thresholdMultiplier)
     {
         using var tx = conn.BeginTransaction();
+        var rows = ComputeAccountRankingsFromMaterialized(
+            conn,
+            tx,
+            totalChartedSongs,
+            credibilityThreshold,
+            populationMedian,
+            thresholdMultiplier);
+        tx.Commit();
+        return rows;
+    }
+
+    public int ComputeAccountRankingsFromMaterialized(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        int totalChartedSongs,
+        int credibilityThreshold,
+        double populationMedian,
+        double thresholdMultiplier)
+    {
+        ArgumentNullException.ThrowIfNull(conn);
+        ArgumentNullException.ThrowIfNull(tx);
+        if (!ReferenceEquals(tx.Connection, conn))
+        {
+            throw new ArgumentException(
+                "The account-ranking transaction must belong to the supplied connection.",
+                nameof(tx));
+        }
         using (var c = conn.CreateCommand())
         {
             c.Transaction = tx;
@@ -4143,7 +4232,6 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         cmd.Parameters.AddWithValue("now", computedAt);
         int rows = cmd.ExecuteNonQuery();
         UpsertAccountRankingStats(conn, tx, rows, computedAt);
-        tx.Commit();
         return rows;
     }
 

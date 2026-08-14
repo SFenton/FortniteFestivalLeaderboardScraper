@@ -553,10 +553,28 @@ public sealed class RankingsCalculatorTests : IDisposable
                 MakeEntry("p2", 1000, rank: 2),
             ]);
         proLeadDb.RecomputeAllRanks();
-        await _sut.ComputeForMaxScoreMaintenanceAsync(
-            service,
-            ["Solo_PeripheralGuitar"],
-            CancellationToken.None);
+            var scrapeId = _metaFixture.Db.StartScrapeRun();
+            _metaFixture.Db.CompleteScrapeRun(
+                scrapeId,
+                1,
+                1,
+                1,
+                1);
+            _metaFixture.Db.PublishScrapeRun(
+                scrapeId,
+                promoteCachedResponses: false);
+            var publicationId = _metaFixture.Db
+                .GetPublicationPointerState()
+                .CurrentPublicationId!.Value;
+            await using var maintenanceLease =
+                await _metaFixture.Db
+                    .AcquireMaxScoreMaintenanceLeaseAsync(
+                        publicationId);
+            await _sut.ComputeForMaxScoreMaintenanceAsync(
+                service,
+                ["Solo_PeripheralGuitar"],
+                maintenanceLease,
+                CancellationToken.None);
 
         Assert.Equal(
             1,

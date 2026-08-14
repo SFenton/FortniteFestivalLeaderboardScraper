@@ -23,7 +23,6 @@ public sealed class MaxScoreMaintenanceDerivedStateService
     private readonly BandCurrentProjectionBuilder _bandProjection;
     private readonly LeaderboardRivalsCalculator _leaderboardRivals;
     private readonly NpgsqlDataSource _dataSource;
-    private readonly ScraperOptions _options;
     private readonly ILogger<MaxScoreMaintenanceDerivedStateService> _log;
 
     public MaxScoreMaintenanceDerivedStateService(
@@ -44,17 +43,18 @@ public sealed class MaxScoreMaintenanceDerivedStateService
         _bandProjection = bandProjection;
         _leaderboardRivals = leaderboardRivals;
         _dataSource = dataSource;
-        _options = options.Value;
         _log = log;
     }
 
     public async Task<MaxScoreMaintenanceDerivedStateResult> RebuildAsync(
         MaxScoreMaintenanceManifest manifest,
         IReadOnlyList<Song> publishedCatalogSongs,
+        IMaxScoreMaintenanceLease maintenanceLease,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(publishedCatalogSongs);
+        ArgumentNullException.ThrowIfNull(maintenanceLease);
         if (publishedCatalogSongs.Count != manifest.CatalogSongCount)
         {
             throw new InvalidOperationException(
@@ -80,8 +80,19 @@ public sealed class MaxScoreMaintenanceDerivedStateService
             FestivalService.CreateFromSongCatalogSnapshot(
                 publishedCatalogSongs);
         var bandThresholdRowsUpdated =
-            _bandRankingRepair.RecomputeOverThresholdFlagsForSongs(
-                manifest.Songs.Select(song => song.SongId).ToArray());
+            await maintenanceLease.ExecuteTransactionAsync(
+                "derived-band-thresholds",
+                requireSourceLocks: true,
+                (connection, transaction, _) =>
+                    Task.FromResult(
+                        _bandRankingRepair
+                            .RecomputeOverThresholdFlagsForSongs(
+                                manifest.Songs
+                                    .Select(song => song.SongId)
+                                    .ToArray(),
+                                connection,
+                                transaction)),
+                ct: ct);
         var targetSongIds = manifest.Songs
             .Select(song => song.SongId)
             .ToHashSet(StringComparer.Ordinal);
@@ -102,8 +113,10 @@ public sealed class MaxScoreMaintenanceDerivedStateService
             .ToArray();
         if (bandScopes.Length > 0)
         {
-            var projection = await _bandProjection.RefreshScopesAsync(
+            var projection = await _bandProjection
+                .RefreshScopesForMaxScoreMaintenanceAsync(
                 bandScopes,
+                maintenanceLease,
                 ct: ct);
             if (projection.FailedScopes > 0
                 || projection.ScopeCount > 0
@@ -116,17 +129,20 @@ public sealed class MaxScoreMaintenanceDerivedStateService
         await _rankings.ComputeForMaxScoreMaintenanceAsync(
             festivalService,
             affectedInstruments,
+            maintenanceLease,
             ct);
 
         var affectedStatsAccounts =
             await LoadAffectedPlayerStatsAccountsAsync(
                 manifest,
                 ct);
-        await PlayerStatsTierRebuilder.RebuildAsync(
+        await PlayerStatsTierRebuilder
+            .RebuildForMaxScoreMaintenanceAsync(
             _persistence,
             _pathDataStore,
             affectedStatsAccounts,
             _log,
+            maintenanceLease,
             ct);
 
         var registeredAccounts = _persistence.Meta
@@ -134,23 +150,17 @@ public sealed class MaxScoreMaintenanceDerivedStateService
             .OrderBy(accountId => accountId, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var rivalsRebuilt = 0;
-        await Parallel.ForEachAsync(
-            registeredAccounts,
-            new ParallelOptions
-            {
-                CancellationToken = ct,
-                MaxDegreeOfParallelism = Math.Max(
-                    1,
-                    _options.LeaderboardRivalsMaxDegreeOfParallelism),
-            },
-            (accountId, _) =>
-            {
-                _leaderboardRivals.ComputeForUser(
+        foreach (var accountId in registeredAccounts)
+        {
+            ct.ThrowIfCancellationRequested();
+            await _leaderboardRivals
+                .ComputeForUserForMaxScoreMaintenanceAsync(
                     accountId,
-                    rankingsAuthoritative: true);
-                Interlocked.Increment(ref rivalsRebuilt);
-                return ValueTask.CompletedTask;
-            });
+                    maintenanceLease,
+                    rankingsAuthoritative: true,
+                    ct);
+            rivalsRebuilt++;
+        }
 
         return new MaxScoreMaintenanceDerivedStateResult(
             affectedInstruments.Length,

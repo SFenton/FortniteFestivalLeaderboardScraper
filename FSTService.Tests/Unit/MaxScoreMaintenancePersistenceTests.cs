@@ -842,10 +842,8 @@ public sealed class MaxScoreMaintenancePersistenceTests
                          .AcquireMaxScoreMaintenanceLeaseAsync(
                              publicationId))
         {
-            using var ambientLease =
-                maintenanceLease.EnterAmbientScope();
-            await maintenanceLease
-                .AcquireSourceLocksAsync();
+            await maintenanceLease.VerifyHeldAsync(
+                requireSourceLocks: true);
             queuedRegistration = Task.Run(async () =>
             {
                 await using var registrationLease =
@@ -907,6 +905,277 @@ public sealed class MaxScoreMaintenancePersistenceTests
                 "post-cache-account"));
     }
 
+    [Theory]
+    [InlineData("path-batch-promotion")]
+    [InlineData("rollback-checkpoint")]
+    [InlineData("derived-ranking-stats")]
+    [InlineData("notification-quarantine-alignment")]
+    [InlineData("cache-staging")]
+    public async Task Backend_loss_after_verification_rolls_back_representative_maintenance_commit(
+        string operation)
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        const long scrapeId = 1397;
+        const long publicationId = 597;
+        var manifestDigest = new string('6', 64);
+        var freezeReason =
+            PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
+            + manifestDigest;
+        using (var connection = dataSource.OpenConnection())
+        using (var seed = connection.CreateCommand())
+        {
+            seed.CommandText = """
+                CREATE TABLE maintenance_fence_probe (
+                    operation TEXT PRIMARY KEY,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+
+                INSERT INTO scrape_log (
+                    id, started_at, completed_at, status)
+                VALUES (
+                    @scrapeId,
+                    now() - interval '1 hour',
+                    now(),
+                    'completed');
+                INSERT INTO publication_generations (
+                    publication_id, scrape_id, status, created_at)
+                VALUES (
+                    @publicationId,
+                    @scrapeId,
+                    'current',
+                    now());
+                INSERT INTO scrape_publication_state (
+                    id,
+                    current_publication_id,
+                    published_scrape_id,
+                    public_reads_frozen,
+                    public_reads_frozen_at,
+                    public_reads_frozen_scrape_id,
+                    public_reads_frozen_reason,
+                    updated_at)
+                VALUES (
+                    TRUE,
+                    @publicationId,
+                    @scrapeId,
+                    TRUE,
+                    now(),
+                    @scrapeId,
+                    @freezeReason,
+                    now())
+                ON CONFLICT (id) DO UPDATE SET
+                    current_publication_id =
+                        EXCLUDED.current_publication_id,
+                    working_publication_id = NULL,
+                    published_scrape_id =
+                        EXCLUDED.published_scrape_id,
+                    public_reads_frozen = TRUE,
+                    public_reads_frozen_at = now(),
+                    public_reads_frozen_scrape_id =
+                        EXCLUDED.public_reads_frozen_scrape_id,
+                    public_reads_frozen_reason =
+                        EXCLUDED.public_reads_frozen_reason,
+                    updated_at = now();
+                INSERT INTO max_score_maintenance_runs (
+                    manifest_sha256,
+                    manifest_version,
+                    plan_digest,
+                    expected_published_scrape_id,
+                    expected_publication_id,
+                    expected_catalog_hash,
+                    expected_catalog_song_count,
+                    published_score_source_fingerprint,
+                    notification_state_fingerprint,
+                    rank_history_fingerprint,
+                    manifest_json,
+                    freeze_reason,
+                    phase,
+                    status)
+                VALUES (
+                    @manifestDigest,
+                    1,
+                    @planDigest,
+                    @scrapeId,
+                    @publicationId,
+                    @catalogHash,
+                    1,
+                    @scoreFingerprint,
+                    @notificationFingerprint,
+                    @rankFingerprint,
+                    '{}'::jsonb,
+                    @freezeReason,
+                    'freeze_established',
+                    'running');
+                """;
+            seed.Parameters.AddWithValue("scrapeId", scrapeId);
+            seed.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            seed.Parameters.AddWithValue(
+                "freezeReason",
+                freezeReason);
+            seed.Parameters.AddWithValue(
+                "manifestDigest",
+                manifestDigest);
+            seed.Parameters.AddWithValue(
+                "planDigest",
+                new string('7', 64));
+            seed.Parameters.AddWithValue(
+                "catalogHash",
+                new string('8', 64));
+            seed.Parameters.AddWithValue(
+                "scoreFingerprint",
+                new string('9', 64));
+            seed.Parameters.AddWithValue(
+                "notificationFingerprint",
+                new string('a', 64));
+            seed.Parameters.AddWithValue(
+                "rankFingerprint",
+                new string('b', 64));
+            seed.ExecuteNonQuery();
+        }
+
+        using var meta = new MetaDatabase(
+            dataSource,
+            NullLogger<MetaDatabase>.Instance);
+        var lostLease =
+            await meta.AcquireMaxScoreMaintenanceLeaseAsync(
+                publicationId);
+        meta.MaxScoreMaintenanceBeforeCommitTestHook =
+            context =>
+            {
+                Assert.Equal(operation, context.Operation);
+                using var terminator =
+                    dataSource.OpenConnection();
+                using var terminate =
+                    terminator.CreateCommand();
+                terminate.CommandText =
+                    "SELECT pg_terminate_backend(@backendProcessId)";
+                terminate.Parameters.AddWithValue(
+                    "backendProcessId",
+                    context.BackendProcessId);
+                Assert.True(terminate.ExecuteScalar() is true);
+            };
+        try
+        {
+            await Assert.ThrowsAsync<
+                MaxScoreMaintenanceLeaseLostException>(
+                () => lostLease.ExecuteTransactionAsync(
+                    operation,
+                    requireSourceLocks: true,
+                    async (connection, transaction, token) =>
+                    {
+                        await using var mutation =
+                            connection.CreateCommand();
+                        mutation.Transaction = transaction;
+                        mutation.CommandText = """
+                            INSERT INTO maintenance_fence_probe (
+                                operation)
+                            VALUES (@operation);
+                            UPDATE max_score_maintenance_runs
+                            SET phase = 'rollback_captured',
+                                promoted_song_count = 1,
+                                updated_at = now()
+                            WHERE manifest_sha256 =
+                                @manifestDigest;
+                            """;
+                        mutation.Parameters.AddWithValue(
+                            "operation",
+                            operation);
+                        mutation.Parameters.AddWithValue(
+                            "manifestDigest",
+                            manifestDigest);
+                        await mutation.ExecuteNonQueryAsync(token);
+                    }));
+        }
+        finally
+        {
+            meta.MaxScoreMaintenanceBeforeCommitTestHook =
+                null;
+        }
+        await lostLease.DisposeAsync();
+
+        using (var connection = dataSource.OpenConnection())
+        using (var verify = connection.CreateCommand())
+        {
+            verify.CommandText = """
+                SELECT
+                    (
+                        SELECT COUNT(*) = 0
+                        FROM maintenance_fence_probe
+                    ),
+                    (
+                        SELECT phase = 'freeze_established'
+                           AND promoted_song_count = 0
+                        FROM max_score_maintenance_runs
+                        WHERE manifest_sha256 =
+                            @manifestDigest
+                    ),
+                    public_reads_frozen,
+                    max_score_mutation_gate_token IS NOT NULL
+                FROM scrape_publication_state
+                WHERE id = TRUE
+                """;
+            verify.Parameters.AddWithValue(
+                "manifestDigest",
+                manifestDigest);
+            using var reader = verify.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.True(reader.GetBoolean(0));
+            Assert.True(reader.GetBoolean(1));
+            Assert.True(reader.GetBoolean(2));
+            Assert.True(reader.GetBoolean(3));
+        }
+
+        await using (var resumedLease =
+                     await meta
+                         .AcquireMaxScoreMaintenanceLeaseAsync(
+                             publicationId)
+                         .WaitAsync(TimeSpan.FromSeconds(5)))
+        {
+            await resumedLease.ExecuteTransactionAsync(
+                $"resume:{operation}",
+                requireSourceLocks: true,
+                async (connection, transaction, token) =>
+                {
+                    await using var resume =
+                        connection.CreateCommand();
+                    resume.Transaction = transaction;
+                    resume.CommandText = """
+                        INSERT INTO maintenance_fence_probe (
+                            operation)
+                        VALUES (@operation)
+                        """;
+                    resume.Parameters.AddWithValue(
+                        "operation",
+                        $"resume:{operation}");
+                    await resume.ExecuteNonQueryAsync(token);
+                });
+        }
+
+        using var resumedConnection =
+            dataSource.OpenConnection();
+        using var resumed = resumedConnection.CreateCommand();
+        resumed.CommandText = """
+            SELECT
+                EXISTS (
+                    SELECT 1
+                    FROM maintenance_fence_probe
+                    WHERE operation = @operation
+                ),
+                public_reads_frozen
+            FROM scrape_publication_state
+            WHERE id = TRUE
+            """;
+        resumed.Parameters.AddWithValue(
+            "operation",
+            $"resume:{operation}");
+        using var resumedReader = resumed.ExecuteReader();
+        Assert.True(resumedReader.Read());
+        Assert.True(resumedReader.GetBoolean(0));
+        Assert.True(resumedReader.GetBoolean(1));
+    }
+
     [Fact]
     public async Task Lost_maintenance_backend_refuses_final_publish_and_unfreeze_until_new_lease_resumes()
     {
@@ -928,25 +1197,35 @@ public sealed class MaxScoreMaintenancePersistenceTests
         var lostLease =
             await meta.AcquireMaxScoreMaintenanceLeaseAsync(
                 publicationId);
-        using (lostLease.EnterAmbientScope())
+        meta.MaxScoreMaintenanceBeforeCommitTestHook =
+            context =>
+            {
+                Assert.Equal(
+                    "final-cache-publication-unfreeze",
+                    context.Operation);
+                using var terminator =
+                    dataSource.OpenConnection();
+                using var terminate =
+                    terminator.CreateCommand();
+                terminate.CommandText =
+                    "SELECT pg_terminate_backend(@backendProcessId)";
+                terminate.Parameters.AddWithValue(
+                    "backendProcessId",
+                    context.BackendProcessId);
+                Assert.True(terminate.ExecuteScalar() is true);
+            };
+        try
         {
-            await lostLease.AcquireSourceLocksAsync();
-            using var terminator =
-                dataSource.OpenConnection();
-            using var terminate =
-                terminator.CreateCommand();
-            terminate.CommandText =
-                "SELECT pg_terminate_backend(@backendProcessId)";
-            terminate.Parameters.AddWithValue(
-                "backendProcessId",
-                lostLease.BackendProcessId);
-            Assert.True(terminate.ExecuteScalar() is true);
-
             await Assert.ThrowsAsync<
                 MaxScoreMaintenanceLeaseLostException>(
                 () => lostLease.CompleteAsync(
                     scrapeId,
                     manifestDigest));
+        }
+        finally
+        {
+            meta.MaxScoreMaintenanceBeforeCommitTestHook =
+                null;
         }
         await lostLease.DisposeAsync();
 
@@ -989,9 +1268,8 @@ public sealed class MaxScoreMaintenancePersistenceTests
                              publicationId)
                          .WaitAsync(TimeSpan.FromSeconds(5)))
         {
-            using var ambient =
-                resumedLease.EnterAmbientScope();
-            await resumedLease.AcquireSourceLocksAsync();
+            await resumedLease.VerifyHeldAsync(
+                requireSourceLocks: true);
             await resumedLease.CompleteAsync(
                 scrapeId,
                 manifestDigest);
@@ -1206,11 +1484,16 @@ public sealed class MaxScoreMaintenancePersistenceTests
             requireOwnedFreeze: true,
             CancellationToken.None);
 
+        await using var maintenanceLease =
+            await AcquireMaintenanceLeaseAsync(
+                dataSource,
+                manifest.ExpectedPublicationId);
         var result = await service.QuarantineAndAlignAsync(
             manifest,
             manifestDigest,
             planDigest,
             inspection.PublishedScoreSourceFingerprint,
+            maintenanceLease,
             CancellationToken.None);
 
         Assert.Equal(0, result.CandidateCount);
@@ -1398,11 +1681,16 @@ public sealed class MaxScoreMaintenancePersistenceTests
                 CancellationToken.None);
         Assert.Single(resumeInspection.Candidates);
 
+        await using var maintenanceLease =
+            await AcquireMaintenanceLeaseAsync(
+                dataSource,
+                manifest.ExpectedPublicationId);
         var result = await service.QuarantineAndAlignAsync(
             manifest,
             manifestDigest,
             planDigest,
             inspection.PublishedScoreSourceFingerprint,
+            maintenanceLease,
             CancellationToken.None);
 
         Assert.Equal(1, result.CandidateCount);
@@ -1530,11 +1818,16 @@ public sealed class MaxScoreMaintenancePersistenceTests
             CancellationToken.None);
         Assert.Empty(inspection.Candidates);
 
+        await using var maintenanceLease =
+            await AcquireMaintenanceLeaseAsync(
+                dataSource,
+                manifest.ExpectedPublicationId);
         var result = await service.QuarantineAndAlignAsync(
             manifest,
             manifestDigest,
             planDigest,
             inspection.PublishedScoreSourceFingerprint,
+            maintenanceLease,
             CancellationToken.None);
         Assert.Equal(0, result.CandidateCount);
 
@@ -1951,11 +2244,16 @@ public sealed class MaxScoreMaintenancePersistenceTests
             inspection.CandidateCount,
             resumeInspection.CandidateCount);
 
+        await using var maintenanceLease =
+            await AcquireMaintenanceLeaseAsync(
+                dataSource,
+                manifest.ExpectedPublicationId);
         var result = await service.QuarantineAndAlignAsync(
             manifest,
             manifestDigest,
             planDigest,
             inspection.PublishedScoreSourceFingerprint,
+            maintenanceLease,
             CancellationToken.None);
 
         Assert.Equal(18, result.CandidateCount);
@@ -2020,6 +2318,18 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     }),
                 NullLogger<
                     MaxScoreMaintenanceNotificationService>.Instance));
+    }
+
+    private static async Task<IMaxScoreMaintenanceLease>
+        AcquireMaintenanceLeaseAsync(
+            NpgsqlDataSource dataSource,
+            long publicationId)
+    {
+        var meta = new MetaDatabase(
+            dataSource,
+            NullLogger<MetaDatabase>.Instance);
+        return await meta.AcquireMaxScoreMaintenanceLeaseAsync(
+            publicationId);
     }
 
     private static ImprovementNotificationPrecomputeOptions

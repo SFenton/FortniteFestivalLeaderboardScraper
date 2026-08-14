@@ -79,9 +79,18 @@ public interface IInstrumentDatabase : IDisposable
     // ── Song stats ───────────────────────────────────────────────────
     int ComputeSongStats(Dictionary<string, int?>? maxScoresByInstrument = null, Dictionary<string, long>? realPopulation = null);
     int ComputeCurrentStateSongStats(Dictionary<string, int?>? maxScoresByInstrument = null, Dictionary<string, long>? realPopulation = null);
+    int ComputeCurrentStateSongStats(
+        Dictionary<string, int?>? maxScoresByInstrument,
+        Dictionary<string, long>? realPopulation,
+        Npgsql.NpgsqlConnection connection,
+        Npgsql.NpgsqlTransaction transaction);
     List<(string AccountId, string SongId)> GetOverThresholdEntries();
     List<(string AccountId, string SongId)> GetCurrentStateOverThresholdEntries();
     void PopulateValidScoreOverrides(IReadOnlyList<(string SongId, string AccountId, int Score, int? Accuracy, bool? IsFullCombo, int? Stars)> overrides);
+    void PopulateValidScoreOverrides(
+        IReadOnlyList<(string SongId, string AccountId, int Score, int? Accuracy, bool? IsFullCombo, int? Stars)> overrides,
+        Npgsql.NpgsqlConnection connection,
+        Npgsql.NpgsqlTransaction transaction);
 
     // ── Account rankings ─────────────────────────────────────────────
     int ComputeAccountRankings(int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5, double thresholdMultiplier = 1.05);
@@ -104,8 +113,19 @@ public interface IInstrumentDatabase : IDisposable
     // ── Materialized ranking pipeline ────────────────────────────────
     void MaterializeValidEntries(Npgsql.NpgsqlConnection conn, double baseThreshold);
     void MaterializeCurrentStateValidEntries(Npgsql.NpgsqlConnection conn, double baseThreshold);
+    void MaterializeCurrentStateValidEntries(
+        Npgsql.NpgsqlConnection conn,
+        Npgsql.NpgsqlTransaction? transaction,
+        double baseThreshold);
     int ComputeAccountRankingsFromMaterialized(Npgsql.NpgsqlConnection conn, int totalChartedSongs,
         int credibilityThreshold, double populationMedian, double thresholdMultiplier);
+    int ComputeAccountRankingsFromMaterialized(
+        Npgsql.NpgsqlConnection conn,
+        Npgsql.NpgsqlTransaction transaction,
+        int totalChartedSongs,
+        int credibilityThreshold,
+        double populationMedian,
+        double thresholdMultiplier);
     Npgsql.NpgsqlConnection OpenConnection();
 
     // ── Maintenance ──────────────────────────────────────────────────

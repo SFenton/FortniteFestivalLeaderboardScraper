@@ -90,9 +90,11 @@ derived rows while retaining the same published scrape/publication ID.
    waits for active registration/backfill/history lifecycles to drain. Its
    isolated lock session records a durable random owner token/backend identity,
    then takes path-generation and publication locks, creates or revalidates the
-   manifest-digest-owned public-read freeze, and only afterward takes source
-   table locks and persists subsequent checkpoints in fixed order.
-4. One transaction promotes every listed song generation. The in-process
+   manifest-digest-owned public-read freeze, and persists every later mutation
+   and checkpoint through bounded transactions on that same session. Each
+   dependent transaction takes source table locks in fixed order and verifies
+   the lease again immediately before commit.
+4. One lock-session transaction promotes every listed song generation. The in-process
    scraper admission cache refreshes immediately. Prior negative backfill
    checks and matching successful history-reconstruction checkpoints are
    removed only for newly usable path-backed pairs. Affected history status is
@@ -121,7 +123,7 @@ derived rows while retaining the same published scrape/publication ID.
    paths/maxima/song stats, rollback coverage, zero visible delivery, and the
    expected staged-cache count.
 8. Cache swap, workflow completion, durable-gate clear, and freeze release
-   commit atomically in the source-lock transaction on the live advisory-lock
+   commit atomically in a source-locked transaction on the live advisory-lock
    session. No queued registration write can commit between that cache cutover
    and lease release.
    Service processes invalidate path/song/response and scraper-admission caches
@@ -148,13 +150,17 @@ maintenance owns the gate, including before freeze creation. The lease has no
 transaction or publication-row lock and remains valid across long external
 async work under the production idle-transaction timeout.
 
-Each guarded phase revalidates the random session token, backend PID,
-advisory/durable owner, and source locks immediately before mutation.
-Registration/source-table triggers also reject the durable exclusive owner so
-a write surviving shared-backend loss cannot cross a new exclusive claim.
-Backend loss during maintenance leaves the durable gate/freeze in place and
-refuses final cache publication/unfreeze; only a newly validated resume lease
-may replace the stale owner and continue. Normal scrape freezes are unchanged.
+Each max-score mutation is explicitly submitted to the unpooled lease session;
+its transaction revalidates the random token, backend PID, advisory/durable
+owner, and source locks before work and immediately before commit. The durable
+band-write gate is unconditional for `band_entries`, members, member stats, and
+membership state, including memberless entries. Registration/source-table
+triggers also reject the durable exclusive owner so a write surviving
+shared-backend loss cannot cross a new exclusive claim. Backend loss during
+maintenance leaves the durable gate/freeze in place and refuses all later
+phase checkpoints, cache publication, and unfreeze; only a newly validated
+resume lease may replace the stale owner and continue. Normal scrape freezes
+are unchanged.
 
 ## Publication-aware API and browser
 

@@ -123,24 +123,28 @@ public sealed class ScrapeTimePrecomputer
             ct,
             publishImmediately,
             useExistingMaintenanceLease: false,
-            expectedPublicationId: null);
+            expectedPublicationId: null,
+            maintenanceLease: null);
 
     internal Task<long> StageCurrentPublicationCachesForMaintenanceAsync(
         long publicationId,
+        IMaxScoreMaintenanceLease maintenanceLease,
         CancellationToken ct)
         => PrecomputeAllCoreAsync(
             _metaDb.ShouldShowLeaderboardEntryTotals(),
             ct,
             publishImmediately: false,
             useExistingMaintenanceLease: true,
-            expectedPublicationId: publicationId);
+            expectedPublicationId: publicationId,
+            maintenanceLease: maintenanceLease);
 
     private async Task<long> PrecomputeAllCoreAsync(
         bool showLeaderboardEntryTotals,
         CancellationToken ct,
         bool publishImmediately,
         bool useExistingMaintenanceLease,
-        long? expectedPublicationId)
+        long? expectedPublicationId,
+        IMaxScoreMaintenanceLease? maintenanceLease)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         _log.LogInformation(
@@ -155,6 +159,7 @@ public sealed class ScrapeTimePrecomputer
         }
         if (useExistingMaintenanceLease
             && (publishImmediately
+                || maintenanceLease is null
                 || !expectedPublicationId.HasValue
                 || publicationPointers.CurrentPublicationId
                     != expectedPublicationId
@@ -175,9 +180,12 @@ public sealed class ScrapeTimePrecomputer
             : _metaDb.AcquirePublicationCacheBuildLease(
                 persistenceTargetPublicationId,
                 requireCurrentPublication: publishImmediately);
-        _metaDb.BulkSetCachedResponsesStaging(
-            [],
-            persistenceTargetPublicationId);
+        if (!useExistingMaintenanceLease)
+        {
+            _metaDb.BulkSetCachedResponsesStaging(
+                [],
+                persistenceTargetPublicationId);
+        }
         var instrumentKeys = _persistence.GetInstrumentKeys();
         var projectionStats = _soloCurrentProjectionBuilder?.Inspect();
         var candidateProjectionReady = true;
@@ -189,7 +197,11 @@ public sealed class ScrapeTimePrecomputer
             }
             else
             {
-                await _soloCurrentProjectionBuilder.EnsureSchemaAsync(ct);
+                if (!useExistingMaintenanceLease)
+                {
+                    await _soloCurrentProjectionBuilder
+                        .EnsureSchemaAsync(ct);
+                }
                 candidateProjectionReady =
                     (await _soloCurrentProjectionBuilder.LoadStaleScopesAsync(ct)).Count == 0
                     && !await _soloCurrentProjectionBuilder.HasOrphanedProjectionScopesAsync(ct);
@@ -271,10 +283,29 @@ public sealed class ScrapeTimePrecomputer
 
         // ── Flush from staging file to PostgreSQL staging table, then atomic swap ──
         _log.LogInformation("All phases complete. {Count:N0} records staged to disk.", staging.RecordCount);
-        staging.FlushToPostgres(
-            _metaDb,
-            useStaging: true,
-            publicationId: persistenceTargetPublicationId);
+        if (maintenanceLease is not null)
+        {
+            await maintenanceLease.ExecuteTransactionAsync(
+                "cache-staging",
+                requireSourceLocks: true,
+                (connection, transaction, _) =>
+                {
+                    staging.FlushToPostgres(
+                        _metaDb,
+                        persistenceTargetPublicationId,
+                        connection,
+                        transaction);
+                    return Task.CompletedTask;
+                },
+                ct: ct);
+        }
+        else
+        {
+            staging.FlushToPostgres(
+                _metaDb,
+                useStaging: true,
+                publicationId: persistenceTargetPublicationId);
+        }
         _log.LogInformation("Scrape-time precompute cache staging flush complete. publishImmediately={PublishImmediately}.", publishImmediately);
         if (publishImmediately)
         {

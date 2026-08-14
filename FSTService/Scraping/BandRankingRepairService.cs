@@ -86,15 +86,67 @@ public sealed class BandRankingRepairService
             overThresholdMultiplier);
     }
 
+    internal int RecomputeOverThresholdFlagsForSongs(
+        IReadOnlyCollection<string> songIds,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        IReadOnlyList<string>? bandTypes = null,
+        double overThresholdMultiplier = 1.05)
+    {
+        ArgumentNullException.ThrowIfNull(songIds);
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(transaction.Connection, connection))
+        {
+            throw new ArgumentException(
+                "The band-threshold transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
+        var normalizedSongIds = songIds
+            .Where(songId => !string.IsNullOrWhiteSpace(songId))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(songId => songId, StringComparer.Ordinal)
+            .ToArray();
+        if (normalizedSongIds.Length == 0)
+        {
+            throw new ArgumentException(
+                "Band threshold maintenance requires at least one song.",
+                nameof(songIds));
+        }
+
+        return RecomputeOverThresholdFlagsCore(
+            bandTypes,
+            normalizedSongIds,
+            overThresholdMultiplier,
+            connection,
+            transaction);
+    }
+
     private int RecomputeOverThresholdFlagsCore(
         IReadOnlyList<string>? bandTypes,
         IReadOnlyList<string>? songIds,
         double overThresholdMultiplier)
     {
+        using var conn = _dataSource.OpenConnection();
+        return RecomputeOverThresholdFlagsCore(
+            bandTypes,
+            songIds,
+            overThresholdMultiplier,
+            conn,
+            transaction: null);
+    }
+
+    private int RecomputeOverThresholdFlagsCore(
+        IReadOnlyList<string>? bandTypes,
+        IReadOnlyList<string>? songIds,
+        double overThresholdMultiplier,
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction)
+    {
         var resolved = ResolveBandTypes(bandTypes);
 
-        using var conn = _dataSource.OpenConnection();
-        using var cmd = conn.CreateCommand();
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
         cmd.CommandTimeout = 0;
         cmd.CommandText = """
             WITH member_thresholds AS (

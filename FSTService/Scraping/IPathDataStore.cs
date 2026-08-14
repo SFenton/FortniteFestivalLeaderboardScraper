@@ -27,8 +27,10 @@ public interface IPathDataStore
         TryPromoteGenerationsAtomicallyAsync(
             IReadOnlyList<PathGenerationPromotion> promotions,
             PathGenerationBatchPromotionGate gate,
+            IMaxScoreMaintenanceLease maintenanceLease,
             CancellationToken ct)
-        => TryPromoteGenerationsAtomicallyAsync(promotions, ct);
+        => throw new NotSupportedException(
+            "Fenced atomic path generation promotion is not supported by this store.");
     Task AppendPathGenerationErrorAsync(
         PathGenerationError error,
         CancellationToken ct);

@@ -221,7 +221,9 @@ public interface IMetaDatabase : IDisposable
     HashSet<(string SongId, string Instrument)> GetCheckedBackfillPairs(string accountId);
     RegistrationAdmissionResetResult ResetRegistrationProgressForAdmittedPairs(
         IReadOnlyCollection<SoloCurrentProjectionScopeKey> pairs,
-        string requiredMaxScoreFreezeReason);
+        string requiredMaxScoreFreezeReason,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction);
     BackfillSongProgressInfo? GetBackfillSongProgress(string accountId, int checkedPairs, int totalPairs);
 
     // ── History reconstruction ───────────────────────────────────────
@@ -263,6 +265,10 @@ public interface IMetaDatabase : IDisposable
     // ── Player stats tiers (leeway breakpoint system) ────────────────
     void UpsertPlayerStatsTiers(string accountId, string instrument, string tiersJson);
     void UpsertPlayerStatsTiersBatch(IReadOnlyList<PlayerStatsTiersRow> rows);
+    void UpsertPlayerStatsTiersBatch(
+        IReadOnlyList<PlayerStatsTiersRow> rows,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction);
     List<PlayerStatsTiersRow> GetPlayerStatsTiers(string accountId);
 
     // ── First seen season ────────────────────────────────────────────
@@ -306,6 +312,15 @@ public interface IMetaDatabase : IDisposable
         IReadOnlyList<LeaderboardRivalSongSampleRow> samples,
         IReadOnlyCollection<string>? completedRankMethods = null,
         IReadOnlyDictionary<string, int>? userRanks = null);
+    void ReplaceLeaderboardRivalsData(
+        string userId,
+        string instrument,
+        IReadOnlyList<LeaderboardRivalRow> rivals,
+        IReadOnlyList<LeaderboardRivalSongSampleRow> samples,
+        IReadOnlyCollection<string>? completedRankMethods,
+        IReadOnlyDictionary<string, int>? userRanks,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction);
     List<LeaderboardRivalRow> GetLeaderboardRivals(string userId, string? instrument = null, string? rankMethod = null, string? direction = null);
     Dictionary<string, int?> GetLeaderboardRivalUserRanks(
         string userId,
@@ -318,6 +333,10 @@ public interface IMetaDatabase : IDisposable
 
     // ── Composite rankings ───────────────────────────────────────────
     void ReplaceCompositeRankings(IReadOnlyList<CompositeRankingDto> rankings);
+    void ReplaceCompositeRankings(
+        IReadOnlyList<CompositeRankingDto> rankings,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction);
     (List<CompositeRankingDto> Entries, int TotalCount) GetCompositeRankings(int page = 1, int pageSize = 50);
     CompositeRankingDto? GetCompositeRanking(string accountId);
     (List<CompositeRankingDto> Above, CompositeRankingDto? Self, List<CompositeRankingDto> Below) GetCompositeRankingNeighborhood(string accountId, int radius = 5);
@@ -340,6 +359,12 @@ public interface IMetaDatabase : IDisposable
     void ReplaceComboLeaderboard(string comboId,
         IReadOnlyList<(string AccountId, double AdjustedRating, double WeightedRating, double FcRate, long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount)> entries,
         int totalAccounts);
+    void ReplaceComboLeaderboard(
+        string comboId,
+        IReadOnlyList<(string AccountId, double AdjustedRating, double WeightedRating, double FcRate, long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount)> entries,
+        int totalAccounts,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction);
     (List<ComboLeaderboardEntry> Entries, int TotalAccounts) GetComboLeaderboard(string comboId, string rankBy = "adjusted", int page = 1, int pageSize = 50);
     ComboLeaderboardEntry? GetComboRank(string comboId, string accountId, string rankBy = "adjusted");
     int GetComboTotalAccounts(string comboId);
@@ -347,6 +372,14 @@ public interface IMetaDatabase : IDisposable
     // ── Band team rankings ──────────────────────────────────────────
     void RebuildBandTeamRankings(string bandType, int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5, BandTeamRankingRebuildOptions? options = null);
     BandTeamRankingRebuildMetrics RebuildBandTeamRankingsMeasured(string bandType, int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5, BandTeamRankingRebuildOptions? options = null);
+    BandTeamRankingRebuildMetrics RebuildBandTeamRankingsMeasured(
+        string bandType,
+        int totalChartedSongs,
+        int credibilityThreshold,
+        double populationMedian,
+        BandTeamRankingRebuildOptions? options,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction);
     void PublishCurrentBandTeamRankings();
     void SnapshotBandRankHistory(string bandType, int retentionDays = 365);
     BandRankHistorySnapshotResult SnapshotBandRankHistoryChunked(string bandType, BandRankHistorySnapshotOptions options, long? jobId = null, CancellationToken ct = default);
@@ -408,6 +441,11 @@ public interface IMetaDatabase : IDisposable
     void BulkSetCachedResponsesStaging(
         IEnumerable<(string Key, byte[] Json, string ETag)> entries,
         long? publicationId = null);
+    void BulkSetCachedResponsesStaging(
+        IEnumerable<(string Key, byte[] Json, string ETag)> entries,
+        long? publicationId,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction);
 
     /// <summary>
     /// Atomically swap the staging table into the live api_response_cache table.

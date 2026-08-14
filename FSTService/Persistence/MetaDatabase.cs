@@ -11,6 +11,10 @@ using NpgsqlTypes;
 
 namespace FSTService.Persistence;
 
+internal sealed record MaxScoreMaintenanceCommitTestContext(
+    string Operation,
+    int BackendProcessId);
+
 /// <summary>
 /// Central metadata database (<see cref="IMetaDatabase"/> implementation).
 /// Uses NpgsqlDataSource (connection pooling) — MVCC handles concurrent reads/writes natively.
@@ -23,15 +27,13 @@ public sealed partial class MetaDatabase : IMetaDatabase
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         };
     private static readonly AsyncLocal<long?> PublicationCacheBuildTarget = new();
-        private static readonly AsyncLocal<long?>
-            CurrentPublicationMaintenanceTarget = new();
-        private static readonly AsyncLocal<MaxScoreMaintenanceLease?>
-            PublicationMaintenanceLease = new();
-        private readonly NpgsqlDataSource _ds;
-        private readonly PostgresUnpooledConnectionFactory
-            _unpooledConnections;
-        private readonly SemaphoreSlim _boundedRegistrationAdmissions;
-        private readonly ILogger<MetaDatabase> _log;
+    private static readonly AsyncLocal<long?>
+        CurrentPublicationMaintenanceTarget = new();
+    private readonly NpgsqlDataSource _ds;
+    private readonly PostgresUnpooledConnectionFactory
+        _unpooledConnections;
+    private readonly SemaphoreSlim _boundedRegistrationAdmissions;
+    private readonly ILogger<MetaDatabase> _log;
     private readonly BandRankHistoryOptions _bandRankHistoryOptions;
     private readonly PublicationCommitOptions _publicationCommitOptions;
     private readonly object _bandRankHistoryPollingSchemaLock = new();
@@ -43,6 +45,9 @@ public sealed partial class MetaDatabase : IMetaDatabase
         PublicReadFreezeReadTestHook
     { get; set; }
     internal Action? PublicReadFreezeWriteTestHook { get; set; }
+    internal Action<MaxScoreMaintenanceCommitTestContext>?
+        MaxScoreMaintenanceBeforeCommitTestHook
+    { get; set; }
 
     internal const int DataCollectionVersion = 3;
     internal const string WebTrackerDeviceId = "web-tracker";
@@ -3873,9 +3878,19 @@ public sealed partial class MetaDatabase : IMetaDatabase
     public RegistrationAdmissionResetResult
         ResetRegistrationProgressForAdmittedPairs(
             IReadOnlyCollection<SoloCurrentProjectionScopeKey> pairs,
-            string requiredMaxScoreFreezeReason)
+            string requiredMaxScoreFreezeReason,
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction)
     {
         ArgumentNullException.ThrowIfNull(pairs);
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(transaction.Connection, connection))
+        {
+            throw new ArgumentException(
+                "The registration admission reset transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
         if (string.IsNullOrWhiteSpace(
                 requiredMaxScoreFreezeReason)
             || !requiredMaxScoreFreezeReason.StartsWith(
@@ -3902,21 +3917,16 @@ public sealed partial class MetaDatabase : IMetaDatabase
         if (normalizedPairs.Length == 0)
             return new RegistrationAdmissionResetResult(0, 0, 0, 0);
 
-        var maintenanceLease =
-            PublicationMaintenanceLease.Value
-            ?? throw new MaxScoreMaintenanceLeaseLostException();
-        maintenanceLease.VerifyHeld(
-            requireSourceLocks: true);
-        using var conn = _ds.OpenConnection();
-        using var tx = conn.BeginTransaction(
-            IsolationLevel.RepeatableRead);
-        using (var guard = conn.CreateCommand())
+        using (var guard = connection.CreateCommand())
         {
-            guard.Transaction = tx;
+            guard.Transaction = transaction;
             guard.CommandText = """
                 SELECT public_reads_frozen,
                        public_reads_frozen_reason,
-                       max_score_mutation_gate_token
+                       max_score_mutation_gate_token,
+                       current_setting(
+                           'fst.max_score_maintenance_lease_token',
+                           TRUE)
                 FROM scrape_publication_state
                 WHERE id = TRUE
                 FOR SHARE
@@ -3930,9 +3940,10 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     requiredMaxScoreFreezeReason,
                     StringComparison.Ordinal)
                 || reader.IsDBNull(2)
+                || reader.IsDBNull(3)
                 || !string.Equals(
                     reader.GetString(2),
-                    maintenanceLease.LeaseToken,
+                    reader.GetString(3),
                     StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
@@ -3940,25 +3951,10 @@ public sealed partial class MetaDatabase : IMetaDatabase
             }
         }
 
-        using (var bypass = conn.CreateCommand())
-        {
-            bypass.Transaction = tx;
-            bypass.CommandText = """
-                SELECT set_config(
-                    'fst.max_score_registration_guard_bypass',
-                    @leaseToken,
-                    TRUE)
-                """;
-            bypass.Parameters.AddWithValue(
-                "leaseToken",
-                maintenanceLease.LeaseToken);
-            bypass.ExecuteScalar();
-        }
-
         var affectedAccounts = new List<string>();
-        using (var reset = conn.CreateCommand())
+        using (var reset = connection.CreateCommand())
         {
-            reset.Transaction = tx;
+            reset.Transaction = transaction;
             reset.CommandText = """
                 DELETE FROM backfill_progress progress
                 USING unnest(
@@ -3996,8 +3992,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
         var requeued = 0;
         if (accountIds.Length > 0)
         {
-            using var queue = conn.CreateCommand();
-            queue.Transaction = tx;
+            using var queue = connection.CreateCommand();
+            queue.Transaction = transaction;
             queue.CommandText = """
                 INSERT INTO backfill_status (
                     account_id,
@@ -4064,9 +4060,9 @@ public sealed partial class MetaDatabase : IMetaDatabase
         }
 
         var affectedHistoryAccounts = new List<string>();
-        using (var resetHistory = conn.CreateCommand())
+        using (var resetHistory = connection.CreateCommand())
         {
-            resetHistory.Transaction = tx;
+            resetHistory.Transaction = transaction;
             resetHistory.CommandText = """
                 DELETE FROM history_recon_progress progress
                 USING unnest(
@@ -4110,8 +4106,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 long AdmissionRevision)>();
         if (historyAccountIds.Length > 0)
         {
-            using var queueHistory = conn.CreateCommand();
-            queueHistory.Transaction = tx;
+            using var queueHistory = connection.CreateCommand();
+            queueHistory.Transaction = transaction;
             queueHistory.CommandText = """
                 UPDATE history_recon_status status
                 SET status = 'pending',
@@ -4165,8 +4161,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
 
         if (requeuedHistoryStates.Count > 0)
         {
-            using var fenceHistory = conn.CreateCommand();
-            fenceHistory.Transaction = tx;
+            using var fenceHistory = connection.CreateCommand();
+            fenceHistory.Transaction = transaction;
             fenceHistory.CommandText = """
                 UPDATE history_recon_progress progress
                 SET admission_revision =
@@ -4225,7 +4221,6 @@ public sealed partial class MetaDatabase : IMetaDatabase
             fenceHistory.ExecuteNonQuery();
         }
 
-        tx.Commit();
         return new RegistrationAdmissionResetResult(
             affectedAccounts.Count,
             requeued,
@@ -4804,18 +4799,37 @@ public sealed partial class MetaDatabase : IMetaDatabase
         if (rows.Count == 0) return;
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
+        UpsertPlayerStatsTiersBatch(rows, conn, tx);
+        tx.Commit();
+    }
 
+    public void UpsertPlayerStatsTiersBatch(
+        IReadOnlyList<PlayerStatsTiersRow> rows,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (rows.Count == 0)
+            return;
+        if (!ReferenceEquals(transaction.Connection, connection))
+        {
+            throw new ArgumentException(
+                "The player-stats transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
         if (rows.Count >= PlayerStatsTiersCopyThreshold)
         {
-            using (var createCmd = conn.CreateCommand())
+            using (var createCmd = connection.CreateCommand())
             {
-                createCmd.Transaction = tx;
+                createCmd.Transaction = transaction;
                 createCmd.CommandText = "CREATE TEMP TABLE _player_stats_tiers_staging (account_id TEXT NOT NULL, instrument TEXT NOT NULL, tiers_json TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL) ON COMMIT DROP";
                 createCmd.ExecuteNonQuery();
             }
 
             var copyNow = DateTime.UtcNow;
-            using (var writer = conn.BeginBinaryImport("COPY _player_stats_tiers_staging (account_id, instrument, tiers_json, updated_at) FROM STDIN (FORMAT BINARY)"))
+            using (var writer = connection.BeginBinaryImport("COPY _player_stats_tiers_staging (account_id, instrument, tiers_json, updated_at) FROM STDIN (FORMAT BINARY)"))
             {
                 foreach (var row in rows)
                 {
@@ -4828,9 +4842,9 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 writer.Complete();
             }
 
-            using (var mergeCmd = conn.CreateCommand())
+            using (var mergeCmd = connection.CreateCommand())
             {
-                mergeCmd.Transaction = tx;
+                mergeCmd.Transaction = transaction;
                 mergeCmd.CommandTimeout = 0;
                 mergeCmd.CommandText = """
                     INSERT INTO player_stats_tiers (account_id, instrument, tiers_json, updated_at)
@@ -4848,12 +4862,11 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 mergeCmd.ExecuteNonQuery();
             }
 
-            tx.Commit();
             return;
         }
 
-        using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
         cmd.CommandTimeout = 0;
         cmd.CommandText = "INSERT INTO player_stats_tiers (account_id, instrument, tiers_json, updated_at) VALUES (@accountId, @instrument, @tiers::jsonb, @now) ON CONFLICT(account_id, instrument) DO UPDATE SET tiers_json = EXCLUDED.tiers_json, updated_at = EXCLUDED.updated_at";
         var pAcct = cmd.Parameters.Add("accountId", NpgsqlTypes.NpgsqlDbType.Text);
@@ -4870,7 +4883,6 @@ public sealed partial class MetaDatabase : IMetaDatabase
             pNow.Value = now;
             cmd.ExecuteNonQuery();
         }
-        tx.Commit();
     }
 
     public List<PlayerStatsTiersRow> GetPlayerStatsTiers(string accountId)
@@ -5257,17 +5269,51 @@ public sealed partial class MetaDatabase : IMetaDatabase
     {
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "SET LOCAL synchronous_commit = off"; c.ExecuteNonQuery(); }
+        ReplaceLeaderboardRivalsData(
+            userId,
+            instrument,
+            rivals,
+            samples,
+            completedRankMethods,
+            userRanks,
+            conn,
+            tx);
+        tx.Commit();
+    }
+
+    public void ReplaceLeaderboardRivalsData(
+        string userId,
+        string instrument,
+        IReadOnlyList<LeaderboardRivalRow> rivals,
+        IReadOnlyList<LeaderboardRivalSongSampleRow> samples,
+        IReadOnlyCollection<string>? completedRankMethods,
+        IReadOnlyDictionary<string, int>? userRanks,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(userId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(instrument);
+        ArgumentNullException.ThrowIfNull(rivals);
+        ArgumentNullException.ThrowIfNull(samples);
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(transaction.Connection, connection))
+        {
+            throw new ArgumentException(
+                "The leaderboard-rivals transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
+        using (var c = connection.CreateCommand()) { c.Transaction = transaction; c.CommandText = "SET LOCAL synchronous_commit = off"; c.ExecuteNonQuery(); }
 
         // Delete existing rivals + samples for this user/instrument
-        using (var d = conn.CreateCommand()) { d.Transaction = tx; d.CommandText = "DELETE FROM leaderboard_rival_song_samples WHERE user_id = @uid AND instrument = @inst"; d.Parameters.AddWithValue("uid", userId); d.Parameters.AddWithValue("inst", instrument); d.ExecuteNonQuery(); }
-        using (var d = conn.CreateCommand()) { d.Transaction = tx; d.CommandText = "DELETE FROM leaderboard_rivals WHERE user_id = @uid AND instrument = @inst"; d.Parameters.AddWithValue("uid", userId); d.Parameters.AddWithValue("inst", instrument); d.ExecuteNonQuery(); }
-        using (var d = conn.CreateCommand()) { d.Transaction = tx; d.CommandText = "DELETE FROM leaderboard_rivals_state WHERE user_id = @uid AND instrument = @inst"; d.Parameters.AddWithValue("uid", userId); d.Parameters.AddWithValue("inst", instrument); d.ExecuteNonQuery(); }
+        using (var d = connection.CreateCommand()) { d.Transaction = transaction; d.CommandText = "DELETE FROM leaderboard_rival_song_samples WHERE user_id = @uid AND instrument = @inst"; d.Parameters.AddWithValue("uid", userId); d.Parameters.AddWithValue("inst", instrument); d.ExecuteNonQuery(); }
+        using (var d = connection.CreateCommand()) { d.Transaction = transaction; d.CommandText = "DELETE FROM leaderboard_rivals WHERE user_id = @uid AND instrument = @inst"; d.Parameters.AddWithValue("uid", userId); d.Parameters.AddWithValue("inst", instrument); d.ExecuteNonQuery(); }
+        using (var d = connection.CreateCommand()) { d.Transaction = transaction; d.CommandText = "DELETE FROM leaderboard_rivals_state WHERE user_id = @uid AND instrument = @inst"; d.Parameters.AddWithValue("uid", userId); d.Parameters.AddWithValue("inst", instrument); d.ExecuteNonQuery(); }
 
         if (completedRankMethods is { Count: > 0 })
         {
-            using var state = conn.CreateCommand();
-            state.Transaction = tx;
+            using var state = connection.CreateCommand();
+            state.Transaction = transaction;
             state.CommandText = """
                 INSERT INTO leaderboard_rivals_state (
                     user_id, instrument, rank_method, user_rank, computed_at)
@@ -5292,7 +5338,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
         // Insert rivals
         if (rivals.Count > 0)
         {
-            using var writer = conn.BeginBinaryImport(
+            using var writer = connection.BeginBinaryImport(
                 "COPY leaderboard_rivals (user_id, rival_account_id, instrument, rank_method, direction, user_rank, rival_rank, shared_song_count, ahead_count, behind_count, avg_signed_delta, computed_at) FROM STDIN (FORMAT BINARY)");
             foreach (var r in rivals)
             {
@@ -5317,7 +5363,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
         // Insert samples
         if (samples.Count > 0)
         {
-            using var writer = conn.BeginBinaryImport(
+            using var writer = connection.BeginBinaryImport(
                 "COPY leaderboard_rival_song_samples (user_id, rival_account_id, instrument, rank_method, song_id, user_rank, rival_rank, rank_delta, user_score, rival_score) FROM STDIN (FORMAT BINARY)");
             foreach (var s in samples)
             {
@@ -5336,8 +5382,6 @@ public sealed partial class MetaDatabase : IMetaDatabase
 
             writer.Complete();
         }
-
-        tx.Commit();
     }
 
     public List<LeaderboardRivalRow> GetLeaderboardRivals(string userId, string? instrument = null, string? rankMethod = null, string? direction = null)
@@ -5407,12 +5451,30 @@ public sealed partial class MetaDatabase : IMetaDatabase
     {
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "TRUNCATE composite_rankings"; c.ExecuteNonQuery(); }
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "SET LOCAL synchronous_commit = off"; c.ExecuteNonQuery(); }
+        ReplaceCompositeRankings(rankings, conn, tx);
+        tx.Commit();
+    }
+
+    public void ReplaceCompositeRankings(
+        IReadOnlyList<CompositeRankingDto> rankings,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction)
+    {
+        ArgumentNullException.ThrowIfNull(rankings);
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(transaction.Connection, connection))
+        {
+            throw new ArgumentException(
+                "The composite-ranking transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
+        using (var c = connection.CreateCommand()) { c.Transaction = transaction; c.CommandText = "TRUNCATE composite_rankings"; c.ExecuteNonQuery(); }
+        using (var c = connection.CreateCommand()) { c.Transaction = transaction; c.CommandText = "SET LOCAL synchronous_commit = off"; c.ExecuteNonQuery(); }
         if (rankings.Count > 0)
         {
             var now = DateTime.UtcNow;
-            using var writer = conn.BeginBinaryImport(
+            using var writer = connection.BeginBinaryImport(
                 "COPY composite_rankings (account_id, instruments_played, total_songs_played, composite_rating, composite_rank, guitar_adjusted_skill, guitar_skill_rank, bass_adjusted_skill, bass_skill_rank, drums_adjusted_skill, drums_skill_rank, vocals_adjusted_skill, vocals_skill_rank, pro_guitar_adjusted_skill, pro_guitar_skill_rank, pro_bass_adjusted_skill, pro_bass_skill_rank, pro_vocals_adjusted_skill, pro_vocals_skill_rank, pro_cymbals_adjusted_skill, pro_cymbals_skill_rank, pro_drums_adjusted_skill, pro_drums_skill_rank, composite_rating_weighted, composite_rank_weighted, composite_rating_fcrate, composite_rank_fcrate, composite_rating_totalscore, composite_rank_totalscore, composite_rating_maxscore, composite_rank_maxscore, computed_at) FROM STDIN (FORMAT BINARY)");
             foreach (var rv in rankings)
             {
@@ -5450,10 +5512,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 WriteNullableInt(writer, rv.CompositeRankMaxScore);
                 writer.Write(now, NpgsqlDbType.TimestampTz);
             }
-
             writer.Complete();
         }
-        tx.Commit();
     }
 
     public (List<CompositeRankingDto> Entries, int TotalCount) GetCompositeRankings(int page = 1, int pageSize = 50) { using var conn = _ds.OpenConnection(); int total; using (var c = conn.CreateCommand()) { c.CommandText = "SELECT COUNT(*) FROM composite_rankings"; total = Convert.ToInt32(c.ExecuteScalar()); } using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id, instruments_played, total_songs_played, composite_rating, composite_rank, guitar_adjusted_skill, guitar_skill_rank, bass_adjusted_skill, bass_skill_rank, drums_adjusted_skill, drums_skill_rank, vocals_adjusted_skill, vocals_skill_rank, pro_guitar_adjusted_skill, pro_guitar_skill_rank, pro_bass_adjusted_skill, pro_bass_skill_rank, pro_vocals_adjusted_skill, pro_vocals_skill_rank, pro_cymbals_adjusted_skill, pro_cymbals_skill_rank, pro_drums_adjusted_skill, pro_drums_skill_rank, composite_rating_weighted, composite_rank_weighted, composite_rating_fcrate, composite_rank_fcrate, composite_rating_totalscore, composite_rank_totalscore, composite_rating_maxscore, composite_rank_maxscore, computed_at FROM composite_rankings ORDER BY composite_rank ASC LIMIT @limit OFFSET @offset"; cmd.Parameters.AddWithValue("limit", pageSize); cmd.Parameters.AddWithValue("offset", (page - 1) * pageSize); var list = new List<CompositeRankingDto>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadCompositeRanking(r)); return (list, total); }
@@ -5779,14 +5839,40 @@ public sealed partial class MetaDatabase : IMetaDatabase
     {
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "SET LOCAL synchronous_commit = off"; c.ExecuteNonQuery(); }
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "DELETE FROM combo_leaderboard WHERE combo_id = @id"; c.Parameters.AddWithValue("id", comboId); c.ExecuteNonQuery(); }
+        ReplaceComboLeaderboard(
+            comboId,
+            entries,
+            totalAccounts,
+            conn,
+            tx);
+        tx.Commit();
+    }
+
+    public void ReplaceComboLeaderboard(
+        string comboId,
+        IReadOnlyList<(string AccountId, double AdjustedRating, double WeightedRating, double FcRate, long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount)> entries,
+        int totalAccounts,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(comboId);
+        ArgumentNullException.ThrowIfNull(entries);
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(transaction.Connection, connection))
+        {
+            throw new ArgumentException(
+                "The combo-ranking transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
+        using (var c = connection.CreateCommand()) { c.Transaction = transaction; c.CommandText = "SET LOCAL synchronous_commit = off"; c.ExecuteNonQuery(); }
+        using (var c = connection.CreateCommand()) { c.Transaction = transaction; c.CommandText = "DELETE FROM combo_leaderboard WHERE combo_id = @id"; c.Parameters.AddWithValue("id", comboId); c.ExecuteNonQuery(); }
         var now = DateTime.UtcNow;
         if (entries.Count > 0)
         {
-            using (var c = conn.CreateCommand())
+            using (var c = connection.CreateCommand())
             {
-                c.Transaction = tx;
+                c.Transaction = transaction;
                 c.CommandText = """
                     CREATE TEMP TABLE _combo_leaderboard_staging (
                         combo_id TEXT,
@@ -5804,7 +5890,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 c.ExecuteNonQuery();
             }
 
-            using (var writer = conn.BeginBinaryImport(
+            using (var writer = connection.BeginBinaryImport(
                 "COPY _combo_leaderboard_staging (combo_id, account_id, adjusted_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, computed_at) FROM STDIN (FORMAT BINARY)"))
             {
                 foreach (var e in entries)
@@ -5825,9 +5911,9 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 writer.Complete();
             }
 
-            using (var c = conn.CreateCommand())
+            using (var c = connection.CreateCommand())
             {
-                c.Transaction = tx;
+                c.Transaction = transaction;
                 c.CommandText = """
                     INSERT INTO combo_leaderboard (
                         combo_id, account_id, adjusted_rating, weighted_rating, fc_rate,
@@ -5840,8 +5926,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 c.ExecuteNonQuery();
             }
         }
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "INSERT INTO combo_stats (combo_id, total_accounts, computed_at) VALUES (@id, @total, @now) ON CONFLICT(combo_id) DO UPDATE SET total_accounts = EXCLUDED.total_accounts, computed_at = EXCLUDED.computed_at"; c.Parameters.AddWithValue("id", comboId); c.Parameters.AddWithValue("total", totalAccounts); c.Parameters.AddWithValue("now", now); c.ExecuteNonQuery(); }
-        tx.Commit();
+        using (var c = connection.CreateCommand()) { c.Transaction = transaction; c.CommandText = "INSERT INTO combo_stats (combo_id, total_accounts, computed_at) VALUES (@id, @total, @now) ON CONFLICT(combo_id) DO UPDATE SET total_accounts = EXCLUDED.total_accounts, computed_at = EXCLUDED.computed_at"; c.Parameters.AddWithValue("id", comboId); c.Parameters.AddWithValue("total", totalAccounts); c.Parameters.AddWithValue("now", now); c.ExecuteNonQuery(); }
     }
 
     public (List<ComboLeaderboardEntry> Entries, int TotalAccounts) GetComboLeaderboard(string comboId, string rankBy = "adjusted", int page = 1, int pageSize = 50) { using var conn = _ds.OpenConnection(); int total; using (var c = conn.CreateCommand()) { c.CommandText = "SELECT total_accounts FROM combo_stats WHERE combo_id = @id"; c.Parameters.AddWithValue("id", comboId); var r2 = c.ExecuteScalar(); total = r2 is DBNull or null ? 0 : Convert.ToInt32(r2); } var orderBy = ComboRankOrderBy(rankBy); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT ROW_NUMBER() OVER (ORDER BY {orderBy}) AS rank, account_id, adjusted_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, computed_at FROM combo_leaderboard WHERE combo_id = @id ORDER BY {orderBy} LIMIT @limit OFFSET @offset"; cmd.Parameters.AddWithValue("id", comboId); cmd.Parameters.AddWithValue("limit", pageSize); cmd.Parameters.AddWithValue("offset", (page - 1) * pageSize); var list = new List<ComboLeaderboardEntry>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadComboEntry(r)); return (list, total); }
@@ -5935,6 +6020,37 @@ public sealed partial class MetaDatabase : IMetaDatabase
 
     public BandTeamRankingRebuildMetrics RebuildBandTeamRankingsMeasured(string bandType, int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5, BandTeamRankingRebuildOptions? options = null)
     {
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        var metrics = RebuildBandTeamRankingsMeasured(
+            bandType,
+            totalChartedSongs,
+            credibilityThreshold,
+            populationMedian,
+            options,
+            conn,
+            tx);
+        tx.Commit();
+        return metrics;
+    }
+
+    public BandTeamRankingRebuildMetrics RebuildBandTeamRankingsMeasured(
+        string bandType,
+        int totalChartedSongs,
+        int credibilityThreshold,
+        double populationMedian,
+        BandTeamRankingRebuildOptions? options,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(transaction.Connection, connection))
+        {
+            throw new ArgumentException(
+                "The band-ranking transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
         var resolvedOptions = ResolveBandTeamRankingRebuildOptions(options);
         var expectedMembers = BandInstrumentMapping.ExpectedMemberCount(bandType);
         var totalSw = Stopwatch.StartNew();
@@ -5952,8 +6068,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
         var resultRowCount = 0;
         var statsRowCount = 0;
         var rankingGeneration = 0L;
-        using var conn = _ds.OpenConnection();
-        using var tx = conn.BeginTransaction();
+        var conn = connection;
+        var tx = transaction;
 
         try
         {
@@ -6114,11 +6230,6 @@ public sealed partial class MetaDatabase : IMetaDatabase
             deleteExistingMs = RoundElapsed(swapSw);
             LogBandRebuildStage(bandType, resolvedOptions, "swap_current", deleteExistingMs);
             lastCompletedStage = "swap_current";
-
-            currentStage = "commit";
-            tx.Commit();
-            LogBandRebuildStage(bandType, resolvedOptions, "commit", 0d);
-            lastCompletedStage = "commit";
 
             totalSw.Stop();
             var metrics = new BandTeamRankingRebuildMetrics(
@@ -11964,15 +12075,38 @@ public sealed partial class MetaDatabase : IMetaDatabase
         if (!IsPublicationCacheBuildLockHeld(publicationId)
             && !IsPublicationMaintenanceLockHeld(publicationId))
             AcquirePublicationCacheMutationLock(conn, tx);
-        publicationId = ResolveCacheTargetPublicationId(
+        BulkSetCachedResponsesStaging(
+            entries,
+            publicationId,
             conn,
-            tx,
+            tx);
+        tx.Commit();
+    }
+
+    public void BulkSetCachedResponsesStaging(
+        IEnumerable<(string Key, byte[] Json, string ETag)> entries,
+        long? publicationId,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(transaction.Connection, connection))
+        {
+            throw new ArgumentException(
+                "The cache staging transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
+        publicationId = ResolveCacheTargetPublicationId(
+            connection,
+            transaction,
             publicationId);
 
         // Start with a clean staging table
-        using (var trunc = conn.CreateCommand())
+        using (var trunc = connection.CreateCommand())
         {
-            trunc.Transaction = tx;
+            trunc.Transaction = transaction;
             trunc.CommandText = publicationId.HasValue
                 ? """
                   TRUNCATE api_response_cache_staging;
@@ -11985,8 +12119,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
             trunc.ExecuteNonQuery();
         }
 
-        using var legacy = conn.CreateCommand();
-        legacy.Transaction = tx;
+        using var legacy = connection.CreateCommand();
+        legacy.Transaction = transaction;
         legacy.CommandText = """
             INSERT INTO api_response_cache_staging (cache_key, json_data, etag, cached_at)
             VALUES (@key, @json, @etag, now())
@@ -11997,8 +12131,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
         legacy.Parameters.Add(new NpgsqlParameter("etag", NpgsqlDbType.Text));
         legacy.Prepare();
 
-        using var generation = conn.CreateCommand();
-        generation.Transaction = tx;
+        using var generation = connection.CreateCommand();
+        generation.Transaction = transaction;
         generation.CommandText = """
             INSERT INTO publication_api_response_cache_staging (
                 publication_id, cache_key, json_data, etag, cached_at)
@@ -12031,7 +12165,6 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 generation.ExecuteNonQuery();
             }
         }
-        tx.Commit();
     }
 
     public void SwapCachedResponsesFromStaging(long? publicationId = null)
@@ -12112,7 +12245,6 @@ public sealed partial class MetaDatabase : IMetaDatabase
     }
 
     private void CompleteMaxScoreMaintenance(
-        MaxScoreMaintenanceLease lease,
         NpgsqlConnection conn,
         NpgsqlTransaction tx,
         long publicationId,
@@ -12306,7 +12438,6 @@ public sealed partial class MetaDatabase : IMetaDatabase
             swap.ExecuteNonQuery();
         }
 
-        lease.VerifyHeld(requireSourceLocks: true);
         using (var release = conn.CreateCommand())
         {
             release.Transaction = tx;
@@ -12384,8 +12515,6 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     "Atomic max-score cache publication and unfreeze did not complete.");
             }
         }
-
-        tx.Commit();
     }
 
     private static long? ReadCacheTargetPublicationId(
@@ -12425,24 +12554,9 @@ public sealed partial class MetaDatabase : IMetaDatabase
 
     private static bool IsPublicationMaintenanceLockHeld(
         long? publicationId)
-    {
-        if (CurrentPublicationMaintenanceTarget.Value.HasValue
-            && CurrentPublicationMaintenanceTarget.Value.Value
-                == (publicationId ?? 0))
-        {
-            return true;
-        }
-
-        var lease = PublicationMaintenanceLease.Value;
-        if (lease is null
-            || lease.PublicationId != (publicationId ?? 0))
-        {
-            return false;
-        }
-
-        lease.VerifyHeld(requireSourceLocks: true);
-        return true;
-    }
+        => CurrentPublicationMaintenanceTarget.Value.HasValue
+           && CurrentPublicationMaintenanceTarget.Value.Value
+               == (publicationId ?? 0);
 
     private static void ReleasePublicationCacheBuildLocks(
         NpgsqlConnection connection,
@@ -12778,8 +12892,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
     {
         private readonly MetaDatabase _owner;
         private NpgsqlConnection? _connection;
-        private NpgsqlTransaction? _sourceLockTransaction;
         private readonly string _leaseToken;
+        private readonly SemaphoreSlim _operationGate = new(1, 1);
         private bool _completionCommitted;
 
         public MaxScoreMaintenanceLease(
@@ -12798,29 +12912,25 @@ public sealed partial class MetaDatabase : IMetaDatabase
 
         public int BackendProcessId { get; }
         public long PublicationId { get; }
-        public string LeaseToken => _leaseToken;
-
-        public IDisposable EnterAmbientScope()
-            => new PublicationMaintenanceAmbientScope(
-                this);
 
         public void VerifyHeld(bool requireSourceLocks)
         {
-            var connection = _connection
-                ?? throw new MaxScoreMaintenanceLeaseLostException();
-            if (requireSourceLocks
-                && _sourceLockTransaction is null)
-            {
-                throw new MaxScoreMaintenanceLeaseLostException();
-            }
-
+            _operationGate.Wait();
             try
             {
-                using var command = CreateVerificationCommand(
-                    connection,
-                    requireSourceLocks);
-                if (command.ExecuteScalar() is not true)
-                    throw new MaxScoreMaintenanceLeaseLostException();
+                var connection = _connection
+                    ?? throw new MaxScoreMaintenanceLeaseLostException();
+                if (!requireSourceLocks)
+                {
+                    VerifyOwnedConnection(connection, transaction: null);
+                    return;
+                }
+
+                using var transaction = connection.BeginTransaction();
+                ConfigureOwnedTransaction(connection, transaction);
+                AcquireSourceLocks(connection, transaction);
+                VerifyOwnedConnection(connection, transaction);
+                transaction.Commit();
             }
             catch (MaxScoreMaintenanceLeaseLostException)
             {
@@ -12830,27 +12940,45 @@ public sealed partial class MetaDatabase : IMetaDatabase
             {
                 throw new MaxScoreMaintenanceLeaseLostException(ex);
             }
+            finally
+            {
+                _operationGate.Release();
+            }
         }
 
         public async Task VerifyHeldAsync(
             bool requireSourceLocks,
             CancellationToken ct = default)
         {
-            var connection = _connection
-                ?? throw new MaxScoreMaintenanceLeaseLostException();
-            if (requireSourceLocks
-                && _sourceLockTransaction is null)
-            {
-                throw new MaxScoreMaintenanceLeaseLostException();
-            }
-
+            await _operationGate.WaitAsync(ct);
             try
             {
-                await using var command = CreateVerificationCommand(
+                var connection = _connection
+                    ?? throw new MaxScoreMaintenanceLeaseLostException();
+                if (!requireSourceLocks)
+                {
+                    await VerifyOwnedConnectionAsync(
+                        connection,
+                        transaction: null,
+                        ct);
+                    return;
+                }
+
+                await using var transaction =
+                    await connection.BeginTransactionAsync(ct);
+                await ConfigureOwnedTransactionAsync(
                     connection,
-                    requireSourceLocks);
-                if (await command.ExecuteScalarAsync(ct) is not true)
-                    throw new MaxScoreMaintenanceLeaseLostException();
+                    transaction,
+                    ct);
+                await AcquireSourceLocksAsync(
+                    connection,
+                    transaction,
+                    ct);
+                await VerifyOwnedConnectionAsync(
+                    connection,
+                    transaction,
+                    ct);
+                await transaction.CommitAsync(ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -12864,65 +12992,55 @@ public sealed partial class MetaDatabase : IMetaDatabase
             {
                 throw new MaxScoreMaintenanceLeaseLostException(ex);
             }
+            finally
+            {
+                _operationGate.Release();
+            }
         }
 
-        public async Task AcquireSourceLocksAsync(
+        public Task ExecuteTransactionAsync(
+            string operation,
+            bool requireSourceLocks,
+            Func<
+                NpgsqlConnection,
+                NpgsqlTransaction,
+                CancellationToken,
+                Task> action,
+            IsolationLevel isolationLevel =
+                IsolationLevel.ReadCommitted,
+            CancellationToken ct = default)
+            => ExecuteTransactionAsync<object?>(
+                operation,
+                requireSourceLocks,
+                async (connection, transaction, token) =>
+                {
+                    await action(connection, transaction, token);
+                    return null;
+                },
+                isolationLevel,
+                ct);
+
+        public async Task<T> ExecuteTransactionAsync<T>(
+            string operation,
+            bool requireSourceLocks,
+            Func<
+                NpgsqlConnection,
+                NpgsqlTransaction,
+                CancellationToken,
+                Task<T>> action,
+            IsolationLevel isolationLevel =
+                IsolationLevel.ReadCommitted,
             CancellationToken ct = default)
         {
-            if (_sourceLockTransaction is not null)
-            {
-                await VerifyHeldAsync(
-                    requireSourceLocks: true,
-                    ct);
-                return;
-            }
-            await VerifyHeldAsync(
-                requireSourceLocks: false,
+            ArgumentException.ThrowIfNullOrWhiteSpace(operation);
+            ArgumentNullException.ThrowIfNull(action);
+            return await ExecuteOwnedTransactionAsync(
+                operation,
+                requireSourceLocks,
+                action,
+                isolationLevel,
+                verifyAfterAction: true,
                 ct);
-            var connection = _connection
-                ?? throw new MaxScoreMaintenanceLeaseLostException();
-            var transaction =
-                await connection.BeginTransactionAsync(ct);
-            try
-            {
-                await using (var timeouts =
-                             connection.CreateCommand())
-                {
-                    timeouts.Transaction = transaction;
-                    timeouts.CommandText = """
-                        SET LOCAL lock_timeout = '5s';
-                        SET LOCAL statement_timeout = '30s';
-                        SET LOCAL idle_in_transaction_session_timeout = 0;
-                        """;
-                    await timeouts.ExecuteNonQueryAsync(ct);
-                }
-                await using (var sourceLocks =
-                             connection.CreateCommand())
-                {
-                    sourceLocks.Transaction = transaction;
-                    sourceLocks.CommandText =
-                        MaxScoreMaintenanceSourceLockSql;
-                    await sourceLocks.ExecuteNonQueryAsync(ct);
-                }
-                _sourceLockTransaction = transaction;
-                await VerifyHeldAsync(
-                    requireSourceLocks: true,
-                    ct);
-            }
-            catch
-            {
-                _sourceLockTransaction = null;
-                try
-                {
-                    await transaction.RollbackAsync(
-                        CancellationToken.None);
-                }
-                finally
-                {
-                    await transaction.DisposeAsync();
-                }
-                throw;
-            }
         }
 
         public async Task CompleteAsync(
@@ -12931,24 +13049,24 @@ public sealed partial class MetaDatabase : IMetaDatabase
             CancellationToken ct = default)
         {
             ct.ThrowIfCancellationRequested();
-            await VerifyHeldAsync(
+            await ExecuteOwnedTransactionAsync<object?>(
+                "final-cache-publication-unfreeze",
                 requireSourceLocks: true,
+                (connection, transaction, _) =>
+                {
+                    _owner.CompleteMaxScoreMaintenance(
+                        connection,
+                        transaction,
+                        PublicationId,
+                        publishedScrapeId,
+                        manifestSha256,
+                        _leaseToken);
+                    return Task.FromResult<object?>(null);
+                },
+                IsolationLevel.Serializable,
+                verifyAfterAction: false,
                 ct);
-            var connection = _connection
-                ?? throw new MaxScoreMaintenanceLeaseLostException();
-            var transaction = _sourceLockTransaction
-                ?? throw new MaxScoreMaintenanceLeaseLostException();
-            _owner.CompleteMaxScoreMaintenance(
-                this,
-                connection,
-                transaction,
-                PublicationId,
-                publishedScrapeId,
-                manifestSha256,
-                _leaseToken);
-            _sourceLockTransaction = null;
             _completionCommitted = true;
-            await transaction.DisposeAsync();
         }
 
         public void Dispose()
@@ -12956,18 +13074,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
             var connection = Interlocked.Exchange(ref _connection, null);
             if (connection is null)
                 return;
-            var transaction = Interlocked.Exchange(
-                ref _sourceLockTransaction,
-                null);
             try
             {
-                try
-                {
-                    transaction?.Rollback();
-                }
-                catch
-                {
-                }
                 try
                 {
                     if (!_completionCommitted)
@@ -12994,7 +13102,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
             }
             finally
             {
-                transaction?.Dispose();
+                _operationGate.Dispose();
                 connection.Dispose();
             }
         }
@@ -13006,23 +13114,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 null);
             if (connection is null)
                 return;
-            var transaction = Interlocked.Exchange(
-                ref _sourceLockTransaction,
-                null);
             try
             {
-                if (transaction is not null)
-                {
-                    try
-                    {
-                        await transaction.RollbackAsync(
-                            CancellationToken.None);
-                    }
-                    catch
-                    {
-                    }
-                }
-
                 try
                 {
                     if (!_completionCommitted)
@@ -13067,19 +13160,217 @@ public sealed partial class MetaDatabase : IMetaDatabase
             }
             finally
             {
-                if (transaction is not null)
-                    await transaction.DisposeAsync();
+                _operationGate.Dispose();
                 await connection.DisposeAsync();
+            }
+        }
+
+        private async Task<T> ExecuteOwnedTransactionAsync<T>(
+            string operation,
+            bool requireSourceLocks,
+            Func<
+                NpgsqlConnection,
+                NpgsqlTransaction,
+                CancellationToken,
+                Task<T>> action,
+            IsolationLevel isolationLevel,
+            bool verifyAfterAction,
+            CancellationToken ct)
+        {
+            await _operationGate.WaitAsync(ct);
+            var commitStarted = false;
+            try
+            {
+                var connection = _connection
+                    ?? throw new MaxScoreMaintenanceLeaseLostException();
+                await using var transaction =
+                    await connection.BeginTransactionAsync(
+                        isolationLevel,
+                        ct);
+                await ConfigureOwnedTransactionAsync(
+                    connection,
+                    transaction,
+                    ct);
+                if (requireSourceLocks)
+                {
+                    await AcquireSourceLocksAsync(
+                        connection,
+                        transaction,
+                        ct);
+                }
+                await VerifyOwnedConnectionAsync(
+                    connection,
+                    transaction,
+                    ct,
+                    requireSourceLocks);
+
+                var result = await action(
+                    connection,
+                    transaction,
+                    ct);
+                await using (var durableCommit =
+                             connection.CreateCommand())
+                {
+                    durableCommit.Transaction = transaction;
+                    durableCommit.CommandText =
+                        "SET LOCAL synchronous_commit = on";
+                    await durableCommit.ExecuteNonQueryAsync(ct);
+                }
+                if (verifyAfterAction)
+                {
+                    await VerifyOwnedConnectionAsync(
+                        connection,
+                        transaction,
+                        ct,
+                        requireSourceLocks);
+                }
+
+                _owner.MaxScoreMaintenanceBeforeCommitTestHook
+                    ?.Invoke(new MaxScoreMaintenanceCommitTestContext(
+                        operation,
+                        BackendProcessId));
+                commitStarted = true;
+                await transaction.CommitAsync(ct);
+                return result;
+            }
+            catch (OperationCanceledException) when (
+                ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (MaxScoreMaintenanceLeaseLostException)
+            {
+                throw;
+            }
+            catch (Exception ex) when (
+                commitStarted
+                || _connection is null
+                || _connection.State != ConnectionState.Open)
+            {
+                throw new MaxScoreMaintenanceLeaseLostException(ex);
+            }
+            finally
+            {
+                _operationGate.Release();
+            }
+        }
+
+        private void ConfigureOwnedTransaction(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction)
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                SET LOCAL lock_timeout = '5s';
+                SET LOCAL statement_timeout = 0;
+                SET LOCAL idle_in_transaction_session_timeout = 0;
+                SELECT set_config(
+                    'fst.max_score_registration_guard_bypass',
+                    @leaseToken,
+                    TRUE);
+                """;
+            command.Parameters.AddWithValue(
+                "leaseToken",
+                _leaseToken);
+            command.ExecuteNonQuery();
+        }
+
+        private async Task ConfigureOwnedTransactionAsync(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            CancellationToken ct)
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                SET LOCAL lock_timeout = '5s';
+                SET LOCAL statement_timeout = 0;
+                SET LOCAL idle_in_transaction_session_timeout = 0;
+                SELECT set_config(
+                    'fst.max_score_registration_guard_bypass',
+                    @leaseToken,
+                    TRUE);
+                """;
+            command.Parameters.AddWithValue(
+                "leaseToken",
+                _leaseToken);
+            await command.ExecuteNonQueryAsync(ct);
+        }
+
+        private static void AcquireSourceLocks(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction)
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText =
+                MaxScoreMaintenanceSourceLockSql;
+            command.ExecuteNonQuery();
+        }
+
+        private static async Task AcquireSourceLocksAsync(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            CancellationToken ct)
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText =
+                MaxScoreMaintenanceSourceLockSql;
+            await command.ExecuteNonQueryAsync(ct);
+        }
+
+        private void VerifyOwnedConnection(
+            NpgsqlConnection connection,
+            NpgsqlTransaction? transaction)
+        {
+            using var command = CreateVerificationCommand(
+                connection,
+                transaction,
+                requireSourceLocks: transaction is not null);
+            if (command.ExecuteScalar() is not true)
+                throw new MaxScoreMaintenanceLeaseLostException();
+        }
+
+        private async Task VerifyOwnedConnectionAsync(
+            NpgsqlConnection connection,
+            NpgsqlTransaction? transaction,
+            CancellationToken ct,
+            bool requireSourceLocks = false)
+        {
+            await using var command = CreateVerificationCommand(
+                connection,
+                transaction,
+                requireSourceLocks);
+            try
+            {
+                if (await command.ExecuteScalarAsync(ct) is not true)
+                    throw new MaxScoreMaintenanceLeaseLostException();
+            }
+            catch (OperationCanceledException) when (
+                ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (MaxScoreMaintenanceLeaseLostException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new MaxScoreMaintenanceLeaseLostException(ex);
             }
         }
 
         private NpgsqlCommand CreateVerificationCommand(
             NpgsqlConnection connection,
+            NpgsqlTransaction? transaction,
             bool requireSourceLocks)
         {
             var command = connection.CreateCommand();
             command.CommandTimeout = 5;
-            command.Transaction = _sourceLockTransaction;
+            command.Transaction = transaction;
             command.CommandText = """
                 SELECT
                     pg_backend_pid() = @backendProcessId
@@ -13157,30 +13448,6 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 "requireSourceLocks",
                 requireSourceLocks);
             return command;
-        }
-    }
-
-    private sealed class PublicationMaintenanceAmbientScope
-        : IDisposable
-    {
-        private readonly MaxScoreMaintenanceLease? _previousLease;
-        private bool _disposed;
-
-        public PublicationMaintenanceAmbientScope(
-            MaxScoreMaintenanceLease lease)
-        {
-            _previousLease =
-                PublicationMaintenanceLease.Value;
-            PublicationMaintenanceLease.Value = lease;
-        }
-
-        public void Dispose()
-        {
-            if (_disposed)
-                return;
-            _disposed = true;
-            PublicationMaintenanceLease.Value =
-                _previousLease;
         }
     }
 

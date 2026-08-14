@@ -118,8 +118,44 @@ public sealed class MaxScoreMaintenanceNotificationService
             string manifestSha256,
             string planDigest,
             string expectedScoreSourceFingerprint,
+            IMaxScoreMaintenanceLease maintenanceLease,
             CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(maintenanceLease);
+        return await maintenanceLease.ExecuteTransactionAsync(
+            "notification-quarantine",
+            requireSourceLocks: true,
+            (connection, transaction, token) =>
+                QuarantineAndAlignInTransactionAsync(
+                    manifest,
+                    manifestSha256,
+                    planDigest,
+                    expectedScoreSourceFingerprint,
+                    connection,
+                    transaction,
+                    token),
+            IsolationLevel.RepeatableRead,
+            ct);
+    }
+
+    private async Task<MaxScoreMaintenanceNotificationQuarantineResult>
+        QuarantineAndAlignInTransactionAsync(
+            MaxScoreMaintenanceManifest manifest,
+            string manifestSha256,
+            string planDigest,
+            string expectedScoreSourceFingerprint,
+            NpgsqlConnection conn,
+            NpgsqlTransaction tx,
+            CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(conn);
+        ArgumentNullException.ThrowIfNull(tx);
+        if (!ReferenceEquals(tx.Connection, conn))
+        {
+            throw new ArgumentException(
+                "The notification quarantine transaction must belong to the supplied connection.",
+                nameof(tx));
+        }
         var normalizedManifest = manifest.ValidateAndNormalize();
         var normalizedManifestDigest =
             MaxScoreMaintenanceManifest.NormalizeSha256(
@@ -167,10 +203,6 @@ public sealed class MaxScoreMaintenanceNotificationService
             .Select(song => song.SongId)
             .ToHashSet(StringComparer.Ordinal);
 
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
-        await using var tx = await conn.BeginTransactionAsync(
-            IsolationLevel.RepeatableRead,
-            ct);
         await ConfigureTransactionAsync(conn, tx, ct);
         await LockAndValidateOwnedPublicationAsync(
             conn,
@@ -345,8 +377,6 @@ public sealed class MaxScoreMaintenanceNotificationService
             tx,
             normalizedManifest.ExpectedPublishedScrapeId,
             ct);
-        await tx.CommitAsync(ct);
-
         _log.LogInformation(
             "Persisted max-score notification quarantine for scrape {ScrapeId}: candidates={CandidateCount:N0}, stateRows={StateRows:N0}, visible=0.",
             normalizedManifest.ExpectedPublishedScrapeId,

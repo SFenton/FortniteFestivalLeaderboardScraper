@@ -3384,13 +3384,11 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                      await maintenanceTask.WaitAsync(
                          TimeSpan.FromSeconds(5)))
         {
-            using var ambientLease =
-                maintenanceLease.EnterAmbientScope();
             metaDb.SetPublicReadFreeze(
                 true,
                 reason: freezeReason);
-            await maintenanceLease
-                .AcquireSourceLocksAsync();
+            await maintenanceLease.VerifyHeldAsync(
+                requireSourceLocks: true);
         }
 
         Assert.True(

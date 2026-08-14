@@ -325,22 +325,38 @@ public sealed class PathDataStore : IPathDataStore
         => await TryPromoteGenerationsAtomicallyCoreAsync(
             promotions,
             gate: null,
+            connection: null,
+            transaction: null,
             ct);
 
     public async Task<PathGenerationBatchPromotionResult>
         TryPromoteGenerationsAtomicallyAsync(
             IReadOnlyList<PathGenerationPromotion> promotions,
             PathGenerationBatchPromotionGate gate,
+            IMaxScoreMaintenanceLease maintenanceLease,
             CancellationToken ct)
-        => await TryPromoteGenerationsAtomicallyCoreAsync(
-            promotions,
-            gate ?? throw new ArgumentNullException(nameof(gate)),
-            ct);
+    {
+        ArgumentNullException.ThrowIfNull(maintenanceLease);
+        return await maintenanceLease.ExecuteTransactionAsync(
+            "path-batch-promotion",
+            requireSourceLocks: true,
+            (connection, transaction, token) =>
+                TryPromoteGenerationsAtomicallyCoreAsync(
+                    promotions,
+                    gate ?? throw new ArgumentNullException(
+                        nameof(gate)),
+                    connection,
+                    transaction,
+                    token),
+            ct: ct);
+    }
 
     private async Task<PathGenerationBatchPromotionResult>
-        TryPromoteGenerationsAtomicallyCoreAsync(
+            TryPromoteGenerationsAtomicallyCoreAsync(
             IReadOnlyList<PathGenerationPromotion> promotions,
             PathGenerationBatchPromotionGate? gate,
+            NpgsqlConnection? connection,
+            NpgsqlTransaction? transaction,
             CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(promotions);
@@ -365,8 +381,29 @@ public sealed class PathDataStore : IPathDataStore
                 nameof(promotions));
         }
 
-        await using var conn = await _ds.OpenConnectionAsync(ct);
-        await using var tx = await conn.BeginTransactionAsync(ct);
+        if ((connection is null) != (transaction is null))
+        {
+            throw new ArgumentException(
+                "A supplied path-promotion connection requires its transaction.");
+        }
+        if (connection is not null
+            && !ReferenceEquals(transaction!.Connection, connection))
+        {
+            throw new ArgumentException(
+                "The path-promotion transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
+
+        NpgsqlConnection? ownedConnection = null;
+        NpgsqlTransaction? ownedTransaction = null;
+        var conn = connection
+            ?? (ownedConnection =
+                await _ds.OpenConnectionAsync(ct));
+        var tx = transaction
+            ?? (ownedTransaction =
+                await conn.BeginTransactionAsync(ct));
+        try
+        {
         await using (var timeout = conn.CreateCommand())
         {
             timeout.Transaction = tx;
@@ -415,7 +452,8 @@ public sealed class PathDataStore : IPathDataStore
             await reader.DisposeAsync();
             if (!publicationGateValid)
             {
-                await tx.RollbackAsync(ct);
+                if (ownedTransaction is not null)
+                    await tx.RollbackAsync(ct);
                 return new PathGenerationBatchPromotionResult(
                     PathGenerationPromotionOutcome.Conflict,
                     0);
@@ -455,7 +493,8 @@ public sealed class PathDataStore : IPathDataStore
         {
             if (!current.TryGetValue(promotion.SongId, out var state))
             {
-                await tx.RollbackAsync(ct);
+                if (ownedTransaction is not null)
+                    await tx.RollbackAsync(ct);
                 return new PathGenerationBatchPromotionResult(
                     PathGenerationPromotionOutcome.SongMissing,
                     0,
@@ -466,7 +505,8 @@ public sealed class PathDataStore : IPathDataStore
                     state.CatalogLastModified,
                     promotion.SongLastModified))
             {
-                await tx.RollbackAsync(ct);
+                if (ownedTransaction is not null)
+                    await tx.RollbackAsync(ct);
                 return new PathGenerationBatchPromotionResult(
                     PathGenerationPromotionOutcome.Conflict,
                     0,
@@ -568,7 +608,8 @@ public sealed class PathDataStore : IPathDataStore
                 promotion.ExpectedInstruments.ToArray();
             if (await update.ExecuteNonQueryAsync(ct) != 1)
             {
-                await tx.RollbackAsync(ct);
+                if (ownedTransaction is not null)
+                    await tx.RollbackAsync(ct);
                 return new PathGenerationBatchPromotionResult(
                     PathGenerationPromotionOutcome.Conflict,
                     0,
@@ -576,11 +617,22 @@ public sealed class PathDataStore : IPathDataStore
             }
         }
 
-        await tx.CommitAsync(ct);
-        InvalidateMaxScoresCache();
+        if (ownedTransaction is not null)
+        {
+            await tx.CommitAsync(ct);
+            InvalidateMaxScoresCache();
+        }
         return new PathGenerationBatchPromotionResult(
             PathGenerationPromotionOutcome.Promoted,
             ordered.Length);
+        }
+        finally
+        {
+            if (ownedTransaction is not null)
+                await ownedTransaction.DisposeAsync();
+            if (ownedConnection is not null)
+                await ownedConnection.DisposeAsync();
+        }
     }
 
     public async Task AppendPathGenerationErrorAsync(

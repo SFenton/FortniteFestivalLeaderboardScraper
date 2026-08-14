@@ -1,3 +1,4 @@
+using System.Data;
 using Npgsql;
 
 namespace FSTService.Persistence;
@@ -12,12 +13,29 @@ public interface IRegistrationMutationLease : IDisposable, IAsyncDisposable
 public interface IMaxScoreMaintenanceLease : IDisposable, IAsyncDisposable
 {
     int BackendProcessId { get; }
-    IDisposable EnterAmbientScope();
+    long PublicationId { get; }
     void VerifyHeld(bool requireSourceLocks);
     Task VerifyHeldAsync(
         bool requireSourceLocks,
         CancellationToken ct = default);
-    Task AcquireSourceLocksAsync(CancellationToken ct = default);
+    /// <summary>
+    /// Runs and commits one mutation on the unpooled lock-owning session.
+    /// The callback must not commit or replace the supplied transaction.
+    /// </summary>
+    Task ExecuteTransactionAsync(
+        string operation,
+        bool requireSourceLocks,
+        Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task>
+            action,
+        IsolationLevel isolationLevel = IsolationLevel.ReadCommitted,
+        CancellationToken ct = default);
+    Task<T> ExecuteTransactionAsync<T>(
+        string operation,
+        bool requireSourceLocks,
+        Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task<T>>
+            action,
+        IsolationLevel isolationLevel = IsolationLevel.ReadCommitted,
+        CancellationToken ct = default);
     Task CompleteAsync(
         long publishedScrapeId,
         string manifestSha256,
@@ -70,6 +88,70 @@ internal static class RegistrationMutationGate
            && exception.MessageText.StartsWith(
                "Registration mutation rejected ",
                StringComparison.Ordinal);
+
+    public static void AssertTransactionAllowed(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(transaction.Connection, connection))
+        {
+            throw new ArgumentException(
+                "The registration mutation transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
+
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandTimeout = 5;
+            command.CommandText = """
+                WITH state AS (
+                    SELECT
+                        public_reads_frozen,
+                        public_reads_frozen_reason,
+                        max_score_mutation_gate_token,
+                        current_setting(
+                            'fst.max_score_registration_guard_bypass',
+                            TRUE) AS guard_bypass
+                    FROM scrape_publication_state
+                    WHERE id = TRUE
+                    FOR SHARE
+                )
+                SELECT
+                    (
+                        max_score_mutation_gate_token IS NULL
+                        OR guard_bypass =
+                            max_score_mutation_gate_token
+                    )
+                    AND (
+                        NOT (
+                            public_reads_frozen
+                            AND public_reads_frozen_reason
+                                LIKE 'max-score-maintenance:v1:%'
+                        )
+                        OR guard_bypass =
+                            max_score_mutation_gate_token
+                        OR guard_bypass =
+                            public_reads_frozen_reason
+                    )
+                FROM state
+                """;
+            if (command.ExecuteScalar() is not true)
+                throw new RegistrationMutationBlockedException();
+        }
+        catch (RegistrationMutationBlockedException)
+        {
+            throw;
+        }
+        catch (PostgresException ex)
+            when (IsDatabaseFenceRejection(ex))
+        {
+            throw new RegistrationMutationBlockedException(ex);
+        }
+    }
 }
 
 public sealed class PostgresUnpooledConnectionFactory

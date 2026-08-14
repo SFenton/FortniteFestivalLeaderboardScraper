@@ -129,9 +129,12 @@ dependencies, recalculates target-song band validity, refreshes affected band
 current-projection scopes, rebuilds dependent band rankings, and explicitly
 skips solo/composite/band rank-history snapshots. See the
 [max-score correction runbook](../database/MaxScoreCorrectionMaintenanceRunbook.md).
-The final cache swap, completed checkpoint, durable-gate clear, and unfreeze
-commit through the live source-lock-owning session; backend loss leaves the
-freeze/gate durable and requires a new validated resume lease.
+Every max-score database mutation and checkpoint commits through a bounded
+source-locked transaction on the live unpooled advisory-lock session; ordinary
+pooled connections are read-only for that workflow. The final cache swap,
+completed checkpoint, durable-gate clear, and unfreeze use one such
+transaction. Backend loss leaves the freeze/gate durable and requires a new
+validated resume lease.
 
 The worker's scrape, pruning, ranking, and statistics paths consume distinct
 CHOpt maxima for all eight generated instruments, including separate Pro Drums

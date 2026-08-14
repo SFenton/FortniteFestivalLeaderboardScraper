@@ -148,11 +148,13 @@ public sealed class RankingsCalculator
             scrapeId,
             instrumentsToRebuild: null,
             includeRankHistory: true,
-            rebuildBandRankings: true);
+            rebuildBandRankings: true,
+            maintenanceLease: null);
 
     internal Task ComputeForMaxScoreMaintenanceAsync(
         FestivalService festivalService,
         IReadOnlyCollection<string> affectedInstruments,
+        IMaxScoreMaintenanceLease maintenanceLease,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(affectedInstruments);
@@ -170,9 +172,10 @@ public sealed class RankingsCalculator
             festivalService,
             ct,
             scrapeId: 0,
-            instruments,
+            instrumentsToRebuild: instruments,
             includeRankHistory: false,
-            rebuildBandRankings: true);
+            rebuildBandRankings: true,
+            maintenanceLease: maintenanceLease);
     }
 
     private async Task ComputeAllCoreAsync(
@@ -181,7 +184,8 @@ public sealed class RankingsCalculator
         long scrapeId,
         IReadOnlyList<string>? instrumentsToRebuild,
         bool includeRankHistory,
-        bool rebuildBandRankings)
+        bool rebuildBandRankings,
+        IMaxScoreMaintenanceLease? maintenanceLease)
     {
         _activeScrapeId = includeRankHistory ? scrapeId : 0;
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -216,8 +220,13 @@ public sealed class RankingsCalculator
         // (temp table + indexes + 5 ROW_NUMBER window functions). 6 concurrent
         // pipelines × ~1GB peak would exceed the container memory limit.
         await Parallel.ForEachAsync(instrumentsToRebuild,
-            new ParallelOptions { MaxDegreeOfParallelism = 2, CancellationToken = ct },
-            (instrument, innerCt) =>
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism =
+                    maintenanceLease is null ? 2 : 1,
+                CancellationToken = ct,
+            },
+            async (instrument, innerCt) =>
         {
             innerCt.ThrowIfCancellationRequested();
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
@@ -248,7 +257,28 @@ public sealed class RankingsCalculator
 
             // Phase 1: SongStats (uses MAX of local count, previous, real population)
             var songStatsSw = System.Diagnostics.Stopwatch.StartNew();
-            db.ComputeCurrentStateSongStats(maxScoresForInstrument, populationForInstrument);
+            if (maintenanceLease is null)
+            {
+                db.ComputeCurrentStateSongStats(
+                    maxScoresForInstrument,
+                    populationForInstrument);
+            }
+            else
+            {
+                await maintenanceLease.ExecuteTransactionAsync(
+                    $"derived-song-stats:{instrument}",
+                    requireSourceLocks: true,
+                    (connection, transaction, _) =>
+                    {
+                        db.ComputeCurrentStateSongStats(
+                            maxScoresForInstrument,
+                            populationForInstrument,
+                            connection,
+                            transaction);
+                        return Task.CompletedTask;
+                    },
+                    ct: innerCt);
+            }
             songStatsSw.Stop();
             LogPhase("per_instrument.song_stats", instrument, songStatsSw.Elapsed, maxScoresForInstrument.Count);
 
@@ -258,6 +288,13 @@ public sealed class RankingsCalculator
             var overridesSw = System.Diagnostics.Stopwatch.StartNew();
             var overThreshold = db.GetCurrentStateOverThresholdEntries();
             long overrideRows = 0;
+            IReadOnlyList<(
+                string SongId,
+                string AccountId,
+                int Score,
+                int? Accuracy,
+                bool? IsFullCombo,
+                int? Stars)> overridesToPersist = [];
             if (overThreshold.Count > 0)
             {
                 var thresholds = new Dictionary<(string AccountId, string SongId), int>();
@@ -279,20 +316,32 @@ public sealed class RankingsCalculator
                         IsFullCombo: kvp.Value.IsFullCombo,
                         Stars: kvp.Value.Stars
                     )).ToList();
-                    db.PopulateValidScoreOverrides(overrides);
+                    overridesToPersist = overrides;
                     overrideRows = overrides.Count;
                     if (overrides.Count > 0)
                         _log.LogInformation("{Instrument}: {OverCount} over-threshold entries, {FallbackCount} valid fallbacks found.",
                             instrument, overThreshold.Count, overrides.Count);
                 }
-                else
-                {
-                    db.PopulateValidScoreOverrides([]);
-                }
+            }
+            if (maintenanceLease is null)
+            {
+                db.PopulateValidScoreOverrides(
+                    overridesToPersist);
             }
             else
             {
-                db.PopulateValidScoreOverrides([]);
+                await maintenanceLease.ExecuteTransactionAsync(
+                    $"derived-score-overrides:{instrument}",
+                    requireSourceLocks: true,
+                    (connection, transaction, _) =>
+                    {
+                        db.PopulateValidScoreOverrides(
+                            overridesToPersist,
+                            connection,
+                            transaction);
+                        return Task.CompletedTask;
+                    },
+                    ct: innerCt);
             }
             overridesSw.Stop();
             LogPhase("per_instrument.populate_valid_overrides", instrument, overridesSw.Elapsed, overrideRows);
@@ -304,35 +353,70 @@ public sealed class RankingsCalculator
             {
                 _log.LogWarning("No charted songs for {Instrument}, skipping rankings.", instrument);
                 _workerStatus?.CompleteOperation(operationKey, "skipped", "No charted songs");
-                return ValueTask.CompletedTask;
+                return;
             }
 
-            using var conn = db.OpenConnection();
-
-            // Boost work_mem for this connection only — the global setting is
-            // kept low (16 MB) to prevent idle backends from holding huge RSS.
-            // The ranking pipeline runs 5 ROW_NUMBER() window functions that
-            // spill at 128MB on the Solo_Guitar-heavy benchmark, so raise sort
-            // memory on the dedicated rankings session. Temp-table index builds
-            // are also a notable part of this path, so raise
-            // maintenance_work_mem alongside it.
-            using (var wmCmd = conn.CreateCommand())
-            {
-                wmCmd.CommandText = "SET work_mem = '256MB'; SET maintenance_work_mem = '256MB'";
-                wmCmd.ExecuteNonQuery();
-            }
-
-            // Materialize leaderboard_entries × song_stats once
             var matSw = System.Diagnostics.Stopwatch.StartNew();
-            db.MaterializeCurrentStateValidEntries(conn, BaseThresholdMultiplier);
-            matSw.Stop();
+            var arSw = new System.Diagnostics.Stopwatch();
+            if (maintenanceLease is null)
+            {
+                using var conn = db.OpenConnection();
+                using (var wmCmd = conn.CreateCommand())
+                {
+                    wmCmd.CommandText =
+                        "SET work_mem = '256MB'; SET maintenance_work_mem = '256MB'";
+                    wmCmd.ExecuteNonQuery();
+                }
+
+                db.MaterializeCurrentStateValidEntries(
+                    conn,
+                    BaseThresholdMultiplier);
+                matSw.Stop();
+                arSw.Start();
+                db.ComputeAccountRankingsFromMaterialized(
+                    conn,
+                    totalCharted,
+                    CredibilityThreshold,
+                    PopulationMedian,
+                    BaseThresholdMultiplier);
+                arSw.Stop();
+            }
+            else
+            {
+                await maintenanceLease.ExecuteTransactionAsync(
+                    $"derived-account-rankings:{instrument}",
+                    requireSourceLocks: true,
+                    (connection, transaction, _) =>
+                    {
+                        using (var wmCmd = connection.CreateCommand())
+                        {
+                            wmCmd.Transaction = transaction;
+                            wmCmd.CommandText =
+                                "SET LOCAL work_mem = '256MB'; SET LOCAL maintenance_work_mem = '256MB'";
+                            wmCmd.ExecuteNonQuery();
+                        }
+
+                        db.MaterializeCurrentStateValidEntries(
+                            connection,
+                            transaction,
+                            BaseThresholdMultiplier);
+                        matSw.Stop();
+                        arSw.Start();
+                        db.ComputeAccountRankingsFromMaterialized(
+                            connection,
+                            transaction,
+                            totalCharted,
+                            CredibilityThreshold,
+                            PopulationMedian,
+                            BaseThresholdMultiplier);
+                        arSw.Stop();
+                        return Task.CompletedTask;
+                    },
+                    ct: innerCt);
+            }
             _log.LogDebug("{Instrument}: materialized valid entries in {Elapsed}.", instrument, matSw.Elapsed);
             LogPhase("per_instrument.materialize_valid_entries", instrument, matSw.Elapsed);
 
-            // Compute base rankings from the materialized temp table
-            var arSw = System.Diagnostics.Stopwatch.StartNew();
-            db.ComputeAccountRankingsFromMaterialized(conn, totalCharted, CredibilityThreshold, PopulationMedian, BaseThresholdMultiplier);
-            arSw.Stop();
             LogPhase("per_instrument.compute_account_rankings", instrument, arSw.Elapsed);
             _progress.ReportPhaseItemComplete();
 
@@ -340,7 +424,7 @@ public sealed class RankingsCalculator
             LogPhase("per_instrument.total", instrument, instrumentSw.Elapsed);
             _workerStatus?.CompleteOperation(operationKey);
 
-            return ValueTask.CompletedTask;
+            return;
             }
             catch (OperationCanceledException)
             {
@@ -398,7 +482,26 @@ public sealed class RankingsCalculator
         _progress.SetSubOperation("composite_rankings");
         _workerStatus?.BeginOperation("rankings.composite", "Computing composite rankings", phase: "ComputingRankings", subOperation: "composite_rankings");
         var compositeSw = System.Diagnostics.Stopwatch.StartNew();
-        ComputeCompositeRankings(instruments, rankingDataFull, rankingDataRanks);
+        var compositeRankings = ComputeCompositeRankings(
+            instruments,
+            rankingDataFull,
+            rankingDataRanks,
+            persist: maintenanceLease is null);
+        if (maintenanceLease is not null)
+        {
+            await maintenanceLease.ExecuteTransactionAsync(
+                "derived-composite-rankings",
+                requireSourceLocks: true,
+                (connection, transaction, _) =>
+                {
+                    _metaDb.ReplaceCompositeRankings(
+                        compositeRankings,
+                        connection,
+                        transaction);
+                    return Task.CompletedTask;
+                },
+                ct: ct);
+        }
         compositeSw.Stop();
         _progress.ReportPhaseItemComplete();
         _workerStatus?.CompleteOperation("rankings.composite");
@@ -411,9 +514,25 @@ public sealed class RankingsCalculator
         var familySw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            ComputeSoloFamilyRankings(
+            var familyRankings = ComputeSoloFamilyRankings(
                 rankingDataFull,
-                totalChartedByInstrument);
+                totalChartedByInstrument,
+                persist: maintenanceLease is null);
+            if (maintenanceLease is not null)
+            {
+                await maintenanceLease.ExecuteTransactionAsync(
+                    "derived-solo-family-rankings",
+                    requireSourceLocks: true,
+                    (connection, transaction, _) =>
+                    {
+                        _metaDb.ReplaceSoloFamilyRankings(
+                            familyRankings.Rankings,
+                            connection,
+                            transaction);
+                        return Task.CompletedTask;
+                    },
+                    ct: ct);
+            }
             familySw.Stop();
             _progress.ReportPhaseItemComplete();
             _workerStatus?.CompleteOperation("rankings.solo_family");
@@ -446,7 +565,14 @@ public sealed class RankingsCalculator
         _progress.SetSubOperation("combo_rankings");
         _workerStatus?.BeginOperation("rankings.combo", "Computing combo rankings", phase: "ComputingRankings", subOperation: "combo_rankings");
         var comboSw = System.Diagnostics.Stopwatch.StartNew();
-        ComputeAllCombos(instruments, rankingDataFull);
+        if (maintenanceLease is null)
+            ComputeAllCombos(instruments, rankingDataFull);
+        else
+            await ComputeAllCombosForMaintenanceAsync(
+                instruments,
+                rankingDataFull,
+                maintenanceLease,
+                ct);
         comboSw.Stop();
         _progress.ReportPhaseItemComplete();
         _workerStatus?.CompleteOperation("rankings.combo");
@@ -456,12 +582,23 @@ public sealed class RankingsCalculator
         // ── Phase 5+6: History snapshots and band team rankings ──
         if (!includeRankHistory && rebuildBandRankings)
         {
-            RunBandRankingsWithTiming(
-                bandTypes,
-                festivalService.Songs.Count,
-                scrapeId: 0,
-                ct: ct,
-                recordBandRankHistory: false);
+            if (maintenanceLease is null)
+            {
+                RunBandRankingsWithTiming(
+                    bandTypes,
+                    festivalService.Songs.Count,
+                    scrapeId: 0,
+                    ct: ct,
+                    recordBandRankHistory: false);
+            }
+            else
+            {
+                await RunBandRankingsForMaintenanceAsync(
+                    bandTypes,
+                    festivalService.Songs.Count,
+                    maintenanceLease,
+                    ct);
+            }
         }
         else if (!includeRankHistory)
         {
@@ -491,10 +628,11 @@ public sealed class RankingsCalculator
     /// Compute composite rankings by merging per-instrument AccountRankings.
     /// Uses pre-loaded ranking data to avoid redundant DB reads.
     /// </summary>
-    internal void ComputeCompositeRankings(
+    internal IReadOnlyList<CompositeRankingDto> ComputeCompositeRankings(
         IReadOnlyList<string> instruments,
         Dictionary<string, Dictionary<string, AccountMetrics>>? rankingDataFull = null,
-        Dictionary<string, Dictionary<string, int>>? rankingDataRanks = null)
+        Dictionary<string, Dictionary<string, int>>? rankingDataRanks = null,
+        bool persist = true)
     {
         // Use pre-loaded data or fall back to DB
         var fullData = rankingDataFull ?? LoadPerInstrumentMetrics(instruments);
@@ -610,8 +748,10 @@ public sealed class RankingsCalculator
             });
         }
 
-        _metaDb.ReplaceCompositeRankings(rankings);
+        if (persist)
+            _metaDb.ReplaceCompositeRankings(rankings);
         _log.LogInformation("Computed composite rankings for {Count:N0} accounts.", rankings.Count);
+        return rankings;
     }
 
     /// <summary>Rank a list of composites by a metric, returning AccountId → 1-based rank.</summary>
@@ -685,9 +825,59 @@ public sealed class RankingsCalculator
         _log.LogInformation("Computed {Combos} combo leaderboards with {TotalRows:N0} total ranked entries.", combosComputed, totalRows);
     }
 
+    private async Task ComputeAllCombosForMaintenanceAsync(
+        IReadOnlyList<string> instruments,
+        Dictionary<string, Dictionary<string, AccountMetrics>>
+            rankingDataFull,
+        IMaxScoreMaintenanceLease maintenanceLease,
+        CancellationToken ct)
+    {
+        if (instruments.Count < 2)
+        {
+            _log.LogDebug(
+                "Fewer than 2 instruments, skipping combo rankings.");
+            return;
+        }
+
+        var comboIds = ComboIds.WithinGroupComboMasks
+            .Select(ComboIds.FromMask)
+            .ToList();
+        var combosComputed = 0;
+        var totalRows = 0;
+        foreach (var leaderboard in
+                 ComboLeaderboardBuilder.BuildLeaderboards(
+                     comboIds,
+                     rankingDataFull))
+        {
+            ct.ThrowIfCancellationRequested();
+            await maintenanceLease.ExecuteTransactionAsync(
+                $"derived-combo-ranking:{leaderboard.ComboId}",
+                requireSourceLocks: true,
+                (connection, transaction, _) =>
+                {
+                    _metaDb.ReplaceComboLeaderboard(
+                        leaderboard.ComboId,
+                        leaderboard.Entries,
+                        leaderboard.Entries.Count,
+                        connection,
+                        transaction);
+                    return Task.CompletedTask;
+                },
+                ct: ct);
+            combosComputed++;
+            totalRows += leaderboard.Entries.Count;
+        }
+
+        _log.LogInformation(
+            "Computed {Combos} fenced combo leaderboards with {TotalRows:N0} total ranked entries.",
+            combosComputed,
+            totalRows);
+    }
+
     internal SoloFamilyRankingBuildResult ComputeSoloFamilyRankings(
         Dictionary<string, Dictionary<string, AccountMetrics>> rankingDataFull,
-        IReadOnlyDictionary<string, int> totalChartedByInstrument)
+        IReadOnlyDictionary<string, int> totalChartedByInstrument,
+        bool persist = true)
     {
         var result = SoloFamilyRankingBuilder.BuildRankings(
             SoloFamilyRankingScopes.All,
@@ -708,12 +898,79 @@ public sealed class RankingsCalculator
         }
 
         result.ThrowIfInvalid();
-        _metaDb.ReplaceSoloFamilyRankings(result.Rankings);
+        if (persist)
+            _metaDb.ReplaceSoloFamilyRankings(result.Rankings);
         _log.LogInformation(
             "Computed solo family rankings for {RowCount:N0} account-scope rows with {OverrideCount:N0} denominator override(s).",
             result.Rankings.Count,
             result.InstrumentDenominators.Count(static row => row.IsOverride));
         return result;
+    }
+
+    private async Task RunBandRankingsForMaintenanceAsync(
+        IReadOnlyList<string> bandTypes,
+        int totalChartedSongs,
+        IMaxScoreMaintenanceLease maintenanceLease,
+        CancellationToken ct)
+    {
+        _progress.SetSubOperation("band_rankings");
+        var bandSw = System.Diagnostics.Stopwatch.StartNew();
+        foreach (var bandType in bandTypes)
+        {
+            ct.ThrowIfCancellationRequested();
+            var operationKey = $"rankings.band.{bandType}";
+            _workerStatus?.BeginOperation(
+                operationKey,
+                $"Computing {FriendlyBandTypeName(bandType)} Rankings",
+                phase: "ComputingRankings",
+                subOperation: "band_rankings",
+                detail: bandType);
+            var perBandSw =
+                System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                await maintenanceLease.ExecuteTransactionAsync(
+                    $"derived-band-ranking:{bandType}",
+                    requireSourceLocks: true,
+                    (connection, transaction, _) =>
+                    {
+                        _metaDb.RebuildBandTeamRankingsMeasured(
+                            bandType,
+                            totalChartedSongs,
+                            CredibilityThreshold,
+                            PopulationMedian,
+                            _bandTeamRankingOptions,
+                            connection,
+                            transaction);
+                        return Task.CompletedTask;
+                    },
+                    ct: ct);
+                perBandSw.Stop();
+                LogPhase(
+                    "band_rankings.per_type",
+                    bandType,
+                    perBandSw.Elapsed);
+                _workerStatus?.CompleteOperation(operationKey);
+                _progress.ReportPhaseItemComplete();
+            }
+            catch (Exception ex)
+                when (ex is not OperationCanceledException)
+            {
+                perBandSw.Stop();
+                _workerStatus?.FailOperation(operationKey, ex);
+                LogPhase(
+                    "band_rankings.per_type.failed",
+                    bandType,
+                    perBandSw.Elapsed);
+                throw;
+            }
+        }
+
+        bandSw.Stop();
+        LogPhase(
+            "band_rankings.total",
+            instrument: null,
+            bandSw.Elapsed);
     }
 
     private async Task RunRankHistorySnapshotsAndBandRankingsOverlappedAsync(

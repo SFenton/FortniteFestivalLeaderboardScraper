@@ -17,6 +17,40 @@ public static class PlayerStatsTierRebuilder
         IReadOnlyCollection<string> accountIds,
         ILogger log,
         CancellationToken ct)
+        => RebuildCoreAsync(
+            persistence,
+            pathDataStore,
+            accountIds,
+            log,
+            maintenanceLease: null,
+            ct: ct);
+
+    internal static Task<PlayerStatsTierRebuildResult>
+        RebuildForMaxScoreMaintenanceAsync(
+            GlobalLeaderboardPersistence persistence,
+            IPathDataStore pathDataStore,
+            IReadOnlyCollection<string> accountIds,
+            ILogger log,
+            IMaxScoreMaintenanceLease maintenanceLease,
+            CancellationToken ct)
+        => RebuildCoreAsync(
+            persistence,
+            pathDataStore,
+            accountIds,
+            log,
+            maintenanceLease
+                ?? throw new ArgumentNullException(
+                    nameof(maintenanceLease)),
+            ct: ct);
+
+    private static async Task<PlayerStatsTierRebuildResult>
+        RebuildCoreAsync(
+            GlobalLeaderboardPersistence persistence,
+            IPathDataStore pathDataStore,
+            IReadOnlyCollection<string> accountIds,
+            ILogger log,
+            IMaxScoreMaintenanceLease? maintenanceLease,
+            CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(persistence);
         ArgumentNullException.ThrowIfNull(pathDataStore);
@@ -25,8 +59,7 @@ public static class PlayerStatsTierRebuilder
 
         if (accountIds.Count == 0)
         {
-            return Task.FromResult(
-                new PlayerStatsTierRebuildResult(0, 0, 0));
+            return new PlayerStatsTierRebuildResult(0, 0, 0);
         }
 
         var normalizedAccountIds = accountIds
@@ -92,7 +125,25 @@ public static class PlayerStatsTierRebuilder
 
             if (rows.Count > 0)
             {
-                metaDb.UpsertPlayerStatsTiersBatch(rows);
+                if (maintenanceLease is null)
+                {
+                    metaDb.UpsertPlayerStatsTiersBatch(rows);
+                }
+                else
+                {
+                    await maintenanceLease.ExecuteTransactionAsync(
+                        $"derived-player-stats:{accountChunk[0]}",
+                        requireSourceLocks: true,
+                        (connection, transaction, _) =>
+                        {
+                            metaDb.UpsertPlayerStatsTiersBatch(
+                                rows,
+                                connection,
+                                transaction);
+                            return Task.CompletedTask;
+                        },
+                        ct: ct);
+                }
                 writtenRows += rows.Count;
             }
         }
@@ -104,10 +155,9 @@ public static class PlayerStatsTierRebuilder
             normalizedAccountIds.Length,
             writtenRows,
             sw.Elapsed.TotalSeconds);
-        return Task.FromResult(
-            new PlayerStatsTierRebuildResult(
-                normalizedAccountIds.Length,
-                rebuiltAccounts,
-                writtenRows));
+        return new PlayerStatsTierRebuildResult(
+            normalizedAccountIds.Length,
+            rebuiltAccounts,
+            writtenRows);
     }
 }

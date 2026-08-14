@@ -361,18 +361,17 @@ public sealed class MaxScoreMaintenanceService
                     .AcquireMaxScoreMaintenanceLeaseAsync(
                         manifest.ExpectedPublicationId,
                         ct);
-            using var ambientLease =
-                lease.EnterAmbientScope();
             await lease.VerifyHeldAsync(
                 requireSourceLocks: false,
                 ct);
-            await lease.AcquireSourceLocksAsync(ct);
-            await lease.VerifyHeldAsync(
+            report = await lease.ExecuteTransactionAsync(
+                "plan-inspection",
                 requireSourceLocks: true,
-                ct);
-            report = await BuildPlanAsync(
-                manifest,
-                manifestDigest,
+                (_, _, token) => BuildPlanAsync(
+                    manifest,
+                    manifestDigest,
+                    token),
+                IsolationLevel.RepeatableRead,
                 ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -439,15 +438,15 @@ public sealed class MaxScoreMaintenanceService
                 nameof(expectedPlanDigest));
 
         MaxScoreMaintenanceApplyReport report;
+        IMaxScoreMaintenanceLease? activeLease = null;
         try
         {
-            await using var lease =
+            activeLease =
                 await _metaDatabase
                     .AcquireMaxScoreMaintenanceLeaseAsync(
                         manifest.ExpectedPublicationId,
                         ct);
-            using var ambientLease =
-                lease.EnterAmbientScope();
+            var lease = activeLease;
             await lease.VerifyHeldAsync(
                 requireSourceLocks: false,
                 ct);
@@ -478,10 +477,16 @@ public sealed class MaxScoreMaintenanceService
                     await lease.VerifyHeldAsync(
                         requireSourceLocks: false,
                         ct);
-                    var plan = await BuildPlanAsync(
-                        manifest,
-                        manifestDigest,
-                        ct);
+                    var plan =
+                        await lease.ExecuteTransactionAsync(
+                            "apply-plan-validation",
+                            requireSourceLocks: true,
+                            (_, _, token) => BuildPlanAsync(
+                                manifest,
+                                manifestDigest,
+                                token),
+                            IsolationLevel.RepeatableRead,
+                            ct);
                     if (!plan.CanApply
                         || !string.Equals(
                             plan.PlanDigest,
@@ -500,7 +505,6 @@ public sealed class MaxScoreMaintenanceService
                         manifestDigest,
                         plan,
                         ct);
-                    await lease.AcquireSourceLocksAsync(ct);
                     await lease.VerifyHeldAsync(
                         requireSourceLocks: true,
                         ct);
@@ -520,7 +524,6 @@ public sealed class MaxScoreMaintenanceService
                     RequireOwnedFreeze(
                         manifest,
                         manifestDigest);
-                    await lease.AcquireSourceLocksAsync(ct);
                     await lease.VerifyHeldAsync(
                         requireSourceLocks: true,
                         ct);
@@ -625,6 +628,7 @@ public sealed class MaxScoreMaintenanceService
                                         PublicReadFreezeState
                                             .MaxScoreMaintenanceReasonPrefix
                                         + manifestDigest),
+                                    lease,
                                     ct);
                         if (promotionResult.Outcome
                             != PathGenerationPromotionOutcome.Promoted
@@ -634,6 +638,7 @@ public sealed class MaxScoreMaintenanceService
                             throw new InvalidOperationException(
                                 $"Atomic path promotion failed at {promotionResult.FailedSongId ?? "unknown"} with {promotionResult.Outcome}.");
                         }
+                        _pathStore.InvalidateCachedState();
                         ValidatePathPhase(
                             manifest,
                             postPromotion: true,
@@ -648,12 +653,20 @@ public sealed class MaxScoreMaintenanceService
                     var admittedPairs =
                         GetNewlyAdmittedPathPairs(manifest);
                     var registrationReset =
-                        _metaDatabase
-                            .ResetRegistrationProgressForAdmittedPairs(
-                                admittedPairs,
-                                PublicReadFreezeState
-                                    .MaxScoreMaintenanceReasonPrefix
-                                + manifestDigest);
+                        await lease.ExecuteTransactionAsync(
+                            "path-admission-reset",
+                            requireSourceLocks: true,
+                            (connection, transaction, _) =>
+                                Task.FromResult(
+                                    _metaDatabase
+                                        .ResetRegistrationProgressForAdmittedPairs(
+                                            admittedPairs,
+                                            PublicReadFreezeState
+                                                .MaxScoreMaintenanceReasonPrefix
+                                            + manifestDigest,
+                                            connection,
+                                            transaction)),
+                            ct: ct);
                     await lease.VerifyHeldAsync(
                         requireSourceLocks: true,
                         ct);
@@ -706,6 +719,7 @@ public sealed class MaxScoreMaintenanceService
                     var derived = await _derivedState.RebuildAsync(
                         manifest,
                         context.CatalogSongs,
+                        lease,
                         ct);
                     await lease.VerifyHeldAsync(
                         requireSourceLocks: true,
@@ -739,6 +753,7 @@ public sealed class MaxScoreMaintenanceService
                         manifestDigest,
                         normalizedPlanDigest,
                         run.PublishedScoreSourceFingerprint,
+                        lease,
                         ct);
                     run = await LoadRequiredRunAsync(
                         manifestDigest,
@@ -755,6 +770,7 @@ public sealed class MaxScoreMaintenanceService
                         await _precomputer
                             .StageCurrentPublicationCachesForMaintenanceAsync(
                                 manifest.ExpectedPublicationId,
+                                lease,
                                 ct);
                     if (stagedCacheEntries <= 0)
                     {
@@ -834,11 +850,15 @@ public sealed class MaxScoreMaintenanceService
                     && run.Phase
                     != MaxScoreMaintenancePhase.Completed)
                 {
-                    await RecordFailureAsync(
-                        manifestDigest,
-                        run.Phase,
-                        ex,
-                        CancellationToken.None);
+                    if (activeLease is not null)
+                    {
+                        await RecordFailureAsync(
+                            activeLease,
+                            manifestDigest,
+                            run.Phase,
+                            ex,
+                            CancellationToken.None);
+                    }
                     run = await LoadRunAsync(
                         manifestDigest,
                         CancellationToken.None);
@@ -895,6 +915,11 @@ public sealed class MaxScoreMaintenanceService
                     succeeded: false,
                     resumable: true,
                     publicReadsFrozen: true);
+        }
+        finally
+        {
+            if (activeLease is not null)
+                await activeLease.DisposeAsync();
         }
 
         await MaxScoreMaintenanceFileStore.WriteNewReportAsync(
@@ -1236,11 +1261,12 @@ public sealed class MaxScoreMaintenanceService
         var freezeReason =
             PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
             + manifestDigest;
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
-        await using var tx = await conn.BeginTransactionAsync(
-            IsolationLevel.Serializable,
-            ct);
-        await ConfigureShortTransactionAsync(conn, tx, ct);
+        await lease.ExecuteTransactionAsync(
+            "freeze-establishment",
+            requireSourceLocks: false,
+            async (conn, tx, token) =>
+            {
+        await ConfigureShortTransactionAsync(conn, tx, token);
         await using (var state = conn.CreateCommand())
         {
             state.Transaction = tx;
@@ -1260,8 +1286,8 @@ public sealed class MaxScoreMaintenanceService
                 WHERE id = TRUE
                 FOR UPDATE
                 """;
-            await using var reader = await state.ExecuteReaderAsync(ct);
-            if (!await reader.ReadAsync(ct)
+            await using var reader = await state.ExecuteReaderAsync(token);
+            if (!await reader.ReadAsync(token)
                 || reader.IsDBNull(0)
                 || reader.GetInt64(0)
                     != manifest.ExpectedPublicationId
@@ -1285,9 +1311,6 @@ public sealed class MaxScoreMaintenanceService
             }
         }
 
-        await lease.VerifyHeldAsync(
-            requireSourceLocks: false,
-            ct);
         await using (var insert = conn.CreateCommand())
         {
             insert.Transaction = tx;
@@ -1360,15 +1383,9 @@ public sealed class MaxScoreMaintenanceService
             insert.Parameters.AddWithValue(
                 "freezeReason",
                 freezeReason);
-            await lease.VerifyHeldAsync(
-                requireSourceLocks: false,
-                ct);
-            await insert.ExecuteNonQueryAsync(ct);
+            await insert.ExecuteNonQueryAsync(token);
         }
 
-        await lease.VerifyHeldAsync(
-            requireSourceLocks: false,
-            ct);
         await using (var freeze = conn.CreateCommand())
         {
             freeze.Transaction = tx;
@@ -1395,16 +1412,15 @@ public sealed class MaxScoreMaintenanceService
             freeze.Parameters.AddWithValue(
                 "freezeReason",
                 freezeReason);
-            await lease.VerifyHeldAsync(
-                requireSourceLocks: false,
-                ct);
-            if (await freeze.ExecuteNonQueryAsync(ct) != 1)
+            if (await freeze.ExecuteNonQueryAsync(token) != 1)
             {
                 throw new InvalidOperationException(
                     "Digest-owned maintenance freeze was not established.");
             }
         }
-        await tx.CommitAsync(ct);
+            },
+            IsolationLevel.Serializable,
+            ct);
     }
 
     private async Task CaptureRollbackAsync(
@@ -1435,23 +1451,18 @@ public sealed class MaxScoreMaintenanceService
                 snapshot,
                 ct);
 
-        await lease.VerifyHeldAsync(
+        await lease.ExecuteTransactionAsync(
+            "rollback-checkpoint",
             requireSourceLocks: true,
-            ct);
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
-        await using var tx = await conn.BeginTransactionAsync(
-            IsolationLevel.Serializable,
-            ct);
-        await ConfigureShortTransactionAsync(conn, tx, ct);
+            async (conn, tx, token) =>
+            {
+        await ConfigureShortTransactionAsync(conn, tx, token);
         await LockOwnedFreezeRowAsync(
             conn,
             tx,
             manifest,
             manifestDigest,
-            ct);
-        await lease.VerifyHeldAsync(
-            requireSourceLocks: true,
-            ct);
+            token);
         foreach (var song in snapshot.Songs)
         {
             await using var insert = conn.CreateCommand();
@@ -1507,7 +1518,7 @@ public sealed class MaxScoreMaintenanceService
                 insert,
                 manifestDigest,
                 song);
-            await insert.ExecuteNonQueryAsync(ct);
+            await insert.ExecuteNonQueryAsync(token);
         }
 
         await using (var advance = conn.CreateCommand())
@@ -1540,10 +1551,7 @@ public sealed class MaxScoreMaintenanceService
             advance.Parameters.AddWithValue(
                 "planDigest",
                 planDigest);
-            await lease.VerifyHeldAsync(
-                requireSourceLocks: true,
-                ct);
-            if (await advance.ExecuteNonQueryAsync(ct) != 1)
+            if (await advance.ExecuteNonQueryAsync(token) != 1)
             {
                 throw new InvalidOperationException(
                     "Rollback capture phase identity changed.");
@@ -1554,8 +1562,10 @@ public sealed class MaxScoreMaintenanceService
             tx,
             manifestDigest,
             snapshot.Songs,
+            token);
+            },
+            IsolationLevel.Serializable,
             ct);
-        await tx.CommitAsync(ct);
     }
 
     internal static MaxScoreMaintenanceRollbackSnapshot
@@ -1986,11 +1996,13 @@ public sealed class MaxScoreMaintenanceService
         long? stagedCacheEntryCount,
         CancellationToken ct)
     {
-        await lease.VerifyHeldAsync(
+        await lease.ExecuteTransactionAsync(
+            $"phase-checkpoint:{FormatPhase(nextPhase)}",
             requireSourceLocks: true,
-            ct);
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+            async (conn, tx, token) =>
+            {
         await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
         cmd.CommandText = """
             UPDATE max_score_maintenance_runs
             SET phase = @nextPhase,
@@ -2034,14 +2046,13 @@ public sealed class MaxScoreMaintenanceService
         cmd.Parameters.AddWithValue(
             "expectedPhase",
             FormatPhase(expectedPhase));
-        await lease.VerifyHeldAsync(
-            requireSourceLocks: true,
-            ct);
-        if (await cmd.ExecuteNonQueryAsync(ct) != 1)
+        if (await cmd.ExecuteNonQueryAsync(token) != 1)
         {
             throw new InvalidOperationException(
                 $"Max-score phase changed before {nextPhase} checkpoint.");
         }
+            },
+            ct: ct);
     }
 
     private async Task MarkRunRunningAsync(
@@ -2049,11 +2060,13 @@ public sealed class MaxScoreMaintenanceService
         string manifestDigest,
         CancellationToken ct)
     {
-        await lease.VerifyHeldAsync(
+        await lease.ExecuteTransactionAsync(
+            "resume-running-checkpoint",
             requireSourceLocks: true,
-            ct);
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+            async (conn, tx, token) =>
+            {
         await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
         cmd.CommandText = """
             UPDATE max_score_maintenance_runs
             SET status = 'running',
@@ -2066,24 +2079,29 @@ public sealed class MaxScoreMaintenanceService
         cmd.Parameters.AddWithValue(
             "manifestSha256",
             manifestDigest);
-        await lease.VerifyHeldAsync(
-            requireSourceLocks: true,
-            ct);
-        if (await cmd.ExecuteNonQueryAsync(ct) != 1)
+        if (await cmd.ExecuteNonQueryAsync(token) != 1)
         {
             throw new InvalidOperationException(
                 "Resumable max-score maintenance run was not found.");
         }
+            },
+            ct: ct);
     }
 
     private async Task RecordFailureAsync(
+        IMaxScoreMaintenanceLease lease,
         string manifestDigest,
         MaxScoreMaintenancePhase phase,
         Exception error,
         CancellationToken ct)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await lease.ExecuteTransactionAsync(
+            "failure-checkpoint",
+            requireSourceLocks: true,
+            async (conn, tx, token) =>
+            {
         await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
         cmd.CommandText = """
             UPDATE max_score_maintenance_runs
             SET status = 'failed',
@@ -2102,7 +2120,9 @@ public sealed class MaxScoreMaintenanceService
         cmd.Parameters.AddWithValue(
             "manifestSha256",
             manifestDigest);
-        await cmd.ExecuteNonQueryAsync(ct);
+        await cmd.ExecuteNonQueryAsync(token);
+            },
+            ct: ct);
     }
 
     private void RequireOwnedFreeze(

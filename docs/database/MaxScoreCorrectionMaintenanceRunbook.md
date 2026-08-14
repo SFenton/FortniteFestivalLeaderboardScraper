@@ -70,9 +70,10 @@ Apply acquires locks in this order:
 2. path-generation advisory lock;
 3. global publication advisory lock;
 4. establish a new digest-owned freeze or revalidate the exact resume freeze;
-5. `leaderboard_entries_overlay`, `leaderboard_entries`, then
+5. for each mutation/checkpoint transaction,
+   `leaderboard_entries_overlay`, `leaderboard_entries`, then
    `band_member_stats` share locks in that fixed order;
-6. publication and song row locks inside bounded transactions.
+6. publication and song row locks inside that same bounded transaction.
 
 Band maintenance is the intentional writer for target-song `band_entries`
 threshold flags and affected projection scopes, so the source lock protects
@@ -116,15 +117,19 @@ seasonal lookup; metadata-only tracking/activity/pruning does not incur that
 cache churn.
 
 The random session token, backend PID, three advisory locks, durable owner, and
-source relation locks are revalidated before every dependent mutation.
-Registration plus leaderboard/score-history and `band_member_stats` triggers
-lock the publication row for each bounded write and reject the durable
-owner/freeze, closing the race if a shared backend is terminated. `AsyncLocal`
-routing is never accepted as lock proof. Final cache swap, completed
-checkpoint, durable-owner clear, and unfreeze commit in the source-lock
-transaction on the live lock-owning session, so no registration commit can
-land after cache cutover but before lease release. Normal scrape/publication
-freezes do not activate this registration guard.
+source relation locks are revalidated inside every dependent transaction and
+again immediately before ordinary commits. The final release validates the
+exact owner/freeze before clearing them and checks the completed/unfrozen state
+before its same-session commit. All max-score writes and checkpoints use the
+unpooled lock-owning session; pooled connections are not mutation authority
+and `AsyncLocal` is not used for fencing. Registration, leaderboard/score-history,
+and all band entry/member/membership triggers lock the publication row and
+reject the durable owner/freeze. Band persistence also performs this gate
+validation unconditionally at transaction start, even when `MemberStats` is
+empty. Final cache swap, completed checkpoint, durable-owner clear, and
+unfreeze commit in one source-locked transaction on the live session, so no
+registration commit can land after cache cutover but before lease release.
+Normal scrape/publication freezes do not activate this registration guard.
 
 ## Stage request
 
@@ -307,12 +312,13 @@ loaded through the same persisted run timestamp and must match byte-for-byte;
 resume never invents a new evidence timestamp.
 
 If `pg_terminate_backend`, network loss, or session failure removes the
-advisory/source locks, the old lease is invalid even if its process-local scope
-still exists. Phase writes fail their live-session check; final cache
-publication and unfreeze are refused. The durable freeze and owner token remain
-fail-closed. A new plan/resume lease must reacquire the fixed lock order,
-replace the stale owner token only after exclusive admission, revalidate the
-checkpoint/fingerprints, and then continue. Do not clear either field manually.
+advisory locks, the current transaction is aborted with its mutation and phase
+checkpoint. Final cache publication and unfreeze are likewise refused. The
+durable freeze and owner token remain fail-closed; the run may retain its last
+status rather than recording a new failure on a dead backend. A new
+plan/resume lease must reacquire the fixed lock order, replace the stale owner
+token only after exclusive admission, revalidate the checkpoint/fingerprints,
+and then continue. Do not clear either field manually.
 
 ## Validation and rollback
 

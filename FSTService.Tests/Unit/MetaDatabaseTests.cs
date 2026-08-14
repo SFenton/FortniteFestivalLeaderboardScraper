@@ -5260,7 +5260,7 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
-    public async Task MaxScoreMaintenance_backend_loss_rejects_ambient_cache_phase_before_mutation()
+    public async Task MaxScoreMaintenance_backend_loss_rolls_back_fenced_cache_phase()
     {
         var scrapeId = Db.StartScrapeRun();
         Db.CompleteScrapeRun(scrapeId, 1, 1, 1, 1);
@@ -5273,9 +5273,9 @@ public sealed class MetaDatabaseTests : IDisposable
         var lease =
             await Db.AcquireMaxScoreMaintenanceLeaseAsync(
                 publicationId);
-        using (lease.EnterAmbientScope())
+        Db.MaxScoreMaintenanceBeforeCommitTestHook =
+            context =>
         {
-            await lease.AcquireSourceLocksAsync();
             using var terminator =
                 DataSource.OpenConnection();
             using var terminate =
@@ -5284,19 +5284,36 @@ public sealed class MetaDatabaseTests : IDisposable
                 "SELECT pg_terminate_backend(@backendProcessId)";
             terminate.Parameters.AddWithValue(
                 "backendProcessId",
-                lease.BackendProcessId);
+                context.BackendProcessId);
             Assert.True(terminate.ExecuteScalar() is true);
+        };
 
-            Assert.Throws<
-                MaxScoreMaintenanceLeaseLostException>(() =>
-                Db.BulkSetCachedResponsesStaging(
-                [
-                    (
-                        Key: "lost-session-cache",
-                        Json: new byte[] { 1 },
-                        ETag: "\"lost\""),
-                ],
-                publicationId));
+        try
+        {
+            await Assert.ThrowsAsync<
+                MaxScoreMaintenanceLeaseLostException>(
+                () => lease.ExecuteTransactionAsync(
+                    "cache-staging",
+                    requireSourceLocks: true,
+                    (connection, transaction, _) =>
+                    {
+                        Db.BulkSetCachedResponsesStaging(
+                            [
+                                (
+                                    Key: "lost-session-cache",
+                                    Json: new byte[] { 1 },
+                                    ETag: "\"lost\""),
+                            ],
+                            publicationId,
+                            connection,
+                            transaction);
+                        return Task.CompletedTask;
+                    }));
+        }
+        finally
+        {
+            Db.MaxScoreMaintenanceBeforeCommitTestHook =
+                null;
         }
         await lease.DisposeAsync();
 
@@ -5417,27 +5434,39 @@ public sealed class MetaDatabaseTests : IDisposable
                      await maintenanceTask.WaitAsync(
                          TimeSpan.FromSeconds(5)))
         {
-            using var ambientLease =
-                maintenanceLease.EnterAmbientScope();
             Assert.False(
                 Db.GetPublicReadFreezeState().IsFrozen);
 
             Db.SetPublicReadFreeze(
                 true,
                 reason: freezeReason);
-            await maintenanceLease
-                .AcquireSourceLocksAsync();
+            await maintenanceLease.VerifyHeldAsync(
+                requireSourceLocks: true);
 
             Assert.True(
                 Db.GetPublicReadFreezeState()
                     .MaxScoreMaintenance);
-            Assert.Equal(
-                [
-                    "band_member_stats",
-                    "leaderboard_entries",
-                    "leaderboard_entries_overlay",
-                ],
-                ReadMaxScoreSourceLocks());
+            Assert.Empty(ReadMaxScoreSourceLocks());
+            var observedSourceLocks = false;
+            Db.MaxScoreMaintenanceBeforeCommitTestHook =
+                _ =>
+                {
+                    Assert.Equal(
+                        [
+                            "band_member_stats",
+                            "leaderboard_entries",
+                            "leaderboard_entries_overlay",
+                        ],
+                        ReadMaxScoreSourceLocks());
+                    observedSourceLocks = true;
+                };
+            await maintenanceLease.ExecuteTransactionAsync(
+                "test-source-lock-order",
+                requireSourceLocks: true,
+                (_, _, _) => Task.CompletedTask);
+            Db.MaxScoreMaintenanceBeforeCommitTestHook =
+                null;
+            Assert.True(observedSourceLocks);
 
             using var cancellation =
                 new CancellationTokenSource();
@@ -5477,12 +5506,11 @@ public sealed class MetaDatabaseTests : IDisposable
                          .AcquireMaxScoreMaintenanceLeaseAsync(
                              publicationId))
         {
-            using var ambientLease =
-                resumeLease.EnterAmbientScope();
             Assert.Equal(
                 freezeReason,
                 Db.GetPublicReadFreezeState().Reason);
-            await resumeLease.AcquireSourceLocksAsync();
+            await resumeLease.VerifyHeldAsync(
+                requireSourceLocks: true);
             ClearPublicReadFreezeForTest();
 
             resumedRegistration = Task.Run(async () =>
@@ -5655,22 +5683,26 @@ public sealed class MetaDatabaseTests : IDisposable
             + new string('d', 64);
         await using var maintenanceLease =
             await Db.AcquireMaxScoreMaintenanceLeaseAsync(1);
-        using var ambientLease =
-            maintenanceLease.EnterAmbientScope();
         Db.SetPublicReadFreeze(true, reason: reason);
-        await maintenanceLease.AcquireSourceLocksAsync();
 
         var result =
-            Db.ResetRegistrationProgressForAdmittedPairs(
-                [
-                    new SoloCurrentProjectionScopeKey(
-                        "song-a",
-                        "Solo_Guitar"),
-                    new SoloCurrentProjectionScopeKey(
-                        "song-a",
-                        "Solo_PeripheralGuitar"),
-                ],
-                reason);
+            await maintenanceLease.ExecuteTransactionAsync(
+                "test-registration-reset",
+                requireSourceLocks: true,
+                (connection, transaction, _) =>
+                    Task.FromResult(
+                        Db.ResetRegistrationProgressForAdmittedPairs(
+                            [
+                                new SoloCurrentProjectionScopeKey(
+                                    "song-a",
+                                    "Solo_Guitar"),
+                                new SoloCurrentProjectionScopeKey(
+                                    "song-a",
+                                    "Solo_PeripheralGuitar"),
+                            ],
+                            reason,
+                            connection,
+                            transaction)));
 
         Assert.Equal(
             2,
@@ -5809,22 +5841,26 @@ public sealed class MetaDatabaseTests : IDisposable
             + new string('e', 64);
         await using var maintenanceLease =
             await Db.AcquireMaxScoreMaintenanceLeaseAsync(1);
-        using var ambientLease =
-            maintenanceLease.EnterAmbientScope();
         Db.SetPublicReadFreeze(true, reason: reason);
-        await maintenanceLease.AcquireSourceLocksAsync();
 
         var result =
-            Db.ResetRegistrationProgressForAdmittedPairs(
-                [
-                    new SoloCurrentProjectionScopeKey(
-                        "song-a",
-                        "Solo_Guitar"),
-                    new SoloCurrentProjectionScopeKey(
-                        "song-a",
-                        "Solo_PeripheralGuitar"),
-                ],
-                reason);
+            await maintenanceLease.ExecuteTransactionAsync(
+                "test-history-reset",
+                requireSourceLocks: true,
+                (connection, transaction, _) =>
+                    Task.FromResult(
+                        Db.ResetRegistrationProgressForAdmittedPairs(
+                            [
+                                new SoloCurrentProjectionScopeKey(
+                                    "song-a",
+                                    "Solo_Guitar"),
+                                new SoloCurrentProjectionScopeKey(
+                                    "song-a",
+                                    "Solo_PeripheralGuitar"),
+                            ],
+                            reason,
+                            connection,
+                            transaction)));
 
         Assert.Equal(
             0,

@@ -72,8 +72,9 @@ volatile table counts.
 manifest/plan identities, exact publication/catalog, score-source,
 notification-state and rank-history fingerprints, freeze owner, last durable
 phase, rollback file digest, notification audit link, counters, and bounded
-failure detail. A post-freeze failure changes status to `failed` but does not
-clear its phase or freeze.
+failure detail. A post-freeze failure changes status to `failed` only while
+the lock-owning backend can commit that checkpoint; backend loss leaves the
+last durable status/phase unchanged and never clears the freeze.
 
 `max_score_maintenance_rollback_songs` stores every pre-promotion path field
 and all eight maxima for every manifest song. It complements the canonical
@@ -118,32 +119,40 @@ opaque random owner token, publication ID, backend PID/start, and acquisition
 time in `scrape_publication_state`; this durable fence also blocks HTTP before
 a public-read freeze exists. Apply then takes the path-generation and
 publication advisory locks, establishes or revalidates its digest-owned
-freeze, and only then opens the source-lock transaction. That transaction
-takes `SHARE` locks in fixed order on `leaderboard_entries_overlay`,
-`leaderboard_entries`, and `band_member_stats`. This removes
-publication-row/source-table lock inversion while protecting solo score
-identity and the member source used by band threshold/projection rebuilds.
+freeze. Every dependent mutation or phase checkpoint then opens its own
+bounded transaction on that same unpooled lock-owning session and takes
+`SHARE` locks in fixed order on `leaderboard_entries_overlay`,
+`leaderboard_entries`, and `band_member_stats` before doing work. Checkpoints
+therefore remain durable between resumable phases without moving writes onto
+unrelated pooled sessions. The durable owner and table triggers bridge the
+short gaps between transactions.
 
 Row triggers remain a fail-closed second line on registered users/bands,
 registered-user refresh progress, registered-band status/progress,
 registered-player band-discovery progress, backfill status/progress, and
 history-reconstruction status/progress. Statement triggers apply the same
 fence to `leaderboard_entries`, `leaderboard_entries_overlay`, and
-`score_history`, plus the locked band source `band_member_stats`. Each trigger
-locks the publication singleton only for its bounded write transaction and
-rejects either the active durable mutation-gate token or a
+`score_history`, plus `band_entries`, `band_member_stats`, `band_members`,
+`band_team_membership`, `band_team_membership_state`, and
+`band_team_configurations`. Every band persistence entry point also validates
+and share-locks the durable gate row at the start of its complete transaction,
+even when `MemberStats` is empty. Each trigger rejects either the active
+durable mutation-gate token or a
 `max-score-maintenance:v1:<digest>` freeze. This row lock orders a surviving
 write from a lost shared session before a newly claimed exclusive gate,
 without taking a second advisory lock on a pooled connection.
 
 Both lease types set an independent random session token and capture the
-backend PID. Every guarded phase verifies the token, backend, expected
-advisory locks, and durable gate state; exclusive phases additionally verify
-the owner token and, after acquisition, all three source table locks
-immediately before mutation. `AsyncLocal` carries only the current lease
-reference for cache routing; it is not accepted as lock proof. Shared-gate
-acquisition synchronously invalidates cached path maxima and refreshes scraper
-instrument support before lookup-bearing backfill/history/band work;
+backend PID. Every max-score write explicitly executes through the lease API;
+inside that same transaction it verifies the token, backend, advisory locks,
+durable owner, and all three source locks both before work and immediately
+before ordinary commits. The final release instead validates its exact owner
+and freeze before clearing them, then validates the completed/unfrozen
+postcondition before the same-session commit. No `AsyncLocal` or preflight-only
+check is accepted as write authority. Shared-gate acquisition synchronously
+invalidates cached path
+maxima and refreshes scraper instrument support before lookup-bearing
+backfill/history/band work;
 metadata-only HTTP activity and pruning take the same gate without that extra
 cache churn. The maintenance owner has one transaction-local owner-token
 bypass used only to remove stale negative backfill checks and matching successful
@@ -157,7 +166,7 @@ history pairs are preserved. Ordinary scrape/publication freezes retain their
 existing registration behavior.
 
 Final cache swap, completed checkpoint, durable-gate clear, and unfreeze run
-inside the source-lock transaction on the live lock-owning session. If that
+inside one source-locked transaction on the live lock-owning session. If that
 backend is terminated or the token/locks disappear, phase/final mutations
 fail closed: the cache is not published, the durable freeze and gate owner
 remain, and resume must acquire and validate a new lease before it can replace
