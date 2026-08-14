@@ -5,6 +5,12 @@ layout, responsive breakpoints, SVG/chart interaction, observers, storage,
 publication changes, WebSockets, and browser-engine differences. Vitest keeps
 fast logic and rendering assertions that do not require those capabilities.
 
+Accessibility route specs block moderate, serious, and critical axe findings
+and own the shell main/skip/title/announcement/focus contract plus
+reduced-motion, Save-Data, and image-label behavior. These specs run in the
+focused WebKit project as well as Chromium; Firefox and desktop WebKit retain
+the same surface in the nightly matrix.
+
 ## Layout
 
 ```text

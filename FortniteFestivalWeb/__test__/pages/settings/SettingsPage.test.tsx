@@ -24,8 +24,11 @@ import { stubResizeObserver, stubScrollTo, stubElementDimensions } from '../../h
 
 const defaultServiceInfo = {
   lastCompletedUpdate: {
+    scrapeId: 1296,
     startedAt: '2026-04-20T12:00:00Z',
     completedAt: '2026-04-20T12:30:00Z',
+    publishedAt: '2026-04-20T12:31:00Z',
+    bestEffortFailureCount: 0,
   },
   currentUpdate: {
     status: 'idle',
@@ -36,6 +39,16 @@ const defaultServiceInfo = {
     elapsedSeconds: null,
     estimatedRemainingSeconds: null,
     branches: null,
+  },
+  activeScrapeId: null,
+  publishedScrapeId: 1296,
+  publication: {
+    publishedScrapeId: 1296,
+    publishedAt: '2026-04-20T12:31:00Z',
+    publicReadsFrozen: false,
+    frozenAt: null,
+    frozenScrapeId: null,
+    freezeReason: null,
   },
   workerStatus: {
     workerKey: 'scraper',
@@ -158,24 +171,22 @@ beforeEach(() => {
   }) as unknown as typeof fetch;
 });
 
-function mockScrollWidths(scale = 7) {
-  const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth');
-  Object.defineProperty(HTMLElement.prototype, 'scrollWidth', {
-    configurable: true,
-    get() {
-      const text = this.textContent ?? '';
-      return Math.max(0, text.length * scale);
-    },
-  });
-
-  return () => {
-    if (original) {
-      Object.defineProperty(HTMLElement.prototype, 'scrollWidth', original);
-      return;
+function mockServiceInfoResponse(serviceInfo: unknown) {
+  globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+    if (typeof url === 'string' && url.includes('/api/version')) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: '1.0.0' }) });
     }
-
-    delete (HTMLElement.prototype as unknown as Record<string, unknown>)['scrollWidth'];
-  };
+    if (typeof url === 'string' && url.includes('/api/service-info')) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(serviceInfo) });
+    }
+    if (typeof url === 'string' && url.includes('/api/bands/') && url.includes('/sync-status')) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultBandSyncStatus) });
+    }
+    if (typeof url === 'string' && url.includes('/sync-status')) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultSyncStatus) });
+    }
+    return Promise.resolve({ ok: false, statusText: 'Not Found', json: () => Promise.resolve({}) });
+  }) as unknown as typeof fetch;
 }
 
 function setViewportQueries({ mobile = false, wide = false }: { mobile?: boolean; wide?: boolean; } = {}) {
@@ -897,69 +908,42 @@ describe('SettingsPage', () => {
     expect(screen.getByText('Service Version')).toBeDefined();
   });
 
-  it('renders Service Info section', () => {
+  it('renders the simplified Health, Progress and ETA, and Publication timing groups', async () => {
     renderSettings();
+
     expect(screen.getByText('Service Info')).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-last-update-start')).getByText('Most recent leaderboard update start')).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-current-update-start')).getByText('Current leaderboard update start')).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-update-status')).getByText('Leaderboard update status')).toBeDefined();
-  });
-
-  it('keeps service info rows inline when every row fits on one line', async () => {
-    renderSettings();
-
-    const list = await screen.findByTestId('settings-service-info-list');
-    expect(list.getAttribute('data-layout')).toBe('inline');
-    expect(screen.getByTestId('settings-service-info-row-last-update-start').getAttribute('data-layout')).toBe('inline');
-    expect(screen.getByTestId('settings-service-info-row-next-scheduled-update').getAttribute('data-layout')).toBe('inline');
-  });
-
-  it('stacks every service info row when any inline row would overflow', async () => {
-    const restoreScrollWidths = mockScrollWidths(32);
-
-    try {
-      localStorage.setItem('fst:trackedPlayer', JSON.stringify({
-        accountId: '195e93ef108143b2975ee46662d4d0e1',
-        displayName: 'Tracked Player',
-      }));
-
-      renderSettings();
-
-      await waitFor(() => {
-        expect(screen.getByTestId('settings-service-info-list').getAttribute('data-layout')).toBe('stacked');
-      });
-
-      expect(screen.getByTestId('settings-service-info-row-last-update-start').getAttribute('data-layout')).toBe('stacked');
-      expect(screen.getByTestId('settings-service-info-row-next-scheduled-update').getAttribute('data-layout')).toBe('stacked');
-      expect(screen.getByTestId('settings-service-info-row-selected-player-id').getAttribute('data-layout')).toBe('stacked');
-      expect(screen.getByTestId('settings-service-info-row-selected-player-rivals-status').getAttribute('data-layout')).toBe('stacked');
-    } finally {
-      restoreScrollWidths();
-    }
-  });
-
-  it('displays service info values after fetch', async () => {
-    renderSettings();
-
-    await waitFor(() => {
-      expect(within(screen.getByTestId('settings-service-info-row-last-update-start')).getByText(new Date(defaultServiceInfo.lastCompletedUpdate.startedAt).toLocaleString())).toBeDefined();
-    });
-
-    expect(within(screen.getByTestId('settings-service-info-row-last-update-complete')).getByText(new Date(defaultServiceInfo.lastCompletedUpdate.completedAt).toLocaleString())).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-current-update-start')).getByText('N/A')).toBeDefined();
+    expect(await screen.findByRole('heading', { level: 2, name: 'Health' })).toBeDefined();
+    expect(screen.getByRole('heading', { level: 2, name: 'Progress and ETA' })).toBeDefined();
+    expect(screen.getByRole('heading', { level: 2, name: 'Publication timing' })).toBeDefined();
     expect(within(screen.getByTestId('settings-service-info-row-worker-status')).getByText('Online')).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-worker-activity')).getByText('Computing Lead Rankings')).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-worker-activity-start')).getByText(new Date(defaultServiceInfo.workerStatus.lastOperation.startedAt).toLocaleString())).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-worker-activity-update')).getByText(new Date(defaultServiceInfo.workerStatus.lastOperation.updatedAt).toLocaleString())).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-worker-activity-end')).getByText(new Date(defaultServiceInfo.workerStatus.lastOperation.endedAt).toLocaleString())).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-worker-heartbeat')).getByText(new Date(defaultServiceInfo.workerStatus.lastHeartbeatAt).toLocaleString())).toBeDefined();
     expect(within(screen.getByTestId('settings-service-info-row-update-status')).getByText('Idle')).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-update-sub-status')).getByText('Waiting for the next scheduled update')).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-update-step-position')).getByText('N/A')).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-update-phase-progress')).getByText('N/A')).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-update-overall-progress')).getByText('N/A')).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-update-eta')).getByText('N/A')).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-next-scheduled-update')).getByText(new Date(defaultServiceInfo.nextScheduledUpdateAt).toLocaleString())).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-update-sub-status')).getByText(
+      'Published scrape 1296 is available. The service is waiting for the next update.',
+    )).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-last-published-at')).getByText(
+      new Date(defaultServiceInfo.lastCompletedUpdate.publishedAt).toLocaleString(),
+    )).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-next-scheduled-update')).getByText(
+      new Date(defaultServiceInfo.nextScheduledUpdateAt).toLocaleString(),
+    )).toBeDefined();
+    expect(screen.queryByRole('progressbar')).toBeNull();
+    expect(screen.queryByTestId('settings-service-info-row-update-overall-progress')).toBeNull();
+    expect(screen.queryByTestId('settings-service-info-row-update-eta')).toBeNull();
+  });
+
+  it('keeps operational diagnostics in a collapsed technical disclosure', async () => {
+    renderSettings();
+
+    const details = await screen.findByTestId('settings-service-technical-details');
+    expect(details).not.toHaveAttribute('open');
+    expect(within(details).getByText('Technical details')).toBeDefined();
+    expect(within(details).getByTestId('settings-service-info-row-worker-activity')).toHaveTextContent('Computing Lead Rankings');
+    expect(within(details).getByTestId('settings-service-info-row-worker-heartbeat')).toHaveTextContent(
+      new Date(defaultServiceInfo.workerStatus.lastHeartbeatAt).toLocaleString(),
+    );
+
+    fireEvent.click(within(details).getByText('Technical details'));
+    expect(details).toHaveAttribute('open');
   });
 
   it('reuses fresh shared service-info cache without issuing a page-owned request', async () => {
@@ -976,8 +960,8 @@ describe('SettingsPage', () => {
     expect(serviceInfoCalls).toHaveLength(0);
   });
 
-  it('renders purple arc spinners on Status and Step rows when update is in progress', async () => {
-    const updatingServiceInfo = {
+  it('renders a v1 update as indeterminate without legacy fake percentages or ETA', async () => {
+    const v1ServiceInfo = {
       ...defaultServiceInfo,
       currentUpdate: {
         status: 'updating',
@@ -990,18 +974,7 @@ describe('SettingsPage', () => {
         branches: null,
       },
     };
-    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
-      if (typeof url === 'string' && url.includes('/api/version')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: '1.0.0' }) });
-      }
-      if (typeof url === 'string' && url.includes('/api/service-info')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(updatingServiceInfo) });
-      }
-      if (typeof url === 'string' && url.includes('/sync-status')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultSyncStatus) });
-      }
-      return Promise.resolve({ ok: false, statusText: 'Not Found', json: () => Promise.resolve({}) });
-    }) as unknown as typeof fetch;
+    mockServiceInfoResponse(v1ServiceInfo);
 
     renderSettings();
 
@@ -1011,35 +984,140 @@ describe('SettingsPage', () => {
       expect(within(statusRow).getByTestId('arc-spinner')).toBeDefined();
       expect(within(stepRow).getByTestId('arc-spinner')).toBeDefined();
     });
-
-    // Non-status/step rows must never show a spinner.
-    expect(within(screen.getByTestId('settings-service-info-row-last-update-start')).queryByTestId('arc-spinner')).toBeNull();
-    expect(within(screen.getByTestId('settings-service-info-row-current-update-start')).queryByTestId('arc-spinner')).toBeNull();
-    expect(within(screen.getByTestId('settings-service-info-row-last-update-start')).getByText(new Date(defaultServiceInfo.lastCompletedUpdate.startedAt).toLocaleString())).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-last-update-start')).queryByText(new Date(updatingServiceInfo.currentUpdate.startedAt).toLocaleString())).toBeNull();
-    expect(within(screen.getByTestId('settings-service-info-row-current-update-start')).getByText(new Date(updatingServiceInfo.currentUpdate.startedAt).toLocaleString())).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-next-scheduled-update')).queryByTestId('arc-spinner')).toBeNull();
-    expect(within(screen.getByTestId('settings-service-info-row-update-step-position')).getByText('Step 2 of 15: Scraping')).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-update-phase-progress')).getByText('25.0%')).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-update-overall-progress')).getByText('13.3%')).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-update-eta')).getByText('1m 30s')).toBeDefined();
+    const progress = screen.getByRole('progressbar', { name: 'Current phase progress' });
+    expect(progress).toHaveAttribute('data-progress-kind', 'indeterminate');
+    expect(progress).not.toHaveAttribute('aria-valuemin');
+    expect(progress).not.toHaveAttribute('aria-valuemax');
+    expect(progress).not.toHaveAttribute('aria-valuenow');
+    expect(screen.getByTestId('settings-service-info-row-update-step-position')).toHaveTextContent('Scraping');
+    expect(screen.getByTestId('settings-service-info-row-update-phase-progress')).toHaveTextContent('In progress — total not yet known');
+    expect(screen.queryByText('25.0%')).toBeNull();
+    expect(screen.queryByText('13.3%')).toBeNull();
+    expect(screen.queryByText('1m 30s')).toBeNull();
   });
 
-  it('does not render spinners on Status/Step rows when update is idle', async () => {
+  it('renders exact v2 phase progress, server overall estimate, units, state, and trusted ETA', async () => {
+    const v2ServiceInfo = {
+      ...defaultServiceInfo,
+      contractVersion: 2,
+      activeScrapeId: 1297,
+      phasePlan: {
+        version: 'fst.scrape-plan.v2',
+        phases: [{
+          id: 'post.compute_rankings',
+          label: 'Computing rankings',
+          legacyPhase: 'ComputeRankings',
+          ordinal: 310,
+          defaultUnitsKind: 'instruments',
+        }],
+      },
+      currentUpdate: {
+        status: 'updating',
+        scrapeId: 1297,
+        startedAt: '2026-04-20T12:45:00Z',
+        phase: 'ComputeRankings',
+        subOperation: 'per_instrument_rankings',
+        contractVersion: 2,
+        operationId: 'scrape.update',
+        phaseId: 'post.compute_rankings',
+        phaseStatus: 'retrying',
+        subphaseId: 'per_instrument_rankings',
+        phasePlanVersion: 'fst.scrape-plan.v2',
+        phaseOrdinal: 310,
+        phaseAttempt: 2,
+        unitsKind: 'instruments',
+        unitsCompleted: 3,
+        unitsTotal: 8,
+        unitsTotalFinal: true,
+        phasePercent: 37.5,
+        overallPercentKind: 'historical_phase_durations',
+        overallPercent: 63.2,
+        overallModelVersion: 'phase-timings.v1',
+        etaLowerSeconds: 120,
+        etaUpperSeconds: 240,
+        etaConfidence: 'medium',
+        etaSampleCount: 9,
+        heartbeatAt: '2026-04-20T12:48:05Z',
+        lastProgressAt: '2026-04-20T12:48:00Z',
+        branches: null,
+      },
+    };
+    mockServiceInfoResponse(v2ServiceInfo);
+
     renderSettings();
 
-    const statusRow = await screen.findByTestId('settings-service-info-row-update-status');
-    const stepRow = await screen.findByTestId('settings-service-info-row-update-sub-status');
-    await waitFor(() => {
-      expect(within(statusRow).getByText('Idle')).toBeDefined();
-    });
-    expect(within(statusRow).queryByTestId('arc-spinner')).toBeNull();
-    expect(within(stepRow).queryByTestId('arc-spinner')).toBeNull();
+    const progress = await screen.findByRole('progressbar', { name: 'Current phase progress' });
+    expect(progress).toHaveAttribute('data-progress-kind', 'determinate');
+    expect(progress).toHaveAttribute('aria-valuemin', '0');
+    expect(progress).toHaveAttribute('aria-valuemax', '100');
+    expect(progress).toHaveAttribute('aria-valuenow', '37.5');
+    expect(progress).toHaveAttribute('aria-valuetext', expect.stringContaining('3 of 8 instruments completed'));
+    expect(screen.getByTestId('settings-service-info-row-update-step-position')).toHaveTextContent(
+      'Computing rankings · Computing rankings by instrument',
+    );
+    expect(screen.getByText('Phase state: Retrying')).toBeDefined();
+    expect(screen.getByTestId('settings-service-info-row-update-phase-progress')).toHaveTextContent('37.5%');
+    expect(screen.getByText('3 of 8 instruments completed')).toBeDefined();
+    expect(screen.getByTestId('settings-service-info-row-update-overall-progress')).toHaveTextContent('63.2%');
+    expect(screen.getByTestId('settings-service-info-row-update-eta')).toHaveTextContent(
+      'Estimated 2m 0s–4m 0s remaining (medium confidence, 9 samples)',
+    );
   });
 
-  it('shows failed durable update status without reporting idle', async () => {
+  it('keeps v2 progress indeterminate while the denominator is not final', async () => {
+    const discoveringServiceInfo = {
+      ...defaultServiceInfo,
+      contractVersion: 2,
+      activeScrapeId: 1297,
+      currentUpdate: {
+        status: 'updating',
+        scrapeId: 1297,
+        startedAt: '2026-04-20T12:45:00Z',
+        phase: 'Scraping',
+        subOperation: 'fetching_leaderboards',
+        contractVersion: 2,
+        operationId: 'scrape.update',
+        phaseId: 'scrape.leaderboards',
+        phaseStatus: 'running',
+        subphaseId: 'fetching_leaderboards',
+        phasePlanVersion: 'fst.scrape-plan.v2',
+        phaseOrdinal: 100,
+        phaseAttempt: 1,
+        unitsKind: 'leaderboards',
+        unitsCompleted: 12,
+        unitsTotal: 48,
+        unitsTotalFinal: false,
+        phasePercent: 25,
+        overallPercentKind: 'indeterminate',
+        overallPercent: 44,
+        etaLowerSeconds: 60,
+        etaUpperSeconds: 120,
+        etaConfidence: 'medium',
+        etaSampleCount: 4,
+        lastProgressAt: '2026-04-20T12:48:00Z',
+        branches: null,
+      },
+    };
+    mockServiceInfoResponse(discoveringServiceInfo);
+
+    renderSettings();
+
+    const progress = await screen.findByRole('progressbar', { name: 'Current phase progress' });
+    expect(progress).toHaveAttribute('data-progress-kind', 'indeterminate');
+    expect(progress).not.toHaveAttribute('aria-valuenow');
+    expect(screen.getByText('12 leaderboards completed; 48 discovered so far')).toBeDefined();
+    expect(screen.queryByText('25.0%')).toBeNull();
+    expect(screen.queryByText('44.0%')).toBeNull();
+    expect(screen.queryByTestId('settings-service-info-row-update-eta')).toBeNull();
+  });
+
+  it('shows failure, stale worker, and warning states without masking published data', async () => {
     const failedServiceInfo = {
       ...defaultServiceInfo,
+      lastCompletedUpdate: {
+        ...defaultServiceInfo.lastCompletedUpdate,
+        bestEffortFailureCount: 2,
+      },
       currentUpdate: {
         ...defaultServiceInfo.currentUpdate,
         status: 'failed',
@@ -1048,96 +1126,108 @@ describe('SettingsPage', () => {
         subOperation: 'failed',
         detail: 'candidate failed',
       },
+      workerStatus: {
+        ...defaultServiceInfo.workerStatus,
+        status: 'stale',
+      },
     };
-    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
-      if (typeof url === 'string' && url.includes('/api/version')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: '1.0.0' }) });
-      }
-      if (typeof url === 'string' && url.includes('/api/service-info')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(failedServiceInfo) });
-      }
-      if (typeof url === 'string' && url.includes('/sync-status')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultSyncStatus) });
-      }
-      return Promise.resolve({ ok: false, statusText: 'Not Found', json: () => Promise.resolve({}) });
-    }) as unknown as typeof fetch;
+    mockServiceInfoResponse(failedServiceInfo);
 
     renderSettings();
 
     const statusRow = await screen.findByTestId('settings-service-info-row-update-status');
-    const stepRow = await screen.findByTestId('settings-service-info-row-update-sub-status');
-    await waitFor(() => {
-      expect(within(statusRow).getByText('Failed')).toBeDefined();
-      expect(within(stepRow).getByText('The last update failed; published leaderboard data remains available')).toBeDefined();
-    });
-    expect(within(statusRow).queryByText('Idle')).toBeNull();
-    expect(within(statusRow).queryByTestId('arc-spinner')).toBeNull();
-    expect(within(stepRow).queryByTestId('arc-spinner')).toBeNull();
-    expect(within(screen.getByTestId('settings-service-info-row-current-update-start')).getByText(new Date(failedServiceInfo.currentUpdate.startedAt).toLocaleString())).toBeDefined();
-  });
-
-  it('shows stale worker activity without treating leaderboard update as active', async () => {
-    const staleServiceInfo = {
-      ...defaultServiceInfo,
-      workerStatus: {
-        ...defaultServiceInfo.workerStatus,
-        status: 'stale',
-        rawStatus: 'running',
-        lastHeartbeatAt: '2026-04-20T12:10:00Z',
-        currentOperation: {
-          operationKey: 'rankings.band.Band_Trios',
-          operationLabel: 'Computing Band Trios Rankings',
-          status: 'running',
-          phase: 'ComputingRankings',
-          subOperation: 'band_rankings',
-          detail: 'Band_Trios',
-          startedAt: '2026-04-20T12:00:00Z',
-          updatedAt: '2026-04-20T12:10:00Z',
-          endedAt: null,
-          progressPercent: null,
-          elapsedSeconds: 600,
-          estimatedRemainingSeconds: null,
-        },
-        lastOperation: defaultServiceInfo.workerStatus.lastOperation,
-      },
-    };
-    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
-      if (typeof url === 'string' && url.includes('/api/version')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: '1.0.0' }) });
-      }
-      if (typeof url === 'string' && url.includes('/api/service-info')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(staleServiceInfo) });
-      }
-      if (typeof url === 'string' && url.includes('/sync-status')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultSyncStatus) });
-      }
-      return Promise.resolve({ ok: false, statusText: 'Not Found', json: () => Promise.resolve({}) });
-    }) as unknown as typeof fetch;
-
-    renderSettings();
-
-    await waitFor(() => {
-      expect(within(screen.getByTestId('settings-service-info-row-worker-status')).getByText('Stale')).toBeDefined();
-    });
-
-    expect(within(screen.getByTestId('settings-service-info-row-worker-activity')).getByText('Computing Band Trios Rankings')).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-worker-activity-start')).getByText(new Date(staleServiceInfo.workerStatus.currentOperation.startedAt).toLocaleString())).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-worker-activity-update')).getByText(new Date(staleServiceInfo.workerStatus.currentOperation.updatedAt).toLocaleString())).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-worker-activity-end')).getByText('N/A')).toBeDefined();
+    expect(within(statusRow).getByText('Failed')).toBeDefined();
+    expect(screen.getByTestId('settings-service-info-row-update-sub-status')).toHaveTextContent(
+      'The update failed. Published scrape 1296 remains available.',
+    );
+    expect(screen.getByTestId('settings-service-info-row-worker-status')).toHaveTextContent('Stale');
+    expect(screen.getByText('The last completed update reported 2 non-critical warnings.')).toBeDefined();
     expect(within(screen.getByTestId('settings-service-info-row-update-status')).queryByTestId('arc-spinner')).toBeNull();
-    expect(within(screen.getByTestId('settings-service-info-row-update-sub-status')).queryByTestId('arc-spinner')).toBeNull();
   });
 
-  it('shows tracked player rows when a player is selected', async () => {
+  it('holds displayed progress against stale payloads and resets for a new attempt', async () => {
+    const queryClient = createTestQueryClient();
+    const makeProgress = (phaseAttempt: number, phasePercent: number | null, lastProgressAt: string, unitsTotalFinal = true) => ({
+      ...defaultServiceInfo,
+      contractVersion: 2,
+      activeScrapeId: 1297,
+      currentUpdate: {
+        status: 'updating',
+        scrapeId: 1297,
+        startedAt: '2026-04-20T12:45:00Z',
+        phase: 'ComputeRankings',
+        subOperation: 'per_instrument_rankings',
+        contractVersion: 2,
+        operationId: 'scrape.update',
+        phaseId: 'post.compute_rankings',
+        phaseStatus: 'running',
+        subphaseId: 'per_instrument_rankings',
+        phasePlanVersion: 'fst.scrape-plan.v2',
+        phaseOrdinal: 310,
+        phaseAttempt,
+        unitsKind: 'instruments',
+        unitsCompleted: phasePercent,
+        unitsTotal: 100,
+        unitsTotalFinal,
+        phasePercent,
+        overallPercentKind: 'historical_phase_durations',
+        overallPercent: phasePercent,
+        lastProgressAt,
+        branches: null,
+      },
+    });
+    queryClient.setQueryData(queryKeys.serviceInfo(), makeProgress(1, 80, '2026-04-20T12:48:00Z'));
+    renderSettings({ queryClient });
+
+    expect(await screen.findByText('80.0%')).toBeDefined();
+    act(() => {
+      queryClient.setQueryData(queryKeys.serviceInfo(), makeProgress(1, 20, '2026-04-20T12:47:00Z'));
+    });
+    expect(screen.getByText('80.0%')).toBeDefined();
+    expect(screen.queryByText('20.0%')).toBeNull();
+
+    act(() => {
+      queryClient.setQueryData(queryKeys.serviceInfo(), makeProgress(2, null, '2026-04-20T12:49:00Z', false));
+    });
+    expect(await screen.findByText('This phase restarted with a new attempt.')).toBeDefined();
+    expect(screen.getByRole('progressbar')).toHaveAttribute('data-progress-kind', 'indeterminate');
+    expect(screen.queryByText('80.0%')).toBeNull();
+  });
+
+  it('moves selected-player synchronization outside global service health', async () => {
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'tracked-player-1', displayName: 'Tracked Player' }));
     renderSettings();
 
     await waitFor(() => {
+      expect(screen.getByText('Selected profile sync')).toBeDefined();
       expect(within(screen.getByTestId('settings-service-info-row-selected-player-id')).getByText('Selected player ID')).toBeDefined();
       expect(within(screen.getByTestId('settings-service-info-row-selected-player-id')).getByText('tracked-player-1')).toBeDefined();
       expect(within(screen.getByTestId('settings-service-info-row-selected-player-rivals-status')).getByText('Selected player Rivals status')).toBeDefined();
       expect(within(screen.getByTestId('settings-service-info-row-selected-player-rivals-status')).getByText('Complete')).toBeDefined();
     });
+    const serviceCard = screen.getByTestId('settings-service-info-list');
+    const profileCard = screen.getByTestId('settings-selected-profile-sync');
+    expect(serviceCard.contains(profileCard)).toBe(false);
+  });
+
+  it('renders selected-band synchronization in the separate profile card', async () => {
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'member-a:member-b',
+      displayName: 'Band Buddies',
+      members: [],
+    }));
+    renderSettings();
+
+    const bandIdRow = await screen.findByTestId('settings-service-info-row-selected-band-id');
+    expect(bandIdRow).toHaveTextContent('Selected band ID');
+    expect(bandIdRow).toHaveTextContent('band-1');
+    await waitFor(() => {
+      expect(screen.getByTestId('settings-service-info-row-selected-band-sync-status')).toHaveTextContent('Complete');
+    });
+    expect(screen.getByTestId('settings-selected-profile-sync')).toBeDefined();
   });
 
   it('displays service version after fetch', async () => {

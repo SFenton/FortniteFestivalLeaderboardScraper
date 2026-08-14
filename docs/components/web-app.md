@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: web
-last_verified: 2026-08-13
-last_verified_commit: aa33576e
+last_verified: 2026-08-14
+last_verified_commit: 3fbfc9f2
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
@@ -15,6 +15,14 @@ sources:
   - FortniteFestivalWeb/src/components/shell/mobile/BottomNav.tsx
   - FortniteFestivalWeb/src/contexts/FabVisibilityContext.tsx
   - FortniteFestivalWeb/src/pages/Page.tsx
+  - FortniteFestivalWeb/src/pages/settings/SettingsPage.tsx
+  - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.tsx
+  - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.module.css
+  - FortniteFestivalWeb/src/pages/settings/serviceProgress.ts
+  - FortniteFestivalWeb/src/pages/settings/serviceInfo.en.json
+  - FortniteFestivalWeb/src/hooks/data/useServiceInfo.ts
+  - FortniteFestivalWeb/e2e/specs/responsive/settings-progress.spec.ts
+  - /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/pr27-settings-live-ab-20260814T062455Z
   - FortniteFestivalWeb/src/pages/shop/ShopPage.tsx
   - FortniteFestivalWeb/src/pages/leaderboards/modals/RankByModal.tsx
   - FortniteFestivalWeb/src/pages/leaderboards/firstRun/metricInfo/
@@ -104,6 +112,24 @@ Sort and Suggestions accordions expose named regions; dense instrument filter
 groups avoid excessive landmarks. Mobile BottomNav uses pending state only for
 visual feedback and assigns `aria-current="page"` solely to the committed route.
 
+Both shell layouts render exactly one `main#main-content[tabindex="-1"]`.
+`RouteAccessibility` owns the first-focusable HashRouter-safe skip link,
+document titles, polite route announcements, and focus transfer for distinct
+PUSH/REPLACE navigation. Initial navigation and POP do not move focus; modal
+ownership delays route focus and preserves a different connected control that
+the modal restores. Route metadata in `src/routes.ts` supplies titles and
+mobile chrome labels. A visually hidden fallback H1 covers lazy/mobile gaps and
+self-removes whenever a page-owned visible H1 is present.
+
+Decorative visual policy is centralized through `useVisualPreferences`.
+Reduced motion removes background crossfades, continuous pulse/breathe
+animation, notification media cycling, and rotating selected-band members
+without disabling functional spinners. Save-Data omits remote decorative
+background and optional notification album art. Both policies pause timer work
+while the document is hidden. Instrument images expose canonical display
+labels while retaining wire keys only in `data-instrument`; repeated star PNGs
+are decorative children of one labelled star group.
+
 `Page` owns the standard bottom-clearance contract for fixed action surfaces.
 Its default `end` spacer always reserves FAB clearance, while `fixed` adjusts
 the shell viewport and `none` delegates spacing to the caller. The opt-in
@@ -141,6 +167,60 @@ The request implementation lives in `src/api/client.ts`. Shared response and
 domain types come from `@festival/core`; that package is not itself the HTTP
 client. API changes must keep the service endpoint files, shared types, and
 client aligned.
+
+### Settings service progress
+
+Settings keeps `useServiceInfo('settings')` as its sole request owner on the
+shared React Query key. Visible Settings polling is five seconds; hidden-page
+polling is throttled to 30 seconds. No WebSocket or page-owned duplicate fetch
+is added, and publication-boundary cache/reset ownership is unchanged.
+
+The service area has three primary groups: Health, Progress and ETA, and
+Publication timing. Operational IDs, raw heartbeat/progress timestamps,
+phase-plan/attempt details, and model diagnostics live under a collapsed native
+`details` disclosure. Selected player or band synchronization is a separate
+card rather than global service health.
+
+The browser uses stable phase/subphase IDs for localization with safe label
+fallbacks. A phase bar is determinate only when service-info v2 reports a final
+denominator and exact `phasePercent`; v1 and unknown-total payloads remain
+indeterminate and never reuse legacy `progressPercent` as exact progress.
+Overall percentage and ETA range/confidence/sample count render only when the
+server emits evidence that passes the client trust gate. Display memory rejects
+older payload regressions while allowing a new phase attempt to reset and
+announce itself.
+
+The English service-progress resource is co-located with the lazy Settings
+route and registered into the existing i18next `translation` namespace when
+that route loads. This keeps the stable phase/subphase vocabulary out of the
+eager application entry while retaining the repository's one-locale key
+contract and browser fallback behavior.
+
+Focused unit and Playwright coverage owns v1/v2 rendering, exact and unknown
+denominators, ETA suppression, warnings/failures/restarts, selected-profile
+separation, keyboard disclosure behavior, shared-request concurrency, and
+overflow at 320, 375, 768, and 1440 pixels.
+
+Live candidate validation accepted commit `0af25b3f` on 2026-08-14 against the
+official `aa33576e` web baseline while publication `1296` remained idle and
+unfrozen. At 320/375/768/1440 pixels the visible service card height changed
+from 890/848/512/512 px to about 581/539/448/293 px, the visible `N/A` count
+fell from five to zero, and neither image overflowed horizontally. Every width
+rendered the three groups with Technical details collapsed. Enter opened the
+disclosure and Space closed it. Two service-info requests occurred in the
+initial polling window with at most one in flight.
+
+The service section had zero axe violations in three matched baseline and
+candidate probes. The full Settings page retained the same pre-existing
+unlabelled `#fst-leeway-slider` finding in both images; PR-3 introduced no new
+accessibility finding. Alternating route probes kept every p50 and p95 delta
+below 10%, with exact publication, version, and songs response parity.
+
+The candidate reduced entry gzip by about 0.21%, increased the lazy Settings
+chunk from 9,810 to 14,551 gzip bytes, increased total static bytes by about
+0.028%, and retained 5,682 bytes of required entry-budget headroom. Evidence is
+stored under
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/pr27-settings-live-ab-20260814T062455Z`.
 
 The path modal can display the generated PNG or a text table. Text mode renders
 one row per activation, not one row per optional start note. Schema-v2

@@ -109,6 +109,10 @@ type PathsModalProps = {
 
 export default function PathsModal({ visible, songId, generationId, sig, onClose }: PathsModalProps) {
   const { t } = useTranslation();
+  const disclosureId = React.useId();
+  const instrumentPanelId = `${disclosureId}-instrument`;
+  const difficultyPanelId = `${disclosureId}-difficulty`;
+  const displayPanelId = `${disclosureId}-display`;
   const isMobile = useIsMobile();
   const vvHeight = useVisualViewportHeight();
   const vvOffsetTop = useVisualViewportOffsetTop();
@@ -309,7 +313,12 @@ export default function PathsModal({ visible, songId, generationId, sig, onClose
             {choptDisplay === 'text' && <PathDataHeader isMobile />}
             <PathImage songId={songId} generationId={generationId} instrument={selected} difficulty={difficulty} displayMode={choptDisplay} isMobile columnOrder={columnOrder} />
             <div style={st.controls}>
-              <div style={{ ...st.accordion, maxHeight: instOpen ? 160 : 0 }}>
+              <div
+                id={instrumentPanelId}
+                inert={!instOpen}
+                aria-hidden={!instOpen}
+                style={{ ...st.accordion, maxHeight: instOpen ? 160 : 0 }}
+              >
                 <div style={{ ...st.accordionInner, paddingTop: 0, paddingBottom: Gap.md }}>
                   <InstrumentSelector
                     instruments={selectorItems}
@@ -325,12 +334,18 @@ export default function PathsModal({ visible, songId, generationId, sig, onClose
                   />
                 </div>
               </div>
-              <div style={{ ...st.accordion, maxHeight: diffOpen ? 120 : 0 }}>
+              <div
+                id={difficultyPanelId}
+                inert={!diffOpen}
+                aria-hidden={!diffOpen}
+                style={{ ...st.accordion, maxHeight: diffOpen ? 120 : 0 }}
+              >
                 <div style={{ ...st.diffGridMobile, paddingBottom: Gap.md }}>
                   {DIFFICULTIES.map(d => (
                     <PathOptionButton
                       key={d}
                       style={difficulty === d ? st.diffBtnSmallActive : st.diffBtnSmall}
+                      selected={difficulty === d}
                       /* v8 ignore start — mobile accordion click */
                       onPress={() => { if (d === difficulty) setDiffOpen(false); else setDifficulty(d); }}
                       /* v8 ignore stop */
@@ -340,12 +355,18 @@ export default function PathsModal({ visible, songId, generationId, sig, onClose
                   ))}
                 </div>
               </div>
-              <div style={{ ...st.accordion, maxHeight: choptOpen ? 120 : 0 }}>
+              <div
+                id={displayPanelId}
+                inert={!choptOpen}
+                aria-hidden={!choptOpen}
+                style={{ ...st.accordion, maxHeight: choptOpen ? 120 : 0 }}
+              >
                 <div style={{ ...st.choptGrid, paddingBottom: Gap.md }}>
                   {CHOPT_DISPLAYS.map(d => (
                     <PathOptionButton
                       key={d}
                       style={choptDisplay === d ? st.diffBtnSmallActive : st.diffBtnSmall}
+                      selected={choptDisplay === d}
                       /* v8 ignore start — mobile accordion click */
                       onPress={() => { if (d === choptDisplay) setChoptOpen(false); else setChoptDisplay(d); }}
                       /* v8 ignore stop */
@@ -356,15 +377,33 @@ export default function PathsModal({ visible, songId, generationId, sig, onClose
                 </div>
               </div>
               <div style={st.mobileRow}>
-                <button style={{ ...st.mobileSelector, flexShrink: 0 }} {...instTogglePressHandlers}>
-                  <InstrumentIcon instrument={selected} sig={sig} size={28} />
+                <button
+                  style={{ ...st.mobileSelector, flexShrink: 0 }}
+                  aria-label={t('aria.instrumentSelector', { instrument: INSTRUMENT_LABELS[selected] })}
+                  aria-expanded={instOpen}
+                  aria-controls={instrumentPanelId}
+                  {...instTogglePressHandlers}
+                >
+                  <InstrumentIcon instrument={selected} sig={sig} size={28} decorative />
                   <IoChevronDown size={16} style={{ ...st.chevron, transform: instOpen ? 'rotate(0)' : 'rotate(180deg)' }} />
                 </button>
-                <button style={{ ...st.mobileSelector, flex: 1 }} {...diffTogglePressHandlers}>
+                <button
+                  style={{ ...st.mobileSelector, flex: 1 }}
+                  aria-label={t('aria.difficultySelector', { difficulty: t(`paths.${difficulty}`) })}
+                  aria-expanded={diffOpen}
+                  aria-controls={difficultyPanelId}
+                  {...diffTogglePressHandlers}
+                >
                   <span style={st.mobileSelectorLabel}>{t(`paths.${difficulty}`)}</span>
                   <IoChevronDown size={16} style={{ ...st.chevron, transform: diffOpen ? 'rotate(0)' : 'rotate(180deg)' }} />
                 </button>
-                <button style={{ ...st.mobileSelector, flexShrink: 0 }} {...choptTogglePressHandlers}>
+                <button
+                  style={{ ...st.mobileSelector, flexShrink: 0 }}
+                  aria-label={t('aria.displaySelector', { display: t(`paths.chopt_${choptDisplay}`) })}
+                  aria-expanded={choptOpen}
+                  aria-controls={displayPanelId}
+                  {...choptTogglePressHandlers}
+                >
                   {choptDisplay === 'image' ? <IoImage size={20} /> : <IoReaderOutline size={20} />}
                   <IoChevronDown size={16} style={{ ...st.chevron, transform: choptOpen ? 'rotate(0)' : 'rotate(180deg)' }} />
                 </button>
@@ -374,22 +413,42 @@ export default function PathsModal({ visible, songId, generationId, sig, onClose
         ) : (
           <div style={st.controls}>
             <div style={st.desktopRow}>
-              <button style={st.desktopSelector} {...instTogglePressHandlers}>
-                <InstrumentIcon instrument={selected} sig={sig} size={28} />
+              <button
+                style={st.desktopSelector}
+                aria-expanded={instOpen}
+                aria-controls={instrumentPanelId}
+                {...instTogglePressHandlers}
+              >
+                <InstrumentIcon instrument={selected} sig={sig} size={28} decorative />
                 <span style={st.mobileSelectorLabel}>{INSTRUMENT_LABELS[selected]}</span>
                 <IoChevronDown size={16} style={{ ...st.chevron, transform: instOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
               </button>
-              <button style={st.desktopSelector} {...diffTogglePressHandlers}>
+              <button
+                style={st.desktopSelector}
+                aria-expanded={diffOpen}
+                aria-controls={difficultyPanelId}
+                {...diffTogglePressHandlers}
+              >
                 <span style={st.mobileSelectorLabel}>{t(`paths.${difficulty}`)}</span>
                 <IoChevronDown size={16} style={{ ...st.chevron, transform: diffOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
               </button>
-              <button style={st.desktopSelector} {...choptTogglePressHandlers}>
+              <button
+                style={st.desktopSelector}
+                aria-expanded={choptOpen}
+                aria-controls={displayPanelId}
+                {...choptTogglePressHandlers}
+              >
                 {choptDisplay === 'image' ? <IoImage size={20} /> : <IoReaderOutline size={20} />}
                 <span style={st.mobileSelectorLabel}>{t(`paths.chopt_${choptDisplay}`)}</span>
                 <IoChevronDown size={16} style={{ ...st.chevron, transform: choptOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
               </button>
             </div>
-            <div style={{ ...st.accordion, maxHeight: instOpen ? 160 : 0 }}>
+            <div
+              id={instrumentPanelId}
+              inert={!instOpen}
+              aria-hidden={!instOpen}
+              style={{ ...st.accordion, maxHeight: instOpen ? 160 : 0 }}
+            >
               <div style={st.accordionInner}>
                 <InstrumentSelector
                   instruments={selectorItems}
@@ -406,12 +465,18 @@ export default function PathsModal({ visible, songId, generationId, sig, onClose
                 />
               </div>
             </div>
-            <div style={{ ...st.accordion, maxHeight: diffOpen ? 120 : 0 }}>
+            <div
+              id={difficultyPanelId}
+              inert={!diffOpen}
+              aria-hidden={!diffOpen}
+              style={{ ...st.accordion, maxHeight: diffOpen ? 120 : 0 }}
+            >
               <div style={{ ...st.diffGridMobile, paddingTop: Gap.md }}>
                 {DIFFICULTIES.map(d => (
                   <PathOptionButton
                     key={d}
                     style={difficulty === d ? st.diffBtnSmallActive : st.diffBtnSmall}
+                    selected={difficulty === d}
                     onPress={() => { if (d === difficulty) setDiffOpen(false); else setDifficulty(d); }}
                   >
                     {t(`paths.${d}`)}
@@ -419,12 +484,18 @@ export default function PathsModal({ visible, songId, generationId, sig, onClose
                 ))}
               </div>
             </div>
-            <div style={{ ...st.accordion, maxHeight: choptOpen ? 120 : 0 }}>
+            <div
+              id={displayPanelId}
+              inert={!choptOpen}
+              aria-hidden={!choptOpen}
+              style={{ ...st.accordion, maxHeight: choptOpen ? 120 : 0 }}
+            >
               <div style={{ ...st.choptGrid, paddingTop: Gap.md }}>
                 {CHOPT_DISPLAYS.map(d => (
                   <PathOptionButton
                     key={d}
                     style={choptDisplay === d ? st.diffBtnSmallActive : st.diffBtnSmall}
+                    selected={choptDisplay === d}
                     onPress={() => { if (d === choptDisplay) setChoptOpen(false); else setChoptDisplay(d); }}
                   >
                     {t(`paths.chopt_${d}`)}
@@ -453,11 +524,11 @@ export default function PathsModal({ visible, songId, generationId, sig, onClose
   );
 }
 
-function PathOptionButton({ style, onPress, children }: { style: CSSProperties; onPress: () => void; children: ReactNode }) {
+function PathOptionButton({ style, onPress, selected, children }: { style: CSSProperties; onPress: () => void; selected?: boolean; children: ReactNode }) {
   const pressHandlers = usePressAction<HTMLButtonElement>({ onPress });
 
   return (
-    <button style={style} {...pressHandlers}>
+    <button style={style} aria-pressed={selected} {...pressHandlers}>
       {children}
     </button>
   );
@@ -736,7 +807,7 @@ function PathImage({ songId, generationId, instrument, difficulty, displayMode, 
         <ZoomableImage
           ref={imgRef}
           src={displaySrc}
-          alt={`${instrument} ${difficulty} path`}
+          alt={`${INSTRUMENT_LABELS[instrument]} ${t(`paths.${difficulty}`)} path`}
           visible={imageVisible}
         />
       )}

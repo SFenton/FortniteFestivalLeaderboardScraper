@@ -58,8 +58,8 @@ test('Song detail paths and chart controls are browser-interactive', async ({ pa
   await expect(dialog).toBeVisible();
   const instrumentToggle = dialog.getByRole('button', {
     name: isMobileProject(testInfo.project.name)
-      ? 'Solo_Guitar'
-      : 'Solo_Guitar Lead',
+      ? 'Instrument: Lead'
+      : 'Lead',
     exact: true,
   });
   await (isMobileProject(testInfo.project.name)
@@ -74,7 +74,7 @@ test('Song detail paths and chart controls are browser-interactive', async ({ pa
       'Solo_PeripheralDrums',
       'Solo_PeripheralCymbals',
     ]) {
-      const icon = dialog.getByRole('img', { name: instrument }).first();
+      const icon = dialog.locator(`img[data-instrument="${instrument}"]`).first();
       for (let step = 0; step < 9 && !await icon.isVisible(); step += 1) {
         await nextInstrument.click();
       }
@@ -82,10 +82,10 @@ test('Song detail paths and chart controls are browser-interactive', async ({ pa
     }
   } else {
     await expect(
-      dialog.getByRole('img', { name: 'Solo_PeripheralDrums' }).first(),
+      dialog.locator('img[data-instrument="Solo_PeripheralDrums"]').first(),
     ).toBeVisible();
     await expect(
-      dialog.getByRole('img', { name: 'Solo_PeripheralCymbals' }).first(),
+      dialog.locator('img[data-instrument="Solo_PeripheralCymbals"]').first(),
     ).toBeVisible();
   }
   await expect(dialog.getByText('2: 1 beats after NN (R)', { exact: true })).toHaveCount(0);

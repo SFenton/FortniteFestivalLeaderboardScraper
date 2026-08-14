@@ -116,9 +116,9 @@ describe('BandRankingsPage', () => {
     const metadata = within(row).getByTestId('band-ranking-metadata');
     expect(within(metadata).getByTestId('ranking-songs-label')).toHaveTextContent('120 / 160');
     expect(within(metadata).getByTestId('ranking-rating-label')).toHaveTextContent('9,876,542');
-    expect(within(row).getByAltText('Solo_Guitar')).toBeTruthy();
-    expect(within(row).getByAltText('Solo_Bass')).toBeTruthy();
-    expect(within(row).getByAltText('Solo_Drums')).toBeTruthy();
+    expect(within(row).getByAltText('Lead')).toBeTruthy();
+    expect(within(row).getByAltText('Bass')).toBeTruthy();
+    expect(within(row).getByAltText('Drums')).toBeTruthy();
     expect(row).toHaveAttribute('href', '/bands/band-1?bandType=Band_Duets&teamKey=alpha%3Abeta&names=Alpha%20%2B%20Beta');
     expect(screen.getByTestId('leaderboard-page-info')).toHaveTextContent('1 / 2');
 
@@ -612,11 +612,11 @@ describe('BandRankingsPage', () => {
     const rows = within(row).getAllByTestId('band-member-row');
     expect(rows).toHaveLength(2);
     expect(within(rows[0]!).getByText('Alpha')).toBeTruthy();
-    expect(within(rows[0]!).getByAltText('Solo_Guitar')).toBeTruthy();
-    expect(within(rows[0]!).getByAltText('Solo_Vocals')).toBeTruthy();
+    expect(within(rows[0]!).getByAltText('Lead')).toBeTruthy();
+    expect(within(rows[0]!).getByAltText('Tap Vocals')).toBeTruthy();
     expect(within(rows[1]!).getByText('Beta')).toBeTruthy();
-    expect(within(rows[1]!).getByAltText('Solo_Guitar')).toBeTruthy();
-    expect(within(rows[1]!).getByAltText('Solo_Vocals')).toBeTruthy();
+    expect(within(rows[1]!).getByAltText('Lead')).toBeTruthy();
+    expect(within(rows[1]!).getByAltText('Tap Vocals')).toBeTruthy();
     expect(row).toHaveAttribute('href', '/bands/band-1?bandType=Band_Duets&teamKey=alpha%3Abeta&names=Alpha%20%2B%20Beta');
   });
 
@@ -678,11 +678,11 @@ describe('BandRankingsPage', () => {
 
     const row = await screen.findByTestId('band-rankings-entry-0');
     const rows = within(row).getAllByTestId('band-member-row');
-    expect(within(rows[0]!).getByAltText('Solo_Guitar')).toBeTruthy();
-    expect(within(rows[0]!).queryByAltText('Solo_Vocals')).toBeNull();
-    expect(within(rows[1]!).getByAltText('Solo_Bass')).toBeTruthy();
-    expect(within(rows[1]!).queryByAltText('Solo_Drums')).toBeNull();
-    expect(within(rows[2]!).getByAltText('Solo_Drums')).toBeTruthy();
-    expect(within(rows[2]!).queryByAltText('Solo_Vocals')).toBeNull();
+    expect(within(rows[0]!).getByAltText('Lead')).toBeTruthy();
+    expect(within(rows[0]!).queryByAltText('Tap Vocals')).toBeNull();
+    expect(within(rows[1]!).getByAltText('Bass')).toBeTruthy();
+    expect(within(rows[1]!).queryByAltText('Drums')).toBeNull();
+    expect(within(rows[2]!).getByAltText('Drums')).toBeTruthy();
+    expect(within(rows[2]!).queryByAltText('Tap Vocals')).toBeNull();
   });
 });

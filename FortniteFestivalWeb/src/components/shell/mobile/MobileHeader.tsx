@@ -99,7 +99,7 @@ export default function MobileHeader({
   /* v8 ignore start — conditional rendering tested via AppMobile integration */
   if (navTitle) {
     return (
-      <div key={locationKey} className="sa-top" style={{ ...s.header, ...(shouldAnimate ? { animation: `fadeIn ${TRANSITION_MS}ms ease-out` } : undefined) }}>
+      <header key={locationKey} className="sa-top" style={{ ...s.header, ...(shouldAnimate ? { animation: `fadeIn ${TRANSITION_MS}ms ease-out` } : undefined) }}>
         {backFallback ? (
           <a
             href="#"
@@ -116,7 +116,7 @@ export default function MobileHeader({
           </>
         )}
         {rightActionGroup}
-      </div>
+      </header>
     );
   }
 
