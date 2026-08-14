@@ -313,6 +313,7 @@ test('100-trigger Suggestions benchmark records growth and restores scroll', {
 }, async ({ page }, testInfo) => {
   test.skip(process.env.SUGGESTIONS_BENCHMARK !== '1', 'Suggestions benchmark runs in its isolated CI pass');
   test.skip(!isPrimaryDesktopProject(testInfo.project.name), 'Suggestions benchmark is owned by primary desktop');
+  await applyCpuThrottle(page);
   const triggerTarget = readTriggerTarget();
   const rivalsReady = page.waitForResponse(response => (
     /\/api\/player\/[^/]+\/rivals\/all$/.test(new URL(response.url()).pathname)
@@ -639,6 +640,14 @@ async function readHeapBytes(page: Page): Promise<number> {
   const heapMetric = result.metrics.find(metric => metric.name === 'JSHeapUsedSize');
   if (!heapMetric) throw new Error('Chromium did not expose JSHeapUsedSize');
   return heapMetric.value;
+}
+
+async function applyCpuThrottle(page: Page): Promise<void> {
+  const rate = Number(process.env.SUGGESTIONS_CPU_THROTTLE ?? 1);
+  if (!Number.isFinite(rate) || rate <= 1) return;
+  const session = await page.context().newCDPSession(page);
+  await session.send('Emulation.setCPUThrottlingRate', { rate });
+  await session.detach();
 }
 
 async function readMetrics(

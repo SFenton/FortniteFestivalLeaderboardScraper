@@ -1,4 +1,11 @@
-import { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
+import {
+  startTransition,
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+} from 'react';
 import { SuggestionGenerator } from '@festival/core/suggestions';
 import type { SuggestionCategory } from '@festival/core/types';
 import type { Song as CoreSong, LeaderboardData } from '@festival/core/types';
@@ -259,7 +266,9 @@ export function useSuggestions(
     if (next.length === 0) {
       activeCache.generatorHasMore = false;
       activeCache.loadTriggerCount = loadTriggerCount;
-      setSession(toSession(activeCache, cacheKey));
+      startTransition(() => {
+        setSession(toSession(activeCache, cacheKey));
+      });
       return;
     }
 
@@ -268,7 +277,9 @@ export function useSuggestions(
       ...next.slice(0, remaining),
     ];
     activeCache.loadTriggerCount = loadTriggerCount;
-    setSession(toSession(activeCache, cacheKey));
+    startTransition(() => {
+      setSession(toSession(activeCache, cacheKey));
+    });
   }, [cacheKey]);
 
   useEffect(() => {

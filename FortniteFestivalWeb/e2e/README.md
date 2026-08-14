@@ -117,7 +117,9 @@ about 8 MB heap growth, zero list-growth long tasks, one geometry read, and
 exact deep restoration. Those final ceilings are enforced. A second tagged
 test reaches the 1,000-category limit under fully hidden filters and verifies
 the explicit fresh-mix reset. The PR runner executes both in a dedicated
-one-worker pass after the normal Chromium desktop project.
+one-worker pass after the normal Chromium desktop project. Set
+`SUGGESTIONS_CPU_THROTTLE` to a Chromium CPU multiplier for a local
+slow-device run.
 
 `scripts/run-e2e-project.mjs` accepts:
 

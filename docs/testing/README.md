@@ -134,8 +134,10 @@ records generated/rendered category counts, total DOM nodes, frosted markers,
 scroll height, available JS heap, long tasks, mousemove geometry reads, and
 back/forward scroll restoration. Set `SUGGESTIONS_METRICS_PATH` to persist the
 JSON report outside the repository and `SUGGESTIONS_TRIGGER_TARGET` to run a
-larger manual profile up to 150 triggers. CI runs the benchmark in a dedicated
-one-worker pass after the normal Chromium desktop suite. The same pass also
+larger manual profile up to 150 triggers. `SUGGESTIONS_CPU_THROTTLE` applies a
+Chromium CPU-throttling multiplier for local slow-device validation. CI runs
+the benchmark in a dedicated one-worker pass after the normal Chromium desktop
+suite. The same pass also
 drives a fully filtered session to the 1,000-category ceiling and verifies the
 explicit fresh-mix reset.
 

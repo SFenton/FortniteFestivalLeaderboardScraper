@@ -1,8 +1,12 @@
 <<<<<<<< HEAD:FSTService/wwwroot/assets/LicensesPage-r7TAJ2PD.js
+<<<<<<<< HEAD:FSTService/wwwroot/assets/LicensesPage-r7TAJ2PD.js
 import{aM as I,e as L,r as h,dh as E,j as t,bG as C,aT as A,bo as N,bT as F,k as x,M as O,Y as R,C as s,co as a,F as c,G as r,O as l,W as g,R as w,ar as p,v as U,y as u,cp as M,L as b,p as v}from"./index-dkLh3Jkt.js";import{F as D}from"./FrostedCard-fLL0xD39.js";const e={MIT:`MIT License
 ========
 import{aM as I,e as L,r as h,di as E,j as t,bG as C,aT as A,bo as N,bT as F,k as x,M as O,Y as R,C as s,cq as a,F as c,G as r,O as l,W as g,R as w,ar as p,v as U,y as u,cr as M,L as b,p as v}from"./index-rypjIoAT.js";import{F as D}from"./FrostedCard-ek3G-4Js.js";const e={MIT:`MIT License
 >>>>>>>> 5010c196 (Avoid refiltering accumulated Suggestions):FSTService/wwwroot/assets/LicensesPage-D8cOGp4p.js
+========
+import{aM as I,e as L,r as h,di as E,j as t,bG as C,aT as A,bo as N,bT as F,k as x,M as O,Y as R,C as s,cq as a,F as c,G as r,O as l,W as g,R as w,ar as p,v as U,y as u,cr as M,L as b,p as v}from"./index-DFPaZZx4.js";import{F as D}from"./FrostedCard-DUc58viw.js";const e={MIT:`MIT License
+>>>>>>>> 93540add (Yield Suggestions batch commits):FSTService/wwwroot/assets/LicensesPage-Cq7mXiK-.js
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
