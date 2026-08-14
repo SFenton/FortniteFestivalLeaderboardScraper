@@ -1,5 +1,0 @@
-<<<<<<<< HEAD:FSTService/wwwroot/assets/rivalRouteState-Cs0Kpi10.js
-import{b as n,a as c,g as S}from"./comboUtils-Dytj3OZY.js";const i="settings";function v(o,r){return e(o,r)[0]??"Solo_Guitar"}function e(o,r){if((o==null?void 0:o.comboScope)===i){const l=n(r);return l.length>0?l:["Solo_Guitar"]}return[(o==null?void 0:o.combo)??c(r)??S(r)[0]??"Solo_Guitar"]}function a(o,r){const l=o!=null&&o.allowLiveFallback?{allowLiveFallback:!0}:{};return(o==null?void 0:o.comboScope)===i?{comboScope:i,...l}:r?{combo:r,...l}:l}export{i as R,v as a,a as b,e as r};
-========
-import{b as n,a as c,g as S}from"./comboUtils-DlUwFU_S.js";const i="settings";function v(o,r){return e(o,r)[0]??"Solo_Guitar"}function e(o,r){if((o==null?void 0:o.comboScope)===i){const l=n(r);return l.length>0?l:["Solo_Guitar"]}return[(o==null?void 0:o.combo)??c(r)??S(r)[0]??"Solo_Guitar"]}function a(o,r){const l=o!=null&&o.allowLiveFallback?{allowLiveFallback:!0}:{};return(o==null?void 0:o.comboScope)===i?{comboScope:i,...l}:r?{combo:r,...l}:l}export{i as R,v as a,a as b,e as r};
->>>>>>>> 5010c196 (Avoid refiltering accumulated Suggestions):FSTService/wwwroot/assets/rivalRouteState-KpmESXAX.js

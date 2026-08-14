@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-13
-last_verified_commit: 623d6059
+last_verified_commit: aa33576e
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FortniteFestivalWeb/package.json

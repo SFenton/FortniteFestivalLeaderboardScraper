@@ -1,5 +1,0 @@
-<<<<<<<< HEAD:FSTService/wwwroot/assets/useSwipeNavigation-l7ORCH8e.js
-import{r as u,eU as i}from"./index-dkLh3Jkt.js";function f({onBack:r,onForward:c}){const t=u.useRef(null),a=u.useCallback(n=>{var e;t.current=((e=n.touches[0])==null?void 0:e.clientX)??null},[]),o=u.useCallback(n=>{var s;if(t.current===null)return;const e=(s=n.changedTouches[0])==null?void 0:s.clientX;if(e===void 0)return;const l=e-t.current;t.current=null,!(Math.abs(l)<i)&&(l<0?c():r())},[r,c]);return{handleTouchStart:a,handleTouchEnd:o}}export{f as u};
-========
-import{r as u,eV as i}from"./index-rypjIoAT.js";function f({onBack:r,onForward:c}){const t=u.useRef(null),a=u.useCallback(n=>{var e;t.current=((e=n.touches[0])==null?void 0:e.clientX)??null},[]),o=u.useCallback(n=>{var s;if(t.current===null)return;const e=(s=n.changedTouches[0])==null?void 0:s.clientX;if(e===void 0)return;const l=e-t.current;t.current=null,!(Math.abs(l)<i)&&(l<0?c():r())},[r,c]);return{handleTouchStart:a,handleTouchEnd:o}}export{f as u};
->>>>>>>> 5010c196 (Avoid refiltering accumulated Suggestions):FSTService/wwwroot/assets/useSwipeNavigation-XvZMdjXI.js
