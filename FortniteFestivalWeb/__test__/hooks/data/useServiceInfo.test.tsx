@@ -13,6 +13,7 @@ vi.mock('../../../src/api/client', () => ({ api: mockApi }));
 
 const {
   SERVICE_INFO_AVAILABILITY_POLL_MS,
+  SERVICE_INFO_BACKGROUND_POLL_MS,
   SERVICE_INFO_SETTINGS_POLL_MS,
   SERVICE_INFO_TIMEOUT_MS,
   ServiceInfoTimeoutError,
@@ -51,6 +52,10 @@ describe('useServiceInfo', () => {
     vi.clearAllMocks();
     mockApi.getServiceInfo.mockResolvedValue(serviceInfo);
     notifyManager.setScheduler(callback => callback());
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      value: 'visible',
+    });
   });
 
   afterEach(() => {
@@ -128,6 +133,31 @@ describe('useServiceInfo', () => {
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(mockApi.getServiceInfo).toHaveBeenCalledTimes(2);
+  });
+
+  it('throttles the shared Settings poll while the document is hidden', async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      value: 'hidden',
+    });
+    const queryClient = createClient();
+
+    renderHook(() => useServiceInfo('settings'), { wrapper: makeWrapper(queryClient) });
+    await flushPromises();
+    expect(mockApi.getServiceInfo).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SERVICE_INFO_SETTINGS_POLL_MS);
+    });
+    expect(mockApi.getServiceInfo).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(
+        SERVICE_INFO_BACKGROUND_POLL_MS - SERVICE_INFO_SETTINGS_POLL_MS,
+      );
     });
     expect(mockApi.getServiceInfo).toHaveBeenCalledTimes(2);
   });

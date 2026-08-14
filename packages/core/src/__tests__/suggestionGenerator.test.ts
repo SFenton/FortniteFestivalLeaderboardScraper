@@ -1,6 +1,7 @@
 import type {LeaderboardData, Song} from '../models';
 import {ScoreTracker} from '../models';
 import {SuggestionGenerator} from '../suggestions/suggestionGenerator';
+import type {RivalDataIndex, RivalInfo, RivalSongMatch} from '../suggestions/types';
 
 const mkSong = (id: string, title: string, artist: string, year?: number): Song => ({
   track: {
@@ -75,6 +76,118 @@ describe('SuggestionGenerator', () => {
       const ids = cat.songs.map(s => s.songId);
       expect(new Set(ids).size).toBe(ids.length);
     }
+  });
+
+  test('adds rival pipelines when rival data arrives after initialization', () => {
+    const song = mkSong('rival-song', 'Rival Song', 'Rival Artist', 2026);
+    const rival: RivalInfo = {
+      accountId: 'rival-1',
+      displayName: 'Rival One',
+      direction: 'above',
+      source: 'song',
+    };
+    const match: RivalSongMatch = {
+      rival,
+      songId: 'rival-song',
+      instrument: 'guitar',
+      userRank: 11,
+      rivalRank: 10,
+      rankDelta: -1,
+      userScore: 100_000,
+      rivalScore: 101_000,
+    };
+    const rivalData: RivalDataIndex = {
+      songRivals: [rival],
+      leaderboardRivals: [],
+      allRivals: [rival],
+      byRival: new Map([[rival.accountId, [match]]]),
+      closestRivalBySong: new Map([['rival-song:guitar', match]]),
+      leaderboardRivalIndex: new Map(),
+    };
+    const gen = new SuggestionGenerator({
+      seed: 123,
+      disableSkipping: true,
+      fixedDisplayCount: 1,
+    });
+    gen.setSource([song], {});
+    gen.getNext(0);
+
+    gen.setRivalData(rivalData);
+    const categories = gen.getNext(500);
+
+    expect(categories.map(category => category.key)).toContain('song_rival_gap_rival-1');
+  });
+
+  test('requeues existing rival pipelines when rival data changes', () => {
+    const song = mkSong('rival-song', 'Rival Song', 'Rival Artist', 2026);
+    const rival: RivalInfo = {
+      accountId: 'rival-1',
+      displayName: 'Rival One',
+      direction: 'above',
+      source: 'song',
+    };
+    const createData = (rankDelta: number): RivalDataIndex => {
+      const match: RivalSongMatch = {
+        rival,
+        songId: 'rival-song',
+        instrument: 'guitar',
+        userRank: 11,
+        rivalRank: 10,
+        rankDelta,
+        userScore: 100_000,
+        rivalScore: 101_000,
+      };
+      return {
+        songRivals: [rival],
+        leaderboardRivals: [],
+        allRivals: [rival],
+        byRival: new Map([[rival.accountId, [match]]]),
+        closestRivalBySong: new Map([['rival-song:guitar', match]]),
+        leaderboardRivalIndex: new Map(),
+      };
+    };
+    const gen = new SuggestionGenerator({
+      seed: 321,
+      disableSkipping: true,
+      fixedDisplayCount: 1,
+    });
+    gen.setSource([], {});
+    gen.getNext(0);
+
+    gen.setRivalData(createData(0));
+    expect(gen.getNext(500).map(category => category.key))
+      .not.toContain('song_rival_gap_rival-1');
+
+    gen.setSource([song], {});
+    gen.setRivalData(createData(-1));
+    expect(gen.getNext(500).map(category => category.key))
+      .toContain('song_rival_gap_rival-1');
+  });
+
+  test('ignores rivals with empty song samples', () => {
+    const rival: RivalInfo = {
+      accountId: 'rival-empty',
+      displayName: 'Empty Rival',
+      direction: 'above',
+      source: 'song',
+    };
+    const gen = new SuggestionGenerator({
+      seed: 456,
+      disableSkipping: true,
+      fixedDisplayCount: 1,
+    });
+    gen.setSource([mkSong('song-1', 'Song', 'Artist', 2026)], {});
+    gen.getNext(0);
+    gen.setRivalData({
+      songRivals: [rival],
+      leaderboardRivals: [],
+      allRivals: [rival],
+      byRival: new Map([[rival.accountId, []]]),
+      closestRivalBySong: new Map(),
+      leaderboardRivalIndex: new Map(),
+    });
+
+    expect(() => gen.getNext(500)).not.toThrow();
   });
 
   test('emits unplayed_any when scores are missing', () => {

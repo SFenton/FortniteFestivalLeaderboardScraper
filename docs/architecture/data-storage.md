@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-08-13
-last_verified_commit: 53c11043
+last_verified: 2026-08-14
+last_verified_commit: a20b9d89
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -11,6 +11,7 @@ sources:
   - FSTService/Persistence/MetaDatabase.PhaseProgress.cs
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
+  - FSTService/Scraping/Replay/
   - FSTService/FeatureOptions.cs
   - deploy/postgres.Dockerfile
 update_triggers:
@@ -45,6 +46,7 @@ surface is not the production service persistence model.
 | Derived products | Rankings, rivals, statistics, precomputed responses, improvement notifications |
 | Publication state | Published scrape/generation, source bindings, read freeze, commit intent, leases, cache generations |
 | Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, maintenance evidence, dedup/recovery audit state |
+| Replay evidence artifacts | Immutable Tier-0 filesystem packages that describe producer/source/build/schema/config/phase lineage and checksummed artifact metadata; never publication authority |
 
 The `songs` path-generation state stores distinct theoretical maxima for all
 eight path instruments. Plastic drums use separate
@@ -177,6 +179,31 @@ workspace became the full `2,607,232,278,528` bytes; executable purge
 rows/bytes were zero. The separately labeled informational candidate was about
 `2.52` billion rows / `1.46 TB`, with about `392 GB` outside MCV coverage.
 Those values are not reclaim proof.
+
+## Tier-0 replay evidence packages
+
+Tier-0 evidence packages are filesystem artifacts, not PostgreSQL relations and
+not a replacement source of truth. Their manifest records source
+scrape/publication/catalog identity, producer build and OCI identity,
+producer-supplied database/schema facts, allowlisted configuration hash,
+stable phase-plan descriptors, summary references, artifact metadata,
+checksums, and parent lineage.
+
+Packages are mutable only before sealing. Artifact commit uses a pending
+journal record around the same-directory temporary-file rename so an
+interrupted writer can validate and finish the transaction. Sealing commits
+the exact canonical state-journal bytes, produces an artifact checksum
+manifest, and then writes `manifest.json` as the final marker. The root hash
+covers canonical manifest metadata while omitting only its own field.
+Verification is read-only and detects corruption, missing/extra files or
+directories, path/symlink escape, and expected parent/config/schema/phase
+mismatches.
+
+No live capture, database export/import, replay invocation, publication
+binding, or retention automation uses this contract yet. Future
+production-derived packages and replay workspace must stay on the 4 TB FST
+drive and receive explicit capacity/retention ownership. See
+[Replay evidence artifacts](replay-artifacts.md).
 
 ## Storage and maintenance rules
 

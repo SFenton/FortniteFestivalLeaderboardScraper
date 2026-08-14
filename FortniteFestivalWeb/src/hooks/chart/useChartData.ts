@@ -1,9 +1,8 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../../api/client';
-import { queryKeys } from '../../api/queryKeys';
 import { type ServerInstrumentKey as InstrumentKey, type ServerScoreHistoryEntry as ScoreHistoryEntry } from '@festival/core/api';
 import { ACCURACY_SCALE } from '@festival/core/runtime';
+import { playerHistoryQueryOptions } from '../../api/remoteDataQueries';
 
 export type ChartPoint = {
   date: string;
@@ -29,10 +28,8 @@ export function useChartData(
   historyProp?: ScoreHistoryEntry[],
 ) {
   const { data: fetchedHistory, isLoading } = useQuery({
-    queryKey: queryKeys.playerHistory(accountId, songId),
-    queryFn: ({ signal }) => api.getPlayerHistory(accountId, songId, undefined, { signal }).then(r => r.history),
+    ...playerHistoryQueryOptions(accountId, songId),
     enabled: !historyProp && !!accountId && !!songId,
-    staleTime: 5 * 60 * 1000,
   });
 
   const songHistory = useMemo(

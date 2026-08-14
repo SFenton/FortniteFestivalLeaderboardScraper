@@ -1,8 +1,8 @@
 ---
 status: roadmap
 owner: worker
-last_verified: 2026-08-13
-last_verified_commit: 3ff9cbc8
+last_verified: 2026-08-14
+last_verified_commit: 099fd6fa
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -12,12 +12,16 @@ sources:
   - FSTService/Scraping/WorkerStatusPublisher.cs
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Scraping/DurablePhaseProgressSink.cs
+  - FSTService/Scraping/Replay/
   - FSTService/Scraping/OnlineBoundedPageWriter.cs
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
   - FSTService/Api/HealthEndpoints.cs
   - FortniteFestivalWeb/src/pages/settings/SettingsPage.tsx
+  - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.tsx
+  - FortniteFestivalWeb/src/pages/settings/serviceProgress.ts
+  - /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/pr27-settings-live-ab-20260814T062455Z
   - packages/core/src/api/serverTypes.ts
   - docs/architecture/data-publication-flow.md
   - docs/architecture/data-storage.md
@@ -95,10 +99,10 @@ resolved through repository and bounded runtime evidence.
 | Historical correctness and publication safety | Great: candidate isolation, exact catalog binding, complete-scope manifests, critical-phase gates, atomic generation publication, and fail-closed reads are strong | High |
 | Test posture | Good: extensive Postgres, worker, API, publication, web, and browser coverage; CI enforces 94% service line coverage | High |
 | Modularity | Okay: phases are testable, but `PostScrapeOrchestrator.cs` is 2,748 lines and still contains dormant or PostgreSQL-no-op paths | High |
-| Live progress observability | Good backend foundation: normalized durable attempts, service-info v2, and watchdog progress/liveness separation are accepted; the Settings UI still needs PR-3 presentation work | High |
+| Live progress observability | Good: normalized durable attempts, service-info v2, watchdog progress/liveness separation, and the responsive Settings progress experience are accepted | High |
 | Performance | Poor: recent full-scrape p50 is about 8.58 hours and recorded post-processing consumes about 5.6 hours on scrape 1290 | High |
 | Storage sustainability | Poor and urgent: the 3.6 TB drive is 96% used with roughly 170 GB free after scrape 1296 | High |
-| Overall | Correctness-first and operationally dependable, with durable backend progress accepted; performance, storage, replay, and UI work remain unresolved | High |
+| Overall | Correctness-first and operationally dependable, with durable backend and browser progress accepted; performance, storage, and replay remain unresolved | High |
 
 ## Evidence rules
 
@@ -677,32 +681,24 @@ Each iteration below is a separate branch/PR.
 - Execution remains `parity-gated-maintenance` and blocked until statistics,
   exact-count, parity, and workspace evidence all agree.
 
-### PR-3: Settings progress experience
-
-**Class:** `continuous-safe`
-
-- three primary visual groups;
-- technical details disclosure;
-- selected-profile sync card;
-- determinate/indeterminate progress;
-- overall estimate and ETA range/confidence;
-- polling/background behavior;
-- unit, contract, responsive, accessibility, and browser acceptance.
-
-### PR-4: Tier 0 evidence package and replay contract
-
-**Class:** `continuous-safe`
-
-- package/phase manifest schema;
-- stable phase contract descriptors;
-- checksum/root lineage;
-- config/build/schema fingerprinting;
-- no production capture or phase mutation;
-- corruption, mismatch, resume, and determinism tests.
-
 ### PR-5: same-binary isolated replay
 
 **Class:** `full-scrape-ab` before any production-facing use.
+
+**Mandatory starting and acceptance gate:** PR-4 confines operations within a
+caller-supplied package root but deliberately does not select or authorize that
+root. PR-5 must add a fail-closed root admission policy before any CLI/runtime
+entry point can create a package:
+
+- production-derived roots must resolve beneath an operator-approved location
+  on the 4 TB FST drive;
+- bounded tests may use only repository or explicitly assigned session-test
+  roots;
+- canonical roots and existing ancestors must reject symlinks/reparse points,
+  traversal, normalization aliases, alternate drives, generic temporary
+  directories, and PostgreSQL data directories; and
+- rejection must occur before database, network, package, import, or phase
+  execution.
 
 - guarded FSTService replay mode;
 - isolated connection-target refusal for production;
@@ -860,8 +856,8 @@ This tandem plan is accepted for implementation after local outbox rendering.
 - Approval of this roadmap is not authorization to bypass the current
   live-safety, parity, publication, provider, storage, rollback, or maintenance
   gate for any later action.
-- PR-3 is the next progress boundary and must retain version-1 fallback
-  behavior during browser migration.
+- PR-5 same-binary isolated replay is the next implementation boundary and
+  cannot pass acceptance without the approved FST-root admission gate.
 - Current-projection optimization is a separate future full-scrape A/B; it
   cannot be combined with PR-3 Settings work.
 - Snapshot-retention execution remains a separate parity- and capacity-gated

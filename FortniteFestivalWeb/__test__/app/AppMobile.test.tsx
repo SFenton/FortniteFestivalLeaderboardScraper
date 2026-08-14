@@ -1079,7 +1079,7 @@ describe('App — mobile FAB branches', () => {
     expect(within(dock).queryByText('TrackedP + BandMate')).toBeNull();
     expect(within(dock).queryByText('Item Shop')).toBeNull();
     expect(filterButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
-    expect(within(filterButton).queryByAltText('Solo_Guitar')).toBeNull();
+    expect(within(filterButton).queryByAltText('Lead')).toBeNull();
     expect(screen.queryByTestId('fab-side-actions')).toBeNull();
     expect(screen.queryByLabelText('Actions')).toBeNull();
     fireEvent.click(filterButton);
@@ -1123,8 +1123,8 @@ describe('App — mobile FAB branches', () => {
     const dock = document.querySelector('.fab-search-dock') as HTMLElement;
     const filterButton = within(dock).getByRole('button', { name: 'Filter Songs' });
     expect(filterButton).toHaveStyle({ backgroundColor: '#2D82E6' });
-    expect(within(filterButton).getByAltText('Solo_Guitar')).toBeDefined();
-    expect(within(filterButton).getByAltText('Solo_Bass')).toBeDefined();
+    expect(within(filterButton).getByAltText('Lead')).toBeDefined();
+    expect(within(filterButton).getByAltText('Bass')).toBeDefined();
     expect(within(filterButton).getByTestId('fab-band-filter-instruments')).toBeDefined();
     expect(screen.queryByTestId('fab-side-actions')).toBeNull();
 
@@ -1148,7 +1148,7 @@ describe('App — mobile FAB branches', () => {
     const dock = document.querySelector('.fab-search-dock') as HTMLElement;
     const filterButton = within(dock).getByRole('button', { name: 'Filter Songs' });
     expect(filterButton).toHaveStyle({ backgroundColor: '#2D82E6' });
-    expect(within(filterButton).queryByAltText('Solo_Guitar')).toBeNull();
+    expect(within(filterButton).queryByAltText('Lead')).toBeNull();
     expect(screen.queryByTestId('fab-band-filter-instruments')).toBeNull();
   });
 
@@ -1301,7 +1301,7 @@ describe('App — mobile FAB branches', () => {
     const instrumentButton = within(sideActions).getByRole('button', { name: 'Change Instrument' });
     expect(instrumentButton).toBeDefined();
     expect(within(instrumentButton).getByText('Lead')).toBeDefined();
-    const instrumentIcon = within(instrumentButton).getByAltText('Solo_Guitar');
+    const instrumentIcon = within(instrumentButton).getByAltText('Lead');
     expect(instrumentIcon).toBeDefined();
     expect(instrumentIcon).toHaveAttribute('width', '32');
     expect(instrumentIcon).toHaveAttribute('height', '32');
@@ -1429,8 +1429,8 @@ describe('App — mobile FAB branches', () => {
     expect(sideActions.parentElement?.style.flexDirection).toBe('');
     const filterButton = within(sideActions).getByRole('button', { name: 'Lead / Bass' });
     expect(filterButton).toHaveStyle({ backgroundColor: '#2D82E6' });
-    expect(within(filterButton).getByAltText('Solo_Guitar')).toBeDefined();
-    expect(within(filterButton).getByAltText('Solo_Bass')).toBeDefined();
+    expect(within(filterButton).getByAltText('Lead')).toBeDefined();
+    expect(within(filterButton).getByAltText('Bass')).toBeDefined();
     expect(within(filterButton).getByTestId('fab-band-filter-instruments')).toBeDefined();
     expect(screen.queryByLabelText('Actions')).toBeNull();
     expect(screen.queryByTestId('fab-menu')).toBeNull();
@@ -1493,8 +1493,8 @@ describe('App — mobile FAB branches', () => {
     expect(sideActions.parentElement?.style.flexDirection).toBe('');
     const filterButton = within(sideActions).getByRole('button', { name: 'Lead / Bass' });
     expect(within(filterButton).queryByText('Lead / Bass')).toBeNull();
-    expect(within(filterButton).getByAltText('Solo_Guitar')).toBeDefined();
-    expect(within(filterButton).getByAltText('Solo_Bass')).toBeDefined();
+    expect(within(filterButton).getByAltText('Lead')).toBeDefined();
+    expect(within(filterButton).getByAltText('Bass')).toBeDefined();
     window.location.hash = '';
   });
 
@@ -1659,8 +1659,8 @@ describe('App — mobile FAB branches', () => {
     const sideActions = screen.getByTestId('fab-side-actions');
     const filterButton = within(sideActions).getByRole('button', { name: 'Lead / Bass' });
     expect(filterButton).toHaveStyle({ backgroundColor: '#2D82E6' });
-    expect(within(filterButton).getByAltText('Solo_Guitar')).toBeDefined();
-    expect(within(filterButton).getByAltText('Solo_Bass')).toBeDefined();
+    expect(within(filterButton).getByAltText('Lead')).toBeDefined();
+    expect(within(filterButton).getByAltText('Bass')).toBeDefined();
     expect(within(filterButton).getByTestId('fab-band-filter-instruments')).toBeDefined();
     expect(within(filterButton).queryByText('Lead / Bass')).toBeNull();
     expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
@@ -1738,7 +1738,7 @@ describe('App — mobile FAB branches', () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText('App Manual')).toBeDefined();
+      expect(screen.getAllByText('App Manual').length).toBeGreaterThan(0);
       expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
     }, { timeout: 5000 });
     expect(screen.queryByLabelText('Actions')).toBeNull();
@@ -1823,7 +1823,7 @@ describe('App — mobile FAB branches', () => {
     await waitFor(() => {
       const activeFilterFab = screen.getByRole('button', { name: 'Filter Suggestions' });
       expect(activeFilterFab).toHaveStyle({ backgroundColor: '#2D82E6' });
-      expect(within(activeFilterFab).queryByAltText('Solo_Guitar')).toBeNull();
+      expect(within(activeFilterFab).queryByAltText('Lead')).toBeNull();
       expect(screen.queryByTestId('fab-band-filter-instruments')).toBeNull();
     });
     window.location.hash = '';
@@ -1897,8 +1897,8 @@ describe('App — mobile FAB branches', () => {
 
     const filterFab = screen.getByRole('button', { name: 'Filter Suggestions' });
     expect(filterFab).toHaveStyle({ backgroundColor: '#2D82E6' });
-    expect(within(filterFab).getByAltText('Solo_Guitar')).toBeDefined();
-    expect(within(filterFab).getByAltText('Solo_Bass')).toBeDefined();
+    expect(within(filterFab).getByAltText('Lead')).toBeDefined();
+    expect(within(filterFab).getByAltText('Bass')).toBeDefined();
     expect(within(filterFab).getByTestId('fab-band-filter-instruments')).toBeDefined();
     expect(screen.queryByTestId('fab-side-actions')).toBeNull();
 
@@ -1918,8 +1918,8 @@ describe('App — mobile FAB branches', () => {
 
     await screen.findByRole('region', { name: 'Global Statistics' }, { timeout: 5000 });
     const quickLinksButton = await findReadyQuickLinksButton();
-    expect(screen.getByText('TrackedP')).toBeDefined();
-    expect(screen.queryByRole('heading', { name: 'TrackedP' })).toBeNull();
+    expect(screen.getAllByText('TrackedP').length).toBeGreaterThan(0);
+    expect(screen.getByRole('heading', { level: 1, name: 'TrackedP' })).toBeDefined();
     expect(screen.queryByTestId('player-header-actions')).toBeNull();
     expect(screen.queryByLabelText('Actions')).toBeNull();
 
@@ -1947,8 +1947,8 @@ describe('App — mobile FAB branches', () => {
     render(<App />);
 
     await findReadyQuickLinksButton();
-    expect(screen.getByText('TrackedP + BandMate')).toBeDefined();
-    expect(screen.queryByRole('heading', { name: 'TrackedP + BandMate' })).toBeNull();
+    expect(screen.getAllByText('TrackedP + BandMate').length).toBeGreaterThan(0);
+    expect(screen.getByRole('heading', { level: 1, name: 'TrackedP + BandMate' })).toBeDefined();
 
     const sideActions = await screen.findByTestId('fab-side-actions', {}, { timeout: 5000 });
     const filterButton = within(sideActions).getByRole('button', { name: 'Duos' });
@@ -1997,12 +1997,12 @@ describe('App — mobile FAB branches', () => {
     const sideActions = await screen.findByTestId('fab-side-actions', {}, { timeout: 5000 });
     const filterButton = within(sideActions).getByRole('button', { name: 'Lead / Bass' });
     expect(filterButton).toHaveStyle({ backgroundColor: '#2D82E6' });
-    expect(within(filterButton).getByAltText('Solo_Guitar')).toBeDefined();
-    expect(within(filterButton).getByAltText('Solo_Bass')).toBeDefined();
+    expect(within(filterButton).getByAltText('Lead')).toBeDefined();
+    expect(within(filterButton).getByAltText('Bass')).toBeDefined();
     expect(within(filterButton).getByTestId('fab-band-filter-instruments')).toBeDefined();
     expect(within(filterButton).queryByText('Lead / Bass')).toBeNull();
     expect(screen.queryByTestId('band-header-filter-instruments')).toBeNull();
-    expect(screen.queryByRole('heading', { level: 1, name: 'TrackedP + BandMate' })).toBeNull();
+    expect(screen.getByRole('heading', { level: 1, name: 'TrackedP + BandMate' })).toBeDefined();
 
     fireEvent.click(filterButton);
 
@@ -2045,8 +2045,8 @@ describe('App — mobile FAB branches', () => {
 
     const filterFab = screen.getByRole('button', { name: 'Lead / Bass' });
     expect(filterFab).toHaveStyle({ backgroundColor: '#2D82E6' });
-    expect(within(filterFab).getByAltText('Solo_Guitar')).toBeDefined();
-    expect(within(filterFab).getByAltText('Solo_Bass')).toBeDefined();
+    expect(within(filterFab).getByAltText('Lead')).toBeDefined();
+    expect(within(filterFab).getByAltText('Bass')).toBeDefined();
     expect(within(filterFab).getByTestId('fab-band-filter-instruments')).toBeDefined();
     expect(screen.queryByTestId('fab-side-actions')).toBeNull();
     expect(screen.queryByTestId('fab-menu')).toBeNull();

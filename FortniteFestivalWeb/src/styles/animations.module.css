@@ -258,3 +258,30 @@
 .choptIconPulse {
   animation: choptIconPulse 2s ease-in-out infinite;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .shopPulse::after,
+  .shopPulseGold::after,
+  .pulseWrap::after,
+  .shopPulseRed::after {
+    animation: none;
+    opacity: 0.7;
+  }
+
+  .shopBreathe,
+  .shopCircleBreathe,
+  .shopBreatheGold,
+  .shopCircleBreatheGold,
+  .shopBreatheRed,
+  .shopCircleBreatheRed,
+  .profilePillBreathe,
+  .profileCircleBreathe {
+    animation: none;
+    background-color: var(--shop-pulse-target, var(--profile-pulse-target, var(--color-accent-purple)));
+  }
+
+  .choptIconPulse {
+    animation: none;
+    opacity: 1;
+  }
+}

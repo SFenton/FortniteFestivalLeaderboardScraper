@@ -1,4 +1,4 @@
-import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
+import { HashRouter, Routes, Route, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { IoCompass, IoPerson, IoPersonAdd, IoSwapVerticalSharp, IoFunnel, IoFlash, IoGrid, IoList, IoOptions, IoMusicalNotes, IoTrophy, IoBagHandle, IoPeople, IoSearch } from 'react-icons/io5';
 import { useEffect, useLayoutEffect, useState, useMemo, useRef, useCallback, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -7,7 +7,6 @@ import { FestivalProvider, useFestival } from './contexts/FestivalContext';
 import { SettingsProvider } from './contexts/SettingsContext';
 import { FeatureFlagsProvider, useFeatureFlagsState } from './contexts/FeatureFlagsContext';
 import { ShopProvider } from './contexts/ShopContext';
-import { AnimatedBackground } from './components/shell/AnimatedBackground';
 import { useTrackedPlayer, type TrackedPlayer } from './hooks/data/useTrackedPlayer';
 import { useSelectedProfileNameRefresh } from './hooks/data/useSelectedProfileNameRefresh';
 import { usePlayerBandsPrefetch } from './hooks/data/usePlayerBandsPrefetch';
@@ -38,68 +37,102 @@ const BandRankingsPage = lazy(() => import('./pages/leaderboards/BandRankingsPag
 const BandPage = lazy(() => import('./pages/band/BandPage'));
 const PlayerBandsPage = lazy(() => import('./pages/band/PlayerBandsPage'));
 const CompetePage = lazy(() => import('./pages/compete/CompetePage'));
+const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
+const AnimatedBackground = lazy(() => import('./components/shell/AnimatedBackground').then(module => ({
+  default: module.AnimatedBackground,
+})));
+const ProximityGlowRuntime = lazy(() => import('./components/shell/ProximityGlowRuntime'));
 /* v8 ignore stop */
 import { Size, Layout, QUERY_NARROW_GRID } from '@festival/theme';
 
 /** Shared route tree used by both mobile and wide-desktop layouts. */
 function RoutesContent({ player, selectedProfile }: { player: TrackedPlayer | null; selectedProfile: SelectedProfile | null }) {
   const selectedBand = selectedProfile?.type === 'band' ? selectedProfile : null;
+  const hasPlayer = !!player;
+  const hasSelection = hasPlayer || !!selectedBand;
   return (
     <Suspense fallback={<SuspenseFallback />}>
     <Routes>
-      <Route path="/" element={<Navigate to={AppRoutes.songs} replace />} />
-      <Route path="/songs" element={<SongsPage />} />
-      <Route path="/songs/:songId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SongDetailPage /></ErrorBoundary>} />
-      <Route path="/songs/:songId/bands/:bandType" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SongBandLeaderboardPage /></ErrorBoundary>} />
-      <Route path="/songs/:songId/:instrument" element={<ErrorBoundary fallback={<RouteErrorFallback />}><LeaderboardPage /></ErrorBoundary>} />
-      <Route path="/songs/:songId/:instrument/history" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerHistoryPage /></ErrorBoundary>} />
-      <Route path="/player/:accountId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerPage /></ErrorBoundary>} />
-      {player ? (
-        <Route path="/rivals" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalsPage /></ErrorBoundary>} />
-      ) : (
-        <Route path="/rivals" element={<Navigate to={AppRoutes.songs} replace />} />
-      )}
-      {player ? (
-        <Route path="/rivals/all" element={<ErrorBoundary fallback={<RouteErrorFallback />}><AllRivalsPage /></ErrorBoundary>} />
-      ) : (
-        <Route path="/rivals/all" element={<Navigate to={AppRoutes.songs} replace />} />
-      )}
-      {player ? (
-        <Route path="/rivals/:rivalId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalDetailPage /></ErrorBoundary>} />
-      ) : (
-        <Route path="/rivals/:rivalId" element={<Navigate to={AppRoutes.songs} replace />} />
-      )}
-      {player ? (
-        <Route path="/rivals/:rivalId/rivalry" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalCategoryPage /></ErrorBoundary>} />
-      ) : (
-        <Route path="/rivals/:rivalId/rivalry" element={<Navigate to={AppRoutes.songs} replace />} />
-      )}
-      <Route path="/statistics" element={player
-        ? <ErrorBoundary fallback={<RouteErrorFallback />}><PlayerPage accountId={player.accountId} /></ErrorBoundary>
-        : selectedBand
-          ? <ErrorBoundary fallback={<RouteErrorFallback />}><BandPage statisticsBand={selectedBand} /></ErrorBoundary>
-          : <Navigate to={AppRoutes.songs} replace />}
+      <Route path={AppRoutes.root} element={<RedirectToSongs />} />
+      <Route path={AppRoutes.songs} element={<RouteBoundary><SongsPage /></RouteBoundary>} />
+      <Route path="/songs/:songId" element={<RouteBoundary><SongDetailPage /></RouteBoundary>} />
+      <Route path="/songs/:songId/bands/:bandType" element={<RouteBoundary><SongBandLeaderboardPage /></RouteBoundary>} />
+      <Route path="/songs/:songId/:instrument" element={<RouteBoundary><LeaderboardPage /></RouteBoundary>} />
+      <Route path="/songs/:songId/:instrument/history" element={<RouteBoundary><PlayerHistoryPage /></RouteBoundary>} />
+      <Route path="/player/:accountId" element={<RouteBoundary><PlayerPage /></RouteBoundary>} />
+      <Route
+        path={AppRoutes.rivals}
+        element={(
+          <RequirePlayer hasPlayer={hasPlayer}>
+            <RouteBoundary><RivalsPage /></RouteBoundary>
+          </RequirePlayer>
+        )}
       />
-      {player || selectedBand ? (
-        <Route path="/suggestions" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SuggestionsPage accountId={player?.accountId} selectedBand={selectedBand} /></ErrorBoundary>} />
-      ) : (
-        <Route path="/suggestions" element={<Navigate to={AppRoutes.songs} replace />} />
-      )}
-      <Route path="/shop" element={<ErrorBoundary fallback={<RouteErrorFallback />}><ShopPage /></ErrorBoundary>} />
-      <Route path="/manual" element={<ManualRouteElement />} />
-      <Route path="/leaderboards" element={<ErrorBoundary fallback={<RouteErrorFallback />}><LeaderboardsOverviewPage /></ErrorBoundary>} />
-      <Route path="/leaderboards/all" element={<ErrorBoundary fallback={<RouteErrorFallback />}><FullRankingsPage /></ErrorBoundary>} />
-      <Route path="/leaderboards/bands/:bandType" element={<ErrorBoundary fallback={<RouteErrorFallback />}><BandRankingsPage /></ErrorBoundary>} />
-      <Route path="/bands/player/:accountId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerBandsPage /></ErrorBoundary>} />
-      <Route path="/bands" element={<ErrorBoundary fallback={<RouteErrorFallback />}><BandPage /></ErrorBoundary>} />
-      <Route path="/bands/:bandId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><BandPage /></ErrorBoundary>} />
-      {player ? (
-        <Route path="/compete" element={<ErrorBoundary fallback={<RouteErrorFallback />}><CompetePage /></ErrorBoundary>} />
-      ) : (
-        <Route path="/compete" element={<Navigate to={AppRoutes.songs} replace />} />
-      )}
-      <Route path="/settings" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SettingsPage /></ErrorBoundary>} />
-      <Route path="/settings/licenses" element={<ErrorBoundary fallback={<RouteErrorFallback />}><LicensesPage /></ErrorBoundary>} />
+      <Route
+        path={AppRoutes.allRivalsRoot}
+        element={(
+          <RequirePlayer hasPlayer={hasPlayer}>
+            <RouteBoundary><AllRivalsPage /></RouteBoundary>
+          </RequirePlayer>
+        )}
+      />
+      <Route
+        path="/rivals/:rivalId"
+        element={(
+          <RequirePlayer hasPlayer={hasPlayer}>
+            <RouteBoundary><RivalDetailPage /></RouteBoundary>
+          </RequirePlayer>
+        )}
+      />
+      <Route
+        path="/rivals/:rivalId/rivalry"
+        element={(
+          <RequirePlayer hasPlayer={hasPlayer}>
+            <RouteBoundary><RivalCategoryPage /></RouteBoundary>
+          </RequirePlayer>
+        )}
+      />
+      <Route
+        path={AppRoutes.statistics}
+        element={(
+          <RequireSelection hasSelection={hasSelection}>
+            {player
+              ? <RouteBoundary><PlayerPage accountId={player.accountId} /></RouteBoundary>
+              : selectedBand
+                ? <RouteBoundary><BandPage statisticsBand={selectedBand} /></RouteBoundary>
+                : null}
+          </RequireSelection>
+        )}
+      />
+      <Route
+        path={AppRoutes.suggestions}
+        element={(
+          <RequireSelection hasSelection={hasSelection}>
+            <RouteBoundary>
+              <SuggestionsPage accountId={player?.accountId} selectedBand={selectedBand} />
+            </RouteBoundary>
+          </RequireSelection>
+        )}
+      />
+      <Route path={AppRoutes.shop} element={<RouteBoundary><ShopPage /></RouteBoundary>} />
+      <Route path={AppRoutes.manual} element={<ManualRouteElement />} />
+      <Route path={AppRoutes.leaderboards} element={<RouteBoundary><LeaderboardsOverviewPage /></RouteBoundary>} />
+      <Route path={AppRoutes.fullRankingsRoot} element={<RouteBoundary><FullRankingsPage /></RouteBoundary>} />
+      <Route path="/leaderboards/bands/:bandType" element={<RouteBoundary><BandRankingsPage /></RouteBoundary>} />
+      <Route path="/bands/player/:accountId" element={<RouteBoundary><PlayerBandsPage /></RouteBoundary>} />
+      <Route path={AppRoutes.bands} element={<RouteBoundary><BandPage /></RouteBoundary>} />
+      <Route path="/bands/:bandId" element={<RouteBoundary><BandPage /></RouteBoundary>} />
+      <Route
+        path={AppRoutes.compete}
+        element={(
+          <RequirePlayer hasPlayer={hasPlayer}>
+            <RouteBoundary><CompetePage /></RouteBoundary>
+          </RequirePlayer>
+        )}
+      />
+      <Route path={AppRoutes.settings} element={<RouteBoundary><SettingsPage /></RouteBoundary>} />
+      <Route path={AppRoutes.settingsLicenses} element={<RouteBoundary><LicensesPage /></RouteBoundary>} />
+      <Route path="*" element={<RouteBoundary><NotFoundPage /></RouteBoundary>} />
     </Routes>
     </Suspense>
   );
@@ -117,7 +150,6 @@ import { FabVisibilityProvider } from './contexts/FabVisibilityContext';
 import { SearchQueryProvider } from './contexts/SearchQueryContext';
 import { useSettings, visibleInstruments, visiblePathInstruments } from './contexts/SettingsContext';
 import { useShopState } from './hooks/data/useShopState';
-import { useProximityGlow } from './hooks/ui/useProximityGlow';
 import BottomNav from './components/shell/mobile/BottomNav';
 import Sidebar from './components/shell/desktop/Sidebar';
 import DesktopNav from './components/shell/desktop/DesktopNav';
@@ -161,7 +193,8 @@ import { APP_VERSION } from './hooks/data/useVersions';
 import { changelogHash } from './changelogHash';
 import ErrorBoundary from './components/page/ErrorBoundary';
 import SuspenseFallback from './components/common/SuspenseFallback';
-import RouteErrorFallback from './components/page/RouteErrorFallback';
+import RouteBoundary from './components/page/RouteBoundary';
+import { RedirectToSongs, RequirePlayer, RequireSelection } from './components/page/RouteGuards';
 import type { PreserveShellScrollState } from './utils/quietNavigation';
 import { getBandFilterActionLabel } from './utils/bandFilterDisplay';
 import { bandTypeLabel } from './utils/bandTypes';
@@ -176,7 +209,7 @@ import {
 import { writeSelectedProfile } from './state/selectedProfile';
 import { queryClient } from './api/queryClient';
 import { invalidateLeaderboardData } from './api/queryPolicy';
-import { Routes as AppRoutes, RoutePatterns } from './routes';
+import { isKnownRoutePath, normalizeRoutePathname, Routes as AppRoutes, RoutePatterns } from './routes';
 import {
   markCurrentSuggestionsScrollRestorable,
 } from './pages/suggestions/suggestionsSessionCache';
@@ -184,6 +217,7 @@ import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext
 import { ScrollContainerProvider, useShellRefs, useScrollContainer, HEADER_PORTAL_HEIGHT_VAR } from './contexts/ScrollContainerContext';
 import { useTapDiagnostics } from './diagnostics/useTapDiagnostics';
 import anim from './styles/animations.module.css';
+import { RouteAccessibility, RouteMain } from './components/shell/RouteAccessibility';
 
 const consumedPreserveShellScrollKeys = new Set<string>();
 const LEADERBOARD_INSTRUMENT_ACTION_ICON_SIZE = 32;
@@ -196,8 +230,8 @@ const PLAYER_BANDS_ACTIVE_FILTER_GROUPS = new Set(['duos', 'trios', 'quads']);
 function ManualRouteElement() {
   const { flags, resolved } = useFeatureFlagsState();
   if (!resolved) return <SuspenseFallback />;
-  if (!flags.appManual) return <Navigate to={AppRoutes.songs} replace />;
-  return <ErrorBoundary fallback={<RouteErrorFallback />}><ManualPage /></ErrorBoundary>;
+  if (!flags.appManual) return <RedirectToSongs />;
+  return <RouteBoundary><ManualPage /></RouteBoundary>;
 }
 
 type SearchModalConfig = {
@@ -325,10 +359,15 @@ function resolveLeaderboardInstrument(search: string): ServerInstrumentKey {
 
 function getSongDetailId(pathname: string): string | undefined {
   const match = pathname.match(/^\/songs\/([^/]+)$/);
-  return match?.[1] ? decodeURIComponent(match[1]) : undefined;
+  if (!match?.[1]) return undefined;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return undefined;
+  }
 }
 
-const ANIMATED_BG_ROUTES = new Set(['/', AppRoutes.songs, AppRoutes.suggestions, AppRoutes.statistics, AppRoutes.manual, AppRoutes.settings, AppRoutes.settingsLicenses, AppRoutes.shop, AppRoutes.compete, AppRoutes.leaderboards]);
+const ANIMATED_BG_ROUTES = new Set<string>([AppRoutes.root, AppRoutes.songs, AppRoutes.suggestions, AppRoutes.statistics, AppRoutes.manual, AppRoutes.settings, AppRoutes.settingsLicenses, AppRoutes.shop, AppRoutes.compete, AppRoutes.leaderboards]);
 /* v8 ignore start — route detection helper */
 function isAnimatedBgRoute(pathname: string) {
   return ANIMATED_BG_ROUTES.has(pathname) || RoutePatterns.player.test(pathname) || pathname.startsWith('/rivals') || pathname.startsWith('/leaderboards') || pathname.startsWith('/bands');
@@ -343,6 +382,9 @@ function WideDesktopLayout({
   selectedProfile,
   onDeselect,
   onSelectPlayer,
+  routeTitle,
+  fallbackHeading,
+  pageHeaderLabel,
 }: {
   shellScrollRef: React.RefObject<HTMLDivElement | null>;
   shellPortalRefCallback: (el: HTMLDivElement | null) => void;
@@ -351,6 +393,9 @@ function WideDesktopLayout({
   selectedProfile: ReturnType<typeof useTrackedPlayer>['profile'];
   onDeselect: () => void;
   onSelectPlayer: () => void;
+  routeTitle: string;
+  fallbackHeading: boolean;
+  pageHeaderLabel: string;
 }) {
   return (
     <div style={appStyles.bodySection}>
@@ -360,9 +405,13 @@ function WideDesktopLayout({
         <div style={appStyles.scrollContentRow}>
           <div style={appStyles.sidebarGutter} />
           <div style={appStyles.centerColumn}>
-            <div id="main-content" style={{ ...appStyles.content, ...appStyles.contentPinned }}>
+            <RouteMain
+              routeTitle={routeTitle}
+              fallbackHeading={fallbackHeading}
+              style={{ ...appStyles.content, ...appStyles.contentPinned }}
+            >
               <RoutesContent player={player} selectedProfile={selectedProfile} />
-            </div>
+            </RouteMain>
           </div>
           <div style={appStyles.rightGutter} />
         </div>
@@ -379,7 +428,12 @@ function WideDesktopLayout({
       {/* Header overlay — pointer-events: none lets wheel through */}
       <div style={appStyles.headerOverlay}>
         <div style={{ width: Layout.sidebarWidth, flexShrink: 0 }} />
-        <div ref={shellPortalRefCallback} style={appStyles.headerPortalWide} />
+        <div
+          ref={shellPortalRefCallback}
+          role="region"
+          aria-label={pageHeaderLabel}
+          style={appStyles.headerPortalWide}
+        />
         <div style={{ width: Layout.sidebarWidth, flexShrink: 0 }} />
       </div>
       {/* Right quick-links overlay — independent chrome outside content scroll */}
@@ -464,8 +518,6 @@ function AppShell() {
   const hasNotifications = surfaceNotifications.length > 0;
   const surfaceUnreadCount = surfaceUnreadNotificationIds.size;
 
-  // Proximity glow for frosted cards — document-level for full coverage
-  useProximityGlow(!settings.disableLightTrails);
   usePlayerBandsPrefetch(player?.accountId);
 
   const location = useLocation();
@@ -725,9 +777,9 @@ function AppShell() {
   }, []);
   /* v8 ignore stop */
 
-  const showAnimatedBg = isAnimatedBgRoute(location.pathname);
+  const routePathname = normalizeRoutePathname(location.pathname);
+  const showAnimatedBg = isAnimatedBgRoute(routePathname);
 
-  // Page title for mobile header
   const NAV_TITLES: Record<string, string> = {
     [AppRoutes.songs]: t('nav.songs'),
     [AppRoutes.suggestions]: t('nav.suggestions'),
@@ -739,16 +791,19 @@ function AppShell() {
     [AppRoutes.leaderboards]: t('rankings.title'),
     [AppRoutes.shop]: t('nav.shop'),
   };
-  const navTitle = location.pathname === AppRoutes.statistics
+  const knownRoute = isKnownRoutePath(routePathname);
+  const navTitle = routePathname === AppRoutes.statistics
     ? (player?.displayName ?? (selectedProfile?.type === 'band' ? selectedProfile.displayName : t('nav.statistics')))
-    : (NAV_TITLES[location.pathname] ?? null);
+    : (NAV_TITLES[routePathname] ?? (knownRoute ? null : t('apiError.notFound')));
+  const mainLabel = navTitle ?? t('common.brandName');
+  const fallbackRouteHeading = navTitle !== null;
 
   // Hierarchical back-navigation fallback for detail pages only.
   // Tab routes (songs, suggestions, statistics, settings) never show a back button.
   /* v8 ignore start — deep AppInner: route-aware memo + animation IIFE */
   const backFallback = useMemo(() => {
-    return getBackFallback(location.pathname, location.search);
-  }, [location.pathname, location.search]);
+    return getBackFallback(routePathname, location.search);
+  }, [routePathname, location.search]);
 
   // Animate header only on first push into a detail stack
   const shouldAnimateHeader = (() => {
@@ -783,7 +838,7 @@ function AppShell() {
     () => activeBandFilterAssignments.map(assignment => assignment.instrument),
     [activeBandFilterAssignments],
   );
-  const showBandFilterAction = shouldShowBandFilterAction(selectedProfile, location.pathname);
+  const showBandFilterAction = shouldShowBandFilterAction(selectedProfile, routePathname);
   const bandFilterLabel = getBandFilterActionLabel(selectedBandFilterInstruments, emptyBandFilterLabel);
   const bandFilterActive = selectedBandFilterInstruments.length > 0;
   const bandFilterIconAccessory = bandFilterActive
@@ -828,7 +883,7 @@ function AppShell() {
     onApplyFilter: handleApplyBandFilter,
     onResetFilter: handleResetBandFilter,
   }), [activeBandFilter, activeBandFilterAssignments, bandFilterLabel, handleApplyBandFilter, handleBandFilterPress, handleResetBandFilter, isMobile, selectedBandFilterInstruments, showBandFilterAction]);
-  const leaderboardsSideActions: ActionItem[] = isMobile && location.pathname === AppRoutes.leaderboards
+  const leaderboardsSideActions: ActionItem[] = isMobile && routePathname === AppRoutes.leaderboards
     ? [
       ...(showBandFilterAction ? [{
       label: bandFilterLabel,
@@ -851,16 +906,16 @@ function AppShell() {
       : undefined,
     onPress: () => fabSearch.openLeaderboardBandCombo(),
   }] : [];
-  const bandFilterFabActions: ActionItem[] = isMobile && showBandFilterAction && location.pathname !== AppRoutes.leaderboards
+  const bandFilterFabActions: ActionItem[] = isMobile && showBandFilterAction && routePathname !== AppRoutes.leaderboards
     ? [{ label: bandFilterLabel, active: bandFilterActive, icon: <IoFunnel size={Size.iconFab} />, iconAccessory: bandFilterIconAccessory, onPress: handleBandFilterPress, onIntent: preloadBandInstrumentFilterModal }]
     : [];
-  const statisticsSideActions: ActionItem[] = isMobile && location.pathname === AppRoutes.statistics && !player && selectedProfile?.type === 'band'
+  const statisticsSideActions: ActionItem[] = isMobile && routePathname === AppRoutes.statistics && !player && selectedProfile?.type === 'band'
     ? bandFilterFabActions.map(action => ({ ...action, iconOnly: true }))
     : [];
-  const playerSelectSideActions: ActionItem[] = isMobile && RoutePatterns.player.test(location.pathname) && fabSearch.playerPageSelect
+  const playerSelectSideActions: ActionItem[] = isMobile && RoutePatterns.player.test(routePathname) && fabSearch.playerPageSelect
     ? [{ label: t('common.selectPlayerName', { name: fabSearch.playerPageSelect.displayName }), icon: <IoPersonAdd size={Size.iconFab} />, onPress: fabSearch.playerPageSelect.onSelect }]
     : [];
-  const bandSelectSideActions: ActionItem[] = isMobile && RoutePatterns.bands.test(location.pathname) && !RoutePatterns.playerBands.test(location.pathname) && fabSearch.bandPageSelect
+  const bandSelectSideActions: ActionItem[] = isMobile && RoutePatterns.bands.test(routePathname) && !RoutePatterns.playerBands.test(routePathname) && fabSearch.bandPageSelect
     ? [{ label: t('common.selectBand'), icon: <IoPeople size={Size.iconFab} />, onPress: fabSearch.bandPageSelect.onSelect }]
     : [];
   const suggestionsFabActive = bandFilterActive || fabSearch.suggestionsFilterActive;
@@ -871,7 +926,7 @@ function AppShell() {
       onPress: () => pageQuickLinks.openPageQuickLinks(),
     }]
     : [];
-  const songDetailId = getSongDetailId(location.pathname);
+  const songDetailId = getSongDetailId(routePathname);
   const songDetailShopUrl = songDetailId ? getShopUrl(songDetailId) : undefined;
   const showSongDetailShopAction = !!songDetailId && isShopVisible && !!songDetailShopUrl;
   const songDetailSideActions: ActionItem[] = songDetailId ? [
@@ -903,8 +958,8 @@ function AppShell() {
   // true for pages that don't opt in). The FAB row's `ready` prop AND's with
   // this so the FAB reveals in lockstep with the page's own staggered content.
   const pageReady = usePageReady();
-  const isStatisticsRoute = location.pathname === AppRoutes.statistics;
-  const isPlayerDetailRoute = RoutePatterns.player.test(location.pathname);
+  const isStatisticsRoute = routePathname === AppRoutes.statistics;
+  const isPlayerDetailRoute = RoutePatterns.player.test(routePathname);
   const playerDetailFabReady = isStatisticsRoute
     ? pageReady
     : pageReady && playerSelectSideActions.length > 0;
@@ -913,7 +968,7 @@ function AppShell() {
     || bandFilterFabActions.length > 0
     || pageQuickLinks.hasPageQuickLinks
   );
-  const isBandRankingsRoute = /^\/leaderboards\/bands\/[^/]+$/.test(location.pathname);
+  const isBandRankingsRoute = RoutePatterns.bandRankings.test(routePathname);
   const leaderboardBandComboSideActions = leaderboardBandComboFabActions.map(action => ({ ...action, iconOnly: true }));
   const showBandRankingsMetricFab = isBandRankingsRoute && settings.enableExperimentalRanks && fabSearch.leaderboardMetricReady;
   const bandRankingsComboOnlyAction = !showBandRankingsMetricFab ? leaderboardBandComboFabActions[0] : undefined;
@@ -923,8 +978,27 @@ function AppShell() {
     <PlayerDataProvider accountId={player?.accountId}>
     <FabVisibilityProvider mobileFabHidden={!showMobileFab}>
     <>
-    {showAnimatedBg && <AnimatedBackground songs={songs} />}
+    {showAnimatedBg && (
+      <ErrorBoundary fallback={null}>
+      <Suspense fallback={null}>
+        <AnimatedBackground songs={songs} />
+      </Suspense>
+      </ErrorBoundary>
+    )}
+    {!settings.disableLightTrails && (
+      <ErrorBoundary fallback={null}>
+        <Suspense fallback={null}>
+          <ProximityGlowRuntime enabled />
+        </Suspense>
+      </ErrorBoundary>
+    )}
     <div style={appStyles.shell}>
+      <RouteAccessibility
+        pathname={location.pathname}
+        titleOverride={navTitle}
+        navigationType={navType}
+        skipLabel={t('common.skipToContent')}
+      />
       <ScrollToTop layoutKey={wideDesktop ? 'wide' : 'standard'} />
 
       {/* v8 ignore start — sidebar callbacks tested via Sidebar.test / PinnedSidebar.test */}
@@ -941,16 +1015,16 @@ function AppShell() {
       {/* v8 ignore stop */}
 
       {/* v8 ignore start — mobile header conditional rendering */}
-      {!isMobile && backFallback && (IS_IOS || IS_ANDROID || IS_PWA) && <BackLink key={location.pathname} fallback={backFallback} animate={shouldAnimateHeader} />}
+      {!isMobile && backFallback && (IS_IOS || IS_ANDROID || IS_PWA) && <BackLink key={routePathname} fallback={backFallback} animate={shouldAnimateHeader} />}
 
         {isMobile ? (
           <MobileHeader
             navTitle={navTitle}
             backFallback={backFallback}
             shouldAnimate={shouldAnimateHeader}
-            locationKey={location.pathname}
+            locationKey={routePathname}
             songInstrument={songInstrument}
-            isSongsRoute={location.pathname === AppRoutes.songs}
+            isSongsRoute={routePathname === AppRoutes.songs}
             onOpenSidebar={() => setSidebarOpen(true)}
             profileType={profileType}
             profileLabel={mobileHeaderProfileLabel}
@@ -993,22 +1067,34 @@ function AppShell() {
           selectedProfile={selectedProfile}
           onDeselect={handleDeselect}
           onSelectPlayer={openProfileSearch}
+          routeTitle={mainLabel}
+          fallbackHeading={fallbackRouteHeading}
+          pageHeaderLabel={t('common.pageHeader')}
         />
       ) : (
         <>
-        <div ref={shellPortalRefCallback} style={appStyles.headerPortal} />
+        <div
+          ref={shellPortalRefCallback}
+          role="region"
+          aria-label={t('common.pageHeader')}
+          style={appStyles.headerPortal}
+        />
         <div data-testid="app-scroll-container" ref={shellScrollRef} style={appStyles.scrollContainer}>
         <div style={appStyles.contentColumn}>
-        <div id="main-content" style={appStyles.content}>
+        <RouteMain
+          routeTitle={mainLabel}
+          fallbackHeading={fallbackRouteHeading}
+          style={appStyles.content}
+        >
           <RoutesContent player={player} selectedProfile={selectedProfile} />
-        </div>
+        </RouteMain>
         </div>
         </div>
         </>
       )}
 
       {isMobile && <BottomNav player={player} selectedProfile={selectedProfile} activeTab={activeTab} onTabClick={handleTabClick} />}
-      {showMobileFab && location.pathname === AppRoutes.suggestions && fabSearch.suggestionsActionsReady && (
+      {showMobileFab && routePathname === AppRoutes.suggestions && fabSearch.suggestionsActionsReady && (
         <MobileFloatingActionButton
           pageKey="suggestions"
           ready={pageReady}
@@ -1022,7 +1108,7 @@ function AppShell() {
           onPress={() => fabSearch.openSuggestionsFilter()}
         />
       )}
-      {showMobileFab && location.pathname === AppRoutes.settings && pageQuickLinks.hasPageQuickLinks && (
+      {showMobileFab && routePathname === AppRoutes.settings && pageQuickLinks.hasPageQuickLinks && (
         <MobileFloatingActionButton
           pageKey="settings"
           ready={pageReady}
@@ -1032,7 +1118,7 @@ function AppShell() {
           onPress={() => pageQuickLinks.openPageQuickLinks()}
         />
       )}
-      {showMobileFab && location.pathname === AppRoutes.manual && pageQuickLinks.hasPageQuickLinks && (
+      {showMobileFab && routePathname === AppRoutes.manual && pageQuickLinks.hasPageQuickLinks && (
         <MobileFloatingActionButton
           pageKey="manual"
           ready={pageReady}
@@ -1044,7 +1130,7 @@ function AppShell() {
       )}
       {showMobileFab && (isStatisticsRoute || isPlayerDetailRoute) && (
         <MobileFloatingActionButton
-          pageKey={isStatisticsRoute ? 'statistics' : `player:${location.pathname}`}
+          pageKey={isStatisticsRoute ? 'statistics' : `player:${routePathname}`}
           ready={playerDetailFabReady}
           mode="players"
           ariaLabel={getFabQuickLinksActionLabel(t)}
@@ -1053,7 +1139,7 @@ function AppShell() {
           onPress={() => pageQuickLinks.openPageQuickLinks()}
         />
       )}
-      {showMobileFab && RoutePatterns.history.test(location.pathname) && (
+      {showMobileFab && RoutePatterns.history.test(routePathname) && (
         <MobileFloatingActionButton
           pageKey="history"
           ready={pageReady}
@@ -1066,7 +1152,7 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
-      {showMobileFab && RoutePatterns.songDetail.test(location.pathname) && (
+      {showMobileFab && RoutePatterns.songDetail.test(routePathname) && (
         <MobileFloatingActionButton
           pageKey="songDetail"
           ready={pageReady}
@@ -1077,7 +1163,7 @@ function AppShell() {
           onPress={() => pageQuickLinks.openPageQuickLinks()}
         />
       )}
-      {showMobileFab && location.pathname === AppRoutes.shop && (
+      {showMobileFab && routePathname === AppRoutes.shop && (
         <MobileFloatingActionButton
           pageKey="shop"
           ready={pageReady}
@@ -1092,7 +1178,7 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
-      {showMobileFab && location.pathname === AppRoutes.leaderboards && (
+      {showMobileFab && routePathname === AppRoutes.leaderboards && (
         <MobileFloatingActionButton
           pageKey="leaderboards"
           ready={pageReady}
@@ -1130,8 +1216,8 @@ function AppShell() {
           onPress={bandRankingsComboOnlyAction.onPress}
         />
       )}
-      {showMobileFab && RoutePatterns.leaderboards.test(location.pathname) && location.pathname !== AppRoutes.leaderboards && !isBandRankingsRoute && (() => {
-        const isAllLeaderboardsRoute = location.pathname === '/leaderboards/all';
+      {showMobileFab && RoutePatterns.leaderboards.test(routePathname) && routePathname !== AppRoutes.leaderboards && !isBandRankingsRoute && (() => {
+        const isAllLeaderboardsRoute = routePathname === AppRoutes.fullRankingsRoot;
         const allLeaderboardsParams = isAllLeaderboardsRoute ? new URLSearchParams(location.search) : null;
         const isScopedAllLeaderboardsRoute = !!(allLeaderboardsParams?.has('combo') || allLeaderboardsParams?.has('family'));
         const showAllLeaderboardsMainFab = pageQuickLinks.hasPageQuickLinks && !isScopedAllLeaderboardsRoute;
@@ -1145,7 +1231,7 @@ function AppShell() {
         if (isAllLeaderboardsRoute) {
           return (
           <MobileFloatingActionButton
-            pageKey={`leaderboards:${location.pathname}`}
+            pageKey={`leaderboards:${routePathname}`}
             ready={pageReady}
             mode="players"
             ariaLabel={showAllLeaderboardsMainFab ? getFabQuickLinksActionLabel(t) : undefined}
@@ -1157,7 +1243,7 @@ function AppShell() {
         }
         return (
         <MobileFloatingActionButton
-          pageKey={`leaderboards:${location.pathname}`}
+          pageKey={`leaderboards:${routePathname}`}
           ready={pageReady}
           mode="players"
           actionGroups={withPageQuickLinks(
@@ -1167,7 +1253,7 @@ function AppShell() {
         />
         );
       })()}
-      {showMobileFab && RoutePatterns.songBandLeaderboard.test(location.pathname) && leaderboardBandComboFabActions[0] && (
+      {showMobileFab && RoutePatterns.songBandLeaderboard.test(routePathname) && leaderboardBandComboFabActions[0] && (
         <MobileFloatingActionButton
           pageKey="songBandLeaderboard"
           ready={pageReady}
@@ -1181,7 +1267,7 @@ function AppShell() {
           onPress={leaderboardBandComboFabActions[0].onPress}
         />
       )}
-      {showMobileFab && RoutePatterns.rivals.test(location.pathname) && (
+      {showMobileFab && RoutePatterns.rivals.test(routePathname) && (
         <MobileFloatingActionButton
           pageKey="rivals"
           ready={pageReady}
@@ -1203,7 +1289,7 @@ function AppShell() {
           onPress={() => pageQuickLinks.openPageQuickLinks()}
         />
       )}
-      {showMobileFab && RoutePatterns.playerBands.test(location.pathname) && fabSearch.bandActionsReady && (
+      {showMobileFab && RoutePatterns.playerBands.test(routePathname) && fabSearch.bandActionsReady && (
         <MobileFloatingActionButton
           pageKey="playerBands"
           ready={pageReady}
@@ -1216,9 +1302,9 @@ function AppShell() {
           onPress={() => fabSearch.openBandFilter()}
         />
       )}
-      {showMobileFab && RoutePatterns.bands.test(location.pathname) && !RoutePatterns.playerBands.test(location.pathname) && (
+      {showMobileFab && RoutePatterns.bands.test(routePathname) && !RoutePatterns.playerBands.test(routePathname) && (
         <MobileFloatingActionButton
-          pageKey={`bands:${location.pathname}${location.search}`}
+          pageKey={`bands:${routePathname}${location.search}`}
           ready={bandDetailFabReady}
           mode="players"
           ariaLabel={getFabQuickLinksActionLabel(t)}
@@ -1227,7 +1313,7 @@ function AppShell() {
           onPress={() => pageQuickLinks.openPageQuickLinks()}
         />
       )}
-      {showMobileFab && location.pathname === AppRoutes.compete && pageQuickLinks.hasPageQuickLinks && (
+      {showMobileFab && routePathname === AppRoutes.compete && pageQuickLinks.hasPageQuickLinks && (
         <MobileFloatingActionButton
           pageKey="compete"
           ready={pageReady}
@@ -1250,8 +1336,8 @@ function AppShell() {
           onPress={() => pageQuickLinks.openPageQuickLinks()}
         />
       )}
-      {showMobileFab && RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.allRivals.test(location.pathname) && (() => {
-        const rivalIdMatch = location.pathname.match(/^\/rivals\/([^/]+)$/);
+      {showMobileFab && RoutePatterns.rivalDetail.test(routePathname) && !RoutePatterns.allRivals.test(routePathname) && (() => {
+        const rivalIdMatch = routePathname.match(/^\/rivals\/([^/]+)$/);
         const currentRivalId = rivalIdMatch?.[1];
         const rivalName = new URLSearchParams(location.search).get('name');
         const profileLabel = rivalName ? t('common.viewNameProfile', { name: rivalName }) : t('common.viewProfile');
@@ -1267,8 +1353,8 @@ function AppShell() {
         />
         ) : null;
       })()}
-      {showMobileFab && RoutePatterns.rivalry.test(location.pathname) && (() => {
-        const rivalryIdMatch = location.pathname.match(/^\/rivals\/([^/]+)\/rivalry/);
+      {showMobileFab && RoutePatterns.rivalry.test(routePathname) && (() => {
+        const rivalryIdMatch = routePathname.match(/^\/rivals\/([^/]+)\/rivalry/);
         const currentRivalId = rivalryIdMatch?.[1];
         const searchParams = new URLSearchParams(location.search);
         const rivalName = searchParams.get('name');
@@ -1288,9 +1374,9 @@ function AppShell() {
         />
         ) : null;
       })()}
-      {showMobileFab && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.statistics && location.pathname !== AppRoutes.settings && location.pathname !== AppRoutes.manual && location.pathname !== AppRoutes.shop && location.pathname !== AppRoutes.compete && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.player.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && !RoutePatterns.songBandLeaderboard.test(location.pathname) && !RoutePatterns.leaderboards.test(location.pathname) && !RoutePatterns.rivals.test(location.pathname) && !RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.rivalry.test(location.pathname) && !RoutePatterns.bands.test(location.pathname) && (
+      {showMobileFab && knownRoute && routePathname !== AppRoutes.songs && routePathname !== AppRoutes.suggestions && routePathname !== AppRoutes.statistics && routePathname !== AppRoutes.settings && routePathname !== AppRoutes.manual && routePathname !== AppRoutes.shop && routePathname !== AppRoutes.compete && !RoutePatterns.history.test(routePathname) && !RoutePatterns.player.test(routePathname) && !RoutePatterns.songDetail.test(routePathname) && !RoutePatterns.songBandLeaderboard.test(routePathname) && !RoutePatterns.leaderboards.test(routePathname) && !RoutePatterns.rivals.test(routePathname) && !RoutePatterns.rivalDetail.test(routePathname) && !RoutePatterns.rivalry.test(routePathname) && !RoutePatterns.bands.test(routePathname) && (
         <MobileFloatingActionButton
-          pageKey={`fallback:${location.pathname}`}
+          pageKey={`fallback:${routePathname}`}
           ready={pageReady}
           mode="players"
           actionGroups={withPageQuickLinks(
@@ -1404,10 +1490,11 @@ function AppShell() {
 function ScrollToTop({ layoutKey }: { layoutKey: 'standard' | 'wide' }) {
   const location = useLocation();
   const { key: locationKey, pathname } = location;
+  const routePathname = normalizeRoutePathname(pathname);
   const preserveShellScrollKey = (location.state as PreserveShellScrollState | null)?.preserveShellScrollKey;
   const scrollContainerRef = useScrollContainer();
   const previousLayoutKeyRef = useRef(layoutKey);
-  const previousPathnameRef = useRef(pathname);
+  const previousPathnameRef = useRef(routePathname);
   const suggestionsRestoreCleanupRef = useRef<(() => void) | null>(null);
   const suggestionsRestoreFrameRef = useRef(0);
   const suggestionsRestoreRequestRef = useRef(0);
@@ -1446,38 +1533,38 @@ function ScrollToTop({ layoutKey }: { layoutKey: 'standard' | 'wide' }) {
   useLayoutEffect(() => {
     const layoutChanged = previousLayoutKeyRef.current !== layoutKey;
     previousLayoutKeyRef.current = layoutKey;
-    if (layoutChanged && pathname === AppRoutes.suggestions) {
+    if (layoutChanged && routePathname === AppRoutes.suggestions) {
       markCurrentSuggestionsScrollRestorable();
     }
-  }, [layoutKey, pathname]);
+  }, [layoutKey, routePathname]);
   useLayoutEffect(() => {
     const previousPathname = previousPathnameRef.current;
-    previousPathnameRef.current = pathname;
-    if (previousPathname === AppRoutes.suggestions && pathname !== AppRoutes.suggestions) {
+    previousPathnameRef.current = routePathname;
+    if (previousPathname === AppRoutes.suggestions && routePathname !== AppRoutes.suggestions) {
       markCurrentSuggestionsScrollRestorable();
     }
-  }, [pathname]);
+  }, [routePathname]);
   useEffect(() => {
     if (preserveShellScrollKey && !consumedPreserveShellScrollKeys.has(preserveShellScrollKey)) {
       consumedPreserveShellScrollKeys.add(preserveShellScrollKey);
       return;
     }
-    if (pathname === AppRoutes.suggestions) return;
+    if (routePathname === AppRoutes.suggestions) return;
     // On browser refresh, always scroll to top — page exemptions only apply to in-app navigation
     if (!IS_PAGE_RELOAD) {
-      if (pathname === AppRoutes.songs) return;
+      if (routePathname === AppRoutes.songs) return;
       // Song detail pages manage their own scroll restoration
-      if (RoutePatterns.songDetail.test(pathname)) return;
+      if (RoutePatterns.songDetail.test(routePathname)) return;
     }
     scrollContainerRef.current?.scrollTo(0, 0);
-  }, [pathname, preserveShellScrollKey, scrollContainerRef]);
+  }, [routePathname, preserveShellScrollKey, scrollContainerRef]);
 
   useLayoutEffect(() => {
-    if (pathname === AppRoutes.suggestions && !preserveShellScrollKey) {
+    if (routePathname === AppRoutes.suggestions && !preserveShellScrollKey) {
       startSuggestionsRestoration();
     } else {
       stopSuggestionsRestoration();
     }
-  }, [layoutKey, locationKey, pathname, preserveShellScrollKey, startSuggestionsRestoration, stopSuggestionsRestoration]);
+  }, [layoutKey, locationKey, routePathname, preserveShellScrollKey, startSuggestionsRestoration, stopSuggestionsRestoration]);
   return null;
 }

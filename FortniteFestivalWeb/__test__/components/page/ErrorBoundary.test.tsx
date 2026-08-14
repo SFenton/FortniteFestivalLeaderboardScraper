@@ -33,4 +33,15 @@ describe('ErrorBoundary', () => {
     expect(screen.getByText('Custom fallback')).toBeDefined();
     consoleSpy.mockRestore();
   });
+
+  it('supports a silent null fallback for optional decorative chunks', () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { container } = render(
+      <ErrorBoundary fallback={null}>
+        <ThrowingChild />
+      </ErrorBoundary>,
+    );
+    expect(container.innerHTML).toBe('');
+    consoleSpy.mockRestore();
+  });
 });

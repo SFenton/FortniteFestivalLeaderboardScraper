@@ -1,6 +1,7 @@
 import { test, expect } from '../../fixtures/test';
 import { E2E_BAND, E2E_PLAYER, E2E_RIVAL, E2E_SONG_ID, createPopulatedScenario } from '../../fixtures/scenarios';
 import { expectMainContent, gotoAppRoute } from '../../support/drivers/app';
+import { isMobileProject } from '../../support/projects';
 
 test.use({ scenario: createPopulatedScenario() });
 
@@ -38,6 +39,45 @@ test.describe('public route contracts', () => {
       await expectMainContent(page, route.content);
     });
   }
+
+  test('unknown routes retain the URL and render an intentional not-found page', async ({ page }) => {
+    await gotoAppRoute(page, '/missing/deep-link');
+
+    await expect(page).toHaveURL(/#\/missing\/deep-link$/);
+    await expect(page).toHaveTitle(/Not Found/);
+    await expect(page.getByRole('heading', { level: 1, name: 'Not Found' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Go to Songs' })).toHaveAttribute('href', '#/songs');
+  });
+
+  test('malformed encoded song links do not crash the application shell', async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on('pageerror', error => pageErrors.push(error.message));
+
+    await gotoAppRoute(page, '/songs/%E0%A4%A');
+
+    await expect(page.locator('main#main-content')).toBeVisible();
+    await expect(page).toHaveTitle(/Song/);
+    expect(pageErrors).toEqual([]);
+  });
+
+  test('trailing slashes retain the matched route title and content', async ({ page }, testInfo) => {
+    await gotoAppRoute(page, '/settings/');
+
+    await expect(page).toHaveURL(/#\/settings\/$/);
+    await expect(page).toHaveTitle(/Settings/);
+    await expect(page.getByRole('heading', { level: 1, name: 'Settings' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: 'Not Found' })).toHaveCount(0);
+    if (isMobileProject(testInfo.project.name)) {
+      await expect(page.getByTestId('bottom-nav-settings')).toHaveAttribute('aria-current', 'page');
+    }
+  });
+
+  test('Licenses retains Settings tab ownership on mobile', async ({ page }, testInfo) => {
+    test.skip(!isMobileProject(testInfo.project.name), 'mobile tab ownership');
+    await gotoAppRoute(page, '/settings/licenses');
+
+    await expect(page.getByTestId('bottom-nav-settings')).toHaveAttribute('aria-current', 'page');
+  });
 });
 
 test.describe('selected player route contracts', () => {
@@ -81,6 +121,20 @@ test.describe('selected band route contracts', () => {
     await gotoAppRoute(page, '/suggestions');
     await expectMainContent(page, 'Deterministic Song');
   });
+
+  for (const path of [
+    '/rivals',
+    '/rivals/all',
+    `/rivals/${E2E_RIVAL.accountId}`,
+    `/rivals/${E2E_RIVAL.accountId}/rivalry`,
+    '/compete',
+  ]) {
+    test(`${path} redirects a selected band to Songs`, async ({ page }) => {
+      await page.goto(`/#${path}`, { waitUntil: 'load' });
+      await expect(page).toHaveURL(/#\/songs$/, { timeout: 15_000 });
+      await expectMainContent(page, 'Deterministic Song');
+    });
+  }
 });
 
 test.describe('guarded route redirects', () => {
@@ -103,4 +157,18 @@ test.describe('guarded route redirects', () => {
       await expectMainContent(page, 'Deterministic Song');
     });
   }
+
+  test('guard redirects replace only the denied route history entry', async ({ page }) => {
+    await gotoAppRoute(page, '/settings');
+    await expectMainContent(page, 'App Settings');
+
+    await page.evaluate(() => {
+      window.location.hash = '#/rivals';
+    });
+    await expect(page).toHaveURL(/#\/songs$/, { timeout: 15_000 });
+
+    await page.goBack();
+    await expect(page).toHaveURL(/#\/settings$/);
+    await expectMainContent(page, 'App Settings');
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import GoldStars from '../../../../src/components/songs/metadata/GoldStars';
 
 describe('GoldStars', () => {
@@ -12,6 +12,10 @@ describe('GoldStars', () => {
   it('renders custom count', () => {
     const { container } = render(<GoldStars count={3} />);
     expect(container.querySelectorAll('img')).toHaveLength(3);
+    expect(screen.getByRole('img', { name: '3 gold stars' })).toBeInTheDocument();
+    container.querySelectorAll('img').forEach(image => {
+      expect(image).toHaveAttribute('alt', '');
+    });
   });
 
   it('uses gold star src', () => {

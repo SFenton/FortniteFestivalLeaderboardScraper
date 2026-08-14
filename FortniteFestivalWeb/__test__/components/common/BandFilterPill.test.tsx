@@ -44,8 +44,8 @@ describe('BandFilterPill', () => {
       expect(icon.getAttribute('width')).toBe(String(InstrumentSize.sm));
       expect(icon.getAttribute('height')).toBe(String(InstrumentSize.sm));
     });
-    expect(container.querySelectorAll('img[alt="Solo_Guitar"]')).toHaveLength(2);
-    expect(container.querySelector('img[alt="Solo_Bass"]')).toBeTruthy();
+    expect(container.querySelectorAll('img[data-instrument="Solo_Guitar"]')).toHaveLength(2);
+    expect(container.querySelector('img[data-instrument="Solo_Bass"]')).toBeTruthy();
   });
 
   it('calls onClick when pressed', () => {

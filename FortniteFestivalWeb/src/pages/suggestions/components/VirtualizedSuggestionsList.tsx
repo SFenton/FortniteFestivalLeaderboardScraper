@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -124,10 +125,36 @@ export function VirtualizedSuggestionsList({
     rangeExtractor,
     scrollMargin,
   });
+  const previousMeasurementKeyRef = useRef(measurementKey);
 
   useEffect(() => {
     virtualizer.measure();
-  }, [identity, isNarrow, measurementKey, virtualizer]);
+  }, [identity, isNarrow, virtualizer]);
+
+  useLayoutEffect(() => {
+    if (previousMeasurementKeyRef.current === measurementKey) return;
+    previousMeasurementKeyRef.current = measurementKey;
+    const scrollElement = scrollContainerRef.current;
+    if (!scrollElement) return;
+
+    virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false;
+    virtualizer.measure();
+    scrollElement.scrollTo(0, 0);
+    let secondFrame = 0;
+    const firstFrame = requestAnimationFrame(() => {
+      scrollElement.scrollTo(0, 0);
+      secondFrame = requestAnimationFrame(() => {
+        scrollElement.scrollTo(0, 0);
+        virtualizer.shouldAdjustScrollPositionOnItemSizeChange = undefined;
+      });
+    });
+
+    return () => {
+      cancelAnimationFrame(firstFrame);
+      cancelAnimationFrame(secondFrame);
+      virtualizer.shouldAdjustScrollPositionOnItemSizeChange = undefined;
+    };
+  }, [measurementKey, scrollContainerRef, virtualizer]);
 
   useScrollFade(
     scrollContainerRef,

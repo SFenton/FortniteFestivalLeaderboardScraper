@@ -319,7 +319,7 @@ async function expectBandSongMediaCycle(page: Page) {
     return activeElement ? getComputedStyle(activeElement).opacity : null;
   }), { timeout: 2_000 }).toBe('1');
   await expect(cycle.getByTestId('notification-media-cycle-art')).toBeAttached();
-  await expect(cycle.getByAltText('Apple band notification album art')).toBeAttached();
+  await expect(cycle.getByTestId('notification-media-cycle-art').locator('img')).toHaveAttribute('alt', '');
 
   const cycleDetails = await cycle.evaluate((element) => {
     const icons = element.querySelector('[data-testid="notification-media-cycle-icons"]');

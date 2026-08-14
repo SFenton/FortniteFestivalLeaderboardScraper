@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { Colors } from '@festival/theme';
 import MiniStars from '../../../../src/components/songs/metadata/MiniStars';
 
@@ -8,6 +8,10 @@ describe('MiniStars', () => {
     const { container } = render(<MiniStars starsCount={3} isFullCombo={false} />);
     const imgs = container.querySelectorAll('img');
     expect(imgs).toHaveLength(3);
+    expect(screen.getByRole('img', { name: '3 stars' })).toBeInTheDocument();
+    imgs.forEach(image => {
+      expect(image).toHaveAttribute('alt', '');
+    });
   });
 
   it('renders 5 stars for gold (count >= 6)', () => {

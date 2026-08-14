@@ -241,7 +241,7 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, mod
               key={inst.key}
               label={
                 <span style={filterStyles.instrumentLabel}>
-                  <InstrumentIcon instrument={inst.key} size={Size.iconTab} />
+                  <InstrumentIcon instrument={inst.key} size={Size.iconTab} decorative />
                   {inst.label}
                 </span>
               }

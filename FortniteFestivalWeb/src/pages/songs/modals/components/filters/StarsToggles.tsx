@@ -18,7 +18,13 @@ export function StarsToggles({ starsFilter, onChange }: StarsTogglesProps) {
     const count = isGold ? 5 : k;
     const src = isGold ? `${import.meta.env.BASE_URL}star_gold.png` : `${import.meta.env.BASE_URL}star_white.png`;
     return (
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: Gap.xs }}>
+      <span
+        role="img"
+        aria-label={isGold
+          ? t('common.goldStarCount', { count })
+          : t('common.starCount', { count })}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: Gap.xs }}
+      >
         {Array.from({ length: count }, (_, i) => (
           <img key={i} src={src} alt="" width={Size.starInline} height={Size.starInline} />
         ))}

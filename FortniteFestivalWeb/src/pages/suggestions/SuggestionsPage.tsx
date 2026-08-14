@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef, type CSSProperties } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { IoFunnel } from 'react-icons/io5';
@@ -256,6 +256,8 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
     categories,
     effectiveInstrumentSettings,
     filterSettings,
+    mixKey,
+    suggestionCacheKey,
     visibilityCacheKey,
   ]);
   
@@ -267,7 +269,7 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
   const previousMixKeyRef = useRef(mixKey);
   const MIN_VISIBLE = 4;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const filterChanged = previousFilterSettingsRef.current !== filterSettings;
     const identityChanged = previousMixKeyRef.current !== mixKey;
     previousFilterSettingsRef.current = filterSettings;

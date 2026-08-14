@@ -44,6 +44,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  Reflect.deleteProperty(navigator, 'connection');
 });
 
 describe('AnimatedBackground', () => {
@@ -128,6 +129,41 @@ describe('AnimatedBackground', () => {
     expect(opA + opB).toBe(1);
   });
 
+  it('keeps the active image visible when reduced motion is enabled mid-cycle', () => {
+    const listeners = new Set<() => void>();
+    const mediaQuery = {
+      matches: false,
+      media: '(prefers-reduced-motion: reduce)',
+      onchange: null,
+      addEventListener: (_event: string, listener: () => void) => {
+        listeners.add(listener);
+      },
+      removeEventListener: (_event: string, listener: () => void) => {
+        listeners.delete(listener);
+      },
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    };
+    vi.spyOn(window, 'matchMedia').mockReturnValue(mediaQuery as unknown as MediaQueryList);
+    const songs = [makeSong('s1'), makeSong('s2')];
+    const { container } = render(<AnimatedBackground songs={songs} />);
+
+    act(() => { vi.advanceTimersByTime(5_100); });
+    const activeBackground = findLayers(container)[1]!.style.backgroundImage;
+    expect(findLayers(container)[1]!.style.opacity).toBe('1');
+
+    act(() => {
+      mediaQuery.matches = true;
+      listeners.forEach(listener => listener());
+    });
+
+    const layers = findLayers(container);
+    expect(layers).toHaveLength(1);
+    expect(layers[0]!.style.opacity).toBe('1');
+    expect(layers[0]!.style.backgroundImage).toBe(activeBackground);
+  });
+
   it('pauses animations when document becomes hidden', () => {
     const pauseMock = vi.fn();
     HTMLElement.prototype.getAnimations = vi.fn().mockReturnValue([{ pause: pauseMock, play: vi.fn(), cancel: vi.fn() }]);
@@ -137,7 +173,9 @@ describe('AnimatedBackground', () => {
 
     // Simulate visibility change to hidden
     Object.defineProperty(document, 'hidden', { value: true, configurable: true });
-    document.dispatchEvent(new Event('visibilitychange'));
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
     expect(pauseMock).toHaveBeenCalled();
 
     // Restore
@@ -154,10 +192,28 @@ describe('AnimatedBackground', () => {
 
     // Hide then show
     Object.defineProperty(document, 'hidden', { value: true, configurable: true });
-    document.dispatchEvent(new Event('visibilitychange'));
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
     Object.defineProperty(document, 'hidden', { value: false, configurable: true });
-    document.dispatchEvent(new Event('visibilitychange'));
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
     expect(playMock).toHaveBeenCalled();
+  });
+
+  it('omits remote album art when Save-Data is enabled', () => {
+    const connection = new EventTarget() as EventTarget & { saveData: boolean };
+    connection.saveData = true;
+    Object.defineProperty(navigator, 'connection', {
+      configurable: true,
+      value: connection,
+    });
+
+    const { container } = render(
+      <AnimatedBackground songs={[makeSong('s1'), makeSong('s2')]} />,
+    );
+    expect(container.innerHTML).toBe('');
   });
 
   it('fades in the container after images are available', () => {

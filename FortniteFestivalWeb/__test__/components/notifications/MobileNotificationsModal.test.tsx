@@ -209,11 +209,11 @@ describe('MobileNotificationsModal', () => {
       'Drums: Full Combo',
       'Tap Vocals: Gold Stars',
     ]);
-    expect(within(flagGroups[0]!).getByAltText('Solo_Guitar')).toBeTruthy();
+    expect(within(flagGroups[0]!).getByAltText('Lead')).toBeTruthy();
     expect(within(flagGroups[0]!).getByText('New High Score')).toBeTruthy();
-    expect(within(flagGroups[1]!).getByAltText('Solo_Drums')).toBeTruthy();
+    expect(within(flagGroups[1]!).getByAltText('Drums')).toBeTruthy();
     expect(within(flagGroups[1]!).getByText('Full Combo')).toBeTruthy();
-    expect(within(flagGroups[2]!).getByAltText('Solo_Vocals')).toBeTruthy();
+    expect(within(flagGroups[2]!).getByAltText('Tap Vocals')).toBeTruthy();
     expect(within(flagGroups[2]!).getByText('Gold Stars')).toBeTruthy();
   });
 
@@ -409,7 +409,9 @@ describe('MobileNotificationsModal', () => {
     expect(screen.getByAltText('Apple album art')).toBeTruthy();
     expect(screen.getByAltText('Stand and Fight (Remix) album art')).toBeTruthy();
     expect(screen.getByAltText("Ghosts 'n' Stuff album art")).toBeTruthy();
-    expect(screen.getByAltText('Apple band notification album art')).toBeTruthy();
+    expect(
+      screen.getByTestId('notification-media-cycle-art').querySelector('img'),
+    ).toHaveAttribute('alt', '');
     screen.getAllByTestId('notification-title').forEach((title) => {
       expect(title.style.color).toBe(BRIGHT_WHITE);
       expect(title.getAttribute('data-marquee-title')).toBe('true');
@@ -420,7 +422,7 @@ describe('MobileNotificationsModal', () => {
     screen.getAllByTestId('notification-flag').forEach((flag) => {
       expect(flag.style.color).toBe(BRIGHT_WHITE);
     });
-    expect(document.body.querySelector('[data-media-kind="soloInstrument"] img[alt="Solo_Drums"]')).toBeTruthy();
+    expect(document.body.querySelector('[data-media-kind="soloInstrument"] img[data-instrument="Solo_Drums"]')).toBeTruthy();
     expect(document.body.querySelector('[data-media-layout="duoStack"]')).toBeTruthy();
     expect(document.body.querySelectorAll('[data-media-layout="duoStack"] img')).toHaveLength(2);
     expect(document.body.querySelector('[data-media-layout="comboGrid"]')).toBeTruthy();
@@ -640,4 +642,31 @@ describe('MobileNotificationsModal', () => {
     expect(onNotificationsSeen).toHaveBeenCalledTimes(2);
     expect(onNotificationsSeen).toHaveBeenLastCalledWith([notifications[1]!.notificationGuid]);
   });
+});
+
+it('keeps notification media static and omits optional album art for reduced motion', () => {
+  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+    matches: query === '(prefers-reduced-motion: reduce)',
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
+
+  render(
+    <MobileNotificationsModal
+      visible={true}
+      onClose={() => {}}
+      notifications={mockMobileNotifications}
+      onNotificationOpen={() => {}}
+    />,
+  );
+
+  const cycle = screen.getByTestId('notification-media-cycle');
+  expect(cycle).toHaveAttribute('data-media-cycle', 'static');
+  expect(cycle).toHaveAttribute('data-media-cycle-active-layer', 'icons');
+  expect(screen.queryByTestId('notification-media-cycle-art')).toBeNull();
 });

@@ -273,7 +273,7 @@ describe('MobileHeader', () => {
     expect(header).toBeTruthy();
     const searchButton = within(header!).getByRole('button', { name: 'Search' });
     const profileButton = within(header!).getByRole('button', { name: 'Select Player Profile' });
-    const instrumentIcon = within(header!).getByAltText('Solo_Guitar');
+    const instrumentIcon = within(header!).getByAltText('Lead');
 
     expect(instrumentIcon.compareDocumentPosition(profileButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(profileButton.compareDocumentPosition(searchButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -421,7 +421,7 @@ describe('MobileHeader', () => {
       />,
     );
 
-    expect(screen.queryByAltText('Solo_Guitar')).toBeNull();
+    expect(screen.queryByAltText('Lead')).toBeNull();
     expect(screen.getByRole('button', { name: 'Search' })).toBeDefined();
   });
 
