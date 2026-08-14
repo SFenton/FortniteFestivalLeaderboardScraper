@@ -16,9 +16,14 @@ describe('queryKeys', () => {
     expect(queryKeys.player('acc-1', 'song-1', ['Solo_Guitar'])).toEqual(['player', 'acc-1', { songId: 'song-1', instruments: ['Solo_Guitar'], leeway: undefined }]);
   });
 
-  it('playerHistory() returns key with accountId and optional params', () => {
-    expect(queryKeys.playerHistory('acc-1')).toEqual(['playerHistory', 'acc-1', { songId: undefined, instrument: undefined }]);
-    expect(queryKeys.playerHistory('acc-1', 'song-1', 'Solo_Guitar')).toEqual(['playerHistory', 'acc-1', { songId: 'song-1', instrument: 'Solo_Guitar' }]);
+  it('playerHistory() owns full-song history under an account scope', () => {
+    expect(queryKeys.playerHistoryScope('acc-1')).toEqual(['playerHistory', 'acc-1']);
+    expect(queryKeys.playerHistory('acc-1')).toEqual(['playerHistory', 'acc-1', { songId: undefined }]);
+    expect(queryKeys.playerHistory('acc-1', 'song-1')).toEqual(['playerHistory', 'acc-1', { songId: 'song-1' }]);
+  });
+
+  it('rivalsAll() is nested under the account rivals scope', () => {
+    expect(queryKeys.rivalsAll('acc-1')).toEqual(['rivals', 'acc-1', 'all']);
   });
 
   it('syncStatus() returns key with accountId', () => {

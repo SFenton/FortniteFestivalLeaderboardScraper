@@ -137,12 +137,12 @@ export default function Sidebar({ player, selectedProfile, open, onClose, onDese
           <span style={s.brand}>{t('common.brandName')}</span>
         </div>
         <nav style={s.sidebarNav}>
-          <NavLink to="/songs" {...getNavigationHandlers(t('nav.songs'), '/songs')} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
+          <NavLink to={Routes.songs} {...getNavigationHandlers(t('nav.songs'), Routes.songs)} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
             <span style={s.sidebarLinkIcon}><IoMusicalNotes size={20} /></span>
             {t('nav.songs')}
           </NavLink>
           {showSuggestions && (
-            <NavLink to="/suggestions" {...getNavigationHandlers(t('nav.suggestions'), '/suggestions')} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
+            <NavLink to={Routes.suggestions} {...getNavigationHandlers(t('nav.suggestions'), Routes.suggestions)} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
               <span style={s.sidebarLinkIcon}><IoSparkles size={20} /></span>
               {t('nav.suggestions')}
             </NavLink>
@@ -155,19 +155,19 @@ export default function Sidebar({ player, selectedProfile, open, onClose, onDese
           )}
           {/* v8 ignore start -- player-gated link */}
           {player && (
-            <NavLink to="/rivals" {...getNavigationHandlers(t('nav.rivals', 'Rivals'), '/rivals')} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
+            <NavLink to={Routes.rivals} {...getNavigationHandlers(t('nav.rivals', 'Rivals'), Routes.rivals)} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
               <span style={s.sidebarLinkIcon}><IoPeople size={20} /></span>
               {t('nav.rivals', 'Rivals')}
             </NavLink>
           )}
           {/* v8 ignore stop */}
-          <NavLink to="/leaderboards" {...getNavigationHandlers(t('nav.leaderboards'), '/leaderboards')} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
+          <NavLink to={Routes.leaderboards} {...getNavigationHandlers(t('nav.leaderboards'), Routes.leaderboards)} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
             <span style={s.sidebarLinkIcon}><IoTrophy size={20} /></span>
             {t('nav.leaderboards')}
           </NavLink>
           {/* v8 ignore start -- shop-visibility link */}
           {!settings.hideItemShop && (
-            <NavLink to="/shop" {...getNavigationHandlers(t('nav.shop', 'Shop'), '/shop')} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
+            <NavLink to={Routes.shop} {...getNavigationHandlers(t('nav.shop', 'Shop'), Routes.shop)} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
               <span style={s.sidebarLinkIcon}><IoBagHandle size={20} /></span>
               {t('nav.shop', 'Shop')}
             </NavLink>
@@ -179,7 +179,7 @@ export default function Sidebar({ player, selectedProfile, open, onClose, onDese
             <SelectedBandPanel band={selectedBand} getNavigationHandlers={getNavigationHandlers} onDeselect={onDeselect} />
           ) : player ? (
             <div style={s.sidebarPlayerRow}>
-              <Link to="/statistics" {...getNavigationHandlers(player.displayName, '/statistics')} style={s.playerLink}>
+              <Link to={Routes.statistics} {...getNavigationHandlers(player.displayName, Routes.statistics)} style={s.playerLink}>
                 <span style={s.sidebarLinkIcon}><IoPerson size={20} /></span>
                 <MarqueeText as="p" text={player.displayName} style={s.playerName} />
               </Link>
@@ -199,7 +199,7 @@ export default function Sidebar({ player, selectedProfile, open, onClose, onDese
               {t('nav.manual')}
             </NavLink>
           )}
-          <NavLink to="/settings" {...getNavigationHandlers(t('nav.settings'), '/settings')} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
+          <NavLink to={Routes.settings} {...getNavigationHandlers(t('nav.settings'), Routes.settings)} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
             <span style={s.sidebarLinkIcon}><IoSettings size={20} /></span>
             {t('nav.settings')}
           </NavLink>

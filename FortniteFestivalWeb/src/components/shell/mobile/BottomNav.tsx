@@ -7,6 +7,7 @@ import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
 import fx from '../../../styles/effects.module.css';
 import { paddingWithSafeAreaBottom } from '../../../utils/safeAreaStyles';
 import { getStatisticsNavigationPath } from '../../../utils/profileNavigation';
+import { Routes } from '../../../routes';
 import { TabKey } from '@festival/core/runtime';
 import {
   Colors, Font, Weight, Gap, ZIndex, Layout,
@@ -43,14 +44,14 @@ export default function BottomNav({ player, selectedProfile = null, activeTab, o
     ...(showSuggestions ? [{ key: TabKey.Suggestions, label: t('nav.suggestions'), icon: <IoSparkles size={20} /> }] : []),
     ...(showSplitCompetitiveTabs
       ? [
-        { key: TabKey.Leaderboards, label: t('nav.leaderboards'), icon: <IoTrophy size={20} />, path: '/leaderboards' },
-        { key: TabKey.Rivals, label: t('nav.rivals'), icon: <IoPeople size={20} />, path: '/rivals' },
+        { key: TabKey.Leaderboards, label: t('nav.leaderboards'), icon: <IoTrophy size={20} />, path: Routes.leaderboards },
+        { key: TabKey.Rivals, label: t('nav.rivals'), icon: <IoPeople size={20} />, path: Routes.rivals },
       ]
       : [{
         key: player ? TabKey.Compete : TabKey.Leaderboards,
         label: player ? t('nav.compete') : t('nav.leaderboards'),
         icon: <IoTrophy size={20} />,
-        path: player ? '/compete' : '/leaderboards',
+        path: player ? Routes.compete : Routes.leaderboards,
         activeKeys: player ? [TabKey.Leaderboards, TabKey.Rivals] : undefined,
       }]),
     ...(statisticsPath ? [{ key: TabKey.Statistics, label: t('nav.statistics'), icon: <IoStatsChart size={20} />, path: statisticsPath }] : []),

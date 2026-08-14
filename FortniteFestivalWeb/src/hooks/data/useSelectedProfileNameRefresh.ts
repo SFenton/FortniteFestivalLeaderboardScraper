@@ -160,16 +160,14 @@ function invalidateAccountNameQueries(queryClient: QueryClient, accountIds: read
   for (const accountId of accountIds) {
     void queryClient.invalidateQueries({ queryKey: ['player', accountId] });
     void queryClient.invalidateQueries({ queryKey: ['playerStats', accountId] });
-    void queryClient.invalidateQueries({ queryKey: ['playerHistory', accountId] });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.playerHistoryScope(accountId) });
     void queryClient.invalidateQueries({ queryKey: ['playerRanking'] });
     void queryClient.invalidateQueries({ queryKey: ['playerCompositeRanking', accountId] });
     void queryClient.invalidateQueries({ queryKey: ['playerSoloFamilyRanking', accountId] });
     void queryClient.invalidateQueries({ queryKey: ['playerComboRanking', accountId] });
     void queryClient.invalidateQueries({ queryKey: ['leaderboardNeighborhood'] });
     void queryClient.invalidateQueries({ queryKey: ['compositeNeighborhood', accountId] });
-    void queryClient.invalidateQueries({ queryKey: ['rivalsOverview', accountId] });
-    void queryClient.invalidateQueries({ queryKey: ['rivalsList', accountId] });
-    void queryClient.invalidateQueries({ queryKey: ['rivalDetail', accountId] });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.rivalsScope(accountId) });
     void queryClient.invalidateQueries({ queryKey: ['playerBandsList', accountId] });
   }
 

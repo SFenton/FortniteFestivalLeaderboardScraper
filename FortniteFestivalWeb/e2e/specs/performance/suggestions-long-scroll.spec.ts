@@ -240,6 +240,31 @@ test('Suggestions restores after visiting one of its song links', async ({ page 
     .toBe(suggestionsScrollTop);
 });
 
+test('trailing-slash Suggestions restores after visiting a song link', async ({ page }, testInfo) => {
+  test.skip(!isPrimaryDesktopProject(testInfo.project.name), 'trailing-slash restoration is covered once');
+  await gotoAppRoute(page, '/suggestions/');
+  await settleSuggestionsRoute(page);
+  await waitForAnimationFrames(page);
+
+  const scrollContainer = page.getByTestId('app-scroll-container');
+  const targetSong = page.getByTestId('suggestions-list').getByRole('link').nth(6);
+  await targetSong.scrollIntoViewIfNeeded();
+  await expect(targetSong).toBeVisible({ timeout: 15_000 });
+  await releasePendingScrollRestoration(page);
+  await waitForAnimationFrames(page);
+  const suggestionsScrollTop = await scrollContainer.evaluate(
+    element => element.scrollTop,
+  );
+  expect(suggestionsScrollTop).toBeGreaterThan(0);
+
+  await targetSong.click();
+  await expect(page).toHaveURL(/#\/songs\/[^?]+(?:\?.*)?$/);
+  await page.goBack();
+  await expect(page).toHaveURL(/#\/suggestions\/$/);
+  await expect.poll(() => scrollContainer.evaluate(element => element.scrollTop))
+    .toBe(suggestionsScrollTop);
+});
+
 test('Suggestions keeps a focused category mounted while the virtual window moves', async ({ page }, testInfo) => {
   test.skip(!isPrimaryDesktopProject(testInfo.project.name), 'focused-row retention is covered once');
   await gotoAppRoute(page, '/suggestions');

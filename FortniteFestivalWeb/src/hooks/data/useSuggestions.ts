@@ -5,15 +5,18 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
 } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { SuggestionGenerator } from '@festival/core/suggestions';
 import type { SuggestionCategory } from '@festival/core/types';
 import type { Song as CoreSong, LeaderboardData } from '@festival/core/types';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
-import { api } from '../../api/client';
 import { buildRivalDataIndexFromRivalsAll } from '../../utils/suggestionAdapter';
 import { deriveComboFromSettings } from '../../pages/rivals/helpers/comboUtils';
 import { useSettings } from '../../contexts/SettingsContext';
+import { rivalsAllQueryOptions } from '../../api/remoteDataQueries';
+import { normalizeRoutePathname, Routes } from '../../routes';
 import {
   initializeSuggestionsScrollState,
   updateSuggestionsScrollY,
@@ -40,6 +43,7 @@ type SuggestionsCache = {
   generator: SuggestionGenerator;
   generatorHasMore: boolean;
   loadTriggerCount: number;
+  rivalDataRevision: string | null;
 };
 
 type SuggestionsSession = {
@@ -82,6 +86,23 @@ export function useSuggestions(
   const mode = options.mode ?? 'solo';
   const cacheKey = options.cacheKey ?? `${mode}:${accountId}`;
   const sourceReady = options.sourceReady ?? true;
+  const rivalCombo = useMemo(
+    () => deriveComboFromSettings(settings) ?? undefined,
+    [settings],
+  );
+  const rivalsAllQuery = useQuery({
+    ...rivalsAllQueryOptions(accountId),
+    enabled: mode === 'solo' && !!accountId,
+  });
+  const rivalData = useMemo(
+    () => rivalsAllQuery.data
+      ? buildRivalDataIndexFromRivalsAll(rivalsAllQuery.data, rivalCombo, 5)
+      : null,
+    [rivalCombo, rivalsAllQuery.data],
+  );
+  const rivalDataRevision = rivalData
+    ? `${rivalsAllQuery.dataUpdatedAt}:${rivalCombo ?? ''}`
+    : null;
 
   // Restore from cache if same suggestion identity
   const cached = suggestionsCache?.sourceKey === cacheKey
@@ -96,7 +117,7 @@ export function useSuggestions(
   const readyRef = useRef(!!cached);
   const initializedRef = useRef(!!cached);
   const cacheKeyRef = useRef(cacheKey);
-  const rivalDataInjectedRef = useRef(false);
+  const lastInjectedRivalDataRevisionRef = useRef(cached?.rivalDataRevision ?? null);
   const loadMorePendingRef = useRef(false);
   const currentSession = session.sourceKey === cacheKey
     ? session
@@ -113,7 +134,7 @@ export function useSuggestions(
     mixKeyRef.current = nextCached?.mixKey ?? null;
     readyRef.current = !!nextCached;
     initializedRef.current = !!nextCached;
-    rivalDataInjectedRef.current = false;
+    lastInjectedRivalDataRevisionRef.current = nextCached?.rivalDataRevision ?? null;
     loadMorePendingRef.current = false;
     setSession(toSession(nextCached, cacheKey));
   }, [cacheKey]);
@@ -126,8 +147,8 @@ export function useSuggestions(
     if (!scrollEl || !scrollCacheKey) return;
     /* v8 ignore start — scroll position tracking */
     const onScroll = () => {
-      const hashPath = window.location.hash.slice(1).split('?')[0];
-      if (hashPath !== '/suggestions') return;
+      const hashPath = window.location.hash.slice(1).split('?')[0] ?? Routes.root;
+      if (normalizeRoutePathname(hashPath) !== Routes.suggestions) return;
       updateSuggestionsScrollY(scrollCacheKey, scrollEl.scrollTop);
     };
     /* v8 ignore stop */
@@ -149,6 +170,7 @@ export function useSuggestions(
       bandComboId: options.bandComboId,
     });
     gen.setSource(coreSongs, scoresIndex);
+    if (rivalData) gen.setRivalData(rivalData);
 
     return {
       sourceKey: cacheKey,
@@ -157,6 +179,7 @@ export function useSuggestions(
       generator: gen,
       generatorHasMore: true,
       loadTriggerCount: 0,
+      rivalDataRevision,
     };
   }, [
     cacheKey,
@@ -164,6 +187,8 @@ export function useSuggestions(
     currentSeason,
     mode,
     options.bandComboId,
+    rivalData,
+    rivalDataRevision,
     scoresIndex,
   ]);
 
@@ -174,7 +199,7 @@ export function useSuggestions(
     mixKeyRef.current = nextCache.mixKey;
     readyRef.current = true;
     initializedRef.current = true;
-    rivalDataInjectedRef.current = false;
+    lastInjectedRivalDataRevisionRef.current = nextCache.rivalDataRevision;
     loadMorePendingRef.current = false;
     initializeSuggestionsScrollState(nextCache.mixKey);
     setSession(toSession(nextCache, nextCache.sourceKey));
@@ -200,35 +225,34 @@ export function useSuggestions(
   // eslint-disable-next-line react-hooks/exhaustive-deps -- currentSeason/options only needed at init
   }, [accountId, cacheKey, coreSongs, createMix, installFreshMix, scoresIndex, sourceReady]);
 
-  // Fetch rival data and inject into the generator when it becomes ready.
+  // Inject newly available query-owned rival data without replacing the mix.
   useEffect(() => {
-    if (mode !== 'solo') return;
-    if (!accountId) return;
-    if (!generatorRef.current || rivalDataInjectedRef.current) return;
-
     const generator = generatorRef.current;
-    const mixKey = mixKeyRef.current;
-    if (!mixKey) return;
-    const controller = new AbortController();
-    const combo = deriveComboFromSettings(settings) ?? undefined;
+    if (
+      !generator
+      || !currentSession.mixKey
+      || !rivalData
+      || !rivalDataRevision
+      || lastInjectedRivalDataRevisionRef.current === rivalDataRevision
+    ) return;
 
-    api.getRivalsAll(accountId, { signal: controller.signal })
-      .then((response) => {
-        if (
-          controller.signal.aborted
-          || generatorRef.current !== generator
-          || mixKeyRef.current !== mixKey
-        ) return;
-        const index = buildRivalDataIndexFromRivalsAll(response, combo, 5);
-        generator.setRivalData(index);
-        rivalDataInjectedRef.current = true;
-      })
-      .catch(() => {
-        // Graceful degradation — rival suggestions simply won't appear
-      });
-
-    return () => controller.abort();
-  }, [accountId, currentSession.mixKey, mode, settings]);
+    generator.setRivalData(rivalData);
+    lastInjectedRivalDataRevisionRef.current = rivalDataRevision;
+    const activeCache = suggestionsCache;
+    if (
+      activeCache?.sourceKey === cacheKey
+      && activeCache.mixKey === currentSession.mixKey
+      && activeCache.generator === generator
+    ) {
+      activeCache.rivalDataRevision = rivalDataRevision;
+      if (!activeCache.generatorHasMore) {
+        activeCache.generatorHasMore = true;
+        startTransition(() => {
+          setSession(toSession(activeCache, cacheKey));
+        });
+      }
+    }
+  }, [cacheKey, currentSession.mixKey, rivalData, rivalDataRevision]);
 
   const loadMore = useCallback(() => {
     const gen = generatorRef.current;
