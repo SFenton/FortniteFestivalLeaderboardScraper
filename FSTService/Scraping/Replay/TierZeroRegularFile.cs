@@ -57,6 +57,60 @@ internal static class TierZeroRegularFile
     internal static long GetLength(string path) =>
         Inspect(path).Length;
 
+    internal static string GetFileSystemDeviceIdentity(
+        string path)
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            var buffer = Marshal.AllocHGlobal(StatBufferBytes);
+            try
+            {
+                Zero(buffer);
+                if (Statx(
+                        AtCurrentWorkingDirectory,
+                        path,
+                        AtSymlinkNoFollow,
+                        StatxBasicStats,
+                        buffer) != 0)
+                {
+                    throw InspectException(path);
+                }
+                var major = unchecked((uint)Marshal.ReadInt32(
+                    buffer,
+                    LinuxStatxDeviceMajorOffset));
+                var minor = unchecked((uint)Marshal.ReadInt32(
+                    buffer,
+                    LinuxStatxDeviceMinorOffset));
+                return $"{major}:{minor}";
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+        if (OperatingSystem.IsMacOS() ||
+            OperatingSystem.IsFreeBSD())
+        {
+            var buffer = Marshal.AllocHGlobal(StatBufferBytes);
+            try
+            {
+                Zero(buffer);
+                if (LStatForCurrentPlatform(path, buffer) != 0)
+                    throw InspectException(path);
+                return OperatingSystem.IsMacOS()
+                    ? unchecked((uint)Marshal.ReadInt32(buffer, 0))
+                        .ToString()
+                    : unchecked((ulong)Marshal.ReadInt64(buffer, 0))
+                        .ToString();
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+        return FindDrive(path).RootDirectory.FullName;
+    }
+
     internal static TierZeroFileSnapshot Inspect(string path)
     {
         if (OperatingSystem.IsLinux())
@@ -739,6 +793,20 @@ internal static class TierZeroRegularFile
     {
         for (var offset = 0; offset < StatBufferBytes; offset += 8)
             Marshal.WriteInt64(buffer, offset, 0);
+    }
+
+    private static DriveInfo FindDrive(string path)
+    {
+        var full = Path.GetFullPath(path);
+        return DriveInfo.GetDrives()
+            .Where(drive => full.StartsWith(
+                drive.RootDirectory.FullName,
+                OperatingSystem.IsWindows()
+                    ? StringComparison.OrdinalIgnoreCase
+                    : StringComparison.Ordinal))
+            .OrderByDescending(static drive =>
+                drive.RootDirectory.FullName.Length)
+            .First();
     }
 
     private static int LStatForCurrentPlatform(

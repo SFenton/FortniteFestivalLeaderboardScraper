@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-14
-last_verified_commit: 76ddfd59
+last_verified_commit: cb295b7e
 sources:
   - FortniteFestival.Core/FortniteFestival.Core.csproj
   - FortniteFestival.Core/Config/InstrumentType.cs
@@ -15,6 +15,7 @@ sources:
   - packages/theme/src/colorHelpers.ts
   - packages/ui-utils/package.json
   - packages/ui-utils/src/index.ts
+  - FSTService/Scraping/Replay/TierOneReplayModels.cs
 update_triggers:
   - Shared project targets, package exports, instrument/song types, API types, theme tokens, or utilities change.
 ---
@@ -31,6 +32,12 @@ production persistence is PostgreSQL.
 Shared .NET responsibilities include domain models, Epic/catalog integration,
 instrument definitions, song/path logic, and compatibility code used outside
 the service host.
+
+Tier-0/Tier-1 replay manifests and phase adapters intentionally remain
+service-local under `FSTService.Scraping.Replay`. They are same-image evidence
+and isolated-execution contracts, not shared public API types or a plugin SDK.
+Move them into a shared assembly only after a second independently versioned
+consumer exists and compatibility/version-skew requirements are measured.
 
 ## TypeScript packages
 

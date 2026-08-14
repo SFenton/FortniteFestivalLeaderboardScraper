@@ -2,7 +2,7 @@
 status: decision
 owner: worker
 last_verified: 2026-08-12
-last_verified_commit: 86b45d30
+last_verified_commit: cb295b7e
 sources:
   - FSTService/FSTService.csproj
   - FSTService/Program.cs
@@ -13,6 +13,8 @@ sources:
   - docs/decisions/0001-split-service-worker-roles.md
   - docs/architecture/data-publication-flow.md
   - docs/roadmap/post-scrape-processing.md
+  - FSTService/Scraping/Replay/ReplayEntryPoint.cs
+  - FSTService/Scraping/Replay/TierOneReplayRunner.cs
 update_triggers:
   - Post-scrape phase contracts, replay hosting, process boundaries, deployment ownership, or data ownership changes.
 ---
@@ -35,6 +37,17 @@ problem justifies it.
 
 Do not use runtime-loaded phase plugins or extract post-scrape microservices at
 the current scale.
+
+The first implementation slice is deliberately narrower than full
+BandMaintenance: stable phase `post.band_maintenance`, adapter
+`current_projection_refresh`, one band type, bounded overall scopes, and fresh
+isolated PostgreSQL only. This is sufficient to iterate the dominant
+current-projection SQL/algorithm while prune, search projection, provider
+capture, publication, and notification coupling remain unsupported.
+Replay forces unchanged-scope skipping off, one band-type worker, synchronous
+commit, and candidate cleanup off. Its timing is explicitly non-comparable to
+production; option-parity replay or a separate bounded probe is required for
+production optimization claims.
 
 ## Context
 
@@ -81,6 +94,17 @@ run arbitrary phase slices from a sealed parent state.
 - It avoids a second executable/project before another real consumer exists.
 - It provides a migration path to a dedicated runner later if startup/resource
   evidence proves the host is unsuitable.
+
+The replay command branches before `.env` loading and `WebApplication`
+construction. This preserves one binary/image without inheriting the normal
+host's DI graph, production credentials, provider network, hosted workers,
+Docker access, HTTP serving, caches, notifications, or publication authority.
+
+Tier-1 import is an allowlisted data contract, not a database restore. The
+isolated target must be a marker-owned fresh database on a different
+PostgreSQL system identifier than the captured source. Baseline and candidate
+outputs are immutable child packages compared by an independently pinned
+baseline image.
 
 ## Alternatives
 

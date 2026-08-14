@@ -2,7 +2,7 @@
 status: roadmap
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: 099fd6fa
+last_verified_commit: cb295b7e
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -681,36 +681,15 @@ Each iteration below is a separate branch/PR.
 - Execution remains `parity-gated-maintenance` and blocked until statistics,
   exact-count, parity, and workspace evidence all agree.
 
-### PR-5: same-binary isolated replay
-
-**Class:** `full-scrape-ab` before any production-facing use.
-
-**Mandatory starting and acceptance gate:** PR-4 confines operations within a
-caller-supplied package root but deliberately does not select or authorize that
-root. PR-5 must add a fail-closed root admission policy before any CLI/runtime
-entry point can create a package:
-
-- production-derived roots must resolve beneath an operator-approved location
-  on the 4 TB FST drive;
-- bounded tests may use only repository or explicitly assigned session-test
-  roots;
-- canonical roots and existing ancestors must reject symlinks/reparse points,
-  traversal, normalization aliases, alternate drives, generic temporary
-  directories, and PostgreSQL data directories; and
-- rejection must occur before database, network, package, import, or phase
-  execution.
-
-- guarded FSTService replay mode;
-- isolated connection-target refusal for production;
-- phase-from/through or stable single-phase invocation;
-- no-publication mode;
-- phase-scoped import/output manifest;
-- bounded Tier 1 dataset;
-- baseline/candidate runner against the same parent.
-
 ### PR-6: verified dead/no-op path cleanup
 
 **Class:** `scrape-boundary-deploy`
+
+**Starting note:** PR-5 accepted same-binary root confinement, isolated
+PostgreSQL refusal, typed Tier-1 manifests/import, the bounded current-
+projection adapter, and exact output comparison. Full BandMaintenance,
+provider capture, production-derived packages, live replay, and deployment
+remain unsupported and are not prerequisites or authorization for PR-6.
 
 - audit best-effort skip reasons/starvation first;
 - conditionally remove PostgreSQL checkpoint/cache warm and legacy rank work;
@@ -723,7 +702,11 @@ entry point can create a package:
 Order is evidence-driven:
 
 1. BandMaintenance current projection refresh, starting with the measured
-   `53,543` considered / `8,020` refreshed scope and row-churn path;
+   `53,543` considered / `8,020` refreshed scope and row-churn path. Current
+   replay forces `SkipUnchangedScopes=false`, one band-type worker,
+   synchronous commit, and cleanup disabled, so it cannot evaluate this
+   unchanged-scope hypothesis. PR-7 must add an option-parity replay mode or
+   use a separate bounded probe before claiming skip-path evidence;
 2. solo current-projection write reduction;
 3. rank-history query path and one-variable concurrency/overlap experiment;
 4. leaderboard-rivals batching/fingerprints;
@@ -833,7 +816,7 @@ metrics. Correctness/publication differences reject regardless of speed.
 
 | Gap | Evidence class | Exact next probe | Gate |
 |---|---|---|---|
-| Current band projection rewrite feasibility | Unknown | Bounded plan/same-input checksum probe for the `53,543` considered / `8,020` refreshed scope path | Separate one-variable A/B; exact projection/publication parity; no >10% resource regression |
+| Current band projection rewrite feasibility | Unknown | Option-parity replay or a separate bounded probe for the `53,543` considered / `8,020` refreshed scope path; deterministic PR-5 timing is not production-comparable | Separate one-variable A/B; exact projection/publication parity; no >10% resource regression |
 | Exact snapshot reclaim plan | Unknown | Establish complete protected-ID row distribution and exact workspace evidence from a bounded validated source | No rewrite or gate reduction |
 | Improvement-notification gaps | Unknown | Record skip reasons and inspect markers/coverage on recent publications | Do not call the phase starved or removable without evidence |
 | Best-effort skip/starvation | Unknown | Compare requested phases, outcomes, skip reasons, pressure decisions, and feature conditions | Required before dead-path PR |
@@ -856,8 +839,7 @@ This tandem plan is accepted for implementation after local outbox rendering.
 - Approval of this roadmap is not authorization to bypass the current
   live-safety, parity, publication, provider, storage, rollback, or maintenance
   gate for any later action.
-- PR-5 same-binary isolated replay is the next implementation boundary and
-  cannot pass acceptance without the approved FST-root admission gate.
+- PR-6 verified dead/no-op cleanup is the next implementation boundary.
 - Current-projection optimization is a separate future full-scrape A/B; it
   cannot be combined with PR-3 Settings work.
 - Snapshot-retention execution remains a separate parity- and capacity-gated

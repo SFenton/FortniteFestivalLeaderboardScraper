@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-14
-last_verified_commit: a20b9d89
+last_verified_commit: cb295b7e
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -199,11 +199,19 @@ Verification is read-only and detects corruption, missing/extra files or
 directories, path/symlink escape, and expected parent/config/schema/phase
 mismatches.
 
-No live capture, database export/import, replay invocation, publication
-binding, or retention automation uses this contract yet. Future
+No live capture, production database export/import, accepted production replay,
+publication binding, or retention automation uses this contract. Future
 production-derived packages and replay workspace must stay on the 4 TB FST
 drive and receive explicit capacity/retention ownership. See
 [Replay evidence artifacts](replay-artifacts.md).
+
+The accepted PR-5 repository capability adds only a synthetic/bounded Tier-1
+import into a fresh marker-owned isolated PostgreSQL database. The importer
+owns three typed input datasets and the BandMaintenance current-projection
+output tables; it rejects all pre-existing public objects, source/production
+cluster identity, arbitrary SQL, publication tables, and unlisted datasets.
+Isolated replay databases are ephemeral experimental workspaces, never
+source-of-truth or restore targets.
 
 ## Storage and maintenance rules
 
