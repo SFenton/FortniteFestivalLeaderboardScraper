@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-13
-last_verified_commit: 53c11043
+last_verified_commit: aa33576e
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -10,6 +10,8 @@ sources:
   - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
   - packages/core/src/api/serverTypes.ts
   - FortniteFestivalWeb/src/api/client.ts
+  - FortniteFestivalWeb/src/hooks/data/useServiceInfo.ts
+  - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.tsx
   - FSTService/Persistence/InstrumentDatabase.cs
   - FSTService/Scraping/RankingsCalculator.cs
 update_triggers:
@@ -139,8 +141,16 @@ version-1 field. Contract version 2 adds:
 Weak overall or ETA evidence is omitted, not serialized as false precision.
 Initial overall progress is normally `indeterminate`. Existing `phase`,
 `subOperation`, `progressPercent`, labels, branches, and worker-operation fields
-remain available so PR-3 can migrate without coupling this backend change to
-rendered Settings UI.
+remain available for version-1 browser fallback.
+
+The unaccepted PR-3 web candidate consumes this additive payload through the
+existing shared service-info React Query request. It uses stable IDs for
+translated labels, renders exact phase percentage only when
+`unitsTotalFinal=true`, and shows server-owned overall/ETA evidence only when
+present and trustworthy. It does not derive an overall percentage from browser
+weights or promote legacy `progressPercent` into an exact value. The candidate
+is not merged, deployed, or production validated; this paragraph records
+candidate consumption behavior, not current production UI behavior.
 
 `service_worker_status.current_operation_json` carries the same additive v2
 summary. PostgreSQL `scrape_phase_attempts` is authoritative for normalized
