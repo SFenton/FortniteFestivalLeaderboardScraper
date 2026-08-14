@@ -145,16 +145,19 @@ export function useSuggestions(
     const scrollCacheKey = currentSession.mixKey;
     const scrollEl = scrollContainerRef.current;
     if (!scrollEl || !scrollCacheKey) return;
+    const recordScroll = () => {
+      updateSuggestionsScrollY(scrollCacheKey, scrollEl.scrollTop);
+    };
     /* v8 ignore start — scroll position tracking */
     const onScroll = () => {
       const hashPath = window.location.hash.slice(1).split('?')[0] ?? Routes.root;
       if (normalizeRoutePathname(hashPath) !== Routes.suggestions) return;
-      updateSuggestionsScrollY(scrollCacheKey, scrollEl.scrollTop);
+      recordScroll();
     };
     /* v8 ignore stop */
     scrollEl.addEventListener('scroll', onScroll, { passive: true });
     return () => {
-      onScroll();
+      recordScroll();
       scrollEl.removeEventListener('scroll', onScroll);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

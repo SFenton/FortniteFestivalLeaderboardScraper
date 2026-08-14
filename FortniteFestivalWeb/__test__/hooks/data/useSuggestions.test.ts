@@ -3,6 +3,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement, type ReactNode } from 'react';
 import { queryKeys } from '../../../src/api/queryKeys';
+import { getSuggestionsScrollRestoreState } from '../../../src/pages/suggestions/suggestionsSessionCache';
 
 const mockGetNext = vi.fn().mockReturnValue([]);
 const mockSetSource = vi.fn();
@@ -10,6 +11,7 @@ const mockResetForEndless = vi.fn();
 const mockGeneratorOptions = vi.fn();
 const mockGeneratorInstances: Array<{ setRivalData: ReturnType<typeof vi.fn> }> = [];
 const mockGetRivalsAll = vi.fn();
+const mockScrollContainerRef: { current: HTMLElement | null } = { current: null };
 const mockBuildRivalDataIndex = vi.fn((response: unknown) => ({
   songRivals: [],
   byRival: new Map(),
@@ -39,7 +41,7 @@ vi.mock('../../../src/contexts/SettingsContext', () => ({
 }));
 
 vi.mock('../../../src/contexts/ScrollContainerContext', () => ({
-  useScrollContainer: () => ({ current: null }),
+  useScrollContainer: () => mockScrollContainerRef,
 }));
 
 vi.mock('../../../src/api/client', () => ({
@@ -68,6 +70,8 @@ describe('useSuggestions', () => {
     vi.clearAllMocks();
     vi.resetModules();
     mockGeneratorInstances.length = 0;
+    mockScrollContainerRef.current = null;
+    window.location.hash = '';
     mockGetNext.mockReturnValue([]);
     mockGetRivalsAll.mockResolvedValue({ accountId: 'acc1', songs: [], combos: [] });
     queryClient = new QueryClient({
@@ -348,6 +352,28 @@ describe('useSuggestions', () => {
       'initial',
       'rival',
     ]);
+  });
+
+  it('captures the final scroll position during route cleanup', () => {
+    mockGetNext.mockReturnValue([{ key: 'cat', title: 'Category', songs: [] }]);
+    const scrollElement = document.createElement('div');
+    mockScrollContainerRef.current = scrollElement;
+    const songs = [{ _title: 'S', track: { su: 's1', tt: 'S', an: 'A' } }] as any[];
+    const hook = renderHook(
+      () => useSuggestions('acc-scroll-cleanup', songs, {}, 1),
+      { wrapper },
+    );
+    const mixKey = hook.result.current.mixKey!;
+    scrollElement.scrollTop = 432;
+    window.location.hash = '#/settings';
+
+    hook.unmount();
+
+    expect(getSuggestionsScrollRestoreState(mixKey)).toEqual({
+      matches: true,
+      restorable: false,
+      scrollY: 432,
+    });
   });
 
   it('ignores a rival response for a replaced mix', async () => {
