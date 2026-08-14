@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: eb593898
+last_verified_commit: bb739119
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -16,6 +16,9 @@ sources:
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Scraping/DurablePhaseProgressSink.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
+  - FSTService/Scraping/ScrapeTimePrecomputer.cs
+  - FSTService/Persistence/MetaDatabase.cs
+  - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/HostedWorkerMode.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
   - deploy/config/fstworker-role.env
@@ -103,13 +106,14 @@ for the guarded work itself. The gate holds no transaction, so long
 Epic/history waits cannot be expired by
 `idle_in_transaction_session_timeout`. Before each guarded mutation the
 worker verifies the owning backend/session token; database triggers fence
-registration, leaderboard, and score-history writes if a lost shared backend
-allows exclusive maintenance to claim its durable owner token. This covers
-registration-only hosting, including the interval before a publication monitor
-observes a same-publication release. Exclusive maintenance admission waits for
-active holders, blocks later holders, and remains fail-closed across
-cancellation/resume. Ordinary scrape freezes continue to use the existing
-background-work boundary rather than this max-score-only rejection.
+registration, leaderboard entry/population, and score-history writes if a lost
+shared backend allows exclusive maintenance to claim its durable owner token.
+This covers registration-only hosting, including the interval before a
+publication monitor observes a same-publication release. Exclusive maintenance
+admission waits for active holders, blocks later holders, and remains
+fail-closed across cancellation/resume. Ordinary scrape freezes continue to
+use the existing background-work boundary rather than this max-score-only
+rejection.
 
 Optimal-path generation is a separate coordinated workload. Automatic path
 generation remains disabled by default and selects only pending songs; the
@@ -122,19 +126,21 @@ hosted scraper/background services and requires the real `fstworker` offline.
 Stage shares the path-generation admission lock without promoting. Plan/apply
 take the exclusive mutation gate before the path-generation and global
 publication locks. Apply establishes or revalidates the freeze before taking
-solo source and band-member-stat share locks, then rechecks that the worker
-remains offline around each mutable phase. Maintenance ranking mode suppresses
-`WorkerStatusPublisher`, rebuilds changed solo instruments plus aggregate
-dependencies, recalculates target-song band validity, refreshes affected band
-current-projection scopes, rebuilds dependent band rankings, and explicitly
-skips solo/composite/band rank-history snapshots. See the
+solo entry/overlay, band-member-stat, and leaderboard-population share locks,
+then rechecks that the worker remains offline around each mutable phase.
+Maintenance ranking mode suppresses `WorkerStatusPublisher`, rebuilds changed
+solo instruments plus aggregate dependencies, recalculates target-song band
+validity, refreshes affected band current-projection scopes, rebuilds dependent
+band rankings, and explicitly skips solo/composite/band rank-history snapshots.
+See the
 [max-score correction runbook](../database/MaxScoreCorrectionMaintenanceRunbook.md).
 Every max-score database mutation and checkpoint commits through a bounded
 source-locked transaction on the live unpooled advisory-lock session; ordinary
 pooled connections are read-only for that workflow. The final cache swap,
-completed checkpoint, durable-gate clear, and unfreeze use one such
-transaction. Backend loss leaves the freeze/gate durable and requires a new
-validated resume lease.
+completed checkpoint, and unfreeze use one such transaction while the durable
+gate remains set. Disposal releases all advisory locks before clearing the
+gate, so backend loss during handoff leaves mutations fail-closed and requires
+a new validated lease to finish release.
 
 The worker's scrape, pruning, ranking, and statistics paths consume distinct
 CHOpt maxima for all eight generated instruments, including separate Pro Drums

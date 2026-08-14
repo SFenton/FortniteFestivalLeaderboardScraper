@@ -2,7 +2,7 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-14
-last_verified_commit: eb593898
+last_verified_commit: bb739119
 sources:
   - FSTService/Api/AdminEndpoints.cs
   - FSTService/Persistence/MaxScoreMaintenanceCommand.cs
@@ -16,6 +16,8 @@ sources:
   - FSTService/Scraping/BackfillOrchestrator.cs
   - FSTService/Scraping/GlobalLeaderboardScraper.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
+  - FSTService/Scraping/RankingsCalculator.cs
+  - FSTService/Scraping/ScrapeTimePrecomputer.cs
   - FSTService/Scraping/BandRankingRepairService.cs
   - FSTService/Persistence/BandCurrentProjectionBuilder.cs
   - FSTService/Scraping/PathGenerationCoordinator.cs
@@ -72,7 +74,8 @@ Apply acquires locks in this order:
 4. establish a new digest-owned freeze or revalidate the exact resume freeze;
 5. for each mutation/checkpoint transaction,
    `leaderboard_entries_overlay`, `leaderboard_entries`, then
-   `band_member_stats` share locks in that fixed order;
+   `band_member_stats` and `leaderboard_population` share locks in that fixed
+   order;
 6. publication and song row locks inside that same bounded transaction.
 
 Band maintenance is the intentional writer for target-song `band_entries`
@@ -117,19 +120,22 @@ seasonal lookup; metadata-only tracking/activity/pruning does not incur that
 cache churn.
 
 The random session token, backend PID, three advisory locks, durable owner, and
-source relation locks are revalidated inside every dependent transaction and
-again immediately before ordinary commits. The final release validates the
-exact owner/freeze before clearing them and checks the completed/unfrozen state
-before its same-session commit. All max-score writes and checkpoints use the
-unpooled lock-owning session; pooled connections are not mutation authority
-and `AsyncLocal` is not used for fencing. Registration, leaderboard/score-history,
-and all band entry/member/membership triggers lock the publication row and
-reject the durable owner/freeze. Band persistence also performs this gate
-validation unconditionally at transaction start, even when `MemberStats` is
-empty. Final cache swap, completed checkpoint, durable-owner clear, and
-unfreeze commit in one source-locked transaction on the live session, so no
-registration commit can land after cache cutover but before lease release.
-Normal scrape/publication freezes do not activate this registration guard.
+four source relation locks are revalidated inside every dependent transaction
+and again immediately before ordinary commits. Final completion validates the
+exact owner/freeze, swaps caches, marks the workflow complete, and unfreezes
+inside one source-locked transaction while retaining the durable owner token.
+All max-score writes and checkpoints use the unpooled lock-owning session;
+pooled connections are not mutation authority and `AsyncLocal` is not used
+for fencing. Registration, leaderboard entry/population, score-history, and
+all band entry/member/membership triggers lock the publication row and reject
+the durable owner/freeze. Band persistence also performs this gate validation
+unconditionally at transaction start, even when `MemberStats` is empty.
+Disposal releases the publication, path-generation, and exclusive mutation
+advisory locks before conditionally clearing the durable token. A stale writer
+therefore cannot commit after cache cutover but before release, and backend
+loss during that handoff leaves mutations fail-closed until a new validated
+lease finishes release. Normal scrape/publication freezes do not activate this
+registration guard.
 
 ## Stage request
 

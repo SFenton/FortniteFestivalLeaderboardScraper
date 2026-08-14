@@ -1745,6 +1745,16 @@ public static class DatabaseInitializer
             PRIMARY KEY (song_id, instrument)
         );
 
+        DROP TRIGGER IF EXISTS
+            trg_leaderboard_population_registration_mutation_guard
+            ON leaderboard_population;
+        CREATE TRIGGER
+            trg_leaderboard_population_registration_mutation_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON leaderboard_population
+            FOR EACH STATEMENT
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
         -- =====================================================================
         -- PLAYER STATS (from fst-meta.db)
         -- =====================================================================

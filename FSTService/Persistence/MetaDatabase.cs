@@ -48,6 +48,9 @@ public sealed partial class MetaDatabase : IMetaDatabase
     internal Action<MaxScoreMaintenanceCommitTestContext>?
         MaxScoreMaintenanceBeforeCommitTestHook
     { get; set; }
+    internal Action<MaxScoreMaintenanceCommitTestContext>?
+        MaxScoreMaintenanceAfterLocksReleasedTestHook
+    { get; set; }
 
     internal const int DataCollectionVersion = 3;
     internal const string WebTrackerDeviceId = "web-tracker";
@@ -60,6 +63,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
         LOCK TABLE leaderboard_entries_overlay IN SHARE MODE;
         LOCK TABLE leaderboard_entries IN SHARE MODE;
         LOCK TABLE band_member_stats IN SHARE MODE;
+        LOCK TABLE leaderboard_population IN SHARE MODE;
         """;
     internal const string PostProcessReadIsolationFailurePhase = "post_process";
     internal const string PublicationReadIsolationFailurePhase = "publication";
@@ -11668,11 +11672,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
             using (var sourceLocks = conn.CreateCommand())
             {
                 sourceLocks.Transaction = tx;
-                sourceLocks.CommandText = """
-                    LOCK TABLE leaderboard_entries_overlay IN SHARE MODE;
-                    LOCK TABLE leaderboard_entries IN SHARE MODE;
-                    LOCK TABLE band_member_stats IN SHARE MODE;
-                    """;
+                sourceLocks.CommandText =
+                    MaxScoreMaintenanceSourceLockSql;
                 sourceLocks.ExecuteNonQuery();
             }
             using (var publicationRowLock = conn.CreateCommand())
@@ -11898,6 +11899,11 @@ public sealed partial class MetaDatabase : IMetaDatabase
             {
                 try
                 {
+                    ReleaseMaxScoreMaintenanceLocks(
+                        conn,
+                        mutationGateLockAcquired,
+                        pathLockAcquired,
+                        publicationLockAcquired);
                     if (durableMutationGateClaimed)
                     {
                         await ClearMaxScoreMutationGateAsync(
@@ -11905,11 +11911,6 @@ public sealed partial class MetaDatabase : IMetaDatabase
                             leaseToken,
                             CancellationToken.None);
                     }
-                    ReleaseMaxScoreMaintenanceLocks(
-                        conn,
-                        mutationGateLockAcquired,
-                        pathLockAcquired,
-                        publicationLockAcquired);
                 }
                 catch
                 {
@@ -12438,20 +12439,15 @@ public sealed partial class MetaDatabase : IMetaDatabase
             swap.ExecuteNonQuery();
         }
 
-        using (var release = conn.CreateCommand())
+        using (var unfreeze = conn.CreateCommand())
         {
-            release.Transaction = tx;
-            release.CommandText = """
+            unfreeze.Transaction = tx;
+            unfreeze.CommandText = """
                 UPDATE scrape_publication_state
                 SET public_reads_frozen = FALSE,
                     public_reads_frozen_at = NULL,
                     public_reads_frozen_scrape_id = NULL,
                     public_reads_frozen_reason = NULL,
-                    max_score_mutation_gate_token = NULL,
-                    max_score_mutation_gate_publication_id = NULL,
-                    max_score_mutation_gate_backend_pid = NULL,
-                    max_score_mutation_gate_backend_start = NULL,
-                    max_score_mutation_gate_acquired_at = NULL,
                     updated_at = now()
                 WHERE id = TRUE
                   AND current_publication_id = @publicationId
@@ -12464,19 +12460,19 @@ public sealed partial class MetaDatabase : IMetaDatabase
                   AND max_score_mutation_gate_publication_id =
                       @publicationId
                 """;
-            release.Parameters.AddWithValue(
+            unfreeze.Parameters.AddWithValue(
                 "publicationId",
                 publicationId);
-            release.Parameters.AddWithValue(
+            unfreeze.Parameters.AddWithValue(
                 "publishedScrapeId",
                 publishedScrapeId);
-            release.Parameters.AddWithValue(
+            unfreeze.Parameters.AddWithValue(
                 "freezeReason",
                 expectedFreezeReason);
-            release.Parameters.AddWithValue(
+            unfreeze.Parameters.AddWithValue(
                 "leaseToken",
                 leaseToken);
-            if (release.ExecuteNonQuery() != 1)
+            if (unfreeze.ExecuteNonQuery() != 1)
             {
                 throw new MaxScoreMaintenanceLeaseLostException();
             }
@@ -12495,8 +12491,10 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     ),
                     (
                         SELECT NOT public_reads_frozen
-                           AND max_score_mutation_gate_token
-                               IS NULL
+                           AND max_score_mutation_gate_token =
+                               @leaseToken
+                           AND max_score_mutation_gate_publication_id =
+                               @publicationId
                         FROM scrape_publication_state
                         WHERE id = TRUE
                     )
@@ -12504,6 +12502,12 @@ public sealed partial class MetaDatabase : IMetaDatabase
             verify.Parameters.AddWithValue(
                 "manifestSha256",
                 normalizedDigest);
+            verify.Parameters.AddWithValue(
+                "leaseToken",
+                leaseToken);
+            verify.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
             using var reader = verify.ExecuteReader();
             if (!reader.Read()
                 || reader.IsDBNull(0)
@@ -12512,7 +12516,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 || !reader.GetBoolean(1))
             {
                 throw new InvalidOperationException(
-                    "Atomic max-score cache publication and unfreeze did not complete.");
+                    "Atomic max-score cache publication and unfreeze did not complete under the durable mutation gate.");
             }
         }
     }
@@ -12894,7 +12898,6 @@ public sealed partial class MetaDatabase : IMetaDatabase
         private NpgsqlConnection? _connection;
         private readonly string _leaseToken;
         private readonly SemaphoreSlim _operationGate = new(1, 1);
-        private bool _completionCommitted;
 
         public MaxScoreMaintenanceLease(
             MetaDatabase owner,
@@ -13064,9 +13067,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     return Task.FromResult<object?>(null);
                 },
                 IsolationLevel.Serializable,
-                verifyAfterAction: false,
+                verifyAfterAction: true,
                 ct);
-            _completionCommitted = true;
         }
 
         public void Dispose()
@@ -13078,20 +13080,23 @@ public sealed partial class MetaDatabase : IMetaDatabase
             {
                 try
                 {
-                    if (!_completionCommitted)
-                    {
-                        ClearMaxScoreMutationGateAsync(
-                                connection,
-                                _leaseToken,
-                                CancellationToken.None)
-                            .GetAwaiter()
-                            .GetResult();
-                    }
                     ReleaseMaxScoreMaintenanceLocks(
                         connection,
                         mutationGateLockAcquired: true,
                         pathLockAcquired: true,
                         publicationLockAcquired: true);
+                    _owner
+                        .MaxScoreMaintenanceAfterLocksReleasedTestHook
+                        ?.Invoke(
+                            new MaxScoreMaintenanceCommitTestContext(
+                                "lease-disposal",
+                                BackendProcessId));
+                    ClearMaxScoreMutationGateAsync(
+                            connection,
+                            _leaseToken,
+                            CancellationToken.None)
+                        .GetAwaiter()
+                        .GetResult();
                 }
                 catch (Exception ex)
                 {
@@ -13118,13 +13123,6 @@ public sealed partial class MetaDatabase : IMetaDatabase
             {
                 try
                 {
-                    if (!_completionCommitted)
-                    {
-                        await ClearMaxScoreMutationGateAsync(
-                            connection,
-                            _leaseToken,
-                            CancellationToken.None);
-                    }
                     await using var unlock =
                         connection.CreateCommand();
                     unlock.CommandTimeout = 5;
@@ -13149,6 +13147,16 @@ public sealed partial class MetaDatabase : IMetaDatabase
                         RegistrationMutationGate
                             .AdvisoryLockKey);
                     await unlock.ExecuteNonQueryAsync(
+                        CancellationToken.None);
+                    _owner
+                        .MaxScoreMaintenanceAfterLocksReleasedTestHook
+                        ?.Invoke(
+                            new MaxScoreMaintenanceCommitTestContext(
+                                "lease-disposal",
+                                BackendProcessId));
+                    await ClearMaxScoreMutationGateAsync(
+                        connection,
+                        _leaseToken,
                         CancellationToken.None);
                 }
                 catch (Exception ex)
@@ -13411,7 +13419,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     AND (
                         NOT @requireSourceLocks
                         OR (
-                            SELECT COUNT(DISTINCT held.relation) = 3
+                            SELECT COUNT(DISTINCT held.relation) = 4
                             FROM pg_locks held
                             WHERE held.pid = pg_backend_pid()
                               AND held.locktype = 'relation'
@@ -13421,7 +13429,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
                                   ARRAY[
                                       'leaderboard_entries_overlay'::REGCLASS,
                                       'leaderboard_entries'::REGCLASS,
-                                      'band_member_stats'::REGCLASS
+                                      'band_member_stats'::REGCLASS,
+                                      'leaderboard_population'::REGCLASS
                                   ]::OID[])
                         )
                     )

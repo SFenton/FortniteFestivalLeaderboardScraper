@@ -1928,6 +1928,7 @@ public sealed class MetaDatabaseTests : IDisposable
             "LOCK TABLE leaderboard_entries_overlay IN SHARE MODE",
             "LOCK TABLE leaderboard_entries IN SHARE MODE",
             "LOCK TABLE band_member_stats IN SHARE MODE",
+            "LOCK TABLE leaderboard_population IN SHARE MODE",
         ], statements);
     }
 
@@ -5260,6 +5261,120 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public async Task Leaderboard_population_shared_gate_allows_ordinary_write_and_fences_stale_followup_after_backend_loss()
+    {
+        var sharedLease =
+            await Db.AcquireRegistrationMutationLeaseAsync();
+        try
+        {
+            await sharedLease.VerifyHeldAsync();
+            using (var connection =
+                   DataSource.OpenConnection())
+            using (var entries = connection.CreateCommand())
+            {
+                entries.CommandText = """
+                    INSERT INTO leaderboard_entries (
+                        song_id,
+                        instrument,
+                        account_id,
+                        score,
+                        rank,
+                        source,
+                        first_seen_at,
+                        last_updated_at)
+                    VALUES
+                        (
+                            'ordinary-population-song',
+                            'Solo_Guitar',
+                            'ordinary-population-account',
+                            100000,
+                            10,
+                            'backfill',
+                            now(),
+                            now()),
+                        (
+                            'stale-population-song',
+                            'Solo_Guitar',
+                            'stale-population-account',
+                            100000,
+                            20,
+                            'backfill',
+                            now(),
+                            now())
+                    """;
+                Assert.Equal(2, entries.ExecuteNonQuery());
+            }
+
+            Db.RaiseLeaderboardPopulationFloor(
+                "ordinary-population-song",
+                "Solo_Guitar",
+                10);
+            Assert.Equal(
+                10,
+                Db.GetLeaderboardPopulation(
+                    "ordinary-population-song",
+                    "Solo_Guitar"));
+
+            using (var terminator =
+                   DataSource.OpenConnection())
+            using (var terminate =
+                   terminator.CreateCommand())
+            {
+                terminate.CommandText =
+                    "SELECT pg_terminate_backend(@backendProcessId)";
+                terminate.Parameters.AddWithValue(
+                    "backendProcessId",
+                    sharedLease.BackendProcessId);
+                Assert.True(terminate.ExecuteScalar() is true);
+            }
+
+            await Assert.ThrowsAsync<
+                RegistrationMutationBlockedException>(
+                () => sharedLease.VerifyHeldAsync());
+
+            await using (var maintenanceLease =
+                         await Db
+                             .AcquireMaxScoreMaintenanceLeaseAsync(1)
+                             .WaitAsync(TimeSpan.FromSeconds(5)))
+            {
+                await maintenanceLease.VerifyHeldAsync(
+                    requireSourceLocks: true);
+                var blockedPopulation =
+                    Assert.Throws<PostgresException>(() =>
+                        Db.RaiseLeaderboardPopulationFloor(
+                            "stale-population-song",
+                            "Solo_Guitar",
+                            20));
+                Assert.Equal(
+                    PostgresErrorCodes.ObjectNotInPrerequisiteState,
+                    blockedPopulation.SqlState);
+                Assert.Equal(
+                    -1,
+                    Db.GetLeaderboardPopulation(
+                        "stale-population-song",
+                        "Solo_Guitar"));
+            }
+        }
+        finally
+        {
+            await sharedLease.DisposeAsync();
+        }
+
+        await using var resumedLease =
+            await Db.AcquireRegistrationMutationLeaseAsync();
+        await resumedLease.VerifyHeldAsync();
+        Db.RaiseLeaderboardPopulationFloor(
+            "stale-population-song",
+            "Solo_Guitar",
+            20);
+        Assert.Equal(
+            20,
+            Db.GetLeaderboardPopulation(
+                "stale-population-song",
+                "Solo_Guitar"));
+    }
+
+    [Fact]
     public async Task MaxScoreMaintenance_backend_loss_rolls_back_fenced_cache_phase()
     {
         var scrapeId = Db.StartScrapeRun();
@@ -5456,6 +5571,7 @@ public sealed class MetaDatabaseTests : IDisposable
                             "band_member_stats",
                             "leaderboard_entries",
                             "leaderboard_entries_overlay",
+                            "leaderboard_population",
                         ],
                         ReadMaxScoreSourceLocks());
                     observedSourceLocks = true;
@@ -5644,7 +5760,8 @@ public sealed class MetaDatabaseTests : IDisposable
                       ARRAY[
                           'leaderboard_entries_overlay',
                           'leaderboard_entries',
-                          'band_member_stats'])
+                          'band_member_stats',
+                          'leaderboard_population'])
                 """;
             return (string[])(command.ExecuteScalar()
                 ?? Array.Empty<string>());

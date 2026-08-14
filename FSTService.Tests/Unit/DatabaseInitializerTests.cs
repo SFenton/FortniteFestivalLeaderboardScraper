@@ -58,6 +58,35 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public async Task EnsureSchemaAsync_creates_idempotent_leaderboard_population_guard()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _metaFixture.DataSource);
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _metaFixture.DataSource);
+
+        using var connection =
+            _metaFixture.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_trigger
+                WHERE tgrelid =
+                        'leaderboard_population'::regclass
+                  AND tgname =
+                        'trg_leaderboard_population_registration_mutation_guard'
+                  AND NOT tgisinternal
+                  AND (tgtype & 1) = 0
+                  AND tgfoid =
+                        'fst_assert_registration_mutation_allowed()'::regprocedure
+            )
+            """;
+
+        Assert.True(command.ExecuteScalar() is true);
+    }
+
+    [Fact]
     public async Task CheckHealthAsync_BeforeInit_ReturnsUnhealthy()
     {
         var festivalService = new FestivalService((IFestivalPersistence?)null);

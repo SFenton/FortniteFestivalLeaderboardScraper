@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: eb593898
+last_verified_commit: bb739119
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -14,7 +14,11 @@ sources:
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
   - FSTService/Persistence/RegistrationMutationGuard.cs
+  - FSTService/Persistence/MetaDatabase.cs
+  - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
+  - FSTService/Scraping/RankingsCalculator.cs
+  - FSTService/Scraping/ScrapeTimePrecomputer.cs
   - FSTService/Scraping/GlobalLeaderboardScraper.cs
   - FSTService/Scraping/RegistrationBackfillWorker.cs
   - FSTService/Scraping/BackfillOrchestrator.cs
@@ -122,10 +126,12 @@ derived rows while retaining the same published scrape/publication ID.
    validation requires unchanged rank-history and source fingerprints, exact
    paths/maxima/song stats, rollback coverage, zero visible delivery, and the
    expected staged-cache count.
-8. Cache swap, workflow completion, durable-gate clear, and freeze release
-   commit atomically in a source-locked transaction on the live advisory-lock
-   session. No queued registration write can commit between that cache cutover
-   and lease release.
+8. Cache swap, workflow completion, and freeze release commit atomically in a
+   source-locked transaction on the live advisory-lock session while its
+   durable mutation token remains set. Disposal releases the publication,
+   path-generation, and exclusive mutation advisory locks before clearing the
+   token. Queued holders cannot pass the advisory gate early, and stale direct
+   entry or population writers remain durably blocked throughout the handoff.
    Service processes invalidate path/song/response and scraper-admission caches
    and force connected clients to refresh the unchanged publication ID.
    Registration lease acquisition independently refreshes path/instrument
@@ -155,12 +161,14 @@ its transaction revalidates the random token, backend PID, advisory/durable
 owner, and source locks before work and immediately before commit. The durable
 band-write gate is unconditional for `band_entries`, members, member stats, and
 membership state, including memberless entries. Registration/source-table
-triggers also reject the durable exclusive owner so a write surviving
-shared-backend loss cannot cross a new exclusive claim. Backend loss during
-maintenance leaves the durable gate/freeze in place and refuses all later
-phase checkpoints, cache publication, and unfreeze; only a newly validated
-resume lease may replace the stale owner and continue. Normal scrape freezes
-are unchanged.
+triggers, including the `leaderboard_population` statement guard, also reject
+the durable exclusive owner so a write surviving shared-backend loss cannot
+cross a new exclusive claim. Backend loss before final commit leaves the old
+cache, durable gate, and freeze in place and refuses later checkpoints,
+publication, and unfreeze. Loss during post-commit advisory-release/token-clear
+handoff leaves the completed cache coherent and guarded mutations fail-closed;
+only a newly validated lease may replace the stale owner and finish release.
+Normal scrape freezes are unchanged.
 
 ## Publication-aware API and browser
 

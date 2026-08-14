@@ -1,4 +1,6 @@
 using System.Text.Json;
+using FortniteFestival.Core;
+using FortniteFestival.Core.Services;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
@@ -408,6 +410,128 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
         Assert.Equal("s1", offsetsJson.RootElement.GetProperty("songId").GetString());
         Assert.Equal("Solo_Guitar", offsetsJson.RootElement.GetProperty("instrument").GetString());
         Assert.Equal(101, offsetsJson.RootElement.GetProperty("removed").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task MaxScoreMaintenance_rankings_and_precompute_share_fenced_population()
+    {
+        const string songId = "population-fence-song";
+        const string instrument = "Solo_Guitar";
+        RegisterUser("population-fence-user");
+        SeedSong(
+            songId,
+            instrument,
+            100_000,
+            ("population-fence-user", 95_000),
+            ("population-fence-peer", 90_000));
+        _metaDb.UpsertLeaderboardPopulation(
+            [(songId, instrument, 100L)]);
+        var scrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            scrapeId,
+            1,
+            2,
+            1,
+            1);
+        _metaDb.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var publicationId = _metaDb
+            .GetPublicationPointerState()
+            .CurrentPublicationId!.Value;
+        var festivalService =
+            FestivalService.CreateFromSongCatalogSnapshot(
+            [
+                new Song
+                {
+                    track = new Track
+                    {
+                        su = songId,
+                        tt = "Population Fence Song",
+                        an = "Test Artist",
+                        @in = new In { gr = 3 },
+                    },
+                },
+            ]);
+        var rankings = new RankingsCalculator(
+            _persistence,
+            _metaDb,
+            _pathDataStore,
+            new ScrapeProgressTracker(),
+            Substitute.For<ILogger<RankingsCalculator>>());
+
+        await using var maintenanceLease =
+            await _metaDb
+                .AcquireMaxScoreMaintenanceLeaseAsync(
+                    publicationId);
+        var blockedPopulation =
+            Assert.Throws<Npgsql.PostgresException>(() =>
+                _metaDb.RaiseLeaderboardPopulationFloor(
+                    songId,
+                    instrument,
+                    200));
+        Assert.Equal("55000", blockedPopulation.SqlState);
+
+        await rankings.ComputeForMaxScoreMaintenanceAsync(
+            festivalService,
+            [instrument],
+            maintenanceLease,
+            CancellationToken.None);
+        var stagedCount =
+            await _sut
+                .StageCurrentPublicationCachesForMaintenanceAsync(
+                    publicationId,
+                    maintenanceLease,
+                    CancellationToken.None);
+        Assert.True(stagedCount > 0);
+
+        using var connection =
+            _metaFixture.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT
+                (
+                    SELECT entry_count
+                    FROM song_stats
+                    WHERE song_id = @songId
+                      AND instrument = @instrument
+                ),
+                (
+                    SELECT json_data
+                    FROM publication_api_response_cache_staging
+                    WHERE publication_id = @publicationId
+                      AND cache_key = @cacheKey
+                )
+            """;
+        command.Parameters.AddWithValue("songId", songId);
+        command.Parameters.AddWithValue(
+            "instrument",
+            instrument);
+        command.Parameters.AddWithValue(
+            "publicationId",
+            publicationId);
+        command.Parameters.AddWithValue(
+            "cacheKey",
+            $"lb:{songId}:10:");
+        using var reader = command.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(100, reader.GetInt32(0));
+        var json =
+            JsonDocument.Parse(reader.GetFieldValue<byte[]>(1));
+        var guitar = json.RootElement
+            .GetProperty("instruments")
+            .EnumerateArray()
+            .Single(entry =>
+                entry.GetProperty("instrument").GetString()
+                == instrument);
+        Assert.Equal(
+            100,
+            guitar.GetProperty("totalEntries").GetInt32());
+        Assert.Equal(
+            100,
+            _metaDb.GetLeaderboardPopulation(
+                songId,
+                instrument));
     }
 
     [Fact]

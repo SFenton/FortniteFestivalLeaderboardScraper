@@ -905,6 +905,246 @@ public sealed class MaxScoreMaintenancePersistenceTests
                 "post-cache-account"));
     }
 
+    [Fact]
+    public async Task Completed_publication_retains_durable_gate_until_disposal_and_fences_stale_writer()
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        const long scrapeId = 1298;
+        const long publicationId = 502;
+        var manifestDigest = new string('8', 64);
+        using var meta = new MetaDatabase(
+            dataSource,
+            NullLogger<MetaDatabase>.Instance);
+        var staleLease =
+            await meta.AcquireRegistrationMutationLeaseAsync();
+        try
+        {
+            await staleLease.VerifyHeldAsync();
+            using var terminator =
+                dataSource.OpenConnection();
+            using var terminate =
+                terminator.CreateCommand();
+            terminate.CommandText =
+                "SELECT pg_terminate_backend(@backendProcessId)";
+            terminate.Parameters.AddWithValue(
+                "backendProcessId",
+                staleLease.BackendProcessId);
+            Assert.True(terminate.ExecuteScalar() is true);
+            await Assert.ThrowsAsync<
+                RegistrationMutationBlockedException>(
+                () => staleLease.VerifyHeldAsync());
+        }
+        finally
+        {
+            await staleLease.DisposeAsync();
+        }
+
+        SeedValidatedCompletionState(
+            dataSource,
+            scrapeId,
+            publicationId,
+            manifestDigest);
+        var maintenanceLease =
+            await meta.AcquireMaxScoreMaintenanceLeaseAsync(
+                publicationId);
+        try
+        {
+            await maintenanceLease.CompleteAsync(
+                scrapeId,
+                manifestDigest);
+
+            Assert.True(meta.AreRegistrationMutationsBlocked());
+            using var staleConnection =
+                dataSource.OpenConnection();
+            using var staleWrite =
+                staleConnection.CreateCommand();
+            staleWrite.CommandText = """
+                INSERT INTO leaderboard_entries (
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    rank,
+                    source,
+                    first_seen_at,
+                    last_updated_at)
+                VALUES (
+                    'handoff-song',
+                    'Solo_Guitar',
+                    'stale-writer',
+                    100000,
+                    1,
+                    'backfill',
+                    now(),
+                    now())
+                """;
+            var blocked =
+                Assert.Throws<PostgresException>(
+                    () => staleWrite.ExecuteNonQuery());
+            Assert.Equal("55000", blocked.SqlState);
+
+            using var verifyConnection =
+                dataSource.OpenConnection();
+            using var verify =
+                verifyConnection.CreateCommand();
+            verify.CommandText = """
+                SELECT
+                    NOT public_reads_frozen,
+                    max_score_mutation_gate_token IS NOT NULL,
+                    (
+                        SELECT phase = 'completed'
+                           AND status = 'completed'
+                        FROM max_score_maintenance_runs
+                        WHERE manifest_sha256 = @manifestDigest
+                    ),
+                    (
+                        SELECT etag = 'new-etag'
+                        FROM api_response_cache
+                        WHERE cache_key = 'route'
+                    ),
+                    NOT EXISTS (
+                        SELECT 1
+                        FROM leaderboard_entries
+                        WHERE song_id = 'handoff-song'
+                          AND instrument = 'Solo_Guitar'
+                          AND account_id = 'stale-writer'
+                    )
+                FROM scrape_publication_state
+                WHERE id = TRUE
+                """;
+            verify.Parameters.AddWithValue(
+                "manifestDigest",
+                manifestDigest);
+            using var reader = verify.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.True(reader.GetBoolean(0));
+            Assert.True(reader.GetBoolean(1));
+            Assert.True(reader.GetBoolean(2));
+            Assert.True(reader.GetBoolean(3));
+            Assert.True(reader.GetBoolean(4));
+        }
+        finally
+        {
+            await maintenanceLease.DisposeAsync();
+        }
+
+        Assert.False(meta.AreRegistrationMutationsBlocked());
+    }
+
+    [Fact]
+    public async Task Backend_loss_after_advisory_release_leaves_completed_publication_fail_closed()
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        const long scrapeId = 1299;
+        const long publicationId = 503;
+        var manifestDigest = new string('9', 64);
+        SeedValidatedCompletionState(
+            dataSource,
+            scrapeId,
+            publicationId,
+            manifestDigest);
+        using var meta = new MetaDatabase(
+            dataSource,
+            NullLogger<MetaDatabase>.Instance);
+        var maintenanceLease =
+            await meta.AcquireMaxScoreMaintenanceLeaseAsync(
+                publicationId);
+        await maintenanceLease.CompleteAsync(
+            scrapeId,
+            manifestDigest);
+
+        meta.MaxScoreMaintenanceAfterLocksReleasedTestHook =
+            context =>
+            {
+                Assert.Equal(
+                    "lease-disposal",
+                    context.Operation);
+                using var terminator =
+                    dataSource.OpenConnection();
+                using var terminate =
+                    terminator.CreateCommand();
+                terminate.CommandText =
+                    "SELECT pg_terminate_backend(@backendProcessId)";
+                terminate.Parameters.AddWithValue(
+                    "backendProcessId",
+                    context.BackendProcessId);
+                Assert.True(terminate.ExecuteScalar() is true);
+            };
+        try
+        {
+            await maintenanceLease.DisposeAsync();
+        }
+        finally
+        {
+            meta.MaxScoreMaintenanceAfterLocksReleasedTestHook =
+                null;
+        }
+
+        using (var failedConnection =
+               dataSource.OpenConnection())
+        using (var failed = failedConnection.CreateCommand())
+        {
+            failed.CommandText = """
+                SELECT
+                    NOT public_reads_frozen,
+                    max_score_mutation_gate_token IS NOT NULL,
+                    (
+                        SELECT phase = 'completed'
+                           AND status = 'completed'
+                        FROM max_score_maintenance_runs
+                        WHERE manifest_sha256 = @manifestDigest
+                    ),
+                    (
+                        SELECT etag = 'new-etag'
+                        FROM api_response_cache
+                        WHERE cache_key = 'route'
+                    )
+                FROM scrape_publication_state
+                WHERE id = TRUE
+                """;
+            failed.Parameters.AddWithValue(
+                "manifestDigest",
+                manifestDigest);
+            using var reader = failed.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.True(reader.GetBoolean(0));
+            Assert.True(reader.GetBoolean(1));
+            Assert.True(reader.GetBoolean(2));
+            Assert.True(reader.GetBoolean(3));
+        }
+
+        var blockedPopulation =
+            Assert.Throws<PostgresException>(() =>
+                meta.RaiseLeaderboardPopulationFloor(
+                    "handoff-loss-song",
+                    "Solo_Guitar",
+                    25));
+        Assert.Equal("55000", blockedPopulation.SqlState);
+
+        await using (var recoveryLease =
+                     await meta
+                         .AcquireMaxScoreMaintenanceLeaseAsync(
+                             publicationId)
+                         .WaitAsync(TimeSpan.FromSeconds(5)))
+        {
+            await recoveryLease.VerifyHeldAsync(
+                requireSourceLocks: true);
+        }
+
+        Assert.False(meta.AreRegistrationMutationsBlocked());
+        meta.RaiseLeaderboardPopulationFloor(
+            "handoff-loss-song",
+            "Solo_Guitar",
+            25);
+        Assert.Equal(
+            25,
+            meta.GetLeaderboardPopulation(
+                "handoff-loss-song",
+                "Solo_Guitar"));
+    }
+
     [Theory]
     [InlineData("path-batch-promotion")]
     [InlineData("rollback-checkpoint")]
