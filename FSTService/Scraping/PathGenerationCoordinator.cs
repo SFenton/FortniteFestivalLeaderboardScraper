@@ -318,7 +318,7 @@ public sealed partial class PathGenerationCoordinator
             {
                 throw new PathGenerationException(
                     "request_validation",
-                    "The raw chart metadata contains none of gr/ba/ds/vl/pg/pb.");
+                    "The raw chart metadata contains none of gr/ba/ds/vl/pg/pb/pd.");
             }
 
             byte[] datBytes;
@@ -374,10 +374,28 @@ public sealed partial class PathGenerationCoordinator
                     $"Failed to decrypt or transform the chart: {ex.Message}",
                     innerException: ex);
             }
+            if (expected.Any(instrument =>
+                    instrument is
+                        "Solo_PeripheralCymbals" or
+                        "Solo_PeripheralDrums") &&
+                !variants.PlasticDrumsTrackPromoted)
+            {
+                throw new PathGenerationException(
+                    "transform_validation",
+                    "The chart advertises pd but has no PLASTIC DRUM or " +
+                    "PLASTIC DRUMS MIDI track.");
+            }
 
             var proMidiPath = Path.Combine(stagingDirectory, "chart-pro.mid");
+            var plasticDrumsMidiPath = Path.Combine(
+                stagingDirectory,
+                "chart-drums.mid");
             var originalMidiPath = Path.Combine(stagingDirectory, "chart-og.mid");
             await File.WriteAllBytesAsync(proMidiPath, variants.ProMidi, ct);
+            await File.WriteAllBytesAsync(
+                plasticDrumsMidiPath,
+                variants.PlasticDrumsMidi,
+                ct);
             await File.WriteAllBytesAsync(originalMidiPath, variants.OgMidi, ct);
             await File.WriteAllTextAsync(
                 Path.Combine(stagingDirectory, "song.ini"),
@@ -392,9 +410,12 @@ public sealed partial class PathGenerationCoordinator
             foreach (var instrument in expected)
             {
                 var definition = PathGenerationInstruments.GetDefinition(instrument);
-                var midiPath = definition.MidiVariant == "pro"
-                    ? proMidiPath
-                    : originalMidiPath;
+                var midiPath = definition.MidiVariant switch
+                {
+                    "pro" => proMidiPath,
+                    "drums" => plasticDrumsMidiPath,
+                    _ => originalMidiPath,
+                };
                 var instrumentDirectory = Path.Combine(
                     artifactDirectory,
                     definition.Instrument);

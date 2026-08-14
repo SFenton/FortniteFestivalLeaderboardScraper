@@ -61,10 +61,10 @@ public sealed class PathArtifactResolver
                 ? currentGenerationId
                 : null;
         if (currentGenerationId is not null &&
-            generationId is null &&
-            instrument is
-                "Solo_PeripheralCymbals" or
-                "Solo_PeripheralDrums")
+            IsPlasticDrumsInstrument(instrument) &&
+            (generationId is null ||
+             PathGenerationProfiles.HasInvalidPlasticDrumsScores(
+                 state!.GenerationProfile)))
         {
             return null;
         }
@@ -83,8 +83,7 @@ public sealed class PathArtifactResolver
         string instrument,
         string? requestedGenerationId)
     {
-        if (instrument is not
-            ("Solo_PeripheralCymbals" or "Solo_PeripheralDrums"))
+        if (!IsPlasticDrumsInstrument(instrument))
         {
             return false;
         }
@@ -96,10 +95,17 @@ public sealed class PathArtifactResolver
                     requestedGenerationId,
                     currentGenerationId,
                     StringComparison.Ordinal)) &&
-               !state.ExpectedInstruments.Contains(
-                   instrument,
-                   StringComparer.Ordinal);
+               (PathGenerationProfiles.HasInvalidPlasticDrumsScores(
+                    state.GenerationProfile) ||
+                !state.ExpectedInstruments.Contains(
+                    instrument,
+                    StringComparer.Ordinal));
     }
+
+    private static bool IsPlasticDrumsInstrument(string instrument)
+        => instrument is
+            "Solo_PeripheralCymbals" or
+            "Solo_PeripheralDrums";
 
     internal static ResolvedPathArtifact? Resolve(
         string dataDirectory,
@@ -811,7 +817,9 @@ internal static class PathArtifactValidator
 
     internal static int? RequiredSchemaVersion(string? generationProfile)
         => generationProfile?.EndsWith("-v2", StringComparison.Ordinal) == true ||
-           generationProfile == "chopt-fnf-ew0-s20-json-png-prodrums-v3"
+           generationProfile is
+               "chopt-fnf-ew0-s20-json-png-prodrums-v3" or
+               "chopt-fnf-ew0-s20-json-png-prodrums-v4"
                 ? CurrentSchemaVersion
                 : null;
 

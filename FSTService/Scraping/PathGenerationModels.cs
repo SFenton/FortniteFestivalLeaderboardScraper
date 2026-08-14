@@ -4,6 +4,18 @@ using FSTService.Persistence;
 
 namespace FSTService.Scraping;
 
+internal static class PathGenerationProfiles
+{
+    internal const string InvalidPlasticDrumsV3 =
+        "chopt-fnf-ew0-s20-json-png-prodrums-v3";
+
+    internal static bool HasInvalidPlasticDrumsScores(string? profile)
+        => string.Equals(
+            profile,
+            InvalidPlasticDrumsV3,
+            StringComparison.Ordinal);
+}
+
 public sealed record PathInstrumentDefinition(
     string ProviderProperty,
     string Instrument,
@@ -21,12 +33,12 @@ public static class PathGenerationInstruments
         new("vl", "Solo_Vocals", "og", "vocals"),
         new("pg", "Solo_PeripheralGuitar", "pro", "guitar"),
         new("pb", "Solo_PeripheralBass", "pro", "bass"),
-        // CHOpt's FNF prodrums mode reads PLASTIC DRUMS from the original MIDI.
-        new("pd", "Solo_PeripheralCymbals", "og", "prodrums"),
+        // Promote PLASTIC DRUMS to PART DRUMS for CHOpt's dedicated FNF engine.
+        new("pd", "Solo_PeripheralCymbals", "drums", "prodrums"),
         new(
             "pd",
             "Solo_PeripheralDrums",
-            "og",
+            "drums",
             "prodrums",
             DisableProDrums: true),
     ];
