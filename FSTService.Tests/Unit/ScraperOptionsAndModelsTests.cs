@@ -38,7 +38,7 @@ public class ScraperOptionsAndModelsTests
         Assert.False(opts.EnableAutomaticPathGeneration);
         Assert.Equal(4, opts.PathGenerationParallelism);
         Assert.Equal(
-            "chopt-fnf-ew0-s20-json-png-prodrums-v3",
+            "chopt-fnf-ew0-s20-json-png-prodrums-v4",
             opts.PathGenerationProfile);
         Assert.Null(opts.TestSongQuery);
         Assert.Equal(TimeSpan.Zero, opts.RegisteredUserRefreshTimeout);

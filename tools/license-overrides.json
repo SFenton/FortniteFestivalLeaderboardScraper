@@ -63,10 +63,10 @@
   "other": [
     {
       "name": "CHOpt",
-      "version": "1.16.3",
+      "version": "1.16.4",
       "licenseType": "GPL-3.0-or-later",
       "licenseTextPath": "tools/chopt-cli-linux/LICENSE.txt",
-      "packageUrl": "https://github.com/SFenton/CHOpt/tree/418e5eed28df00b6330be3bfc08aaff0422dbb90",
+      "packageUrl": "https://github.com/SFenton/CHOpt/tree/f339262d3d64d782c4428bc0072633dd0b1031ab",
       "repositoryUrl": "https://github.com/SFenton/CHOpt",
       "sourcePath": "tools/chopt-cli-linux"
     }

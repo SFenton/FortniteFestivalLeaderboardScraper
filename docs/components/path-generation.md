@@ -29,12 +29,18 @@ together as an immutable generation.
 1. FST downloads the encrypted Festival MIDI `.dat` file and verifies its
    content hash.
 2. The configured MIDI key decrypts the chart in a private staging directory.
+   FST promotes `PLASTIC DRUM` or `PLASTIC DRUMS` to `PART DRUMS` in a
+   dedicated MIDI variant and hides the pad `PART DRUMS` track. A `pd` song
+   without the plastic track fails closed. A promoted plastic chart whose
+   expert output has no authored activation windows also fails closed.
 3. CHOpt runs once for each expected instrument and each of `easy`, `medium`,
    `hard`, and `expert`, using the `fnf` engine, zero early whammy, and 20%
    squeeze. Plastic-drums charts generate two modes from Epic's `pd` chart:
-   `Solo_PeripheralCymbals` uses `-i prodrums` so cymbals score 42 and toms
-   score 36, while `Solo_PeripheralDrums` also passes `--no-pro-drums` so all
-   gems score 36.
+   `Solo_PeripheralCymbals` uses the dedicated `prodrums` engine so cymbals
+   score 42 and toms score 36, while `Solo_PeripheralDrums` also passes
+   `--no-pro-drums` so all gems score 36. Both modes preserve double kicks and
+   restrict activation starts to the scoring gems nearest Epic's authored
+   Overdrive Activation Gem window endpoints.
 4. FST validates every PNG and JSON artifact. Expert scores must be positive.
    PNGs may be up to 32,768 pixels on either axis, while the independent
    256 MiB decoded-image limit still rejects oversized or compressed-bomb
@@ -52,7 +58,7 @@ hash, or profile mismatch makes a selected song non-skippable.
 
 ## JSON contract
 
-Profile `chopt-fnf-ew0-s20-json-png-prodrums-v3` requires JSON
+Profile `chopt-fnf-ew0-s20-json-png-prodrums-v4` requires JSON
 `schemaVersion: 2`.
 Every `activations[]` entry has one authoritative `instruction` plus:
 
@@ -91,8 +97,8 @@ raw CHOpt instruction notation.
 
 `POST /api/admin/regenerate-paths` is protected by `X-API-Key` and requires one
 `songId`. `force=true` is for bounded canaries. Catalogue regeneration must
-submit songs sequentially with `force=false`; the v2 profile makes the run
-idempotent and resumable while already-promoted v2 songs skip.
+submit songs sequentially with `force=false`; the current profile makes the
+run idempotent and resumable while already-promoted songs skip.
 
 ## Deployment and regeneration
 
@@ -101,13 +107,16 @@ The Linux CLI and runtime libraries are pinned under
 FSTService image. Update the bundled README, source commit, version, SHA, and
 license manifest together.
 
-The profile-derived validator accepts both the prior v2 profile and the
-eight-instrument v3 profile as schema-v2 JSON. Switching to v3 changes the
-expected instrument set and is the atomic fail-closed regeneration trigger.
-While an immutable v2 song is pending v3 regeneration, the two plastic-drums
-routes return unavailable rather than falling back to stale legacy artifacts.
+The profile-derived validator accepts the v2, v3, and v4 profiles as schema-v2
+JSON. The v3 profile used the pad `PART DRUMS` track and is rejected for
+plastic-drums serving; its two plastic maxima are also masked from runtime
+leaderboard and ranking reads. Switching to v4 changes the binary, MIDI
+variant, and activation model and is the atomic fail-closed regeneration
+trigger. While an immutable v2 or v3 song is pending v4 regeneration, the two
+plastic-drums routes return unavailable rather than falling back to stale or
+incorrect artifacts.
 
-Before deploying the v3 service, run the existing
+Before deploying the v4 service, run the existing
 `--initialize-schema-only` one-shot with that image. It adds the nullable,
 idempotent `max_pro_cymbals_score` and `max_pro_drums_score` columns before any
 role queries or promotes the expanded path state.
@@ -125,8 +134,9 @@ Before a canary or full regeneration, apply
    identity, the expected CHOpt version/hash/profile, zero generation errors,
    and accepted expert-score/path parity. Plastic-drums canaries additionally
    require observed leaderboard scores to remain below the applicable CHOpt
-   maximum and require the cymbal-mode maximum to be greater than or equal to
-   the no-cymbal maximum;
+   maximum, require non-empty authored activation windows, require a note
+   inventory distinct from `Solo_Drums`, and require the cymbal-mode maximum
+   to be greater than or equal to the no-cymbal maximum;
 6. stop on unexplained maximum-score changes because maxima feed ranking and
    leaderboard validity calculations;
 7. run the catalogue sequentially and preserve a resumable state manifest on
@@ -134,7 +144,7 @@ Before a canary or full regeneration, apply
 8. verify the named canaries and catalogue-wide schema/profile counts before
    returning the worker to normal operation.
 
-All current songs expose `pd`, so v3 adds 5,616 JSON and 5,616 PNG artifacts
+All current songs expose `pd`, so v4 adds 5,616 JSON and 5,616 PNG artifacts
 across the two plastic-drums modes and four difficulties. Atomic generations
 still rebuild the complete expected set, approximately 22,448 CHOpt
 invocations for the current 702-song catalogue.
