@@ -3,6 +3,7 @@
  * Extracted from PlayerPage for reuse.
  */
 import { memo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Size, Gap } from '@festival/theme';
 
 const BASE = import.meta.env.BASE_URL;
@@ -15,10 +16,15 @@ export interface GoldStarsProps {
 }
 
 const GoldStars = memo(function GoldStars({ size = Size.iconDefault, count = 5 }: GoldStarsProps) {
+  const { t } = useTranslation();
   return (
-    <span style={{ display: 'inline-flex', gap: Gap.xs }}>
+    <span
+      role="img"
+      aria-label={t('common.goldStarCount', { count })}
+      style={{ display: 'inline-flex', gap: Gap.xs }}
+    >
       {Array.from({ length: count }, (_, i) => (
-        <img key={i} src={`${BASE}star_gold.png`} alt="★" width={size} height={size} />
+        <img key={i} src={`${BASE}star_gold.png`} alt="" width={size} height={size} />
       ))}
     </span>
   );

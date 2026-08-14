@@ -294,7 +294,9 @@ test('Suggestions remeasures virtual rows after an in-place filter change', asyn
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Filter Suggestions' });
   await dialog.getByRole('button', { name: /Instruments/ }).click();
-  await dialog.getByRole('button', { name: 'guitar Lead', exact: true }).click();
+  await dialog.getByRole('region', { name: /Instruments/ })
+    .getByRole('button', { name: 'Lead', exact: true })
+    .click();
   await dialog.getByRole('button', { name: 'Apply Filter Changes', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect.poll(() => scrollContainer.evaluate(element => element.scrollTop)).toBe(0);

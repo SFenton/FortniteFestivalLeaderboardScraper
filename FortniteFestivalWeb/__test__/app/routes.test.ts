@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Routes, RoutePatterns } from '../../src/routes';
+import { matchRouteMetadata } from '../../src/routeMetadata';
 
 describe('Routes', () => {
   it('has songs route', () => {
@@ -146,6 +147,49 @@ describe('RoutePatterns', () => {
   describe('songDetail', () => {
     it('matches /songs/abc-123', () => {
       expect(RoutePatterns.songDetail.test('/songs/abc-123')).toBe(true);
+    });
+
+    describe('matchRouteMetadata', () => {
+      it.each([
+        ['/songs', 'songs'],
+        ['/songs/song-1', 'song-detail'],
+        ['/songs/song-1/bands/Band_Duets', 'song-band-leaderboard'],
+        ['/songs/song-1/Solo_Guitar', 'leaderboard'],
+        ['/songs/song-1/Solo_Guitar/history', 'history'],
+        ['/rivals/all', 'all-rivals'],
+        ['/rivals/rival-1/rivalry', 'rivalry'],
+        ['/rivals/rival-1', 'rival-detail'],
+        ['/leaderboards/all', 'full-rankings'],
+        ['/leaderboards/bands/Band_Duets', 'band-rankings'],
+        ['/bands/player/player-1', 'player-bands'],
+        ['/settings/licenses', 'licenses'],
+      ])('matches %s before broader route patterns', (pathname, expectedTitleKey) => {
+        const expectedKeys: Record<string, string> = {
+          songs: 'nav.songs',
+          'song-detail': 'nav.songInfo',
+          'song-band-leaderboard': 'rankings.title',
+          leaderboard: 'rankings.title',
+          history: 'history.title',
+          'all-rivals': 'rivals.allTitle',
+          rivalry: 'rivals.rivalryTitle',
+          'rival-detail': 'rivals.detailTitle',
+          'full-rankings': 'rankings.title',
+          'band-rankings': 'rankings.title',
+          'player-bands': 'bandList.title',
+          licenses: 'settings.licenses.title',
+        };
+        expect(matchRouteMetadata(pathname)[0]).toBe(expectedKeys[expectedTitleKey]);
+      });
+
+      it('uses the Songs metadata for the root redirect and unknown paths', () => {
+        expect(matchRouteMetadata('/')[0]).toBe('nav.songs');
+        expect(matchRouteMetadata('/not-found')[0]).toBe('nav.songs');
+      });
+
+      it('distinguishes band detail metadata from player band lists', () => {
+        expect(matchRouteMetadata('/bands/player/player-1')[1]).toBe('Player Bands');
+        expect(matchRouteMetadata('/bands/band-1')[1]).toBe('Bands');
+      });
     });
 
     it('does not match /songs/', () => {

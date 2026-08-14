@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-13
-last_verified_commit: aa33576e
+last_verified: 2026-08-14
+last_verified_commit: 3fbfc9f2
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FortniteFestivalWeb/package.json
@@ -62,6 +62,14 @@ Playwright browser projects are named by engine and owned layout:
 - `chromium-wide` owns Manual asset and breakpoint-boundary tests;
 - `webkit-mobile` owns critical iPhone-class and accessibility coverage;
 - `webkit-desktop` and `firefox-desktop` run in the scheduled matrix.
+
+Representative Songs, Suggestions, Leaderboards, Settings, and Manual routes
+must have no moderate, serious, or critical axe violations in the focused
+accessibility suite. The same suite owns skip navigation, route
+title/announcement, PUSH/POP focus, one-main-landmark behavior, reduced-motion,
+Save-Data, and friendly instrument image semantics. WebKit mobile runs this
+focused accessibility surface on every PR; WebKit desktop and Firefox desktop
+retain it in the nightly matrix.
 
 Component UX uses Playwright's stable stories-and-gallery model through
 `playwright.component.config.ts`; publication transitions use a dedicated

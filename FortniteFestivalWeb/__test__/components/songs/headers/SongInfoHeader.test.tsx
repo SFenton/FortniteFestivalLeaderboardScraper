@@ -158,7 +158,7 @@ describe('SongInfoHeader', () => {
         <SongInfoHeader song={baseSong as any} songId="s1" collapsed={false} instrument={'Solo_Guitar' as any} />
       </TestProviders>,
     );
-    expect(container.querySelector('img[alt="Solo_Guitar"]')).toBeTruthy();
+    expect(container.querySelector('img[data-instrument="Solo_Guitar"]')).toBeTruthy();
   });
 
   it('shows actions slot', () => {
@@ -200,7 +200,7 @@ describe('SongInfoHeader', () => {
         <SongInfoHeader song={baseSong as any} songId="s1" collapsed={true} instrument={'Solo_Guitar' as any} animate />
       </TestProviders>,
     );
-    const iconWrap = container.querySelector('img[alt="Solo_Guitar"]');
+    const iconWrap = container.querySelector('img[data-instrument="Solo_Guitar"]');
     expect(iconWrap).toBeTruthy();
   });
 

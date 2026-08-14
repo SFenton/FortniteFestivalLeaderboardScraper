@@ -256,6 +256,8 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
     categories,
     effectiveInstrumentSettings,
     filterSettings,
+    mixKey,
+    suggestionCacheKey,
     visibilityCacheKey,
   ]);
   

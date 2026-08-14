@@ -420,10 +420,10 @@ describe('BandPage', () => {
     await advancePastSpinner();
 
     const memberCards = screen.getAllByTestId('band-member-card');
-    expect(within(memberCards[0]!).getByAltText('Solo_Drums')).toBeTruthy();
-    expect(within(memberCards[0]!).queryByAltText('Solo_Guitar')).toBeNull();
-    expect(within(memberCards[1]!).getByAltText('Solo_Vocals')).toBeTruthy();
-    expect(within(memberCards[1]!).queryByAltText('Solo_Bass')).toBeNull();
+    expect(within(memberCards[0]!).getByAltText('Drums')).toBeTruthy();
+    expect(within(memberCards[0]!).queryByAltText('Lead')).toBeNull();
+    expect(within(memberCards[1]!).getByAltText('Tap Vocals')).toBeTruthy();
+    expect(within(memberCards[1]!).queryByAltText('Bass')).toBeNull();
   });
 
   it('does not fall back to unfiltered member instruments when an active filter lacks a member assignment', async () => {
@@ -436,7 +436,7 @@ describe('BandPage', () => {
     await advancePastSpinner();
 
     const memberCards = screen.getAllByTestId('band-member-card');
-    expect(within(memberCards[0]!).getByAltText('Solo_Drums')).toBeTruthy();
+    expect(within(memberCards[0]!).getByAltText('Drums')).toBeTruthy();
     expect(within(memberCards[1]!).queryAllByRole('img')).toHaveLength(0);
   });
 

@@ -467,9 +467,9 @@ export function SettingsServiceProgressCard({
             aria-labelledby="settings-service-health-title"
             data-testid="settings-service-health"
           >
-            <h3 id="settings-service-health-title" className={styles.groupTitle}>
+            <h2 id="settings-service-health-title" className={styles.groupTitle}>
               {t('settings.serviceInfo.healthTitle')}
-            </h3>
+            </h2>
             <div aria-live="polite">
               <MetricRows rows={healthRows} />
             </div>
@@ -487,9 +487,9 @@ export function SettingsServiceProgressCard({
             aria-labelledby="settings-service-progress-title"
             data-testid="settings-service-progress"
           >
-            <h3 id="settings-service-progress-title" className={styles.groupTitle}>
+            <h2 id="settings-service-progress-title" className={styles.groupTitle}>
               {t('settings.serviceInfo.progressTitle')}
-            </h3>
+            </h2>
             <div className={styles.progressBlock} aria-live="polite">
               <div
                 className={styles.progressText}
@@ -559,9 +559,9 @@ export function SettingsServiceProgressCard({
             aria-labelledby="settings-service-publication-title"
             data-testid="settings-service-publication"
           >
-            <h3 id="settings-service-publication-title" className={styles.groupTitle}>
+            <h2 id="settings-service-publication-title" className={styles.groupTitle}>
               {t('settings.serviceInfo.publicationTitle')}
-            </h3>
+            </h2>
             {publicationRows.length > 0 ? (
               <MetricRows rows={publicationRows} />
             ) : (

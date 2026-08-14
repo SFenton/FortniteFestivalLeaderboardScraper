@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
+import { serverInstrumentLabel, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import { ImagePhase } from '@festival/core/runtime';
 import { Colors, Font, TRANSITION_MS, MIN_SPINNER_MS, STAGGER_INTERVAL, Opacity } from '@festival/theme';
 import { Gap, Radius, Weight, Display, Cursor, CssValue, TextAlign, Border, Shadow, ObjectFit, frostedCard, flexColumn, transition, CssProp, padding, border } from '@festival/theme';
@@ -211,7 +211,7 @@ export default function PathPreviewDemo() {
           {imageMounted && (
             <img
               src={displaySrc}
-              alt={`${selectedInst} ${selectedDiff} path`}
+              alt={`${serverInstrumentLabel(selectedInst)} ${t(`paths.${selectedDiff}`)} path`}
               style={s.pathImgFade}
             />
           )}

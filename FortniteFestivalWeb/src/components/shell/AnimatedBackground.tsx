@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties }
 import { Colors, Overflow, PointerEvents, fixedFill, absoluteFill } from '@festival/theme';
 import { type ServerSong as Song } from '@festival/core/api';
 import { SAFE_AREA_BOTTOM_RAW_VAR, SAFE_AREA_TOP_RAW_VAR } from '../../utils/safeAreaStyles';
-import { useMediaQuery } from '../../hooks/ui/useMediaQuery';
+import { useVisualPreferences } from '../../hooks/ui/useVisualPreferences';
 
 const BG_DURATION = 1000;
 const BACKGROUND_LAYER_Z_INDEX = 0;
@@ -63,13 +63,14 @@ export function AnimatedBackground({
   songs: Song[];
   dimOpacity?: number;
 }) {
-  const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
+  const { reducedMotion, saveData, isDocumentVisible } = useVisualPreferences();
   // Build shuffled image list — only rebuild when pool size changes.
   const candidateCount = useMemo(
     () => songs.filter((s) => !!s.albumArt).length,
     [songs],
   );
   const imageUris = useMemo(() => {
+    if (saveData) return [];
     const candidates = songs
       .map((s) => s.albumArt)
       .filter((url): url is string => !!url);
@@ -81,12 +82,13 @@ export function AnimatedBackground({
     }
     return candidates.slice(0, Math.min(100, candidates.length));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candidateCount]);
+  }, [candidateCount, saveData]);
 
   const imgCursor = useRef(2);
   const activeRef = useRef<'A' | 'B'>('A');
   const layerARef = useRef<HTMLDivElement>(null);
   const layerBRef = useRef<HTMLDivElement>(null);
+  const preloadTimeoutsRef = useRef(new Set<number>());
 
   const [layerAIdx, setLayerAIdx] = useState(0);
   const [layerBIdx, setLayerBIdx] = useState(1);
@@ -118,6 +120,27 @@ export function AnimatedBackground({
     startMotion(layerARef.current);
   }, [imageUris, reducedMotion]);
 
+  useEffect(() => {
+    if (!reducedMotion) return;
+    const activeIndex = activeRef.current === 'A' ? layerAIdx : layerBIdx;
+    setLayerAIdx(activeIndex);
+    setOpacityA(1);
+    setOpacityB(0);
+    activeRef.current = 'A';
+  }, [layerAIdx, layerBIdx, reducedMotion]);
+
+  const schedulePreload = useCallback((callback: () => void) => {
+    const timeout = window.setTimeout(() => {
+      preloadTimeoutsRef.current.delete(timeout);
+      callback();
+    }, FADE_DURATION);
+    preloadTimeoutsRef.current.add(timeout);
+  }, []);
+  const clearPreloadTimeouts = useCallback(() => {
+    for (const timeout of preloadTimeoutsRef.current) window.clearTimeout(timeout);
+    preloadTimeoutsRef.current.clear();
+  }, []);
+
   const doTransition = useCallback(() => {
     if (imageUris.length < 2) return;
 
@@ -128,29 +151,30 @@ export function AnimatedBackground({
       setOpacityB(1);
       activeRef.current = 'B';
       // After fade, preload next image on the now-hidden A
-      setTimeout(() => {
+      schedulePreload(() => {
         const nextIdx = imgCursor.current % imageUris.length;
         imgCursor.current = nextIdx + 1;
         setLayerAIdx(nextIdx);
-      }, FADE_DURATION);
+      });
     } else {
       startMotion(layerARef.current);
       setOpacityB(0);
       setOpacityA(1);
       activeRef.current = 'A';
-      setTimeout(() => {
+      schedulePreload(() => {
         const nextIdx = imgCursor.current % imageUris.length;
         imgCursor.current = nextIdx + 1;
         setLayerBIdx(nextIdx);
-      }, FADE_DURATION);
+      });
     }
-  }, [imageUris]);
+  }, [imageUris, schedulePreload]);
 
   // Transition timer — fires every DISPLAY_DURATION, paused when tab is hidden
   useEffect(() => {
-    if (reducedMotion) {
+    if (reducedMotion || saveData) {
       layerARef.current?.getAnimations?.().forEach(animation => animation.cancel());
       layerBRef.current?.getAnimations?.().forEach(animation => animation.cancel());
+      clearPreloadTimeouts();
       return;
     }
     if (imageUris.length < 2) return;
@@ -165,25 +189,26 @@ export function AnimatedBackground({
       layerARef.current?.getAnimations().forEach((a) => a.pause());
       layerBRef.current?.getAnimations().forEach((a) => a.pause());
     };
-    const onVisibility = () => {
-      if (document.hidden) {
-        stop();
-      } else {
-        // Resume paused animations
-        layerARef.current?.getAnimations().forEach((a) => a.play());
-        layerBRef.current?.getAnimations().forEach((a) => a.play());
-        start();
-      }
-    };
-
-    if (!document.hidden) start();
-    document.addEventListener('visibilitychange', onVisibility);
+    if (isDocumentVisible) {
+      layerARef.current?.getAnimations().forEach((a) => a.play());
+      layerBRef.current?.getAnimations().forEach((a) => a.play());
+      start();
+    } else {
+      stop();
+    }
 
     return () => {
       stop();
-      document.removeEventListener('visibilitychange', onVisibility);
+      clearPreloadTimeouts();
     };
-  }, [imageUris.length, doTransition, reducedMotion]);
+  }, [
+    clearPreloadTimeouts,
+    doTransition,
+    imageUris.length,
+    isDocumentVisible,
+    reducedMotion,
+    saveData,
+  ]);
 
   // Fade in the container once images are available
   useEffect(() => {
@@ -197,7 +222,11 @@ export function AnimatedBackground({
   /* v8 ignore stop */
 
   return (
-    <div style={{ ...abStyles.container, transition: `opacity ${BG_DURATION}ms ease`, opacity: containerVisible ? 1 : 0 }}>
+    <div style={{
+      ...abStyles.container,
+      transition: reducedMotion ? 'none' : `opacity ${BG_DURATION}ms ease`,
+      opacity: containerVisible ? 1 : 0,
+    }}>
       <div
         ref={layerARef}
         style={{
