@@ -912,9 +912,9 @@ describe('SettingsPage', () => {
     renderSettings();
 
     expect(screen.getByText('Service Info')).toBeDefined();
-    expect(await screen.findByRole('heading', { name: 'Health' })).toBeDefined();
-    expect(screen.getByRole('heading', { name: 'Progress and ETA' })).toBeDefined();
-    expect(screen.getByRole('heading', { name: 'Publication timing' })).toBeDefined();
+    expect(await screen.findByRole('heading', { level: 2, name: 'Health' })).toBeDefined();
+    expect(screen.getByRole('heading', { level: 2, name: 'Progress and ETA' })).toBeDefined();
+    expect(screen.getByRole('heading', { level: 2, name: 'Publication timing' })).toBeDefined();
     expect(within(screen.getByTestId('settings-service-info-row-worker-status')).getByText('Online')).toBeDefined();
     expect(within(screen.getByTestId('settings-service-info-row-update-status')).getByText('Idle')).toBeDefined();
     expect(within(screen.getByTestId('settings-service-info-row-update-sub-status')).getByText(

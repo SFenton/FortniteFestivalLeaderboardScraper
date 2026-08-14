@@ -172,6 +172,7 @@ test('real Paths overlay has no moderate, serious, or critical axe violations', 
   await page.getByRole('button', { name: 'View Paths', exact: true }).first().click();
   const dialog = page.getByRole('dialog', { name: 'Paths' });
   await expect(dialog).toBeVisible();
+  await expect(dialog).toHaveCSS('opacity', '1');
   await page.addScriptTag({ content: axe.source });
 
   const results = await page.evaluate(() => window.axe.run('[role="dialog"]'));

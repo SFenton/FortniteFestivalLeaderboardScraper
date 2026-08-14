@@ -1,0 +1,1 @@
+import{aK as n,d as c,r,al as u}from"./index-jdkdxruL.js";function g(o){var s;const i=n(),t=c(),e=(s=i.state)==null?void 0:s.backTo,a=o?u.songDetail(o):void 0;return r.useCallback(()=>{a&&t(e===a?-1:a)},[e,a,t])}export{g as u};
