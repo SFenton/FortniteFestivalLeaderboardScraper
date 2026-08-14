@@ -36,8 +36,8 @@ import { getLeaderboardPageForRank } from '../leaderboards/helpers/rankingHelper
 import PlayerSectionHeading from '../player/sections/PlayerSectionHeading';
 import BandRankHistoryChart from './components/BandRankHistoryChart';
 import BandSongsSection, { useBandSongs } from './components/BandSongsSection';
+import { bandTypeLabel, coerceBandType } from '../../utils/bandTypes';
 
-const VALID_BAND_TYPES: BandType[] = ['Band_Duets', 'Band_Trios', 'Band_Quad'];
 const SELECT_BAND_PROFILE_ACTION_SLOT_MAX_WIDTH = 360;
 const SELECT_BAND_PROFILE_ACTION_SHADOW_GUTTER = 20;
 const SELECT_BAND_PROFILE_ACTION_SLOT_DESKTOP_MAX_WIDTH = SELECT_BAND_PROFILE_ACTION_SLOT_MAX_WIDTH + (SELECT_BAND_PROFILE_ACTION_SHADOW_GUTTER * 2);
@@ -94,7 +94,7 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
   const lookupAccountId = isStatisticsBandMode ? undefined : searchParams.get('accountId') ?? undefined;
   const lookupTeamKey = statisticsBand?.teamKey ?? searchParams.get('teamKey') ?? undefined;
   const lookupBandTypeRaw = statisticsBand?.bandType ?? searchParams.get('bandType') ?? undefined;
-  const lookupBandType = statisticsBand?.bandType ?? (isBandType(lookupBandTypeRaw) ? lookupBandTypeRaw : undefined);
+  const lookupBandType = statisticsBand?.bandType ?? coerceBandType(lookupBandTypeRaw) ?? undefined;
   const routeNames = statisticsBand?.displayName.trim() || searchParams.get('names')?.trim() || undefined;
   const hasTeamContext = !!lookupBandType && !!lookupTeamKey;
   const hasAccountLookupContext = !isStatisticsBandMode && !!lookupAccountId && hasTeamContext;
@@ -237,7 +237,7 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
   const title = resolvedTitle ?? routeNames ?? genericBandTitle;
   const subtitle = payload
     ? t('band.subtitle', {
-        type: formatBandType(payload.band.bandType),
+        type: bandTypeLabel(payload.band.bandType, t),
         count: payload.band.appearanceCount ?? 0,
       })
     : undefined;
@@ -582,7 +582,7 @@ function BandSummarySection({ band, sectionRef, style, onAnimationEnd }: { band:
     <section ref={sectionRef} data-testid="band-section-summary" style={{ ...styles.section, ...style }} onAnimationEnd={onAnimationEnd} aria-label={t('band.summary')}>
       <PlayerSectionHeading title={t('band.summary')} />
       <div style={styles.statsGrid}>
-        <StatCard label={t('band.type')} value={formatBandType(band.bandType)} />
+        <StatCard label={t('band.type')} value={bandTypeLabel(band.bandType, t)} />
         <StatCard label={t('band.appearances')} value={(band.appearanceCount ?? 0).toLocaleString()} />
         <StatCard label={t('band.members')} value={band.members.length.toLocaleString()} />
       </div>
@@ -737,18 +737,6 @@ function bandFullCombosUpdater(settings: SongSettings): SongSettings {
     sortAscending: true,
     filters: { ...defaultSongFilters(), hasFCs: { [DEFAULT_INSTRUMENT]: true } },
   };
-}
-
-function isBandType(value: string | undefined): value is BandType {
-  return !!value && VALID_BAND_TYPES.includes(value as BandType);
-}
-
-function formatBandType(bandType: BandType): string {
-  switch (bandType) {
-    case 'Band_Duets': return 'Duos';
-    case 'Band_Trios': return 'Trios';
-    case 'Band_Quad': return 'Quads';
-  }
 }
 
 function formatBandTitle(band: PlayerBandEntry, fallbackName: string, fallbackTitle: string): string {

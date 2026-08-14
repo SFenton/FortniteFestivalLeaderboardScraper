@@ -17,6 +17,7 @@ import {
   flexColumn, flexRow, purpleGlass, btnDanger, transition, transitions, padding, border,
   Overflow, LINK_TRANSITION_MS, PointerEvents,
 } from '@festival/theme';
+import { bandTypeLabel } from '../../../utils/bandTypes';
 
 interface PinnedSidebarProps {
   player: TrackedPlayer | null;
@@ -118,7 +119,7 @@ function SelectedBandPanel({ band, onDeselect, styles: s }: { band: SelectedBand
         <span style={s.linkIcon}><IoPeople size={20} /></span>
         <MarqueeText as="p" text={band.displayName} style={s.bandProfileName} />
       </Link>
-      <div style={s.bandProfileType}>{formatBandType(band.bandType)}</div>
+      <div style={s.bandProfileType}>{bandTypeLabel(band.bandType, t)}</div>
       <div style={s.bandMemberList} aria-label={t('band.members')}>
         {band.members.map(member => (
           <Link key={member.accountId} to={Routes.player(member.accountId)} style={s.bandMemberLink}>
@@ -132,14 +133,6 @@ function SelectedBandPanel({ band, onDeselect, styles: s }: { band: SelectedBand
       </PressableButton>
     </div>
   );
-}
-
-function formatBandType(bandType: SelectedBandProfile['bandType']): string {
-  switch (bandType) {
-    case 'Band_Duets': return 'Duos';
-    case 'Band_Trios': return 'Trios';
-    case 'Band_Quad': return 'Quads';
-  }
 }
 
 /** Exported styles for NavigationDemo cross-consumer. */

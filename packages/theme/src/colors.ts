@@ -115,6 +115,7 @@ export const Colors = {
   whiteOverlaySubtle: 'rgba(255,255,255,0.08)',
   whiteOverlay: 'rgba(255,255,255,0.18)',
   purplePlaceholder: 'rgba(122,43,149,0.3)',
+  purpleBorderSubtle: 'rgba(124, 58, 237, 0.2)',
   purpleBorderGlass: 'rgba(168, 120, 255, 0.3)',
   purpleHighlight: 'rgba(75, 15, 99, 0.75)',
   purpleHighlightBorder: 'rgba(124, 58, 237, 0.5)',

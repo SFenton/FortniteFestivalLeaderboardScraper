@@ -17,21 +17,11 @@ import { ACCURACY_SCALE } from '@festival/core/runtime';
 import GraphCard from '../../../../components/common/GraphCard';
 import { PressableChartPath } from '../../../../components/common/PressableChartPath';
 import { LeaderboardEntry } from '../../../leaderboard/global/components/LeaderboardEntry';
-import { Colors, Font, Gap, Size, Layout, Radius, CHART_ANIM_DURATION, frostedCard, padding, border, transition, QUERY_SHOW_SEASON, QUERY_SHOW_ACCURACY } from '@festival/theme';
+import { ACCURACY_GRADIENT, accuracyColor, ChartSize, Colors, Font, Gap, IconSize, Layout, MetadataSize, Radius, CHART_ANIM_DURATION, frostedCard, padding, border, transition, QUERY_SHOW_SEASON, QUERY_SHOW_ACCURACY } from '@festival/theme';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
 import { useMediaQuery } from '../../../../hooks/ui/useMediaQuery';
 import { useChartData, type ChartPoint } from '../../../../hooks/chart/useChartData';
-
-/* ── Chart visual constants ── */
-
-/** Shared tick style for all axes. */
-const AXIS_TICK = { fill: Colors.textPrimary, fontSize: Font.md };
-
-/** X-axis tick style (extra downward offset for rotated labels). */
-const X_AXIS_TICK = { ...AXIS_TICK, dy: 16 };
-
-/** X-axis label rotation angle. */
-const X_AXIS_ANGLE = -35;
+import { CHART_AXIS_TICK, CHART_X_AXIS_ANGLE, CHART_X_AXIS_TICK } from '../../../../components/common/chartVisuals';
 
 /** Identity function for matching ChartPoints across pagination. */
 const CHART_POINT_IDENTITY = (a: ChartPoint, b: ChartPoint) =>
@@ -40,7 +30,7 @@ const CHART_POINT_IDENTITY = (a: ChartPoint, b: ChartPoint) =>
 /* ── Score card list styles ── */
 const scoreListCardBase: React.CSSProperties = {
   ...frostedCard, display: 'flex', alignItems: 'center', gap: Gap.xl,
-  padding: padding(0, Gap.xl), height: Size.iconXl, borderRadius: Radius.md,
+  padding: padding(0, Gap.xl), height: IconSize.xl, borderRadius: Radius.md,
   fontSize: Font.md, color: 'inherit', transition: transition('border-color', 150),
 };
 const scoreListCardBestStyle: React.CSSProperties = {
@@ -128,7 +118,7 @@ export default memo(function ScoreHistoryChart({
     selectedPoint: ChartPoint | null;
     setSelectedPoint: (p: ChartPoint | null | ((prev: ChartPoint | null) => ChartPoint | null)) => void;
   }) => (
-    <ResponsiveContainer width="100%" height={Size.chartHeight}>
+    <ResponsiveContainer width="100%" height={ChartSize.height}>
       <ComposedChart
         data={visibleData}
         margin={Layout.chartMargin}
@@ -142,15 +132,15 @@ export default memo(function ScoreHistoryChart({
         />
         <XAxis
           dataKey="dateLabel"
-          tick={X_AXIS_TICK}
+          tick={CHART_X_AXIS_TICK}
           stroke={Colors.borderSubtle}
-          angle={X_AXIS_ANGLE}
+          angle={CHART_X_AXIS_ANGLE}
           textAnchor="end"
           interval="preserveStartEnd"
         />
         <YAxis
           yAxisId="score"
-          tick={AXIS_TICK}
+          tick={CHART_AXIS_TICK}
           stroke={Colors.borderSubtle}
           tickFormatter={(v: number) =>
             v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)
@@ -167,7 +157,7 @@ export default memo(function ScoreHistoryChart({
           orientation="right"
           domain={[0, 100]}
           padding={{ top: 4 }}
-          tick={AXIS_TICK}
+          tick={CHART_AXIS_TICK}
           stroke={Colors.borderSubtle}
           tickFormatter={(v: number) => `${v}%`}
           label={({ viewBox }: { viewBox: { x: number; y: number; width: number; height: number } }) => {
@@ -230,11 +220,7 @@ export default memo(function ScoreHistoryChart({
               fill = Colors.gold;
               fillOp = 1;
             } else {
-              const t = Math.min(Math.max(acc / 100, 0), 1);
-              const r = Math.round(Colors.accuracyLow.r * (1 - t) + Colors.accuracyHigh.r * t);
-              const g = Math.round(Colors.accuracyLow.g * (1 - t) + Colors.accuracyHigh.g * t);
-              const b = Math.round(Colors.accuracyLow.b * (1 - t) + Colors.accuracyHigh.b * t);
-              fill = `rgb(${r},${g},${b})`;
+              fill = accuracyColor(acc);
               fillOp = 1;
             }
             const rad = Radius.barCorner[0];
@@ -248,7 +234,7 @@ export default memo(function ScoreHistoryChart({
                 fill={fill}
                 fillOpacity={fillOp}
                 stroke={isSelected ? Colors.accentPurple : 'transparent'}
-                strokeWidth={Size.barSelectionStroke}
+                strokeWidth={ChartSize.barSelectionStroke}
                 onPress={() => setSelectedPoint(prev => prev?.date === point.payload.date && prev?.score === point.payload.score ? null : point.payload)}
               />
             );
@@ -262,8 +248,8 @@ export default memo(function ScoreHistoryChart({
           name={t('chart.score')}
           stroke={Colors.accentBlueBright}
           strokeWidth={2}
-          dot={{ fill: Colors.accentBlueBright, r: Size.dotRadius }}
-          activeDot={isMobile ? false : { r: Size.dotRadiusActive, fill: Colors.accentBlue }}
+          dot={{ fill: Colors.accentBlueBright, r: MetadataSize.dotRadius }}
+          activeDot={isMobile ? false : { r: MetadataSize.dotRadiusActive, fill: Colors.accentBlue }}
           isAnimationActive={animating}
           animationDuration={CHART_ANIM_DURATION}
         />
@@ -353,7 +339,7 @@ function useChartStyles() {
   return useMemo(() => ({
     legend: { display: 'flex', justifyContent: 'center', gap: Gap.xl, fontSize: Font.md, color: Colors.textPrimary, paddingTop: 36 } as React.CSSProperties,
     legendItem: { display: 'inline-flex', alignItems: 'center', gap: Gap.sm } as React.CSSProperties,
-    legendGradient: { display: 'inline-block', width: Size.iconXs, height: 12, borderRadius: 2, background: 'linear-gradient(to right, rgb(220,40,40), rgb(46,204,113))' } as React.CSSProperties,
-    legendGold: { display: 'inline-block', width: Size.iconXs, height: 12, borderRadius: 2, backgroundColor: Colors.gold } as React.CSSProperties,
+    legendGradient: { display: 'inline-block', width: IconSize.xs, height: 12, borderRadius: 2, background: ACCURACY_GRADIENT } as React.CSSProperties,
+    legendGold: { display: 'inline-block', width: IconSize.xs, height: 12, borderRadius: 2, backgroundColor: Colors.gold } as React.CSSProperties,
   }), []);
 }

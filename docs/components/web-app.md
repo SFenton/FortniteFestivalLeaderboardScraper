@@ -2,7 +2,7 @@
 status: canonical
 owner: web
 last_verified: 2026-08-14
-last_verified_commit: a20b9d89
+last_verified_commit: 76ddfd59
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
@@ -31,6 +31,7 @@ sources:
   - FortniteFestivalWeb/src/pages/suggestions/suggestionsSessionCache.ts
   - FortniteFestivalWeb/performance-budgets.json
   - FortniteFestivalWeb/scripts/check-performance-budgets.mjs
+  - FortniteFestivalWeb/scripts/generate-theme-css.mjs
   - .github/workflows/web-performance.yml
   - FortniteFestivalWeb/src/routes.ts
   - FortniteFestivalWeb/src/routeMetadata.ts
@@ -177,6 +178,20 @@ Current styling combines:
 - local inline style objects when values are dynamic or do not justify a CSS
   class;
 - shared UI utilities from `@festival/ui-utils`.
+
+`src/styles/theme.css` is generated from an explicit 115-variable mapping to
+`@festival/theme`; `theme:css:check` runs before every production build and
+fails on drift. Existing CSS variable names remain stable. Deprecated `Size`
+usage is allowed only within a checked no-growth baseline while migrations
+move domain slices to `IconSize`, `InstrumentSize`, `StarSize`, `ChartSize`,
+`MetadataSize`, `GeneralSize`, and `Layout`. The first accepted slice removes
+all chart-category aliases and shares rank-history modeling, axis visuals, and
+accuracy colors without merging the solo and band chart components.
+
+Band type taxonomy and localized labels have one web owner. Labels are
+translated at render time and are never persisted or used as route keys.
+Action and band-filter pills share transition timing while retaining their
+different active-style behavior.
 
 The obsolete CSS migration checklist was removed and is not a current
 file-count or completion source.

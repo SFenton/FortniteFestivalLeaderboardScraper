@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && node scripts/ensure-embedded-compatibility-assets.mjs",
+    "build": "yarn theme:css:check && tsc -b && vite build && node scripts/ensure-embedded-compatibility-assets.mjs",
     "preview": "vite preview",
     "test": "yarn test:unit",
     "test:unit": "node scripts/run-unit-tests.mjs",
@@ -38,6 +38,8 @@
     "icons:generate": "node scripts/generate-pwa-icons.mjs",
     "licenses:generate": "node ../tools/generate-license-manifest.mjs",
     "licenses:check": "node ../tools/generate-license-manifest.mjs --check",
+    "theme:css:generate": "node scripts/generate-theme-css.mjs",
+    "theme:css:check": "node scripts/generate-theme-css.mjs --check",
     "check:coverage-ignores": "node --test ../tools/check-coverage-ignores.test.mjs && node scripts/check-coverage-ignores.mjs",
     "check:encoding": "node ../tools/check-encoding.mjs"
   },

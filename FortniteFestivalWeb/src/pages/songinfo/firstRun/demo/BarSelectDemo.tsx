@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
-import { Colors, Size, Layout, Gap } from '@festival/theme';
+import { ACCURACY_GRADIENT, accuracyColor, ChartSize, Colors, MetadataSize, Layout, Gap } from '@festival/theme';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { useChartDimensions } from '../../../../hooks/chart/useChartDimensions';
 import { LeaderboardEntry } from '../../../leaderboard/global/components/LeaderboardEntry';
 import FadeIn from '../../../../components/page/FadeIn';
 import { useChartDemoStyles } from './ChartDemo';
+import { CHART_AXIS_TICK, CHART_X_AXIS_ANGLE, CHART_X_AXIS_TICK } from '../../../../components/common/chartVisuals';
 
 const CYCLE_MS = 2500;
 const CARD_HEIGHT = 44;
@@ -26,15 +27,6 @@ function buildDemoData(): ChartPoint[] {
   ];
 }
 const DATA: ChartPoint[] = buildDemoData();
-
-function barFill(accuracy: number, isFC: boolean): string {
-  if (accuracy >= 100 && isFC) return Colors.gold;
-  const t = Math.min(Math.max(accuracy / 100, 0), 1);
-  const r = Math.round(220 * (1 - t) + 46 * t);
-  const g = Math.round(40 * (1 - t) + 204 * t);
-  const b = Math.round(40 * (1 - t) + 113 * t);
-  return `rgb(${r},${g},${b})`;
-}
 
 export default function BarSelectDemo() {
   const { t } = useTranslation();
@@ -88,7 +80,9 @@ export default function BarSelectDemo() {
       /* v8 ignore start */
       if (!ht || ht <= 0) return null;
       /* v8 ignore stop */
-      const fill = barFill(payload.accuracy, payload.isFullCombo);
+      const fill = payload.accuracy >= 100 && payload.isFullCombo
+        ? Colors.gold
+        : accuracyColor(payload.accuracy);
       const isSelected = index === selectedIdx;
       const path = `M${x + RAD},${y + ht} Q${x},${y + ht} ${x},${y + ht - RAD} L${x},${y + RAD} Q${x},${y} ${x + RAD},${y} L${x + w - RAD},${y} Q${x + w},${y} ${x + w},${y + RAD} L${x + w},${y + ht - RAD} Q${x + w},${y + ht} ${x + w - RAD},${y + ht} Z`;
       return (
@@ -97,7 +91,7 @@ export default function BarSelectDemo() {
           fill={fill}
           fillOpacity={1}
           stroke={isSelected ? Colors.accentPurple : 'transparent'}
-          strokeWidth={Size.barSelectionStroke}
+          strokeWidth={ChartSize.barSelectionStroke}
         />
       );
     };
@@ -114,16 +108,16 @@ export default function BarSelectDemo() {
               <CartesianGrid strokeDasharray="3 3" stroke={Colors.borderSubtle} horizontal={false} vertical={false} />
               <XAxis
                 dataKey="dateLabel"
-                tick={{ fill: Colors.textPrimary, fontSize: 14, dy: 16 }}
+                tick={CHART_X_AXIS_TICK}
                 stroke={Colors.borderSubtle}
-                angle={-35}
+                angle={CHART_X_AXIS_ANGLE}
                 textAnchor="end"
                 interval="preserveStartEnd"
-                height={60}
+                height={Layout.chartXAxisHeight}
               />
               <YAxis
                 yAxisId="score"
-                tick={{ fill: Colors.textPrimary, fontSize: 14 }}
+                tick={CHART_AXIS_TICK}
                 stroke={Colors.borderSubtle}
                 tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)}
                 label={({ viewBox }: { viewBox: { x: number; y: number; height: number } }) => {
@@ -140,7 +134,7 @@ export default function BarSelectDemo() {
                 orientation="right"
                 domain={[0, 100]}
                 padding={{ top: 4 }}
-                tick={{ fill: Colors.textPrimary, fontSize: 14 }}
+                tick={CHART_AXIS_TICK}
                 stroke={Colors.borderSubtle}
                 tickFormatter={(v: number) => `${v}%`}
                 label={({ viewBox }: { viewBox: { x: number; y: number; width: number; height: number } }) => {
@@ -158,7 +152,7 @@ export default function BarSelectDemo() {
                 <div style={s.legend}>
                   {hasNonFc && (
                     <span style={s.legendItem}>
-                      <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 2, background: 'linear-gradient(to right, rgb(220,40,40), rgb(46,204,113))' }} />
+                      <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 2, background: ACCURACY_GRADIENT }} />
                       {t('chart.accuracy')}
                     </span>
                   )}
@@ -178,7 +172,7 @@ export default function BarSelectDemo() {
                 </div>
               )} />
               <Bar yAxisId="accuracy" dataKey="accuracy" radius={[RAD, RAD, 0, 0]} isAnimationActive={false} shape={BarShape as any} />
-              <Line yAxisId="score" type="monotone" dataKey="score" stroke={Colors.accentBlueBright} strokeWidth={2} dot={{ fill: Colors.accentBlueBright, r: Size.dotRadius }} isAnimationActive={false} />
+              <Line yAxisId="score" type="monotone" dataKey="score" stroke={Colors.accentBlueBright} strokeWidth={2} dot={{ fill: Colors.accentBlueBright, r: MetadataSize.dotRadius }} isAnimationActive={false} />
             </ComposedChart>
           </ResponsiveContainer>
           <div style={{ ...s.detailCardBorderless, opacity: detailVisible ? 1 : 0, marginTop: Gap.xl }}>

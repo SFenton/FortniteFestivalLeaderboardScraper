@@ -25,7 +25,21 @@ import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../src/hooks/data/useV
 import * as useVisualViewportExports from '../src/hooks/ui/useVisualViewport';
 
 // Theme (@festival/theme)
-import { Colors, Radius, Font, LineHeight, Gap, Opacity, Size, MaxWidth, Layout } from '@festival/theme';
+import {
+  ACCURACY_GRADIENT,
+  accuracyColor,
+  ChartSize,
+  Colors,
+  GeneralSize,
+  Radius,
+  Font,
+  LineHeight,
+  Gap,
+  Opacity,
+  Size,
+  MaxWidth,
+  Layout,
+} from '@festival/theme';
 import { goldFill, goldOutline, goldOutlineSkew, frostedCard, frostedCardLight } from '@festival/theme';
 
 // i18n
@@ -75,8 +89,15 @@ describe('theme exports', () => {
     expect(Gap).toBeDefined();
     expect(Opacity).toBeDefined();
     expect(Size).toBeDefined();
+    expect(ChartSize.height).toBe(320);
+    expect(GeneralSize.profileCircle).toBe(64);
     expect(MaxWidth).toBeDefined();
     expect(Layout).toBeDefined();
+  });
+
+  it('color helpers derive from the public theme surface', () => {
+    expect(accuracyColor(50)).toBe('rgb(133,122,77)');
+    expect(ACCURACY_GRADIENT).toContain('rgb(220,40,40)');
   });
 
   it('goldStyles exports CSS objects', () => {
