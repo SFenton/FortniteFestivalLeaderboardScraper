@@ -1235,7 +1235,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
             Options.Create(new ScraperOptions
             {
-                RegisteredUserRefreshTimeout = TimeSpan.FromMilliseconds(50),
+                RegisteredUserRefreshTimeout = TimeSpan.FromMilliseconds(500),
             }), _log, _registrationMutations, null);
 
         var ctx = CreateContext(
