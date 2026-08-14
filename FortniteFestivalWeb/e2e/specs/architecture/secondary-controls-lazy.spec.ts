@@ -273,17 +273,17 @@ async function dismissOverlays(page: Page) {
   await page.waitForTimeout(750);
   let quietChecks = 0;
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    const firstRunClose = page.getByTestId('fre-close');
+    const firstRunClose = page.getByTestId('fre-close').last();
     if (await firstRunClose.isVisible().catch(() => false)) {
-      await firstRunClose.click();
-      await page.waitForTimeout(600);
+      await firstRunClose.evaluate(element => (element as HTMLButtonElement).click());
+      await firstRunClose.waitFor({ state: 'hidden', timeout: 2_000 }).catch(() => {});
       quietChecks = 0;
       continue;
     }
-    const dismiss = page.getByRole('button', { name: 'Dismiss' });
+    const dismiss = page.getByRole('button', { name: 'Dismiss' }).last();
     if (await dismiss.isVisible().catch(() => false)) {
-      await dismiss.click();
-      await page.waitForTimeout(500);
+      await dismiss.evaluate(element => (element as HTMLButtonElement).click());
+      await dismiss.waitFor({ state: 'hidden', timeout: 2_000 }).catch(() => {});
       quietChecks = 0;
       continue;
     }
