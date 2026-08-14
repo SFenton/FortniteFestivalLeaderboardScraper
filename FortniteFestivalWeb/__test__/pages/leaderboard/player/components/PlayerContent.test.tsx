@@ -592,12 +592,12 @@ describe('PlayerContent', () => {
     const proStringsHeadingRow = screen.getByRole('heading', { name: 'Pro Strings Global Statistics' }).parentElement as HTMLElement;
     const proDrumsHeadingRow = screen.getByRole('heading', { name: 'Pro Drums Global Statistics' }).parentElement as HTMLElement;
 
-    expect(padHeadingRow.querySelector('img[alt="Solo_Guitar"]')).not.toBeNull();
-    expect(padHeadingRow.querySelector('img[alt="Solo_Bass"]')).toBeNull();
-    expect(proStringsHeadingRow.querySelector('img[alt="Solo_PeripheralGuitar"]')).not.toBeNull();
-    expect(proStringsHeadingRow.querySelector('img[alt="Solo_PeripheralBass"]')).toBeNull();
-    expect(proDrumsHeadingRow.querySelector('img[alt="Solo_PeripheralDrums"]')).not.toBeNull();
-    expect(proDrumsHeadingRow.querySelector('img[alt="Solo_PeripheralCymbals"]')).toBeNull();
+    expect(padHeadingRow.querySelector('img[data-instrument="Solo_Guitar"]')).not.toBeNull();
+    expect(padHeadingRow.querySelector('img[data-instrument="Solo_Bass"]')).toBeNull();
+    expect(proStringsHeadingRow.querySelector('img[data-instrument="Solo_PeripheralGuitar"]')).not.toBeNull();
+    expect(proStringsHeadingRow.querySelector('img[data-instrument="Solo_PeripheralBass"]')).toBeNull();
+    expect(proDrumsHeadingRow.querySelector('img[data-instrument="Solo_PeripheralDrums"]')).not.toBeNull();
+    expect(proDrumsHeadingRow.querySelector('img[data-instrument="Solo_PeripheralCymbals"]')).toBeNull();
     expect(screen.getByText('The overall rankings for Lead, Bass, Drums, and Tap Vocals. Selected instrument icons indicate instruments enabled in app settings, but these statistics cards apply to all pad instruments combined.')).toBeDefined();
     expect(screen.getByText('The overall rankings for Pro Lead and Pro Bass. Selected instrument icons indicate instruments enabled in app settings, but these statistics cards apply to all pro strings instruments combined.')).toBeDefined();
     expect(screen.getByText('The overall rankings for Pro Drums and Pro Cymbals. Selected instrument icons indicate instruments enabled in app settings, but these statistics cards apply to all pro drums instruments combined.')).toBeDefined();

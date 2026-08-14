@@ -188,6 +188,7 @@ function RightContent({ song, layout, leaderboardData, starCount = 0, starSrc,
   starCount?: number;
   starSrc?: string;
 }) {
+  const { t } = useTranslation();
   if (layout === 'hidden') return null;
 
   // Rival layout: shows rival name + rank delta pill + instrument icon
@@ -252,9 +253,15 @@ function RightContent({ song, layout, leaderboardData, starCount = 0, starSrc,
     return (
       <div style={categoryCardStyles.badges}>
         {starCount > 0 && starSrc && (
-          <span style={categoryCardStyles.starPngInlineRow}>
+          <span
+            role="img"
+            aria-label={starSrc.includes('gold')
+              ? t('common.goldStarCount', { count: starCount })
+              : t('common.starCount', { count: starCount })}
+            style={categoryCardStyles.starPngInlineRow}
+          >
             {Array.from({ length: starCount }, (_, i) => (
-              <img key={i} src={starSrc} alt="★" style={categoryCardStyles.starPngImg} />
+              <img key={i} src={starSrc} alt="" style={categoryCardStyles.starPngImg} />
             ))}
           </span>
         )}

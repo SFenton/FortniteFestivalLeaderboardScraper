@@ -316,7 +316,18 @@ describe('PathsModal', () => {
     it('shows mobile instrument selector button', () => {
       render(<PathsModal visible={true} songId="song-1" onClose={vi.fn()} />);
 
-      expect(findMobileInstrumentToggle()).toBeDefined();
+      const instrumentToggle = findMobileInstrumentToggle();
+      expect(instrumentToggle).toHaveAttribute('aria-label', 'Instrument: Lead');
+      expect(instrumentToggle).toHaveAttribute('aria-expanded', 'false');
+      const instrumentPanel = document.getElementById(instrumentToggle.getAttribute('aria-controls')!);
+      expect(instrumentPanel).toHaveAttribute('inert');
+      expect(instrumentPanel).toHaveAttribute('aria-hidden', 'true');
+      expect(screen.getByRole('button', { name: 'Difficulty: Expert' })).toHaveAttribute('aria-expanded', 'false');
+      expect(screen.getByRole('button', { name: 'Path display: Image' })).toHaveAttribute('aria-expanded', 'false');
+
+      fireEvent.click(instrumentToggle);
+      expect(instrumentPanel).not.toHaveAttribute('inert');
+      expect(instrumentPanel).toHaveAttribute('aria-hidden', 'false');
     });
 
     it('reserves bottom safe-area space for mobile controls', () => {

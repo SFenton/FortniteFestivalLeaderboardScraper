@@ -41,6 +41,7 @@ import { loadLeaderboardRankBy, saveLeaderboardRankBy } from '../../utils/leader
 import { rankingsCache } from '../../api/pageCache';
 import { useModalState } from '../../hooks/ui/useModalState';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
+import { useVisualPreferences } from '../../hooks/ui/useVisualPreferences';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import EmptyState from '../../components/common/EmptyState';
@@ -588,6 +589,7 @@ function SelectedBandMemberRotatingFooter({
   reserveTenDigitScoreWidth?: boolean;
   cycleKey: string;
 }) {
+  const { reducedMotion, isDocumentVisible } = useVisualPreferences();
   const [activeIndex, setActiveIndex] = useState(0);
   const [fading, setFading] = useState(false);
 
@@ -597,16 +599,13 @@ function SelectedBandMemberRotatingFooter({
   }, [cycleKey]);
 
   useEffect(() => {
-    if (rankings.length <= 1) return;
+    if (rankings.length <= 1 || reducedMotion || !isDocumentVisible) {
+      setFading(false);
+      return;
+    }
 
     let fadeTimer: ReturnType<typeof setTimeout> | undefined;
-    const reduceMotion = prefersReducedMotion();
     const interval = setInterval(() => {
-      if (reduceMotion) {
-        setActiveIndex(index => (index + 1) % rankings.length);
-        return;
-      }
-
       setFading(true);
       fadeTimer = setTimeout(() => {
         setActiveIndex(index => (index + 1) % rankings.length);
@@ -618,7 +617,7 @@ function SelectedBandMemberRotatingFooter({
       clearInterval(interval);
       if (fadeTimer) clearTimeout(fadeTimer);
     };
-  }, [cycleKey, rankings.length]);
+  }, [cycleKey, isDocumentVisible, rankings.length, reducedMotion]);
 
   if (rankings.length === 0) {
     return (
@@ -632,7 +631,7 @@ function SelectedBandMemberRotatingFooter({
   const rating = getDisplayRating(activeRanking, metric);
   const rank = getDisplayRank(activeRanking, metric);
   const usePercentile = usesPercentileValueDisplay(metric);
-  const contentStyle = prefersReducedMotion()
+  const contentStyle = reducedMotion
     ? selectedBandMemberFooterStyles.content
     : { ...selectedBandMemberFooterStyles.content, opacity: fading ? 0 : 1 };
 
@@ -665,10 +664,6 @@ function SelectedBandMemberRotatingFooter({
       </div>
     </Link>
   );
-}
-
-function prefersReducedMotion(): boolean {
-  return typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 }
 
 function normalizeAccountId(accountId: string | null | undefined): string {

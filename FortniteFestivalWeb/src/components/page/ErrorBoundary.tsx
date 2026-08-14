@@ -37,7 +37,7 @@ export default class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (this.state.hasError) {
-      if (this.props.fallback) return this.props.fallback;
+      if (this.props.fallback !== undefined) return this.props.fallback;
       return (
         <div style={styles.container}>
           <h1 style={styles.title}>{i18next.t('common.error')}</h1>

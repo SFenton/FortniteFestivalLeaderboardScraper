@@ -240,6 +240,31 @@ test('Suggestions restores after visiting one of its song links', async ({ page 
     .toBe(suggestionsScrollTop);
 });
 
+test('trailing-slash Suggestions restores after visiting a song link', async ({ page }, testInfo) => {
+  test.skip(!isPrimaryDesktopProject(testInfo.project.name), 'trailing-slash restoration is covered once');
+  await gotoAppRoute(page, '/suggestions/');
+  await settleSuggestionsRoute(page);
+  await waitForAnimationFrames(page);
+
+  const scrollContainer = page.getByTestId('app-scroll-container');
+  const targetSong = page.getByTestId('suggestions-list').getByRole('link').nth(6);
+  await targetSong.scrollIntoViewIfNeeded();
+  await expect(targetSong).toBeVisible({ timeout: 15_000 });
+  await releasePendingScrollRestoration(page);
+  await waitForAnimationFrames(page);
+  const suggestionsScrollTop = await scrollContainer.evaluate(
+    element => element.scrollTop,
+  );
+  expect(suggestionsScrollTop).toBeGreaterThan(0);
+
+  await targetSong.click();
+  await expect(page).toHaveURL(/#\/songs\/[^?]+(?:\?.*)?$/);
+  await page.goBack();
+  await expect(page).toHaveURL(/#\/suggestions\/$/);
+  await expect.poll(() => scrollContainer.evaluate(element => element.scrollTop))
+    .toBe(suggestionsScrollTop);
+});
+
 test('Suggestions keeps a focused category mounted while the virtual window moves', async ({ page }, testInfo) => {
   test.skip(!isPrimaryDesktopProject(testInfo.project.name), 'focused-row retention is covered once');
   await gotoAppRoute(page, '/suggestions');
@@ -294,7 +319,9 @@ test('Suggestions remeasures virtual rows after an in-place filter change', asyn
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Filter Suggestions' });
   await dialog.getByRole('button', { name: /Instruments/ }).click();
-  await dialog.getByRole('button', { name: 'guitar Lead', exact: true }).click();
+  await dialog.getByRole('region', { name: /Instruments/ })
+    .getByRole('button', { name: 'Lead', exact: true })
+    .click();
   await dialog.getByRole('button', { name: 'Apply Filter Changes', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect.poll(() => scrollContainer.evaluate(element => element.scrollTop)).toBe(0);
@@ -619,14 +646,20 @@ async function driveSuggestionsToCategoryLimit(
     const currentCount = await readGeneratedCategoryCount(list);
     if (currentCount >= categoryLimit) return;
 
-    await expect(sentinel).toHaveAttribute('data-observer-ready', 'true');
+    await expect.poll(async () => (
+      await readGeneratedCategoryCount(list) >= categoryLimit
+      || await sentinel.getAttribute('data-observer-ready') === 'true'
+    )).toBe(true);
+    const readyCount = await readGeneratedCategoryCount(list);
+    if (readyCount >= categoryLimit) return;
+
     await scrollContainer.evaluate((element) => {
       element.scrollTo(0, element.scrollHeight);
     });
     await expect.poll(
       () => readGeneratedCategoryCount(list),
-      { timeout: 5_000, message: `Suggestions category ${currentCount + 1} did not commit` },
-    ).toBeGreaterThan(currentCount);
+      { timeout: 5_000, message: `Suggestions category ${readyCount + 1} did not commit` },
+    ).toBeGreaterThan(readyCount);
   }
   throw new Error(`Suggestions did not reach the ${categoryLimit}-category limit`);
 }

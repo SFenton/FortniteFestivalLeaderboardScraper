@@ -443,7 +443,13 @@ function StarsToggles({ starsFilter, onChange }: { starsFilter: Record<number, b
     const count = isGold ? 5 : k;
     const src = isGold ? `${import.meta.env.BASE_URL}star_gold.png` : `${import.meta.env.BASE_URL}star_white.png`;
     return (
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+      <span
+        role="img"
+        aria-label={isGold
+          ? t('common.goldStarCount', { count })
+          : t('common.starCount', { count })}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}
+      >
         {Array.from({ length: count }, (_, i) => (
           <img key={i} src={src} alt="" width={14} height={14} />
         ))}

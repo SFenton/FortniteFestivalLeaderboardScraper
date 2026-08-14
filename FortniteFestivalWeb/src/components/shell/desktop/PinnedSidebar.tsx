@@ -40,12 +40,12 @@ export default function PinnedSidebar({ player, selectedProfile, onDeselect, onS
   return (
     <aside style={s.sidebar} data-testid="pinned-sidebar" onWheel={(e) => { scrollRef.current?.scrollBy({ top: e.deltaY, left: e.deltaX }); }}>
       <nav style={s.nav}>
-        <NavLink to="/songs" style={({ isActive }) => linkClass(isActive)}>
+        <NavLink to={Routes.songs} style={({ isActive }) => linkClass(isActive)}>
           <span style={s.linkIcon}><IoMusicalNotes size={20} /></span>
           {t('nav.songs')}
         </NavLink>
         {showSuggestions && (
-          <NavLink to="/suggestions" style={({ isActive }) => linkClass(isActive)}>
+          <NavLink to={Routes.suggestions} style={({ isActive }) => linkClass(isActive)}>
             <span style={s.linkIcon}><IoSparkles size={20} /></span>
             {t('nav.suggestions')}
           </NavLink>
@@ -58,19 +58,19 @@ export default function PinnedSidebar({ player, selectedProfile, onDeselect, onS
         )}
         {/* v8 ignore start -- player-gated link */}
         {player && (
-          <NavLink to="/rivals" style={({ isActive }) => linkClass(isActive)}>
+          <NavLink to={Routes.rivals} style={({ isActive }) => linkClass(isActive)}>
             <span style={s.linkIcon}><IoPeople size={20} /></span>
             {t('nav.rivals', 'Rivals')}
           </NavLink>
         )}
         {/* v8 ignore stop */}
-        <NavLink to="/leaderboards" style={({ isActive }) => linkClass(isActive)}>
+        <NavLink to={Routes.leaderboards} style={({ isActive }) => linkClass(isActive)}>
           <span style={s.linkIcon}><IoTrophy size={20} /></span>
           {t('nav.leaderboards')}
         </NavLink>
         {/* v8 ignore start -- shop-visibility link */}
         {!settings.hideItemShop && (
-          <NavLink to="/shop" style={({ isActive }) => linkClass(isActive)}>
+          <NavLink to={Routes.shop} style={({ isActive }) => linkClass(isActive)}>
             <span style={s.linkIcon}><IoBagHandle size={20} /></span>
             {t('nav.shop', 'Shop')}
           </NavLink>
@@ -81,7 +81,7 @@ export default function PinnedSidebar({ player, selectedProfile, onDeselect, onS
           <SelectedBandPanel band={selectedBand} onDeselect={onDeselect} styles={s} />
         ) : player ? (
           <div style={s.playerRow}>
-            <Link to="/statistics" style={s.playerLink}>
+            <Link to={Routes.statistics} style={s.playerLink}>
               <span style={s.linkIcon}><IoPerson size={20} /></span>
               <MarqueeText as="p" text={player.displayName} style={s.playerName} />
             </Link>
@@ -101,7 +101,7 @@ export default function PinnedSidebar({ player, selectedProfile, onDeselect, onS
             {t('nav.manual')}
           </NavLink>
         )}
-        <NavLink to="/settings" style={({ isActive }) => linkClass(isActive)}>
+        <NavLink to={Routes.settings} style={({ isActive }) => linkClass(isActive)}>
           <span style={s.linkIcon}><IoSettings size={20} /></span>
           {t('nav.settings')}
         </NavLink>

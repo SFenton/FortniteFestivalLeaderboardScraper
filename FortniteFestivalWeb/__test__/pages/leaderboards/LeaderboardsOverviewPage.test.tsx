@@ -252,9 +252,9 @@ describe('LeaderboardsOverviewPage band rankings', () => {
     const metadata = within(duosEntry).getByTestId('band-ranking-metadata');
     expect(within(metadata).getByTestId('ranking-songs-label')).toHaveTextContent('120 / 160');
     expect(within(metadata).getByTestId('ranking-rating-label')).toHaveTextContent('9,876,542');
-    expect(within(duosEntry).getByAltText('Solo_Guitar')).toBeTruthy();
-    expect(within(duosEntry).getByAltText('Solo_Bass')).toBeTruthy();
-    expect(within(duosEntry).getByAltText('Solo_Drums')).toBeTruthy();
+    expect(within(duosEntry).getByAltText('Lead')).toBeTruthy();
+    expect(within(duosEntry).getByAltText('Bass')).toBeTruthy();
+    expect(within(duosEntry).getByAltText('Drums')).toBeTruthy();
     expect(within(duosCard).getByText('View all band rankings (42)')).toBeTruthy();
 
     await waitFor(() => {
@@ -582,20 +582,20 @@ describe('LeaderboardsOverviewPage band rankings', () => {
 
     const duosEntry = await screen.findByTestId('band-ranking-entry-Band_Duets-0');
     const duosRows = within(duosEntry).getAllByTestId('band-member-row');
-    expect(within(duosRows[0]!).getByAltText('Solo_Vocals')).toBeTruthy();
-    expect(within(duosRows[0]!).queryByAltText('Solo_Guitar')).toBeNull();
-    expect(within(duosRows[0]!).queryByAltText('Solo_Drums')).toBeNull();
-    expect(within(duosRows[0]!).queryByAltText('Solo_PeripheralGuitar')).toBeNull();
-    expect(within(duosRows[1]!).getByAltText('Solo_Guitar')).toBeTruthy();
-    expect(within(duosRows[1]!).queryByAltText('Solo_Vocals')).toBeNull();
-    expect(within(duosRows[1]!).queryByAltText('Solo_Drums')).toBeNull();
+    expect(within(duosRows[0]!).getByAltText('Tap Vocals')).toBeTruthy();
+    expect(within(duosRows[0]!).queryByAltText('Lead')).toBeNull();
+    expect(within(duosRows[0]!).queryByAltText('Drums')).toBeNull();
+    expect(within(duosRows[0]!).queryByAltText('Pro Lead')).toBeNull();
+    expect(within(duosRows[1]!).getByAltText('Lead')).toBeTruthy();
+    expect(within(duosRows[1]!).queryByAltText('Tap Vocals')).toBeNull();
+    expect(within(duosRows[1]!).queryByAltText('Drums')).toBeNull();
 
     const triosEntry = await screen.findByTestId('band-ranking-entry-Band_Trios-0');
     const triosRows = within(triosEntry).getAllByTestId('band-member-row');
-    expect(within(triosRows[0]!).getByAltText('Solo_Guitar')).toBeTruthy();
-    expect(within(triosRows[0]!).getByAltText('Solo_Vocals')).toBeTruthy();
-    expect(within(triosRows[1]!).getByAltText('Solo_Bass')).toBeTruthy();
-    expect(within(triosRows[1]!).getByAltText('Solo_Drums')).toBeTruthy();
+    expect(within(triosRows[0]!).getByAltText('Lead')).toBeTruthy();
+    expect(within(triosRows[0]!).getByAltText('Tap Vocals')).toBeTruthy();
+    expect(within(triosRows[1]!).getByAltText('Bass')).toBeTruthy();
+    expect(within(triosRows[1]!).getByAltText('Drums')).toBeTruthy();
 
     await waitFor(() => {
       expectCancellableCall(mockApi.getBandRankings, 'Band_Duets', 'Solo_Guitar+Solo_Vocals', 'weighted', 1, 10, undefined, 'selected-a:selected-b');
@@ -688,14 +688,14 @@ describe('LeaderboardsOverviewPage band rankings', () => {
     expect(duosRows).toHaveLength(2);
 
     expect(within(duosRows[0]!).getByText('Alpha')).toBeTruthy();
-    expect(within(duosRows[0]!).getByAltText('Solo_Guitar')).toBeTruthy();
-    expect(within(duosRows[0]!).getByAltText('Solo_Vocals')).toBeTruthy();
-    expect(within(duosRows[0]!).queryByAltText('Solo_Drums')).toBeNull();
+    expect(within(duosRows[0]!).getByAltText('Lead')).toBeTruthy();
+    expect(within(duosRows[0]!).getByAltText('Tap Vocals')).toBeTruthy();
+    expect(within(duosRows[0]!).queryByAltText('Drums')).toBeNull();
 
     expect(within(duosRows[1]!).getByText('Beta')).toBeTruthy();
-    expect(within(duosRows[1]!).getByAltText('Solo_Guitar')).toBeTruthy();
-    expect(within(duosRows[1]!).getByAltText('Solo_Vocals')).toBeTruthy();
-    expect(within(duosRows[1]!).queryByAltText('Solo_Drums')).toBeNull();
+    expect(within(duosRows[1]!).getByAltText('Lead')).toBeTruthy();
+    expect(within(duosRows[1]!).getByAltText('Tap Vocals')).toBeTruthy();
+    expect(within(duosRows[1]!).queryByAltText('Drums')).toBeNull();
 
     expect(duosEntry).toHaveAttribute('href', '/bands/Band_Duets-1?bandType=Band_Duets&teamKey=duo-a%3Aduo-b&names=Alpha%20%2B%20Beta');
   });
@@ -774,11 +774,11 @@ describe('LeaderboardsOverviewPage band rankings', () => {
     const selectedRows = within(selectedRow).getAllByTestId('band-member-row');
     expect(selectedRows).toHaveLength(2);
     expect(within(selectedRows[0]!).getByText('Selected A')).toBeTruthy();
-    expect(within(selectedRows[0]!).getByAltText('Solo_Guitar')).toBeTruthy();
-    expect(within(selectedRows[0]!).getByAltText('Solo_Vocals')).toBeTruthy();
+    expect(within(selectedRows[0]!).getByAltText('Lead')).toBeTruthy();
+    expect(within(selectedRows[0]!).getByAltText('Tap Vocals')).toBeTruthy();
     expect(within(selectedRows[1]!).getByText('Selected B')).toBeTruthy();
-    expect(within(selectedRows[1]!).getByAltText('Solo_Guitar')).toBeTruthy();
-    expect(within(selectedRows[1]!).getByAltText('Solo_Vocals')).toBeTruthy();
+    expect(within(selectedRows[1]!).getByAltText('Lead')).toBeTruthy();
+    expect(within(selectedRows[1]!).getByAltText('Tap Vocals')).toBeTruthy();
     await waitFor(() => {
       expectCancellableCall(mockApi.getBandRankings, 'Band_Duets', 'Solo_Guitar+Solo_Vocals', 'weighted', 1, 10, undefined, 'selected-a:selected-b');
     });

@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { createElement, type ReactNode } from 'react';
+import { queryKeys } from '../../../src/api/queryKeys';
+import { getSuggestionsScrollRestoreState } from '../../../src/pages/suggestions/suggestionsSessionCache';
 
 const mockGetNext = vi.fn().mockReturnValue([]);
 const mockSetSource = vi.fn();
@@ -7,6 +11,14 @@ const mockResetForEndless = vi.fn();
 const mockGeneratorOptions = vi.fn();
 const mockGeneratorInstances: Array<{ setRivalData: ReturnType<typeof vi.fn> }> = [];
 const mockGetRivalsAll = vi.fn();
+const mockScrollContainerRef: { current: HTMLElement | null } = { current: null };
+const mockBuildRivalDataIndex = vi.fn((response: unknown) => ({
+  songRivals: [],
+  byRival: new Map(),
+  closestRivalBySong: new Map(),
+  topRivalBySong: new Map(),
+  response,
+}));
 
 vi.mock('@festival/core/suggestions', () => {
   return {
@@ -29,7 +41,7 @@ vi.mock('../../../src/contexts/SettingsContext', () => ({
 }));
 
 vi.mock('../../../src/contexts/ScrollContainerContext', () => ({
-  useScrollContainer: () => ({ current: null }),
+  useScrollContainer: () => mockScrollContainerRef,
 }));
 
 vi.mock('../../../src/api/client', () => ({
@@ -37,7 +49,7 @@ vi.mock('../../../src/api/client', () => ({
 }));
 
 vi.mock('../../../src/utils/suggestionAdapter', () => ({
-  buildRivalDataIndexFromRivalsAll: vi.fn().mockReturnValue({ songRivals: [], byRival: new Map(), closestRivalBySong: new Map(), topRivalBySong: new Map() }),
+  buildRivalDataIndexFromRivalsAll: mockBuildRivalDataIndex,
 }));
 
 vi.mock('../../../src/pages/rivals/helpers/comboUtils', () => ({
@@ -47,19 +59,31 @@ vi.mock('../../../src/pages/rivals/helpers/comboUtils', () => ({
 type UseSuggestionsModule = typeof import('../../../src/hooks/data/useSuggestions');
 let useSuggestions: UseSuggestionsModule['useSuggestions'];
 let SUGGESTIONS_CATEGORY_LIMIT: UseSuggestionsModule['SUGGESTIONS_CATEGORY_LIMIT'];
+let queryClient: QueryClient;
+
+function wrapper({ children }: { children: ReactNode }) {
+  return createElement(QueryClientProvider, { client: queryClient }, children);
+}
 
 describe('useSuggestions', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     vi.resetModules();
     mockGeneratorInstances.length = 0;
+    mockScrollContainerRef.current = null;
+    window.location.hash = '';
     mockGetNext.mockReturnValue([]);
     mockGetRivalsAll.mockResolvedValue({ accountId: 'acc1', songs: [], combos: [] });
+    queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: Infinity },
+      },
+    });
     ({ useSuggestions, SUGGESTIONS_CATEGORY_LIMIT } = await import('../../../src/hooks/data/useSuggestions'));
   });
 
   it('returns empty categories when no songs', () => {
-    const { result } = renderHook(() => useSuggestions('acc1', [], {}, 1));
+    const { result } = renderHook(() => useSuggestions('acc1', [], {}, 1), { wrapper });
     expect(result.current.categories).toEqual([]);
     expect(result.current.hasMore).toBe(true);
   });
@@ -71,7 +95,7 @@ describe('useSuggestions', () => {
     const songs = [{ _title: 'Song1', track: { su: 's1', tt: 'Song1', an: 'Artist' } }] as any[];
     const scores = { s1: { songId: 's1' } } as any;
 
-    const { result } = renderHook(() => useSuggestions('acc2', songs, scores, 1));
+    const { result } = renderHook(() => useSuggestions('acc2', songs, scores, 1), { wrapper });
     expect(mockSetSource).toHaveBeenCalledWith(songs, scores);
     expect(result.current.categories).toHaveLength(1);
     expect(result.current.categories[0]!.key).toBe('cat1');
@@ -83,7 +107,7 @@ describe('useSuggestions', () => {
     mockGetNext.mockReturnValueOnce(batch1).mockReturnValueOnce(batch2);
 
     const songs = [{ _title: 'S', track: { su: 's1', tt: 'S', an: 'A' } }] as any[];
-    const { result } = renderHook(() => useSuggestions('acc3', songs, {}, 1));
+    const { result } = renderHook(() => useSuggestions('acc3', songs, {}, 1), { wrapper });
 
     act(() => { result.current.loadMore(); });
     expect(result.current.categories).toHaveLength(2);
@@ -96,7 +120,7 @@ describe('useSuggestions', () => {
     mockGetNext.mockReturnValueOnce(batch1).mockReturnValueOnce(batch2).mockReturnValueOnce(batch3);
 
     const songs = [{ _title: 'S', track: { su: 's1', tt: 'S', an: 'A' } }] as any[];
-    const { result } = renderHook(() => useSuggestions('acc-dedup', songs, {}, 1));
+    const { result } = renderHook(() => useSuggestions('acc-dedup', songs, {}, 1), { wrapper });
 
     act(() => {
       result.current.loadMore();
@@ -119,7 +143,7 @@ describe('useSuggestions', () => {
       .mockReturnValueOnce([]); // after resetForEndless
 
     const songs = [{ _title: 'S', track: { su: 's1', tt: 'S', an: 'A' } }] as any[];
-    const { result } = renderHook(() => useSuggestions('acc4', songs, {}, 1));
+    const { result } = renderHook(() => useSuggestions('acc4', songs, {}, 1), { wrapper });
 
     act(() => { result.current.loadMore(); });
     expect(mockResetForEndless).toHaveBeenCalled();
@@ -134,7 +158,7 @@ describe('useSuggestions', () => {
       .mockReturnValueOnce(batch2); // after resetForEndless - has data
 
     const songs = [{ _title: 'S', track: { su: 's1', tt: 'S', an: 'A' } }] as any[];
-    const { result } = renderHook(() => useSuggestions('acc5', songs, {}, 1));
+    const { result } = renderHook(() => useSuggestions('acc5', songs, {}, 1), { wrapper });
 
     act(() => { result.current.loadMore(); });
     expect(mockResetForEndless).toHaveBeenCalled();
@@ -143,7 +167,7 @@ describe('useSuggestions', () => {
   });
 
   it('loadMore does nothing before generator is ready', () => {
-    const { result } = renderHook(() => useSuggestions('acc6', [], {}, 1));
+    const { result } = renderHook(() => useSuggestions('acc6', [], {}, 1), { wrapper });
     act(() => { result.current.loadMore(); });
     expect(result.current.categories).toEqual([]);
   });
@@ -154,7 +178,7 @@ describe('useSuggestions', () => {
     const songs = [{ _title: 'S', track: { su: 's1', tt: 'S', an: 'A' } }] as any[];
     const { result, rerender } = renderHook(
       ({ s }) => useSuggestions('acc7', s, {}, 1),
-      { initialProps: { s: songs } },
+      { initialProps: { s: songs }, wrapper },
     );
     expect(result.current.categories).toHaveLength(1);
     // Re-render with same songs should not re-initialize
@@ -177,7 +201,7 @@ describe('useSuggestions', () => {
     });
 
     const songs = [{ _title: 'S', track: { su: 's1', tt: 'S', an: 'A' } }] as any[];
-    const { result } = renderHook(() => useSuggestions('acc-limit', songs, {}, 1));
+    const { result } = renderHook(() => useSuggestions('acc-limit', songs, {}, 1), { wrapper });
 
     for (let trigger = 0; trigger < 166; trigger += 1) {
       act(() => { result.current.loadMore(); });
@@ -204,7 +228,7 @@ describe('useSuggestions', () => {
     });
 
     const songs = [{ _title: 'S', track: { su: 's1', tt: 'S', an: 'A' } }] as any[];
-    const { result } = renderHook(() => useSuggestions('acc-reset', songs, {}, 1));
+    const { result } = renderHook(() => useSuggestions('acc-reset', songs, {}, 1), { wrapper });
     const originalMixKey = result.current.mixKey;
 
     act(() => { result.current.loadMore(); });
@@ -220,19 +244,136 @@ describe('useSuggestions', () => {
     dateNow.mockRestore();
   });
 
-  it('reuses a cached mix when the same source remounts', () => {
+  it('reuses a cached mix and rivals query when the same source remounts', async () => {
     const batch = [{ key: 'cached', title: 'Cached', songs: [] }];
     mockGetNext.mockReturnValue(batch);
     const songs = [{ _title: 'S', track: { su: 's1', tt: 'S', an: 'A' } }] as any[];
 
-    const first = renderHook(() => useSuggestions('acc-cached', songs, {}, 1));
+    const first = renderHook(() => useSuggestions('acc-cached', songs, {}, 1), { wrapper });
     const mixKey = first.result.current.mixKey;
+    await waitFor(() => {
+      expect(mockGetRivalsAll).toHaveBeenCalledTimes(1);
+    });
     first.unmount();
 
-    const second = renderHook(() => useSuggestions('acc-cached', songs, {}, 1));
+    const second = renderHook(() => useSuggestions('acc-cached', songs, {}, 1), { wrapper });
     expect(second.result.current.mixKey).toBe(mixKey);
     expect(second.result.current.categories).toEqual(batch);
     expect(mockGeneratorOptions).toHaveBeenCalledTimes(1);
+    expect(mockGetRivalsAll).toHaveBeenCalledTimes(1);
+    expect(mockGeneratorInstances[0]!.setRivalData).toHaveBeenCalledTimes(1);
+  });
+
+  it('injects cached rival data before a fresh mix generates categories', async () => {
+    mockGetNext.mockReturnValue([{ key: 'cat', title: 'Category', songs: [] }]);
+    const songs = [{ _title: 'S', track: { su: 's1', tt: 'S', an: 'A' } }] as any[];
+    const { result } = renderHook(
+      () => useSuggestions('acc-fresh-rivals', songs, {}, 1),
+      { wrapper },
+    );
+
+    await waitFor(() => {
+      expect(mockGeneratorInstances[0]!.setRivalData).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => {
+      result.current.startNewMix();
+    });
+
+    expect(mockGeneratorInstances).toHaveLength(2);
+    expect(mockGeneratorInstances[1]!.setRivalData).toHaveBeenCalledTimes(1);
+    expect(mockGeneratorInstances[1]!.setRivalData.mock.invocationCallOrder[0])
+      .toBeLessThan(mockGetNext.mock.invocationCallOrder[1]!);
+  });
+
+  it('injects updated rivals data without replacing the active mix', async () => {
+    mockGetNext.mockReturnValue([{ key: 'cat', title: 'Category', songs: [] }]);
+    const songs = [{ _title: 'S', track: { su: 's1', tt: 'S', an: 'A' } }] as any[];
+    const { result } = renderHook(
+      () => useSuggestions('acc-updated', songs, {}, 1),
+      { wrapper },
+    );
+    const mixKey = result.current.mixKey;
+
+    await waitFor(() => {
+      expect(mockGeneratorInstances[0]!.setRivalData).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => {
+      queryClient.setQueryData(queryKeys.rivalsAll('acc-updated'), {
+        accountId: 'acc-updated',
+        songs: [{ songId: 'song-2' }],
+        combos: [],
+      });
+    });
+
+    await waitFor(() => {
+      expect(mockGeneratorInstances[0]!.setRivalData).toHaveBeenCalledTimes(2);
+    });
+    expect(result.current.mixKey).toBe(mixKey);
+    expect(mockGeneratorInstances).toHaveLength(1);
+  });
+
+  it('reactivates an exhausted mix when updated rival data queues work', async () => {
+    mockGetNext
+      .mockReturnValueOnce([{ key: 'initial', title: 'Initial', songs: [] }])
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([{ key: 'rival', title: 'Rival', songs: [] }]);
+    const songs = [{ _title: 'S', track: { su: 's1', tt: 'S', an: 'A' } }] as any[];
+    const { result } = renderHook(
+      () => useSuggestions('acc-reactivate', songs, {}, 1),
+      { wrapper },
+    );
+
+    await waitFor(() => {
+      expect(mockGeneratorInstances[0]!.setRivalData).toHaveBeenCalledTimes(1);
+    });
+    act(() => {
+      result.current.loadMore();
+    });
+    expect(result.current.hasMore).toBe(false);
+
+    act(() => {
+      queryClient.setQueryData(queryKeys.rivalsAll('acc-reactivate'), {
+        accountId: 'acc-reactivate',
+        songs: [{ songId: 'song-2' }],
+        combos: [],
+      });
+    });
+    await waitFor(() => {
+      expect(result.current.hasMore).toBe(true);
+    });
+
+    act(() => {
+      result.current.loadMore();
+    });
+    expect(result.current.categories.map(category => category.key)).toEqual([
+      'initial',
+      'rival',
+    ]);
+  });
+
+  it('captures the final scroll position during route cleanup', () => {
+    mockGetNext.mockReturnValue([{ key: 'cat', title: 'Category', songs: [] }]);
+    const scrollElement = document.createElement('div');
+    mockScrollContainerRef.current = scrollElement;
+    const songs = [{ _title: 'S', track: { su: 's1', tt: 'S', an: 'A' } }] as any[];
+    const hook = renderHook(
+      () => useSuggestions('acc-scroll-cleanup', songs, {}, 1),
+      { wrapper },
+    );
+    const mixKey = hook.result.current.mixKey!;
+    scrollElement.scrollTop = 432;
+    window.location.hash = '#/settings';
+
+    hook.unmount();
+
+    expect(getSuggestionsScrollRestoreState(mixKey)).toEqual({
+      matches: true,
+      restorable: false,
+      scrollY: 432,
+    });
   });
 
   it('ignores a rival response for a replaced mix', async () => {
@@ -245,9 +386,12 @@ describe('useSuggestions', () => {
 
     const { rerender } = renderHook(
       ({ accountId }) => useSuggestions(accountId, songs, {}, 1),
-      { initialProps: { accountId: 'acc-stale' } },
+      { initialProps: { accountId: 'acc-stale' }, wrapper },
     );
     rerender({ accountId: 'acc-next' });
+    await waitFor(() => {
+      expect(mockGetRivalsAll).toHaveBeenCalledTimes(2);
+    });
 
     await act(async () => {
       resolveFirst({ accountId: 'acc-stale', songs: [], combos: [] });
@@ -256,6 +400,8 @@ describe('useSuggestions', () => {
 
     expect(mockGeneratorInstances).toHaveLength(2);
     expect(mockGeneratorInstances[0]!.setRivalData).not.toHaveBeenCalled();
-    expect(mockGeneratorInstances[1]!.setRivalData).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(mockGeneratorInstances[1]!.setRivalData).toHaveBeenCalledTimes(1);
+    });
   });
 });

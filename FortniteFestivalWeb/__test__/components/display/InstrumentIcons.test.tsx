@@ -17,6 +17,25 @@ describe('InstrumentIcon', () => {
     const img = container.querySelector('img');
     expect(img).toBeTruthy();
     expect(img?.src).toContain('guitar');
+    expect(img).toHaveAttribute('alt', 'Lead');
+    expect(img).toHaveAttribute('data-instrument', 'Solo_Guitar');
+  });
+
+  it('uses friendly keyboard labels and supports decorative icons', () => {
+    const { rerender, container } = render(
+      <InstrumentIcon instrument="Solo_Guitar" sig="Keyboard" />,
+    );
+    expect(container.querySelector('img')).toHaveAttribute('alt', 'Keys');
+
+    rerender(<InstrumentIcon instrument="Solo_Guitar" decorative />);
+    expect(container.querySelector('img')).toHaveAttribute('alt', '');
+  });
+
+  it('keeps non-keyboard instrument labels when a song uses keyboard lead charts', () => {
+    const { container } = render(
+      <InstrumentIcon instrument="Solo_Bass" sig="Keyboard" />,
+    );
+    expect(container.querySelector('img')).toHaveAttribute('alt', 'Bass');
   });
 
   it('applies size', () => {

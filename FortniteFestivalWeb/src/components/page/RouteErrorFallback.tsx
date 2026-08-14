@@ -15,7 +15,7 @@ export default function RouteErrorFallback() {
   const s = useStyles();
   return (
     <div style={s.container}>
-      <h2 style={s.title}>{t('common.error')}</h2>
+      <h1 style={s.title}>{t('common.error')}</h1>
       <p style={s.message}>{t('error.routeLoadFailed')}</p>
       <div style={s.actions}>
         <a href="#/songs" style={s.linkBtn}>{t('error.goToSongs')}</a>

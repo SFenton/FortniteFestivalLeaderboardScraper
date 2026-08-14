@@ -1,10 +1,11 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-13
-last_verified_commit: aa33576e
+last_verified: 2026-08-14
+last_verified_commit: a20b9d89
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
+  - FSTService/Scraping/Replay/TierZeroRegularFile.cs
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/playwright.config.ts
   - FortniteFestivalWeb/playwright.component.config.ts
@@ -40,6 +41,13 @@ The service suite uses xUnit. Integration coverage includes hosted-role
 selection, API route classification, publication contracts, persistence, and
 worker behavior. CI enforces the repository's service coverage gate.
 
+The Tier-0 native filesystem syscall shim is excluded from the aggregate line
+denominator because its branches are operating-system ABI specific. Focused
+contract tests execute the supported Linux no-follow/openat2 behavior,
+special-file rejection, lock contention, atomic moves, and ancestor-symlink
+guards; the package, manifest, lifecycle, and verifier logic remains in the
+normal coverage gate.
+
 ## Web and shared TypeScript packages
 
 ```bash
@@ -62,6 +70,14 @@ Playwright browser projects are named by engine and owned layout:
 - `chromium-wide` owns Manual asset and breakpoint-boundary tests;
 - `webkit-mobile` owns critical iPhone-class and accessibility coverage;
 - `webkit-desktop` and `firefox-desktop` run in the scheduled matrix.
+
+Representative Songs, Suggestions, Leaderboards, Settings, and Manual routes
+must have no moderate, serious, or critical axe violations in the focused
+accessibility suite. The same suite owns skip navigation, route
+title/announcement, PUSH/POP focus, one-main-landmark behavior, reduced-motion,
+Save-Data, and friendly instrument image semantics. WebKit mobile runs this
+focused accessibility surface on every PR; WebKit desktop and Firefox desktop
+retain it in the nightly matrix.
 
 Component UX uses Playwright's stable stories-and-gallery model through
 `playwright.component.config.ts`; publication transitions use a dedicated

@@ -15,6 +15,7 @@ import PressableButton from '../common/PressableButton';
 import { getNotificationDestination } from './notificationDestination';
 import { formatNotificationPresentation, type NotificationFlagGroup, type NotificationFlagKind, type NotificationMessagePart, type NotificationPresentation } from './notificationText';
 import type { MobileNotification, NotificationMedia } from './notificationTypes';
+import { useVisualPreferences } from '../../hooks/ui/useVisualPreferences';
 
 export {
   filterSurfaceNotifications,
@@ -423,10 +424,17 @@ function NotificationMediaRail({ media, styles }: { media: NotificationMedia; st
 }
 
 function NotificationMediaCycle({ comboContent, cycleAlbumArt, styles }: { comboContent: ReactNode; cycleAlbumArt: { albumArt: string; alt: string }; styles: ReturnType<typeof useStyles> }) {
+  const { reducedMotion, saveData, isDocumentVisible } = useVisualPreferences();
+  const staticMedia = reducedMotion || saveData;
   const [visibleLayer, setVisibleLayer] = useState<NotificationMediaCycleLayer>(() => mediaCycleLayerAt(Date.now()));
   const [isFading, setIsFading] = useState(false);
 
   useEffect(() => {
+    if (staticMedia || !isDocumentVisible) {
+      setVisibleLayer('icons');
+      setIsFading(false);
+      return;
+    }
     let fadeTimer: ReturnType<typeof setTimeout> | undefined;
     let swapInterval: ReturnType<typeof setInterval> | undefined;
 
@@ -448,7 +456,20 @@ function NotificationMediaCycle({ comboContent, cycleAlbumArt, styles }: { combo
       if (fadeTimer) clearTimeout(fadeTimer);
       if (swapInterval) clearInterval(swapInterval);
     };
-  }, []);
+  }, [isDocumentVisible, staticMedia]);
+
+  if (staticMedia) {
+    return (
+      <div
+        style={styles.mediaCycle}
+        data-testid="notification-media-cycle"
+        data-media-cycle="static"
+        data-media-cycle-active-layer="icons"
+      >
+        {comboContent}
+      </div>
+    );
+  }
 
   const iconsStyle = visibleLayer === 'icons'
     ? isFading ? styles.mediaCycleFading : styles.mediaCycleVisible
@@ -474,7 +495,7 @@ function NotificationMediaCycle({ comboContent, cycleAlbumArt, styles }: { combo
         {comboContent}
       </div>
       <div style={{ ...styles.mediaCycleLayer, ...artStyle }} data-testid="notification-media-cycle-art" data-media-cycle-row-layer="art" aria-hidden="true">
-        <img src={cycleAlbumArt.albumArt} alt={cycleAlbumArt.alt} loading="lazy" style={styles.mediaArt} />
+        <img src={cycleAlbumArt.albumArt} alt="" loading="lazy" style={styles.mediaArt} />
       </div>
     </div>
   );

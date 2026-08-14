@@ -73,15 +73,18 @@ function bandComboFilter(overrides: Partial<NonNullable<ComponentProps<typeof Fi
   };
 }
 
-async function clickCurrentCompactInstrument(alt: string, index = 0) {
-  const instrument = (await screen.findAllByAltText(alt))[index];
+async function clickCurrentCompactInstrument(label: string, index = 0) {
+  const instrument = (await screen.findAllByRole('button', { name: label }))[index];
   expect(instrument).toBeDefined();
   if (!instrument) return;
-  fireEvent.click(instrument.closest('button') ?? instrument);
+  fireEvent.click(instrument);
 }
 
-function instrumentSelectionScale(alt: string, index = 0) {
-  return screen.getAllByAltText(alt)[index]?.closest('button')?.querySelector('div')?.style.transform;
+function instrumentSelectionScale(instrument: string, index = 0) {
+  return document.querySelectorAll(`img[data-instrument="${instrument}"]`)[index]
+    ?.closest('button')
+    ?.querySelector('div')
+    ?.style.transform;
 }
 
 /* ── Tests ── */
@@ -305,9 +308,9 @@ describe('FilterModal', () => {
     const combo = bandComboFilter();
     const { props } = renderModal({ selectedBandMode: true, selectedBandName: 'Test Duo', bandComboFilter: combo });
 
-    await clickCurrentCompactInstrument('Solo_Guitar', 0);
+    await clickCurrentCompactInstrument('Lead', 0);
     fireEvent.click(screen.getAllByLabelText('Next instrument')[1]!);
-    await clickCurrentCompactInstrument('Solo_Bass', 0);
+    await clickCurrentCompactInstrument('Bass', 0);
 
     await waitFor(() => expect(screen.getByText('Apply Filter Changes').closest('button')).not.toBeDisabled());
     fireEvent.click(screen.getByText('Apply Filter Changes'));
@@ -348,10 +351,10 @@ describe('FilterModal', () => {
     const combo = bandComboFilter();
     renderModal({ selectedBandMode: true, selectedBandName: 'Test Duo', bandComboFilter: combo });
 
-    await clickCurrentCompactInstrument('Solo_Guitar', 0);
+    await clickCurrentCompactInstrument('Lead', 0);
     fireEvent.click(screen.getAllByLabelText('Next instrument')[1]!);
     fireEvent.click(screen.getAllByLabelText('Next instrument')[1]!);
-    await clickCurrentCompactInstrument('Solo_Drums', 0);
+    await clickCurrentCompactInstrument('Drums', 0);
 
     expect(await screen.findByText('Invalid Configuration')).toBeDefined();
     expect(screen.getByText('Apply Filter Changes').closest('button')).toBeDisabled();

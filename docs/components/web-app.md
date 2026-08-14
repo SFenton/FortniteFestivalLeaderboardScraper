@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: web
-last_verified: 2026-08-13
-last_verified_commit: aa33576e
+last_verified: 2026-08-14
+last_verified_commit: a20b9d89
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
@@ -15,6 +15,14 @@ sources:
   - FortniteFestivalWeb/src/components/shell/mobile/BottomNav.tsx
   - FortniteFestivalWeb/src/contexts/FabVisibilityContext.tsx
   - FortniteFestivalWeb/src/pages/Page.tsx
+  - FortniteFestivalWeb/src/pages/settings/SettingsPage.tsx
+  - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.tsx
+  - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.module.css
+  - FortniteFestivalWeb/src/pages/settings/serviceProgress.ts
+  - FortniteFestivalWeb/src/pages/settings/serviceInfo.en.json
+  - FortniteFestivalWeb/src/hooks/data/useServiceInfo.ts
+  - FortniteFestivalWeb/e2e/specs/responsive/settings-progress.spec.ts
+  - /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/pr27-settings-live-ab-20260814T062455Z
   - FortniteFestivalWeb/src/pages/shop/ShopPage.tsx
   - FortniteFestivalWeb/src/pages/leaderboards/modals/RankByModal.tsx
   - FortniteFestivalWeb/src/pages/leaderboards/firstRun/metricInfo/
@@ -25,7 +33,11 @@ sources:
   - FortniteFestivalWeb/scripts/check-performance-budgets.mjs
   - .github/workflows/web-performance.yml
   - FortniteFestivalWeb/src/routes.ts
+  - FortniteFestivalWeb/src/routeMetadata.ts
   - FortniteFestivalWeb/src/api/
+  - FortniteFestivalWeb/src/components/page/RouteBoundary.tsx
+  - FortniteFestivalWeb/src/components/page/RouteGuards.tsx
+  - FortniteFestivalWeb/src/pages/NotFoundPage.tsx
   - FortniteFestivalWeb/src/contexts/
   - FortniteFestivalWeb/playwright.config.ts
   - FortniteFestivalWeb/playwright.component.config.ts
@@ -75,14 +87,21 @@ The route tree covers:
 - shop, optional manual, settings, and licenses.
 
 Use `src/routes.ts` for route construction and `src/App.tsx` for the rendered
-tree and access-dependent redirects. The manual is the only feature currently
-exposed through `/api/features`.
+tree. Static destinations and route-family matchers stay centralized in
+`src/routes.ts`; route title/announcement metadata stays in
+`src/routeMetadata.ts`. `RouteBoundary` gives every normal route, including
+the eager Songs page, the standard recoverable error UI. `RequirePlayer` and
+`RequireSelection` own access redirects with replace semantics, while one
+wildcard route retains malformed URLs and renders an intentional Not Found
+page. Route and tab ownership normalize trailing slashes, and Licenses remains
+owned by the Settings tab. The manual is the only feature currently exposed
+through `/api/features`.
 
 ## State ownership
 
 | State | Owner |
 |---|---|
-| Remote API data | React Query and API-specific caches |
+| Remote API data | React Query; shared option factories own keys, request functions, and policies |
 | Publication identity | `src/api/publication.ts` and `PublicationBoundary` |
 | User preferences | Settings context and browser storage |
 | Navigation/shareable filters | Route paths and search parameters where implemented |
@@ -90,6 +109,14 @@ exposed through `/api/features`.
 
 Do not add another global store without a cross-cutting need that the existing
 query/context split cannot model.
+
+Full-song player history uses one account/song query across Song Detail,
+Player History, and chart consumers. Rival data used by Suggestions is also
+React Query owned under the selected account. Profile sync, publication
+changes, and name refreshes invalidate the same account scopes, while the
+Suggestions module cache retains only locally generated mix/navigation state.
+Page-visit animation state is committed only after content is ready; render
+and abandoned/suspended work do not mutate session-level visit markers.
 
 ## UI structure and styling
 
@@ -103,6 +130,25 @@ but are `inert` and `aria-hidden`, so hidden controls never enter the tab order.
 Sort and Suggestions accordions expose named regions; dense instrument filter
 groups avoid excessive landmarks. Mobile BottomNav uses pending state only for
 visual feedback and assigns `aria-current="page"` solely to the committed route.
+
+Both shell layouts render exactly one `main#main-content[tabindex="-1"]`.
+`RouteAccessibility` owns the first-focusable HashRouter-safe skip link,
+document titles, polite route announcements, and focus transfer for distinct
+PUSH/REPLACE navigation. Initial navigation and POP do not move focus; modal
+ownership delays route focus and preserves a different connected control that
+the modal restores. `src/routes.ts` and `src/routeMetadata.ts` supply route
+matching, titles, and mobile chrome labels, including Not Found metadata. A
+visually hidden fallback H1 covers lazy/mobile gaps and self-removes whenever a
+page-owned visible H1 is present.
+
+Decorative visual policy is centralized through `useVisualPreferences`.
+Reduced motion removes background crossfades, continuous pulse/breathe
+animation, notification media cycling, and rotating selected-band members
+without disabling functional spinners. Save-Data omits remote decorative
+background and optional notification album art. Both policies pause timer work
+while the document is hidden. Instrument images expose canonical display
+labels while retaining wire keys only in `data-instrument`; repeated star PNGs
+are decorative children of one labelled star group.
 
 `Page` owns the standard bottom-clearance contract for fixed action surfaces.
 Its default `end` spacer always reserves FAB clearance, while `fixed` adjusts
@@ -142,6 +188,60 @@ domain types come from `@festival/core`; that package is not itself the HTTP
 client. API changes must keep the service endpoint files, shared types, and
 client aligned.
 
+### Settings service progress
+
+Settings keeps `useServiceInfo('settings')` as its sole request owner on the
+shared React Query key. Visible Settings polling is five seconds; hidden-page
+polling is throttled to 30 seconds. No WebSocket or page-owned duplicate fetch
+is added, and publication-boundary cache/reset ownership is unchanged.
+
+The service area has three primary groups: Health, Progress and ETA, and
+Publication timing. Operational IDs, raw heartbeat/progress timestamps,
+phase-plan/attempt details, and model diagnostics live under a collapsed native
+`details` disclosure. Selected player or band synchronization is a separate
+card rather than global service health.
+
+The browser uses stable phase/subphase IDs for localization with safe label
+fallbacks. A phase bar is determinate only when service-info v2 reports a final
+denominator and exact `phasePercent`; v1 and unknown-total payloads remain
+indeterminate and never reuse legacy `progressPercent` as exact progress.
+Overall percentage and ETA range/confidence/sample count render only when the
+server emits evidence that passes the client trust gate. Display memory rejects
+older payload regressions while allowing a new phase attempt to reset and
+announce itself.
+
+The English service-progress resource is co-located with the lazy Settings
+route and registered into the existing i18next `translation` namespace when
+that route loads. This keeps the stable phase/subphase vocabulary out of the
+eager application entry while retaining the repository's one-locale key
+contract and browser fallback behavior.
+
+Focused unit and Playwright coverage owns v1/v2 rendering, exact and unknown
+denominators, ETA suppression, warnings/failures/restarts, selected-profile
+separation, keyboard disclosure behavior, shared-request concurrency, and
+overflow at 320, 375, 768, and 1440 pixels.
+
+Live candidate validation accepted commit `0af25b3f` on 2026-08-14 against the
+official `aa33576e` web baseline while publication `1296` remained idle and
+unfrozen. At 320/375/768/1440 pixels the visible service card height changed
+from 890/848/512/512 px to about 581/539/448/293 px, the visible `N/A` count
+fell from five to zero, and neither image overflowed horizontally. Every width
+rendered the three groups with Technical details collapsed. Enter opened the
+disclosure and Space closed it. Two service-info requests occurred in the
+initial polling window with at most one in flight.
+
+The service section had zero axe violations in three matched baseline and
+candidate probes. The full Settings page retained the same pre-existing
+unlabelled `#fst-leeway-slider` finding in both images; PR-3 introduced no new
+accessibility finding. Alternating route probes kept every p50 and p95 delta
+below 10%, with exact publication, version, and songs response parity.
+
+The candidate reduced entry gzip by about 0.21%, increased the lazy Settings
+chunk from 9,810 to 14,551 gzip bytes, increased total static bytes by about
+0.028%, and retained 5,682 bytes of required entry-budget headroom. Evidence is
+stored under
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/pr27-settings-live-ab-20260814T062455Z`.
+
 The path modal can display the generated PNG or a text table. Text mode renders
 one row per activation, not one row per optional start note. Schema-v2
 artifacts supply authoritative trigger metadata for the fret cue, beat, time,
@@ -164,8 +264,16 @@ durable release history or a source of implementation status.
 Suggestions are locally generated from the current catalog and selected
 player/band score source; they are not paginated remote data and therefore do
 not use `useInfiniteQuery`. `useSuggestions` owns the generator, navigation
-cache, and batch commit guard. A lightweight per-identity scroll map is shared
-with the persistent shell. Because generated content caches one identity,
+cache, and batch commit guard. Solo rival input is fetched once per account
+through the shared React Query rivals-all key, then injected into the current
+generator without replacing its mix. Cached rival data is installed before a
+fresh mix generates its first category; data that resolves or refreshes later
+requeues rivalry pipelines while retaining emitted categories and history.
+The navigation cache records the applied query revision and combo, so an
+unchanged remount does not duplicate pipelines; a distinct revision also
+reactivates a previously exhausted mix. A lightweight per-identity scroll map
+is shared with the persistent shell.
+Because generated content caches one identity,
 creating a replacement generator resets its identity and invalidates snapshots
 for discarded identities before the shell can restore them. Same-identity
 route and layout remounts preserve their snapshot because they reuse the
@@ -180,11 +288,14 @@ Category cards are variable-height TanStack Virtual rows rooted in the
 persistent application scroll container. Stable mix-and-source ordinals,
 dynamic measurement, responsive remeasurement, and one retained focused row
 preserve filtering, keyboard focus, route navigation, and deep pixel
-restoration while bounding mounted DOM. The shell loads the restoration
+restoration while bounding mounted DOM. Filter measurement changes temporarily
+suppress virtualizer scroll compensation, enforce the intentional top reset,
+then restore normal deep-scroll compensation. The shell loads the restoration
 controller through the existing lazy Suggestions module and restores on route
 return, profile/layout ownership changes, and song-detail Back navigation. It
 holds the target through late virtual measurements until the scroll position
-is stable or user intent cancels. Pages without a restoration key no longer
+is stable or user intent cancels. Canonical and trailing-slash Suggestions
+paths share the same scroll owner. Pages without a restoration key no longer
 share an anonymous fallback cache.
 
 An internal `IntersectionObserver` sentinel observes against the application

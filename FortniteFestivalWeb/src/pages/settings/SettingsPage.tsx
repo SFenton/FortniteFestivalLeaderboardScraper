@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import type { TFunction } from 'i18next';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { Link } from 'react-router-dom';
@@ -12,7 +11,6 @@ import { ToggleRow } from '../../components/common/ToggleRow';
 import { RadioRow } from '../../components/common/RadioRow';
 import PressableButton from '../../components/common/PressableButton';
 import SectionHeader from '../../components/common/SectionHeader';
-import MarqueeText from '../../components/common/MarqueeText';
 import { ReorderList } from '../../components/sort/ReorderList';
 import { METADATA_SORT_DISPLAY } from '../../utils/songSettings';
 import type { ColumnKey } from '../songinfo/components/path/pathTableColumns';
@@ -20,13 +18,11 @@ import ConfirmAlert from '../../components/modals/ConfirmAlert';
 import { modalStyles as modalCss } from '../../components/modals/modalStyles';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import { ActionPill } from '../../components/common/ActionPill';
-import type { ServerInstrumentKey as InstrumentKey, BandSyncStatusResponse, ServiceInfoResponse, SyncStatusResponse } from '@festival/core/api';
+import type { ServerInstrumentKey as InstrumentKey, BandSyncStatusResponse, SyncStatusResponse } from '@festival/core/api';
 import { Colors, Font, Gap, Weight, Radius, Layout, Size, Display, Align, Overflow, CssValue, LineHeight, TextAlign, Opacity, btnDanger, btnPrimary, flexColumn, flexBetween, padding, transition, CssProp, FAST_FADE_MS, STAGGER_INTERVAL, FADE_DURATION, QUERY_NARROW_GRID } from '@festival/theme';
 import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
 import { useFirstRunReplay } from '../../hooks/ui/useFirstRun';
 import { FrostedCard } from '../../components/common/FrostedCard';
-import ArcSpinner, { SpinnerSize } from '../../components/common/ArcSpinner';
-import { Spinner } from '@festival/theme';
 import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
 import { statisticsSlides } from '../player/firstRun';
 import { suggestionsSlides } from '../suggestions/firstRun';
@@ -44,73 +40,24 @@ import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
 import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
-import { useContainerWidth } from '../../hooks/ui/useContainerWidth';
 import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 import { useServiceInfo } from '../../hooks/data/useServiceInfo';
+import { SelectedProfileSyncCard, SettingsServiceProgressCard } from './SettingsServiceProgress';
 import { IoBagHandle, IoChevronForward, IoCompass, IoDocumentText, IoDownload, IoInformationCircle, IoList, IoMusicalNotes, IoPersonCircle, IoServer, IoSettings, IoSparkles, IoTrash } from 'react-icons/io5';
 import { Routes as AppRoutes } from '../../routes';
+import { hasVisitedPage, markPageVisited } from '../../hooks/ui/usePageTransition';
 
 import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVersions';
 
 const PROFILE_SYNC_STATUS_POLL_MS = 5_000;
-const SERVICE_INFO_INLINE_KEY_MIN_WIDTH = 300;
 const SETTINGS_ACTION_BUTTON_WIDTH = 212;
 const QUICK_LINK_GLYPH_ICON_SIZE = 20;
 
-const SERVICE_PHASE_ORDER = [
-  'Initializing',
-  'Scraping',
-  'PostScrapeEnrichment',
-  'CalculatingFirstSeen',
-  'ResolvingNames',
-  'RefreshingRegisteredUsers',
-  'SongMachine',
-  'BackfillingScores',
-  'ReconstructingHistory',
-  'BandScraping',
-  'ComputingRankings',
-  'ComputingRivals',
-  'Precomputing',
-  'Finalizing',
-  'Cleanup',
-] as const;
-
-const SERVICE_PHASE_WEIGHTS: Record<(typeof SERVICE_PHASE_ORDER)[number], number> = {
-  Initializing: 2,
-  Scraping: 45,
-  PostScrapeEnrichment: 8,
-  CalculatingFirstSeen: 5,
-  ResolvingNames: 5,
-  RefreshingRegisteredUsers: 5,
-  SongMachine: 4,
-  BackfillingScores: 3,
-  ReconstructingHistory: 3,
-  BandScraping: 5,
-  ComputingRankings: 7,
-  ComputingRivals: 4,
-  Precomputing: 2,
-  Finalizing: 1,
-  Cleanup: 1,
-};
-
-/** Track whether settings page has rendered at least once to skip stagger on re-visit. */
-let _hasRendered = false;
-
- type SettingsQuickLinkId = 'app-settings' | 'diagnostics' | 'item-shop' | 'show-instruments' | 'show-metadata' | 'version' | 'service-info' | 'first-run' | 'licenses' | 'refresh-profile-name' | 'export' | 'reset';
+type SettingsQuickLinkId = 'app-settings' | 'diagnostics' | 'item-shop' | 'show-instruments' | 'show-metadata' | 'version' | 'service-info' | 'profile-sync' | 'first-run' | 'licenses' | 'refresh-profile-name' | 'export' | 'reset';
 
 type SettingsQuickLink = PageQuickLinkItem & {
   id: SettingsQuickLinkId;
 };
-
-type ServiceInfoRowItem = {
-  id: string;
-  label: string;
-  value: string;
-  showSpinner?: boolean;
-};
-
-/** Width contribution of the inline spinner adornment (spinner diameter + leading gap). */
-const SERVICE_INFO_SPINNER_WIDTH = Spinner[SpinnerSize.SM].size + Gap.md;
 
 function FadeInDiv({ delay, children, style }: { delay?: number; children: React.ReactNode; style?: CSSProperties }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -210,7 +157,7 @@ function leewayTrackBackground(value: number): string {
 }
 
 /* v8 ignore start — LeewaySlider: DOM style injection not testable in jsdom */
-function LeewaySlider({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+function LeewaySlider({ value, label, onChange }: { value: number; label: string; onChange: (v: number) => void }) {
   const styleRef = useRef<HTMLStyleElement | null>(null);
 
   useEffect(() => {
@@ -237,6 +184,8 @@ function LeewaySlider({ value, onChange }: { value: number; onChange: (v: number
         max={5}
         step={0.1}
         value={value}
+        aria-label={label}
+        aria-valuetext={`${value > 0 ? '+' : ''}${value.toFixed(1)}%`}
         onChange={e => onChange(Math.round(parseFloat(e.target.value) * 10) / 10)}
         style={{ flex: 1, background: leewayTrackBackground(value) }}
       />
@@ -248,243 +197,12 @@ function LeewaySlider({ value, onChange }: { value: number; onChange: (v: number
 }
 /* v8 ignore stop */
 
-function formatLocalDateTime(value: string | null | undefined, fallback: string): string {
-  if (!value) return fallback;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.valueOf())) return fallback;
-  return parsed.toLocaleString();
-}
-
-function formatPercentValue(value: number | null | undefined): string | null {
-  if (typeof value !== 'number' || Number.isNaN(value)) return null;
-  return `${Math.max(0, Math.min(100, value)).toFixed(1)}%`;
-}
-
-function formatDurationShort(totalSeconds: number): string {
-  const clamped = Math.max(0, Math.floor(totalSeconds));
-  const hours = Math.floor(clamped / 3600);
-  const minutes = Math.floor((clamped % 3600) / 60);
-  const seconds = clamped % 60;
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  if (minutes > 0) return `${minutes}m ${seconds}s`;
-  return `${seconds}s`;
-}
-
-function computeOverallPipelineProgress(serviceInfo: ServiceInfoResponse): number | null {
-  if (serviceInfo.currentUpdate.status !== 'updating') return null;
-  const phase = serviceInfo.currentUpdate.phase;
-  if (!phase) return null;
-
-  const phaseIndex = SERVICE_PHASE_ORDER.indexOf(phase as (typeof SERVICE_PHASE_ORDER)[number]);
-  const phaseProgress = serviceInfo.currentUpdate.progressPercent ?? 0;
-
-  if (phaseIndex < 0) {
-    return typeof serviceInfo.currentUpdate.progressPercent === 'number'
-      ? Math.max(0, Math.min(100, serviceInfo.currentUpdate.progressPercent))
-      : null;
-  }
-
-  const completedWeight = SERVICE_PHASE_ORDER
-    .slice(0, phaseIndex)
-    .reduce((sum, name) => sum + SERVICE_PHASE_WEIGHTS[name], 0);
-  const currentPhase = SERVICE_PHASE_ORDER[phaseIndex];
-  if (!currentPhase) return null;
-  const phaseWeight = SERVICE_PHASE_WEIGHTS[currentPhase];
-  const clampedPhase = Math.max(0, Math.min(100, phaseProgress));
-  return Math.max(0, Math.min(100, completedWeight + phaseWeight * (clampedPhase / 100)));
-}
-
-function formatPhaseLabel(phase: string): string {
-  return phase
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/_/g, ' ')
-    .trim();
-}
-
-function computeServiceStepPositionText(t: TFunction, serviceInfo: ServiceInfoResponse): string | null {
-  if (serviceInfo.currentUpdate.status !== 'updating') return null;
-  const phase = serviceInfo.currentUpdate.phase;
-  if (!phase) return null;
-
-  const phaseIndex = SERVICE_PHASE_ORDER.indexOf(phase as (typeof SERVICE_PHASE_ORDER)[number]);
-  const stepPrefix = phaseIndex >= 0
-    ? t('settings.serviceInfo.stepOfTotal', { current: phaseIndex + 1, total: SERVICE_PHASE_ORDER.length })
-    : t('settings.serviceInfo.stepOfTotalUnknown', { total: SERVICE_PHASE_ORDER.length });
-  return `${stepPrefix}: ${formatPhaseLabel(phase)}`;
-}
-
-function describeServiceSubStatus(t: TFunction, serviceInfo: ServiceInfoResponse): string {
-  if (serviceInfo.currentUpdate.status === 'idle') {
-    return t('settings.serviceInfo.subStatusIdle');
-  }
-  if (serviceInfo.currentUpdate.status === 'failed') {
-    return t('settings.serviceInfo.subStatusFailed');
-  }
-  if (serviceInfo.currentUpdate.status === 'stalled') {
-    return t('settings.serviceInfo.subStatusStalled');
-  }
-
-  const phase = serviceInfo.currentUpdate.phase;
-  const subOperation = serviceInfo.currentUpdate.subOperation;
-
-  if (phase === 'Scraping') {
-    if (subOperation === 'fetching_leaderboards' || subOperation === 'deep_scraping') {
-      return t('settings.serviceInfo.subStatusUpdatingScores');
-    }
-    if (subOperation === 'persisting_scores' || subOperation === 'flushing_solo' || subOperation === 'flushing_band') {
-      return t('settings.serviceInfo.subStatusWritingScores');
-    }
-    return t('settings.serviceInfo.subStatusPostProcessing');
-  }
-
-  if (phase === 'BackfillingScores' || phase === 'ReconstructingHistory' || phase === 'SongMachine' || phase === 'CalculatingFirstSeen') {
-    return t('settings.serviceInfo.subStatusUpdatingHistory');
-  }
-
-  if (phase === 'PostScrapeEnrichment' || phase === 'ResolvingNames' || phase === 'RefreshingRegisteredUsers') {
-    return t('settings.serviceInfo.subStatusPostProcessing');
-  }
-
-  if (phase === 'ComputingRivals') {
-    return t('settings.serviceInfo.subStatusUpdatingRivals');
-  }
-
-  if (phase === 'ComputingRankings' || phase === 'Precomputing' || phase === 'Finalizing') {
-    return t('settings.serviceInfo.subStatusUpdatingLeaderboards');
-  }
-
-  if (phase === 'BandScraping') {
-    return t('settings.serviceInfo.subStatusUpdatingBandScores');
-  }
-
-  if (phase === 'Initializing') {
-    return t('settings.serviceInfo.subStatusInitializing');
-  }
-
-  return t('settings.serviceInfo.subStatusWorking');
-}
-
-function describeWorkerStatus(t: TFunction, serviceInfo: ServiceInfoResponse, fallback: string): string {
-  const status = serviceInfo.workerStatus?.status;
-  switch (status) {
-    case 'online':
-      return t('settings.serviceInfo.workerStatusOnline');
-    case 'offline':
-      return t('settings.serviceInfo.workerStatusOffline');
-    case 'stale':
-      return t('settings.serviceInfo.workerStatusStale');
-    case 'starting':
-      return t('settings.serviceInfo.workerStatusStarting');
-    case 'stopping':
-      return t('settings.serviceInfo.workerStatusStopping');
-    case 'unknown':
-      return t('settings.serviceInfo.workerStatusUnknown');
-    default:
-      return status || fallback;
-  }
-}
-
-function describeTrackedPlayerRivalsStatus(t: TFunction, syncStatus: SyncStatusResponse | null, fallback: string): string {
-  switch (syncStatus?.rivals?.status) {
-    case 'pending':
-      return t('settings.serviceInfo.rivalsPending');
-    case 'in_progress':
-      return t('settings.serviceInfo.rivalsUpdating');
-    case 'complete':
-      return t('settings.serviceInfo.rivalsComplete');
-    case 'error':
-      return t('settings.serviceInfo.rivalsError');
-    default:
-      return syncStatus?.isTracked ? t('settings.serviceInfo.rivalsPending') : fallback;
-  }
-}
-
-function estimateTextWidth(text: string, fontSize = Font.md): number {
-  return Math.ceil(Array.from(text).length * fontSize * 0.62);
-}
-
-function measureSingleLineTextWidth(el: HTMLElement | null, text: string, fontSize = Font.md): number {
-  const measured = Math.max(el?.scrollWidth ?? 0, el?.offsetWidth ?? 0);
-  return measured > 0 ? measured : estimateTextWidth(text, fontSize);
-}
-
-function ServiceInfoRows({ rows, styles }: { rows: ServiceInfoRowItem[]; styles: ReturnType<typeof useSettingsStyles> }) {
-  const listRef = useRef<HTMLDivElement>(null);
-  const keyMeasureRefs = useRef<Record<string, HTMLSpanElement | null>>({});
-  const valueMeasureRefs = useRef<Record<string, HTMLSpanElement | null>>({});
-  const listWidth = useContainerWidth(listRef);
-  const [stackAllRows, setStackAllRows] = useState(false);
-
-  useLayoutEffect(() => {
-    if (rows.length === 0 || listWidth <= 0) {
-      return;
-    }
-
-    const nextStackAllRows = rows.some((row) => {
-      const keyWidth = measureSingleLineTextWidth(keyMeasureRefs.current[row.id] ?? null, row.label);
-      const valueWidth = measureSingleLineTextWidth(valueMeasureRefs.current[row.id] ?? null, row.value)
-        + (row.showSpinner ? SERVICE_INFO_SPINNER_WIDTH : 0);
-      return Math.max(keyWidth, SERVICE_INFO_INLINE_KEY_MIN_WIDTH) + valueWidth + Gap.md > listWidth;
-    });
-
-    setStackAllRows(prev => prev === nextStackAllRows ? prev : nextStackAllRows);
-  }, [listWidth, rows]);
-
-  return (
-    <div ref={listRef} data-testid="settings-service-info-list" data-layout={stackAllRows ? 'stacked' : 'inline'} style={styles.serviceInfoList}>
-      <div aria-hidden="true" style={styles.serviceInfoMeasureBox}>
-        {rows.map((row) => (
-          <div key={row.id} style={styles.serviceInfoMeasureRow}>
-            <span ref={(element) => { keyMeasureRefs.current[row.id] = element; }} style={styles.serviceInfoMeasureText}>{row.label}</span>
-            <span ref={(element) => { valueMeasureRefs.current[row.id] = element; }} style={styles.serviceInfoMeasureText}>{row.value}</span>
-          </div>
-        ))}
-      </div>
-
-      {rows.map((row) => (
-        <div
-          key={row.id}
-          data-testid={`settings-service-info-row-${row.id}`}
-          data-layout={stackAllRows ? 'stacked' : 'inline'}
-          style={stackAllRows ? styles.serviceInfoRowStacked : styles.serviceInfoRowInline}
-        >
-          {stackAllRows ? (
-            <>
-              <span style={styles.serviceInfoKeyStacked}>{row.label}</span>
-              {row.showSpinner ? (
-                <span style={styles.serviceInfoValueStackedWithSpinner}>
-                  <MarqueeText text={row.value} as="span" style={styles.serviceInfoValueStackedText} />
-                  <ArcSpinner size={SpinnerSize.SM} style={styles.serviceInfoSpinner} />
-                </span>
-              ) : (
-                <MarqueeText text={row.value} as="span" style={styles.serviceInfoValueStacked} />
-              )}
-            </>
-          ) : (
-            <>
-              <span style={styles.serviceInfoKeyInline}>{row.label}</span>
-              {row.showSpinner ? (
-                <span style={styles.serviceInfoValueInlineWithSpinner}>
-                  <span style={styles.serviceInfoValueInline}>{row.value}</span>
-                  <ArcSpinner size={SpinnerSize.SM} style={styles.serviceInfoSpinner} />
-                </span>
-              ) : (
-                <span style={styles.serviceInfoValueInline}>{row.value}</span>
-              )}
-            </>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export default function SettingsPage() {
   useSetPageReady(true);
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { settings, updateSettings, resetSettings } = useSettings();
-  const { profile: selectedProfile, player: trackedPlayer } = useTrackedPlayer();
+  const { profile: selectedProfile } = useTrackedPlayer();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
   const isWideDesktop = useIsWideDesktop();
@@ -530,8 +248,10 @@ export default function SettingsPage() {
   const [tapDiagnosticsEnabled, setTapDiagnosticsEnabled] = useState(() => getTapDiagnosticsPreference('diagnostics'));
   const [tapTelemetryEnabled, setTapTelemetryEnabled] = useState(() => getTapDiagnosticsPreference('telemetry'));
   // Skip stagger on revisit
-  const skipAnimRef = useRef(_hasRendered);
-  _hasRendered = true;
+  const skipAnimRef = useRef(hasVisitedPage('settings'));
+  useEffect(() => {
+    markPageVisited('settings');
+  }, []);
 
   const st = useSettingsStyles(isMobile, settings.filterInvalidScores, settings.songRowVisualOrderEnabled);
   const selectedPlayerAccountId = selectedProfile?.type === 'player' ? selectedProfile.accountId : null;
@@ -594,68 +314,6 @@ export default function SettingsPage() {
       if (timer) clearTimeout(timer);
     };
   }, [selectedBandTeamKey, selectedBandType, selectedPlayerAccountId, selectedProfile]);
-  const serviceInfoFallback = serviceInfoLoadFailed ? t('common.failedToLoad') : serviceInfo ? t('settings.serviceInfo.unavailable') : t('common.loading');
-  const selectedProfileFallback = selectedProfileSyncLoadFailed ? t('common.failedToLoad') : (trackedPlayerSyncStatus || selectedBandSyncStatus) ? t('settings.serviceInfo.unavailable') : t('common.loading');
-
-  const lastLeaderboardUpdateStart = formatLocalDateTime(
-    serviceInfo?.lastCompletedUpdate?.startedAt,
-    serviceInfoFallback,
-  );
-  const lastLeaderboardUpdateComplete = formatLocalDateTime(
-    serviceInfo?.lastCompletedUpdate?.completedAt,
-    serviceInfoFallback,
-  );
-  const currentLeaderboardUpdateStart = formatLocalDateTime(
-    serviceInfo && serviceInfo.currentUpdate.status !== 'idle'
-      ? serviceInfo.currentUpdate.startedAt
-      : null,
-    serviceInfo ? t('settings.serviceInfo.notApplicable') : serviceInfoFallback,
-  );
-  const leaderboardUpdateStatus = serviceInfo
-    ? serviceInfo.currentUpdate.status === 'updating'
-      ? t('settings.serviceInfo.statusUpdating')
-      : serviceInfo.currentUpdate.status === 'failed'
-        ? t('settings.serviceInfo.statusFailed')
-        : serviceInfo.currentUpdate.status === 'stalled'
-          ? t('settings.serviceInfo.statusStalled')
-          : t('settings.serviceInfo.statusIdle')
-    : serviceInfoFallback;
-  const leaderboardUpdateSubStatus = serviceInfo
-    ? describeServiceSubStatus(t, serviceInfo)
-    : serviceInfoFallback;
-  const workerOperation = serviceInfo?.workerStatus?.currentOperation ?? serviceInfo?.workerStatus?.lastOperation ?? null;
-  const workerStatusText = serviceInfo
-    ? describeWorkerStatus(t, serviceInfo, serviceInfoFallback)
-    : serviceInfoFallback;
-  const workerActivityText = serviceInfo
-    ? workerOperation?.operationLabel ?? t('settings.serviceInfo.workerActivityIdle')
-    : serviceInfoFallback;
-  const workerActivityStarted = formatLocalDateTime(
-    workerOperation?.startedAt,
-    serviceInfo ? t('settings.serviceInfo.notApplicable') : serviceInfoFallback,
-  );
-  const workerActivityUpdated = formatLocalDateTime(
-    workerOperation?.updatedAt,
-    serviceInfo ? t('settings.serviceInfo.notApplicable') : serviceInfoFallback,
-  );
-  const workerActivityEnded = formatLocalDateTime(
-    workerOperation?.endedAt,
-    serviceInfo ? t('settings.serviceInfo.notApplicable') : serviceInfoFallback,
-  );
-  const workerLastHeartbeat = formatLocalDateTime(
-    serviceInfo?.workerStatus?.lastHeartbeatAt,
-    serviceInfo ? t('settings.serviceInfo.notApplicable') : serviceInfoFallback,
-  );
-  const nextLeaderboardScheduledUpdate = serviceInfo
-    ? serviceInfo.nextScheduledUpdateAt
-      ? formatLocalDateTime(serviceInfo.nextScheduledUpdateAt, serviceInfoFallback)
-      : serviceInfo.currentUpdate.status === 'updating' || serviceInfo.currentUpdate.status === 'stalled'
-        ? t('settings.serviceInfo.afterCurrentUpdate')
-        : t('settings.serviceInfo.awaitingFirstUpdate')
-    : serviceInfoFallback;
-  const trackedPlayerRivalsStatus = trackedPlayer
-    ? describeTrackedPlayerRivalsStatus(t, trackedPlayerSyncStatus, selectedProfileFallback)
-    : null;
   const canExportData = !!selectedProfile && !isExportingData;
   const selectedProfileRefreshAccountIds = useMemo(
     () => getSelectedProfileRefreshAccountIds(selectedProfile),
@@ -678,82 +336,6 @@ export default function SettingsPage() {
   const exportDataDescription = !selectedProfile
     ? t('settings.exportDataNoProfileDescription')
     : t('settings.exportDataDescription', { player: selectedProfileName });
-  const phaseProgressText = serviceInfo
-    ? serviceInfo.currentUpdate.status === 'updating'
-      ? (formatPercentValue(serviceInfo.currentUpdate.progressPercent) ?? t('settings.serviceInfo.progressEstimating'))
-      : t('settings.serviceInfo.notApplicable')
-    : serviceInfoFallback;
-  const overallProgressText = serviceInfo
-    ? serviceInfo.currentUpdate.status === 'updating'
-      ? (formatPercentValue(computeOverallPipelineProgress(serviceInfo)) ?? t('settings.serviceInfo.progressEstimating'))
-      : t('settings.serviceInfo.notApplicable')
-    : serviceInfoFallback;
-  const updateEtaText = serviceInfo
-    ? serviceInfo.currentUpdate.status === 'updating'
-      ? (typeof serviceInfo.currentUpdate.estimatedRemainingSeconds === 'number'
-        ? formatDurationShort(serviceInfo.currentUpdate.estimatedRemainingSeconds)
-        : t('settings.serviceInfo.progressEstimating'))
-      : t('settings.serviceInfo.notApplicable')
-    : serviceInfoFallback;
-  const updateStepPositionText = serviceInfo
-    ? serviceInfo.currentUpdate.status === 'updating'
-      ? (computeServiceStepPositionText(t, serviceInfo) ?? t('settings.serviceInfo.progressEstimating'))
-      : t('settings.serviceInfo.notApplicable')
-    : serviceInfoFallback;
-
-  const serviceInfoRows = useMemo<ServiceInfoRowItem[]>(() => {
-    const isUpdating = serviceInfo?.currentUpdate.status === 'updating';
-    const rows: ServiceInfoRowItem[] = [
-      { id: 'worker-status', label: t('settings.serviceInfo.workerStatus'), value: workerStatusText },
-      { id: 'worker-activity', label: t('settings.serviceInfo.workerActivity'), value: workerActivityText },
-      { id: 'worker-activity-start', label: t('settings.serviceInfo.workerActivityStart'), value: workerActivityStarted },
-      { id: 'worker-activity-update', label: t('settings.serviceInfo.workerActivityUpdate'), value: workerActivityUpdated },
-      { id: 'worker-activity-end', label: t('settings.serviceInfo.workerActivityEnd'), value: workerActivityEnded },
-      { id: 'worker-heartbeat', label: t('settings.serviceInfo.workerHeartbeat'), value: workerLastHeartbeat },
-      { id: 'last-update-start', label: t('settings.serviceInfo.lastUpdateStart'), value: lastLeaderboardUpdateStart },
-      { id: 'last-update-complete', label: t('settings.serviceInfo.lastUpdateComplete'), value: lastLeaderboardUpdateComplete },
-      { id: 'current-update-start', label: t('settings.serviceInfo.currentUpdateStart'), value: currentLeaderboardUpdateStart },
-      { id: 'update-status', label: t('settings.serviceInfo.updateStatus'), value: leaderboardUpdateStatus, showSpinner: isUpdating },
-      { id: 'update-sub-status', label: t('settings.serviceInfo.updateSubStatus'), value: leaderboardUpdateSubStatus, showSpinner: isUpdating },
-      { id: 'update-step-position', label: t('settings.serviceInfo.updateStepPosition'), value: updateStepPositionText },
-      { id: 'update-phase-progress', label: t('settings.serviceInfo.updatePhaseProgress'), value: phaseProgressText },
-      { id: 'update-overall-progress', label: t('settings.serviceInfo.updateOverallProgress'), value: overallProgressText },
-      { id: 'update-eta', label: t('settings.serviceInfo.updateEta'), value: updateEtaText },
-      { id: 'next-scheduled-update', label: t('settings.serviceInfo.nextScheduledUpdate'), value: nextLeaderboardScheduledUpdate },
-    ];
-
-    if (trackedPlayer) {
-      rows.push(
-        { id: 'selected-player-id', label: t('settings.serviceInfo.selectedPlayerId'), value: trackedPlayer.accountId },
-        { id: 'selected-player-rivals-status', label: t('settings.serviceInfo.selectedPlayerRivalsStatus'), value: trackedPlayerRivalsStatus ?? selectedProfileFallback },
-      );
-    }
-
-    return rows;
-  }, [
-    currentLeaderboardUpdateStart,
-    lastLeaderboardUpdateComplete,
-    lastLeaderboardUpdateStart,
-    leaderboardUpdateStatus,
-    leaderboardUpdateSubStatus,
-    overallProgressText,
-    phaseProgressText,
-    nextLeaderboardScheduledUpdate,
-    serviceInfo,
-    t,
-    trackedPlayer,
-    selectedProfileFallback,
-    trackedPlayerRivalsStatus,
-    updateEtaText,
-    updateStepPositionText,
-    workerActivityEnded,
-    workerActivityStarted,
-    workerActivityText,
-    workerActivityUpdated,
-    workerLastHeartbeat,
-    workerStatusText,
-  ]);
-
   const showActiveCount = INSTRUMENT_SHOW_MAP.filter(i => settings[i.showKey]).length;
 
   const toggleShow = useCallback(
@@ -879,6 +461,9 @@ export default function SettingsPage() {
       { id: 'show-metadata', label: t('settings.showMetadata'), landmarkLabel: t('settings.showMetadata'), icon: <IoList size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
       { id: 'version', label: t('settings.versionTitle'), landmarkLabel: t('settings.versionTitle'), icon: <IoInformationCircle size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
       { id: 'service-info', label: t('settings.serviceInfo.title'), landmarkLabel: t('settings.serviceInfo.title'), icon: <IoServer size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
+      ...(selectedProfile
+        ? [{ id: 'profile-sync' as const, label: t('settings.serviceInfo.selectedProfileSyncTitle'), landmarkLabel: t('settings.serviceInfo.selectedProfileSyncTitle'), icon: <IoPersonCircle size={QUICK_LINK_GLYPH_ICON_SIZE} /> }]
+        : []),
       { id: 'first-run', label: t('firstRun.settings.showFirstRunTitle'), landmarkLabel: t('firstRun.settings.showFirstRunTitle'), icon: <IoSparkles size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
       { id: 'licenses', label: t('settings.licensesNavTitle'), landmarkLabel: t('settings.licensesNavTitle'), icon: <IoDocumentText size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
       ...(hasSelectedProfile
@@ -888,7 +473,7 @@ export default function SettingsPage() {
       { id: 'reset', label: t('settings.resetSection'), landmarkLabel: t('settings.resetSection'), icon: <IoTrash size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
     );
     return items;
-  }, [diagnosticsSettingsVisible, hasSelectedProfile, refreshProfileNameLabel, t]);
+  }, [diagnosticsSettingsVisible, hasSelectedProfile, refreshProfileNameLabel, selectedProfile, t]);
 
   const {
     activeItemId,
@@ -1067,6 +652,7 @@ export default function SettingsPage() {
                       </div>
                       <LeewaySlider
                         value={settings.filterInvalidScoresLeeway}
+                        label={t('settings.maxScoreLeeway')}
                         onChange={v => updateSettings({ filterInvalidScoresLeeway: v })}
                       />
                     </div>
@@ -1213,11 +799,29 @@ export default function SettingsPage() {
           <FadeInDiv delay={stagger(staggerIndex++)}>
             <div ref={(element) => registerSectionRef('service-info', element)}>
               <SectionHeader title={t('settings.serviceInfo.title')} description={t('settings.serviceInfo.hint')} />
-              <Card>
-                <ServiceInfoRows rows={serviceInfoRows} styles={st} />
-              </Card>
+              <SettingsServiceProgressCard
+                serviceInfo={serviceInfo}
+                loadFailed={serviceInfoLoadFailed}
+              />
             </div>
           </FadeInDiv>
+
+          {selectedProfile && (
+            <FadeInDiv delay={stagger(staggerIndex++)}>
+              <div ref={(element) => registerSectionRef('profile-sync', element)}>
+                <SectionHeader
+                  title={t('settings.serviceInfo.selectedProfileSyncTitle')}
+                  description={t('settings.serviceInfo.selectedProfileSyncHint')}
+                />
+                <SelectedProfileSyncCard
+                  profile={selectedProfile}
+                  playerStatus={trackedPlayerSyncStatus}
+                  bandStatus={selectedBandSyncStatus}
+                  loadFailed={selectedProfileSyncLoadFailed}
+                />
+              </div>
+            </FadeInDiv>
+          )}
 
           {/* ── First Run Guides ── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
@@ -1459,91 +1063,6 @@ function useSettingsStyles(isMobile: boolean, filterOpen: boolean, visualOrderOp
     } as CSSProperties,
     versionValue: {
       color: Colors.textSecondary,
-    } as CSSProperties,
-    serviceInfoList: {
-      position: 'relative',
-      ...flexColumn,
-      gap: Gap.none,
-    } as CSSProperties,
-    serviceInfoMeasureBox: {
-      position: 'absolute',
-      inset: 0,
-      visibility: 'hidden',
-      pointerEvents: 'none',
-      overflow: Overflow.hidden,
-    } as CSSProperties,
-    serviceInfoMeasureRow: {
-      ...flexBetween,
-      padding: padding(Gap.sm, Gap.none),
-      fontSize: Font.md,
-    } as CSSProperties,
-    serviceInfoMeasureText: {
-      display: 'inline-block',
-      whiteSpace: 'nowrap',
-      fontSize: Font.md,
-    } as CSSProperties,
-    serviceInfoRowInline: {
-      ...flexBetween,
-      alignItems: Align.center,
-      gap: Gap.md,
-      padding: padding(Gap.md, Gap.none),
-      fontSize: Font.md,
-    } as CSSProperties,
-    serviceInfoKeyInline: {
-      flex: '1 1 auto',
-      minWidth: 0,
-      width: CssValue.full,
-      maxWidth: CssValue.full,
-      minInlineSize: SERVICE_INFO_INLINE_KEY_MIN_WIDTH,
-      whiteSpace: 'nowrap',
-      overflow: Overflow.hidden,
-      textOverflow: 'ellipsis',
-      fontWeight: Weight.bold,
-      paddingRight: Gap.md,
-    } as CSSProperties,
-    serviceInfoValueInline: {
-      flexShrink: 0,
-      whiteSpace: 'nowrap',
-      color: Colors.textSecondary,
-      textAlign: TextAlign.right,
-    } as CSSProperties,
-    serviceInfoRowStacked: {
-      ...flexColumn,
-      padding: padding(Gap.md, Gap.none),
-      fontSize: Font.md,
-    } as CSSProperties,
-    serviceInfoKeyStacked: {
-      color: Colors.textPrimary,
-      fontWeight: Weight.bold,
-      lineHeight: LineHeight.relaxed,
-    } as CSSProperties,
-    serviceInfoValueStacked: {
-      width: CssValue.full,
-      minWidth: 0,
-      color: Colors.textSecondary,
-      textAlign: TextAlign.left,
-    } as CSSProperties,
-    serviceInfoValueInlineWithSpinner: {
-      display: Display.flex,
-      alignItems: Align.center,
-      gap: Gap.md,
-      flexShrink: 0,
-    } as CSSProperties,
-    serviceInfoValueStackedWithSpinner: {
-      display: Display.flex,
-      alignItems: Align.center,
-      gap: Gap.md,
-      width: CssValue.full,
-      minWidth: 0,
-    } as CSSProperties,
-    serviceInfoValueStackedText: {
-      flex: '1 1 auto',
-      minWidth: 0,
-      color: Colors.textSecondary,
-      textAlign: TextAlign.left,
-    } as CSSProperties,
-    serviceInfoSpinner: {
-      flexShrink: 0,
     } as CSSProperties,
     resetRow: {
       ...flexBetween,
