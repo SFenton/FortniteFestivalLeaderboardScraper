@@ -1,1 +1,0 @@
-import{r as a,j as e,m as d}from"./index-DI40PQx8.js";const x=a.forwardRef(function({children:r,className:s,style:t},o){return e.jsx("div",{ref:o,className:s,style:{...d,...t},children:r})});export{x as F};

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, type RefObject } from 'react';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
+import { useScrollUpdateScheduler } from './useScrollUpdateScheduler';
 
 export interface ScrollFadeOptions {
   /** How many pixels the fade zone extends inward from each scroll edge. Default: 36 */
@@ -45,14 +46,7 @@ export function useScrollFade(
   const distance = options.distance ?? DEFAULT_DISTANCE;
   const stops = options.stops ?? DEFAULT_STOPS;
   const dynamicChildren = options.dynamicChildren ?? false;
-  const rafId = useRef(0);
-  const viewportTimeoutsRef = useRef<number[]>([]);
   const scrollContainerRef = useScrollContainer();
-
-  const clearViewportTimeouts = useCallback(() => {
-    for (const id of viewportTimeoutsRef.current) window.clearTimeout(id);
-    viewportTimeoutsRef.current = [];
-  }, []);
 
   const getScrollElement = useCallback(() => scrollRef.current ?? scrollContainerRef.current, [scrollRef, scrollContainerRef]);
 
@@ -123,25 +117,7 @@ export function useScrollFade(
     }
   }, [distance, stops, listRef, getScrollElement]);
 
-  const throttledUpdate = useCallback(() => {
-    if (rafId.current) return;
-    rafId.current = requestAnimationFrame(() => {
-      rafId.current = 0;
-      applyMasks();
-    });
-  }, [applyMasks]);
-
-  const updateNow = useCallback(() => {
-    cancelAnimationFrame(rafId.current);
-    rafId.current = 0;
-    applyMasks();
-  }, [applyMasks]);
-
-  const scheduleViewportUpdate = useCallback(() => {
-    clearViewportTimeouts();
-    throttledUpdate();
-    viewportTimeoutsRef.current = [80, 180, 320].map(delay => window.setTimeout(throttledUpdate, delay));
-  }, [clearViewportTimeouts, throttledUpdate]);
+  const { scheduleUpdate, updateNow } = useScrollUpdateScheduler(applyMasks);
 
   // Set up IntersectionObserver to track children near scroll container edges
   useEffect(() => {
@@ -166,7 +142,7 @@ export function useScrollFade(
             }
           }
         }
-        throttledUpdate();
+        scheduleUpdate();
       },
       {
         root: scrollEl ?? undefined,
@@ -201,7 +177,7 @@ export function useScrollFade(
               if (child instanceof Element) observeChild(child);
             }
           }
-          throttledUpdate();
+          scheduleUpdate();
         })
       : null;
     childObserver?.observe(listEl, { childList: true });
@@ -216,43 +192,25 @@ export function useScrollFade(
       edgeChildren.clear();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [distance, dynamicChildren, throttledUpdate, getScrollElement, ...deps]);
+  }, [distance, dynamicChildren, scheduleUpdate, getScrollElement, ...deps]);
 
   // Listen to scroll container for mask updates on tracked elements
   useEffect(() => {
     const scrollEl = getScrollElement();
     if (!scrollEl) return;
-    scrollEl.addEventListener('scroll', throttledUpdate, { passive: true });
-    return () => scrollEl.removeEventListener('scroll', throttledUpdate);
-  }, [throttledUpdate, getScrollElement]);
-
-  useEffect(() => {
-    const visualViewport = window.visualViewport;
-    visualViewport?.addEventListener('resize', scheduleViewportUpdate);
-    visualViewport?.addEventListener('scroll', scheduleViewportUpdate);
-    window.addEventListener('resize', scheduleViewportUpdate);
-    return () => {
-      visualViewport?.removeEventListener('resize', scheduleViewportUpdate);
-      visualViewport?.removeEventListener('scroll', scheduleViewportUpdate);
-      window.removeEventListener('resize', scheduleViewportUpdate);
-      clearViewportTimeouts();
-    };
-  }, [clearViewportTimeouts, scheduleViewportUpdate]);
+    scrollEl.addEventListener('scroll', scheduleUpdate, { passive: true });
+    return () => scrollEl.removeEventListener('scroll', scheduleUpdate);
+  }, [scheduleUpdate, getScrollElement]);
 
   // Re-evaluate masks when the scroll container resizes (e.g. header portal
   // rendering, fab spacer margin, window resize).
   useEffect(() => {
     const scrollEl = getScrollElement();
     if (!scrollEl) return;
-    const ro = new ResizeObserver(throttledUpdate);
+    const ro = new ResizeObserver(scheduleUpdate);
     ro.observe(scrollEl);
     return () => ro.disconnect();
-  }, [getScrollElement, throttledUpdate]);
-
-  useEffect(() => () => {
-    cancelAnimationFrame(rafId.current);
-    clearViewportTimeouts();
-  }, [clearViewportTimeouts]);
+  }, [getScrollElement, scheduleUpdate]);
 
   // Initial computation
   // eslint-disable-next-line react-hooks/exhaustive-deps

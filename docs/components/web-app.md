@@ -12,15 +12,19 @@ sources:
   - FortniteFestivalWeb/src/components/lazy/secondaryControls.ts
   - FortniteFestivalWeb/src/components/common/Accordion.tsx
   - FortniteFestivalWeb/src/components/shell/fab/MobileFloatingActionButton.tsx
+  - FortniteFestivalWeb/src/components/shell/ShellScrollRestoration.tsx
   - FortniteFestivalWeb/src/components/shell/mobile/BottomNav.tsx
   - FortniteFestivalWeb/src/contexts/FabVisibilityContext.tsx
   - FortniteFestivalWeb/src/pages/Page.tsx
   - FortniteFestivalWeb/src/pages/settings/SettingsPage.tsx
   - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.tsx
   - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.module.css
+  - FortniteFestivalWeb/src/pages/settings/useSelectedProfileSyncStatus.ts
   - FortniteFestivalWeb/src/pages/settings/serviceProgress.ts
   - FortniteFestivalWeb/src/pages/settings/serviceInfo.en.json
   - FortniteFestivalWeb/src/hooks/data/useServiceInfo.ts
+  - FortniteFestivalWeb/src/hooks/ui/useScrollUpdateScheduler.ts
+  - FortniteFestivalWeb/src/hooks/ui/useVirtualListScrollMargin.ts
   - FortniteFestivalWeb/e2e/specs/responsive/settings-progress.spec.ts
   - /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/pr27-settings-live-ab-20260814T062455Z
   - FortniteFestivalWeb/src/pages/shop/ShopPage.tsx
@@ -162,6 +166,14 @@ The Item Shop uses `auto`, so narrow handsets without quick links, a selected
 band filter, or the view-toggle action retain only the list's normal bottom
 padding; handset states that do render a FAB remain protected from overlap.
 
+`ShellScrollRestoration` owns route/layout scroll resets, preserve-scroll keys,
+and the lazy Suggestions restoration coordinator outside `App.tsx`.
+`useScrollUpdateScheduler` provides one-frame coalescing plus viewport settling
+and cleanup for masks/fades, while each consumer retains its own observer and
+geometry rules. Songs and Suggestions share virtual-list scroll-margin
+measurement through `useVirtualListScrollMargin`; filter-specific virtualizer
+compensation remains local to Suggestions.
+
 Rank By keeps its normal radio controls in the shared secondary-control chunk.
 Per-instrument player metric-help content is a nested interaction boundary: the
 accessible info button loads the metric carousel, formulas, KaTeX JS/CSS, and
@@ -215,6 +227,11 @@ Publication timing. Operational IDs, raw heartbeat/progress timestamps,
 phase-plan/attempt details, and model diagnostics live under a collapsed native
 `details` disclosure. Selected player or band synchronization is a separate
 card rather than global service health.
+
+Selected-profile sync polling is owned by the lazy Settings-local
+`useSelectedProfileSyncStatus` hook. It preserves the existing player/band API
+choice, abort behavior, and recursive five-second cadence without moving this
+volatile progress state into React Query.
 
 The browser uses stable phase/subphase IDs for localization with safe label
 fallbacks. A phase bar is determinate only when service-info v2 reports a final
