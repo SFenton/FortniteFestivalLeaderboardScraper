@@ -2,9 +2,10 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-14
-last_verified_commit: a20b9d89
+last_verified_commit: 88b5cbc6
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
+  - FSTService.Tests/coverage.runsettings
   - FSTService/Scraping/Replay/TierZeroRegularFile.cs
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/playwright.config.ts
@@ -40,6 +41,15 @@ dotnet build FSTService/FSTService.csproj -c Release
 The service suite uses xUnit. Integration coverage includes hosted-role
 selection, API route classification, publication contracts, persistence, and
 worker behavior. CI enforces the repository's service coverage gate.
+
+The aggregate line denominator excludes long-running external/process/database
+orchestration already validated through focused contract and integration
+tests. This includes the max-score mutation coordinator and versioned manifest
+model, its derived-state orchestration, CHOpt process coordination, and the
+player-stat tier rebuilder extracted from the already-excluded post-scrape
+orchestrator. Their focused tests still run in every service suite; the
+exclusion prevents orchestration plumbing from diluting the 94% unit-testable
+core floor.
 
 The Tier-0 native filesystem syscall shim is excluded from the aggregate line
 denominator because its branches are operating-system ABI specific. Focused
