@@ -16,6 +16,11 @@ describe('inferTab', () => {
   it('returns songs for /songs/detail', () => expect(inferTab('/songs/abc123')).toBe(TabKey.Songs));
   it('returns songs for /shop', () => expect(inferTab('/shop')).toBe(TabKey.Songs));
   it('returns suggestions', () => expect(inferTab('/suggestions')).toBe(TabKey.Suggestions));
+  it('normalizes trailing slashes', () => {
+    expect(inferTab('/suggestions/')).toBe(TabKey.Suggestions);
+    expect(inferTab('/statistics/')).toBe(TabKey.Statistics);
+    expect(inferTab('/settings/')).toBe(TabKey.Settings);
+  });
   it('returns compete for /compete', () => expect(inferTab('/compete')).toBe(TabKey.Compete));
   it('returns leaderboards for /leaderboards', () => expect(inferTab('/leaderboards')).toBe(TabKey.Leaderboards));
   it('returns leaderboards for /leaderboards/detail', () => expect(inferTab('/leaderboards/all')).toBe(TabKey.Leaderboards));
@@ -26,6 +31,10 @@ describe('inferTab', () => {
   it('returns null for band detail route', () => expect(inferTab('/bands/band-1?bandType=Band_Duets&teamKey=p1%3Ap2')).toBeNull());
   it('returns null for player bands route', () => expect(inferTab('/bands/player/p1')).toBeNull());
   it('returns settings', () => expect(inferTab('/settings')).toBe(TabKey.Settings));
+  it('returns settings for the licenses child route', () => {
+    expect(inferTab('/settings/licenses')).toBe(TabKey.Settings);
+    expect(inferTab('/settings/licenses/')).toBe(TabKey.Settings);
+  });
   it('returns null for /player', () => expect(inferTab('/player/abc')).toBeNull());
   it('returns null for /', () => expect(inferTab('/')).toBeNull());
 });

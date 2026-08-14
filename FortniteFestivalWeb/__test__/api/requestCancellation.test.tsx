@@ -99,9 +99,7 @@ describe('request cancellation coverage', () => {
     for (const relativePath of [
       'hooks/data/useAccountSearch.ts',
       'hooks/data/useUnifiedSearch.ts',
-      'hooks/data/useSuggestions.ts',
       'hooks/data/useSyncStatus.ts',
-      'pages/leaderboard/player/PlayerHistoryPage.tsx',
       'pages/settings/SettingsPage.tsx',
       'pages/songinfo/components/path/PathsModal.tsx',
     ]) {

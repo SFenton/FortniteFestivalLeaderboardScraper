@@ -6,31 +6,32 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { TabKey } from '@festival/core/runtime';
 import { markTapDiagnosticsAction } from '../../diagnostics/tapDiagnosticsBridge';
+import { normalizeRoutePathname, Routes } from '../../routes';
 export type { TabKey };
 
 export const TAB_ROOTS: Record<TabKey, string> = {
-  [TabKey.Songs]: '/songs',
-  [TabKey.Suggestions]: '/suggestions',
-  [TabKey.Compete]: '/compete',
-  [TabKey.Leaderboards]: '/leaderboards',
-  [TabKey.Rivals]: '/rivals',
-  [TabKey.Statistics]: '/statistics',
-  [TabKey.Settings]: '/settings',
+  [TabKey.Songs]: Routes.songs,
+  [TabKey.Suggestions]: Routes.suggestions,
+  [TabKey.Compete]: Routes.compete,
+  [TabKey.Leaderboards]: Routes.leaderboards,
+  [TabKey.Rivals]: Routes.rivals,
+  [TabKey.Statistics]: Routes.statistics,
+  [TabKey.Settings]: Routes.settings,
 };
 
 const STORAGE_KEY = 'fst:tabRoutes';
 
 /** Infer which tab owns a route. Profile detail routes are neutral unless represented by /statistics. */
 export function inferTab(pathname: string): TabKey | null {
-  const path = pathname.split(/[?#]/, 1)[0] || '/';
-  if (path === '/songs' || path.startsWith('/songs/')) return TabKey.Songs;
-  if (path === '/shop') return TabKey.Songs;
-  if (path === '/suggestions') return TabKey.Suggestions;
-  if (path === '/compete') return TabKey.Compete;
-  if (path === '/leaderboards' || path.startsWith('/leaderboards/')) return TabKey.Leaderboards;
-  if (path === '/rivals' || path.startsWith('/rivals/')) return TabKey.Rivals;
-  if (path === '/statistics') return TabKey.Statistics;
-  if (path === '/settings') return TabKey.Settings;
+  const path = normalizeRoutePathname(pathname.split(/[?#]/, 1)[0] || '/');
+  if (path === Routes.songs || path.startsWith(`${Routes.songs}/`)) return TabKey.Songs;
+  if (path === Routes.shop) return TabKey.Songs;
+  if (path === Routes.suggestions) return TabKey.Suggestions;
+  if (path === Routes.compete) return TabKey.Compete;
+  if (path === Routes.leaderboards || path.startsWith(`${Routes.leaderboards}/`)) return TabKey.Leaderboards;
+  if (path === Routes.rivals || path.startsWith(`${Routes.rivals}/`)) return TabKey.Rivals;
+  if (path === Routes.statistics) return TabKey.Statistics;
+  if (path === Routes.settings || path === Routes.settingsLicenses) return TabKey.Settings;
   return null;
 }
 

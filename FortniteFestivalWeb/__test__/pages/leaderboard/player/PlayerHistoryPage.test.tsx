@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { Routes, Route } from 'react-router-dom';
+import type { QueryClient } from '@tanstack/react-query';
 import PlayerHistoryPage from '../../../../src/pages/leaderboard/player/PlayerHistoryPage';
 import { playerHistorySlides } from '../../../../src/pages/leaderboard/player/firstRun';
 import { contentHash } from '../../../../src/firstRun/types';
-import { TestProviders } from '../../../helpers/TestProviders';
+import { createTestQueryClient, TestProviders } from '../../../helpers/TestProviders';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../../helpers/browserStubs';
+import { queryKeys } from '../../../../src/api/queryKeys';
 
 /** Generate N history entries for Solo_Guitar on song-1. */
 function makeHistory(count: number) {
@@ -90,9 +92,13 @@ beforeEach(() => {
   resetMocks();
 });
 
-function renderHistory(route = '/songs/song-1/Solo_Guitar/history', accountId = 'test-player-1') {
+function renderHistory(
+  route = '/songs/song-1/Solo_Guitar/history',
+  accountId = 'test-player-1',
+  queryClient?: QueryClient,
+) {
   return render(
-    <TestProviders route={route} accountId={accountId}>
+    <TestProviders route={route} accountId={accountId} queryClient={queryClient}>
       <Routes>
         <Route path="/songs/:songId/:instrument/history" element={<PlayerHistoryPage />} />
       </Routes>
@@ -141,6 +147,30 @@ describe('PlayerHistoryPage', () => {
     await waitFor(() => {
       expect(screen.getByText('Something Went Wrong')).toBeDefined();
     });
+  });
+
+  it('keeps cached history visible when a background refetch fails', async () => {
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(
+      queryKeys.playerHistory('test-player-1', 'song-1'),
+      makeHistory(1),
+      { updatedAt: 0 },
+    );
+    mockApi.getPlayerHistory.mockRejectedValue(new Error('Background failure'));
+
+    renderHistory(
+      '/songs/song-1/Solo_Guitar/history',
+      'test-player-1',
+      queryClient,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('100,000')).toBeDefined();
+    });
+    await waitFor(() => {
+      expect(mockApi.getPlayerHistory).toHaveBeenCalled();
+    });
+    expect(screen.queryByText('Something Went Wrong')).toBeNull();
   });
 
   it('shows select player message when no tracked player', async () => {
