@@ -1599,6 +1599,435 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public async Task EnsureSchemaAsync_creates_exact_scrape_phase_attempts_shape_idempotently()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var columns = conn.CreateCommand();
+        columns.CommandText = """
+            SELECT
+                array_agg(column_name ORDER BY ordinal_position),
+                array_agg(udt_name ORDER BY ordinal_position),
+                array_agg(is_nullable ORDER BY ordinal_position),
+                array_agg(COALESCE(column_default, '') ORDER BY ordinal_position)
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'scrape_phase_attempts'
+            """;
+
+        using var reader = columns.ExecuteReader();
+        Assert.True(reader.Read());
+        var names = reader.GetFieldValue<string[]>(0);
+        Assert.Equal(
+            [
+                "scrape_id",
+                "phase_id",
+                "attempt",
+                "operation_id",
+                "phase_ordinal",
+                "plan_version",
+                "worker_instance_id",
+                "current_subphase_id",
+                "status",
+                "units_kind",
+                "units_completed",
+                "units_total",
+                "units_total_final",
+                "phase_percent",
+                "overall_percent_kind",
+                "overall_percent",
+                "overall_model_version",
+                "eta_lower_seconds",
+                "eta_upper_seconds",
+                "eta_confidence",
+                "eta_sample_count",
+                "started_at",
+                "last_progress_at",
+                "heartbeat_at",
+                "completed_at",
+                "build_id",
+                "config_id",
+                "warning_message",
+                "error_message",
+            ],
+            names);
+        Assert.Equal(
+            [
+                "int8", "text", "int4", "text", "int4", "text", "text",
+                "text", "text", "text", "int8", "int8", "bool", "float8",
+                "text", "float8", "text", "float8", "float8", "text", "int4",
+                "timestamptz", "timestamptz", "timestamptz", "timestamptz",
+                "text", "text", "text", "text",
+            ],
+            reader.GetFieldValue<string[]>(1));
+        var nullability = reader.GetFieldValue<string[]>(2);
+        Assert.Equal(
+            [
+                "NO", "NO", "NO", "NO", "NO", "NO", "NO", "YES", "NO",
+                "YES", "YES", "YES", "NO", "YES", "NO", "YES", "YES",
+                "YES", "YES", "YES", "YES", "NO", "NO", "NO", "YES",
+                "YES", "YES", "YES", "YES",
+            ],
+            nullability);
+        var defaults = reader.GetFieldValue<string[]>(3);
+        Assert.Equal("false", defaults[12]);
+        Assert.Contains("indeterminate", defaults[14]);
+
+        reader.Close();
+        using (var constraints = conn.CreateCommand())
+        {
+            constraints.CommandText = """
+                SELECT
+                    count(*) FILTER (WHERE contype = 'p'),
+                    count(*) FILTER (WHERE contype = 'f'),
+                    count(*) FILTER (WHERE contype = 'c')
+                FROM pg_constraint
+                WHERE conrelid = 'public.scrape_phase_attempts'::regclass
+                """;
+            using var constraintReader = constraints.ExecuteReader();
+            Assert.True(constraintReader.Read());
+            Assert.Equal(1, constraintReader.GetInt64(0));
+            Assert.Equal(0, constraintReader.GetInt64(1));
+            Assert.True(constraintReader.GetInt64(2) >= 10);
+        }
+        using var indexes = conn.CreateCommand();
+        indexes.CommandText = """
+            SELECT indexname, indexdef
+            FROM pg_indexes
+            WHERE schemaname = 'public'
+              AND tablename = 'scrape_phase_attempts'
+            ORDER BY indexname
+            """;
+        using var indexReader = indexes.ExecuteReader();
+        var definitions = new Dictionary<string, string>(StringComparer.Ordinal);
+        while (indexReader.Read())
+            definitions[indexReader.GetString(0)] = indexReader.GetString(1);
+        Assert.Contains("scrape_phase_attempts_pkey", definitions.Keys);
+        Assert.DoesNotContain("ix_scrape_phase_attempts_active", definitions.Keys);
+        Assert.Contains(
+            "(scrape_id, last_progress_at DESC, phase_ordinal DESC, attempt DESC)",
+            definitions["ix_scrape_phase_attempts_watchdog"]);
+        Assert.Contains(
+            "WHERE (status = 'running'::text)",
+            definitions["ix_scrape_phase_attempts_watchdog"]);
+        Assert.Contains("(worker_instance_id, scrape_id)", definitions["ix_scrape_phase_attempts_instance"]);
+        Assert.Contains(
+            "(phase_id, plan_version, config_id, completed_at DESC)",
+            definitions["ix_scrape_phase_attempts_history"]);
+    }
+
+    [Fact]
+    public void Scrape_phase_attempt_roundtrips_progress_heartbeat_and_completion()
+    {
+        var scrapeId = _metaFixture.Db.StartScrapeRun();
+        var startedAt = DateTime.UtcNow.AddSeconds(-10);
+        var attempt = _metaFixture.Db.StartScrapePhaseAttempt(new ScrapePhaseAttemptStart(
+            scrapeId,
+            "scrape.leaderboards",
+            "scrape.update",
+            100,
+            "fst.scrape-plan.v2",
+            "test-instance",
+            "fetching_leaderboards",
+            "running",
+            "leaderboards",
+            0,
+            10,
+            true,
+            0,
+            "indeterminate",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            startedAt,
+            startedAt,
+            startedAt,
+            "build-test",
+            "config-test"));
+
+        Assert.Equal(1, attempt);
+        var progressAt = startedAt.AddSeconds(5);
+        Assert.True(_metaFixture.Db.UpdateScrapePhaseAttemptProgress(
+            new ScrapePhaseAttemptProgress(
+                scrapeId,
+                "scrape.leaderboards",
+                attempt,
+                "persisting_scores",
+                "leaderboards",
+                5,
+                10,
+                true,
+                50,
+                "indeterminate",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                progressAt,
+                progressAt)));
+        var heartbeatAt = progressAt.AddSeconds(2);
+        Assert.Equal(
+            1,
+            _metaFixture.Db.HeartbeatScrapePhaseAttempts(
+                scrapeId,
+                "test-instance",
+                heartbeatAt));
+
+        var runtime = _metaFixture.Db.GetServiceRuntimeState(
+            WorkerStatusPublisher.ScraperWorkerKey);
+        var current = Assert.IsType<ScrapePhaseAttemptInfo>(runtime.CurrentPhaseAttempt);
+        Assert.Equal("persisting_scores", current.CurrentSubphaseId);
+        Assert.Equal(5, current.UnitsCompleted);
+        Assert.Equal(50, current.PhasePercent);
+        Assert.InRange(
+            Math.Abs((progressAt - current.LastProgressAtUtc).TotalMilliseconds),
+            0,
+            0.001);
+        Assert.InRange(
+            Math.Abs((heartbeatAt - current.HeartbeatAtUtc).TotalMilliseconds),
+            0,
+            0.001);
+
+        var completedAt = heartbeatAt.AddSeconds(3);
+        Assert.True(_metaFixture.Db.CompleteScrapePhaseAttempt(
+            new ScrapePhaseAttemptCompletion(
+                scrapeId,
+                "scrape.leaderboards",
+                attempt,
+                "completed",
+                completedAt,
+                completedAt,
+                completedAt,
+                null,
+                null)));
+        Assert.Null(_metaFixture.Db.GetServiceRuntimeState(
+            WorkerStatusPublisher.ScraperWorkerKey).CurrentPhaseAttempt);
+        Assert.Single(_metaFixture.Db.GetSuccessfulPhaseDurationSamples(
+            "scrape.leaderboards",
+            "fst.scrape-plan.v2",
+            "config-test",
+            20));
+    }
+
+    [Fact]
+    public void Scrape_phase_attempt_progress_timestamp_remains_monotonic_across_clock_regression()
+    {
+        var scrapeId = _metaFixture.Db.StartScrapeRun();
+        var startedAt = DateTime.UtcNow;
+        var attempt = _metaFixture.Db.StartScrapePhaseAttempt(new ScrapePhaseAttemptStart(
+            scrapeId,
+            "scrape.leaderboards",
+            "scrape.update",
+            100,
+            PhaseProgressCatalog.PlanVersion,
+            "clock-regression-test",
+            "fetching_leaderboards",
+            "running",
+            "leaderboards",
+            0,
+            10,
+            true,
+            0,
+            "indeterminate",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            startedAt,
+            startedAt,
+            startedAt,
+            "build-test",
+            "config-test"));
+
+        var regressedAt = startedAt.AddMinutes(-1);
+        Assert.True(_metaFixture.Db.UpdateScrapePhaseAttemptProgress(
+            new ScrapePhaseAttemptProgress(
+                scrapeId,
+                "scrape.leaderboards",
+                attempt,
+                "persisting_scores",
+                "leaderboards",
+                1,
+                10,
+                true,
+                10,
+                "indeterminate",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                regressedAt,
+                regressedAt)));
+
+        var afterRegression = Assert.IsType<ScrapePhaseAttemptInfo>(
+            _metaFixture.Db.GetServiceRuntimeState(
+                WorkerStatusPublisher.ScraperWorkerKey).CurrentPhaseAttempt);
+        Assert.InRange(
+            Math.Abs((startedAt - afterRegression.LastProgressAtUtc).TotalMilliseconds),
+            0,
+            0.001);
+        Assert.Equal(1, afterRegression.UnitsCompleted);
+
+        var subsequentAt = startedAt.AddSeconds(5);
+        Assert.True(_metaFixture.Db.UpdateScrapePhaseAttemptProgress(
+            new ScrapePhaseAttemptProgress(
+                scrapeId,
+                "scrape.leaderboards",
+                attempt,
+                "persisting_scores",
+                "leaderboards",
+                2,
+                10,
+                true,
+                20,
+                "indeterminate",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                subsequentAt,
+                subsequentAt)));
+
+        var afterRecovery = Assert.IsType<ScrapePhaseAttemptInfo>(
+            _metaFixture.Db.GetServiceRuntimeState(
+                WorkerStatusPublisher.ScraperWorkerKey).CurrentPhaseAttempt);
+        Assert.InRange(
+            Math.Abs((subsequentAt - afterRecovery.LastProgressAtUtc).TotalMilliseconds),
+            0,
+            0.001);
+        Assert.Equal(2, afterRecovery.UnitsCompleted);
+        Assert.True(_metaFixture.Db.CompleteScrapePhaseAttempt(
+            new ScrapePhaseAttemptCompletion(
+                scrapeId,
+                "scrape.leaderboards",
+                attempt,
+                "completed",
+                subsequentAt,
+                subsequentAt,
+                subsequentAt,
+                null,
+                null)));
+    }
+
+    [Fact]
+    public void Scrape_phase_attempt_restart_marks_orphan_interrupted()
+    {
+        var scrapeId = _metaFixture.Db.StartScrapeRun();
+        var now = DateTime.UtcNow;
+        _metaFixture.Db.StartScrapePhaseAttempt(new ScrapePhaseAttemptStart(
+            scrapeId,
+            "post.band_maintenance",
+            "scrape.update",
+            300,
+            "fst.scrape-plan.v2",
+            "old-instance",
+            null,
+            "running",
+            null,
+            null,
+            null,
+            false,
+            null,
+            "indeterminate",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            now,
+            now,
+            now,
+            "build-test",
+            "config-test"));
+
+        Assert.Equal(
+            1,
+            _metaFixture.Db.InterruptOrphanedScrapePhaseAttempts(
+                "new-instance",
+                now.AddMinutes(1),
+                "worker restarted"));
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT status, completed_at IS NOT NULL, warning_message
+            FROM scrape_phase_attempts
+            WHERE scrape_id = @scrapeId
+              AND phase_id = 'post.band_maintenance'
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal("interrupted", reader.GetString(0));
+        Assert.True(reader.GetBoolean(1));
+        Assert.Equal("worker restarted", reader.GetString(2));
+    }
+
+    [Fact]
+    public void Scrape_phase_attempt_retry_allocates_next_attempt()
+    {
+        var scrapeId = _metaFixture.Db.StartScrapeRun();
+        var now = DateTime.UtcNow;
+        ScrapePhaseAttemptStart Start() => new(
+            scrapeId,
+            "post.checkpoint",
+            "scrape.update",
+            360,
+            PhaseProgressCatalog.PlanVersion,
+            "test-instance",
+            null,
+            "running",
+            "steps",
+            null,
+            null,
+            false,
+            null,
+            "indeterminate",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            now,
+            now,
+            now,
+            "build-test",
+            "config-test");
+
+        var first = _metaFixture.Db.StartScrapePhaseAttempt(Start());
+        Assert.True(_metaFixture.Db.CompleteScrapePhaseAttempt(
+            new ScrapePhaseAttemptCompletion(
+                scrapeId,
+                "post.checkpoint",
+                first,
+                "failed",
+                now,
+                now,
+                now,
+                "retrying",
+                null)));
+        var second = _metaFixture.Db.StartScrapePhaseAttempt(Start());
+
+        Assert.Equal(1, first);
+        Assert.Equal(2, second);
+    }
+
+    [Fact]
     public async Task EnsureSchemaAsync_does_not_recreate_retired_composite_history_latest_index()
     {
         await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);

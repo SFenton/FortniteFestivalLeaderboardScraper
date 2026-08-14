@@ -901,6 +901,87 @@ public static class DatabaseInitializer
         CREATE INDEX IF NOT EXISTS ix_scrape_phase_timings_started
             ON scrape_phase_timings (started_at DESC);
 
+        CREATE TABLE IF NOT EXISTS scrape_phase_attempts (
+            scrape_id             BIGINT           NOT NULL,
+            phase_id              TEXT             NOT NULL,
+            attempt               INTEGER          NOT NULL,
+            operation_id          TEXT             NOT NULL,
+            phase_ordinal         INTEGER          NOT NULL,
+            plan_version          TEXT             NOT NULL,
+            worker_instance_id    TEXT             NOT NULL,
+            current_subphase_id   TEXT,
+            status                TEXT             NOT NULL,
+            units_kind            TEXT,
+            units_completed       BIGINT,
+            units_total           BIGINT,
+            units_total_final     BOOLEAN          NOT NULL DEFAULT FALSE,
+            phase_percent         DOUBLE PRECISION,
+            overall_percent_kind  TEXT             NOT NULL DEFAULT 'indeterminate',
+            overall_percent       DOUBLE PRECISION,
+            overall_model_version TEXT,
+            eta_lower_seconds     DOUBLE PRECISION,
+            eta_upper_seconds     DOUBLE PRECISION,
+            eta_confidence        TEXT,
+            eta_sample_count      INTEGER,
+            started_at            TIMESTAMPTZ      NOT NULL,
+            last_progress_at      TIMESTAMPTZ      NOT NULL,
+            heartbeat_at          TIMESTAMPTZ      NOT NULL,
+            completed_at          TIMESTAMPTZ,
+            build_id              TEXT,
+            config_id             TEXT,
+            warning_message       TEXT,
+            error_message         TEXT,
+            PRIMARY KEY (scrape_id, phase_id, attempt),
+            CHECK (attempt > 0),
+            CHECK (phase_ordinal >= 0),
+            CHECK (status IN (
+                'running', 'completed', 'failed', 'cancelled',
+                'interrupted', 'skipped', 'deferred')),
+            CHECK (units_completed IS NULL OR units_completed >= 0),
+            CHECK (units_total IS NULL OR units_total >= 0),
+            CHECK (NOT units_total_final OR units_total IS NOT NULL),
+            CHECK (
+                NOT units_total_final
+                OR units_completed IS NULL
+                OR units_completed <= units_total),
+            CHECK (phase_percent IS NULL OR (
+                units_total_final
+                AND phase_percent >= 0
+                AND phase_percent <= 100)),
+            CHECK (overall_percent IS NULL OR (
+                overall_percent >= 0
+                AND overall_percent <= 100)),
+            CHECK (eta_lower_seconds IS NULL OR eta_lower_seconds >= 0),
+            CHECK (eta_upper_seconds IS NULL OR eta_upper_seconds >= 0),
+            CHECK (
+                eta_lower_seconds IS NULL
+                OR eta_upper_seconds IS NULL
+                OR eta_upper_seconds >= eta_lower_seconds),
+            CHECK (eta_sample_count IS NULL OR eta_sample_count >= 0),
+            CHECK (last_progress_at >= started_at),
+            CHECK (heartbeat_at >= started_at),
+            CHECK (completed_at IS NULL OR completed_at >= started_at),
+            CHECK (
+                (status = 'running' AND completed_at IS NULL)
+                OR (status <> 'running' AND completed_at IS NOT NULL))
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_scrape_phase_attempts_watchdog
+            ON scrape_phase_attempts
+               (scrape_id, last_progress_at DESC,
+                phase_ordinal DESC, attempt DESC)
+            WHERE status = 'running';
+
+        CREATE INDEX IF NOT EXISTS ix_scrape_phase_attempts_instance
+            ON scrape_phase_attempts
+               (worker_instance_id, scrape_id)
+            WHERE status = 'running';
+
+        CREATE INDEX IF NOT EXISTS ix_scrape_phase_attempts_history
+            ON scrape_phase_attempts
+               (phase_id, plan_version, config_id, completed_at DESC)
+            WHERE status = 'completed';
+
         CREATE TABLE IF NOT EXISTS scrape_publication_state (
             id                  BOOLEAN     PRIMARY KEY DEFAULT TRUE CHECK (id),
             published_scrape_id INTEGER     REFERENCES scrape_log(id),

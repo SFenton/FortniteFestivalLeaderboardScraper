@@ -759,6 +759,8 @@ public sealed class ScraperWorker : BackgroundService
                 : null;
             if (opts.ResumeScrapeId > 0)
                 ValidateResumeScrape(opts, resolvedPhases, resumeState);
+            if (resumeState is not null)
+                _workerStatus?.AttachScrape(resumeState.ScrapeId);
             bool anyScrapePhase =
                 resolvedPhases.HasFlag(ScrapePhase.SoloScrape)
                 || resolvedPhases.HasFlag(ScrapePhase.BandScrape);
@@ -1523,6 +1525,7 @@ public sealed class ScraperWorker : BackgroundService
             "Resuming deferred ready publication {PublicationId} for scrape {ScrapeId} before any new scrape allocation.",
             preparation.PublicationId,
             preparation.ScrapeId);
+        _workerStatus?.AttachScrape(preparation.ScrapeId);
         _workerStatus?.BeginOperation(
             "scrape.publication",
             "Resuming deferred leaderboard publication",

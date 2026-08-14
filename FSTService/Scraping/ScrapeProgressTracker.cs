@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text.Json.Serialization;
 
 namespace FSTService.Scraping;
 
@@ -161,6 +162,7 @@ public sealed class ScrapeProgressTracker
 
     private int _phaseTotal;
     private int _phaseCompleted;
+    private volatile bool _phaseTotalFinal;
     private int _phaseAccountsTotal;
     private int _phaseAccountsCompleted;
     private int _phaseRequests;
@@ -728,6 +730,7 @@ public sealed class ScrapeProgressTracker
     {
         _phaseTotal = totalItems;
         _phaseCompleted = 0;
+        _phaseTotalFinal = true;
         _phaseAccountsTotal = totalAccounts;
         _phaseAccountsCompleted = 0;
         _phaseRequests = 0;
@@ -736,7 +739,19 @@ public sealed class ScrapeProgressTracker
     }
 
     /// <summary>Add to the total work item count (for incrementally-discovered work).</summary>
-    public void AddPhaseItems(int additional) => Interlocked.Add(ref _phaseTotal, additional);
+    public void AddPhaseItems(int additional)
+    {
+        _phaseTotalFinal = false;
+        Interlocked.Add(ref _phaseTotal, additional);
+        Interlocked.Increment(ref _changeSequence);
+    }
+
+    /// <summary>Mark the incrementally-discovered work-item total as final.</summary>
+    public void FinalizePhaseItems()
+    {
+        _phaseTotalFinal = true;
+        Interlocked.Increment(ref _changeSequence);
+    }
 
     /// <summary>Update the total account count mid-phase (e.g. when hot-adding users).</summary>
     public void SetPhaseAccounts(int total) { _phaseAccountsTotal = total; Interlocked.Increment(ref _changeSequence); }
@@ -760,6 +775,7 @@ public sealed class ScrapeProgressTracker
     {
         _phaseTotal = 0;
         _phaseCompleted = 0;
+        _phaseTotalFinal = false;
         _phaseAccountsTotal = 0;
         _phaseAccountsCompleted = 0;
         _phaseRequests = 0;
@@ -1142,6 +1158,7 @@ public sealed class ScrapeProgressTracker
             ProgressPercent = progressPercent.HasValue ? Math.Round(progressPercent.Value, 1) : null,
             Accounts = accountsTotal > 0 ? new ProgressCounter { Completed = accountsCompleted, Total = accountsTotal } : null,
             WorkItems = total > 0 ? new ProgressCounter { Completed = completed, Total = total } : null,
+            WorkItemsTotalFinal = total > 0 ? _phaseTotalFinal : null,
             Requests = requests > 0 ? requests : null,
             Retries = retries > 0 ? retries : null,
             EntriesUpdated = updated > 0 ? updated : null,
@@ -1322,6 +1339,8 @@ public sealed class OperationSnapshot
     // ── Generic phase progress ──
     public ProgressCounter? Accounts { get; init; }
     public ProgressCounter? WorkItems { get; init; }
+    [JsonIgnore]
+    public bool? WorkItemsTotalFinal { get; init; }
     public int? EntriesUpdated { get; init; }
 
     // ── Sub-operation detail ──

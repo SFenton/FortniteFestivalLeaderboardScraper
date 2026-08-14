@@ -26,6 +26,20 @@ public class ScrapeProgressTrackerTests
     }
 
     [Fact]
+    public void Incrementally_discovered_phase_total_is_not_final_until_explicitly_finalized()
+    {
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.SongMachine);
+        _tracker.BeginPhaseProgress(10);
+        Assert.True(_tracker.GetProgressResponse().Current?.WorkItemsTotalFinal);
+
+        _tracker.AddPhaseItems(5);
+        Assert.False(_tracker.GetProgressResponse().Current?.WorkItemsTotalFinal);
+
+        _tracker.FinalizePhaseItems();
+        Assert.True(_tracker.GetProgressResponse().Current?.WorkItemsTotalFinal);
+    }
+
+    [Fact]
     public void BeginPass_ResetsCounters()
     {
         _tracker.BeginPass(10, 5, 100);
