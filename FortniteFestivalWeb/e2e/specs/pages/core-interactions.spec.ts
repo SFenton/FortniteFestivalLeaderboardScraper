@@ -36,7 +36,7 @@ test('Suggestions filter opens with populated player data', async ({ page }, tes
   await page.keyboard.press('Escape');
 });
 
-test('Song detail paths and chart controls are browser-interactive', async ({ page, appState }) => {
+test('Song detail paths and chart controls are browser-interactive', async ({ page, appState }, testInfo) => {
   await appState.setSettings({
     pathDefaultView: 'text',
     pathUnavailableWarningDismissed: true,
@@ -56,12 +56,38 @@ test('Song detail paths and chart controls are browser-interactive', async ({ pa
   await paths.click();
   const dialog = page.getByRole('dialog', { name: 'Paths' });
   await expect(dialog).toBeVisible();
-  await expect(
-    dialog.getByRole('img', { name: 'Solo_PeripheralDrums' }).first(),
-  ).toBeVisible();
-  await expect(
-    dialog.getByRole('img', { name: 'Solo_PeripheralCymbals' }).first(),
-  ).toBeVisible();
+  const instrumentToggle = dialog.getByRole('button', {
+    name: isMobileProject(testInfo.project.name)
+      ? 'Solo_Guitar'
+      : 'Solo_Guitar Lead',
+    exact: true,
+  });
+  await (isMobileProject(testInfo.project.name)
+    ? instrumentToggle.last()
+    : instrumentToggle.first()).click();
+  if (isMobileProject(testInfo.project.name)) {
+    const nextInstrument = dialog.getByRole('button', {
+      name: 'Next instrument',
+      exact: true,
+    });
+    for (const instrument of [
+      'Solo_PeripheralDrums',
+      'Solo_PeripheralCymbals',
+    ]) {
+      const icon = dialog.getByRole('img', { name: instrument }).first();
+      for (let step = 0; step < 9 && !await icon.isVisible(); step += 1) {
+        await nextInstrument.click();
+      }
+      await expect(icon).toBeVisible();
+    }
+  } else {
+    await expect(
+      dialog.getByRole('img', { name: 'Solo_PeripheralDrums' }).first(),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole('img', { name: 'Solo_PeripheralCymbals' }).first(),
+    ).toBeVisible();
+  }
   await expect(dialog.getByText('2: 1 beats after NN (R)', { exact: true })).toHaveCount(0);
   await expect(dialog.getByText('20.99', { exact: true })).toBeVisible();
   await dialog.getByRole('button', { name: 'Close' }).click();

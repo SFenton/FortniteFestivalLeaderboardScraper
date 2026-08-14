@@ -1563,6 +1563,8 @@
     "choptDisplay": "CHOpt Display",
     "chopt_image": "Image",
     "chopt_text": "Text",
+    "previousInstrument": "Previous instrument",
+    "nextInstrument": "Next instrument",
     "colNote": "Activation",
     "colBeat": "Beat",
     "colTime": "Time",
