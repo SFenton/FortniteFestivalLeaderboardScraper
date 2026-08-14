@@ -37,25 +37,9 @@ public static class SharedPostgresContainer
     /// </summary>
     public static NpgsqlDataSource CreateDatabase()
     {
-        var connStr = ConnectionString;
-        var dbName = $"fst_{Guid.NewGuid():N}";
-        ExecuteWithPostgresReadyRetry(() =>
-        {
-            using var conn = new NpgsqlConnection(connStr);
-            conn.Open();
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"CREATE DATABASE \"{dbName}\";";
-            cmd.ExecuteNonQuery();
-        });
-
-        var builder = new NpgsqlConnectionStringBuilder(connStr)
-        {
-            Database = dbName,
-            MinPoolSize = 0,
-            MaxPoolSize = 10,
-            ConnectionIdleLifetime = 10,
-        };
-        var ds = NpgsqlDataSource.Create(builder.ConnectionString);
+        var connectionString =
+            CreateEmptyDatabaseConnectionString("fst_");
+        var ds = NpgsqlDataSource.Create(connectionString);
 
         // Initialize schema after the freshly-created database accepts connections.
         try
@@ -75,6 +59,30 @@ public static class SharedPostgresContainer
         }
 
         return ds;
+    }
+
+    public static string CreateEmptyDatabaseConnectionString(
+        string prefix = "fst_replay_")
+    {
+        var connStr = ConnectionString;
+        var dbName = $"{prefix}{Guid.NewGuid():N}";
+        ExecuteWithPostgresReadyRetry(() =>
+        {
+            using var conn = new NpgsqlConnection(connStr);
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"CREATE DATABASE \"{dbName}\";";
+            cmd.ExecuteNonQuery();
+        });
+
+        var builder = new NpgsqlConnectionStringBuilder(connStr)
+        {
+            Database = dbName,
+            MinPoolSize = 0,
+            MaxPoolSize = 10,
+            ConnectionIdleLifetime = 10,
+        };
+        return builder.ConnectionString;
     }
 
     private static void ExecuteWithPostgresReadyRetry(Action action)
