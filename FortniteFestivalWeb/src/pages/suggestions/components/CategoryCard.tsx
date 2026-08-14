@@ -85,11 +85,13 @@ export const CategoryCard = memo(function CategoryCard({
   albumArtMap,
   scoresIndex,
   bandType,
+  style,
 }: {
   category: SuggestionCategory;
   albumArtMap: Map<string, string>;
   scoresIndex: Record<string, LeaderboardData>;
   bandType?: BandType;
+  style?: CSSProperties;
 }) {
   const { t } = useTranslation();
   const st = useCategoryStyles();
@@ -98,7 +100,7 @@ export const CategoryCard = memo(function CategoryCard({
   const title = resolved ? t(resolved.titleKey, resolved.params) : category.title;
   const description = resolved ? t(resolved.descKey, resolved.params) : category.description;
   return (
-    <div data-testid="suggestion-category-card" style={st.card}>
+    <div data-testid="suggestion-category-card" style={{ ...st.card, ...style }}>
       <div style={st.cardHeader}>
         <div style={st.cardHeaderRow}>
           <div>

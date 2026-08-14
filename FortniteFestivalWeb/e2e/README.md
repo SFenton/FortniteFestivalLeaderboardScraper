@@ -109,12 +109,14 @@ corepack yarn performance:suggestions
 The Suggestions benchmark fixes the generator clock, drives at least 100
 accepted load triggers, attaches JSON metrics for generated/rendered
 categories, DOM nodes, frosted markers, scroll height, heap, long tasks,
-mousemove geometry reads, and back/forward restoration. PR 4 records the
-unvirtualized baseline; PR 5 promotes the final DOM, marker, geometry, and
-long-task targets to enforced assertions. The PR 4 baseline is 540 rendered
-categories, about 22.7k DOM nodes, 1,471 frosted markers, roughly 50.6 MB
-post-GC heap growth, a 1.28 s worst long task, and 1,471 geometry reads.
-The PR runner executes this memory-intensive benchmark in a dedicated
+mousemove geometry reads, and back/forward restoration. The PR 4 baseline is
+540 rendered categories, about 22.7k DOM nodes, 1,471 frosted markers, roughly
+50.6 MB post-GC heap growth, a 1.28 s worst long task, and 1,471 geometry
+reads. The PR 5 candidate is 12 mounted categories, 519 DOM nodes, 38 markers,
+about 7.8 MB heap growth, zero list-growth long tasks, one geometry read, and
+exact deep restoration. Those final ceilings are enforced. A second tagged
+test reaches the 1,000-category limit under fully hidden filters and verifies
+the explicit fresh-mix reset. The PR runner executes both in a dedicated
 one-worker pass after the normal Chromium desktop project.
 
 `scripts/run-e2e-project.mjs` accepts:

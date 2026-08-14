@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-12
-last_verified_commit: 41c3bdb4
+last_verified: 2026-08-13
+last_verified_commit: 623d6059
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FortniteFestivalWeb/package.json
@@ -134,17 +134,24 @@ records generated/rendered category counts, total DOM nodes, frosted markers,
 scroll height, available JS heap, long tasks, mousemove geometry reads, and
 back/forward scroll restoration. Set `SUGGESTIONS_METRICS_PATH` to persist the
 JSON report outside the repository and `SUGGESTIONS_TRIGGER_TARGET` to run a
-larger manual profile. PR 4 establishes the observer-based baseline; the
-virtualization phase owns enforcement of the final DOM and runtime ceilings.
-CI runs the 100-trigger case in a dedicated one-worker pass after the normal
-Chromium desktop suite so its intentionally unbounded baseline cannot compete
-with another browser worker.
+larger manual profile up to 150 triggers. CI runs the benchmark in a dedicated
+one-worker pass after the normal Chromium desktop suite. The same pass also
+drives a fully filtered session to the 1,000-category ceiling and verifies the
+explicit fresh-mix reset.
 
 The accepted PR 4 unvirtualized baseline produced 540 generated/rendered
 categories, about 22.7k DOM nodes, 1,471 frosted markers, about 50.6 MB of
 post-GC heap growth, a 1.28 s worst observed long task, and 1,471 frosted-card
 geometry reads for one mousemove. Structural counts and scroll restoration are
 deterministic; heap and long-task observations remain runtime measurements.
+
+The accepted PR 5 virtualized candidate produced 533 generated categories but
+only 12 mounted category cards, 519 total DOM nodes, 38 frosted markers, about
+7.8 MB of post-GC heap growth, zero list-growth long tasks above 50 ms, one
+geometry read for a hovered row, and exact 83,398 px restoration. CI enforces
+20 mounted categories, fewer than 2,500 DOM nodes, fewer than 200 frosted
+markers, at most one pointer geometry read, no list-growth long task above
+50 ms, less than 20 MB heap growth, and pixel restoration within 4 px.
 
 ## Merge and release gates
 

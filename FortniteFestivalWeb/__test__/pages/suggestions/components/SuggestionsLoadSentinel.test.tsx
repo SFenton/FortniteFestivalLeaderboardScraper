@@ -39,7 +39,7 @@ describe('SuggestionsLoadSentinel', () => {
       <SuggestionsLoadSentinel
         rootRef={rootRef}
         disabled={false}
-        triggerKey={10}
+        triggerKey="mix-a:10"
         prefetchPx={600}
         onLoadMore={onLoadMore}
         fallbackLabel="Load more"
@@ -67,7 +67,7 @@ describe('SuggestionsLoadSentinel', () => {
       <SuggestionsLoadSentinel
         rootRef={rootRef}
         disabled={false}
-        triggerKey={16}
+        triggerKey="mix-b:10"
         prefetchPx={600}
         onLoadMore={onLoadMore}
         fallbackLabel="Load more"

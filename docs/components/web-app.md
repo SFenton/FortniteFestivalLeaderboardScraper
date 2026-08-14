@@ -2,7 +2,7 @@
 status: canonical
 owner: web
 last_verified: 2026-08-13
-last_verified_commit: 96ed9680
+last_verified_commit: c6770a33
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
@@ -169,18 +169,34 @@ with the persistent shell. Because generated content caches one identity,
 creating a replacement generator resets its identity and invalidates snapshots
 for discarded identities before the shell can restore them. Same-identity
 route and layout remounts preserve their snapshot because they reuse the
-generator. The shell loads the restoration controller through the existing
-lazy Suggestions module and restores on route return, profile/layout ownership
-changes, and song-detail Back navigation. Pages without a restoration key no
-longer share an anonymous fallback cache.
+generator. Each generator has a distinct mix identity, and the raw navigation
+cache stops at 1,000 categories. The page then exposes an explicit **Start a
+new mix** action that creates a fresh seeded generator while retaining the
+selected source and filters; it never silently evicts the user-visible
+backscroll range. Filtered-empty sessions continue loading until a match, true
+generator exhaustion, or that ceiling.
+
+Category cards are variable-height TanStack Virtual rows rooted in the
+persistent application scroll container. Stable mix-and-source ordinals,
+dynamic measurement, responsive remeasurement, and one retained focused row
+preserve filtering, keyboard focus, route navigation, and deep pixel
+restoration while bounding mounted DOM. The shell loads the restoration
+controller through the existing lazy Suggestions module and restores on route
+return, profile/layout ownership changes, and song-detail Back navigation. It
+holds the target through late virtual measurements until the scroll position
+is stable or user intent cancels. Pages without a restoration key no longer
+share an anonymous fallback cache.
 
 An internal `IntersectionObserver` sentinel observes against the application
 scroll container with the shared prefetch distance. Each raw-category commit
-re-arms the sentinel, while page and hook guards coalesce repeated observer
-notifications before React commits the batch. Browsers without
+re-arms the sentinel using the mix identity and category count, while page and
+hook guards coalesce repeated observer notifications before React commits the
+batch. Browsers without
 `IntersectionObserver` receive a manual Load More control. The legacy
 `react-infinite-scroll-component` and `throttle-debounce` dependency path is
-removed.
+removed. Per-card edge fading observes only mounted virtual wrappers, and the
+global frosted-card hover path resolves and measures only the card under the
+pointer instead of scanning the accumulated list.
 
 ## Build and deployment
 

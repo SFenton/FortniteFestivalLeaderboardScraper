@@ -16,13 +16,11 @@ const FROSTED_SELECTOR = '[style*="--frosted-card"]';
 const SCOPE_SELECTOR = '[data-glow-scope]';
 
 /**
- * Proximity-based glow for frosted cards.
+ * Hover glow for frosted cards.
  *
  * Attaches a `mousemove` listener to `document.documentElement` and
  * updates CSS custom properties (`--glow-x`, `--glow-y`, `--glow-opacity`)
- * on every frosted card in the viewport.  Cards are discovered automatically
- * via the `--frosted-card` CSS custom property set by the `frostedCard`
- * theme mixin — no className or hook wiring needed on individual cards.
+ * only on the frosted card under the pointer.
  *
  * Covers all regions of the app (content, sidebar, header) because the
  * listener is on the document root.
@@ -40,63 +38,58 @@ export function useProximityGlow(enabled: boolean): void {
     if (!enabled) return;
 
     const root = document.documentElement;
-    // const radius = getGlowRadius();  // unused while proximity mode is off
+    let activeCard: HTMLElement | null = null;
+    let pointerTarget: EventTarget | null = null;
+    let pointerX = 0;
+    let pointerY = 0;
 
     function onMouseMove(e: MouseEvent) {
+      pointerTarget = e.target;
+      pointerX = e.clientX;
+      pointerY = e.clientY;
       if (rafId.current) return;          // already scheduled
       rafId.current = requestAnimationFrame(() => {
         rafId.current = 0;
-        const cards = root.querySelectorAll<HTMLElement>(FROSTED_SELECTOR);
         const scopes = root.querySelectorAll<HTMLElement>(SCOPE_SELECTOR);
         const scope = scopes.length > 0 ? scopes[scopes.length - 1]! : null;
-        const mx = e.clientX;
-        const my = e.clientY;
-        for (const card of cards) {
-          // When a glow scope is active, suppress painting on cards outside it
-          if (scope && !scope.contains(card)) {
-            card.style.setProperty('--glow-opacity', '0');
-            card.style.setProperty('--glow-hover', '0');
-            continue;
-          }
-          const r = card.getBoundingClientRect();
-          // Local coordinates (can be negative / beyond bounds — that's the point)
-          const lx = mx - r.left;
-          const ly = my - r.top;
-
-          // Shortest distance from mouse to card rect (0 when inside)
-          const cx = Math.max(r.left, Math.min(mx, r.right));
-          const cy = Math.max(r.top, Math.min(my, r.bottom));
-          const dist = Math.sqrt((mx - cx) ** 2 + (my - cy) ** 2);
-
-          if (dist === 0) {
-            card.style.setProperty('--glow-x', `${lx}px`);
-            card.style.setProperty('--glow-y', `${ly}px`);
-            card.style.setProperty('--glow-opacity', '1');
-            card.style.setProperty('--glow-hover', '1');
-          } else {
-            card.style.setProperty('--glow-opacity', '0');
-            card.style.setProperty('--glow-hover', '0');
-          }
+        const target = pointerTarget instanceof Element
+          ? pointerTarget.closest<HTMLElement>(FROSTED_SELECTOR)
+          : null;
+        const card = target && (!scope || scope.contains(target)) ? target : null;
+        if (activeCard && activeCard !== card) {
+          clearGlow(activeCard);
         }
+        activeCard = card;
+        if (!card) return;
+
+        const rect = card.getBoundingClientRect();
+        card.style.setProperty('--glow-x', `${pointerX - rect.left}px`);
+        card.style.setProperty('--glow-y', `${pointerY - rect.top}px`);
+        card.style.setProperty('--glow-opacity', '1');
+        card.style.setProperty('--glow-hover', '1');
       });
     }
 
     function onMouseLeave() {
       cancelAnimationFrame(rafId.current);
       rafId.current = 0;
-      const cards = root.querySelectorAll<HTMLElement>(FROSTED_SELECTOR);
-      for (const card of cards) {
-        card.style.setProperty('--glow-opacity', '0');
-        card.style.setProperty('--glow-hover', '0');
-      }
+      if (activeCard) clearGlow(activeCard);
+      activeCard = null;
     }
 
     root.addEventListener('mousemove', onMouseMove, { passive: true });
     root.addEventListener('mouseleave', onMouseLeave);
     return () => {
       cancelAnimationFrame(rafId.current);
+      if (activeCard) clearGlow(activeCard);
+      activeCard = null;
       root.removeEventListener('mousemove', onMouseMove);
       root.removeEventListener('mouseleave', onMouseLeave);
     };
   }, [enabled]);
+}
+
+function clearGlow(card: HTMLElement): void {
+  card.style.setProperty('--glow-opacity', '0');
+  card.style.setProperty('--glow-hover', '0');
 }

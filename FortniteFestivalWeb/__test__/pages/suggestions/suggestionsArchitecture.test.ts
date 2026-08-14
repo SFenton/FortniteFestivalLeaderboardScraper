@@ -24,4 +24,22 @@ describe('Suggestions pagination architecture', () => {
     expect(sentinelSource).toContain('new IntersectionObserver');
     expect(sentinelSource).toContain('rootMargin: `0px 0px ${prefetchPx}px 0px`');
   });
+
+  it('virtualizes measured category cards and bounds the cached mix', () => {
+    const hookSource = readFileSync(
+      path.join(webRoot, 'src/hooks/data/useSuggestions.ts'),
+      'utf8',
+    );
+    const virtualListSource = readFileSync(
+      path.join(webRoot, 'src/pages/suggestions/components/VirtualizedSuggestionsList.tsx'),
+      'utf8',
+    );
+
+    expect(hookSource).toContain('SUGGESTIONS_CATEGORY_LIMIT = 1_000');
+    expect(hookSource).toContain('startNewMix');
+    expect(virtualListSource).toContain('useVirtualizer');
+    expect(virtualListSource).toContain('virtualizer.measureElement');
+    expect(virtualListSource).toContain('dynamicChildren: true');
+    expect(virtualListSource).toContain('focusedRowIndex');
+  });
 });

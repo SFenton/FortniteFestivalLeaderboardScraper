@@ -19,6 +19,13 @@ export function beginSuggestionsScrollRestoration(scrollElement: HTMLElement): (
   let frame = 0;
   let activeRestoreKey: string | null = null;
   let safetyTimeout = 0;
+  const queueRestoreFrame = () => {
+    if (done || frame) return;
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      restore();
+    });
+  };
 
   const finishRestore = () => {
     if (activeRestoreKey) {
@@ -29,16 +36,32 @@ export function beginSuggestionsScrollRestoration(scrollElement: HTMLElement): (
     finishRestore();
     clearPending();
   };
+  const scheduleStableCompletion = (reset = false) => {
+    if (scrollGuardTimeout !== 0 && !reset) return;
+    window.clearTimeout(scrollGuardTimeout);
+    scrollGuardTimeout = window.setTimeout(() => {
+      scrollGuardTimeout = 0;
+      finishRestore();
+      clearPending();
+    }, RESTORE_GUARD_TIMEOUT_MS);
+  };
+  const ensureScrollGuard = () => {
+    if (scrollGuardAttached) return;
+    scrollGuardAttached = true;
+    scrollElement.addEventListener('scroll', guardRestoredScroll, { passive: true });
+  };
   const guardRestoredScroll = () => {
     const maxScrollTop = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
     if (scrollGuardTarget > maxScrollTop + 1) return;
-    if (Math.abs(scrollElement.scrollTop - scrollGuardTarget) <= 1) return;
-    scrollElement.scrollTo(0, scrollGuardTarget);
-    if (activeRestoreKey) {
-      updateSuggestionsScrollY(activeRestoreKey, scrollElement.scrollTop);
+    if (Math.abs(scrollElement.scrollTop - scrollGuardTarget) > 1) {
+      scrollElement.scrollTo(0, scrollGuardTarget);
+      if (activeRestoreKey) {
+        updateSuggestionsScrollY(activeRestoreKey, scrollElement.scrollTop);
+      }
+      scheduleStableCompletion(true);
+      return;
     }
-    finishRestore();
-    clearPending();
+    scheduleStableCompletion();
   };
   const clearPending = () => {
     done = true;
@@ -73,31 +96,32 @@ export function beginSuggestionsScrollRestoration(scrollElement: HTMLElement): (
     const restoreState = getSuggestionsScrollRestoreState(requestedCacheKey);
     if (!requestedCacheKey || !restoreState.matches) {
       scrollElement.scrollTo(0, 0);
+      queueRestoreFrame();
       return;
     }
     if (!restoreState.restorable) {
+      activeRestoreKey = requestedCacheKey;
+      scrollGuardTarget = 0;
+      ensureScrollGuard();
+      const previousScrollTop = scrollElement.scrollTop;
       scrollElement.scrollTo(0, 0);
+      updateSuggestionsScrollY(requestedCacheKey, scrollElement.scrollTop);
+      scheduleStableCompletion(previousScrollTop > 1);
+      queueRestoreFrame();
       return;
     }
 
     const target = restoreState.scrollY;
     activeRestoreKey = requestedCacheKey;
     scrollGuardTarget = target;
-    if (!scrollGuardAttached) {
-      scrollGuardAttached = true;
-      scrollElement.addEventListener('scroll', guardRestoredScroll, { passive: true });
-    }
+    ensureScrollGuard();
+    const previousScrollTop = scrollElement.scrollTop;
     scrollElement.scrollTo(0, target);
     updateSuggestionsScrollY(requestedCacheKey, scrollElement.scrollTop);
-    if (
-      scrollGuardTimeout === 0
-      && Math.abs(scrollElement.scrollTop - target) <= 1
-    ) {
-      scrollGuardTimeout = window.setTimeout(() => {
-        finishRestore();
-        clearPending();
-      }, RESTORE_GUARD_TIMEOUT_MS);
+    if (Math.abs(scrollElement.scrollTop - target) <= 1) {
+      scheduleStableCompletion(Math.abs(previousScrollTop - target) > 1);
     }
+    queueRestoreFrame();
   };
 
   observer = new MutationObserver(restore);
@@ -113,10 +137,12 @@ export function beginSuggestionsScrollRestoration(scrollElement: HTMLElement): (
   window.addEventListener('pointerdown', cancelForUserIntent, { capture: true, passive: true });
   window.addEventListener('keydown', cancelForUserIntent, true);
   restore();
-  frame = done ? 0 : requestAnimationFrame(restore);
   if (!done) {
     timeouts = RESTORE_DELAYS_MS.map(delay => window.setTimeout(restore, delay));
-    safetyTimeout = window.setTimeout(clearPending, RESTORE_SAFETY_TIMEOUT_MS);
+    safetyTimeout = window.setTimeout(() => {
+      finishRestore();
+      clearPending();
+    }, RESTORE_SAFETY_TIMEOUT_MS);
   }
 
   return () => {

@@ -14,6 +14,7 @@ import {
 
 const BATCH_SIZE = 6;
 const INITIAL_BATCH = 10;
+export const SUGGESTIONS_CATEGORY_LIMIT = 1_000;
 
 type SuggestionsMode = 'solo' | 'band';
 
@@ -25,12 +26,43 @@ type UseSuggestionsOptions = {
 };
 
 // Module-level cache so generated categories survive route navigation.
-let suggestionsCache: {
-  cacheKey: string;
+type SuggestionsCache = {
+  sourceKey: string;
+  mixKey: string;
   categories: SuggestionCategory[];
   generator: SuggestionGenerator;
+  generatorHasMore: boolean;
   loadTriggerCount: number;
-} | null = null;
+};
+
+type SuggestionsSession = {
+  sourceKey: string;
+  mixKey: string | null;
+  categories: SuggestionCategory[];
+  generatorHasMore: boolean;
+  loadTriggerCount: number;
+};
+
+let suggestionsCache: SuggestionsCache | null = null;
+let nextMixSequence = 0;
+
+function toSession(cache: SuggestionsCache | null, sourceKey: string): SuggestionsSession {
+  return cache
+    ? {
+        sourceKey: cache.sourceKey,
+        mixKey: cache.mixKey,
+        categories: cache.categories,
+        generatorHasMore: cache.generatorHasMore,
+        loadTriggerCount: cache.loadTriggerCount,
+      }
+    : {
+        sourceKey,
+        mixKey: null,
+        categories: [],
+        generatorHasMore: true,
+        loadTriggerCount: 0,
+      };
+}
 
 export function useSuggestions(
   accountId: string,
@@ -45,49 +77,51 @@ export function useSuggestions(
   const sourceReady = options.sourceReady ?? true;
 
   // Restore from cache if same suggestion identity
-  const cached = suggestionsCache?.cacheKey === cacheKey
+  const cached = suggestionsCache?.sourceKey === cacheKey
     ? suggestionsCache
     : null;
 
-  const [categories, setCategories] = useState<SuggestionCategory[]>(
-    () => cached?.categories ?? [],
+  const [session, setSession] = useState<SuggestionsSession>(
+    () => toSession(cached, cacheKey),
   );
-  const [hasMore, setHasMore] = useState(true);
   const generatorRef = useRef<SuggestionGenerator | null>(cached?.generator ?? null);
+  const mixKeyRef = useRef<string | null>(cached?.mixKey ?? null);
   const readyRef = useRef(!!cached);
   const initializedRef = useRef(!!cached);
   const cacheKeyRef = useRef(cacheKey);
   const rivalDataInjectedRef = useRef(false);
   const loadMorePendingRef = useRef(false);
-  const loadTriggerCountRef = useRef(cached?.loadTriggerCount ?? 0);
+  const currentSession = session.sourceKey === cacheKey
+    ? session
+    : toSession(cached, cacheKey);
 
   useEffect(() => {
     if (cacheKeyRef.current === cacheKey) return;
 
     cacheKeyRef.current = cacheKey;
-    const nextCached = suggestionsCache?.cacheKey === cacheKey
+    const nextCached = suggestionsCache?.sourceKey === cacheKey
       ? suggestionsCache
       : null;
-    setCategories(nextCached?.categories ?? []);
-    setHasMore(true);
     generatorRef.current = nextCached?.generator ?? null;
+    mixKeyRef.current = nextCached?.mixKey ?? null;
     readyRef.current = !!nextCached;
     initializedRef.current = !!nextCached;
     rivalDataInjectedRef.current = false;
     loadMorePendingRef.current = false;
-    loadTriggerCountRef.current = nextCached?.loadTriggerCount ?? 0;
+    setSession(toSession(nextCached, cacheKey));
   }, [cacheKey]);
 
   // Continuously save scroll position so browser back works
   const scrollContainerRef = useScrollContainer();
   useLayoutEffect(() => {
+    const scrollCacheKey = currentSession.mixKey;
     const scrollEl = scrollContainerRef.current;
-    if (!scrollEl) return;
+    if (!scrollEl || !scrollCacheKey) return;
     /* v8 ignore start — scroll position tracking */
     const onScroll = () => {
       const hashPath = window.location.hash.slice(1).split('?')[0];
       if (hashPath !== '/suggestions') return;
-      updateSuggestionsScrollY(cacheKey, scrollEl.scrollTop);
+      updateSuggestionsScrollY(scrollCacheKey, scrollEl.scrollTop);
     };
     /* v8 ignore stop */
     scrollEl.addEventListener('scroll', onScroll, { passive: true });
@@ -96,7 +130,48 @@ export function useSuggestions(
       scrollEl.removeEventListener('scroll', onScroll);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cacheKey]);
+  }, [currentSession.mixKey]);
+
+  const createMix = useCallback((): SuggestionsCache => {
+    nextMixSequence += 1;
+    const mixKey = `${cacheKey}:mix:${nextMixSequence}`;
+    const gen = new SuggestionGenerator({
+      seed: Date.now() + nextMixSequence,
+      currentSeason,
+      mode,
+      bandComboId: options.bandComboId,
+    });
+    gen.setSource(coreSongs, scoresIndex);
+
+    return {
+      sourceKey: cacheKey,
+      mixKey,
+      categories: gen.getNext(Math.min(INITIAL_BATCH, SUGGESTIONS_CATEGORY_LIMIT)),
+      generator: gen,
+      generatorHasMore: true,
+      loadTriggerCount: 0,
+    };
+  }, [
+    cacheKey,
+    coreSongs,
+    currentSeason,
+    mode,
+    options.bandComboId,
+    scoresIndex,
+  ]);
+
+  const installFreshMix = useCallback((nextCache: SuggestionsCache) => {
+    suggestionsCache = nextCache;
+    cacheKeyRef.current = nextCache.sourceKey;
+    generatorRef.current = nextCache.generator;
+    mixKeyRef.current = nextCache.mixKey;
+    readyRef.current = true;
+    initializedRef.current = true;
+    rivalDataInjectedRef.current = false;
+    loadMorePendingRef.current = false;
+    initializeSuggestionsScrollState(nextCache.mixKey);
+    setSession(toSession(nextCache, nextCache.sourceKey));
+  }, []);
 
   // Initialize generator once when source data is ready
   useEffect(() => {
@@ -114,31 +189,9 @@ export function useSuggestions(
       return;
     }
     if (initializedRef.current) return;
-    initializedRef.current = true;
-
-    const gen = new SuggestionGenerator({
-      seed: Date.now(),
-      currentSeason,
-      mode,
-      bandComboId: options.bandComboId,
-    });
-    gen.setSource(coreSongs, scoresIndex);
-    generatorRef.current = gen;
-    readyRef.current = true;
-
-    const first = gen.getNext(INITIAL_BATCH);
-    setCategories(first);
-    setHasMore(true);
-
-    suggestionsCache = {
-      cacheKey,
-      categories: first,
-      generator: gen,
-      loadTriggerCount: 0,
-    };
-    initializeSuggestionsScrollState(cacheKey);
+    installFreshMix(createMix());
   // eslint-disable-next-line react-hooks/exhaustive-deps -- currentSeason/options only needed at init
-  }, [accountId, cacheKey, coreSongs, scoresIndex, sourceReady]);
+  }, [accountId, cacheKey, coreSongs, createMix, installFreshMix, scoresIndex, sourceReady]);
 
   // Fetch rival data and inject into the generator when it becomes ready.
   useEffect(() => {
@@ -146,14 +199,21 @@ export function useSuggestions(
     if (!accountId) return;
     if (!generatorRef.current || rivalDataInjectedRef.current) return;
 
+    const generator = generatorRef.current;
+    const mixKey = mixKeyRef.current;
+    if (!mixKey) return;
     const controller = new AbortController();
     const combo = deriveComboFromSettings(settings) ?? undefined;
 
     api.getRivalsAll(accountId, { signal: controller.signal })
       .then((response) => {
-        if (controller.signal.aborted || !generatorRef.current) return;
+        if (
+          controller.signal.aborted
+          || generatorRef.current !== generator
+          || mixKeyRef.current !== mixKey
+        ) return;
         const index = buildRivalDataIndexFromRivalsAll(response, combo, 5);
-        generatorRef.current.setRivalData(index);
+        generator.setRivalData(index);
         rivalDataInjectedRef.current = true;
       })
       .catch(() => {
@@ -161,50 +221,101 @@ export function useSuggestions(
       });
 
     return () => controller.abort();
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- inject once after generator init using the current settings snapshot
-  }, [accountId, mode, settings, generatorRef.current]);
+  }, [accountId, currentSession.mixKey, mode, settings]);
 
   const loadMore = useCallback(() => {
     const gen = generatorRef.current;
-    if (!gen || !readyRef.current) return;
+    const mixKey = mixKeyRef.current;
+    const activeCache = suggestionsCache;
+    if (
+      !gen
+      || !mixKey
+      || !readyRef.current
+      || cacheKeyRef.current !== cacheKey
+      || activeCache?.sourceKey !== cacheKey
+      || activeCache.mixKey !== mixKey
+      || activeCache.generator !== gen
+      || !activeCache.generatorHasMore
+    ) return;
     if (loadMorePendingRef.current) return;
-    loadMorePendingRef.current = true;
-    loadTriggerCountRef.current += 1;
-    if (suggestionsCache?.cacheKey === cacheKey) {
-      suggestionsCache.loadTriggerCount = loadTriggerCountRef.current;
-    }
+    const remaining = SUGGESTIONS_CATEGORY_LIMIT - activeCache.categories.length;
+    if (remaining <= 0) return;
 
-    let next = gen.getNext(BATCH_SIZE);
+    loadMorePendingRef.current = true;
+    const loadTriggerCount = activeCache.loadTriggerCount + 1;
+    const requestedCount = Math.min(BATCH_SIZE, remaining);
+
+    let next = gen.getNext(requestedCount);
     if (next.length === 0) {
       gen.resetForEndless();
-      next = gen.getNext(BATCH_SIZE);
+      next = gen.getNext(requestedCount);
     }
+    if (
+      suggestionsCache !== activeCache
+      || mixKeyRef.current !== mixKey
+      || generatorRef.current !== gen
+    ) return;
+
     if (next.length === 0) {
-      setHasMore(false);
+      activeCache.generatorHasMore = false;
+      activeCache.loadTriggerCount = loadTriggerCount;
+      setSession(toSession(activeCache, cacheKey));
       return;
     }
-    setCategories((prev) => {
-      const updated = [...prev, ...next];
-      if (suggestionsCache?.cacheKey === cacheKey) {
-        suggestionsCache.categories = updated;
-      }
-      return updated;
-    });
+
+    activeCache.categories = [
+      ...activeCache.categories,
+      ...next.slice(0, remaining),
+    ];
+    activeCache.loadTriggerCount = loadTriggerCount;
+    setSession(toSession(activeCache, cacheKey));
   }, [cacheKey]);
 
   useEffect(() => {
     loadMorePendingRef.current = false;
-  }, [cacheKey, categories.length, hasMore]);
+  }, [
+    cacheKey,
+    currentSession.categories.length,
+    currentSession.generatorHasMore,
+    currentSession.mixKey,
+  ]);
+
+  const startNewMix = useCallback(() => {
+    if (
+      (mode === 'solo' && !accountId)
+      || !sourceReady
+      || coreSongs.length === 0
+    ) return;
+
+    const nextCache = createMix();
+    installFreshMix(nextCache);
+    scrollContainerRef.current?.scrollTo(0, 0);
+  }, [
+    accountId,
+    coreSongs.length,
+    createMix,
+    installFreshMix,
+    mode,
+    scrollContainerRef,
+    sourceReady,
+  ]);
 
   const resetScrollPosition = useCallback(() => {
-    updateSuggestionsScrollY(cacheKey, 0);
-  }, [cacheKey]);
+    const mixKey = mixKeyRef.current;
+    if (mixKey) updateSuggestionsScrollY(mixKey, 0);
+  }, []);
+
+  const limitReached = currentSession.categories.length >= SUGGESTIONS_CATEGORY_LIMIT;
+  const hasMore = currentSession.generatorHasMore && !limitReached;
 
   return {
-    categories,
+    categories: currentSession.categories,
+    mixKey: currentSession.mixKey,
     loadMore,
     hasMore,
-    loadTriggerCount: loadTriggerCountRef.current,
+    limitReached,
+    loadTriggerCount: currentSession.loadTriggerCount,
+    startNewMix,
     resetScrollPosition,
   };
 }
