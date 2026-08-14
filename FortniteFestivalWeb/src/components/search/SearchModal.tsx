@@ -18,6 +18,7 @@ import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
 import { usePressAction } from '../../hooks/ui/usePressAction';
 import { Routes } from '../../routes';
 import { SEARCH_TARGETS, type SearchTarget } from '../../types/search';
+import { KEYBOARD_VIEWPORT_CLEARANCE } from '../../constants/keyboardLayoutVars';
 import { paddingWithSafeAreaBottom } from '../../utils/safeAreaStyles';
 import {
   Align, Border, BoxSizing, Colors, Cursor, CssValue, Display, Font, Gap, Justify,
@@ -29,7 +30,6 @@ const SEARCH_MODAL_DESKTOP: CSSProperties = { width: 520, height: 640, maxHeight
 const MODAL_TRANSITION_MS = 250;
 const SEARCH_STAGGER_VISIBLE_ITEMS = 8;
 const SEARCH_SCROLL_FADE_SIZE = 40;
-const SEARCH_KEYBOARD_CLEARANCE = 12;
 const SEARCH_KEYBOARD_OPEN_THRESHOLD = 120;
 const SEARCH_KEYBOARD_CLOSED_THRESHOLD = 80;
 const SEARCH_KEYBOARD_DIRECTION_DEADBAND = 8;
@@ -425,7 +425,7 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
     const visibleBottom = visualViewport ? visualViewport.height + visualViewport.offsetTop : window.innerHeight;
     const layoutBottom = Math.max(window.innerHeight, document.documentElement.clientHeight);
     const maxInset = Math.max(0, Math.round(layoutBottom - visibleBottom));
-    const desiredBottom = visibleBottom - SEARCH_KEYBOARD_CLEARANCE;
+    const desiredBottom = visibleBottom - KEYBOARD_VIEWPORT_CLEARANCE;
     const filtersElement = mobileFiltersRef.current;
     const filterRect = filtersElement?.getBoundingClientRect();
     if (filterBottomBaselineRef.current == null && filterRect && filterRect.bottom > 0) {

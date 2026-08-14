@@ -14,13 +14,11 @@ import {
   Weight,
   frostedCard,
   flexCenter,
-  transitions,
-  transition,
-  TRANSITION_MS,
 } from '@festival/theme';
 import { InstrumentIcon } from '../display/InstrumentIcons';
 import { bandTypeLabel } from '../../utils/bandTypes';
 import { usePressAction } from '../../hooks/ui/usePressAction';
+import { ACTION_PILL_TRANSITION } from './ActionPill';
 
 export interface BandFilterPillProps {
   label: string;
@@ -37,13 +35,6 @@ const activeButtonOverrides: CSSProperties = {
   boxShadow: 'none',
   color: '#FFFFFF',
 };
-
-const bandFilterPillTransition = transitions(
-  transition('background-color', TRANSITION_MS),
-  transition('border-color', TRANSITION_MS),
-  transition('color', TRANSITION_MS),
-  transition('box-shadow', TRANSITION_MS),
-);
 
 export default function BandFilterPill({ label, selectedInstruments, bandType, onClick, onIntent }: BandFilterPillProps) {
   const { t } = useTranslation();
@@ -106,7 +97,7 @@ function useStyles(active: boolean) {
       fontSize: Font.sm,
       ...frostedCard,
       color: Colors.textPrimary,
-      transition: bandFilterPillTransition,
+      transition: ACTION_PILL_TRANSITION,
       ...(active ? activeButtonOverrides : null),
     } as CSSProperties,
     bandTypeLabel: {

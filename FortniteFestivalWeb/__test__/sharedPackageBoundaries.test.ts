@@ -12,6 +12,15 @@ const corePackage = JSON.parse(readFileSync(corePackageJsonPath, 'utf8')) as {
   sideEffects?: boolean;
   exports?: Record<string, string | { types?: string; default?: string }>;
 };
+const themeRoot = path.join(repoRoot, 'packages/theme');
+const uiUtilsRoot = path.join(repoRoot, 'packages/ui-utils');
+const themePackage = readPackageManifest(path.join(themeRoot, 'package.json'));
+const uiUtilsPackage = readPackageManifest(path.join(uiUtilsRoot, 'package.json'));
+const webPackage = JSON.parse(
+  readFileSync(path.join(webRoot, 'package.json'), 'utf8'),
+) as {
+  dependencies?: Record<string, string>;
+};
 
 describe('@festival/core package boundaries', () => {
   it('publishes explicit feature entry points and declares audited side effects', () => {
@@ -80,6 +89,86 @@ describe('@festival/core package boundaries', () => {
     expect(suggestionsGraph.has(generator)).toBe(true);
   });
 });
+
+describe('theme and UI utility package boundaries', () => {
+  it('publishes root-only entry points with audited side effects', () => {
+    for (const packageManifest of [themePackage, uiUtilsPackage]) {
+      expect(packageManifest.sideEffects).toBe(false);
+      expect(packageManifest.exports).toEqual({
+        '.': {
+          types: './src/index.ts',
+          default: './src/index.ts',
+        },
+        './package.json': './package.json',
+      });
+    }
+  });
+
+  it('resolves package roots through Yarn portals and rejects deep imports', () => {
+    const configFile = ts.readConfigFile(
+      path.join(webRoot, 'tsconfig.json'),
+      fileName => readFileSync(fileName, 'utf8'),
+    );
+    const parsed = ts.parseJsonConfigFileContent(configFile.config, ts.sys, webRoot);
+    const containingFile = path.join(webRoot, 'src/main.tsx');
+
+    for (const [specifier, expected] of [
+      ['@festival/theme', path.join(themeRoot, 'src/index.ts')],
+      ['@festival/ui-utils', path.join(uiUtilsRoot, 'src/index.ts')],
+    ] as const) {
+      const resolved = ts.resolveModuleName(
+        specifier,
+        containingFile,
+        parsed.options,
+        ts.sys,
+      ).resolvedModule?.resolvedFileName;
+      expect(resolved && path.normalize(resolved)).toBe(expected);
+    }
+
+    for (const specifier of [
+      '@festival/theme/colors',
+      '@festival/ui-utils/platform',
+    ]) {
+      expect(ts.resolveModuleName(
+        specifier,
+        containingFile,
+        parsed.options,
+        ts.sys,
+      ).resolvedModule).toBeUndefined();
+    }
+  });
+
+  it('keeps all consumers on package roots rather than deep or source imports', () => {
+    const roots = [
+      path.join(webRoot, 'src'),
+      path.join(webRoot, '__test__'),
+      path.join(webRoot, 'component-tests'),
+      path.join(webRoot, 'e2e'),
+    ];
+    const violations = roots.flatMap(root => sourceFiles(root).flatMap(fileName =>
+      moduleSpecifiers(fileName)
+        .filter(specifier => (
+          specifier.startsWith('@festival/theme/')
+          || specifier.startsWith('@festival/ui-utils/')
+          || /packages\/(?:theme|ui-utils)\/src/.test(specifier.replace(/\\/g, '/'))
+        ))
+        .map(specifier => `${path.relative(repoRoot, fileName)} -> ${specifier}`),
+    ));
+    expect(violations).toEqual([]);
+  });
+
+  it('keeps web dependencies on the repository portal packages', () => {
+    expect(webPackage.dependencies?.['@festival/theme']).toBe('portal:../packages/theme');
+    expect(webPackage.dependencies?.['@festival/ui-utils']).toBe('portal:../packages/ui-utils');
+  });
+});
+
+function readPackageManifest(fileName: string): {
+  sideEffects?: boolean;
+  exports?: Record<string, string | { types?: string; default?: string }>;
+} {
+  return JSON.parse(readFileSync(fileName, 'utf8'));
+}
 
 function collectStaticGraph(entryFile: string): Set<string> {
   const visited = new Set<string>();

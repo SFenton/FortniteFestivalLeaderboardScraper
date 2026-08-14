@@ -8,7 +8,8 @@ import InstrumentEmptyState from '../../player/sections/InstrumentEmptyState';
 import SongBandScoreFooter, { SongBandMemberMetadata, formatSongBandAccuracy, getSongBandMemberScoreWidth, getSongBandScoreWidth, hasSongBandMemberAccuracy, hasSongBandMemberStars } from '../../../components/bands/SongBandScoreFooter';
 import { Routes } from '../../../routes';
 import { parseApiError } from '../../../utils/apiError';
-import { songBandToPlayerBandEntry, songBandTypeLabel } from '../../../utils/songBandLeaderboards';
+import { songBandToPlayerBandEntry } from '../../../utils/songBandLeaderboards';
+import { bandTypeLabel } from '../../../utils/bandTypes';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 import { useNavLinkPress } from '../../../hooks/navigation/useNavLinkPress';
 import ViewFullLeaderboardCta from './ViewFullLeaderboardCta';
@@ -35,7 +36,7 @@ export default function SongBandLeaderboardPreview({
   const { t } = useTranslation();
   const isMobile = useIsMobile();
   const styles = useStyles();
-  const title = songBandTypeLabel(bandType, t);
+  const title = bandTypeLabel(bandType, t);
   const selectedEntry = data.selectedBandEntry ?? data.selectedPlayerEntry ?? null;
   const selectedInTop = !!selectedEntry && data.entries.some(entry => isSameSongBandEntry(entry, selectedEntry));
   const showSelectedRow = !!selectedEntry && !selectedInTop;

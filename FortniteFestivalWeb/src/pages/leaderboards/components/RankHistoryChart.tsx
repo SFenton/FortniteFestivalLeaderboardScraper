@@ -17,51 +17,35 @@ import { formatLeaderboardPercentile, formatRatingValue, rankColor } from '@fest
 import GraphCard from '../../../components/common/GraphCard';
 import { PressableChartPath } from '../../../components/common/PressableChartPath';
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';
-import { useRankHistoryAll, formatValueTick, formatDetailValue, type RankHistoryChartPoint } from '../../../hooks/chart/useRankHistory';
+import { useRankHistoryAll } from '../../../hooks/chart/useRankHistory';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
-import { parseSnapshotDate } from '../../../utils/fillRankHistoryGaps';
 import { COMPACT_PERCENTILE_ROW_HEIGHT } from './RankingEntry';
 import { computePillMinWidth, computeRankAxisWidth, computeRankWidth, formatBayesianRatingDisplay, formatRankLabel, formatRankingValueDisplay } from '../helpers/rankingHelpers';
 import {
-  Colors, Font, FontVariant, Gap, Size, Layout, MetadataSize, Radius, Weight,
+  ACCURACY_GRADIENT, ChartSize, Colors, Font, FontVariant, Gap, IconSize, Layout, MetadataSize, Radius, Weight,
   frostedCard, padding, border, transition, truncate,
   CHART_ANIM_DURATION,
 } from '@festival/theme';
-
-/* ── Chart visual constants ── */
-const AXIS_TICK = { fill: Colors.textPrimary, fontSize: Font.md };
-const X_AXIS_TICK = { ...AXIS_TICK, dy: 16 };
-const X_AXIS_ANGLE = -35;
-
-/** Gradient endpoints matching accuracyColor scale for legend display. */
-const RANK_GRADIENT = 'linear-gradient(to right, rgb(220,40,40), rgb(46,204,113))';
-
-/** Identity function for matching RankHistoryChartPoints across pagination. */
-const RANK_POINT_IDENTITY = (a: RankHistoryChartPoint, b: RankHistoryChartPoint) =>
-  a.date === b.date && a.rank === b.rank && a.value === b.value;
-
-const formatSnapshotDisplayDate = (snapshotDate: string) =>
-  parseSnapshotDate(snapshotDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-
-const formatCountPart = (value: number | null) => value == null ? '—' : value.toLocaleString();
-
-function getTotalSongCount(point: RankHistoryChartPoint): number | null {
-  if (point.totalChartedSongs != null) return point.totalChartedSongs;
-  if (point.songsPlayed == null) return null;
-  if (point.coverage == null || point.coverage <= 0) return point.songsPlayed;
-
-  const totalSongs = Math.round(point.songsPlayed / point.coverage);
-  return Number.isFinite(totalSongs) && totalSongs > 0 ? totalSongs : point.songsPlayed;
-}
-
-const formatFcFraction = (point: RankHistoryChartPoint) => `${formatCountPart(point.fullComboCount)} / ${formatCountPart(getTotalSongCount(point))}`;
-const formatSongsFraction = (point: RankHistoryChartPoint) => `${formatCountPart(point.songsPlayed)} / ${formatCountPart(getTotalSongCount(point))}`;
+import { CHART_AXIS_TICK, CHART_X_AXIS_ANGLE, CHART_X_AXIS_TICK } from '../../../components/common/chartVisuals';
+import {
+  formatDetailValue,
+  formatRankHistoryCount,
+  formatRankHistoryDisplayDate,
+  formatRankHistoryFcFraction,
+  formatRankHistorySongsFraction,
+  formatValueTick,
+  getRankHistoryDomain,
+  getRankHistoryTotalSongCount,
+  getRecentRankHistoryPoints,
+  isSameRankHistoryPoint,
+  type RankHistoryChartPoint,
+} from '../../../utils/rankHistoryChartModel';
 
 function renderFcFraction(point: RankHistoryChartPoint, width: number | undefined, bold = false) {
   return (
     <span style={{ color: Colors.textPrimary, ...(bold ? { fontWeight: Weight.bold } : undefined), ...(width ? { width, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const } : {}) }}>
-      <span style={{ color: Colors.gold }}>{formatCountPart(point.fullComboCount)}</span>
-      {` / ${formatCountPart(getTotalSongCount(point))}`}
+      <span style={{ color: Colors.gold }}>{formatRankHistoryCount(point.fullComboCount)}</span>
+      {` / ${formatRankHistoryCount(getRankHistoryTotalSongCount(point))}`}
     </span>
   );
 }
@@ -69,7 +53,7 @@ function renderFcFraction(point: RankHistoryChartPoint, width: number | undefine
 /* ── List card styles ── */
 const listCardBase: React.CSSProperties = {
   ...frostedCard, display: 'flex', alignItems: 'center', gap: Gap.xl,
-  padding: padding(0, Gap.xl), height: Size.iconXl, borderRadius: Radius.md,
+  padding: padding(0, Gap.xl), height: IconSize.xl, borderRadius: Radius.md,
   fontSize: Font.md, color: 'inherit', transition: transition('border-color', 150),
 };
 const listCardBest: React.CSSProperties = {
@@ -122,10 +106,10 @@ export default memo(function RankHistoryChart({
   );
 
   // Last 5 snapshots (most recent first) for the list
-  const listData = useMemo(() => {
-    if (chartData.length === 0) return [];
-    return [...chartData].reverse().slice(0, 5);
-  }, [chartData]);
+  const listData = useMemo(
+    () => getRecentRankHistoryPoints(chartData),
+    [chartData],
+  );
 
   // Stable column widths derived from ALL chart history points
   const rankWidth = useMemo(() => {
@@ -137,23 +121,17 @@ export default memo(function RankHistoryChart({
     if (chartData.length === 0) return undefined;
     let maxLen = 1;
     for (const p of chartData) {
-      const label = metric === 'fcrate' ? formatFcFraction(p) : formatDetailValue(p.value, metric);
+      const label = metric === 'fcrate' ? formatRankHistoryFcFraction(p) : formatDetailValue(p.value, metric);
       maxLen = Math.max(maxLen, label.length);
     }
     return Math.ceil(maxLen * Layout.rankCharWidth) + Layout.rankColumnPadding;
   }, [chartData, metric]);
 
   // Compute rank domain (inverted — rank 1 at top)
-  const rankDomain = useMemo(() => {
-    if (chartData.length === 0) return [1, 100] as [number, number];
-    const ranks = chartData.map(p => p.rank).filter(r => r > 0);
-    if (ranks.length === 0) return [1, 100] as [number, number];
-    const minRank = Math.min(...ranks);
-    const maxRank = Math.max(...ranks);
-    const padded = Math.max(1, minRank - Math.ceil((maxRank - minRank) * 0.1));
-    const paddedMax = maxRank + Math.ceil((maxRank - minRank) * 0.1);
-    return [padded, paddedMax || 100] as [number, number]; // reversed prop on YAxis puts rank 1 at top
-  }, [chartData]);
+  const rankDomain = useMemo(
+    () => getRankHistoryDomain(chartData),
+    [chartData],
+  );
 
   const rankAxisWidth = useMemo(() => {
     const ranks = chartData.map(p => p.rank).filter(r => r > 0);
@@ -181,7 +159,7 @@ export default memo(function RankHistoryChart({
     selectedPoint: RankHistoryChartPoint | null;
     setSelectedPoint: (p: RankHistoryChartPoint | null | ((prev: RankHistoryChartPoint | null) => RankHistoryChartPoint | null)) => void;
   }) => (
-    <ResponsiveContainer width="100%" height={Size.chartHeight}>
+    <ResponsiveContainer width="100%" height={ChartSize.height}>
       <ComposedChart
         data={visibleData}
         margin={Layout.chartMargin}
@@ -195,15 +173,15 @@ export default memo(function RankHistoryChart({
         />
         <XAxis
           dataKey="dateLabel"
-          tick={X_AXIS_TICK}
+          tick={CHART_X_AXIS_TICK}
           stroke={Colors.borderSubtle}
-          angle={X_AXIS_ANGLE}
+          angle={CHART_X_AXIS_ANGLE}
           textAnchor="end"
           interval="preserveStartEnd"
         />
         <YAxis
           yAxisId="value"
-          tick={AXIS_TICK}
+          tick={CHART_AXIS_TICK}
           stroke={Colors.borderSubtle}
           tickFormatter={valueTickFormatter}
           label={({ viewBox }: { viewBox: { x: number; y: number; height: number } }) => {
@@ -220,7 +198,7 @@ export default memo(function RankHistoryChart({
           reversed
           allowDecimals={false}
           width={rankAxisWidth}
-          tick={AXIS_TICK}
+          tick={CHART_AXIS_TICK}
           stroke={Colors.borderSubtle}
           tickFormatter={(v: number) => formatRankLabel(v)}
           label={({ viewBox }: { viewBox: { x: number; y: number; width: number; height: number } }) => {
@@ -236,7 +214,7 @@ export default memo(function RankHistoryChart({
           content={() => (
             <div style={st.legend}>
               <span style={st.legendItem}>
-                <span style={{ ...st.legendSwatch, background: RANK_GRADIENT }} />
+                <span style={{ ...st.legendSwatch, background: ACCURACY_GRADIENT }} />
                 {metricLabel}
               </span>
               <span style={st.legendItem}>
@@ -272,7 +250,7 @@ export default memo(function RankHistoryChart({
                 fill={rankColor(bar.payload.rank, totalAccounts)}
                 fillOpacity={0.8}
                 stroke={isSelected ? Colors.accentPurple : 'transparent'}
-                strokeWidth={Size.barSelectionStroke}
+                strokeWidth={ChartSize.barSelectionStroke}
                 onPress={() => setSelectedPoint(prev => prev?.date === bar.payload.date ? null : bar.payload)}
               />
             );
@@ -286,8 +264,8 @@ export default memo(function RankHistoryChart({
           name={t('chart.rank')}
           stroke={Colors.accentBlueBright}
           strokeWidth={2}
-          dot={{ fill: Colors.accentBlueBright, r: Size.dotRadius }}
-          activeDot={{ r: Size.dotRadiusActive, fill: Colors.accentBlueBright }}
+          dot={{ fill: Colors.accentBlueBright, r: MetadataSize.dotRadius }}
+          activeDot={{ r: MetadataSize.dotRadiusActive, fill: Colors.accentBlueBright }}
           isAnimationActive={animating}
           animationDuration={CHART_ANIM_DURATION}
         />
@@ -296,7 +274,7 @@ export default memo(function RankHistoryChart({
   ), [t, st, totalAccounts, metricLabel, rankAxisWidth, rankDomain, valueTickFormatter]);
 
   const renderDetailCard = useCallback((point: RankHistoryChartPoint) => {
-    const dateStr = formatSnapshotDisplayDate(point.date);
+    const dateStr = formatRankHistoryDisplayDate(point.date);
     const percentileStr = usePercentile ? formatLeaderboardPercentile(point.rank, totalAccounts) : undefined;
     const isPctMetric = metric === 'fcrate' || metric === 'maxscore';
     const pct = isPctMetric ? point.value * 100 : 0;
@@ -349,7 +327,7 @@ export default memo(function RankHistoryChart({
       };
     }
     /* v8 ignore stop */
-    const dateStr = formatSnapshotDisplayDate(point.date);
+    const dateStr = formatRankHistoryDisplayDate(point.date);
     const percentileStr = usePercentile ? formatLeaderboardPercentile(point.rank, totalAccounts) : undefined;
     const isPctMetric = metric === 'fcrate' || metric === 'maxscore';
     const pct = isPctMetric ? point.value * 100 : 0;
@@ -399,11 +377,11 @@ export default memo(function RankHistoryChart({
       subtitle={t('chart.rankHistoryHint', { days })}
       loadingMessage={t('chart.loadingRankHistory')}
       emptyMessage={t('chart.noRankHistory', { instrument: instrumentLabel(selected) })}
-      identity={RANK_POINT_IDENTITY}
+      identity={isSameRankHistoryPoint}
       renderChart={renderChart}
       renderDetailCard={renderDetailCard}
       listData={listData}
-      listIdentity={RANK_POINT_IDENTITY}
+      listIdentity={isSameRankHistoryPoint}
       renderListItem={renderListItem}
       listCardHeight={showMobilePercentileDetails ? historyTwoRowHeight : undefined}
       skipAnimation={skipAnimation}
@@ -419,7 +397,7 @@ function renderPercentileHistoryPrimaryMetadata(
 ) {
   return (
     <>
-      <span style={{ flexShrink: 0, fontSize: Font.sm, color: Colors.textSecondary, fontVariantNumeric: FontVariant.tabularNums, ...(bold ? { fontWeight: Weight.bold } : undefined) }}>{formatSongsFraction(point)}</span>
+      <span style={{ flexShrink: 0, fontSize: Font.sm, color: Colors.textSecondary, fontVariantNumeric: FontVariant.tabularNums, ...(bold ? { fontWeight: Weight.bold } : undefined) }}>{formatRankHistorySongsFraction(point)}</span>
       <PercentilePill display={formatRankingValueDisplay(point.value, metric)} minWidth={percentileValueWidth} bold={bold} />
     </>
   );
@@ -448,7 +426,7 @@ function useRankHistoryChartStyles() {
     } as React.CSSProperties,
     legendItem: { display: 'inline-flex', alignItems: 'center', gap: Gap.sm } as React.CSSProperties,
     legendSwatch: {
-      display: 'inline-block', width: Size.iconXs, height: 12, borderRadius: 2,
+      display: 'inline-block', width: IconSize.xs, height: 12, borderRadius: 2,
     } as React.CSSProperties,
     mobileHistoryLayout: {
       display: 'flex',

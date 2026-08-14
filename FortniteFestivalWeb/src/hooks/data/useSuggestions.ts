@@ -123,6 +123,12 @@ export function useSuggestions(
     ? session
     : toSession(cached, cacheKey);
 
+  useLayoutEffect(() => {
+    if (suggestionsCache && suggestionsCache.sourceKey !== cacheKey) {
+      suggestionsCache = null;
+    }
+  }, [cacheKey]);
+
   useEffect(() => {
     if (cacheKeyRef.current === cacheKey) return;
 

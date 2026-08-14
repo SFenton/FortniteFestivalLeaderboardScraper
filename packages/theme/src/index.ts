@@ -1,5 +1,6 @@
 export { Colors } from './colors';
 export type { ColorKey } from './colors';
+export { ACCURACY_GRADIENT, accuracyColor } from './colorHelpers';
 export { Radius, Font, Weight, ZIndex, LineHeight, Gap, Opacity, Border, Shadow, SpinnerSize, Spinner, IconSize, InstrumentSize, StarSize, AlbumArtSize, MetadataSize, ChartSize, GeneralSize, Size, MaxWidth, Layout } from './spacing';
 export { goldFill, goldOutline, goldOutlineSkew, GOLD_SKEW } from './goldStyles';
 export { frostedCard, frostedCardSurface, frostedCardLight, opaqueGlass, modalOverlay, modalCard, btnPrimary, btnDanger, purpleGlass } from './frostedStyles';

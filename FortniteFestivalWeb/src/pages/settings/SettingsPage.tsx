@@ -18,7 +18,7 @@ import ConfirmAlert from '../../components/modals/ConfirmAlert';
 import { modalStyles as modalCss } from '../../components/modals/modalStyles';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import { ActionPill } from '../../components/common/ActionPill';
-import type { ServerInstrumentKey as InstrumentKey, BandSyncStatusResponse, SyncStatusResponse } from '@festival/core/api';
+import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api';
 import { Colors, Font, Gap, Weight, Radius, Layout, Size, Display, Align, Overflow, CssValue, LineHeight, TextAlign, Opacity, btnDanger, btnPrimary, flexColumn, flexBetween, padding, transition, CssProp, FAST_FADE_MS, STAGGER_INTERVAL, FADE_DURATION, QUERY_NARROW_GRID } from '@festival/theme';
 import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
 import { useFirstRunReplay } from '../../hooks/ui/useFirstRun';
@@ -48,8 +48,8 @@ import { Routes as AppRoutes } from '../../routes';
 import { hasVisitedPage, markPageVisited } from '../../hooks/ui/usePageTransition';
 
 import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVersions';
+import { useSelectedProfileSyncStatus } from './useSelectedProfileSyncStatus';
 
-const PROFILE_SYNC_STATUS_POLL_MS = 5_000;
 const SETTINGS_ACTION_BUTTON_WIDTH = 212;
 const QUICK_LINK_GLYPH_ICON_SIZE = 20;
 
@@ -238,9 +238,11 @@ export default function SettingsPage() {
   const serviceInfoQuery = useServiceInfo('settings');
   const serviceInfo = serviceInfoQuery.data ?? null;
   const serviceInfoLoadFailed = serviceInfoQuery.isError;
-  const [trackedPlayerSyncStatus, setTrackedPlayerSyncStatus] = useState<SyncStatusResponse | null>(null);
-  const [selectedBandSyncStatus, setSelectedBandSyncStatus] = useState<BandSyncStatusResponse | null>(null);
-  const [selectedProfileSyncLoadFailed, setSelectedProfileSyncLoadFailed] = useState(false);
+  const {
+    playerStatus: trackedPlayerSyncStatus,
+    bandStatus: selectedBandSyncStatus,
+    loadFailed: selectedProfileSyncLoadFailed,
+  } = useSelectedProfileSyncStatus(selectedProfile);
   const [isExportingData, setIsExportingData] = useState(false);
   const [exportDataFailed, setExportDataFailed] = useState(false);
   const [isRefreshingProfileName, setIsRefreshingProfileName] = useState(false);
@@ -254,10 +256,6 @@ export default function SettingsPage() {
   }, []);
 
   const st = useSettingsStyles(isMobile, settings.filterInvalidScores, settings.songRowVisualOrderEnabled);
-  const selectedPlayerAccountId = selectedProfile?.type === 'player' ? selectedProfile.accountId : null;
-  const selectedBandType = selectedProfile?.type === 'band' ? selectedProfile.bandType : null;
-  const selectedBandTeamKey = selectedProfile?.type === 'band' ? selectedProfile.teamKey : null;
-
   useEffect(() => {
     const controller = new AbortController();
     api.getVersion({ signal: controller.signal })
@@ -268,52 +266,6 @@ export default function SettingsPage() {
     return () => controller.abort();
   }, []);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-
-    if (!selectedProfile) {
-      setTrackedPlayerSyncStatus(null);
-      setSelectedBandSyncStatus(null);
-      setSelectedProfileSyncLoadFailed(false);
-      return undefined;
-    }
-
-    setTrackedPlayerSyncStatus(null);
-    setSelectedBandSyncStatus(null);
-    setSelectedProfileSyncLoadFailed(false);
-
-    const loadSelectedProfileSyncStatus = async () => {
-      try {
-        if (selectedPlayerAccountId) {
-          const data = await api.getSyncStatus(selectedPlayerAccountId, { signal: controller.signal });
-          if (controller.signal.aborted) return;
-          setTrackedPlayerSyncStatus(data);
-          setSelectedBandSyncStatus(null);
-        } else if (selectedBandType && selectedBandTeamKey) {
-          const data = await api.getBandSyncStatus(selectedBandType, selectedBandTeamKey, { signal: controller.signal });
-          if (controller.signal.aborted) return;
-          setSelectedBandSyncStatus(data);
-          setTrackedPlayerSyncStatus(null);
-        }
-        if (controller.signal.aborted) return;
-        setSelectedProfileSyncLoadFailed(false);
-      } catch {
-        if (!controller.signal.aborted) setSelectedProfileSyncLoadFailed(true);
-      } finally {
-        if (!controller.signal.aborted) {
-          timer = setTimeout(loadSelectedProfileSyncStatus, PROFILE_SYNC_STATUS_POLL_MS);
-        }
-      }
-    };
-
-    void loadSelectedProfileSyncStatus();
-
-    return () => {
-      controller.abort();
-      if (timer) clearTimeout(timer);
-    };
-  }, [selectedBandTeamKey, selectedBandType, selectedPlayerAccountId, selectedProfile]);
   const canExportData = !!selectedProfile && !isExportingData;
   const selectedProfileRefreshAccountIds = useMemo(
     () => getSelectedProfileRefreshAccountIds(selectedProfile),

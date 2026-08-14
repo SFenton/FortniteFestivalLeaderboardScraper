@@ -14,6 +14,7 @@ import { getStatisticsNavigationPath } from '../../../utils/profileNavigation';
 import { markTapDiagnosticsAction } from '../../../diagnostics/tapDiagnosticsBridge';
 import { usePressAction } from '../../../hooks/ui/usePressAction';
 import { scheduleCompatibilityClickSuppression } from '../../../hooks/ui/pressCompatibilityClickSuppression';
+import { bandTypeLabel } from '../../../utils/bandTypes';
 
 const SIDEBAR_DURATION = 250;
 const TOUCH_NAV_MOVEMENT_THRESHOLD = 12;
@@ -217,7 +218,7 @@ function SelectedBandPanel({ band, getNavigationHandlers, onDeselect }: { band: 
         <span style={s.sidebarLinkIcon}><IoPeople size={20} /></span>
         <MarqueeText as="p" text={band.displayName} style={s.bandProfileName} />
       </Link>
-      <div style={s.bandProfileType}>{formatBandType(band.bandType)}</div>
+      <div style={s.bandProfileType}>{bandTypeLabel(band.bandType, t)}</div>
       <div style={s.bandMemberList} aria-label={t('band.members')}>
         {band.members.map(member => (
           <Link key={member.accountId} to={Routes.player(member.accountId)} {...getNavigationHandlers(member.displayName, Routes.player(member.accountId))} style={s.bandMemberLink}>
@@ -231,12 +232,4 @@ function SelectedBandPanel({ band, getNavigationHandlers, onDeselect }: { band: 
       </PressableButton>
     </div>
   );
-}
-
-function formatBandType(bandType: SelectedBandProfile['bandType']): string {
-  switch (bandType) {
-    case 'Band_Duets': return 'Duos';
-    case 'Band_Trios': return 'Trios';
-    case 'Band_Quad': return 'Quads';
-  }
 }
