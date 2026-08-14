@@ -22,6 +22,8 @@ public sealed class MaxScoreMaintenanceService
     private readonly MaxScoreMaintenanceNotificationService _notifications;
     private readonly MaxScoreMaintenanceDerivedStateService _derivedState;
     private readonly ScrapeTimePrecomputer _precomputer;
+    private readonly ISongInstrumentSupportCache
+        _instrumentSupportCache;
     private readonly ILogger<MaxScoreMaintenanceService> _log;
 
     public MaxScoreMaintenanceService(
@@ -33,6 +35,7 @@ public sealed class MaxScoreMaintenanceService
         MaxScoreMaintenanceNotificationService notifications,
         MaxScoreMaintenanceDerivedStateService derivedState,
         ScrapeTimePrecomputer precomputer,
+        ISongInstrumentSupportCache instrumentSupportCache,
         ILogger<MaxScoreMaintenanceService> log)
     {
         _pathGeneration = pathGeneration;
@@ -43,6 +46,7 @@ public sealed class MaxScoreMaintenanceService
         _notifications = notifications;
         _derivedState = derivedState;
         _precomputer = precomputer;
+        _instrumentSupportCache = instrumentSupportCache;
         _log = log;
     }
 
@@ -545,22 +549,10 @@ public sealed class MaxScoreMaintenanceService
 
                 if (run.Phase < MaxScoreMaintenancePhase.PathsPromoted)
                 {
-                    if (ValidatePathPhase(
+                    if (!ValidatePathPhase(
                             manifest,
                             postPromotion: true,
                             throwOnMismatch: false))
-                    {
-                        await AdvancePhaseAsync(
-                            manifestDigest,
-                            normalizedPlanDigest,
-                            MaxScoreMaintenancePhase.RollbackCaptured,
-                            MaxScoreMaintenancePhase.PathsPromoted,
-                            promotedSongCount: manifest.Songs.Count,
-                            rebuiltInstrumentCount: null,
-                            stagedCacheEntryCount: null,
-                            ct);
-                    }
-                    else
                     {
                         ValidatePathPhase(
                             manifest,
@@ -591,16 +583,34 @@ public sealed class MaxScoreMaintenanceService
                             manifest,
                             postPromotion: true,
                             throwOnMismatch: true);
-                        await AdvancePhaseAsync(
-                            manifestDigest,
-                            normalizedPlanDigest,
-                            MaxScoreMaintenancePhase.RollbackCaptured,
-                            MaxScoreMaintenancePhase.PathsPromoted,
-                            promotedSongCount: manifest.Songs.Count,
-                            rebuiltInstrumentCount: null,
-                            stagedCacheEntryCount: null,
-                            ct);
                     }
+                    ValidateWorkerOffline();
+                    _instrumentSupportCache
+                        .RefreshSongInstrumentSupport();
+                    var admittedPairs =
+                        GetNewlyAdmittedPathPairs(manifest);
+                    var backfillReset =
+                        _metaDatabase
+                            .ResetNegativeBackfillChecksForAdmittedPairs(
+                                admittedPairs,
+                                PublicReadFreezeState
+                                    .MaxScoreMaintenanceReasonPrefix
+                                + manifestDigest);
+                    ValidateWorkerOffline();
+                    _log.LogInformation(
+                        "Refreshed promoted path admission: pairs={PairCount}, negativeChecksReset={ResetCount}, accountsRequeued={AccountCount}.",
+                        admittedPairs.Count,
+                        backfillReset.RemovedNegativePairChecks,
+                        backfillReset.RequeuedAccountCount);
+                    await AdvancePhaseAsync(
+                        manifestDigest,
+                        normalizedPlanDigest,
+                        MaxScoreMaintenancePhase.RollbackCaptured,
+                        MaxScoreMaintenancePhase.PathsPromoted,
+                        promotedSongCount: manifest.Songs.Count,
+                        rebuiltInstrumentCount: null,
+                        stagedCacheEntryCount: null,
+                        ct);
                     run = await LoadRequiredRunAsync(
                         manifestDigest,
                         ct);
@@ -713,6 +723,8 @@ public sealed class MaxScoreMaintenanceService
                         manifest.ExpectedPublicationId,
                         manifest.ExpectedPublishedScrapeId,
                         manifestDigest);
+                _instrumentSupportCache
+                    .InvalidateSongInstrumentSupport();
                 run = await LoadRequiredRunAsync(
                     manifestDigest,
                     ct);
@@ -2242,6 +2254,33 @@ public sealed class MaxScoreMaintenanceService
                 song.StagedPath.GenerationProfile!),
             song.StagedPath.ExpectedInstruments,
             song.StagedPath.Maxima.ToSongMaxScores());
+
+    internal static IReadOnlyList<SoloCurrentProjectionScopeKey>
+        GetNewlyAdmittedPathPairs(
+            MaxScoreMaintenanceManifest manifest)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        return manifest.Songs
+            .SelectMany(song =>
+                song.StagedPath.ExpectedInstruments
+                    .Where(instrument =>
+                        song.StagedPath.Maxima
+                            .GetByInstrument(instrument) is > 0
+                        && (!song.CurrentPath.ExpectedInstruments
+                                .Contains(
+                                    instrument,
+                                    StringComparer.Ordinal)
+                            || song.CurrentPath.Maxima
+                                .GetByInstrument(instrument) is not > 0))
+                    .Select(instrument =>
+                        new SoloCurrentProjectionScopeKey(
+                            song.SongId,
+                            instrument)))
+            .Distinct()
+            .OrderBy(pair => pair.SongId, StringComparer.Ordinal)
+            .ThenBy(pair => pair.Instrument, StringComparer.Ordinal)
+            .ToArray();
+    }
 
     private static bool PathIdentityMatches(
         PathGenerationState actual,

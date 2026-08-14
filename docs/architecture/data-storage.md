@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-14
-last_verified_commit: 69322a3e
+last_verified_commit: 00531b19
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -11,9 +11,11 @@ sources:
   - FSTService/Persistence/MaxScoreMaintenanceSchema.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
+  - FSTService/Persistence/RegistrationMutationGuard.cs
   - FSTService/Persistence/MetaDatabase.PhaseProgress.cs
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
+  - FSTService/Scraping/BackfillOrchestrator.cs
   - FSTService/FeatureOptions.cs
   - deploy/postgres.Dockerfile
 update_triggers:
@@ -82,15 +84,31 @@ file-first/database-checkpoint retry validates identical canonical bytes.
 `maintenance_pro_lead_max_score_repair_v1` rows and accept new
 `maintenance_max_score_correction_v1` audit rows. Both purposes remain
 quarantine-only with a compile/schema-enforced visible delivery count of zero.
-Maintenance candidate parity counts only routine-emittable player-rank kinds;
-max-score-percent rank changes remain in quarantine and state alignment.
-Missing current band subjects and their song/rank state are created inside the
-same repeatable-read quarantine transaction before candidate collection.
+Maintenance candidate parity uses routine visible cardinality rather than raw
+audit-row cardinality: player ranks coalesce by player/instrument, band-song
+metrics coalesce by play, band rank metrics group by subject/scope, progress
+metrics remain individual, and `band_rank_state_missing` is audit/alignment
+only. Max-score-percent rank changes likewise remain in quarantine and state
+alignment. Missing current band subjects and their song/rank state are created
+inside the same repeatable-read quarantine transaction before candidate
+collection.
 
 The max-score lease takes `SHARE` locks in fixed order on
 `leaderboard_entries_overlay`, `leaderboard_entries`, and
 `band_member_stats`. This protects both solo score identity and the member
 source used by band threshold/projection rebuilds.
+
+Registration scope is also database-guarded. Row triggers on
+`registered_users`, `registered_bands`, `backfill_status`, and
+`backfill_progress` lock the publication singleton and reject mutations only
+when its reason is `max-score-maintenance:v1:<digest>`. Registration workers
+hold a shared publication-row lease across a batch, making freeze acquisition
+and registration persistence mutually exclusive even in the registration-only
+host. The maintenance owner has one transaction-local, exact-freeze bypass used
+only to remove stale negative backfill checks for newly promoted path-backed
+pairs. Affected accounts are requeued; positive and unrelated progress rows
+are preserved. Ordinary scrape/publication freezes retain their existing
+registration behavior.
 
 ## Publication ownership
 

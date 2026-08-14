@@ -53,6 +53,102 @@ public sealed class MaxScoreMaintenancePersistenceTests
     }
 
     [Fact]
+    public void Routine_band_song_count_coalesces_multi_metric_same_play_rows()
+    {
+        var score = Candidate("Solo_Guitar") with
+        {
+            SubjectType = "band",
+            SubjectKey = "Band_Duets:account-1:account-2",
+            Instrument = null,
+            SongId = "song-a",
+            ScopeKey = "overall:",
+            CandidateKind = "band_score_pb",
+            Metric = "score",
+            Lane = "band_song",
+            RoutineEventGroupKey = "201000\u001f0:1\u001fSolo_Guitar+Solo_Bass",
+        };
+        var rank = score with
+        {
+            ScopeKey = "combo:Solo_Guitar+Solo_Bass",
+            CandidateKind = "band_song_rank_improved",
+            Metric = "song_rank",
+        };
+        var stars = score with
+        {
+            CandidateKind = "band_stars_improved",
+            Metric = "stars",
+        };
+        var otherPlay = score with
+        {
+            RoutineEventGroupKey =
+                "202000\u001f0:1\u001fSolo_Guitar+Solo_Bass",
+        };
+
+        Assert.Equal(
+            2,
+            MaxScoreMaintenanceNotificationService
+                .CountRoutineBandSongEvents(
+                    [score, rank, stars, otherPlay]));
+    }
+
+    [Fact]
+    public void Routine_band_rank_count_groups_rank_metrics_and_excludes_missing_state()
+    {
+        var weightedRank = Candidate("Solo_Guitar") with
+        {
+            SubjectType = "band",
+            SubjectKey = "Band_Duets:account-1:account-2",
+            Instrument = null,
+            ScopeKey = "combo:Solo_Guitar+Solo_Bass",
+            CandidateKind = "band_weighted_rank_improved",
+            Metric = "weighted_rank",
+            Lane = "band_rank",
+            RoutineEventGroupKey =
+                "combo\u001fSolo_Guitar+Solo_Bass",
+        };
+        var totalScoreRank = weightedRank with
+        {
+            CandidateKind = "band_total_score_rank_improved",
+            Metric = "total_score_rank",
+        };
+        var fcRateRank = weightedRank with
+        {
+            CandidateKind = "band_fc_rate_rank_improved",
+            Metric = "fc_rate_rank",
+        };
+        var totalScore = weightedRank with
+        {
+            CandidateKind = "band_total_score_improved",
+            Metric = "total_score",
+        };
+        var fullCombos = weightedRank with
+        {
+            CandidateKind = "band_fc_count_improved",
+            Metric = "full_combo_count",
+        };
+        var missing = weightedRank with
+        {
+            ScopeKey = "overall:",
+            CandidateKind = "band_rank_state_missing",
+            Metric = "state",
+            RoutineEventGroupKey = "overall\u001f",
+        };
+
+        Assert.Equal(
+            3,
+            MaxScoreMaintenanceNotificationService
+                .CountRoutineBandRankEvents(
+                    [
+                        weightedRank,
+                        totalScoreRank,
+                        fcRateRank,
+                        totalScore,
+                        fullCombos,
+                        missing,
+                    ]));
+    }
+
+    [Fact]
     public void Notification_classification_quarantines_target_band_candidates()
     {
         var targetSong = Candidate("Solo_Guitar") with
@@ -1016,11 +1112,6 @@ public sealed class MaxScoreMaintenancePersistenceTests
         var manifest = CreateManifest();
         var manifestDigest = manifest.ComputeDigest();
         var planDigest = new string('5', 64);
-        SeedNotificationMaintenanceState(
-            dataSource,
-            manifest,
-            manifestDigest,
-            planDigest);
         using (var conn = dataSource.OpenConnection())
         using (var seed = conn.CreateCommand())
         {
@@ -1110,6 +1201,11 @@ public sealed class MaxScoreMaintenancePersistenceTests
                 """;
             seed.ExecuteNonQuery();
         }
+        SeedNotificationMaintenanceState(
+            dataSource,
+            manifest,
+            manifestDigest,
+            planDigest);
 
         var (routine, service) =
             CreateNotificationMaintenanceServices(
@@ -1176,11 +1272,6 @@ public sealed class MaxScoreMaintenancePersistenceTests
         var manifest = CreateManifest();
         var manifestDigest = manifest.ComputeDigest();
         var planDigest = new string('6', 64);
-        SeedNotificationMaintenanceState(
-            dataSource,
-            manifest,
-            manifestDigest,
-            planDigest);
         using (var conn = dataSource.OpenConnection())
         using (var seed = conn.CreateCommand())
         {
@@ -1272,6 +1363,11 @@ public sealed class MaxScoreMaintenancePersistenceTests
                 """;
             seed.ExecuteNonQuery();
         }
+        SeedNotificationMaintenanceState(
+            dataSource,
+            manifest,
+            manifestDigest,
+            planDigest);
 
         var (routine, service) =
             CreateNotificationMaintenanceServices(
@@ -1342,6 +1438,412 @@ public sealed class MaxScoreMaintenancePersistenceTests
         using var reader = verify.ExecuteReader();
         Assert.True(reader.Read());
         Assert.Equal(1, reader.GetInt64(0));
+        Assert.Equal(1, reader.GetInt64(1));
+        Assert.Equal(0, reader.GetInt64(2));
+    }
+
+    [Fact]
+    public async Task Band_candidate_parity_uses_routine_coalescing_and_excludes_missing_state_on_resume()
+    {
+        using var dataSource = SharedPostgresContainer.CreateDatabase();
+        var manifest = CreateManifest();
+        var manifestDigest = manifest.ComputeDigest();
+        var planDigest = new string('7', 64);
+        using (var conn = dataSource.OpenConnection())
+        using (var seed = conn.CreateCommand())
+        {
+            seed.CommandText = """
+                INSERT INTO registered_bands (
+                    source_id,
+                    band_type,
+                    team_key,
+                    band_id,
+                    registered_at,
+                    last_activity_at,
+                    last_member_sync_at)
+                VALUES (
+                    'web-band-tracker',
+                    'Band_Duets',
+                    'account-1:account-2',
+                    'band-1',
+                    now() - interval '1 day',
+                    now(),
+                    now());
+
+                INSERT INTO band_improvement_subjects (
+                    band_type,
+                    team_key,
+                    team_members,
+                    first_seen_at,
+                    last_seen_at)
+                VALUES (
+                    'Band_Duets',
+                    'account-1:account-2',
+                    ARRAY['account-1', 'account-2'],
+                    now() - interval '1 day',
+                    now());
+
+                INSERT INTO current_band_leaderboard_entries (
+                    song_id,
+                    band_type,
+                    ranking_scope,
+                    scope_combo_id,
+                    team_key,
+                    entry_combo_id,
+                    entry_instrument_combo,
+                    team_members,
+                    score,
+                    accuracy,
+                    is_full_combo,
+                    stars,
+                    difficulty,
+                    season,
+                    rank,
+                    total_entries,
+                    percentile,
+                    first_seen_at,
+                    last_updated_at,
+                    computed_at,
+                    projection_generation)
+                VALUES
+                    (
+                        'song-a',
+                        'Band_Duets',
+                        'overall',
+                        '',
+                        'account-1:account-2',
+                        '0:1',
+                        'Solo_Guitar+Solo_Bass',
+                        ARRAY['account-1', 'account-2'],
+                        201000,
+                        100,
+                        TRUE,
+                        6,
+                        3,
+                        14,
+                        90,
+                        500,
+                        82,
+                        now() - interval '1 day',
+                        now(),
+                        now(),
+                        7),
+                    (
+                        'song-a',
+                        'Band_Duets',
+                        'combo',
+                        'Solo_Guitar+Solo_Bass',
+                        'account-1:account-2',
+                        '0:1',
+                        'Solo_Guitar+Solo_Bass',
+                        ARRAY['account-1', 'account-2'],
+                        201000,
+                        100,
+                        TRUE,
+                        6,
+                        3,
+                        14,
+                        40,
+                        500,
+                        92,
+                        now() - interval '1 day',
+                        now(),
+                        now(),
+                        7);
+
+                INSERT INTO band_current_projection_scope (
+                    song_id,
+                    band_type,
+                    ranking_scope,
+                    scope_combo_id,
+                    projection_generation,
+                    published_generation,
+                    row_count,
+                    published_row_count,
+                    status,
+                    last_rebuilt_at,
+                    updated_at)
+                VALUES
+                    (
+                        'song-a',
+                        'Band_Duets',
+                        'overall',
+                        '',
+                        7,
+                        7,
+                        1,
+                        1,
+                        'ready',
+                        now(),
+                        now()),
+                    (
+                        'song-a',
+                        'Band_Duets',
+                        'combo',
+                        'Solo_Guitar+Solo_Bass',
+                        7,
+                        7,
+                        1,
+                        1,
+                        'ready',
+                        now(),
+                        now());
+
+                INSERT INTO band_improvement_state (
+                    band_subject_id,
+                    song_id,
+                    ranking_scope,
+                    scope_combo_id,
+                    entry_combo_id,
+                    entry_instrument_combo,
+                    score,
+                    rank,
+                    stars,
+                    is_full_combo,
+                    difficulty,
+                    percentile,
+                    season,
+                    total_entries,
+                    first_seen_at,
+                    last_updated_at,
+                    observed_at,
+                    updated_at)
+                SELECT subject.band_subject_id,
+                       'song-a',
+                       state.ranking_scope,
+                       state.scope_combo_id,
+                       '0:1',
+                       'Solo_Guitar+Solo_Bass',
+                       200000,
+                       state.rank,
+                       5,
+                       FALSE,
+                       2,
+                       80,
+                       14,
+                       500,
+                       now() - interval '1 day',
+                       now() - interval '1 hour',
+                       now() - interval '1 hour',
+                       now() - interval '1 hour'
+                FROM band_improvement_subjects subject
+                CROSS JOIN (VALUES
+                    ('overall', '', 100),
+                    (
+                        'combo',
+                        'Solo_Guitar+Solo_Bass',
+                        50)
+                ) state(ranking_scope, scope_combo_id, rank)
+                WHERE subject.band_type = 'Band_Duets'
+                  AND subject.team_key =
+                      'account-1:account-2';
+
+                INSERT INTO band_team_rankings_current_band_duets (
+                    band_type,
+                    ranking_scope,
+                    combo_id,
+                    team_key,
+                    team_members,
+                    songs_played,
+                    total_charted_songs,
+                    coverage,
+                    raw_skill_rating,
+                    adjusted_skill_rating,
+                    adjusted_skill_rank,
+                    weighted_rating,
+                    weighted_rank,
+                    fc_rate,
+                    fc_rate_rank,
+                    total_score,
+                    total_score_rank,
+                    avg_accuracy,
+                    full_combo_count,
+                    avg_stars,
+                    best_rank,
+                    avg_rank,
+                    raw_weighted_rating,
+                    computed_at)
+                VALUES
+                    (
+                        'Band_Duets',
+                        'combo',
+                        'Solo_Guitar+Solo_Bass',
+                        'account-1:account-2',
+                        ARRAY['account-1', 'account-2'],
+                        1,
+                        1,
+                        1,
+                        0,
+                        0,
+                        1,
+                        0,
+                        90,
+                        1,
+                        250,
+                        201000,
+                        180,
+                        100,
+                        2,
+                        6,
+                        1,
+                        1,
+                        NULL,
+                        now()),
+                    (
+                        'Band_Duets',
+                        'overall',
+                        '',
+                        'account-1:account-2',
+                        ARRAY['account-1', 'account-2'],
+                        1,
+                        1,
+                        1,
+                        0,
+                        0,
+                        1,
+                        0,
+                        1,
+                        1,
+                        1,
+                        201000,
+                        1,
+                        100,
+                        2,
+                        6,
+                        1,
+                        1,
+                        NULL,
+                        now());
+
+                INSERT INTO band_rank_improvement_state (
+                    band_subject_id,
+                    ranking_scope,
+                    combo_id,
+                    adjusted_skill_rank,
+                    weighted_rank,
+                    fc_rate_rank,
+                    total_score_rank,
+                    total_score,
+                    full_combo_count,
+                    computed_at,
+                    observed_at,
+                    updated_at)
+                SELECT subject.band_subject_id,
+                       'combo',
+                       'Solo_Guitar+Solo_Bass',
+                       1,
+                       100,
+                       300,
+                       200,
+                       200000,
+                       1,
+                       now() - interval '1 hour',
+                       now() - interval '1 hour',
+                       now() - interval '1 hour'
+                FROM band_improvement_subjects subject
+                WHERE subject.band_type = 'Band_Duets'
+                  AND subject.team_key =
+                      'account-1:account-2';
+                """;
+            seed.ExecuteNonQuery();
+        }
+        SeedNotificationMaintenanceState(
+            dataSource,
+            manifest,
+            manifestDigest,
+            planDigest);
+
+        var (routine, service) =
+            CreateNotificationMaintenanceServices(dataSource);
+        var inspection = await service.InspectRoutineStateAsync(
+            manifest,
+            manifestDigest,
+            requireOwnedFreeze: true,
+            CancellationToken.None);
+        var routineReport = routine.Precompute(
+            new ImprovementNotificationPrecomputeOptions(
+                Execute: false,
+                BaselineOnly: false,
+                Scope: "registered",
+                IncludePlayers: false,
+                IncludeBands: true,
+                IncludeSongEvents: true,
+                IncludeRankings: true,
+                PruneExpired: false,
+                PublishedScrapeId:
+                    manifest.ExpectedPublishedScrapeId));
+        Assert.Equal(1, routineReport.BandSongEventsInserted);
+        Assert.Equal(3, routineReport.BandRankEventsInserted);
+
+        using (var conn = dataSource.OpenConnection())
+        using (var fail = conn.CreateCommand())
+        {
+            fail.CommandText = """
+                UPDATE max_score_maintenance_runs
+                SET status = 'failed',
+                    failure_stage = 'derived_state_rebuilt',
+                    failure_detail = 'injected resume boundary'
+                WHERE manifest_sha256 = @manifestDigest
+                """;
+            fail.Parameters.AddWithValue(
+                "manifestDigest",
+                manifestDigest);
+            Assert.Equal(1, fail.ExecuteNonQuery());
+        }
+        var resumeInspection =
+            await service.InspectRoutineStateAsync(
+                manifest,
+                manifestDigest,
+                requireOwnedFreeze: true,
+                CancellationToken.None);
+        Assert.Equal(
+            inspection.CandidateCount,
+            resumeInspection.CandidateCount);
+
+        var result = await service.QuarantineAndAlignAsync(
+            manifest,
+            manifestDigest,
+            planDigest,
+            inspection.PublishedScoreSourceFingerprint,
+            CancellationToken.None);
+
+        Assert.Equal(18, result.CandidateCount);
+        Assert.Equal(0, result.VisibleDeliveryCount);
+        var aligned = await service.InspectRoutineStateAsync(
+            manifest,
+            manifestDigest,
+            requireOwnedFreeze: true,
+            CancellationToken.None);
+        Assert.Empty(aligned.Candidates);
+
+        using var verifyConnection = dataSource.OpenConnection();
+        using var verify = verifyConnection.CreateCommand();
+        verify.CommandText = """
+            SELECT
+                (
+                    SELECT COUNT(*)
+                    FROM improvement_notification_maintenance_candidates
+                    WHERE maintenance_run_id = @maintenanceRunId
+                ),
+                (
+                    SELECT COUNT(*)
+                    FROM improvement_notification_maintenance_candidates
+                    WHERE maintenance_run_id = @maintenanceRunId
+                      AND candidate_kind =
+                          'band_rank_state_missing'
+                ),
+                (
+                    SELECT COUNT(*)
+                    FROM band_improvement_events
+                    WHERE delivery_state = 'visible'
+                )
+            """;
+        verify.Parameters.AddWithValue(
+            "maintenanceRunId",
+            result.MaintenanceRunId);
+        using var reader = verify.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(18, reader.GetInt64(0));
         Assert.Equal(1, reader.GetInt64(1));
         Assert.Equal(0, reader.GetInt64(2));
     }

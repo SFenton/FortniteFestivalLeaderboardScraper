@@ -204,9 +204,9 @@ public sealed class MaxScoreMaintenanceNotificationService
                 ct);
         if (CountRoutinePlayerRankEvents(playerRankCandidates)
                 != routineReport.PlayerRankEventsInserted
-            || bandSongCandidates.Count
+            || CountRoutineBandSongEvents(bandSongCandidates)
                 != routineReport.BandSongEventsInserted
-            || bandRankCandidates.Count
+            || CountRoutineBandRankEvents(bandRankCandidates)
                 != routineReport.BandRankEventsInserted)
         {
             throw new InvalidOperationException(
@@ -390,6 +390,75 @@ public sealed class MaxScoreMaintenanceNotificationService
                 candidate.Instrument))
             .Distinct()
             .Count();
+    }
+
+    internal static int CountRoutineBandSongEvents(
+        IReadOnlyList<MaxScoreMaintenanceCandidate> candidates)
+    {
+        ArgumentNullException.ThrowIfNull(candidates);
+        var bandSongCandidates = candidates
+            .Where(candidate => candidate.Lane == "band_song")
+            .ToArray();
+        if (bandSongCandidates.Any(candidate =>
+                candidate.SongId is null
+                || candidate.RoutineEventGroupKey is null))
+        {
+            throw new InvalidOperationException(
+                "Band-song maintenance candidates are missing routine play-group identity.");
+        }
+
+        return bandSongCandidates
+            .Select(candidate => (
+                candidate.SubjectKey,
+                candidate.SongId!,
+                candidate.RoutineEventGroupKey!))
+            .Distinct()
+            .Count();
+    }
+
+    internal static int CountRoutineBandRankEvents(
+        IReadOnlyList<MaxScoreMaintenanceCandidate> candidates)
+    {
+        ArgumentNullException.ThrowIfNull(candidates);
+        var bandRankCandidates = candidates
+            .Where(candidate => candidate.Lane == "band_rank")
+            .ToArray();
+        if (bandRankCandidates.Any(candidate =>
+                candidate.RoutineEventGroupKey is null))
+        {
+            throw new InvalidOperationException(
+                "Band-rank maintenance candidates are missing routine rank-group identity.");
+        }
+
+        var groupedRankEvents = bandRankCandidates
+            .Where(candidate => candidate.CandidateKind is
+                "band_total_score_rank_improved"
+                or "band_weighted_rank_improved"
+                or "band_fc_rate_rank_improved")
+            .Select(candidate => (
+                candidate.SubjectKey,
+                candidate.RoutineEventGroupKey!))
+            .Distinct()
+            .Count();
+        var progressEvents = bandRankCandidates.Count(candidate =>
+            candidate.CandidateKind is
+                "band_total_score_improved"
+                or "band_fc_count_improved");
+        var recognizedRows = bandRankCandidates.Count(candidate =>
+            candidate.CandidateKind is
+                "band_total_score_rank_improved"
+                or "band_weighted_rank_improved"
+                or "band_fc_rate_rank_improved"
+                or "band_total_score_improved"
+                or "band_fc_count_improved"
+                or "band_rank_state_missing");
+        if (recognizedRows != bandRankCandidates.Length)
+        {
+            throw new InvalidOperationException(
+                "Band-rank maintenance candidates contain an unknown routine grouping kind.");
+        }
+
+        return groupedRankEvents + progressEvents;
     }
 
     internal static MaxScoreMaintenanceCandidate[]
@@ -624,7 +693,8 @@ public sealed class MaxScoreMaintenanceNotificationService
                 reader.GetString(11),
                 "routine_candidate",
                 MaintenanceInduced: false,
-                BlocksMaintenance: true));
+                BlocksMaintenance: true,
+                reader.IsDBNull(12) ? null : reader.GetString(12)));
         }
 
         return candidates
@@ -633,6 +703,9 @@ public sealed class MaxScoreMaintenanceNotificationService
             .ThenBy(candidate => candidate.Instrument, StringComparer.Ordinal)
             .ThenBy(candidate => candidate.SongId, StringComparer.Ordinal)
             .ThenBy(candidate => candidate.ScopeKey, StringComparer.Ordinal)
+            .ThenBy(
+                candidate => candidate.RoutineEventGroupKey,
+                StringComparer.Ordinal)
             .ThenBy(candidate => candidate.CandidateKind, StringComparer.Ordinal)
             .ThenBy(candidate => candidate.Metric, StringComparer.Ordinal)
             .ToArray();
@@ -1941,7 +2014,9 @@ public sealed class MaxScoreMaintenanceNotificationService
                candidate.new_numeric,
                candidate.old_rank,
                candidate.new_rank,
-               'player_rank'::TEXT AS lane
+               'player_rank'::TEXT AS lane,
+               current.account_id || chr(31)
+                   || current.instrument AS routine_event_group_key
         FROM current_rows current
         CROSS JOIN LATERAL (VALUES
             (
@@ -2102,7 +2177,13 @@ public sealed class MaxScoreMaintenanceNotificationService
                candidate.new_numeric,
                candidate.old_rank,
                candidate.new_rank,
-               'band_song'::TEXT AS lane
+               'band_song'::TEXT AS lane,
+               concat_ws(
+                   chr(31),
+                   current.score::TEXT,
+                   COALESCE(current.entry_combo_id, ''),
+                   COALESCE(current.entry_instrument_combo, ''))
+                   AS routine_event_group_key
         FROM current_rows current
         CROSS JOIN LATERAL (VALUES
             (
@@ -2281,7 +2362,10 @@ public sealed class MaxScoreMaintenanceNotificationService
                candidate.new_numeric,
                candidate.old_rank,
                candidate.new_rank,
-               'band_rank'::TEXT AS lane
+               'band_rank'::TEXT AS lane,
+               current.ranking_scope || chr(31)
+                   || COALESCE(current.combo_id, '')
+                   AS routine_event_group_key
         FROM current_rows current
         CROSS JOIN LATERAL (VALUES
             (

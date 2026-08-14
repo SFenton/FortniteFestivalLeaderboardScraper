@@ -38,7 +38,8 @@ public sealed record MaxScoreMaintenanceCommand(
         "--expected-max-score-manifest-digest";
     public const string ExpectedPlanDigestFlag =
         "--expected-max-score-plan-digest";
-    public const string PublishedScrapeIdFlag = "--published-scrape-id";
+    public const string PublishedScrapeIdFlag =
+        PublishedScrapeIdArgument.Flag;
 
     private static readonly HashSet<string> KnownFlags =
     [
@@ -67,8 +68,16 @@ public sealed record MaxScoreMaintenanceCommand(
 
     public static MaxScoreMaintenanceCommand? Parse(
         IReadOnlyList<string> args)
+        => Parse(
+            args,
+            PublishedScrapeIdArgument.Parse(args));
+
+    public static MaxScoreMaintenanceCommand? Parse(
+        IReadOnlyList<string> args,
+        PublishedScrapeIdArgument publishedScrapeId)
     {
         ArgumentNullException.ThrowIfNull(args);
+        ArgumentNullException.ThrowIfNull(publishedScrapeId);
         foreach (var argument in args)
         {
             var equals = argument.IndexOf('=');
@@ -117,9 +126,9 @@ public sealed record MaxScoreMaintenanceCommand(
             RequireFlagWithoutValue(values, actionFlag);
         }
 
-        var expectedPublishedScrapeId = ParsePositiveLong(
-            RequireSingleValue(values, PublishedScrapeIdFlag),
-            PublishedScrapeIdFlag);
+        var expectedPublishedScrapeId =
+            publishedScrapeId.RequireValue(
+                actions[0].Flag);
         var stageRequest = OptionalSingleValue(values, StageRequestFlag);
         var rawSongIds =
             values.TryGetValue(SongIdFlag, out var songValues)
@@ -294,13 +303,6 @@ public sealed record MaxScoreMaintenanceCommand(
                 $"{flag} must be specified once with a nonblank value.");
         }
         return occurrences[0];
-    }
-
-    private static long ParsePositiveLong(string value, string flag)
-    {
-        if (!long.TryParse(value, out var parsed) || parsed <= 0)
-            throw new ArgumentException($"{flag} requires a positive integer.");
-        return parsed;
     }
 
     private static string? NormalizeOptionalDigest(

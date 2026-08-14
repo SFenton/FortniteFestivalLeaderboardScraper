@@ -1,3 +1,4 @@
+using System.Data;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -2702,6 +2703,106 @@ public sealed partial class MetaDatabase : IMetaDatabase
             ids.Add(reader.GetString(0));
         return ids;
     }
+
+    public bool AreRegistrationMutationsBlocked()
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT public_reads_frozen,
+                   public_reads_frozen_reason
+            FROM scrape_publication_state
+            WHERE id = TRUE
+            """;
+        using var reader = cmd.ExecuteReader();
+        if (reader.Read())
+            return IsMaxScoreRegistrationFreeze(reader);
+        reader.Close();
+
+        using (var ensure = conn.CreateCommand())
+        {
+            ensure.CommandText = """
+                INSERT INTO scrape_publication_state (
+                    id,
+                    updated_at)
+                VALUES (
+                    TRUE,
+                    now())
+                ON CONFLICT (id) DO NOTHING
+                """;
+            ensure.ExecuteNonQuery();
+        }
+        using var verify = conn.CreateCommand();
+        verify.CommandText = """
+            SELECT public_reads_frozen,
+                   public_reads_frozen_reason
+            FROM scrape_publication_state
+            WHERE id = TRUE
+            """;
+        using var verifyReader = verify.ExecuteReader();
+        return !verifyReader.Read()
+               || IsMaxScoreRegistrationFreeze(verifyReader);
+    }
+
+    public IRegistrationMutationLease AcquireRegistrationMutationLease()
+    {
+        var conn = _ds.OpenConnection();
+        NpgsqlTransaction? tx = null;
+        try
+        {
+            using (var ensure = conn.CreateCommand())
+            {
+                ensure.CommandText = """
+                    INSERT INTO scrape_publication_state (
+                        id,
+                        updated_at)
+                    VALUES (
+                        TRUE,
+                        now())
+                    ON CONFLICT (id) DO NOTHING
+                    """;
+                ensure.ExecuteNonQuery();
+            }
+            tx = conn.BeginTransaction(IsolationLevel.ReadCommitted);
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                SELECT public_reads_frozen,
+                       public_reads_frozen_reason
+                FROM scrape_publication_state
+                WHERE id = TRUE
+                FOR SHARE
+                """;
+            using var reader = cmd.ExecuteReader();
+            if (!reader.Read())
+                throw new RegistrationMutationBlockedException();
+            var blocked =
+                IsMaxScoreRegistrationFreeze(reader);
+            reader.Close();
+            if (blocked)
+                throw new RegistrationMutationBlockedException();
+
+            return new PostgresRegistrationMutationLease(
+                conn,
+                tx);
+        }
+        catch
+        {
+            tx?.Dispose();
+            conn.Dispose();
+            throw;
+        }
+    }
+
+    private static bool IsMaxScoreRegistrationFreeze(
+        NpgsqlDataReader reader)
+        => reader.GetBoolean(0)
+           && !reader.IsDBNull(1)
+           && reader.GetString(1).StartsWith(
+               PublicReadFreezeState
+                   .MaxScoreMaintenanceReasonPrefix,
+               StringComparison.Ordinal);
+
     public bool IsAccountRegistered(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT EXISTS (SELECT 1 FROM registered_users WHERE account_id = @accountId)"; cmd.Parameters.AddWithValue("accountId", accountId); return Convert.ToBoolean(cmd.ExecuteScalar() ?? false); }
     public bool RegisterUser(string deviceId, string accountId)
     {
@@ -3602,6 +3703,195 @@ public sealed partial class MetaDatabase : IMetaDatabase
         tx.Commit();
     }
     public HashSet<(string SongId, string Instrument)> GetCheckedBackfillPairs(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT song_id, instrument FROM backfill_progress WHERE account_id = @acct AND checked = 1"; cmd.Parameters.AddWithValue("acct", accountId); var set = new HashSet<(string, string)>(); using var r = cmd.ExecuteReader(); while (r.Read()) set.Add((r.GetString(0), r.GetString(1))); return set; }
+
+    public BackfillAdmissionResetResult
+        ResetNegativeBackfillChecksForAdmittedPairs(
+            IReadOnlyCollection<SoloCurrentProjectionScopeKey> pairs,
+            string requiredMaxScoreFreezeReason)
+    {
+        ArgumentNullException.ThrowIfNull(pairs);
+        if (string.IsNullOrWhiteSpace(
+                requiredMaxScoreFreezeReason)
+            || !requiredMaxScoreFreezeReason.StartsWith(
+                PublicReadFreezeState
+                    .MaxScoreMaintenanceReasonPrefix,
+                StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                "A max-score maintenance freeze reason is required.",
+                nameof(requiredMaxScoreFreezeReason));
+        }
+
+        var normalizedPairs = pairs
+            .Where(pair =>
+                !string.IsNullOrWhiteSpace(pair.SongId)
+                && !string.IsNullOrWhiteSpace(pair.Instrument))
+            .Select(pair => new SoloCurrentProjectionScopeKey(
+                pair.SongId.Trim(),
+                pair.Instrument.Trim()))
+            .Distinct()
+            .OrderBy(pair => pair.SongId, StringComparer.Ordinal)
+            .ThenBy(pair => pair.Instrument, StringComparer.Ordinal)
+            .ToArray();
+        if (normalizedPairs.Length == 0)
+            return new BackfillAdmissionResetResult(0, 0);
+
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction(
+            IsolationLevel.RepeatableRead);
+        using (var guard = conn.CreateCommand())
+        {
+            guard.Transaction = tx;
+            guard.CommandText = """
+                SELECT public_reads_frozen,
+                       public_reads_frozen_reason
+                FROM scrape_publication_state
+                WHERE id = TRUE
+                FOR SHARE
+                """;
+            using var reader = guard.ExecuteReader();
+            if (!reader.Read()
+                || !reader.GetBoolean(0)
+                || reader.IsDBNull(1)
+                || !string.Equals(
+                    reader.GetString(1),
+                    requiredMaxScoreFreezeReason,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Backfill admission reset requires the exact owned max-score maintenance freeze.");
+            }
+        }
+
+        using (var bypass = conn.CreateCommand())
+        {
+            bypass.Transaction = tx;
+            bypass.CommandText = """
+                SELECT set_config(
+                    'fst.max_score_registration_guard_bypass',
+                    @freezeReason,
+                    TRUE)
+                """;
+            bypass.Parameters.AddWithValue(
+                "freezeReason",
+                requiredMaxScoreFreezeReason);
+            bypass.ExecuteScalar();
+        }
+
+        var affectedAccounts = new List<string>();
+        using (var reset = conn.CreateCommand())
+        {
+            reset.Transaction = tx;
+            reset.CommandText = """
+                DELETE FROM backfill_progress progress
+                USING unnest(
+                    @songIds::text[],
+                    @instruments::text[])
+                    AS admitted(song_id, instrument)
+                WHERE progress.song_id = admitted.song_id
+                  AND progress.instrument =
+                      admitted.instrument
+                  AND progress.checked = 1
+                  AND progress.entry_found = 0
+                RETURNING progress.account_id
+                """;
+            reset.Parameters.Add(
+                "songIds",
+                NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+                normalizedPairs
+                    .Select(pair => pair.SongId)
+                    .ToArray();
+            reset.Parameters.Add(
+                "instruments",
+                NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+                normalizedPairs
+                    .Select(pair => pair.Instrument)
+                    .ToArray();
+            using var reader = reset.ExecuteReader();
+            while (reader.Read())
+                affectedAccounts.Add(reader.GetString(0));
+        }
+
+        var accountIds = affectedAccounts
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var requeued = 0;
+        if (accountIds.Length > 0)
+        {
+            using var queue = conn.CreateCommand();
+            queue.Transaction = tx;
+            queue.CommandText = """
+                INSERT INTO backfill_status (
+                    account_id,
+                    status,
+                    songs_checked,
+                    entries_found,
+                    total_songs_to_check,
+                    started_at,
+                    completed_at,
+                    last_resumed_at,
+                    error_message,
+                    rankings_pending,
+                    deferred_reason)
+                SELECT affected.account_id,
+                       'deferred',
+                       (
+                           SELECT COUNT(*)::INTEGER
+                           FROM backfill_progress progress
+                           WHERE progress.account_id =
+                                   affected.account_id
+                             AND progress.checked = 1
+                       ),
+                       (
+                           SELECT COUNT(*)::INTEGER
+                           FROM backfill_progress progress
+                           WHERE progress.account_id =
+                                   affected.account_id
+                             AND progress.checked = 1
+                             AND progress.entry_found = 1
+                       ),
+                       0,
+                       NULL,
+                       NULL,
+                       NULL,
+                       NULL,
+                       FALSE,
+                       @deferredReason
+                FROM unnest(@accountIds::text[])
+                    AS affected(account_id)
+                ON CONFLICT (account_id) DO UPDATE SET
+                    status = 'deferred',
+                    songs_checked =
+                        EXCLUDED.songs_checked,
+                    entries_found =
+                        EXCLUDED.entries_found,
+                    started_at = NULL,
+                    completed_at = NULL,
+                    last_resumed_at = NULL,
+                    error_message = NULL,
+                    deferred_reason =
+                        EXCLUDED.deferred_reason
+                RETURNING 1
+                """;
+            queue.Parameters.Add(
+                "accountIds",
+                NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+                accountIds;
+            queue.Parameters.AddWithValue(
+                "deferredReason",
+                BackfillDeferredReasons.PathAdmissionRefresh);
+            using var reader = queue.ExecuteReader();
+            while (reader.Read())
+                requeued++;
+        }
+
+        tx.Commit();
+        return new BackfillAdmissionResetResult(
+            affectedAccounts.Count,
+            requeued);
+    }
+
     public BackfillSongProgressInfo? GetBackfillSongProgress(string accountId, int checkedPairs, int totalPairs)
     {
         var instrumentCount = Math.Max(1, GlobalLeaderboardScraper.AllInstruments.Count);

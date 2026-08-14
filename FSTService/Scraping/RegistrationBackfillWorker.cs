@@ -77,7 +77,10 @@ public sealed class RegistrationBackfillWorker : BackgroundService
                             claimedInBatch => _log.LogInformation(
                                 "Claimed {Count} queued registration backfill account(s).",
                                 claimedInBatch),
-                            linkedCts.Token);
+                            linkedCts.Token,
+                            _metaDb.AreRegistrationMutationsBlocked,
+                            () => _log.LogInformation(
+                                "Registration backfill paused while max-score maintenance owns the current publication."));
 
                         if (claimed > 0)
                             continue;
@@ -94,6 +97,14 @@ public sealed class RegistrationBackfillWorker : BackgroundService
                 {
                     _log.LogInformation(
                         "Registration backfill paused at the scrape publication boundary.");
+                }
+                catch (RegistrationMutationBlockedException)
+                {
+                    _log.LogInformation(
+                        "Registration backfill paused before persistence because max-score maintenance owns the current publication.");
+                    await Task.Delay(
+                        TimeSpan.FromSeconds(5),
+                        stoppingToken);
                 }
             }
         }
@@ -134,8 +145,16 @@ public sealed class RegistrationBackfillWorker : BackgroundService
         Func<CancellationToken, Task> runHistoryReconAsync,
         Func<bool> hasQueuedBackfills,
         Action<int> onBatchClaimed,
-        CancellationToken ct)
+        CancellationToken ct,
+        Func<bool>? registrationMutationsBlocked = null,
+        Action? onPaused = null)
     {
+        if (registrationMutationsBlocked?.Invoke() == true)
+        {
+            onPaused?.Invoke();
+            return 0;
+        }
+
         var claimed = await DrainQueuedRegistrationBackfillsAsync(
             batchSize,
             runBatchAsync,

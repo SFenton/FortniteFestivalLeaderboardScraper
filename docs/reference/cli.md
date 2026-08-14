@@ -2,10 +2,11 @@
 status: canonical
 owner: service
 last_verified: 2026-08-14
-last_verified_commit: 69322a3e
+last_verified_commit: 00531b19
 sources:
   - FSTService/Program.cs
   - FSTService/ScrapePhase.cs
+  - FSTService/Persistence/PublishedScrapeIdArgument.cs
   - FSTService/Persistence/MaxScoreMaintenanceCommand.cs
   - FSTService/Persistence/ScoreHistoryDedupMaintenanceCommand.cs
   - FSTService/Scraping/SoloFamilyRankingBackfillCommand.cs
@@ -70,7 +71,7 @@ pass of a continuous worker.
 | Command | Default behavior | Additional flags |
 |---|---|---|
 | `--initialize-schema-only` | Apply idempotent schema and exit | Cannot combine with maintenance/recovery commands |
-| `--recover-improvement-notifications` | Execute recovery for the current published scrape | `--published-scrape-id`, `--notification-dry-run`, `--notification-baseline-only`, `--notification-skip-projection-refresh`, `--notification-force` |
+| `--recover-improvement-notifications` | Execute recovery for one exact published scrape | Required `--published-scrape-id`; optional `--notification-dry-run`, `--notification-baseline-only`, `--notification-skip-projection-refresh`, `--notification-force` |
 | `--score-history-dedup-maintenance` | Read-only deterministic report | Execute also requires `--score-history-dedup-execute` and `--expected-score-history-dedup-digest` `<sha256>` |
 | `--solo-family-ranking-backfill` | Dry-run report | `--solo-family-ranking-backfill-execute` |
 | `--leaderboard-rivals-recompute-account` `<id>` | Recompute one account and exit | Accepts `--flag=value` form |
@@ -79,9 +80,12 @@ Maintenance commands are mutually exclusive where enforced by `Program.cs`.
 Use the matching living runbook; CLI availability is not authorization to run
 against production.
 
-`--published-scrape-id` is shared with improvement-notification recovery. It
-does not activate max-score parsing by itself; at least one
-`--max-score-maintenance-*` or `--expected-max-score-*` option must be present.
+`--published-scrape-id` is parsed once for improvement-notification recovery
+and max-score maintenance. Both `--published-scrape-id 1296` and
+`--published-scrape-id=1296` are accepted. The owning command requires exactly
+one positive value; duplicates, blank/malformed values, and an orphaned scrape
+ID without either owning command are startup errors. The shared option does not
+activate max-score parsing by itself.
 
 ### Max-score correction
 

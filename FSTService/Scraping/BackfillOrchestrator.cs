@@ -143,6 +143,8 @@ public sealed class BackfillOrchestrator
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
+        using var registrationLease =
+            _persistence.Meta.AcquireRegistrationMutationLease();
         RegisterKnownBandsForAccounts(accountIds);
 
         var users = new List<UserWorkItem>(accountIds.Length);
@@ -342,6 +344,8 @@ public sealed class BackfillOrchestrator
     /// </summary>
     public async Task RunBackfillAsync(FestivalService service, CancellationToken ct)
     {
+        using var registrationLease =
+            _persistence.Meta.AcquireRegistrationMutationLease();
         var queued = _backfillQueue.DrainAll();
         var pending = _persistence.Meta.GetPendingBackfills();
 
@@ -540,6 +544,8 @@ public sealed class BackfillOrchestrator
     /// </summary>
     public async Task RunHistoryReconAsync(FestivalService service, CancellationToken ct)
     {
+        using var registrationLease =
+            _persistence.Meta.AcquireRegistrationMutationLease();
         var registeredIds = _persistence.Meta.GetRegisteredAccountIds();
         if (registeredIds.Count == 0) return;
 

@@ -67,6 +67,150 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
         Assert.Null(command);
     }
 
+    [Theory]
+    [InlineData(
+        "--published-scrape-id",
+        "1296")]
+    [InlineData(
+        "--published-scrape-id=1296",
+        null)]
+    public void Shared_scrape_id_parser_accepts_token_and_equals_forms(
+        string argument,
+        string? separateValue)
+    {
+        var args = separateValue is null
+            ? new[] { argument }
+            : new[] { argument, separateValue };
+
+        var parsed = PublishedScrapeIdArgument.Parse(args);
+
+        Assert.True(parsed.IsPresent);
+        Assert.Equal(1296, parsed.Value);
+    }
+
+    [Theory]
+    [InlineData("--published-scrape-id")]
+    [InlineData("--published-scrape-id=")]
+    [InlineData("--published-scrape-id=abc")]
+    [InlineData("--published-scrape-id=0")]
+    [InlineData("--published-scrape-id=-1")]
+    public void Shared_scrape_id_parser_rejects_missing_or_malformed_values(
+        string argument)
+    {
+        Assert.Throws<ArgumentException>(() =>
+            PublishedScrapeIdArgument.Parse([argument]));
+    }
+
+    [Fact]
+    public void Shared_scrape_id_parser_rejects_duplicate_forms()
+    {
+        var error = Assert.Throws<ArgumentException>(() =>
+            PublishedScrapeIdArgument.Parse(
+            [
+                "--published-scrape-id",
+                "1296",
+                "--published-scrape-id=1296",
+            ]));
+
+        Assert.Contains("exactly once", error.Message);
+    }
+
+    [Fact]
+    public void Shared_scrape_id_parser_rejects_orphaned_option()
+    {
+        var parsed = PublishedScrapeIdArgument.Parse(
+            ["--published-scrape-id=1296"]);
+
+        Assert.Throws<ArgumentException>(() =>
+            parsed.RejectIfOrphaned(
+                hasOwningCommand: false));
+    }
+
+    [Theory]
+    [InlineData(
+        MaxScoreMaintenanceCommand.StageFlag,
+        MaxScoreMaintenanceAction.Stage)]
+    [InlineData(
+        MaxScoreMaintenanceCommand.PlanFlag,
+        MaxScoreMaintenanceAction.Plan)]
+    [InlineData(
+        MaxScoreMaintenanceCommand.ApplyFlag,
+        MaxScoreMaintenanceAction.Apply)]
+    [InlineData(
+        MaxScoreMaintenanceCommand.ResumeFlag,
+        MaxScoreMaintenanceAction.Resume)]
+    public void Max_score_actions_route_equals_form_shared_scrape_id(
+        string actionFlag,
+        MaxScoreMaintenanceAction expectedAction)
+    {
+        var args = new List<string>
+        {
+            actionFlag,
+            "--published-scrape-id=1296",
+            MaxScoreMaintenanceCommand.ReportOutputFlag,
+            "report.json",
+        };
+        switch (expectedAction)
+        {
+            case MaxScoreMaintenanceAction.Stage:
+                args.AddRange(
+                [
+                    MaxScoreMaintenanceCommand.SongIdFlag,
+                    "song-a",
+                    MaxScoreMaintenanceCommand.ManifestOutputFlag,
+                    "manifest.json",
+                ]);
+                break;
+            case MaxScoreMaintenanceAction.Plan:
+                args.AddRange(
+                [
+                    MaxScoreMaintenanceCommand.ManifestFlag,
+                    "manifest.json",
+                    MaxScoreMaintenanceCommand
+                        .ExpectedManifestDigestFlag,
+                    new string('a', 64),
+                ]);
+                break;
+            case MaxScoreMaintenanceAction.Apply:
+                args.AddRange(
+                [
+                    MaxScoreMaintenanceCommand.ManifestFlag,
+                    "manifest.json",
+                    MaxScoreMaintenanceCommand.RollbackOutputFlag,
+                    "rollback.json",
+                    MaxScoreMaintenanceCommand
+                        .ExpectedManifestDigestFlag,
+                    new string('a', 64),
+                    MaxScoreMaintenanceCommand
+                        .ExpectedPlanDigestFlag,
+                    new string('b', 64),
+                ]);
+                break;
+            case MaxScoreMaintenanceAction.Resume:
+                args.AddRange(
+                [
+                    MaxScoreMaintenanceCommand.ManifestFlag,
+                    "manifest.json",
+                    MaxScoreMaintenanceCommand
+                        .ExpectedManifestDigestFlag,
+                    new string('a', 64),
+                    MaxScoreMaintenanceCommand
+                        .ExpectedPlanDigestFlag,
+                    new string('b', 64),
+                ]);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(
+                    nameof(expectedAction));
+        }
+
+        var command = MaxScoreMaintenanceCommand.Parse(args);
+
+        Assert.NotNull(command);
+        Assert.Equal(expectedAction, command.Action);
+        Assert.Equal(1296, command.ExpectedPublishedScrapeId);
+    }
+
     [Fact]
     public void Stage_parser_requires_exactly_one_input_form()
     {
@@ -273,6 +417,27 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
                 Assert.Null(song.CurrentPath.Maxima.Lead);
                 Assert.Null(song.CurrentPath.Maxima.ProLead);
             });
+    }
+
+    [Fact]
+    public void Promotion_admission_includes_newly_usable_lead_paths_only()
+    {
+        var manifest = CreateManifest();
+
+        var pairs =
+            MaxScoreMaintenanceService
+                .GetNewlyAdmittedPathPairs(manifest);
+
+        Assert.Equal(
+            [
+                new SoloCurrentProjectionScopeKey(
+                    "song-a",
+                    "Solo_Guitar"),
+                new SoloCurrentProjectionScopeKey(
+                    "song-a",
+                    "Solo_PeripheralGuitar"),
+            ],
+            pairs);
     }
 
     [Fact]

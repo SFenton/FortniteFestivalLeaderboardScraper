@@ -4,6 +4,8 @@ public static class BackfillDeferredReasons
 {
     public const string WorkerQueue = "worker_backfill_queue";
     public const string CatalogRefreshQueue = "catalog_refresh_queue";
+    public const string PathAdmissionRefresh =
+        "path_admission_refresh";
 
     public static bool IsCatalogRefresh(string? reason)
         => string.Equals(

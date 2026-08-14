@@ -2,13 +2,15 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: 69322a3e
+last_verified_commit: 00531b19
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FSTService/Scraping/GlobalLeaderboardScraper.cs
+  - FSTService/Scraping/RegistrationBackfillWorker.cs
+  - FSTService/Scraping/BackfillOrchestrator.cs
   - FSTService/Scraping/RankingsCalculator.cs
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Scraping/DurablePhaseProgressSink.cs
@@ -87,6 +89,15 @@ After startup the worker:
 Background registration and band work is paused and drained at scrape
 boundaries so it cannot race publication-critical work.
 
+Registration-sync work also observes the durable max-score maintenance freeze.
+The worker reports a pause before invoking a writer, and each backfill/history
+orchestrator entry acquires a shared publication-row registration lease before
+its first persistence mutation. This covers registration-only hosting, which
+does not publish the full scraper heartbeat. Freeze establishment cannot cross
+an active lease; failed/resumed maintenance remains blocked, and each polling
+resume revalidates. Ordinary scrape freezes continue to use the existing
+background-work boundary rather than this max-score-only rejection.
+
 Optimal-path generation is a separate coordinated workload. Automatic path
 generation remains disabled by default and selects only pending songs; the
 protected admin route accepts one song at a time. CHOpt outputs are validated
@@ -115,6 +126,11 @@ Path-derived support is admitted only when the immutable generation is
 complete, non-pending, and bound to the same song/catalog timestamp. This
 preserves MIDI-inferred charts when provider metadata omitted them without
 turning path state into a second song catalog.
+Promotion refreshes the singleton scraper's cached path support before derived
+work. Same-publication freeze release invalidates that cache in monitoring
+roles. Newly usable path-backed pairs also clear only prior negative backfill
+checks and requeue only the affected accounts, so a previous unsupported/null
+lookup cannot suppress Lead or Pro Lead indefinitely.
 
 ## Two phase views
 

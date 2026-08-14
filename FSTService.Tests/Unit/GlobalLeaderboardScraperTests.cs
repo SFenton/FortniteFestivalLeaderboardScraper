@@ -313,6 +313,64 @@ public class GlobalLeaderboardScraperTests
         Assert.Empty(handler.Requests);
     }
 
+    [Theory]
+    [InlineData("Solo_Guitar")]
+    [InlineData("Solo_PeripheralGuitar")]
+    public async Task SamePublicationSupportRefresh_admits_newly_promoted_midi_instrument(
+        string instrument)
+    {
+        var service = CreateFestivalServiceWithMicModeDifficulty(0);
+        var song = service.Songs[0];
+        song.track.@in = new In();
+        song.lastModified = new DateTime(
+            2026,
+            8,
+            2,
+            0,
+            0,
+            0,
+            DateTimeKind.Utc);
+        var initial = new Dictionary<string, PathGenerationState>(
+            StringComparer.OrdinalIgnoreCase)
+        {
+            ["song-1"] = CreatePromotedPathState(
+                "song-1",
+                song.lastModified,
+                []),
+        };
+        var promoted = new Dictionary<string, PathGenerationState>(
+            StringComparer.OrdinalIgnoreCase)
+        {
+            ["song-1"] = CreatePromotedPathState(
+                "song-1",
+                song.lastModified,
+                [instrument]),
+        };
+        var pathStore = Substitute.For<IPathDataStore>();
+        pathStore.GetPathGenerationStates()
+            .Returns(initial, promoted);
+        var (scraper, handler) = CreateScraper(service, pathStore);
+
+        Assert.Null(await scraper.LookupAccountAsync(
+            "song-1",
+            instrument,
+            "account-1",
+            "token",
+            "caller"));
+        Assert.Empty(handler.Requests);
+
+        scraper.RefreshSongInstrumentSupport();
+        handler.EnqueueJsonOk("[]");
+
+        Assert.Null(await scraper.LookupAccountAsync(
+            "song-1",
+            instrument,
+            "account-1",
+            "token",
+            "caller"));
+        Assert.Single(handler.Requests);
+    }
+
     private static PathGenerationState CreatePromotedPathState(
         string songId,
         DateTime catalogLastModified,
@@ -331,6 +389,7 @@ public class GlobalLeaderboardScraperTests
             ExpectedInstruments: expectedInstruments,
             MaxScores: new SongMaxScores
             {
+                MaxLeadScore = 123_456,
                 MaxProLeadScore = 123_456,
             },
             CatalogLastModified:

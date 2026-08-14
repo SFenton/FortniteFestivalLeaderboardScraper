@@ -659,7 +659,8 @@ public sealed record MaxScoreMaintenanceCandidate(
     string Lane,
     string Classification,
     bool MaintenanceInduced,
-    bool BlocksMaintenance);
+    bool BlocksMaintenance,
+    string? RoutineEventGroupKey = null);
 
 public sealed record MaxScoreMaintenancePlanReport(
     int ReportVersion,

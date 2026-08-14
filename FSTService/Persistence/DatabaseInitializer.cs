@@ -1283,6 +1283,81 @@ public static class DatabaseInitializer
         ALTER TABLE registered_bands
             ADD COLUMN IF NOT EXISTS last_member_sync_at TIMESTAMPTZ;
 
+        CREATE OR REPLACE FUNCTION fst_assert_registration_mutation_allowed()
+        RETURNS TRIGGER
+        LANGUAGE plpgsql
+        AS $$
+        DECLARE
+            reads_frozen BOOLEAN;
+            freeze_reason TEXT;
+        BEGIN
+            SELECT public_reads_frozen,
+                   public_reads_frozen_reason
+            INTO reads_frozen,
+                 freeze_reason
+            FROM scrape_publication_state
+            WHERE id = TRUE
+            FOR SHARE;
+
+            IF NOT FOUND THEN
+                INSERT INTO scrape_publication_state (
+                    id,
+                    updated_at)
+                VALUES (
+                    TRUE,
+                    now())
+                ON CONFLICT (id) DO NOTHING;
+
+                SELECT public_reads_frozen,
+                       public_reads_frozen_reason
+                INTO reads_frozen,
+                     freeze_reason
+                FROM scrape_publication_state
+                WHERE id = TRUE
+                FOR SHARE;
+            END IF;
+
+            IF NOT FOUND THEN
+                RAISE EXCEPTION
+                    USING ERRCODE = '55000',
+                          MESSAGE =
+                              'Registration mutation rejected because publication state is unavailable.';
+            END IF;
+
+            IF reads_frozen
+               AND freeze_reason LIKE 'max-score-maintenance:v1:%'
+               AND current_setting(
+                       'fst.max_score_registration_guard_bypass',
+                       TRUE)
+                   IS DISTINCT FROM freeze_reason
+            THEN
+                RAISE EXCEPTION
+                    USING ERRCODE = '55000',
+                          MESSAGE =
+                              'Registration mutation rejected while max-score maintenance owns the publication.';
+            END IF;
+
+            IF TG_OP = 'DELETE' THEN
+                RETURN OLD;
+            END IF;
+            RETURN NEW;
+        END
+        $$;
+
+        DROP TRIGGER IF EXISTS trg_registered_users_maintenance_guard
+            ON registered_users;
+        CREATE TRIGGER trg_registered_users_maintenance_guard
+            BEFORE INSERT OR UPDATE OR DELETE ON registered_users
+            FOR EACH ROW
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
+        DROP TRIGGER IF EXISTS trg_registered_bands_maintenance_guard
+            ON registered_bands;
+        CREATE TRIGGER trg_registered_bands_maintenance_guard
+            BEFORE INSERT OR UPDATE OR DELETE ON registered_bands
+            FOR EACH ROW
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
         CREATE TABLE IF NOT EXISTS registered_band_processing_status (
             source_id              TEXT    NOT NULL,
             band_type              TEXT    NOT NULL,
@@ -1401,6 +1476,20 @@ public static class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS ix_bfp_account
             ON backfill_progress (account_id);
+
+        DROP TRIGGER IF EXISTS trg_backfill_status_maintenance_guard
+            ON backfill_status;
+        CREATE TRIGGER trg_backfill_status_maintenance_guard
+            BEFORE INSERT OR UPDATE OR DELETE ON backfill_status
+            FOR EACH ROW
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
+        DROP TRIGGER IF EXISTS trg_backfill_progress_maintenance_guard
+            ON backfill_progress;
+        CREATE TRIGGER trg_backfill_progress_maintenance_guard
+            BEFORE INSERT OR UPDATE OR DELETE ON backfill_progress
+            FOR EACH ROW
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
 
         -- =====================================================================
         -- HISTORY RECON STATUS (from fst-meta.db)

@@ -113,6 +113,8 @@ public sealed class PublicationChangeMonitorServiceTests
                     + new string('a', 64))
                 : PublicReadFreezeState.NotFrozen);
         var pathStore = Substitute.For<IPathDataStore>();
+        var instrumentSupportCache =
+            Substitute.For<ISongInstrumentSupportCache>();
         var notifications = new NotificationService(
             NullLogger<NotificationService>.Instance);
         var socket = Substitute.For<WebSocket>();
@@ -140,7 +142,8 @@ public sealed class PublicationChangeMonitorServiceTests
             new SongsCacheService(),
             caches,
             NullLogger<PublicationChangeMonitorService>.Instance,
-            pathStore);
+            pathStore,
+            instrumentSupportCache);
 
         try
         {
@@ -163,6 +166,8 @@ public sealed class PublicationChangeMonitorServiceTests
                 "Publication changed",
                 Arg.Any<CancellationToken>());
             pathStore.Received().InvalidateCachedState();
+            instrumentSupportCache.Received()
+                .InvalidateSongInstrumentSupport();
         }
         finally
         {
@@ -214,7 +219,8 @@ public sealed class PublicationChangeMonitorServiceTests
         SongsCacheService songsCache,
         ResponseCacheService[] caches,
         ILogger<PublicationChangeMonitorService> logger,
-        IPathDataStore? pathStore = null)
+        IPathDataStore? pathStore = null,
+        ISongInstrumentSupportCache? instrumentSupportCache = null)
     {
         var startup = new StartupInitializer(
             null!,
@@ -255,7 +261,8 @@ public sealed class PublicationChangeMonitorServiceTests
             lifecycle,
             songsCache,
             logger,
-            pathStore);
+            pathStore,
+            instrumentSupportCache);
     }
 
     private static ResponseCacheService[] CreateCaches() =>

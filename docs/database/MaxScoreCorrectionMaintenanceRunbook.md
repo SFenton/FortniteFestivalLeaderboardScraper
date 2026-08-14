@@ -2,11 +2,14 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-14
-last_verified_commit: 69322a3e
+last_verified_commit: 00531b19
 sources:
   - FSTService/Persistence/MaxScoreMaintenanceCommand.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
+  - FSTService/Persistence/RegistrationMutationGuard.cs
+  - FSTService/Scraping/RegistrationBackfillWorker.cs
+  - FSTService/Scraping/GlobalLeaderboardScraper.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
   - FSTService/Scraping/BandRankingRepairService.cs
   - FSTService/Persistence/BandCurrentProjectionBuilder.cs
@@ -74,9 +77,14 @@ remain blocked.
 The same freeze rejects `POST /api/player/{accountId}/track` and the
 registration-changing band `sync-status` request. Selected-profile activity
 tracking also suppresses player touches and band/member registration writes,
-including on outer public-cache hits. These guards remain active across every
-resume attempt so the checkpointed notification, rivals, and cache scope cannot
-grow late.
+including on outer public-cache hits. PostgreSQL triggers independently reject
+registered-player, registered-band, and backfill status/progress mutations
+under the digest-owned freeze. Registration-only backfill/history workers
+check the durable state before work and hold a shared publication-row lease
+across each mutation batch, so freeze establishment waits for an admitted batch
+and new/resumed batches revalidate before their first write. A failed or resumed
+maintenance run remains blocked until its exact freeze is released. Normal
+scrape/publication freezes do not activate this registration guard.
 
 ## Stage request
 
@@ -194,6 +202,10 @@ Apply:
   rollback JSON uses the durable run creation timestamp so file-first,
   checkpoint-second retries reproduce identical bytes;
 - promotes every song in one transaction;
+- refreshes in-process song/instrument admission immediately after promotion,
+  removes only prior negative backfill checks for newly usable path-backed
+  song/instrument pairs, and requeues only affected accounts. Positive checks
+  and unrelated completed pairs remain intact;
 - rebuilds affected `song_stats` and solo rankings, then composite,
   solo-family, and combo rankings; recalculates target-song band
   over-threshold flags, refreshes affected band current-projection scopes, and
@@ -202,20 +214,25 @@ Apply:
   leaderboard rivals;
 - classifies affected-instrument player-rank and target-song/dependent-band
   candidates as maintenance, including max-score-percent rank changes that the
-  routine visible lane does not emit. Routine candidate parity compares only
-  routine-emittable coalesced player-rank kinds. Missing band subjects are
-  created and their song/rank state is baselined inside the quarantine
-  transaction before candidate collection, preventing a later visible
-  `band_first_score`. The audit advances matching state, emits no visible
-  event, and leaves publication `1296`'s completed notification marker
-  unchanged;
+  routine visible lane does not emit. Routine parity uses the same visible
+  event cardinality as normal delivery: player-rank metrics coalesce per
+  player/instrument, band-song metrics coalesce per play across overall/combo
+  rows, and band rank metrics group per subject/scope while progress metrics
+  remain individual. Raw candidate rows remain in the audit, but
+  `band_rank_state_missing` is excluded from visible parity because routine
+  delivery never emits it. Missing band subjects are created and their
+  song/rank state is baselined inside the quarantine transaction before
+  candidate collection, preventing a later visible `band_first_score`. The
+  audit advances matching state, emits no visible event, and leaves publication
+  `1296`'s completed notification marker unchanged;
 - stages a complete current-publication API cache; and
 - validates paths, maxima, rankings, rollback coverage, rank-history
   fingerprint, notification audit, and staged cache before atomically swapping
   the cache and releasing the freeze.
 
-Freeze release invalidates API/path/song caches and forces connected clients
-to refresh even though the publication ID does not change.
+Freeze release invalidates API/path/song and scraper admission caches in every
+monitoring role and forces connected clients to refresh even though the
+publication ID does not change.
 
 ## Failure and resume
 

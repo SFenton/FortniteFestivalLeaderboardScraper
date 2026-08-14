@@ -4811,6 +4811,197 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void MaxScoreMaintenanceFreeze_rejects_registration_scope_and_backfill_writes()
+    {
+        InsertBandProjection(
+            "Band_Duets",
+            "acct1:acct2",
+            ["acct1", "acct2"]);
+        Db.RegisterUser("web-tracker", "acct1");
+        Db.EnqueueBackfill("acct1", 9);
+        var reason =
+            PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
+            + new string('a', 64);
+        Db.SetPublicReadFreeze(true, reason: reason);
+
+        Assert.True(Db.AreRegistrationMutationsBlocked());
+        Assert.Throws<RegistrationMutationBlockedException>(
+            Db.AcquireRegistrationMutationLease);
+        Assert.Equal(
+            "55000",
+            Assert.Throws<PostgresException>(() =>
+                Db.RegisterUser("web-tracker", "acct3"))
+                .SqlState);
+        Assert.Equal(
+            "55000",
+            Assert.Throws<PostgresException>(() =>
+                Db.TouchWebRegistrationActivity("acct1"))
+                .SqlState);
+        Assert.Equal(
+            "55000",
+            Assert.Throws<PostgresException>(() =>
+                Db.RegisterSelectedBandActivity(
+                    "Band_Duets",
+                    "acct1:acct2"))
+                .SqlState);
+        Assert.Equal(
+            "55000",
+            Assert.Throws<PostgresException>(() =>
+                Db.RegisterKnownBandsForAccountActivity("acct1"))
+                .SqlState);
+        Assert.Equal(
+            "55000",
+            Assert.Throws<PostgresException>(() =>
+                Db.RegisterDiscoveredBandActivity(
+                    "Band_Quad",
+                    "acct1:acct2:acct3:acct4",
+                    ["acct1", "acct2", "acct3", "acct4"]))
+                .SqlState);
+        Assert.Equal(
+            "55000",
+            Assert.Throws<PostgresException>(() =>
+                Db.DeferBackfill(
+                    "acct1",
+                    9,
+                    "worker_backfill_retry"))
+                .SqlState);
+
+        Assert.DoesNotContain(
+            "acct3",
+            Db.GetRegisteredAccountIds());
+        Assert.Empty(Db.GetRegisteredBands());
+        Assert.Equal("pending", Db.GetBackfillStatus("acct1")?.Status);
+    }
+
+    [Fact]
+    public void RegistrationGuard_allows_ordinary_scrape_freeze()
+    {
+        InsertBandProjection(
+            "Band_Duets",
+            "acct1:acct2",
+            ["acct1", "acct2"]);
+        Db.SetPublicReadFreeze(true, reason: "scrape");
+
+        Assert.False(Db.AreRegistrationMutationsBlocked());
+        using var lease = Db.AcquireRegistrationMutationLease();
+        Assert.True(Db.RegisterUser("web-tracker", "acct1"));
+        Assert.True(
+            Db.RegisterSelectedBandActivity(
+                "Band_Duets",
+                "acct1:acct2").Registered);
+    }
+
+    [Fact]
+    public void RegistrationGuard_remains_closed_across_failure_and_resume_until_release()
+    {
+        var reason =
+            PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
+            + new string('b', 64);
+        Db.SetPublicReadFreeze(true, reason: reason);
+
+        Assert.True(Db.AreRegistrationMutationsBlocked());
+        Assert.Throws<RegistrationMutationBlockedException>(
+            Db.AcquireRegistrationMutationLease);
+
+        Db.SetPublicReadFreeze(true, reason: reason);
+        Assert.True(Db.AreRegistrationMutationsBlocked());
+        Assert.Throws<RegistrationMutationBlockedException>(
+            Db.AcquireRegistrationMutationLease);
+
+        Db.SetPublicReadFreeze(false, reason: reason);
+        Assert.False(Db.AreRegistrationMutationsBlocked());
+        using var lease = Db.AcquireRegistrationMutationLease();
+        Assert.True(Db.RegisterUser("web-tracker", "acct1"));
+    }
+
+    [Fact]
+    public async Task RegistrationMutationLease_delays_maintenance_freeze_until_batch_releases()
+    {
+        var reason =
+            PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
+            + new string('c', 64);
+        var lease = Db.AcquireRegistrationMutationLease();
+
+        var freezeTask = Task.Run(
+            () => Db.SetPublicReadFreeze(true, reason: reason));
+        await Task.Delay(100);
+        Assert.False(freezeTask.IsCompleted);
+
+        lease.Dispose();
+        await freezeTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(Db.AreRegistrationMutationsBlocked());
+    }
+
+    [Fact]
+    public void Promoted_path_admission_retries_only_negative_target_pairs()
+    {
+        Db.RegisterUser("web-tracker", "acct1");
+        Db.EnqueueBackfill("acct1", 4);
+        Db.MarkBackfillSongChecked(
+            "acct1",
+            "song-a",
+            "Solo_Guitar",
+            entryFound: false);
+        Db.MarkBackfillSongChecked(
+            "acct1",
+            "song-a",
+            "Solo_PeripheralGuitar",
+            entryFound: false);
+        Db.MarkBackfillSongChecked(
+            "acct1",
+            "song-a",
+            "Solo_Bass",
+            entryFound: false);
+        Db.MarkBackfillSongChecked(
+            "acct1",
+            "song-b",
+            "Solo_Drums",
+            entryFound: true);
+        Db.UpdateBackfillProgress("acct1", 4, 1);
+        Db.CompleteBackfill("acct1");
+        var reason =
+            PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
+            + new string('d', 64);
+        Db.SetPublicReadFreeze(true, reason: reason);
+
+        var result =
+            Db.ResetNegativeBackfillChecksForAdmittedPairs(
+                [
+                    new SoloCurrentProjectionScopeKey(
+                        "song-a",
+                        "Solo_Guitar"),
+                    new SoloCurrentProjectionScopeKey(
+                        "song-a",
+                        "Solo_PeripheralGuitar"),
+                ],
+                reason);
+
+        Assert.Equal(2, result.RemovedNegativePairChecks);
+        Assert.Equal(1, result.RequeuedAccountCount);
+        var checkedPairs = Db.GetCheckedBackfillPairs("acct1");
+        Assert.DoesNotContain(
+            ("song-a", "Solo_Guitar"),
+            checkedPairs);
+        Assert.DoesNotContain(
+            ("song-a", "Solo_PeripheralGuitar"),
+            checkedPairs);
+        Assert.Contains(
+            ("song-a", "Solo_Bass"),
+            checkedPairs);
+        Assert.Contains(
+            ("song-b", "Solo_Drums"),
+            checkedPairs);
+        var status = Db.GetBackfillStatus("acct1");
+        Assert.Equal("deferred", status?.Status);
+        Assert.Equal(2, status?.SongsChecked);
+        Assert.Equal(1, status?.EntriesFound);
+        Assert.Equal(4, status?.TotalSongsToCheck);
+        Assert.Equal(
+            BackfillDeferredReasons.PathAdmissionRefresh,
+            status?.DeferredReason);
+    }
+
+    [Fact]
     public void UnregisterUser_returns_true_when_removed()
     {
         Db.RegisterUser("dev1", "acct1");

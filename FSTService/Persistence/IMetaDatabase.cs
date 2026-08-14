@@ -172,6 +172,8 @@ public interface IMetaDatabase : IDisposable
         long currentScrapeId,
         DateTime observedAtUtc);
     List<string> GetRegisteredAccountIdsForBandDiscovery();
+    bool AreRegistrationMutationsBlocked();
+    IRegistrationMutationLease AcquireRegistrationMutationLease();
     bool IsAccountRegistered(string accountId);
     bool RegisterUser(string deviceId, string accountId);
     bool UnregisterUser(string deviceId, string accountId);
@@ -211,6 +213,9 @@ public interface IMetaDatabase : IDisposable
     void MarkBackfillSongChecked(string accountId, string songId, string instrument, bool entryFound);
     void MarkBackfillSongsChecked(string accountId, IReadOnlyCollection<(string SongId, string Instrument, bool EntryFound)> checks);
     HashSet<(string SongId, string Instrument)> GetCheckedBackfillPairs(string accountId);
+    BackfillAdmissionResetResult ResetNegativeBackfillChecksForAdmittedPairs(
+        IReadOnlyCollection<SoloCurrentProjectionScopeKey> pairs,
+        string requiredMaxScoreFreezeReason);
     BackfillSongProgressInfo? GetBackfillSongProgress(string accountId, int checkedPairs, int totalPairs);
 
     // ── History reconstruction ───────────────────────────────────────

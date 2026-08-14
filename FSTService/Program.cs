@@ -77,6 +77,8 @@ builder.Services.Configure<Microsoft.AspNetCore.ResponseCompression.BrotliCompre
 
 var improvementNotificationRecoveryRequested = args.Any(
     arg => arg.Equals("--recover-improvement-notifications", StringComparison.OrdinalIgnoreCase));
+var publishedScrapeIdArgument =
+    PublishedScrapeIdArgument.Parse(args);
 var scoreHistoryDedupMaintenanceCommand =
     ScoreHistoryDedupMaintenanceCommand.Parse(args);
 var soloFamilyRankingBackfillCommand =
@@ -84,7 +86,9 @@ var soloFamilyRankingBackfillCommand =
 var leaderboardRivalsRecomputeCommand =
     LeaderboardRivalsRecomputeCommand.Parse(args);
 var maxScoreMaintenanceCommand =
-    MaxScoreMaintenanceCommand.Parse(args);
+    MaxScoreMaintenanceCommand.Parse(
+        args,
+        publishedScrapeIdArgument);
 var initializeSchemaOnlyRequested = args.Any(
     arg => arg.Equals(
         "--initialize-schema-only",
@@ -154,6 +158,14 @@ if (maxScoreMaintenanceCommand is not null
     throw new ArgumentException(
         "Max-score maintenance cannot run with another one-shot schema or notification command.");
 }
+publishedScrapeIdArgument.RejectIfOrphaned(
+    improvementNotificationRecoveryRequested
+    || maxScoreMaintenanceCommand is not null);
+var improvementNotificationRecoveryPublishedScrapeId =
+    improvementNotificationRecoveryRequested
+        ? publishedScrapeIdArgument.RequireValue(
+            "--recover-improvement-notifications")
+        : (long?)null;
 
 var apiOnlyRequested = improvementNotificationRecoveryRequested
     || scoreHistoryDedupMaintenanceCommand is not null
@@ -345,6 +357,8 @@ builder.Services.AddSingleton<ProxyHandlerAccessor>();
 builder.Services.AddSingleton<EpicTrafficCoordinator>();
 
 builder.Services.AddSingleton<ILeaderboardQuerier>(sp => sp.GetRequiredService<GlobalLeaderboardScraper>());
+builder.Services.AddSingleton<ISongInstrumentSupportCache>(
+    sp => sp.GetRequiredService<GlobalLeaderboardScraper>());
 
 // Promote GlobalLeaderboardScraper to singleton so the diagnostic endpoint
 // (/api/diag/inflight) and scrape orchestrator resolve the SAME instance —
@@ -1098,19 +1112,6 @@ if (improvementNotificationRecoveryRequested)
     var pgDs = app.Services.GetRequiredService<NpgsqlDataSource>();
     await FSTService.Persistence.DatabaseInitializer.EnsureSchemaAsync(pgDs);
 
-    long? expectedPublishedScrapeId = null;
-    for (var i = 0; i < args.Length; i++)
-    {
-        if (!args[i].Equals("--published-scrape-id", StringComparison.OrdinalIgnoreCase))
-            continue;
-
-        if (i + 1 >= args.Length || !long.TryParse(args[i + 1], out var parsedScrapeId) || parsedScrapeId <= 0)
-            throw new ArgumentException("--published-scrape-id requires a positive integer.");
-
-        expectedPublishedScrapeId = parsedScrapeId;
-        break;
-    }
-
     var execute = !args.Any(arg => arg.Equals("--notification-dry-run", StringComparison.OrdinalIgnoreCase));
     var baselineOnly = args.Any(arg => arg.Equals("--notification-baseline-only", StringComparison.OrdinalIgnoreCase));
     var refreshProjection = !args.Any(
@@ -1119,14 +1120,14 @@ if (improvementNotificationRecoveryRequested)
 
     recoveryLog.LogInformation(
         "Recovering improvement notifications for published scrape {ExpectedScrapeId}; execute={Execute}, baselineOnly={BaselineOnly}, refreshProjection={RefreshProjection}.",
-        expectedPublishedScrapeId,
+        improvementNotificationRecoveryPublishedScrapeId,
         execute,
         baselineOnly,
         refreshProjection);
 
     var recovery = app.Services.GetRequiredService<FSTService.Persistence.ImprovementNotificationRecoveryService>();
     var report = await recovery.RunPublishedScrapeAsync(
-        expectedPublishedScrapeId,
+        improvementNotificationRecoveryPublishedScrapeId,
         execute,
         baselineOnly,
         refreshProjection,

@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-14
-last_verified_commit: 69322a3e
+last_verified_commit: 00531b19
 sources:
   - FSTService/Scraping/MidiTrackInspector.cs
   - FSTService/Scraping/PathGenerationCoordinator.cs
@@ -147,7 +147,12 @@ Apply promotes every manifest generation in one PostgreSQL transaction. It
 does not expose the new path pointer until a digest-owned maintenance freeze is
 active, and it does not release that freeze until all maximum-dependent
 derived state, notification quarantine, current-publication caches, and
-rollback evidence validate. The old exact-four command names remain rejected.
+rollback evidence validate. Promotion refreshes cached scraper admission before
+derived work. Any prior negative backfill result for a newly usable
+song/instrument pair is removed and its account requeued, while positive and
+unrelated completed pairs remain untouched. Freeze release invalidates scraper
+admission again so registration-only/service roles reload the same-publication
+path revision. The old exact-four command names remain rejected.
 
 ## Deployment and regeneration
 

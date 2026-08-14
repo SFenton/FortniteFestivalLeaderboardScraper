@@ -11,6 +11,12 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace FSTService.Scraping;
 
+public interface ISongInstrumentSupportCache
+{
+    void RefreshSongInstrumentSupport();
+    void InvalidateSongInstrumentSupport();
+}
+
 /// <summary>
 /// Fetches *all* entries from a Fortnite Festival V1 leaderboard by paging
 /// through every page (page 0 … totalPages-1).
@@ -21,7 +27,9 @@ namespace FSTService.Scraping;
 ///
 /// Both instrument-level and page-level requests are parallelised.
 /// </summary>
-public class GlobalLeaderboardScraper : ILeaderboardQuerier
+public class GlobalLeaderboardScraper
+    : ILeaderboardQuerier,
+      ISongInstrumentSupportCache
 {
     private const string EventsBase = "https://events-public-service-live.ol.epicgames.com";
 
@@ -303,7 +311,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     /// </summary>
     public void ResetCdnState() => _executor.ResetCdnState();
 
-    internal void RefreshSongInstrumentSupport()
+    public void RefreshSongInstrumentSupport()
     {
         if (_pathDataStore is null)
             return;
@@ -312,6 +320,14 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         {
             _pathGenerationStates =
                 _pathDataStore.GetPathGenerationStates();
+        }
+    }
+
+    public void InvalidateSongInstrumentSupport()
+    {
+        lock (_pathGenerationStatesLock)
+        {
+            _pathGenerationStates = null;
         }
     }
 
