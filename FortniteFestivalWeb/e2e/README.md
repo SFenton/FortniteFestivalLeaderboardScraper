@@ -113,7 +113,7 @@ mousemove geometry reads, and back/forward restoration. The PR 4 baseline is
 540 rendered categories, about 22.7k DOM nodes, 1,471 frosted markers, roughly
 50.6 MB post-GC heap growth, a 1.28 s worst long task, and 1,471 geometry
 reads. The PR 5 candidate is 12 mounted categories, 519 DOM nodes, 38 markers,
-about 7.8 MB heap growth, zero list-growth long tasks, one geometry read, and
+about 8 MB heap growth, zero list-growth long tasks, one geometry read, and
 exact deep restoration. Those final ceilings are enforced. A second tagged
 test reaches the 1,000-category limit under fully hidden filters and verifies
 the explicit fresh-mix reset. The PR runner executes both in a dedicated

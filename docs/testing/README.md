@@ -147,7 +147,7 @@ deterministic; heap and long-task observations remain runtime measurements.
 
 The accepted PR 5 virtualized candidate produced 533 generated categories but
 only 12 mounted category cards, 519 total DOM nodes, 38 frosted markers, about
-7.8 MB of post-GC heap growth, zero list-growth long tasks above 50 ms, one
+8 MB of post-GC heap growth, zero list-growth long tasks above 50 ms, one
 geometry read for a hovered row, and exact 83,398 px restoration. CI enforces
 20 mounted categories, fewer than 2,500 DOM nodes, fewer than 200 frosted
 markers, at most one pointer geometry read, no list-growth long task above

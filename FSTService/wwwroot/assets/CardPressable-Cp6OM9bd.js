@@ -1,1 +1,5 @@
+<<<<<<<< HEAD:FSTService/wwwroot/assets/CardPressable-Cp6OM9bd.js
 import{am as l,j as u}from"./index-dkLh3Jkt.js";function p({children:e,onPress:a,className:r,style:t,pressedStyle:d,testId:i,ariaLabel:o,onAnimationEnd:n}){const s=l({onPress:a});return u.jsx("div",{className:r,"data-card-pressable":"","data-testid":i,role:"button",tabIndex:0,"aria-label":o,"data-pressed":s.isPressed?"true":void 0,style:{touchAction:"manipulation",...t,...s.isPressed?d:void 0},onAnimationEnd:n,...s.pressHandlers,children:e})}export{p as C};
+========
+import{am as l,j as u}from"./index-rypjIoAT.js";function p({children:e,onPress:a,className:r,style:t,pressedStyle:d,testId:i,ariaLabel:o,onAnimationEnd:n}){const s=l({onPress:a});return u.jsx("div",{className:r,"data-card-pressable":"","data-testid":i,role:"button",tabIndex:0,"aria-label":o,"data-pressed":s.isPressed?"true":void 0,style:{touchAction:"manipulation",...t,...s.isPressed?d:void 0},onAnimationEnd:n,...s.pressHandlers,children:e})}export{p as C};
+>>>>>>>> 5010c196 (Avoid refiltering accumulated Suggestions):FSTService/wwwroot/assets/CardPressable-CN11p5T4.js

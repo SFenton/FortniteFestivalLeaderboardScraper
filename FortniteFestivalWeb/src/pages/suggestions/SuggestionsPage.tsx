@@ -217,31 +217,46 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
     () => JSON.stringify([filterSettings, effectiveInstrumentSettings]),
     [effectiveInstrumentSettings, filterSettings],
   );
+  const visibilityCacheRef = useRef<{
+    key: string;
+    sourceLength: number;
+    rows: VisibleSuggestionRow[];
+  }>({ key: '', sourceLength: 0, rows: [] });
+  const visibilityCacheKey = `${mixKey ?? suggestionCacheKey}:${virtualizationMeasurementKey}`;
   const visibleCategories = useMemo<VisibleSuggestionRow[]>(() => {
-    const rows: VisibleSuggestionRow[] = [];
-    categories.forEach((category, sourceIndex) => {
-      if (!shouldShowCategory(category.key, effectiveInstrumentSettings)) return;
-      if (!shouldShowCategoryType(category.key, filterSettings)) return;
+    const cachedVisibility = visibilityCacheRef.current;
+    const canAppend = cachedVisibility.key === visibilityCacheKey
+      && cachedVisibility.sourceLength <= categories.length;
+    const rows = canAppend ? [...cachedVisibility.rows] : [];
+    const startIndex = canAppend ? cachedVisibility.sourceLength : 0;
+    for (let sourceIndex = startIndex; sourceIndex < categories.length; sourceIndex += 1) {
+      const category = categories[sourceIndex]!;
+      if (!shouldShowCategory(category.key, effectiveInstrumentSettings)) continue;
+      if (!shouldShowCategoryType(category.key, filterSettings)) continue;
       const instrumentFiltered = filterCategoryForInstruments(
         category,
         effectiveInstrumentSettings,
       );
-      if (!instrumentFiltered) return;
+      if (!instrumentFiltered) continue;
       const typeFiltered = filterCategoryForInstrumentTypes(instrumentFiltered, filterSettings);
-      if (!typeFiltered) return;
+      if (!typeFiltered) continue;
       rows.push({
         id: `${mixKey ?? suggestionCacheKey}:${sourceIndex}:${category.key}`,
         sourceIndex,
         category: typeFiltered,
       });
-    });
+    }
+    visibilityCacheRef.current = {
+      key: visibilityCacheKey,
+      sourceLength: categories.length,
+      rows,
+    };
     return rows;
   }, [
     categories,
     effectiveInstrumentSettings,
     filterSettings,
-    mixKey,
-    suggestionCacheKey,
+    visibilityCacheKey,
   ]);
   
 
