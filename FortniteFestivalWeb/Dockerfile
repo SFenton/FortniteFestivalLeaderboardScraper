@@ -7,7 +7,7 @@ COPY packages/ui-utils/ packages/ui-utils/
 COPY FortniteFestivalWeb/package.json FortniteFestivalWeb/yarn.lock FortniteFestivalWeb/
 WORKDIR /src/FortniteFestivalWeb
 # Use node-modules linker in Docker (local dev uses PnP with global cache)
-RUN corepack enable && echo 'nodeLinker: node-modules' > .yarnrc.yml && yarn install
+RUN corepack enable && echo 'nodeLinker: node-modules' > .yarnrc.yml && yarn install --immutable
 COPY FortniteFestivalWeb/ .
 # Overwrite .yarnrc.yml again after COPY brings in project files
 RUN echo 'nodeLinker: node-modules' > .yarnrc.yml && FST_WEB_OUT_DIR=/webapp-dist yarn build

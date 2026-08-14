@@ -112,6 +112,9 @@ export function validatePublishImageWorkflow(workflow, webDockerfile) {
   if (!webDockerfile.includes('FST_WEB_OUT_DIR=/webapp-dist yarn build')) {
     errors.push('web image does not use the canonical yarn build command');
   }
+  if (!webDockerfile.includes('yarn install --immutable')) {
+    errors.push('web image does not enforce the committed Yarn lockfile');
+  }
 
   return errors;
 }
