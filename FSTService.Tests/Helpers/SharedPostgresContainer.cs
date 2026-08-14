@@ -38,26 +38,11 @@ public static class SharedPostgresContainer
     public static NpgsqlDataSource CreateDatabase(
         int maxPoolSize = 10)
     {
-        var connStr = ConnectionString;
-        var dbName = $"fst_{Guid.NewGuid():N}";
-        ExecuteWithPostgresReadyRetry(() =>
-        {
-            using var conn = new NpgsqlConnection(connStr);
-            conn.Open();
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"CREATE DATABASE \"{dbName}\";";
-            cmd.ExecuteNonQuery();
-        });
-
-        var builder = new NpgsqlConnectionStringBuilder(connStr)
-        {
-            Database = dbName,
-            MinPoolSize = 0,
-            MaxPoolSize = maxPoolSize,
-            ConnectionIdleLifetime = 10,
-            PersistSecurityInfo = true,
-        };
-        var ds = NpgsqlDataSource.Create(builder.ConnectionString);
+        var connectionString =
+            CreateEmptyDatabaseConnectionString(
+                "fst_",
+                maxPoolSize);
+        var ds = NpgsqlDataSource.Create(connectionString);
 
         // Initialize schema after the freshly-created database accepts connections.
         try
@@ -77,6 +62,32 @@ public static class SharedPostgresContainer
         }
 
         return ds;
+    }
+
+    public static string CreateEmptyDatabaseConnectionString(
+        string prefix = "fst_replay_",
+        int maxPoolSize = 10)
+    {
+        var connStr = ConnectionString;
+        var dbName = $"{prefix}{Guid.NewGuid():N}";
+        ExecuteWithPostgresReadyRetry(() =>
+        {
+            using var conn = new NpgsqlConnection(connStr);
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"CREATE DATABASE \"{dbName}\";";
+            cmd.ExecuteNonQuery();
+        });
+
+        var builder = new NpgsqlConnectionStringBuilder(connStr)
+        {
+            Database = dbName,
+            MinPoolSize = 0,
+            MaxPoolSize = maxPoolSize,
+            ConnectionIdleLifetime = 10,
+            PersistSecurityInfo = true,
+        };
+        return builder.ConnectionString;
     }
 
     private static void ExecuteWithPostgresReadyRetry(Action action)

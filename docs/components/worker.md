@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: f8cf6f02
+last_verified_commit: e570d468
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -21,6 +21,7 @@ sources:
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Scraping/Replay/
+  - FSTService/Program.cs
   - FSTService/HostedWorkerMode.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
   - deploy/config/fstworker-role.env
@@ -278,6 +279,19 @@ duplicate or reorder the 28 stable descriptors. The manifest can describe
 scope/fingerprint and phase outcome/timing summaries, but the current worker
 does not create packages, capture a scrape, export PostgreSQL, import an
 isolated database, invoke replay, or alter publication.
+
+The accepted PR-5 repository capability dispatches replay before `.env`
+loading and before `WebApplication`, API, hosted-worker, provider,
+notification, cache, Docker, or publication registration. Replay therefore is
+not a new worker mode and cannot schedule or host background mutation.
+Protocol v1 invokes only the existing BandMaintenance current-projection
+refresh builder against a marker-owned isolated PostgreSQL database; every
+other post-scrape phase remains explicitly unsupported.
+
+Replay forces unchanged-scope skipping off, one band-type worker, synchronous
+commit, and cleanup off. Output/comparison manifests therefore declare
+`productionComparableTiming=false`; replay timing cannot support production
+phase-wall or unchanged-scope optimization claims.
 
 Future worker capture must remain a separately gated change with explicit FST
 drive capacity/retention ownership and must preserve PostgreSQL authority,

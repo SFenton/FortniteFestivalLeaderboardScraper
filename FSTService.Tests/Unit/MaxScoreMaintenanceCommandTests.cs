@@ -286,6 +286,145 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
     }
 
     [Fact]
+    public void Parser_rejects_multiple_actions()
+    {
+        var error = Assert.Throws<ArgumentException>(() =>
+            MaxScoreMaintenanceCommand.Parse(
+            [
+                MaxScoreMaintenanceCommand.StageFlag,
+                MaxScoreMaintenanceCommand.PlanFlag,
+                MaxScoreMaintenanceCommand.PublishedScrapeIdFlag,
+                "1296",
+                MaxScoreMaintenanceCommand.ReportOutputFlag,
+                "report.json",
+            ]));
+
+        Assert.Contains("exactly one", error.Message);
+    }
+
+    [Fact]
+    public void Parser_rejects_duplicate_song_ids_before_scope_validation()
+    {
+        var error = Assert.Throws<ArgumentException>(() =>
+            MaxScoreMaintenanceCommand.Parse(
+            [
+                MaxScoreMaintenanceCommand.StageFlag,
+                MaxScoreMaintenanceCommand.PublishedScrapeIdFlag,
+                "1296",
+                MaxScoreMaintenanceCommand.SongIdFlag,
+                "song-a",
+                MaxScoreMaintenanceCommand.SongIdFlag,
+                "song-a",
+                MaxScoreMaintenanceCommand.ReportOutputFlag,
+                "report.json",
+            ]));
+
+        Assert.Contains("unique", error.Message);
+    }
+
+    [Fact]
+    public void Parser_rejects_more_than_maximum_song_ids()
+    {
+        var args = new List<string>
+        {
+            MaxScoreMaintenanceCommand.StageFlag,
+            MaxScoreMaintenanceCommand.PublishedScrapeIdFlag,
+            "1296",
+            MaxScoreMaintenanceCommand.ReportOutputFlag,
+            "report.json",
+        };
+        foreach (var index in Enumerable.Range(
+                     0,
+                     MaxScoreMaintenanceManifest.MaximumSongs + 1))
+        {
+            args.Add(MaxScoreMaintenanceCommand.SongIdFlag);
+            args.Add($"song-{index:D2}");
+        }
+
+        var error = Assert.Throws<ArgumentException>(() =>
+            MaxScoreMaintenanceCommand.Parse(args));
+
+        Assert.Contains("at most", error.Message);
+    }
+
+    [Fact]
+    public void Parser_rejects_missing_option_value()
+    {
+        var error = Assert.Throws<ArgumentException>(() =>
+            MaxScoreMaintenanceCommand.Parse(
+            [
+                MaxScoreMaintenanceCommand.StageFlag,
+                MaxScoreMaintenanceCommand.PublishedScrapeIdFlag,
+                "1296",
+                MaxScoreMaintenanceCommand.ReportOutputFlag,
+            ]));
+
+        Assert.Contains("requires a value", error.Message);
+    }
+
+    [Fact]
+    public void Parser_rejects_action_flag_value()
+    {
+        var error = Assert.Throws<ArgumentException>(() =>
+            MaxScoreMaintenanceCommand.Parse(
+            [
+                $"{MaxScoreMaintenanceCommand.StageFlag}=true",
+                MaxScoreMaintenanceCommand.PublishedScrapeIdFlag,
+                "1296",
+                MaxScoreMaintenanceCommand.ReportOutputFlag,
+                "report.json",
+            ]));
+
+        Assert.Contains("without a value", error.Message);
+    }
+
+    [Fact]
+    public void Parser_rejects_duplicate_single_value_option()
+    {
+        var error = Assert.Throws<ArgumentException>(() =>
+            MaxScoreMaintenanceCommand.Parse(
+            [
+                MaxScoreMaintenanceCommand.StageFlag,
+                MaxScoreMaintenanceCommand.PublishedScrapeIdFlag,
+                "1296",
+                MaxScoreMaintenanceCommand.StageRequestFlag,
+                "request.json",
+                MaxScoreMaintenanceCommand.ManifestOutputFlag,
+                "manifest.json",
+                MaxScoreMaintenanceCommand.ReportOutputFlag,
+                "first.json",
+                MaxScoreMaintenanceCommand.ReportOutputFlag,
+                "second.json",
+            ]));
+
+        Assert.Contains("specified once", error.Message);
+    }
+
+    [Fact]
+    public void Parser_rejects_action_specific_option()
+    {
+        var error = Assert.Throws<ArgumentException>(() =>
+            MaxScoreMaintenanceCommand.Parse(
+            [
+                MaxScoreMaintenanceCommand.PlanFlag,
+                MaxScoreMaintenanceCommand.PublishedScrapeIdFlag,
+                "1296",
+                MaxScoreMaintenanceCommand.ManifestFlag,
+                "manifest.json",
+                MaxScoreMaintenanceCommand.ExpectedManifestDigestFlag,
+                new string('a', 64),
+                MaxScoreMaintenanceCommand.RollbackOutputFlag,
+                "rollback.json",
+                MaxScoreMaintenanceCommand.ReportOutputFlag,
+                "report.json",
+            ]));
+
+        Assert.Contains(
+            MaxScoreMaintenanceCommand.RollbackOutputFlag,
+            error.Message);
+    }
+
+    [Fact]
     public async Task Canonical_manifest_has_stable_digest_and_strict_loader()
     {
         var manifest = CreateManifest();

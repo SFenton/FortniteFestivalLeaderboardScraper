@@ -5,11 +5,20 @@ using FSTService.Api;
 using FSTService.Auth;
 using FSTService.Persistence;
 using FSTService.Scraping;
+using FSTService.Scraping.Replay;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.HttpOverrides;
 using Npgsql;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
+
+// Replay dispatch must happen before .env loading and WebApplication/worker
+// registration so production credentials and mutation services are absent.
+if (ReplayCommand.IsRequested(args))
+{
+    Environment.ExitCode = await ReplayEntryPoint.RunAsync(args);
+    return;
+}
 
 // ─── Load .env file (local development secrets) ────────────
 

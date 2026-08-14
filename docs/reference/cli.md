@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-14
-last_verified_commit: f8cf6f02
+last_verified_commit: e570d468
 sources:
   - FSTService/Program.cs
   - FSTService/ScrapePhase.cs
@@ -13,6 +13,8 @@ sources:
   - FSTService/Persistence/ScoreHistoryDedupMaintenanceCommand.cs
   - FSTService/Scraping/SoloFamilyRankingBackfillCommand.cs
   - FSTService/Scraping/LeaderboardRivalsRecomputeCommand.cs
+  - FSTService/Scraping/Replay/ReplayCommand.cs
+  - FSTService/Scraping/Replay/ReplayEntryPoint.cs
 update_triggers:
   - A command-line flag, combination rule, one-shot mode, or phase expansion changes.
 ---
@@ -35,6 +37,55 @@ Use `dotnet FSTService.dll <flags>` in a built image or the equivalent
 | `--rollout-postgres-read-only` | Enforce the paired PostgreSQL read-only rollout mode |
 
 The two rollout read-only flags must be enabled together.
+
+## Isolated phase replay candidate
+
+Replay dispatch occurs before `.env` loading, `WebApplication` construction,
+HTTP hosting, hosted-worker registration, provider clients, notifications, and
+publication services.
+
+The protocol-v1 execution command requires all of:
+
+```text
+--replay-parent-package <sealed-tier0-root>
+--replay-package <sealed-tier1-input-root>
+--replay-phase post.band_maintenance
+--replay-subphase current_projection_refresh
+--replay-output <new-attempt-directory>
+--replay-id <manifest-replay-id>
+--replay-attempt <positive-integer>
+--no-publication
+```
+
+Only the bounded BandMaintenance current-projection refresh kernel is
+replayable. Unknown phase IDs, other stable phases, other BandMaintenance
+subphases, provider/network phases, phase ranges, and publication are rejected.
+
+Comparison is a separate no-database command. It requires baseline/candidate
+package paths, report output, exact expected image digest, Git commit, OCI
+revision, attempt number for both lanes, and `--no-publication`:
+
+```text
+--replay-compare-baseline <package>
+--replay-compare-candidate <package>
+--replay-comparison-output <new-json-file>
+--replay-baseline-image-digest <sha256:...>
+--replay-baseline-git-commit <commit>
+--replay-baseline-revision <revision>
+--replay-baseline-attempt <positive-integer>
+--replay-candidate-image-digest <sha256:...>
+--replay-candidate-git-commit <commit>
+--replay-candidate-revision <revision>
+--replay-candidate-attempt <positive-integer>
+--no-publication
+```
+
+Exit codes distinguish usage, root, package, target, import, phase, output,
+comparison, cancellation, and unexpected failures. Output/comparison format
+version `2` always emits `productionComparableTiming=false` with the
+deterministic-override reason. CLI availability does not authorize
+production-derived capture, full BandMaintenance, provider access, live
+replay, or deployment.
 
 ## Focused execution
 

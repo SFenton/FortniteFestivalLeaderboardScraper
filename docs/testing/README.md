@@ -2,11 +2,14 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-14
-last_verified_commit: 9fcd76d2
+last_verified_commit: e570d468
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
   - FSTService/Scraping/Replay/TierZeroRegularFile.cs
+  - FSTService.Tests/Unit/ReplayContractTests.cs
+  - FSTService.Tests/Integration/TierOneReplayIntegrationTests.cs
+  - tools/postgres-tier1-replay-drill.test.mjs
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/playwright.config.ts
   - FortniteFestivalWeb/playwright.component.config.ts
@@ -58,6 +61,29 @@ contract tests execute the supported Linux no-follow/openat2 behavior,
 special-file rejection, lock contention, atomic moves, and ancestor-symlink
 guards; the package, manifest, lifecycle, and verifier logic remains in the
 normal coverage gate.
+
+Focused replay validation:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj \
+  --filter 'FullyQualifiedName~Replay'
+bash -n tools/postgres-tier1-replay-drill.sh
+node --test tools/postgres-tier1-replay-drill.test.mjs
+```
+
+The replay integration suite uses fresh test-container databases to prove
+source/production target refusal, canonical marker/object inventory, typed
+bounded import, direct production-builder reuse, no publication tables,
+deterministic output parity, corrupt/parent mismatch rejection, stale-attempt
+refusal, cancellation evidence, and incomplete-output comparison failure.
+Tests also require output/comparison version `2`,
+`productionComparableTiming=false`, the exact deterministic-override reason,
+canonical hash sensitivity to the field, and rejection of a relabeled
+production-comparable package.
+
+The separate FST-drive drill is the no-published-port/process-isolation proof.
+It runs baseline/candidate images in network-none PostgreSQL namespaces and
+must retain exact output hashes while cleaning containers and PGDATA.
 
 ## Web and shared TypeScript packages
 
