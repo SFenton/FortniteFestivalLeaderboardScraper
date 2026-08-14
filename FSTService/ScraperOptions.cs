@@ -1,3 +1,5 @@
+using FSTService.Scraping;
+
 namespace FSTService;
 
 public enum LeaderboardWriteMode
@@ -385,7 +387,7 @@ public sealed class ScraperOptions
     /// Change this value whenever path-generation semantics change.
     /// </summary>
     public string PathGenerationProfile { get; set; } =
-        "chopt-fnf-ew0-s20-json-png-prodrums-v4";
+        PathGenerationProfiles.PlasticDrumsV4;
 
     /// <summary>
     /// Maximum pages to fetch per leaderboard (100 entries per page).

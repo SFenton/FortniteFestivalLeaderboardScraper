@@ -31,7 +31,8 @@ together as an immutable generation.
 2. The configured MIDI key decrypts the chart in a private staging directory.
    FST promotes `PLASTIC DRUM` or `PLASTIC DRUMS` to `PART DRUMS` in a
    dedicated MIDI variant and hides the pad `PART DRUMS` track. A `pd` song
-   without the plastic track fails closed.
+   without the plastic track fails closed. A promoted plastic chart whose
+   expert output has no authored activation windows also fails closed.
 3. CHOpt runs once for each expected instrument and each of `easy`, `medium`,
    `hard`, and `expert`, using the `fnf` engine, zero early whammy, and 20%
    squeeze. Plastic-drums charts generate two modes from Epic's `pd` chart:

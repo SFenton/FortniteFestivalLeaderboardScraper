@@ -441,6 +441,7 @@ public sealed partial class PathGenerationCoordinator
                             difficulty,
                             pngPath,
                             jsonPath,
+                            execution.Runtime.Profile,
                             ct);
                     }
                     finally
@@ -674,6 +675,7 @@ public sealed partial class PathGenerationCoordinator
         string difficulty,
         string outputImage,
         string jsonOutput,
+        string generationProfile,
         CancellationToken ct)
     {
         var startInfo = CreateProcessStartInfo(choptPath);
@@ -733,17 +735,26 @@ public sealed partial class PathGenerationCoordinator
         }
 
         var requirePositiveScore = difficulty == "expert";
+        var requireAuthoredDrumFills =
+            requirePositiveScore &&
+            PathGenerationInstruments.IsPlasticDrumsInstrument(
+                instrument.Instrument) &&
+            PathGenerationProfiles.RequiresAuthoredDrumFills(
+                generationProfile);
         if (!PathArtifactValidator.TryParseJson(
                 result.StandardOutput,
                 requirePositiveScore,
                 out var totalScore,
                 requiredSchemaVersion:
                     PathArtifactValidator.RequiredSchemaVersion(
-                        _options.Value.PathGenerationProfile)))
+                        generationProfile),
+                requireNonEmptyDrumFills: requireAuthoredDrumFills))
         {
             throw new PathGenerationException(
                 "artifact_validation",
-                requirePositiveScore
+                requireAuthoredDrumFills
+                    ? "CHOpt JSON did not match the path-data contract, had a non-positive expert totalScore, or omitted authored drum activation windows."
+                    : requirePositiveScore
                     ? "CHOpt JSON did not match the path-data contract or had a non-positive expert totalScore."
                     : "CHOpt JSON did not match the path-data contract.",
                 instrument.Instrument,

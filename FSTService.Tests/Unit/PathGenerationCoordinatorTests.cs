@@ -312,6 +312,39 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
     }
 
     [Fact]
+    public async Task Plastic_drums_without_authored_windows_fail_closed()
+    {
+        var chopt = CreateChoptScript(
+            new ChoptBehavior(Mode: "missing-drum-fills"));
+        var store = new FakePathDataStore();
+        store.EnsureSong("markerless-plastic-drums");
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            new StaticDatHandler(_encryptedDat),
+            profile:
+                $"  {PathGenerationProfiles.PlasticDrumsV4}  ");
+
+        var result = await coordinator.GeneratePathsAsync(
+            [
+                CreateSong(
+                    "markerless-plastic-drums",
+                    new In { pd = 0 }),
+            ],
+            force: false,
+            CancellationToken.None);
+
+        Assert.Equal(1, result.Failed);
+        Assert.Contains(
+            store.Errors,
+            error => error.FailureStage == "artifact_validation" &&
+                     error.Detail.Contains(
+                         "authored drum activation windows",
+                         StringComparison.Ordinal));
+        AssertNoStagingAttempts();
+    }
+
+    [Fact]
     public async Task Stale_legacy_files_are_not_used_to_rescue_failed_generation()
     {
         var legacyImage = Path.Combine(
@@ -1238,6 +1271,7 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
               malformed-json) printf '{' ;;
               legacy-json) printf '%s' '{{BuildLegacyPathJson(123_456, "expert")}}' ;;
               missing-notes) printf '%s' '{{BuildValidPathJson(123_456, "expert").Replace(",\"notes\":[]", "", StringComparison.Ordinal)}}' ;;
+              missing-drum-fills) printf '%s' '{{BuildValidPathJson(123_456, "expert").Replace("\"drumFills\":[{}]", "\"drumFills\":[]", StringComparison.Ordinal)}}' ;;
               zero-expert)
                 if [ "$difficulty" = "expert" ]; then
                   printf '%s' '{{BuildValidPathJson(0, "expert")}}'
@@ -1294,8 +1328,9 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
             if "{{mode}}"=="malformed-json" echo {
             if "{{mode}}"=="legacy-json" echo {{BuildLegacyPathJson(123_456, "expert")}}
             if "{{mode}}"=="missing-notes" echo {{BuildValidPathJson(123_456, "expert").Replace(",\"notes\":[]", "", StringComparison.Ordinal)}}
+            if "{{mode}}"=="missing-drum-fills" echo {{BuildValidPathJson(123_456, "expert").Replace("\"drumFills\":[{}]", "\"drumFills\":[]", StringComparison.Ordinal)}}
             if "{{mode}}"=="zero-expert" echo {{BuildValidPathJson(0, "expert")}}
-            if not "{{mode}}"=="malformed-json" if not "{{mode}}"=="legacy-json" if not "{{mode}}"=="missing-notes" if not "{{mode}}"=="zero-expert" echo {{BuildValidPathJson(123_456, "expert")}}
+            if not "{{mode}}"=="malformed-json" if not "{{mode}}"=="legacy-json" if not "{{mode}}"=="missing-notes" if not "{{mode}}"=="missing-drum-fills" if not "{{mode}}"=="zero-expert" echo {{BuildValidPathJson(123_456, "expert")}}
             """;
         File.WriteAllText(path, script);
         return path;
@@ -1351,7 +1386,7 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
     private static string BuildValidPathJson(
         int totalScore,
         string difficulty)
-        => $$"""{"schemaVersion":2,"songName":"Song","artist":"Artist","charter":"Charter","difficulty":"{{difficulty}}","totalScore":{{totalScore}},"pathSummary":"","activations":[],"notes":[],"spPhrases":[],"measures":[],"bpms":[],"timeSignatures":[]}""";
+        => $$"""{"schemaVersion":2,"songName":"Song","artist":"Artist","charter":"Charter","difficulty":"{{difficulty}}","totalScore":{{totalScore}},"pathSummary":"","activations":[],"notes":[],"spPhrases":[],"drumFills":[{}],"measures":[],"bpms":[],"timeSignatures":[]}""";
 
     private static string BuildLegacyPathJson(
         int totalScore,

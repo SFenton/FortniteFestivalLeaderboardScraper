@@ -8,11 +8,19 @@ internal static class PathGenerationProfiles
 {
     internal const string InvalidPlasticDrumsV3 =
         "chopt-fnf-ew0-s20-json-png-prodrums-v3";
+    internal const string PlasticDrumsV4 =
+        "chopt-fnf-ew0-s20-json-png-prodrums-v4";
 
     internal static bool HasInvalidPlasticDrumsScores(string? profile)
         => string.Equals(
             profile,
             InvalidPlasticDrumsV3,
+            StringComparison.Ordinal);
+
+    internal static bool RequiresAuthoredDrumFills(string? profile)
+        => string.Equals(
+            profile,
+            PlasticDrumsV4,
             StringComparison.Ordinal);
 }
 
@@ -53,6 +61,11 @@ public static class PathGenerationInstruments
         => ByInstrument.TryGetValue(instrument, out var definition)
             ? definition
             : throw new ArgumentOutOfRangeException(nameof(instrument), instrument, "Unsupported path instrument.");
+
+    public static bool IsPlasticDrumsInstrument(string instrument)
+        => instrument is
+            "Solo_PeripheralCymbals" or
+            "Solo_PeripheralDrums";
 
     public static string[] NormalizeExpected(IEnumerable<string> instruments)
     {
