@@ -305,16 +305,17 @@ The navigation cache records the applied query revision and combo, so an
 unchanged remount does not duplicate pipelines; a distinct revision also
 reactivates a previously exhausted mix. A lightweight per-identity scroll map
 is shared with the persistent shell.
-Because generated content caches one identity,
-creating a replacement generator resets its identity and invalidates snapshots
-for discarded identities before the shell can restore them. Same-identity
-route and layout remounts preserve their snapshot because they reuse the
-generator. Each generator has a distinct mix identity, and the raw navigation
-cache stops at 1,000 categories. The page then exposes an explicit **Start a
-new mix** action that creates a fresh seeded generator while retaining the
-selected source and filters; it never silently evicts the user-visible
-backscroll range. Filtered-empty sessions continue loading until a match, true
-generator exhaustion, or that ceiling.
+Because generated content caches one identity, committing a different player
+or band source immediately discards the prior local mix, even before the new
+source finishes loading. Creating its replacement generator then resets the
+identity and invalidates snapshots for discarded identities before the shell
+can restore them. Same-identity route and layout remounts preserve their
+snapshot because they reuse the generator. Each generator has a distinct mix
+identity, and the raw navigation cache stops at 1,000 categories. The page
+then exposes an explicit **Start a new mix** action that creates a fresh seeded
+generator while retaining the selected source and filters; it never silently
+evicts the user-visible backscroll range. Filtered-empty sessions continue
+loading until a match, true generator exhaustion, or that ceiling.
 
 Category cards are variable-height TanStack Virtual rows rooted in the
 persistent application scroll container. Stable mix-and-source ordinals,
