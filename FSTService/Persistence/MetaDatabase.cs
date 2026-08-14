@@ -32,7 +32,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
     private int _bandRankHistoryCompactV3TriosReady;
     private int _bandRankHistoryCompactV3QuadReady;
     internal Func<Exception?>?
-        PublicReadFreezeReadTestHook { get; set; }
+        PublicReadFreezeReadTestHook
+    { get; set; }
     internal Action? PublicReadFreezeWriteTestHook { get; set; }
 
     internal const int DataCollectionVersion = 3;
@@ -633,11 +634,11 @@ public sealed partial class MetaDatabase : IMetaDatabase
 
     public ScrapeRunInfo? GetPublishedScrapeRun()
     {
-                try
-                {
-                        using var conn = _ds.OpenConnection();
-                        using var cmd = conn.CreateCommand();
-                        cmd.CommandText = """
+        try
+        {
+            using var conn = _ds.OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
                                 SELECT scrape.id, scrape.started_at, scrape.completed_at, scrape.songs_scraped,
                                              scrape.total_entries, scrape.total_requests, scrape.total_bytes,
                                              scrape.epic_reported_over_100_pages, scrape.status,
@@ -660,13 +661,13 @@ public sealed partial class MetaDatabase : IMetaDatabase
                                 ORDER BY id DESC
                                 LIMIT 1
                                 """;
-                        using var r = cmd.ExecuteReader();
-                        return ReadScrapeRunInfo(r);
-                }
-                catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable)
-                {
-                        return GetLastCompletedScrapeRun();
-                }
+            using var r = cmd.ExecuteReader();
+            return ReadScrapeRunInfo(r);
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable)
+        {
+            return GetLastCompletedScrapeRun();
+        }
     }
 
     public PublicationPointerState GetPublicationPointerState()
@@ -1115,24 +1116,34 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     publication_commit_intent_heartbeat_at = NULL,
                     publication_commit_intent_owner = NULL,
                     updated_at = EXCLUDED.updated_at
-                WHERE COALESCE(
-                          scrape_publication_state
-                              .public_reads_frozen_reason,
-                          '')
-                        NOT IN (
-                            @commitIntentReason,
-                            @failureIsolationPendingReason,
-                            @commitDeferredReason)
-                   OR scrape_publication_state.public_reads_frozen_reason
+                WHERE (
+                    (
+                        COALESCE(
+                            scrape_publication_state
+                                .public_reads_frozen_reason,
+                            '')
+                            NOT IN (
+                                @commitIntentReason,
+                                @failureIsolationPendingReason,
+                                @commitDeferredReason)
+                        AND COALESCE(
+                            scrape_publication_state
+                                .public_reads_frozen_reason,
+                            '')
+                            NOT LIKE @maxScoreMaintenancePattern
+                    )
+                    OR scrape_publication_state
+                        .public_reads_frozen_reason
                         IS NOT DISTINCT FROM
                         EXCLUDED.public_reads_frozen_reason
-                   OR (
+                    OR (
                         scrape_publication_state
                             .public_reads_frozen_reason =
                             @commitIntentReason
                         AND scrape_publication_state
                             .publication_commit_intent_owner IS NULL
-                   )
+                    )
+                )
                 """;
             cmd.Parameters.AddWithValue("frozen", frozen);
             cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
@@ -1148,6 +1159,11 @@ public sealed partial class MetaDatabase : IMetaDatabase
             cmd.Parameters.AddWithValue(
                 "commitDeferredReason",
                 PublicReadFreezeState.PublicationCommitDeferredReason);
+            cmd.Parameters.AddWithValue(
+                "maxScoreMaintenancePattern",
+                PublicReadFreezeState
+                    .MaxScoreMaintenanceReasonPrefix
+                + "%");
             cmd.ExecuteNonQuery();
         }
 
@@ -6571,7 +6587,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
         }
 
         using var cmd = conn.CreateCommand();
-                cmd.CommandText = @"
+        cmd.CommandText = @"
                         WITH wide_rows AS (
                                 SELECT count(*)::bigint AS row_count
                                 FROM band_team_rank_history w
@@ -10908,6 +10924,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 sourceLocks.CommandText = """
                     LOCK TABLE leaderboard_entries_overlay IN SHARE MODE;
                     LOCK TABLE leaderboard_entries IN SHARE MODE;
+                    LOCK TABLE band_member_stats IN SHARE MODE;
                     """;
                 sourceLocks.ExecuteNonQuery();
             }
@@ -11014,6 +11031,108 @@ public sealed partial class MetaDatabase : IMetaDatabase
             tx?.Rollback();
             tx?.Dispose();
             conn.Dispose();
+            throw;
+        }
+    }
+
+    public IDisposable AcquireMaxScoreMaintenanceLease(
+        long publicationId)
+    {
+        if (publicationId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(publicationId),
+                "Max-score maintenance requires a positive publication ID.");
+        }
+
+        var conn = _ds.OpenConnection();
+        NpgsqlTransaction? sourceLockTransaction = null;
+        var pathLockAcquired = false;
+        var publicationLockAcquired = false;
+        try
+        {
+            using (var applicationName = conn.CreateCommand())
+            {
+                applicationName.CommandTimeout = 5;
+                applicationName.CommandText =
+                    "SELECT set_config('application_name', " +
+                    "'fst-max-score-maintenance', false)";
+                applicationName.ExecuteNonQuery();
+            }
+            using (var pathLock = conn.CreateCommand())
+            {
+                pathLock.CommandTimeout = 5;
+                pathLock.CommandText =
+                    "SELECT pg_try_advisory_lock(@lockKey)";
+                pathLock.Parameters.AddWithValue(
+                    "lockKey",
+                    PathGenerationAdmissionLock.AdvisoryLockKey);
+                pathLockAcquired =
+                    pathLock.ExecuteScalar() is true;
+                if (!pathLockAcquired)
+                {
+                    throw new InvalidOperationException(
+                        "Max-score maintenance is blocked by active path generation.");
+                }
+            }
+            using (var publicationLock = conn.CreateCommand())
+            {
+                publicationLock.CommandTimeout = 5;
+                publicationLock.CommandText =
+                    "SELECT pg_try_advisory_lock(@lockKey)";
+                publicationLock.Parameters.AddWithValue(
+                    "lockKey",
+                    PublicationGenerationSchema.AdvisoryLockKey);
+                publicationLockAcquired =
+                    publicationLock.ExecuteScalar() is true;
+                if (!publicationLockAcquired)
+                {
+                    throw new InvalidOperationException(
+                        "Max-score maintenance is blocked by publication or another maintenance operation.");
+                }
+            }
+
+            sourceLockTransaction = conn.BeginTransaction();
+            using (var timeouts = conn.CreateCommand())
+            {
+                timeouts.Transaction = sourceLockTransaction;
+                timeouts.CommandText = """
+                    SET LOCAL lock_timeout = '5s';
+                    SET LOCAL statement_timeout = '30s';
+                    SET LOCAL idle_in_transaction_session_timeout = 0;
+                    """;
+                timeouts.ExecuteNonQuery();
+            }
+            using (var sourceLocks = conn.CreateCommand())
+            {
+                sourceLocks.Transaction = sourceLockTransaction;
+                sourceLocks.CommandText = """
+                    LOCK TABLE leaderboard_entries_overlay IN SHARE MODE;
+                    LOCK TABLE leaderboard_entries IN SHARE MODE;
+                    """;
+                sourceLocks.ExecuteNonQuery();
+            }
+
+            return new MaxScoreMaintenanceLease(
+                conn,
+                sourceLockTransaction,
+                publicationId);
+        }
+        catch
+        {
+            try
+            {
+                sourceLockTransaction?.Rollback();
+                sourceLockTransaction?.Dispose();
+                ReleaseMaxScoreMaintenanceLocks(
+                    conn,
+                    pathLockAcquired,
+                    publicationLockAcquired);
+            }
+            finally
+            {
+                conn.Dispose();
+            }
             throw;
         }
     }
@@ -11167,7 +11286,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
         using var conn = _ds.OpenConnection();
         EnsureScrapePublicationStateTable(conn);
         using var tx = conn.BeginTransaction();
-        if (!IsPublicationCacheBuildLockHeld(publicationId))
+        if (!IsPublicationCacheBuildLockHeld(publicationId)
+            && !IsPublicationMaintenanceLockHeld(publicationId))
             AcquirePublicationCacheMutationLock(conn, tx);
         publicationId = ResolveCacheTargetPublicationId(
             conn,
@@ -11244,7 +11364,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
         using var conn = _ds.OpenConnection();
         EnsureScrapePublicationStateTable(conn);
         using var tx = conn.BeginTransaction();
-        if (!IsPublicationCacheBuildLockHeld(publicationId))
+        if (!IsPublicationCacheBuildLockHeld(publicationId)
+            && !IsPublicationMaintenanceLockHeld(publicationId))
             AcquirePublicationCacheMutationLock(conn, tx);
         publicationId = ResolveCacheTargetPublicationId(
             conn,
@@ -11312,6 +11433,247 @@ public sealed partial class MetaDatabase : IMetaDatabase
         if (publicationId.HasValue)
             cmd.Parameters.AddWithValue("publicationId", publicationId.Value);
         cmd.ExecuteNonQuery();
+        tx.Commit();
+    }
+
+    public void SwapCachedResponsesFromStagingAndReleaseMaxScoreMaintenance(
+        long publicationId,
+        long publishedScrapeId,
+        string manifestSha256)
+    {
+        var normalizedDigest =
+            MaxScoreMaintenanceManifest.NormalizeSha256(
+                manifestSha256,
+                nameof(manifestSha256));
+        if (publicationId <= 0 || publishedScrapeId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(publicationId),
+                "Maintenance publication and scrape IDs must be positive.");
+        }
+        if (!IsPublicationMaintenanceLockHeld(publicationId))
+        {
+            throw new InvalidOperationException(
+                $"Publication {publicationId} max-score completion requires its maintenance lease.");
+        }
+
+        var expectedFreezeReason =
+            PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
+            + normalizedDigest;
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using (var timeouts = conn.CreateCommand())
+        {
+            timeouts.Transaction = tx;
+            timeouts.CommandText = """
+                SET LOCAL lock_timeout = '5s';
+                SET LOCAL statement_timeout = '120s';
+                """;
+            timeouts.ExecuteNonQuery();
+        }
+        using (var state = conn.CreateCommand())
+        {
+            state.Transaction = tx;
+            state.CommandText = """
+                SELECT current_publication_id,
+                       working_publication_id,
+                       published_scrape_id,
+                       public_reads_frozen,
+                       public_reads_frozen_scrape_id,
+                       public_reads_frozen_reason
+                FROM scrape_publication_state
+                WHERE id = TRUE
+                FOR UPDATE
+                """;
+            using var reader = state.ExecuteReader();
+            if (!reader.Read()
+                || reader.IsDBNull(0)
+                || reader.GetInt64(0) != publicationId
+                || !reader.IsDBNull(1)
+                || reader.IsDBNull(2)
+                || reader.GetInt64(2) != publishedScrapeId
+                || !reader.GetBoolean(3)
+                || reader.IsDBNull(4)
+                || reader.GetInt64(4) != publishedScrapeId
+                || reader.IsDBNull(5)
+                || !string.Equals(
+                    reader.GetString(5),
+                    expectedFreezeReason,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Max-score maintenance completion lost its exact publication or freeze identity.");
+            }
+        }
+
+        using (var swap = conn.CreateCommand())
+        {
+            swap.Transaction = tx;
+            swap.CommandText = """
+                TRUNCATE api_response_cache;
+                INSERT INTO api_response_cache (
+                    cache_key, json_data, etag, cached_at)
+                SELECT cache_key, json_data, etag, cached_at
+                FROM api_response_cache_staging;
+                TRUNCATE api_response_cache_staging;
+
+                DELETE FROM publication_api_response_cache
+                WHERE publication_id = @publicationId;
+                INSERT INTO publication_api_response_cache (
+                    publication_id, cache_key, json_data, etag, cached_at)
+                SELECT publication_id, cache_key, json_data, etag, cached_at
+                FROM publication_api_response_cache_staging
+                WHERE publication_id = @publicationId;
+                DELETE FROM publication_api_response_cache_staging
+                WHERE publication_id = @publicationId;
+
+                INSERT INTO publication_surface_bindings (
+                    publication_id, surface_name, binding_kind, binding_json,
+                    row_count, content_hash, status, built_at)
+                VALUES (
+                    @publicationId,
+                    'api_response_cache',
+                    'generation_cache_table',
+                    jsonb_build_object(
+                        'table', 'publication_api_response_cache',
+                        'publicationId', @publicationId),
+                    (
+                        SELECT COUNT(*)
+                        FROM publication_api_response_cache
+                        WHERE publication_id = @publicationId
+                    ),
+                    (
+                        SELECT md5(COALESCE(
+                            string_agg(
+                                cache_key || ':' || etag,
+                                '|' ORDER BY cache_key),
+                            ''))
+                        FROM publication_api_response_cache
+                        WHERE publication_id = @publicationId
+                    ),
+                    'ready',
+                    now())
+                ON CONFLICT (publication_id, surface_name) DO UPDATE SET
+                    binding_kind = EXCLUDED.binding_kind,
+                    binding_json = EXCLUDED.binding_json,
+                    row_count = EXCLUDED.row_count,
+                    content_hash = EXCLUDED.content_hash,
+                    status = EXCLUDED.status,
+                    built_at = EXCLUDED.built_at;
+
+                INSERT INTO publication_surface_bindings (
+                    publication_id, surface_name, binding_kind, binding_json,
+                    row_count, content_hash, status, built_at)
+                VALUES (
+                    @publicationId,
+                    'path_artifacts',
+                    'legacy_live_unversioned',
+                    jsonb_build_object(
+                        'table', 'songs',
+                        'maintenanceManifestSha256',
+                            @manifestSha256),
+                    (
+                        SELECT COUNT(*)
+                        FROM songs
+                        WHERE paths_generated_at IS NOT NULL
+                    ),
+                    (
+                        SELECT md5(COALESCE(
+                            string_agg(
+                                song_id || ':'
+                                || path_generation_revision || ':'
+                                || COALESCE(
+                                    path_artifact_generation_id,
+                                    ''),
+                                '|' ORDER BY song_id),
+                            ''))
+                        FROM songs
+                        WHERE paths_generated_at IS NOT NULL
+                    ),
+                    'building',
+                    now())
+                ON CONFLICT (publication_id, surface_name) DO UPDATE SET
+                    binding_kind = EXCLUDED.binding_kind,
+                    binding_json = EXCLUDED.binding_json,
+                    row_count = EXCLUDED.row_count,
+                    content_hash = EXCLUDED.content_hash,
+                    status = EXCLUDED.status,
+                    built_at = EXCLUDED.built_at;
+
+                UPDATE max_score_maintenance_runs
+                SET phase = 'completed',
+                    status = 'completed',
+                    failure_stage = NULL,
+                    failure_detail = NULL,
+                    completed_at = now(),
+                    updated_at = now()
+                WHERE manifest_sha256 = @manifestSha256
+                  AND expected_publication_id = @publicationId
+                  AND expected_published_scrape_id = @publishedScrapeId
+                  AND phase = 'validated'
+                  AND status IN ('running', 'failed');
+
+                UPDATE scrape_publication_state
+                SET public_reads_frozen = FALSE,
+                    public_reads_frozen_at = NULL,
+                    public_reads_frozen_scrape_id = NULL,
+                    public_reads_frozen_reason = NULL,
+                    updated_at = now()
+                WHERE id = TRUE
+                  AND current_publication_id = @publicationId
+                  AND working_publication_id IS NULL
+                  AND published_scrape_id = @publishedScrapeId
+                  AND public_reads_frozen
+                  AND public_reads_frozen_scrape_id = @publishedScrapeId
+                  AND public_reads_frozen_reason = @freezeReason;
+                """;
+            swap.Parameters.AddWithValue(
+                "publicationId",
+                publicationId);
+            swap.Parameters.AddWithValue(
+                "publishedScrapeId",
+                publishedScrapeId);
+            swap.Parameters.AddWithValue(
+                "manifestSha256",
+                normalizedDigest);
+            swap.Parameters.AddWithValue(
+                "freezeReason",
+                expectedFreezeReason);
+            swap.ExecuteNonQuery();
+        }
+
+        using (var verify = conn.CreateCommand())
+        {
+            verify.Transaction = tx;
+            verify.CommandText = """
+                SELECT
+                    (
+                        SELECT phase = 'completed'
+                           AND status = 'completed'
+                        FROM max_score_maintenance_runs
+                        WHERE manifest_sha256 = @manifestSha256
+                    ),
+                    (
+                        SELECT NOT public_reads_frozen
+                        FROM scrape_publication_state
+                        WHERE id = TRUE
+                    )
+                """;
+            verify.Parameters.AddWithValue(
+                "manifestSha256",
+                normalizedDigest);
+            using var reader = verify.ExecuteReader();
+            if (!reader.Read()
+                || reader.IsDBNull(0)
+                || !reader.GetBoolean(0)
+                || reader.IsDBNull(1)
+                || !reader.GetBoolean(1))
+            {
+                throw new InvalidOperationException(
+                    "Atomic max-score cache publication and unfreeze did not complete.");
+            }
+        }
+
         tx.Commit();
     }
 
@@ -11383,6 +11745,37 @@ public sealed partial class MetaDatabase : IMetaDatabase
             unlock.Parameters.AddWithValue(
                 "publicationLockKey",
                 PublicationGenerationSchema.AdvisoryLockKey);
+        }
+        unlock.CommandText = string.Join(";", statements);
+        unlock.ExecuteNonQuery();
+    }
+
+    private static void ReleaseMaxScoreMaintenanceLocks(
+        NpgsqlConnection connection,
+        bool pathLockAcquired,
+        bool publicationLockAcquired)
+    {
+        if (!pathLockAcquired && !publicationLockAcquired)
+            return;
+
+        using var unlock = connection.CreateCommand();
+        unlock.CommandTimeout = 5;
+        var statements = new List<string>(2);
+        if (publicationLockAcquired)
+        {
+            statements.Add(
+                "SELECT pg_advisory_unlock(@publicationLockKey)");
+            unlock.Parameters.AddWithValue(
+                "publicationLockKey",
+                PublicationGenerationSchema.AdvisoryLockKey);
+        }
+        if (pathLockAcquired)
+        {
+            statements.Add(
+                "SELECT pg_advisory_unlock(@pathLockKey)");
+            unlock.Parameters.AddWithValue(
+                "pathLockKey",
+                PathGenerationAdmissionLock.AdvisoryLockKey);
         }
         unlock.CommandText = string.Join(";", statements);
         unlock.ExecuteNonQuery();
@@ -11550,6 +11943,61 @@ public sealed partial class MetaDatabase : IMetaDatabase
             try
             {
                 transaction?.Rollback();
+            }
+            finally
+            {
+                transaction?.Dispose();
+                connection.Dispose();
+            }
+        }
+    }
+
+    private sealed class MaxScoreMaintenanceLease : IDisposable
+    {
+        private NpgsqlConnection? _connection;
+        private NpgsqlTransaction? _sourceLockTransaction;
+        private readonly long? _previousTarget;
+
+        public MaxScoreMaintenanceLease(
+            NpgsqlConnection connection,
+            NpgsqlTransaction sourceLockTransaction,
+            long publicationId)
+        {
+            _connection = connection;
+            _sourceLockTransaction = sourceLockTransaction;
+            _previousTarget = PublicationMaintenanceTarget.Value;
+            PublicationMaintenanceTarget.Value = publicationId;
+        }
+
+        public void Dispose()
+        {
+            PublicationMaintenanceTarget.Value = _previousTarget;
+            var connection = Interlocked.Exchange(ref _connection, null);
+            if (connection is null)
+                return;
+            var transaction = Interlocked.Exchange(
+                ref _sourceLockTransaction,
+                null);
+            try
+            {
+                try
+                {
+                    transaction?.Rollback();
+                }
+                catch
+                {
+                }
+                try
+                {
+                    ReleaseMaxScoreMaintenanceLocks(
+                        connection,
+                        pathLockAcquired: true,
+                        publicationLockAcquired: true);
+                }
+                catch
+                {
+                    // Closing the dedicated session releases both advisory locks.
+                }
             }
             finally
             {

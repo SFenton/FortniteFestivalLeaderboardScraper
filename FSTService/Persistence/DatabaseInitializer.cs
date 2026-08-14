@@ -125,6 +125,15 @@ public static class DatabaseInitializer
                 UseShortTransaction: false,
                 LockTimeout: null,
                 StatementTimeout: null),
+            new(
+                Name: "max-score-maintenance",
+                Sql: MaxScoreMaintenanceSchema.Sql,
+                CommandTimeoutSeconds:
+                    NotificationSchemaCommandTimeoutSeconds,
+                UseShortTransaction: true,
+                LockTimeout: NotificationSchemaLockTimeout,
+                StatementTimeout:
+                    NotificationSchemaStatementTimeout),
         ];
 
     // ── Complete DDL ──────────────────────────────────────────────────────

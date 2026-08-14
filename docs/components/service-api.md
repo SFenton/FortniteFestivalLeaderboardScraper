@@ -9,6 +9,8 @@ sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
   - FSTService/Api/PublicationRouteSurfaceContract.cs
+  - FSTService/Api/PublicReadGateService.cs
+  - FSTService/Api/PublicationChangeMonitorService.cs
   - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
 update_triggers:
   - Hosting modes, middleware, endpoints, auth, rate limits, cache behavior, or publication contracts change.
@@ -84,6 +86,13 @@ scrape lifecycle. Publication-bound routes declare the generation surfaces they
 require. Read pinning is permitted only when configuration is enabled and all
 required surfaces are ready; stale or unavailable generations fail explicitly
 instead of silently reading candidate state.
+
+A digest-owned max-score maintenance freeze requires published cache hits or
+`503` for affected publication-bound reads. `/api/songs` and both `/api/paths`
+forms are included even though they are normally live endpoint code. When the
+same publication is released, every API process invalidates response caches,
+the path-maxima cache, and `SongsCacheService`, then broadcasts a forced
+publication refresh so browsers do not retain the pre-maintenance maxima.
 
 ## Operational progress
 

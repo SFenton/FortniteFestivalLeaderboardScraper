@@ -145,17 +145,49 @@ public sealed class RankingsCalculator
         => ComputeAllCoreAsync(
             festivalService,
             ct,
-            scrapeId);
+            scrapeId,
+            instrumentsToRebuild: null,
+            includeRankHistory: true,
+            rebuildBandRankings: true);
+
+    internal Task ComputeForMaxScoreMaintenanceAsync(
+        FestivalService festivalService,
+        IReadOnlyCollection<string> affectedInstruments,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(affectedInstruments);
+        var instruments = PathGenerationInstruments.NormalizeExpected(
+            affectedInstruments);
+        if (instruments.Length == 0
+            || instruments.Length != affectedInstruments.Count)
+        {
+            throw new ArgumentException(
+                "Max-score maintenance requires a nonempty unique supported instrument set.",
+                nameof(affectedInstruments));
+        }
+
+        return ComputeAllCoreAsync(
+            festivalService,
+            ct,
+            scrapeId: 0,
+            instruments,
+            includeRankHistory: false,
+            rebuildBandRankings: true);
+    }
 
     private async Task ComputeAllCoreAsync(
         FestivalService festivalService,
         CancellationToken ct,
-        long scrapeId)
+        long scrapeId,
+        IReadOnlyList<string>? instrumentsToRebuild,
+        bool includeRankHistory,
+        bool rebuildBandRankings)
     {
-        _activeScrapeId = scrapeId;
+        _activeScrapeId = includeRankHistory ? scrapeId : 0;
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var allMaxScores = _pathStore.GetAllMaxScores();
         var instruments = GlobalLeaderboardScraper.AllInstruments;
+        instrumentsToRebuild ??= instruments;
         var bandTypes = BandInstrumentMapping.AllBandTypes;
         var allPopulation = _metaDb.GetAllLeaderboardPopulation();
         var totalChartedByInstrument = instruments.ToDictionary(
@@ -165,12 +197,12 @@ public sealed class RankingsCalculator
 
         // ── Phase 1+2: SongStats + AccountRankings per instrument (parallel) ──
         _progress.BeginPhaseProgress(
-            instruments.Count +
+            instrumentsToRebuild.Count +
             1 +
             1 +
-            instruments.Count + 1 +
+            (includeRankHistory ? instruments.Count + 1 : 0) +
             1 +
-            bandTypes.Count);
+            (rebuildBandRankings ? bandTypes.Count : 0));
         _progress.SetSubOperation("per_instrument_rankings");
         _workerStatus?.BeginOperation("rankings.per_instrument", "Computing solo instrument rankings", phase: "ComputingRankings", subOperation: "per_instrument_rankings");
 
@@ -178,7 +210,7 @@ public sealed class RankingsCalculator
         // Each instrument's ranking pipeline boosts work_mem to 256MB per-session
         // (temp table + indexes + 5 ROW_NUMBER window functions). 6 concurrent
         // pipelines × ~1GB peak would exceed the container memory limit.
-        await Parallel.ForEachAsync(instruments,
+        await Parallel.ForEachAsync(instrumentsToRebuild,
             new ParallelOptions { MaxDegreeOfParallelism = 2, CancellationToken = ct },
             (instrument, innerCt) =>
         {
@@ -417,7 +449,21 @@ public sealed class RankingsCalculator
         LogPhase("all_combo_rankings", instrument: null, comboSw.Elapsed);
 
         // ── Phase 5+6: History snapshots and band team rankings ──
-        if (_bandTeamRankingOptions.OverlapRankHistorySnapshotsWithBandRankings)
+        if (!includeRankHistory && rebuildBandRankings)
+        {
+            RunBandRankingsWithTiming(
+                bandTypes,
+                festivalService.Songs.Count,
+                scrapeId: 0,
+                ct: ct,
+                recordBandRankHistory: false);
+        }
+        else if (!includeRankHistory)
+        {
+            _log.LogInformation(
+                "Max-score maintenance ranking rebuild skipped rank history and band rankings.");
+        }
+        else if (_bandTeamRankingOptions.OverlapRankHistorySnapshotsWithBandRankings)
         {
             await RunRankHistorySnapshotsAndBandRankingsOverlappedAsync(
                 instruments,

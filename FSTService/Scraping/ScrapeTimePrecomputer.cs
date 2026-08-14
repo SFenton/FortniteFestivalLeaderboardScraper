@@ -114,7 +114,33 @@ public sealed class ScrapeTimePrecomputer
     public Task PrecomputeAllAsync(CancellationToken ct)
         => PrecomputeAllAsync(_metaDb.ShouldShowLeaderboardEntryTotals(), ct);
 
-    public async Task PrecomputeAllAsync(bool showLeaderboardEntryTotals, CancellationToken ct, bool publishImmediately = true)
+    public async Task PrecomputeAllAsync(
+        bool showLeaderboardEntryTotals,
+        CancellationToken ct,
+        bool publishImmediately = true)
+        => _ = await PrecomputeAllCoreAsync(
+            showLeaderboardEntryTotals,
+            ct,
+            publishImmediately,
+            useExistingMaintenanceLease: false,
+            expectedPublicationId: null);
+
+    internal Task<long> StageCurrentPublicationCachesForMaintenanceAsync(
+        long publicationId,
+        CancellationToken ct)
+        => PrecomputeAllCoreAsync(
+            _metaDb.ShouldShowLeaderboardEntryTotals(),
+            ct,
+            publishImmediately: false,
+            useExistingMaintenanceLease: true,
+            expectedPublicationId: publicationId);
+
+    private async Task<long> PrecomputeAllCoreAsync(
+        bool showLeaderboardEntryTotals,
+        CancellationToken ct,
+        bool publishImmediately,
+        bool useExistingMaintenanceLease,
+        long? expectedPublicationId)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         _log.LogInformation(
@@ -127,14 +153,26 @@ public sealed class ScrapeTimePrecomputer
             throw new InvalidOperationException(
                 "Standalone precompute cannot publish while a working publication generation exists.");
         }
+        if (useExistingMaintenanceLease
+            && (publishImmediately
+                || !expectedPublicationId.HasValue
+                || publicationPointers.CurrentPublicationId
+                    != expectedPublicationId
+                || publicationPointers.WorkingPublicationId.HasValue))
+        {
+            throw new InvalidOperationException(
+                "Maintenance cache staging requires the exact current publication, no working publication, and deferred publication.");
+        }
 
-        var targetPublicationId = publishImmediately
-            ? publicationPointers.CurrentPublicationId
-            : publicationPointers.WorkingPublicationId
-                ?? publicationPointers.CurrentPublicationId;
+        var targetPublicationId = expectedPublicationId
+            ?? (publishImmediately
+                ? publicationPointers.CurrentPublicationId
+                : publicationPointers.WorkingPublicationId
+                    ?? publicationPointers.CurrentPublicationId);
         var persistenceTargetPublicationId = targetPublicationId ?? 0;
-        using var publicationBuildLease =
-            _metaDb.AcquirePublicationCacheBuildLease(
+        using var publicationBuildLease = useExistingMaintenanceLease
+            ? null
+            : _metaDb.AcquirePublicationCacheBuildLease(
                 persistenceTargetPublicationId,
                 requireCurrentPublication: publishImmediately);
         _metaDb.BulkSetCachedResponsesStaging(
@@ -245,6 +283,7 @@ public sealed class ScrapeTimePrecomputer
                 persistenceTargetPublicationId);
             _log.LogInformation("Scrape-time precompute cache staging responses published.");
         }
+        var stagedCount = staging.RecordCount;
         _staging = null;
 
         sw.Stop();
@@ -253,6 +292,7 @@ public sealed class ScrapeTimePrecomputer
                 ? "Scrape-time precomputation complete: {PlayerCount} players in {Elapsed}s."
                 : "Scrape-time precomputation staged for publication: {PlayerCount} players in {Elapsed}s.",
             registeredIds.Count, sw.Elapsed.TotalSeconds);
+        return stagedCount;
     }
 
     private static string ExtractAccountId(string cacheKey)

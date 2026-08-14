@@ -9,6 +9,7 @@ sources:
   - FSTService/Scraping/PathGenerationModels.cs
   - FSTService/Scraping/PathArtifactResolver.cs
   - FSTService/Scraping/PathDataStore.cs
+  - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Api/SongEndpoints.cs
   - FSTService/Api/AdminEndpoints.cs
   - FortniteFestivalWeb/src/pages/songinfo/components/path/PathDataTable.tsx
@@ -107,6 +108,37 @@ After deploying a new stable instrument correction, regenerate each affected
 song sequentially with `force=false`. Do not update nullable maximum columns
 directly: the normal path promotes the complete immutable generation and keeps
 the manifest, maxima, expected instruments, and revision coherent.
+
+## Max-score correction maintenance
+
+A reviewed correction to an already-published song's theoretical maximum uses
+the CLI-only
+[max-score correction runbook](../database/MaxScoreCorrectionMaintenanceRunbook.md),
+not the generic admin endpoint.
+
+`--max-score-maintenance-stage` accepts either a strict bounded request JSON or
+`1..32` explicit song IDs. It acquires the distributed path-generation lease,
+processes songs serially, applies the normal decrypted-MIDI inference before
+generation, and writes every expected instrument/difficulty into a complete
+immutable generation. It returns the staged promotion identity without calling
+the PostgreSQL pointer promotion path. A canonical manifest binds the exact
+publication/catalog, current revision and full path identity, staged runtime
+and generation, all eight old/new maxima, and the exact changed instruments.
+
+Plan revalidates each immutable directory and rejects:
+
+- a changed publication, catalog, provider timestamp, or path revision;
+- an active staged generation;
+- a runtime/artifact identity mismatch;
+- a nonpositive changed maximum;
+- a maximum difference omitted from `changedInstruments`; or
+- any supposedly unchanged maximum that differs.
+
+Apply promotes every manifest generation in one PostgreSQL transaction. It
+does not expose the new path pointer until a digest-owned maintenance freeze is
+active, and it does not release that freeze until all maximum-dependent
+derived state, notification quarantine, current-publication caches, and
+rollback evidence validate. The old exact-four command names remain rejected.
 
 ## Deployment and regeneration
 

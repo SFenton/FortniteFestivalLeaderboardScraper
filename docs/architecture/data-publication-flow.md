@@ -10,6 +10,7 @@ sources:
   - FSTService/Scraping/ScrapeLifecycleNotifier.cs
   - FSTService/Api/PublicationRouteSurfaceContract.cs
   - FSTService/Api/PublicReadGateService.cs
+  - FSTService/Persistence/MaxScoreMaintenanceService.cs
 update_triggers:
   - Scrape allocation, phase ordering, failure isolation, publication, freeze, recovery, or client notification changes.
 ---
@@ -68,6 +69,41 @@ diagnostic or replay data without becoming the published generation.
 - Publication lookup/read-gate failures fail closed.
 - Run-once exits only after its publication decision and any permitted
   registration drain.
+
+## Same-publication max-score maintenance
+
+The CLI-only max-score workflow changes path metadata and maximum-dependent
+derived rows while retaining the same published scrape/publication ID.
+
+1. Stage writes complete immutable path directories only.
+2. Plan binds the exact current publication/catalog/path revisions and
+   fingerprints published score sources, notification state, and rank history.
+3. Apply acquires path-generation then publication locks, creates a
+   manifest-digest-owned public-read freeze, and persists rollback evidence.
+4. One transaction promotes every listed song generation.
+5. Maintenance ranking mode rebuilds affected instruments plus composite,
+   family, and combo dependencies. Target-song band over-threshold flags are
+   recalculated, prior/current affected band projection scopes are refreshed,
+   and dependent band rankings are rebuilt. Solo/composite/band rank history is
+   not written. Affected player-stat tiers and registered-player leaderboard
+   rivals follow.
+6. Routine notification dry-run candidates are accepted only for player ranks
+   in changed instruments, target-song band rows, and their dependent band
+   ranks. They are persisted in the maintenance quarantine, relevant state is
+   aligned, visible delivery remains zero, and the publication's completed
+   notification marker is not reopened.
+7. A complete current-publication API cache is built in staging. Final
+   validation requires unchanged rank-history and source fingerprints, exact
+   paths/maxima/song stats, rollback coverage, zero visible delivery, and the
+   expected staged-cache count.
+8. Cache swap, workflow completion, and freeze release commit atomically.
+   Service processes invalidate path/song/response caches and force connected
+   clients to refresh the unchanged publication ID.
+
+During this maintenance freeze, publication-bound path and song routes that
+have no safe published response cache return `503`; cacheable ranking/player/
+band routes serve the prior published cache or return `503`. A failure after
+freeze records a resumable checkpoint and leaves reads frozen.
 
 ## Publication-aware API and browser
 

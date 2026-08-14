@@ -219,6 +219,30 @@ public sealed class RetiredMaintenanceCommandGuardTests
     }
 
     [Fact]
+    public void NewMaxScoreCommandDoesNotUnretireExactFourOptions()
+    {
+        RetiredMaintenanceCommandGuard.ThrowIfPresent(
+        [
+            MaxScoreMaintenanceCommand.StageFlag,
+            MaxScoreMaintenanceCommand.PublishedScrapeIdFlag,
+            "1296",
+            MaxScoreMaintenanceCommand.SongIdFlag,
+            "song-a",
+        ]);
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            RetiredMaintenanceCommandGuard.ThrowIfPresent(
+            [
+                MaxScoreMaintenanceCommand.StageFlag,
+                "--path-repair-stage-exact-four",
+            ]));
+        Assert.Contains(
+            "--path-repair-stage-exact-four",
+            exception.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void GuardMatchesRetiredOptionsCaseInsensitively()
     {
         Assert.Throws<ArgumentException>(

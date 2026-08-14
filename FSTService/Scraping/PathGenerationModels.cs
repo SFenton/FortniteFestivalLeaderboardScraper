@@ -176,6 +176,16 @@ public enum PathGenerationPromotionOutcome
     SongMissing,
 }
 
+public sealed record PathGenerationBatchPromotionResult(
+    PathGenerationPromotionOutcome Outcome,
+    int PromotedCount,
+    string? FailedSongId = null);
+
+public sealed record PathGenerationBatchPromotionGate(
+    long PublicationId,
+    long PublishedScrapeId,
+    string FreezeReason);
+
 public sealed record PathGenerationError(
     string AttemptId,
     string SongId,
@@ -202,6 +212,7 @@ public sealed record PathGenerationBatchResult(
 
 internal enum PathGenerationAttemptOutcome
 {
+    Staged,
     Promoted,
     Skipped,
     Failed,
@@ -210,4 +221,5 @@ internal enum PathGenerationAttemptOutcome
 internal sealed record PathGenerationAttemptResult(
     PathGenerationAttemptOutcome Outcome,
     string? FailureStage = null,
-    string? Detail = null);
+    string? Detail = null,
+    PathGenerationPromotion? StagedPromotion = null);

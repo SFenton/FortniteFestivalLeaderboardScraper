@@ -10,6 +10,7 @@ sources:
   - FSTService/Scraping/PostScrapeOrchestrator.cs
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Scraping/DurablePhaseProgressSink.cs
+  - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
   - FSTService/HostedWorkerMode.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
   - deploy/config/fstworker-role.env
@@ -89,6 +90,18 @@ generation remains disabled by default and selects only pending songs; the
 protected admin route accepts one song at a time. CHOpt outputs are validated
 and promoted as immutable generations, and complete catalogue migrations must
 remain sequential and resumable. See [Path generation](path-generation.md).
+
+Max-score correction is a separate CLI-only one-shot mode. It registers no
+hosted scraper/background services and requires the real `fstworker` offline.
+Stage shares the path-generation admission lock without promoting. Plan/apply
+take the path-generation lock before the global publication lock. Apply holds
+solo source and band-member-stat share locks and rechecks that the worker
+remains offline around each mutable phase. Maintenance ranking mode suppresses
+`WorkerStatusPublisher`, rebuilds changed solo instruments plus aggregate
+dependencies, recalculates target-song band validity, refreshes affected band
+current-projection scopes, rebuilds dependent band rankings, and explicitly
+skips solo/composite/band rank-history snapshots. See the
+[max-score correction runbook](../database/MaxScoreCorrectionMaintenanceRunbook.md).
 
 The worker's scrape, pruning, ranking, and statistics paths consume distinct
 CHOpt maxima for all eight generated instruments, including separate Pro Drums
@@ -210,6 +223,13 @@ Role defaults intentionally differ:
 - service resolves public reads through published sources;
 - publication read-context rollout remains disabled until every bound surface
   is generation-addressable.
+
+A digest-owned max-score maintenance freeze is stricter than a normal scrape
+freeze: affected publication-bound cache misses, including `/api/songs` and
+both path routes, return `503`. After derived validation a complete cache swap,
+workflow completion, and unfreeze commit together. API processes invalidate
+response, path-maxima, and song caches and force a same-publication client
+refresh.
 
 ## Service-level retention planning
 

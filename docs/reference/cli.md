@@ -1,11 +1,12 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-11
-last_verified_commit: 453fd9b6
+last_verified: 2026-08-13
+last_verified_commit: 9d11111e
 sources:
   - FSTService/Program.cs
   - FSTService/ScrapePhase.cs
+  - FSTService/Persistence/MaxScoreMaintenanceCommand.cs
   - FSTService/Persistence/ScoreHistoryDedupMaintenanceCommand.cs
   - FSTService/Scraping/SoloFamilyRankingBackfillCommand.cs
   - FSTService/Scraping/LeaderboardRivalsRecomputeCommand.cs
@@ -77,3 +78,28 @@ pass of a continuous worker.
 Maintenance commands are mutually exclusive where enforced by `Program.cs`.
 Use the matching living runbook; CLI availability is not authorization to run
 against production.
+
+### Max-score correction
+
+All max-score files must be `.json` paths below `Scraper:DataDirectory`.
+Manifests use canonical strict JSON; unknown properties, noncanonical encoding,
+unsupported versions, duplicate/unsorted song IDs, and more than 32 songs are
+rejected.
+
+| Action | Required flags | Behavior |
+|---|---|---|
+| `--max-score-maintenance-stage` | `--published-scrape-id`, exactly one of `--max-score-maintenance-stage-request` or repeated `--max-score-maintenance-song-id`, `--max-score-maintenance-manifest-output`, `--max-score-maintenance-report-output` | Serially stage complete inferred immutable generations; never mutate a song pointer |
+| `--max-score-maintenance-plan` | `--published-scrape-id`, `--max-score-maintenance-manifest`, `--expected-max-score-manifest-digest`, `--max-score-maintenance-report-output` | Read-only fail-closed preflight; emits the deterministic `planDigest` |
+| `--max-score-maintenance-apply` | plan flags plus `--expected-max-score-plan-digest` and `--max-score-maintenance-rollback-output` | Freeze, persist rollback evidence, atomically promote all songs, rebuild derived state, quarantine notifications, stage/publish caches, validate, and unfreeze |
+| `--max-score-maintenance-resume` | apply manifest/scrape/digest flags and a new report output; rollback output is required only before it has been durably captured | Resume only the same digest/phase identities; any failure after freeze remains frozen |
+
+Every action writes a versioned report. Apply/resume exit `2` with
+`resumable=true` after a post-freeze failure. Do not manually clear the freeze;
+rerun `--max-score-maintenance-resume` with the same manifest and digests.
+
+The retired `--path-repair-*` and
+`--notification-maintenance-pro-lead-max-score-repair` families remain startup
+errors in every supported prefix/value form.
+
+See
+[Max-score correction maintenance](../database/MaxScoreCorrectionMaintenanceRunbook.md).

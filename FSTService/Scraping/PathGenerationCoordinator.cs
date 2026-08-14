@@ -200,6 +200,7 @@ public sealed partial class PathGenerationCoordinator
                     state,
                     execution,
                     force,
+                    promote: true,
                     ownsProgress,
                     ct);
             });
@@ -232,6 +233,103 @@ public sealed partial class PathGenerationCoordinator
         }
     }
 
+    internal async Task<IReadOnlyList<PathGenerationAttemptResult>>
+        StagePathsSerialAsync(
+            IReadOnlyList<(
+                SongPathRequest Request,
+                PathGenerationState State)> songs,
+            CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(songs);
+        if (!_options.Value.EnablePathGeneration)
+        {
+            throw new InvalidOperationException(
+                "Max-score maintenance staging requires path generation to be enabled.");
+        }
+        if (songs.Count == 0)
+            return [];
+
+        using var admissionTimeout =
+            CancellationTokenSource.CreateLinkedTokenSource(ct);
+        admissionTimeout.CancelAfter(TimeSpan.FromSeconds(30));
+        IAsyncDisposable admissionLease;
+        try
+        {
+            admissionLease =
+                await _admissionLeaseProvider.AcquireAsync(
+                    admissionTimeout.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new InvalidOperationException(
+                "Max-score maintenance staging could not acquire the path-generation lease within 30 seconds.");
+        }
+        await using var acquiredAdmissionLease = admissionLease;
+        PathGenerationExecutionContext execution;
+        try
+        {
+            execution = await CreateExecutionContextAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            await RecordBatchFailureAsync(
+                songs.Select(song => song.Request).ToArray(),
+                null,
+                "cancelled",
+                "Path generation was cancelled before maintenance staging began.",
+                ownsProgress: false);
+            throw;
+        }
+        catch (PathGenerationException ex)
+        {
+            await RecordBatchFailureAsync(
+                songs.Select(song => song.Request).ToArray(),
+                null,
+                ex.Stage,
+                ex.Message,
+                ownsProgress: false);
+            return songs
+                .Select(_ => new PathGenerationAttemptResult(
+                    PathGenerationAttemptOutcome.Failed,
+                    ex.Stage,
+                    ex.Message))
+                .ToArray();
+        }
+        catch (Exception ex)
+        {
+            await RecordBatchFailureAsync(
+                songs.Select(song => song.Request).ToArray(),
+                null,
+                "runtime_identity",
+                ex.Message,
+                ownsProgress: false);
+            return songs
+                .Select(_ => new PathGenerationAttemptResult(
+                    PathGenerationAttemptOutcome.Failed,
+                    "runtime_identity",
+                    ex.Message))
+                .ToArray();
+        }
+
+        var results = new List<PathGenerationAttemptResult>(songs.Count);
+        foreach (var song in songs)
+        {
+            var result = await ProcessSongAsync(
+                song.Request,
+                song.State,
+                execution,
+                force: true,
+                promote: false,
+                ownsProgress: false,
+                ct);
+            results.Add(result);
+            if (result.Outcome != PathGenerationAttemptOutcome.Staged)
+                break;
+        }
+
+        return results;
+    }
+
     public Task<PathGenerationBatchResult> GenerateAutomaticPathsAsync(
         IReadOnlyCollection<Song> songs,
         CancellationToken ct)
@@ -259,6 +357,7 @@ public sealed partial class PathGenerationCoordinator
         PathGenerationState? initialState,
         PathGenerationExecutionContext execution,
         bool force,
+        bool promote,
         bool ownsProgress,
         CancellationToken ct)
     {
@@ -551,6 +650,14 @@ public sealed partial class PathGenerationCoordinator
                 execution.Runtime,
                 expected,
                 maxScores);
+            if (!promote)
+            {
+                if (ownsProgress)
+                    _progress.PathGenSongCompleted();
+                return new PathGenerationAttemptResult(
+                    PathGenerationAttemptOutcome.Staged,
+                    StagedPromotion: promotion);
+            }
 
             PathGenerationPromotionOutcome promotionOutcome;
             try

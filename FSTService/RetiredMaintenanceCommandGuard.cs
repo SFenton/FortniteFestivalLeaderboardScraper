@@ -52,6 +52,18 @@ internal static class RetiredMaintenanceCommandGuard
             "solo-family-ranking-backfill",
             "solo-family-ranking-backfill-execute",
             "leaderboard-rivals-recompute-account",
+            "max-score-maintenance-stage",
+            "max-score-maintenance-plan",
+            "max-score-maintenance-apply",
+            "max-score-maintenance-resume",
+            "max-score-maintenance-stage-request",
+            "max-score-maintenance-song-id",
+            "max-score-maintenance-manifest",
+            "max-score-maintenance-manifest-output",
+            "max-score-maintenance-report-output",
+            "max-score-maintenance-rollback-output",
+            "expected-max-score-manifest-digest",
+            "expected-max-score-plan-digest",
         };
 
     public static void ThrowIfPresent(IReadOnlyList<string> args)

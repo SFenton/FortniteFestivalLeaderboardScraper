@@ -7,6 +7,7 @@ sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
   - FSTService/Api/PublicationRouteSurfaceContract.cs
+  - FSTService/Api/PublicReadGateService.cs
   - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
   - packages/core/src/api/serverTypes.ts
   - FortniteFestivalWeb/src/api/client.ts
@@ -119,6 +120,12 @@ Aggregate player scopes intentionally use different formulas:
   per second per client outside tests.
 - Publication-bound responses participate in read gates, generation context,
   cache behavior, and route-surface readiness.
+- During a `max-score-maintenance:v1:<manifest-sha256>` freeze, a
+  publication-bound route may serve only an existing published cache hit.
+  Otherwise affected song/path/ranking/player/band surfaces return `503` with
+  `Retry-After`; path and `/api/songs` are explicitly included even though
+  they normally use live endpoint code. Freeze release invalidates path-maxima,
+  song, and response caches and forces a WebSocket same-publication refresh.
 - Operational-live endpoints expose current process/coordination state.
 - Admin/private endpoints must not be reclassified as public data accidentally.
 

@@ -1,11 +1,13 @@
 ---
 status: living-runbook
 owner: data
-last_verified: 2026-08-11
-last_verified_commit: 453fd9b6
+last_verified: 2026-08-13
+last_verified_commit: 9d11111e
 sources:
   - FSTService/Persistence/ImprovementNotificationRecoveryService.cs
   - FSTService/Persistence/ImprovementNotificationService.cs
+  - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
+  - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Program.cs
   - FSTService/Scraping/PathGenerationCoordinator.cs
   - FSTService/Scraping/RankingsCalculator.cs
@@ -54,9 +56,9 @@ song/ranking lane can mark the published scrape complete.
 ## Retired Pro Lead max-score repair evidence
 
 The exact-four Pro Lead path and notification repair completed once and has no
-recurring operator owner. Publication `1276` is current. All four immutable
-path generations were promoted, the affected rankings were rebuilt, and the
-single notification-maintenance execution persisted `26` quarantined
+recurring operator owner. Its historical publication was `1276`. All four
+immutable path generations were promoted, the affected rankings were rebuilt,
+and the single notification-maintenance execution persisted `26` quarantined
 candidates with `0` visible deliveries.
 
 The executable repair surface is retired:
@@ -83,18 +85,15 @@ workflow.
 
 A new provider-metadata or CHOpt maximum defect is a new maintenance event, not
 authorization to restore the retired exact-four commands. Make the recurring
-generation rule correct first, then use a separately reviewed maintenance path
-that:
-
-1. stages and validates the affected immutable generations;
-2. freezes public reads before promotion;
-3. promotes the complete path metadata atomically;
-4. rebuilds affected song statistics and all ranking families that consume the
-   maxima;
-5. evaluates notification candidates as maintenance effects rather than normal
-   player improvements; and
-6. validates paths, maxima, rankings, caches, notification state, and rollback
-   evidence before unfreezing.
+generation rule correct first, then use the implemented
+[max-score correction maintenance workflow](MaxScoreCorrectionMaintenanceRunbook.md).
+It stages complete inferred generations without pointer mutation, requires a
+strict canonical manifest and deterministic plan digest, freezes affected
+publication reads, atomically promotes the whole song set, rebuilds every
+maximum-dependent derived surface without rank-history insertion, quarantines
+maintenance-induced player-rank and target-song/dependent-band candidates with
+zero visible delivery, restages the current-publication cache, and unfreezes
+only after validation.
 
 The generic single-song regeneration endpoint alone is not completion evidence
 for a maximum-score correction because derived rankings and notification
@@ -104,10 +103,13 @@ semantics are outside that command.
 
 `improvement_notification_maintenance_runs` and
 `improvement_notification_maintenance_candidates` remain immutable historical
-compatibility surfaces. Fresh schema initialization still creates them, and
-this retirement performs no live DDL or row deletion. The completed run's
-published-scrape provenance, normalized manifest, digest, candidate payloads,
-and quarantine classification must remain intact.
+compatibility surfaces and now also accept the generic
+`maintenance_max_score_correction_v1` purpose. Fresh schema initialization
+creates the generic `max_score_maintenance_runs` and
+`max_score_maintenance_rollback_songs` checkpoint/evidence tables without
+deleting historical exact-four rows. Every completed run's published-scrape
+provenance, normalized manifest, digest, candidate payloads, and quarantine
+classification remain intact.
 
 Public notification reads, source cursors, expiry cleanup, and supersession
 continue to accept only `delivery_state='visible'`. Quarantined audit evidence
@@ -126,11 +128,13 @@ no automatic rollback CLI.
 Any future reversal requires a separately reviewed transaction while public
 reads are frozen, restoration of every captured song field, a full supported
 ranking recompute, and post-restore path/song-stat/ranking validation before
-unfreeze. The API still recognizes the historical ranking-maintenance freeze
-reasons so releasing an interrupted old-image freeze invalidates process/song
-caches and broadcasts a same-publication client refresh. Provider timestamp
-normalization, generation validation, immutable artifact directories, and the
-normal path-generation CAS remain active for recurring path work.
+unfreeze. There is no automatic generic rollback command. The API recognizes
+both historical ranking-maintenance reasons and
+`max-score-maintenance:v1:<manifest-sha256>`; releasing either invalidates
+process, path, and song caches and broadcasts a same-publication client
+refresh. Provider timestamp normalization, generation validation, immutable
+artifact directories, and the normal path-generation CAS remain active for
+recurring path work.
 
 ## Durable completion
 

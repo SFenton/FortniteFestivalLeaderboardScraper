@@ -30,7 +30,9 @@ public sealed class PublicReadGateMiddleware
 
         if (gate.RequiresCachedReads
             && publicationBound
-            && RequiresPublishedData(context.Request)
+            && (RequiresPublishedData(context.Request)
+                || state.MaxScoreMaintenance
+                && RequiresMaxScoreMaintenanceData(context.Request))
             && !FailedCandidateReadRoutingPolicy.EndpointHandlesRead(
                 context,
                 gate))
@@ -39,7 +41,7 @@ public sealed class PublicReadGateMiddleware
             context.Response.Headers["Retry-After"] = "30";
             await Results.Problem(
                 title: "Published data unavailable",
-                detail: "A failed candidate changed unversioned derived data. This route is held until a stable published response is available.",
+                detail: "Published data is under a fail-closed maintenance or recovery gate. This route is held until a stable published response is available.",
                 statusCode: StatusCodes.Status503ServiceUnavailable).ExecuteAsync(context);
             return;
         }
@@ -82,6 +84,19 @@ public sealed class PublicReadGateMiddleware
             || path.StartsWith("/api/firstseen", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/status", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/leaderboard-population", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static bool RequiresMaxScoreMaintenanceData(
+        HttpRequest request)
+    {
+        var path = request.Path.Value;
+        return !string.IsNullOrEmpty(path)
+            && (path.Equals(
+                    "/api/songs",
+                    StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith(
+                    "/api/paths/",
+                    StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsPublishedSoloLeaderboardPath(string path)

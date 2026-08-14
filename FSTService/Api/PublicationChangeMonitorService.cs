@@ -11,6 +11,7 @@ public sealed class PublicationChangeMonitorService : BackgroundService
     private readonly NotificationService _notifications;
     private readonly ScrapeLifecycleNotifier _scrapeLifecycle;
     private readonly SongsCacheService _songsCache;
+    private readonly IPathDataStore? _pathStore;
     private readonly ILogger<PublicationChangeMonitorService> _log;
 
     public PublicationChangeMonitorService(
@@ -19,13 +20,15 @@ public sealed class PublicationChangeMonitorService : BackgroundService
         NotificationService notifications,
         ScrapeLifecycleNotifier scrapeLifecycle,
         SongsCacheService songsCache,
-        ILogger<PublicationChangeMonitorService> log)
+        ILogger<PublicationChangeMonitorService> log,
+        IPathDataStore? pathStore = null)
     {
         _startup = startup;
         _metaDb = metaDb;
         _notifications = notifications;
         _scrapeLifecycle = scrapeLifecycle;
         _songsCache = songsCache;
+        _pathStore = pathStore;
         _log = log;
     }
 
@@ -56,6 +59,7 @@ public sealed class PublicationChangeMonitorService : BackgroundService
                         "Same-publication maintenance freeze completed for publication {PublicationId}; invalidating API caches and refreshing connected clients.",
                         currentPublicationId);
                     _scrapeLifecycle.InvalidateInProcessCaches();
+                    _pathStore?.InvalidateCachedState();
                     _songsCache.Invalidate();
                     await _notifications.NotifyPublicationChangedAsync(
                         currentPublicationId.Value,
@@ -68,6 +72,7 @@ public sealed class PublicationChangeMonitorService : BackgroundService
                     if (currentPublicationId.HasValue)
                     {
                         _scrapeLifecycle.InvalidateInProcessCaches();
+                        _pathStore?.InvalidateCachedState();
                         _songsCache.Invalidate();
                     }
                     previousPublicationId = currentPublicationId;
@@ -87,6 +92,7 @@ public sealed class PublicationChangeMonitorService : BackgroundService
                     previousPublicationId,
                     currentPublicationId);
                 _scrapeLifecycle.InvalidateInProcessCaches();
+                _pathStore?.InvalidateCachedState();
                 _songsCache.Invalidate();
                 await _notifications.NotifyPublicationChangedAsync(
                     currentPublicationId.Value);

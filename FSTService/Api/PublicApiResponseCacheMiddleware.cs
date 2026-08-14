@@ -126,7 +126,10 @@ public sealed class PublicApiResponseCacheMiddleware
             if (publicationBound &&
                 gate.RequiresCachedReads &&
                 !gate.GetState().PublicationCommitPending &&
-                PublicReadGateMiddleware.RequiresPublishedData(context.Request))
+                (PublicReadGateMiddleware.RequiresPublishedData(context.Request)
+                 || gate.GetState().MaxScoreMaintenance
+                 && PublicReadGateMiddleware
+                     .RequiresMaxScoreMaintenanceData(context.Request)))
             {
                 if (publicationBound)
                     telemetry.Record(context, PublicApiCacheOutcome.MissBlocked);
@@ -134,7 +137,7 @@ public sealed class PublicApiResponseCacheMiddleware
                 context.Response.Headers["Retry-After"] = "30";
                 await Results.Problem(
                     title: "Published data unavailable",
-                    detail: "A failed candidate changed unversioned derived data. This route is held until a stable published response is available.",
+                    detail: "Published data is under a fail-closed maintenance or recovery gate. This route is held until a stable published response is available.",
                     statusCode: StatusCodes.Status503ServiceUnavailable).ExecuteAsync(context);
                 return;
             }

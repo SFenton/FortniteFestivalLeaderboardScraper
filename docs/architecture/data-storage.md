@@ -8,6 +8,8 @@ sources:
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/InstrumentDatabase.cs
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
+  - FSTService/Persistence/MaxScoreMaintenanceSchema.cs
+  - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Persistence/MetaDatabase.PhaseProgress.cs
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
@@ -44,7 +46,7 @@ surface is not the production service persistence model.
 | Account state | Display names, registrations, selected profiles, refresh/backfill progress |
 | Derived products | Rankings, rivals, statistics, precomputed responses, improvement notifications |
 | Publication state | Published scrape/generation, source bindings, read freeze, commit intent, leases, cache generations |
-| Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, maintenance evidence, dedup/recovery audit state |
+| Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, max-score checkpoints/rollback evidence, maintenance notification quarantine, dedup/recovery audit state |
 
 The `songs` path-generation state stores distinct theoretical maxima for all
 eight path instruments. Plastic drums use separate
@@ -57,6 +59,27 @@ The exact relation inventory is intentionally source-driven because it changes
 frequently. `DatabaseInitializer` and its tests are the schema inventory;
 canonical documentation describes ownership and invariants instead of copying
 volatile table counts.
+
+### Max-score maintenance evidence
+
+`max_score_maintenance_runs` owns the digest-bound workflow checkpoint:
+manifest/plan identities, exact publication/catalog, score-source,
+notification-state and rank-history fingerprints, freeze owner, last durable
+phase, rollback file digest, notification audit link, counters, and bounded
+failure detail. A post-freeze failure changes status to `failed` but does not
+clear its phase or freeze.
+
+`max_score_maintenance_rollback_songs` stores every pre-promotion path field
+and all eight maxima for every manifest song. It complements the canonical
+same-drive rollback JSON. Database triggers reject workflow-identity changes
+and rollback-row updates/deletes; neither surface deletes historical
+generations.
+
+`improvement_notification_maintenance_runs` and
+`improvement_notification_maintenance_candidates` retain historical
+`maintenance_pro_lead_max_score_repair_v1` rows and accept new
+`maintenance_max_score_correction_v1` audit rows. Both purposes remain
+quarantine-only with a compile/schema-enforced visible delivery count of zero.
 
 ## Publication ownership
 
@@ -188,6 +211,11 @@ Those values are not reclaim proof.
   retention, rewrite, or reduction of the `500 GiB` free-space gate.
 - Destructive maintenance requires exact affected objects, parity evidence,
   rollback, live preflight, and a bounded maintenance window.
+- Current-publication max-score correction requires the canonical manifest and
+  plan digests, the path-generation/publication lock order, a durable
+  maintenance freeze, complete rollback coverage, and atomic cache
+  swap/unfreeze. Use the
+  [max-score correction runbook](../database/MaxScoreCorrectionMaintenanceRunbook.md).
 - Schema initialization is idempotent but is not a substitute for a bounded
   maintenance command.
 - Preserve Epic/provider provenance, historical leaderboard correctness,

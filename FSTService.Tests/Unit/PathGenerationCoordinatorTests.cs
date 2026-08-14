@@ -1169,6 +1169,70 @@ public sealed class PathGenerationCoordinatorTests : IDisposable
         Assert.All(store.Errors, error => Assert.True(error.Detail.Length <= 2048));
     }
 
+    [Fact]
+    public async Task Maintenance_stage_writes_full_inferred_generation_without_promoting()
+    {
+        var midi = BuildMidiWithInstrumentTracks(
+            ("PART GUITAR", true),
+            ("PLASTIC GUITAR", true));
+        var encrypted = EncryptMidi(midi, _midiKey);
+        var chopt = CreateChoptScript();
+        var store = new FakePathDataStore();
+        var state = new PathGenerationState(
+            "stage-only",
+            7,
+            "old-hash",
+            "2026-08-01T00:00:00Z",
+            DateTime.UtcNow.AddDays(-1),
+            "1.16.2",
+            new string('a', 64),
+            "old-profile",
+            "old-generation",
+            ["Solo_Guitar"],
+            new SongMaxScores
+            {
+                MaxLeadScore = 100,
+            },
+            CatalogLastModified: "2026-08-01T00:00:00Z");
+        store.Seed(state);
+        var coordinator = CreateCoordinator(
+            chopt,
+            store,
+            new StaticDatHandler(encrypted));
+        var song = CreateSong(
+            "stage-only",
+            new In(),
+            UtcDate(1));
+        var request = SongPathRequest.FromSong(song)! with
+        {
+            LastModified = "2026-08-01T00:00:00Z",
+        };
+
+        var result = await coordinator.StagePathsSerialAsync(
+            [(request, state)],
+            CancellationToken.None);
+
+        var staged = Assert.Single(result);
+        Assert.Equal(
+            PathGenerationAttemptOutcome.Staged,
+            staged.Outcome);
+        Assert.NotNull(staged.StagedPromotion);
+        Assert.Equal(
+            ["Solo_Guitar", "Solo_PeripheralGuitar"],
+            staged.StagedPromotion!.ExpectedInstruments);
+        Assert.Empty(store.Promotions);
+        Assert.Equal(
+            "old-generation",
+            store.GetPathGenerationState("stage-only")!
+                .ArtifactGenerationId);
+        Assert.True(
+            Directory.Exists(
+                PathArtifactResolver.GetGenerationDirectory(
+                    _dataDirectory,
+                    "stage-only",
+                    staged.StagedPromotion.ArtifactGenerationId)));
+    }
+
     private PathGenerationCoordinator CreateCoordinator(
         string choptPath,
         FakePathDataStore store,

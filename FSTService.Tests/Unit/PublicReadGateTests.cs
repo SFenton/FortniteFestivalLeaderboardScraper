@@ -21,6 +21,7 @@ public class PublicReadGateTests
     [Theory]
     [InlineData("path-repair-ranking-rebuild")]
     [InlineData("path-repair-ranking-alignment")]
+    [InlineData("max-score-maintenance:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
     public void HistoricalSamePublicationMaintenanceFreezeRequiresRefresh(
         string reason)
     {
@@ -31,6 +32,42 @@ public class PublicReadGateTests
             reason);
 
         Assert.True(freeze.RequiresSamePublicationRefreshOnRelease);
+    }
+
+    [Fact]
+    public void MaxScoreMaintenanceFreezeCannotBeClearedByGenericFreezeWriter()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        using (var conn = fixture.DataSource.OpenConnection())
+        using (var seed = conn.CreateCommand())
+        {
+            seed.CommandText = """
+                INSERT INTO scrape_log (
+                    id, started_at, completed_at, status)
+                VALUES
+                    (1296, now(), now(), 'completed'),
+                    (1297, now(), now(), 'completed')
+                """;
+            seed.ExecuteNonQuery();
+        }
+        var reason =
+            PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
+            + new string('a', 64);
+        fixture.Db.SetPublicReadFreeze(
+            true,
+            1296,
+            reason);
+
+        fixture.Db.SetPublicReadFreeze(false);
+        fixture.Db.SetPublicReadFreeze(
+            true,
+            1297,
+            "scrape");
+
+        var freeze = fixture.Db.GetPublicReadFreezeState();
+        Assert.True(freeze.IsFrozen);
+        Assert.Equal(1296, freeze.ScrapeId);
+        Assert.Equal(reason, freeze.Reason);
     }
 
     [Fact]
@@ -365,6 +402,7 @@ public class PublicReadGateTests
     [InlineData("/api/bands/search", true)]
     [InlineData("/api/songs", false)]
     [InlineData("/api/songs/member-score-filter", true)]
+    [InlineData("/api/paths/song/Solo_Guitar/expert", false)]
     [InlineData("/api/status", true)]
     [InlineData("/api/progress", false)]
     [InlineData("/api/player/account/track", false)]
@@ -423,10 +461,10 @@ public class PublicReadGateTests
 
         await middleware.InvokeAsync(context, gate);
 
-    Assert.True(nextCalled);
-    Assert.Equal(StatusCodes.Status204NoContent, context.Response.StatusCode);
-    Assert.Equal("published", context.Response.Headers["X-FST-Public-Read-Mode"]);
-    Assert.Equal("publish", context.Response.Headers["X-FST-Public-Read-Freeze-Reason"]);
+        Assert.True(nextCalled);
+        Assert.Equal(StatusCodes.Status204NoContent, context.Response.StatusCode);
+        Assert.Equal("published", context.Response.Headers["X-FST-Public-Read-Mode"]);
+        Assert.Equal("publish", context.Response.Headers["X-FST-Public-Read-Freeze-Reason"]);
     }
 
     [Fact]
@@ -483,6 +521,60 @@ public class PublicReadGateTests
         Assert.Equal(
             MetaDatabase.FailedCandidateReadIsolationReason,
             context.Response.Headers["X-FST-Public-Read-Freeze-Reason"]);
+    }
+
+    [Theory]
+    [InlineData("/api/songs", "/api/songs")]
+    [InlineData(
+        "/api/paths/song/Solo_Guitar/expert",
+        "/api/paths/{songId}/{instrument}/{difficulty}")]
+    [InlineData(
+        "/api/rankings/Solo_Guitar",
+        "/api/rankings/{instrument}")]
+    public async Task PublicReadGateMiddleware_FailsClosedForMaxScoreMaintenanceRoutes(
+        string path,
+        string pattern)
+    {
+        var reason =
+            PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
+            + new string('a', 64);
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1296,
+                reason));
+        metaDb.GetFailedCandidateReadIsolationState().Returns(
+            PublicReadFreezeState.NotFrozen);
+        var gate = new PublicReadGateService(
+            metaDb,
+            NullLogger<PublicReadGateService>.Instance);
+        var nextCalled = false;
+        var middleware = new PublicReadGateMiddleware(_ =>
+        {
+            nextCalled = true;
+            return Task.CompletedTask;
+        });
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = path;
+        SetPublicationEndpoint(context, pattern);
+        context.RequestServices = new ServiceCollection()
+            .AddLogging()
+            .BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context, gate);
+
+        Assert.False(nextCalled);
+        Assert.Equal(
+            StatusCodes.Status503ServiceUnavailable,
+            context.Response.StatusCode);
+        Assert.Equal(
+            reason,
+            context.Response.Headers[
+                "X-FST-Public-Read-Freeze-Reason"]);
     }
 
     [Fact]

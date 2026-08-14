@@ -16,6 +16,7 @@ update_triggers:
 | Procedure | Path | Safety note |
 |---|---|---|
 | Improvement notification recovery | [`ImprovementNotificationRecoveryRunbook.md`](../../database/ImprovementNotificationRecoveryRunbook.md) | Operates on an already-published scrape; preserve its projection plan |
+| Max-score correction maintenance | [`MaxScoreCorrectionMaintenanceRunbook.md`](../../database/MaxScoreCorrectionMaintenanceRunbook.md) | Stage first; apply is manifest/plan-digest bound and fail-closed |
 | Score-history deduplication | [`ScoreHistoryDedupMaintenanceRunbook.md`](../../database/ScoreHistoryDedupMaintenanceRunbook.md) | Dry run first; execute is digest-bound and maintenance-gated |
 | Snapshot reuse evaluation | [`SnapshotReuseRunbook.md`](../../database/SnapshotReuseRunbook.md) | Treat status sections as evidence to revalidate, not automatic approval |
 | Solo-family ranking backfill | [`SoloFamilyRankingBackfillRunbook.md`](../../database/SoloFamilyRankingBackfillRunbook.md) | Requires quiescence and publication-lock safety |

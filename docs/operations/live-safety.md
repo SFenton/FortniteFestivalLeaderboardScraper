@@ -1,13 +1,14 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-08-11
-last_verified_commit: 2bdf7287
+last_verified: 2026-08-13
+last_verified_commit: 9d11111e
 sources:
   - AGENTS.md
   - .github/copilot-instructions.md
   - .github/instructions/fst-postgres.instructions.md
   - FSTService/Scraping/ScrapeLifecycleNotifier.cs
+  - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - docs/operations/deployment.md
   - tools/fst-worker-compose-guard.sh
   - tools/fst-worker-no-progress-watchdog.mjs
@@ -131,6 +132,22 @@ proves the new path has the same data as the old path. Record:
 
 Removed completed runbooks and Git history are forensic evidence, not reusable
 authorization.
+
+## Current-publication max-score correction
+
+Use the
+[max-score correction runbook](../database/MaxScoreCorrectionMaintenanceRunbook.md)
+after the recurring path rule is fixed. Stage is pointer-free. Plan/apply
+require the worker offline, exact publication/catalog/path and notification
+state, the path-generation/publication lock order, same-drive evidence, and a
+reviewed manifest plus plan digest.
+
+Apply owns a `max-score-maintenance:v1:<manifest-sha256>` freeze. Generic
+scrape/publication freeze writers cannot overwrite or clear it. A failure
+leaves public reads fail-closed and must be continued with the matching resume
+command; do not manually unfreeze. Cache publication and freeze release commit
+together only after derived, notification, rollback, and rank-history
+validation.
 
 ## Service availability
 

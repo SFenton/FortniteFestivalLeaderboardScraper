@@ -468,6 +468,57 @@ public sealed class RankingsCalculatorTests : IDisposable
     }
 
     [Fact]
+    public async Task MaxScoreMaintenance_rebuilds_affected_rankings_without_rank_history()
+    {
+        var guitarDb =
+            _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        var proLeadDb =
+            _persistence.GetOrCreateInstrumentDb(
+                "Solo_PeripheralGuitar");
+        guitarDb.UpsertEntries(
+            "song_0",
+            [
+                MakeEntry("p1", 1000, rank: 1),
+                MakeEntry("p2", 900, rank: 2),
+            ]);
+        proLeadDb.UpsertEntries(
+            "song_0",
+            [
+                MakeEntry("p1", 900, rank: 2),
+                MakeEntry("p2", 1000, rank: 1),
+            ]);
+        guitarDb.RecomputeAllRanks();
+        proLeadDb.RecomputeAllRanks();
+        var service = CreateFestivalServiceWithSongs(1);
+        await _sut.ComputeAllAsync(
+            service,
+            CancellationToken.None);
+        var historyBefore =
+            proLeadDb.GetRankHistory("p1", 100).Count;
+
+        proLeadDb.UpsertEntries(
+            "song_0",
+            [
+                MakeEntry("p1", 1100, rank: 1),
+                MakeEntry("p2", 1000, rank: 2),
+            ]);
+        proLeadDb.RecomputeAllRanks();
+        await _sut.ComputeForMaxScoreMaintenanceAsync(
+            service,
+            ["Solo_PeripheralGuitar"],
+            CancellationToken.None);
+
+        Assert.Equal(
+            1,
+            proLeadDb.GetAccountRanking("p1")!
+                .AdjustedSkillRank);
+        Assert.NotNull(guitarDb.GetAccountRanking("p1"));
+        Assert.Equal(
+            historyBefore,
+            proLeadDb.GetRankHistory("p1", 100).Count);
+    }
+
+    [Fact]
     public async Task ComputeAllAsync_OverlappedSnapshotsAndBandRankings_WaitsForBothBranches()
     {
         var progress = new ScrapeProgressTracker();
