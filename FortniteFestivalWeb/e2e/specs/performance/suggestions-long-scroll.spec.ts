@@ -205,18 +205,17 @@ test('Suggestions restores after visiting one of its song links', async ({ page 
 
   const scrollContainer = page.getByTestId('app-scroll-container');
   await expect(page.getByTestId('suggestions-list')).toBeVisible({ timeout: 15_000 });
-  const firstSong = page.getByTestId('suggestion-category-card').first().getByRole('link').first();
-  await expect(firstSong).toBeVisible({ timeout: 15_000 });
+  const targetSong = page.getByTestId('suggestions-list').getByRole('link').nth(6);
+  await targetSong.scrollIntoViewIfNeeded();
+  await expect(targetSong).toBeVisible({ timeout: 15_000 });
   await releasePendingScrollRestoration(page);
-  const suggestionsScrollTop = await scrollContainer.evaluate((element) => {
-    const nextTop = Math.min(1_000, element.scrollHeight - element.clientHeight);
-    element.scrollTop = nextTop;
-    element.dispatchEvent(new Event('scroll', { bubbles: true }));
-    return element.scrollTop;
-  });
+  await waitForAnimationFrames(page);
+  const suggestionsScrollTop = await scrollContainer.evaluate(
+    element => element.scrollTop,
+  );
   expect(suggestionsScrollTop).toBeGreaterThan(0);
 
-  await firstSong.click();
+  await targetSong.click();
   await expect(page).toHaveURL(/#\/songs\/[^?]+(?:\?.*)?$/);
   await expect(page.getByText('Score Player').first()).toBeVisible({ timeout: 15_000 });
   await scrollContainer.evaluate((element) => {
