@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: 00531b19
+last_verified_commit: e0ec87d3
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -17,6 +17,8 @@ sources:
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
   - FSTService/Scraping/GlobalLeaderboardScraper.cs
   - FSTService/Scraping/RegistrationBackfillWorker.cs
+  - FSTService/Scraping/BackfillOrchestrator.cs
+  - FSTService/Scraping/RegistrationMutationCoordinator.cs
 update_triggers:
   - Scrape allocation, phase ordering, failure isolation, publication, freeze, recovery, or client notification changes.
 ---
@@ -88,8 +90,10 @@ derived rows while retaining the same published scrape/publication ID.
    manifest-digest-owned public-read freeze, and persists rollback evidence.
 4. One transaction promotes every listed song generation. The in-process
    scraper admission cache refreshes immediately. Prior negative backfill
-   checks are removed only for newly usable path-backed pairs and only affected
-   accounts are requeued.
+   checks and matching successful history-reconstruction checkpoints are
+   removed only for newly usable path-backed pairs. Affected history status is
+   fenced and returned to `pending`; unrelated pairs remain complete and only
+   affected accounts are requeued.
 5. Maintenance ranking mode rebuilds affected instruments plus composite,
    family, and combo dependencies. Target-song band over-threshold flags are
    recalculated, prior/current affected band projection scopes are refreshed,
@@ -115,18 +119,22 @@ derived rows while retaining the same published scrape/publication ID.
 8. Cache swap, workflow completion, and freeze release commit atomically.
    Service processes invalidate path/song/response and scraper-admission caches
    and force connected clients to refresh the unchanged publication ID.
+   Registration lease acquisition independently refreshes path/instrument
+   support before lookup work, closing the interval before the monitor pass.
 
 During this maintenance freeze, publication-bound path and song routes that
 have no safe published response cache return `503`; cacheable ranking/player/
 band routes serve the prior published cache or return `503`. Exact solo
 leaderboards follow this rule rather than falling through to current
 max-score/leeway reads. Player tracking, selected-profile registration
-activity, and band sync registration are paused across resume attempts.
-Database triggers reject registration/backfill scope writes, while
-registration-only workers revalidate and hold a shared publication-row lease
-for each batch; normal scrape freezes are unchanged. A failure after freeze
-records a resumable checkpoint and leaves reads and registration mutation
-frozen.
+activity, manual `POST /api/backfill/{accountId}`, and band sync registration
+are paused across resume attempts. Database triggers reject
+registration/backfill scope writes, while registration-only workers and the
+manual all-time/history workflow revalidate and hold a shared publication-row
+lease for their complete mutation lifetime. A freeze that wins the race
+returns `503` before score mutation; normal scrape freezes are unchanged. A
+failure after freeze records a resumable checkpoint and leaves reads and
+registration mutation frozen.
 
 ## Publication-aware API and browser
 

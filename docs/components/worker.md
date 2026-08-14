@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: 00531b19
+last_verified_commit: e0ec87d3
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -11,6 +11,7 @@ sources:
   - FSTService/Scraping/GlobalLeaderboardScraper.cs
   - FSTService/Scraping/RegistrationBackfillWorker.cs
   - FSTService/Scraping/BackfillOrchestrator.cs
+  - FSTService/Scraping/RegistrationMutationCoordinator.cs
   - FSTService/Scraping/RankingsCalculator.cs
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Scraping/DurablePhaseProgressSink.cs
@@ -92,11 +93,15 @@ boundaries so it cannot race publication-critical work.
 Registration-sync work also observes the durable max-score maintenance freeze.
 The worker reports a pause before invoking a writer, and each backfill/history
 orchestrator entry acquires a shared publication-row registration lease before
-its first persistence mutation. This covers registration-only hosting, which
-does not publish the full scraper heartbeat. Freeze establishment cannot cross
-an active lease; failed/resumed maintenance remains blocked, and each polling
-resume revalidates. Ordinary scrape freezes continue to use the existing
-background-work boundary rather than this max-score-only rejection.
+its first account/seasonal lookup or persistence mutation. Immediately after
+acquisition it invalidates path-maxima state and synchronously refreshes the
+singleton scraper's song/instrument support. This covers registration-only
+hosting, including the interval before a publication monitor observes a
+same-publication release. Freeze establishment cannot cross an active lease;
+failed/resumed maintenance remains blocked, cancellation disposes the lease,
+and each polling resume revalidates. Ordinary scrape freezes continue to use
+the existing background-work boundary rather than this max-score-only
+rejection.
 
 Optimal-path generation is a separate coordinated workload. Automatic path
 generation remains disabled by default and selects only pending songs; the
@@ -129,7 +134,9 @@ turning path state into a second song catalog.
 Promotion refreshes the singleton scraper's cached path support before derived
 work. Same-publication freeze release invalidates that cache in monitoring
 roles. Newly usable path-backed pairs also clear only prior negative backfill
-checks and requeue only the affected accounts, so a previous unsupported/null
+checks and matching successful-empty history checkpoints, return affected
+history status to `pending`, and requeue only affected accounts. Unrelated
+pairs remain resumable, so a previous unsupported/null all-time or seasonal
 lookup cannot suppress Lead or Pro Lead indefinitely.
 
 ## Two phase views

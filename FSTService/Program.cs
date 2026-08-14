@@ -633,6 +633,7 @@ builder.Services.AddSingleton<BandSearchProjectionBuilder>();
 builder.Services.AddSingleton<SoloCurrentProjectionBuilder>();
 builder.Services.AddSingleton<BandCurrentProjectionBuilder>();
 builder.Services.AddSingleton<PostScrapeBandExtractor>();
+builder.Services.AddSingleton<RegistrationMutationCoordinator>();
 builder.Services.AddSingleton<BackfillOrchestrator>();
 builder.Services.AddSingleton<ScrapeTimePrecomputer>(sp =>
 {

@@ -213,7 +213,7 @@ public interface IMetaDatabase : IDisposable
     void MarkBackfillSongChecked(string accountId, string songId, string instrument, bool entryFound);
     void MarkBackfillSongsChecked(string accountId, IReadOnlyCollection<(string SongId, string Instrument, bool EntryFound)> checks);
     HashSet<(string SongId, string Instrument)> GetCheckedBackfillPairs(string accountId);
-    BackfillAdmissionResetResult ResetNegativeBackfillChecksForAdmittedPairs(
+    RegistrationAdmissionResetResult ResetRegistrationProgressForAdmittedPairs(
         IReadOnlyCollection<SoloCurrentProjectionScopeKey> pairs,
         string requiredMaxScoreFreezeReason);
     BackfillSongProgressInfo? GetBackfillSongProgress(string accountId, int checkedPairs, int totalPairs);

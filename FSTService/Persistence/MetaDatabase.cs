@@ -3704,8 +3704,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
     }
     public HashSet<(string SongId, string Instrument)> GetCheckedBackfillPairs(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT song_id, instrument FROM backfill_progress WHERE account_id = @acct AND checked = 1"; cmd.Parameters.AddWithValue("acct", accountId); var set = new HashSet<(string, string)>(); using var r = cmd.ExecuteReader(); while (r.Read()) set.Add((r.GetString(0), r.GetString(1))); return set; }
 
-    public BackfillAdmissionResetResult
-        ResetNegativeBackfillChecksForAdmittedPairs(
+    public RegistrationAdmissionResetResult
+        ResetRegistrationProgressForAdmittedPairs(
             IReadOnlyCollection<SoloCurrentProjectionScopeKey> pairs,
             string requiredMaxScoreFreezeReason)
     {
@@ -3734,7 +3734,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
             .ThenBy(pair => pair.Instrument, StringComparer.Ordinal)
             .ToArray();
         if (normalizedPairs.Length == 0)
-            return new BackfillAdmissionResetResult(0, 0);
+            return new RegistrationAdmissionResetResult(0, 0, 0, 0);
 
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction(
@@ -3759,7 +3759,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
-                    "Backfill admission reset requires the exact owned max-score maintenance freeze.");
+                    "Registration admission reset requires the exact owned max-score maintenance freeze.");
             }
         }
 
@@ -3886,10 +3886,174 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 requeued++;
         }
 
+        var affectedHistoryAccounts = new List<string>();
+        using (var resetHistory = conn.CreateCommand())
+        {
+            resetHistory.Transaction = tx;
+            resetHistory.CommandText = """
+                DELETE FROM history_recon_progress progress
+                USING unnest(
+                    @songIds::text[],
+                    @instruments::text[])
+                    AS admitted(song_id, instrument)
+                WHERE progress.song_id = admitted.song_id
+                  AND progress.instrument =
+                      admitted.instrument
+                  AND progress.processed = 1
+                RETURNING
+                    progress.account_id
+                """;
+            resetHistory.Parameters.Add(
+                "songIds",
+                NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+                normalizedPairs
+                    .Select(pair => pair.SongId)
+                    .ToArray();
+            resetHistory.Parameters.Add(
+                "instruments",
+                NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+                normalizedPairs
+                    .Select(pair => pair.Instrument)
+                    .ToArray();
+            using var reader = resetHistory.ExecuteReader();
+            while (reader.Read())
+                affectedHistoryAccounts.Add(reader.GetString(0));
+        }
+
+        var historyAccountIds = affectedHistoryAccounts
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var requeuedHistoryStates =
+            new List<(
+                string AccountId,
+                int ReconstructionVersion,
+                string WindowFingerprint,
+                long PreviousAdmissionRevision,
+                long AdmissionRevision)>();
+        if (historyAccountIds.Length > 0)
+        {
+            using var queueHistory = conn.CreateCommand();
+            queueHistory.Transaction = tx;
+            queueHistory.CommandText = """
+                UPDATE history_recon_status status
+                SET status = 'pending',
+                    songs_processed = (
+                        SELECT COUNT(*)::INTEGER
+                        FROM history_recon_progress remaining
+                        WHERE remaining.account_id =
+                                status.account_id
+                          AND remaining.processed = 1
+                          AND remaining.reconstruction_version =
+                                status.reconstruction_version
+                          AND remaining.window_fingerprint =
+                                status.window_fingerprint
+                          AND remaining.admission_revision =
+                                status.admission_revision
+                    ),
+                    seasons_queried = 0,
+                    history_entries_found = 0,
+                    started_at = NULL,
+                    completed_at = NULL,
+                    error_message = NULL,
+                    admission_revision =
+                        status.admission_revision + 1
+                FROM unnest(
+                    @accountIds::text[])
+                    AS affected(account_id)
+                WHERE status.account_id =
+                        affected.account_id
+                RETURNING
+                    status.account_id,
+                    status.reconstruction_version,
+                    status.window_fingerprint,
+                    status.admission_revision - 1,
+                    status.admission_revision
+                """;
+            queueHistory.Parameters.Add(
+                "accountIds",
+                NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+                historyAccountIds;
+            using var reader = queueHistory.ExecuteReader();
+            while (reader.Read())
+            {
+                requeuedHistoryStates.Add((
+                    reader.GetString(0),
+                    reader.GetInt32(1),
+                    reader.GetString(2),
+                    reader.GetInt64(3),
+                    reader.GetInt64(4)));
+            }
+        }
+
+        if (requeuedHistoryStates.Count > 0)
+        {
+            using var fenceHistory = conn.CreateCommand();
+            fenceHistory.Transaction = tx;
+            fenceHistory.CommandText = """
+                UPDATE history_recon_progress progress
+                SET admission_revision =
+                        affected.admission_revision
+                FROM unnest(
+                    @accountIds::text[],
+                    @versions::integer[],
+                    @fingerprints::text[],
+                    @previousRevisions::bigint[],
+                    @revisions::bigint[])
+                    AS affected(
+                        account_id,
+                        reconstruction_version,
+                        window_fingerprint,
+                        previous_admission_revision,
+                        admission_revision)
+                WHERE progress.account_id =
+                        affected.account_id
+                  AND progress.reconstruction_version =
+                        affected.reconstruction_version
+                  AND progress.window_fingerprint =
+                        affected.window_fingerprint
+                  AND progress.admission_revision =
+                        affected.previous_admission_revision
+                """;
+            fenceHistory.Parameters.Add(
+                "accountIds",
+                NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+                requeuedHistoryStates
+                    .Select(state => state.AccountId)
+                    .ToArray();
+            fenceHistory.Parameters.Add(
+                "versions",
+                NpgsqlDbType.Array | NpgsqlDbType.Integer).Value =
+                requeuedHistoryStates
+                    .Select(state => state.ReconstructionVersion)
+                    .ToArray();
+            fenceHistory.Parameters.Add(
+                "fingerprints",
+                NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+                requeuedHistoryStates
+                    .Select(state => state.WindowFingerprint)
+                    .ToArray();
+            fenceHistory.Parameters.Add(
+                "previousRevisions",
+                NpgsqlDbType.Array | NpgsqlDbType.Bigint).Value =
+                requeuedHistoryStates
+                    .Select(state => state.PreviousAdmissionRevision)
+                    .ToArray();
+            fenceHistory.Parameters.Add(
+                "revisions",
+                NpgsqlDbType.Array | NpgsqlDbType.Bigint).Value =
+                requeuedHistoryStates
+                    .Select(state => state.AdmissionRevision)
+                    .ToArray();
+            fenceHistory.ExecuteNonQuery();
+        }
+
         tx.Commit();
-        return new BackfillAdmissionResetResult(
+        return new RegistrationAdmissionResetResult(
             affectedAccounts.Count,
-            requeued);
+            requeued,
+            affectedHistoryAccounts.Count,
+            requeuedHistoryStates.Count);
     }
 
     public BackfillSongProgressInfo? GetBackfillSongProgress(string accountId, int checkedPairs, int totalPairs)

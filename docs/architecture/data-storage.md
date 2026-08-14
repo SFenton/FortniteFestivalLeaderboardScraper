@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-14
-last_verified_commit: 00531b19
+last_verified_commit: e0ec87d3
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -16,6 +16,7 @@ sources:
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
   - FSTService/Scraping/BackfillOrchestrator.cs
+  - FSTService/Scraping/RegistrationMutationCoordinator.cs
   - FSTService/FeatureOptions.cs
   - deploy/postgres.Dockerfile
 update_triggers:
@@ -102,13 +103,21 @@ Registration scope is also database-guarded. Row triggers on
 `registered_users`, `registered_bands`, `backfill_status`, and
 `backfill_progress` lock the publication singleton and reject mutations only
 when its reason is `max-score-maintenance:v1:<digest>`. Registration workers
-hold a shared publication-row lease across a batch, making freeze acquisition
-and registration persistence mutually exclusive even in the registration-only
-host. The maintenance owner has one transaction-local, exact-freeze bypass used
-only to remove stale negative backfill checks for newly promoted path-backed
-pairs. Affected accounts are requeued; positive and unrelated progress rows
-are preserved. Ordinary scrape/publication freezes retain their existing
-registration behavior.
+and the manual backfill endpoint hold a shared publication-row lease across the
+complete all-time and history mutation lifecycle, making freeze acquisition and
+registration persistence mutually exclusive even in the registration-only
+host. Lease acquisition synchronously invalidates cached path maxima and
+refreshes scraper instrument support before lookup work. The maintenance owner
+has one transaction-local, exact-freeze bypass used only to remove stale
+negative backfill checks and matching successful
+`history_recon_progress` rows for newly promoted path-backed pairs. Matching
+history status rows move to `pending`, clear the completion timestamp,
+recompute `songs_processed` from preserved rows, clear aggregate season/entry
+counters, advance their admission revision, and fence preserved unrelated
+progress to that revision.
+Only affected accounts are requeued; positive backfill checks and unrelated
+history pairs are preserved. Ordinary scrape/publication freezes retain their
+existing registration behavior.
 
 ## Publication ownership
 

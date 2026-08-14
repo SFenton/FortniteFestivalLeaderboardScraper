@@ -4965,7 +4965,7 @@ public sealed class MetaDatabaseTests : IDisposable
         Db.SetPublicReadFreeze(true, reason: reason);
 
         var result =
-            Db.ResetNegativeBackfillChecksForAdmittedPairs(
+            Db.ResetRegistrationProgressForAdmittedPairs(
                 [
                     new SoloCurrentProjectionScopeKey(
                         "song-a",
@@ -4976,8 +4976,14 @@ public sealed class MetaDatabaseTests : IDisposable
                 ],
                 reason);
 
-        Assert.Equal(2, result.RemovedNegativePairChecks);
-        Assert.Equal(1, result.RequeuedAccountCount);
+        Assert.Equal(
+            2,
+            result.RemovedNegativeBackfillPairChecks);
+        Assert.Equal(
+            1,
+            result.RequeuedBackfillAccountCount);
+        Assert.Equal(0, result.RemovedHistoryPairChecks);
+        Assert.Equal(0, result.RequeuedHistoryAccountCount);
         var checkedPairs = Db.GetCheckedBackfillPairs("acct1");
         Assert.DoesNotContain(
             ("song-a", "Solo_Guitar"),
@@ -4999,6 +5005,195 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal(
             BackfillDeferredReasons.PathAdmissionRefresh,
             status?.DeferredReason);
+    }
+
+    [Fact]
+    public void Promoted_path_admission_retries_successful_empty_history_across_current_and_max_season_fingerprints()
+    {
+        var currentSeasonFingerprint =
+            HistoryReconstructor.ComputeWindowFingerprint(
+                Enumerable.Range(1, 14)
+                    .Select(season =>
+                        new SeasonWindowInfo
+                        {
+                            SeasonNumber = season,
+                            EventId = $"event-{season}",
+                            WindowId = $"season-{season}",
+                        }));
+        var maxSeasonFingerprint =
+            HistoryReconstructor.ComputeWindowFingerprint(
+                Enumerable.Range(1, 15)
+                    .Select(season =>
+                        new SeasonWindowInfo
+                        {
+                            SeasonNumber = season,
+                            EventId = $"event-{season}",
+                            WindowId = $"season-{season}",
+                        }));
+
+        long SeedCompletedHistory(
+            string accountId,
+            string targetInstrument,
+            string fingerprint)
+        {
+            Db.RegisterUser("web-tracker", accountId);
+            var revision = Db.AdmitHistoryRecon(
+                accountId,
+                2,
+                HistoryReconstructor.CurrentReconstructionVersion,
+                fingerprint);
+            Db.StartHistoryRecon(
+                accountId,
+                HistoryReconstructor.CurrentReconstructionVersion,
+                fingerprint,
+                revision);
+            Db.MarkHistoryReconSongProcessed(
+                accountId,
+                "song-a",
+                targetInstrument,
+                HistoryReconstructor.CurrentReconstructionVersion,
+                fingerprint,
+                revision);
+            Db.MarkHistoryReconSongProcessed(
+                accountId,
+                "song-b",
+                "Solo_Bass",
+                HistoryReconstructor.CurrentReconstructionVersion,
+                fingerprint,
+                revision);
+            Db.UpdateHistoryReconProgress(
+                accountId,
+                2,
+                20,
+                0,
+                HistoryReconstructor.CurrentReconstructionVersion,
+                fingerprint,
+                revision);
+            Db.CompleteHistoryRecon(
+                accountId,
+                HistoryReconstructor.CurrentReconstructionVersion,
+                fingerprint,
+                revision);
+            return revision;
+        }
+
+        var currentRevision = SeedCompletedHistory(
+            "acct-current",
+            "Solo_Guitar",
+            currentSeasonFingerprint);
+        var maxSeasonRevision = SeedCompletedHistory(
+            "acct-max-season",
+            "Solo_PeripheralGuitar",
+            maxSeasonFingerprint);
+        Assert.Empty(Db.GetScoreHistory("acct-current"));
+        Assert.Empty(
+            Db.GetScoreHistory("acct-max-season"));
+
+        Db.RegisterUser("web-tracker", "acct-unrelated");
+        var unrelatedRevision = Db.AdmitHistoryRecon(
+            "acct-unrelated",
+            1,
+            HistoryReconstructor.CurrentReconstructionVersion,
+            currentSeasonFingerprint);
+        Db.MarkHistoryReconSongProcessed(
+            "acct-unrelated",
+            "song-b",
+            "Solo_Bass",
+            HistoryReconstructor.CurrentReconstructionVersion,
+            currentSeasonFingerprint,
+            unrelatedRevision);
+        Db.CompleteHistoryRecon(
+            "acct-unrelated",
+            HistoryReconstructor.CurrentReconstructionVersion,
+            currentSeasonFingerprint,
+            unrelatedRevision);
+
+        var reason =
+            PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
+            + new string('e', 64);
+        Db.SetPublicReadFreeze(true, reason: reason);
+
+        var result =
+            Db.ResetRegistrationProgressForAdmittedPairs(
+                [
+                    new SoloCurrentProjectionScopeKey(
+                        "song-a",
+                        "Solo_Guitar"),
+                    new SoloCurrentProjectionScopeKey(
+                        "song-a",
+                        "Solo_PeripheralGuitar"),
+                ],
+                reason);
+
+        Assert.Equal(
+            0,
+            result.RemovedNegativeBackfillPairChecks);
+        Assert.Equal(
+            0,
+            result.RequeuedBackfillAccountCount);
+        Assert.Equal(2, result.RemovedHistoryPairChecks);
+        Assert.Equal(2, result.RequeuedHistoryAccountCount);
+
+        var currentStatus =
+            Db.GetHistoryReconStatus("acct-current");
+        Assert.Equal("pending", currentStatus?.Status);
+        Assert.Equal(
+            currentSeasonFingerprint,
+            currentStatus?.WindowFingerprint);
+        Assert.True(
+            currentStatus?.AdmissionRevision > currentRevision);
+        Assert.Equal(1, currentStatus?.SongsProcessed);
+        Assert.Null(currentStatus?.CompletedAt);
+        var currentPairs =
+            Db.GetProcessedHistoryReconPairs(
+                "acct-current",
+                HistoryReconstructor.CurrentReconstructionVersion,
+                currentSeasonFingerprint,
+                currentStatus!.AdmissionRevision);
+        Assert.DoesNotContain(
+            ("song-a", "Solo_Guitar"),
+            currentPairs);
+        Assert.Contains(
+            ("song-b", "Solo_Bass"),
+            currentPairs);
+
+        var maxSeasonStatus =
+            Db.GetHistoryReconStatus("acct-max-season");
+        Assert.Equal("pending", maxSeasonStatus?.Status);
+        Assert.Equal(
+            maxSeasonFingerprint,
+            maxSeasonStatus?.WindowFingerprint);
+        Assert.True(
+            maxSeasonStatus?.AdmissionRevision >
+            maxSeasonRevision);
+        Assert.Equal(1, maxSeasonStatus?.SongsProcessed);
+        Assert.Null(maxSeasonStatus?.CompletedAt);
+        var maxSeasonPairs =
+            Db.GetProcessedHistoryReconPairs(
+                "acct-max-season",
+                HistoryReconstructor.CurrentReconstructionVersion,
+                maxSeasonFingerprint,
+                maxSeasonStatus!.AdmissionRevision);
+        Assert.DoesNotContain(
+            ("song-a", "Solo_PeripheralGuitar"),
+            maxSeasonPairs);
+        Assert.Contains(
+            ("song-b", "Solo_Bass"),
+            maxSeasonPairs);
+
+        var unrelatedStatus =
+            Db.GetHistoryReconStatus("acct-unrelated");
+        Assert.Equal("complete", unrelatedStatus?.Status);
+        Assert.Equal(
+            unrelatedRevision,
+            unrelatedStatus?.AdmissionRevision);
+        Assert.Contains(
+            ("song-b", "Solo_Bass"),
+            Db.GetProcessedHistoryReconPairs(
+                "acct-unrelated",
+                HistoryReconstructor.CurrentReconstructionVersion,
+                currentSeasonFingerprint,
+                unrelatedRevision));
     }
 
     [Fact]

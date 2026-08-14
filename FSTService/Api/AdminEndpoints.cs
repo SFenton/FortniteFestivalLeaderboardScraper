@@ -264,7 +264,9 @@ public static partial class ApiEndpoints
             FestivalService festivalService,
             TokenManager tokenManager,
             IMetaDatabase metaDb,
+            RegistrationMutationCoordinator registrationMutations,
             SharedDopPool pool,
+            HttpContext httpContext,
             CancellationToken ct) =>
         {
             // Verify the account is registered
@@ -289,39 +291,52 @@ public static partial class ApiEndpoints
                     return Results.Problem("Song catalog is empty. Cannot run backfill.");
             }
 
-            // ── Step 1: Backfill missing scores ──
-            var found = await backfiller.BackfillAccountAsync(
-                accountId, festivalService, accessToken, callerAccountId, pool, ct: ct);
-
-            var status = metaDb.GetBackfillStatus(accountId);
-
-            // ── Step 2: Reconstruct score history (if not already done) ──
-            int historyEntries = 0;
-            var reconStatus = metaDb.GetHistoryReconStatus(accountId);
-            if (reconStatus?.Status != "complete")
+            try
             {
-                var seasonWindows = await historyReconstructor.DiscoverSeasonWindowsAsync(
-                    accessToken, callerAccountId, ct);
+                using var registrationLease =
+                    registrationMutations.AcquireLease(ct);
 
-                if (seasonWindows.Count > 0)
+                // ── Step 1: Backfill missing scores ──
+                var found = await backfiller.BackfillAccountAsync(
+                    accountId, festivalService, accessToken, callerAccountId, pool, ct: ct);
+
+                var status = metaDb.GetBackfillStatus(accountId);
+
+                // ── Step 2: Reconstruct score history (if not already done) ──
+                int historyEntries = 0;
+                var reconStatus = metaDb.GetHistoryReconStatus(accountId);
+                if (reconStatus?.Status != "complete")
                 {
-                    historyEntries = await historyReconstructor.ReconstructAccountAsync(
-                        accountId, seasonWindows, accessToken, callerAccountId, pool, ct: ct);
+                    var seasonWindows = await historyReconstructor.DiscoverSeasonWindowsAsync(
+                        accessToken, callerAccountId, ct);
+
+                    if (seasonWindows.Count > 0)
+                    {
+                        historyEntries = await historyReconstructor.ReconstructAccountAsync(
+                            accountId, seasonWindows, accessToken, callerAccountId, pool, ct: ct);
+                    }
                 }
+
+                return Results.Ok(new
+                {
+                    accountId,
+                    newEntriesFound = found,
+                    status = status?.Status,
+                    songsChecked = status?.SongsChecked,
+                    totalSongsToCheck = status?.TotalSongsToCheck,
+                    entriesFound = status?.EntriesFound,
+                    historyEntriesCreated = historyEntries,
+                });
             }
-
-            var accountSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { accountId };
-
-            return Results.Ok(new
+            catch (RegistrationMutationBlockedException ex)
             {
-                accountId,
-                newEntriesFound = found,
-                status = status?.Status,
-                songsChecked = status?.SongsChecked,
-                totalSongsToCheck = status?.TotalSongsToCheck,
-                entriesFound = status?.EntriesFound,
-                historyEntriesCreated = historyEntries,
-            });
+                httpContext.Response.Headers.CacheControl = "no-store";
+                httpContext.Response.Headers["Retry-After"] = "30";
+                return Results.Problem(
+                    title: "Registration temporarily unavailable",
+                    detail: ex.Message,
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
         })
         .WithTags("Backfill")
         .RequireAuthorization()

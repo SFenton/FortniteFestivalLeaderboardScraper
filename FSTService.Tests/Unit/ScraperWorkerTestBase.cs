@@ -243,6 +243,10 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _cyclicalMachine, _pool,
             resultProcessor, precomputer,
             new Api.ResponseCacheService(TimeSpan.FromMinutes(5)),
+            new RegistrationMutationCoordinator(
+                _persistence.Meta,
+                pathDataStore,
+                Substitute.For<ISongInstrumentSupportCache>()),
             Substitute.For<ILogger<BackfillOrchestrator>>());
 
         _shopMetaDb = new FSTService.Persistence.MetaDatabase(
@@ -321,6 +325,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), _progress, new UserSyncProgressTracker(new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), new Api.ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
         var serviceProvider = Substitute.For<IServiceProvider>();
         serviceProvider.GetService(typeof(SongProcessingMachine)).Returns(_machine);
+        var registrationPathStore = Substitute.For<IPathDataStore>();
         return new BackfillOrchestrator(
             _backfillQueue, _historyReconstructor,
             rivalsOrchestrator, notifications, _persistence,
@@ -333,6 +338,10 @@ public abstract class ScraperWorkerTestBase : IDisposable
             new BatchResultProcessor(_persistence, Substitute.For<ILogger<BatchResultProcessor>>()),
             new ScrapeTimePrecomputer(_persistence, _persistence.Meta, new PathDataStore(SharedPostgresContainer.CreateDatabase()), _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions(), new FeatureOptions()),
             new Api.ResponseCacheService(TimeSpan.FromMinutes(5)),
+            new RegistrationMutationCoordinator(
+                _persistence.Meta,
+                registrationPathStore,
+                Substitute.For<ISongInstrumentSupportCache>()),
             Substitute.For<ILogger<BackfillOrchestrator>>());
     }
 

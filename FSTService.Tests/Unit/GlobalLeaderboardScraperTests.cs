@@ -316,7 +316,7 @@ public class GlobalLeaderboardScraperTests
     [Theory]
     [InlineData("Solo_Guitar")]
     [InlineData("Solo_PeripheralGuitar")]
-    public async Task SamePublicationSupportRefresh_admits_newly_promoted_midi_instrument(
+    public async Task RegistrationLeaseRefresh_beforePublicationMonitor_admits_newly_promoted_midi_instrument(
         string instrument)
     {
         var service = CreateFestivalServiceWithMicModeDifficulty(0);
@@ -359,16 +359,38 @@ public class GlobalLeaderboardScraperTests
             "caller"));
         Assert.Empty(handler.Requests);
 
-        scraper.RefreshSongInstrumentSupport();
-        handler.EnqueueJsonOk("[]");
+        var metaDatabase = Substitute.For<IMetaDatabase>();
+        var durableLease =
+            Substitute.For<IRegistrationMutationLease>();
+        metaDatabase.AcquireRegistrationMutationLease()
+            .Returns(durableLease);
+        var registrationMutations =
+            new RegistrationMutationCoordinator(
+                metaDatabase,
+                pathStore,
+                scraper);
+        pathStore.ClearReceivedCalls();
 
-        Assert.Null(await scraper.LookupAccountAsync(
-            "song-1",
-            instrument,
-            "account-1",
-            "token",
-            "caller"));
-        Assert.Single(handler.Requests);
+        using (registrationMutations.AcquireLease())
+        {
+            Received.InOrder(() =>
+            {
+                metaDatabase.AcquireRegistrationMutationLease();
+                pathStore.InvalidateCachedState();
+                pathStore.GetPathGenerationStates();
+            });
+
+            handler.EnqueueJsonOk("[]");
+            Assert.Null(await scraper.LookupAccountAsync(
+                "song-1",
+                instrument,
+                "account-1",
+                "token",
+                "caller"));
+            Assert.Single(handler.Requests);
+        }
+
+        durableLease.Received(1).Dispose();
     }
 
     private static PathGenerationState CreatePromotedPathState(

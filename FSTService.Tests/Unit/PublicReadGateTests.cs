@@ -645,6 +645,9 @@ public class PublicReadGateTests
     [InlineData(
         "GET",
         "/api/bands/Band_Duets/account-1:account-2/sync-status")]
+    [InlineData(
+        "POST",
+        "/api/backfill/account-1")]
     public async Task PublicReadGateMiddleware_BlocksRegistrationChangesThroughoutMaxScoreResume(
         string method,
         string path)

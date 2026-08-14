@@ -589,19 +589,23 @@ public sealed class MaxScoreMaintenanceService
                         .RefreshSongInstrumentSupport();
                     var admittedPairs =
                         GetNewlyAdmittedPathPairs(manifest);
-                    var backfillReset =
+                    var registrationReset =
                         _metaDatabase
-                            .ResetNegativeBackfillChecksForAdmittedPairs(
+                            .ResetRegistrationProgressForAdmittedPairs(
                                 admittedPairs,
                                 PublicReadFreezeState
                                     .MaxScoreMaintenanceReasonPrefix
                                 + manifestDigest);
                     ValidateWorkerOffline();
                     _log.LogInformation(
-                        "Refreshed promoted path admission: pairs={PairCount}, negativeChecksReset={ResetCount}, accountsRequeued={AccountCount}.",
+                        "Refreshed promoted path admission: pairs={PairCount}, negativeBackfillChecksReset={BackfillResetCount}, backfillAccountsRequeued={BackfillAccountCount}, historyChecksReset={HistoryResetCount}, historyAccountsRequeued={HistoryAccountCount}.",
                         admittedPairs.Count,
-                        backfillReset.RemovedNegativePairChecks,
-                        backfillReset.RequeuedAccountCount);
+                        registrationReset
+                            .RemovedNegativeBackfillPairChecks,
+                        registrationReset
+                            .RequeuedBackfillAccountCount,
+                        registrationReset.RemovedHistoryPairChecks,
+                        registrationReset.RequeuedHistoryAccountCount);
                     await AdvancePhaseAsync(
                         manifestDigest,
                         normalizedPlanDigest,

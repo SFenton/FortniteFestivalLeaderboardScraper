@@ -153,6 +153,16 @@ public sealed class PublicReadGateMiddleware
                 && string.Equals(
                     segments[4],
                     "sync-status",
+                    StringComparison.OrdinalIgnoreCase))
+            || (HttpMethods.IsPost(request.Method)
+                && segments.Length == 3
+                && string.Equals(
+                    segments[0],
+                    "api",
+                    StringComparison.OrdinalIgnoreCase)
+                && string.Equals(
+                    segments[1],
+                    "backfill",
                     StringComparison.OrdinalIgnoreCase));
     }
 

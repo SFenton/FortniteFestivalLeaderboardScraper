@@ -28,6 +28,8 @@ public sealed class BackfillOrchestrator
     private readonly BatchResultProcessor _resultProcessor;
     private readonly ScrapeTimePrecomputer _precomputer;
     private readonly ResponseCacheService _leaderboardAllCache;
+    private readonly RegistrationMutationCoordinator
+        _registrationMutations;
     private readonly ILogger<BackfillOrchestrator> _log;
 
     public BackfillOrchestrator(
@@ -45,6 +47,7 @@ public sealed class BackfillOrchestrator
         BatchResultProcessor resultProcessor,
         ScrapeTimePrecomputer precomputer,
         [FromKeyedServices("LeaderboardAllCache")] ResponseCacheService leaderboardAllCache,
+        RegistrationMutationCoordinator registrationMutations,
         ILogger<BackfillOrchestrator> log)
     {
         _backfillQueue = backfillQueue;
@@ -61,6 +64,7 @@ public sealed class BackfillOrchestrator
         _resultProcessor = resultProcessor;
         _precomputer = precomputer;
         _leaderboardAllCache = leaderboardAllCache;
+        _registrationMutations = registrationMutations;
         _log = log;
     }
 
@@ -107,6 +111,9 @@ public sealed class BackfillOrchestrator
             return 0;
         }
 
+        using var registrationLease =
+            _registrationMutations.AcquireLease(ct);
+
         var opts = _options.Value;
         var foregroundRegistration = opts.RegistrationBackfillMode == RegistrationBackfillMode.ForegroundEpicExclusive;
 
@@ -143,8 +150,6 @@ public sealed class BackfillOrchestrator
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        using var registrationLease =
-            _persistence.Meta.AcquireRegistrationMutationLease();
         RegisterKnownBandsForAccounts(accountIds);
 
         var users = new List<UserWorkItem>(accountIds.Length);
@@ -345,7 +350,7 @@ public sealed class BackfillOrchestrator
     public async Task RunBackfillAsync(FestivalService service, CancellationToken ct)
     {
         using var registrationLease =
-            _persistence.Meta.AcquireRegistrationMutationLease();
+            _registrationMutations.AcquireLease(ct);
         var queued = _backfillQueue.DrainAll();
         var pending = _persistence.Meta.GetPendingBackfills();
 
@@ -545,7 +550,7 @@ public sealed class BackfillOrchestrator
     public async Task RunHistoryReconAsync(FestivalService service, CancellationToken ct)
     {
         using var registrationLease =
-            _persistence.Meta.AcquireRegistrationMutationLease();
+            _registrationMutations.AcquireLease(ct);
         var registeredIds = _persistence.Meta.GetRegisteredAccountIds();
         if (registeredIds.Count == 0) return;
 

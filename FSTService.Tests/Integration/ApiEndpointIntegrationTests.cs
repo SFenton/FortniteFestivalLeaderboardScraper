@@ -3132,6 +3132,212 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal("bfRunAcct", json.GetProperty("accountId").GetString());
     }
 
+    [Fact]
+    public async Task Backfill_FreezeWinsLeaseRace_Returns503WithoutScoreMutation()
+    {
+        const string accountId = "backfill-freeze-wins";
+        var freezeReason =
+            PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
+            + new string('f', 64);
+        using var factory = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                services.RemoveAll<ScoreBackfiller>();
+                services.AddSingleton<ScoreBackfiller>(
+                    serviceProvider =>
+                    {
+                        var persistence =
+                            serviceProvider.GetRequiredService<
+                                GlobalLeaderboardPersistence>();
+                        return new DelegatingScoreBackfiller(
+                            persistence,
+                            (requestedAccountId, _) =>
+                            {
+                                persistence
+                                    .GetOrCreateInstrumentDb(
+                                        "Solo_Guitar")
+                                    .UpsertEntries(
+                                        "testSong1",
+                                        [
+                                            new LeaderboardEntry
+                                            {
+                                                AccountId =
+                                                    requestedAccountId,
+                                                Score = 123_456,
+                                                Rank = 1,
+                                                Percentile = 1,
+                                                Source = "backfill",
+                                            },
+                                        ]);
+                                return Task.FromResult(1);
+                            });
+                    });
+            });
+        });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add(
+            "X-API-Key",
+            FstWebApplicationFactory.TestApiKey);
+        var metaDb =
+            factory.Services.GetRequiredService<MetaDatabase>();
+        metaDb.RegisterUser("backfill-device", accountId);
+        var persistence =
+            factory.Services.GetRequiredService<
+                GlobalLeaderboardPersistence>();
+        var backfiller =
+            Assert.IsType<DelegatingScoreBackfiller>(
+                factory.Services.GetRequiredService<
+                    ScoreBackfiller>());
+
+        using var lockConnection =
+            factory.Services
+                .GetRequiredService<NpgsqlDataSource>()
+                .OpenConnection();
+        using var lockTransaction =
+            lockConnection.BeginTransaction();
+        using (var freeze = lockConnection.CreateCommand())
+        {
+            freeze.Transaction = lockTransaction;
+            freeze.CommandText = """
+                UPDATE scrape_publication_state
+                SET public_reads_frozen = TRUE,
+                    public_reads_frozen_at = now(),
+                    public_reads_frozen_reason = @reason,
+                    updated_at = now()
+                WHERE id = TRUE
+                """;
+            freeze.Parameters.AddWithValue(
+                "reason",
+                freezeReason);
+            Assert.Equal(1, freeze.ExecuteNonQuery());
+        }
+
+        var responseTask =
+            client.PostAsync(
+                $"/api/backfill/{accountId}",
+                content: null);
+        await Task.Delay(150);
+        Assert.False(responseTask.IsCompleted);
+
+        lockTransaction.Commit();
+        var response =
+            await responseTask.WaitAsync(
+                TimeSpan.FromSeconds(5));
+
+        Assert.Equal(
+            HttpStatusCode.ServiceUnavailable,
+            response.StatusCode);
+        Assert.Equal(
+            "30",
+            response.Headers.GetValues("Retry-After").Single());
+        var problem =
+            await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(
+            "Registration temporarily unavailable",
+            problem.GetProperty("title").GetString());
+        Assert.Equal(0, backfiller.CallCount);
+        Assert.Null(
+            persistence
+                .GetOrCreateInstrumentDb("Solo_Guitar")
+                .GetEntry("testSong1", accountId));
+    }
+
+    [Fact]
+    public async Task Backfill_CancellationDuringHistoryReconstructionReleasesLeaseBeforeFreeze()
+    {
+        const string accountId = "backfill-history-cancel";
+        var freezeReason =
+            PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
+            + new string('a', 64);
+        var historyStarted =
+            new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+        using var factory = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                services.RemoveAll<ScoreBackfiller>();
+                services.AddSingleton<ScoreBackfiller>(
+                    serviceProvider =>
+                        new DelegatingScoreBackfiller(
+                            serviceProvider.GetRequiredService<
+                                GlobalLeaderboardPersistence>(),
+                            static (_, _) => Task.FromResult(0)));
+                services.RemoveAll<HistoryReconstructor>();
+                services.AddSingleton<HistoryReconstructor>(
+                    serviceProvider =>
+                        new DelegatingHistoryReconstructor(
+                            serviceProvider.GetRequiredService<
+                                GlobalLeaderboardPersistence>(),
+                            async (_, ct) =>
+                            {
+                                historyStarted.TrySetResult();
+                                await Task.Delay(
+                                    Timeout.InfiniteTimeSpan,
+                                    ct);
+                                return 1;
+                            }));
+            });
+        });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add(
+            "X-API-Key",
+            FstWebApplicationFactory.TestApiKey);
+        var metaDb =
+            factory.Services.GetRequiredService<MetaDatabase>();
+        metaDb.RegisterUser("backfill-device", accountId);
+        var freezeAttempted =
+            new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+        metaDb.PublicReadFreezeWriteTestHook =
+            () => freezeAttempted.TrySetResult();
+
+        using var requestCancellation =
+            new CancellationTokenSource();
+        var responseTask = client.PostAsync(
+            $"/api/backfill/{accountId}",
+            content: null,
+            requestCancellation.Token);
+        await historyStarted.Task.WaitAsync(
+            TimeSpan.FromSeconds(5));
+
+        var freezeTask = Task.Run(
+            () => metaDb.SetPublicReadFreeze(
+                true,
+                reason: freezeReason));
+        await freezeAttempted.Task.WaitAsync(
+            TimeSpan.FromSeconds(5));
+        await Task.Delay(150);
+        Assert.False(freezeTask.IsCompleted);
+
+        requestCancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await responseTask);
+        await freezeTask.WaitAsync(
+            TimeSpan.FromSeconds(5));
+
+        Assert.True(
+            metaDb.GetPublicReadFreezeState()
+                .MaxScoreMaintenance);
+        var backfiller =
+            Assert.IsType<DelegatingScoreBackfiller>(
+                factory.Services.GetRequiredService<
+                    ScoreBackfiller>());
+        var history =
+            Assert.IsType<DelegatingHistoryReconstructor>(
+                factory.Services.GetRequiredService<
+                    HistoryReconstructor>());
+        Assert.Equal(1, backfiller.CallCount);
+        Assert.Equal(1, history.CallCount);
+        Assert.Empty(metaDb.GetScoreHistory(accountId));
+
+        metaDb.PublicReadFreezeWriteTestHook = null;
+        metaDb.SetPublicReadFreeze(
+            false,
+            reason: freezeReason);
+    }
+
 
     // ─── POST /api/firstseen/calculate ──────────────────────
 
@@ -8100,6 +8306,104 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 UsersProcessed = users.Count,
                 CompletedScopes = completedScopes,
             };
+        }
+    }
+
+    private sealed class DelegatingScoreBackfiller
+        : ScoreBackfiller
+    {
+        private readonly Func<
+            string,
+            CancellationToken,
+            Task<int>> _run;
+        private int _callCount;
+
+        public DelegatingScoreBackfiller(
+            GlobalLeaderboardPersistence persistence,
+            Func<string, CancellationToken, Task<int>> run)
+            : base(
+                Substitute.For<ILeaderboardQuerier>(),
+                persistence,
+                new ScrapeProgressTracker(),
+                new UserSyncProgressTracker(
+                    new NotificationService(
+                        NullLogger<NotificationService>.Instance),
+                    NullLogger<UserSyncProgressTracker>.Instance),
+                NullLogger<ScoreBackfiller>.Instance)
+        {
+            _run = run;
+        }
+
+        public int CallCount => Volatile.Read(ref _callCount);
+
+        public override Task<int> BackfillAccountAsync(
+            string accountId,
+            FestivalService festivalService,
+            string accessToken,
+            string callerAccountId,
+            SharedDopPool pool,
+            int maxConcurrency = 10,
+            CancellationToken ct = default)
+        {
+            Interlocked.Increment(ref _callCount);
+            return _run(accountId, ct);
+        }
+    }
+
+    private sealed class DelegatingHistoryReconstructor
+        : HistoryReconstructor
+    {
+        private readonly Func<
+            string,
+            CancellationToken,
+            Task<int>> _reconstruct;
+        private int _callCount;
+
+        public DelegatingHistoryReconstructor(
+            GlobalLeaderboardPersistence persistence,
+            Func<string, CancellationToken, Task<int>> reconstruct)
+            : base(
+                Substitute.For<ILeaderboardQuerier>(),
+                persistence,
+                new HttpClient(),
+                new ScrapeProgressTracker(),
+                new UserSyncProgressTracker(
+                    new NotificationService(
+                        NullLogger<NotificationService>.Instance),
+                    NullLogger<UserSyncProgressTracker>.Instance),
+                NullLogger<HistoryReconstructor>.Instance)
+        {
+            _reconstruct = reconstruct;
+        }
+
+        public int CallCount => Volatile.Read(ref _callCount);
+
+        public override Task<IReadOnlyList<SeasonWindowInfo>>
+            DiscoverSeasonWindowsAsync(
+                string accessToken,
+                string callerAccountId,
+                CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<SeasonWindowInfo>>(
+                [
+                    new SeasonWindowInfo
+                    {
+                        SeasonNumber = 1,
+                        EventId = "event-1",
+                        WindowId = "season-1",
+                    },
+                ]);
+
+        public override Task<int> ReconstructAccountAsync(
+            string accountId,
+            IReadOnlyList<SeasonWindowInfo> seasonWindows,
+            string accessToken,
+            string callerAccountId,
+            SharedDopPool pool,
+            int maxConcurrency = 10,
+            CancellationToken ct = default)
+        {
+            Interlocked.Increment(ref _callCount);
+            return _reconstruct(accountId, ct);
         }
     }
 

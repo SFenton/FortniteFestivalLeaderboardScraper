@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-14
-last_verified_commit: 69322a3e
+last_verified_commit: e0ec87d3
 sources:
   - FSTService/Program.cs
   - FSTService/HostedWorkerMode.cs
@@ -13,6 +13,8 @@ sources:
   - FSTService/Api/PublicReadGateMiddleware.cs
   - FSTService/Api/SelectedProfileActivityMiddleware.cs
   - FSTService/Api/PublicationChangeMonitorService.cs
+  - FSTService/Api/AdminEndpoints.cs
+  - FSTService/Scraping/RegistrationMutationCoordinator.cs
   - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
 update_triggers:
   - Hosting modes, middleware, endpoints, auth, rate limits, cache behavior, or publication contracts change.
@@ -96,13 +98,20 @@ forms are included even though they are normally live endpoint code. A warm
 and cold exact solo leaderboard reads, including leeway requests, return
 `503`. Outer-cache exact leaderboard hits remain available.
 
-While that freeze is active, the public-read gate rejects player tracking and
-the registration-changing band sync-status route. Selected-profile activity
-tracking performs no player touch or band/member registration, including when
-the outer response cache handles the request. When the same publication is
-released, every API process invalidates response caches, the path-maxima cache,
-and `SongsCacheService`, then broadcasts a forced publication refresh so
-browsers do not retain the pre-maintenance maxima.
+While that freeze is active, the public-read gate rejects player tracking,
+manual `POST /api/backfill/{accountId}`, and the registration-changing band
+sync-status route. The manual endpoint also acquires the durable registration
+lease before its first all-time write and holds it through optional history
+reconstruction; a freeze that wins the middleware/lease race returns `503`
+with `Retry-After`, while cancellation disposes the lease. Selected-profile
+activity tracking performs no player touch or band/member registration,
+including when the outer response cache handles the request. When the same
+publication is released, every API process invalidates response caches, the
+path-maxima cache, and `SongsCacheService`, then broadcasts a forced
+publication refresh so browsers do not retain the pre-maintenance maxima.
+Before any later registration lookup, lease acquisition also refreshes only
+path/instrument support synchronously; it does not broadly invalidate API
+caches.
 
 ## Operational progress
 

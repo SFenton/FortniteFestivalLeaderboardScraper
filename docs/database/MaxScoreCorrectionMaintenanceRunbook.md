@@ -2,13 +2,16 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-14
-last_verified_commit: 00531b19
+last_verified_commit: e0ec87d3
 sources:
+  - FSTService/Api/AdminEndpoints.cs
   - FSTService/Persistence/MaxScoreMaintenanceCommand.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
   - FSTService/Persistence/RegistrationMutationGuard.cs
   - FSTService/Scraping/RegistrationBackfillWorker.cs
+  - FSTService/Scraping/RegistrationMutationCoordinator.cs
+  - FSTService/Scraping/BackfillOrchestrator.cs
   - FSTService/Scraping/GlobalLeaderboardScraper.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
   - FSTService/Scraping/BandRankingRepairService.cs
@@ -74,17 +77,21 @@ query, follow the same cache-or-`503` rule. A warm `SongsCacheService` response
 may be served, but path artifacts without a separately safe published response
 remain blocked.
 
-The same freeze rejects `POST /api/player/{accountId}/track` and the
-registration-changing band `sync-status` request. Selected-profile activity
-tracking also suppresses player touches and band/member registration writes,
-including on outer public-cache hits. PostgreSQL triggers independently reject
-registered-player, registered-band, and backfill status/progress mutations
-under the digest-owned freeze. Registration-only backfill/history workers
-check the durable state before work and hold a shared publication-row lease
-across each mutation batch, so freeze establishment waits for an admitted batch
-and new/resumed batches revalidate before their first write. A failed or resumed
-maintenance run remains blocked until its exact freeze is released. Normal
-scrape/publication freezes do not activate this registration guard.
+The same freeze rejects `POST /api/player/{accountId}/track`,
+`POST /api/backfill/{accountId}`, and the registration-changing band
+`sync-status` request. Selected-profile activity tracking also suppresses
+player touches and band/member registration writes, including on outer
+public-cache hits. PostgreSQL triggers independently reject registered-player,
+registered-band, and backfill status/progress mutations under the digest-owned
+freeze. Registration-only workers and the manual backfill endpoint hold a
+shared publication-row lease across the complete all-time/history mutation
+lifecycle. Freeze establishment therefore waits or refuses before ownership,
+and a freeze that wins the lease race returns `503` before score mutation.
+Cancellation and failures dispose the lease. Immediately after each lease is
+acquired, path-maxima state is invalidated and scraper song/instrument support
+is synchronously refreshed before any account or seasonal lookup. A failed or
+resumed maintenance run remains blocked until its exact freeze is released.
+Normal scrape/publication freezes do not activate this registration guard.
 
 ## Stage request
 
@@ -204,8 +211,11 @@ Apply:
 - promotes every song in one transaction;
 - refreshes in-process song/instrument admission immediately after promotion,
   removes only prior negative backfill checks for newly usable path-backed
-  song/instrument pairs, and requeues only affected accounts. Positive checks
-  and unrelated completed pairs remain intact;
+  song/instrument pairs, removes matching successful history-reconstruction
+  checkpoints, and requeues only affected all-time/history accounts. Affected
+  history status is fenced to a new admission revision and returned to
+  `pending`; positive backfill checks and unrelated history pairs remain
+  intact;
 - rebuilds affected `song_stats` and solo rankings, then composite,
   solo-family, and combo rankings; recalculates target-song band
   over-threshold flags, refreshes affected band current-projection scopes, and
@@ -232,7 +242,10 @@ Apply:
 
 Freeze release invalidates API/path/song and scraper admission caches in every
 monitoring role and forces connected clients to refresh even though the
-publication ID does not change.
+publication ID does not change. A registration worker that acquires its lease
+before the one-second monitor pass still invalidates path state and refreshes
+instrument support synchronously before its first lookup, so it cannot recreate
+a stale negative checkpoint.
 
 ## Failure and resume
 
