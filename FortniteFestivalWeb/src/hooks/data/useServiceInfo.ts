@@ -2,12 +2,15 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 
+const MINUTE_MS = 60_000;
+
 export const SERVICE_INFO_TIMEOUT_MS = 3_000;
 export const SERVICE_INFO_STALE_TIME_MS = 5_000;
 export const SERVICE_INFO_SETTINGS_POLL_MS = 5_000;
 export const SERVICE_INFO_AVAILABILITY_POLL_MS = 30_000;
+export const SERVICE_INFO_BACKGROUND_POLL_MS = 30_000;
 export const SERVICE_INFO_UNAVAILABLE_RETRY_MS = 5_000;
-export const SERVICE_INFO_GC_TIME_MS = 10 * 60_000;
+export const SERVICE_INFO_GC_TIME_MS = 10 * MINUTE_MS;
 
 export type ServiceInfoConsumer = 'availability' | 'settings';
 
@@ -55,8 +58,12 @@ export function useServiceInfo(consumer: ServiceInfoConsumer) {
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchIntervalInBackground: true,
-    refetchInterval: query => query.state.status === 'error'
-      ? SERVICE_INFO_UNAVAILABLE_RETRY_MS
-      : successPollInterval,
+    refetchInterval: query => {
+      if (query.state.status === 'error') return SERVICE_INFO_UNAVAILABLE_RETRY_MS;
+      if (consumer === 'settings' && document.visibilityState === 'hidden') {
+        return SERVICE_INFO_BACKGROUND_POLL_MS;
+      }
+      return successPollInterval;
+    },
   });
 }
