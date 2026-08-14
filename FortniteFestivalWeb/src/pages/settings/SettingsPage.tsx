@@ -159,7 +159,7 @@ function leewayTrackBackground(value: number): string {
 }
 
 /* v8 ignore start — LeewaySlider: DOM style injection not testable in jsdom */
-function LeewaySlider({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+function LeewaySlider({ value, label, onChange }: { value: number; label: string; onChange: (v: number) => void }) {
   const styleRef = useRef<HTMLStyleElement | null>(null);
 
   useEffect(() => {
@@ -186,6 +186,8 @@ function LeewaySlider({ value, onChange }: { value: number; onChange: (v: number
         max={5}
         step={0.1}
         value={value}
+        aria-label={label}
+        aria-valuetext={`${value > 0 ? '+' : ''}${value.toFixed(1)}%`}
         onChange={e => onChange(Math.round(parseFloat(e.target.value) * 10) / 10)}
         style={{ flex: 1, background: leewayTrackBackground(value) }}
       />
@@ -650,6 +652,7 @@ export default function SettingsPage() {
                       </div>
                       <LeewaySlider
                         value={settings.filterInvalidScoresLeeway}
+                        label={t('settings.maxScoreLeeway')}
                         onChange={v => updateSettings({ filterInvalidScoresLeeway: v })}
                       />
                     </div>

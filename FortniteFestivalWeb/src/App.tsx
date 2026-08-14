@@ -7,7 +7,6 @@ import { FestivalProvider, useFestival } from './contexts/FestivalContext';
 import { SettingsProvider } from './contexts/SettingsContext';
 import { FeatureFlagsProvider, useFeatureFlagsState } from './contexts/FeatureFlagsContext';
 import { ShopProvider } from './contexts/ShopContext';
-import { AnimatedBackground } from './components/shell/AnimatedBackground';
 import { useTrackedPlayer, type TrackedPlayer } from './hooks/data/useTrackedPlayer';
 import { useSelectedProfileNameRefresh } from './hooks/data/useSelectedProfileNameRefresh';
 import { usePlayerBandsPrefetch } from './hooks/data/usePlayerBandsPrefetch';
@@ -38,6 +37,10 @@ const BandRankingsPage = lazy(() => import('./pages/leaderboards/BandRankingsPag
 const BandPage = lazy(() => import('./pages/band/BandPage'));
 const PlayerBandsPage = lazy(() => import('./pages/band/PlayerBandsPage'));
 const CompetePage = lazy(() => import('./pages/compete/CompetePage'));
+const AnimatedBackground = lazy(() => import('./components/shell/AnimatedBackground').then(module => ({
+  default: module.AnimatedBackground,
+})));
+const ProximityGlowRuntime = lazy(() => import('./components/shell/ProximityGlowRuntime'));
 /* v8 ignore stop */
 import { Size, Layout, QUERY_NARROW_GRID } from '@festival/theme';
 
@@ -117,7 +120,6 @@ import { FabVisibilityProvider } from './contexts/FabVisibilityContext';
 import { SearchQueryProvider } from './contexts/SearchQueryContext';
 import { useSettings, visibleInstruments, visiblePathInstruments } from './contexts/SettingsContext';
 import { useShopState } from './hooks/data/useShopState';
-import { useProximityGlow } from './hooks/ui/useProximityGlow';
 import BottomNav from './components/shell/mobile/BottomNav';
 import Sidebar from './components/shell/desktop/Sidebar';
 import DesktopNav from './components/shell/desktop/DesktopNav';
@@ -184,6 +186,7 @@ import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext
 import { ScrollContainerProvider, useShellRefs, useScrollContainer, HEADER_PORTAL_HEIGHT_VAR } from './contexts/ScrollContainerContext';
 import { useTapDiagnostics } from './diagnostics/useTapDiagnostics';
 import anim from './styles/animations.module.css';
+import { RouteAccessibility, RouteMain } from './components/shell/RouteAccessibility';
 
 const consumedPreserveShellScrollKeys = new Set<string>();
 const LEADERBOARD_INSTRUMENT_ACTION_ICON_SIZE = 32;
@@ -343,6 +346,9 @@ function WideDesktopLayout({
   selectedProfile,
   onDeselect,
   onSelectPlayer,
+  routeTitle,
+  fallbackHeading,
+  pageHeaderLabel,
 }: {
   shellScrollRef: React.RefObject<HTMLDivElement | null>;
   shellPortalRefCallback: (el: HTMLDivElement | null) => void;
@@ -351,6 +357,9 @@ function WideDesktopLayout({
   selectedProfile: ReturnType<typeof useTrackedPlayer>['profile'];
   onDeselect: () => void;
   onSelectPlayer: () => void;
+  routeTitle: string;
+  fallbackHeading: boolean;
+  pageHeaderLabel: string;
 }) {
   return (
     <div style={appStyles.bodySection}>
@@ -360,9 +369,13 @@ function WideDesktopLayout({
         <div style={appStyles.scrollContentRow}>
           <div style={appStyles.sidebarGutter} />
           <div style={appStyles.centerColumn}>
-            <div id="main-content" style={{ ...appStyles.content, ...appStyles.contentPinned }}>
+            <RouteMain
+              routeTitle={routeTitle}
+              fallbackHeading={fallbackHeading}
+              style={{ ...appStyles.content, ...appStyles.contentPinned }}
+            >
               <RoutesContent player={player} selectedProfile={selectedProfile} />
-            </div>
+            </RouteMain>
           </div>
           <div style={appStyles.rightGutter} />
         </div>
@@ -379,7 +392,12 @@ function WideDesktopLayout({
       {/* Header overlay — pointer-events: none lets wheel through */}
       <div style={appStyles.headerOverlay}>
         <div style={{ width: Layout.sidebarWidth, flexShrink: 0 }} />
-        <div ref={shellPortalRefCallback} style={appStyles.headerPortalWide} />
+        <div
+          ref={shellPortalRefCallback}
+          role="region"
+          aria-label={pageHeaderLabel}
+          style={appStyles.headerPortalWide}
+        />
         <div style={{ width: Layout.sidebarWidth, flexShrink: 0 }} />
       </div>
       {/* Right quick-links overlay — independent chrome outside content scroll */}
@@ -464,8 +482,6 @@ function AppShell() {
   const hasNotifications = surfaceNotifications.length > 0;
   const surfaceUnreadCount = surfaceUnreadNotificationIds.size;
 
-  // Proximity glow for frosted cards — document-level for full coverage
-  useProximityGlow(!settings.disableLightTrails);
   usePlayerBandsPrefetch(player?.accountId);
 
   const location = useLocation();
@@ -727,7 +743,6 @@ function AppShell() {
 
   const showAnimatedBg = isAnimatedBgRoute(location.pathname);
 
-  // Page title for mobile header
   const NAV_TITLES: Record<string, string> = {
     [AppRoutes.songs]: t('nav.songs'),
     [AppRoutes.suggestions]: t('nav.suggestions'),
@@ -742,6 +757,8 @@ function AppShell() {
   const navTitle = location.pathname === AppRoutes.statistics
     ? (player?.displayName ?? (selectedProfile?.type === 'band' ? selectedProfile.displayName : t('nav.statistics')))
     : (NAV_TITLES[location.pathname] ?? null);
+  const mainLabel = navTitle ?? t('common.brandName');
+  const fallbackRouteHeading = navTitle !== null;
 
   // Hierarchical back-navigation fallback for detail pages only.
   // Tab routes (songs, suggestions, statistics, settings) never show a back button.
@@ -923,8 +940,27 @@ function AppShell() {
     <PlayerDataProvider accountId={player?.accountId}>
     <FabVisibilityProvider mobileFabHidden={!showMobileFab}>
     <>
-    {showAnimatedBg && <AnimatedBackground songs={songs} />}
+    {showAnimatedBg && (
+      <ErrorBoundary fallback={null}>
+      <Suspense fallback={null}>
+        <AnimatedBackground songs={songs} />
+      </Suspense>
+      </ErrorBoundary>
+    )}
+    {!settings.disableLightTrails && (
+      <ErrorBoundary fallback={null}>
+        <Suspense fallback={null}>
+          <ProximityGlowRuntime enabled />
+        </Suspense>
+      </ErrorBoundary>
+    )}
     <div style={appStyles.shell}>
+      <RouteAccessibility
+        pathname={location.pathname}
+        titleOverride={navTitle}
+        navigationType={navType}
+        skipLabel={t('common.skipToContent')}
+      />
       <ScrollToTop layoutKey={wideDesktop ? 'wide' : 'standard'} />
 
       {/* v8 ignore start — sidebar callbacks tested via Sidebar.test / PinnedSidebar.test */}
@@ -993,15 +1029,27 @@ function AppShell() {
           selectedProfile={selectedProfile}
           onDeselect={handleDeselect}
           onSelectPlayer={openProfileSearch}
+          routeTitle={mainLabel}
+          fallbackHeading={fallbackRouteHeading}
+          pageHeaderLabel={t('common.pageHeader')}
         />
       ) : (
         <>
-        <div ref={shellPortalRefCallback} style={appStyles.headerPortal} />
+        <div
+          ref={shellPortalRefCallback}
+          role="region"
+          aria-label={t('common.pageHeader')}
+          style={appStyles.headerPortal}
+        />
         <div data-testid="app-scroll-container" ref={shellScrollRef} style={appStyles.scrollContainer}>
         <div style={appStyles.contentColumn}>
-        <div id="main-content" style={appStyles.content}>
+        <RouteMain
+          routeTitle={mainLabel}
+          fallbackHeading={fallbackRouteHeading}
+          style={appStyles.content}
+        >
           <RoutesContent player={player} selectedProfile={selectedProfile} />
-        </div>
+        </RouteMain>
         </div>
         </div>
         </>

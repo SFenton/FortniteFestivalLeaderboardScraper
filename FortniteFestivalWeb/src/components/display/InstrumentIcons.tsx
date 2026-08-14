@@ -4,7 +4,7 @@
  */
 import { memo, useMemo } from 'react';
 import type { InstrumentKey } from '@festival/core/types';
-import type { ServerInstrumentKey } from '@festival/core/api';
+import { serverInstrumentLabel, type ServerInstrumentKey } from '@festival/core/api';
 import { Colors, ObjectFit } from '@festival/theme';
 
 type AnyInstrumentKey = InstrumentKey | ServerInstrumentKey;
@@ -45,6 +45,18 @@ const KEYBOARD_ICON_OVERRIDES: Partial<Record<AnyInstrumentKey, string>> = {
   Solo_PeripheralGuitar: buildIconPath('pro_keys.png'),
 };
 
+const CORE_INSTRUMENT_LABELS: Record<InstrumentKey, string> = {
+  guitar: 'Lead',
+  bass: 'Bass',
+  drums: 'Drums',
+  vocals: 'Tap Vocals',
+  pro_guitar: 'Pro Lead',
+  pro_bass: 'Pro Bass',
+  peripheral_vocals: 'Karaoke',
+  peripheral_cymbals: 'Pro Drums + Cymbals',
+  peripheral_drums: 'Pro Drums',
+};
+
 function resolveIconPath(instrument: AnyInstrumentKey, sig?: string): string {
   if (sig === 'Keyboard') {
     const override = KEYBOARD_ICON_OVERRIDES[instrument];
@@ -53,14 +65,28 @@ function resolveIconPath(instrument: AnyInstrumentKey, sig?: string): string {
   return ICON_PATHS[instrument];
 }
 
-type IconProps = { size?: number; style?: React.CSSProperties };
+type IconProps = {
+  size?: number;
+  style?: React.CSSProperties;
+  label?: string;
+  decorative?: boolean;
+};
 
-export const InstrumentIcon = memo(function InstrumentIcon({ instrument, sig, size = 20, style }: IconProps & { instrument: AnyInstrumentKey; sig?: string }) {
+export const InstrumentIcon = memo(function InstrumentIcon({
+  instrument,
+  sig,
+  size = 20,
+  style,
+  label,
+  decorative = false,
+}: IconProps & { instrument: AnyInstrumentKey; sig?: string }) {
   const iconStyle = useMemo(() => ({ objectFit: ObjectFit.contain, ...style }), [style]);
+  const accessibleLabel = label ?? getInstrumentLabel(instrument, sig);
   return (
     <img
       src={resolveIconPath(instrument, sig)}
-      alt={instrument}
+      alt={decorative ? '' : accessibleLabel}
+      data-instrument={instrument}
       width={size}
       height={size}
       style={iconStyle}
@@ -68,6 +94,17 @@ export const InstrumentIcon = memo(function InstrumentIcon({ instrument, sig, si
     />
   );
 });
+
+export function getInstrumentLabel(instrument: AnyInstrumentKey, sig?: string): string {
+  if (sig === 'Keyboard' && KEYBOARD_ICON_OVERRIDES[instrument]) {
+    return instrument === 'pro_guitar' || instrument === 'Solo_PeripheralGuitar'
+      ? 'Pro Keys'
+      : 'Keys';
+  }
+  return instrument.startsWith('Solo_')
+    ? serverInstrumentLabel(instrument as ServerInstrumentKey)
+    : CORE_INSTRUMENT_LABELS[instrument as InstrumentKey];
+}
 
 /** Status colors matching the mobile app's instrument badge chips. */
 export const INSTRUMENT_STATUS_COLORS = {

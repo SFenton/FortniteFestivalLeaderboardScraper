@@ -1181,7 +1181,8 @@ describe('SongsPage quick links', () => {
 
     await openSongsQuickLinksModal();
     const starsButton = screen.getByTestId('songs-quick-link-stars-6');
-    expect(starsButton.querySelectorAll('img[alt="★"]').length).toBe(5);
+    expect(within(starsButton).getByRole('img', { name: '5 gold stars' })).toBeDefined();
+    expect(starsButton.querySelectorAll('img[alt=""]').length).toBe(5);
     const starsRow = starsButton.querySelector('span[style*="justify-content"]') as HTMLElement | null;
     expect(starsRow?.style.justifyContent).toBe('flex-start');
   });

@@ -238,7 +238,7 @@ describe('FullRankingsPage', () => {
     });
 
     const instrumentButton = screen.getByRole('button', { name: 'Bass' });
-    expect(instrumentButton.querySelector('img[alt="Solo_Bass"]')).not.toBeNull();
+    expect(instrumentButton.querySelector('img[data-instrument="Solo_Bass"]')).not.toBeNull();
   });
 
   it('renders the selected instrument icon in the mobile page header for instrument rankings', async () => {
@@ -258,7 +258,7 @@ describe('FullRankingsPage', () => {
     });
 
     const headerPortal = screen.getByTestId('test-header-portal');
-    expect(headerPortal.querySelector('img[alt="Solo_Bass"]')).not.toBeNull();
+    expect(headerPortal.querySelector('img[data-instrument="Solo_Bass"]')).not.toBeNull();
     expect(within(headerPortal).getByText('Bass Leaderboards')).toBeTruthy();
   });
 
@@ -302,8 +302,8 @@ describe('FullRankingsPage', () => {
     const headerPortal = screen.getByTestId('test-header-portal');
     const iconTitle = within(headerPortal).getByTestId('combo-ranking-title-icons');
     expect(iconTitle).toHaveAttribute('aria-label', 'Lead + Drums Leaderboards');
-    expect(within(iconTitle).getByAltText('Solo_Guitar')).toBeTruthy();
-    expect(within(iconTitle).getByAltText('Solo_Drums')).toBeTruthy();
+    expect(within(iconTitle).getByAltText('Lead')).toBeTruthy();
+    expect(within(iconTitle).getByAltText('Drums')).toBeTruthy();
     expect(within(headerPortal).queryByText('Lead + Drums Leaderboards')).toBeNull();
   });
 
@@ -411,8 +411,8 @@ describe('FullRankingsPage', () => {
     expect(await screen.findByText('Top 05')).toBeTruthy();
     const iconTitle = await screen.findByTestId('combo-ranking-title-icons');
     expect(iconTitle).toHaveAttribute('aria-label', 'Lead + Drums Leaderboards');
-    expect(within(iconTitle).getByAltText('Solo_Guitar')).toBeTruthy();
-    expect(within(iconTitle).getByAltText('Solo_Drums')).toBeTruthy();
+    expect(within(iconTitle).getByAltText('Lead')).toBeTruthy();
+    expect(within(iconTitle).getByAltText('Drums')).toBeTruthy();
     expect(screen.queryByText('Lead + Drums Leaderboards')).toBeNull();
   });
 
@@ -757,6 +757,49 @@ describe('FullRankingsPage', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(FADE_DURATION); });
     expect(await screen.findByText('Beta')).toBeTruthy();
     expect(screen.getByTestId('selected-band-member-footer-content')).toHaveStyle({ opacity: '1' });
+  });
+
+  it('keeps the selected band member footer static for reduced motion', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+      matches: query === '(prefers-reduced-motion: reduce)',
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+    selectBandProfile();
+    mockApi.getRankings.mockResolvedValue({
+      instrument: 'Solo_Guitar',
+      rankBy: 'totalscore',
+      page: 1,
+      pageSize: 25,
+      totalAccounts: 100,
+      entries: [makeAccountRankingEntry(1, { accountId: 'top-player', displayName: 'Top Player' })],
+    });
+    mockApi.getSelectedMemberRankings.mockResolvedValue(makeSelectedMemberRankings([
+      makeAccountRankingEntry(12, { accountId: 'band-a', displayName: 'Alpha', totalScore: 765432, totalScoreRank: 12 }),
+      makeAccountRankingEntry(34, { accountId: 'band-b', displayName: 'Beta', totalScore: 654321, totalScoreRank: 34 }),
+    ]));
+
+    render(
+      <TestProviders route="/leaderboards/all?instrument=Solo_Guitar&rankBy=totalscore">
+        <Routes>
+          <Route path="/leaderboards/all" element={<FullRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    expect(await screen.findByText('Alpha')).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DEMO_SWAP_INTERVAL_MS + FADE_DURATION);
+    });
+    expect(screen.getByText('Alpha')).toBeTruthy();
+    expect(screen.queryByText('Beta')).toBeNull();
+    expect(screen.getByTestId('selected-band-member-footer-content').style.opacity).not.toBe('0');
   });
 
   it('skips unranked selected band members and keeps one ranked member static', async () => {

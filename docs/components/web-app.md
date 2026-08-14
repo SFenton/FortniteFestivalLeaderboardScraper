@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: web
-last_verified: 2026-08-13
-last_verified_commit: 0af25b3f
+last_verified: 2026-08-14
+last_verified_commit: ceacaba9
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
@@ -111,6 +111,24 @@ but are `inert` and `aria-hidden`, so hidden controls never enter the tab order.
 Sort and Suggestions accordions expose named regions; dense instrument filter
 groups avoid excessive landmarks. Mobile BottomNav uses pending state only for
 visual feedback and assigns `aria-current="page"` solely to the committed route.
+
+Both shell layouts render exactly one `main#main-content[tabindex="-1"]`.
+`RouteAccessibility` owns the first-focusable HashRouter-safe skip link,
+document titles, polite route announcements, and focus transfer for distinct
+PUSH/REPLACE navigation. Initial navigation and POP do not move focus; modal
+ownership delays route focus and preserves a different connected control that
+the modal restores. Route metadata in `src/routes.ts` supplies titles and
+mobile chrome labels. A visually hidden fallback H1 covers lazy/mobile gaps and
+self-removes whenever a page-owned visible H1 is present.
+
+Decorative visual policy is centralized through `useVisualPreferences`.
+Reduced motion removes background crossfades, continuous pulse/breathe
+animation, notification media cycling, and rotating selected-band members
+without disabling functional spinners. Save-Data omits remote decorative
+background and optional notification album art. Both policies pause timer work
+while the document is hidden. Instrument images expose canonical display
+labels while retaining wire keys only in `data-instrument`; repeated star PNGs
+are decorative children of one labelled star group.
 
 `Page` owns the standard bottom-clearance contract for fixed action surfaces.
 Its default `end` spacer always reserves FAB clearance, while `fixed` adjusts
