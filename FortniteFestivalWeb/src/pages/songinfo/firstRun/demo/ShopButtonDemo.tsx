@@ -12,7 +12,7 @@ type ShopButtonDemoProps = {
 
 /**
  * Demo component for the SongInfo FRE slide showing the Item Shop button.
- * Matches the production SongDetailHeader pill/circle exactly.
+ * Matches the production Song Info header pill/circle exactly.
  * Pulse is only active when shop highlighting is enabled in settings.
  */
 /* v8 ignore start -- demo component uses SettingsContext */

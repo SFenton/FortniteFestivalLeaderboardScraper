@@ -8,7 +8,6 @@ import { pathsMobileSlide, pathsDesktopSlide } from '../../../../src/pages/songi
 import { shopButtonMobileSlide, shopButtonDesktopSlide } from '../../../../src/pages/songinfo/firstRun/pages/ShopButton';
 import { newInShopMobileSlide, newInShopDesktopSlide } from '../../../../src/pages/songinfo/firstRun/pages/NewInShop';
 import { leavingTomorrowMobileSlide, leavingTomorrowDesktopSlide } from '../../../../src/pages/songinfo/firstRun/pages/LeavingTomorrow';
-import { historySlide } from '../../../../src/pages/songinfo/firstRun/pages/History';
 
 describe('songInfoSlides', () => {
   it('returns 8 slides', () => {
@@ -55,7 +54,7 @@ describe('songInfoSlides', () => {
 });
 
 describe('slide definitions', () => {
-  const slides = [chartSlide, barSelectSlide, viewAllSlide, topScoresSlide, pathsMobileSlide, pathsDesktopSlide, shopButtonMobileSlide, shopButtonDesktopSlide, newInShopMobileSlide, newInShopDesktopSlide, leavingTomorrowMobileSlide, leavingTomorrowDesktopSlide, historySlide];
+  const slides = [chartSlide, barSelectSlide, viewAllSlide, topScoresSlide, pathsMobileSlide, pathsDesktopSlide, shopButtonMobileSlide, shopButtonDesktopSlide, newInShopMobileSlide, newInShopDesktopSlide, leavingTomorrowMobileSlide, leavingTomorrowDesktopSlide];
 
   it.each(slides.map(s => [s.id, s]))('%s has required fields', (_id, slide) => {
     expect(slide.id).toBeTruthy();
@@ -78,11 +77,6 @@ describe('slide definitions', () => {
   it('viewAllSlide gates on hasPlayer', () => {
     expect(viewAllSlide.gate!({ hasPlayer: true })).toBe(true);
     expect(viewAllSlide.gate!({ hasPlayer: false })).toBe(false);
-  });
-
-  it('historySlide gates on hasPlayer', () => {
-    expect(historySlide.gate!({ hasPlayer: true })).toBe(true);
-    expect(historySlide.gate!({ hasPlayer: false })).toBe(false);
   });
 
   it('topScoresSlide has no gate', () => {
@@ -123,7 +117,7 @@ describe('slide definitions', () => {
     }
   });
 
-  it('all slides are at version 2 except history', () => {
+  it('tracks the expected slide versions', () => {
     expect(chartSlide.version).toBe(2);
     expect(barSelectSlide.version).toBe(2);
     expect(viewAllSlide.version).toBe(2);
@@ -132,6 +126,5 @@ describe('slide definitions', () => {
     expect(pathsDesktopSlide.version).toBe(2);
     expect(newInShopMobileSlide.version).toBe(1);
     expect(newInShopDesktopSlide.version).toBe(1);
-    expect(historySlide.version).toBe(1);
   });
 });

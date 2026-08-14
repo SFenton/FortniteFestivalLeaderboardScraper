@@ -77,6 +77,12 @@ backend-availability gates. Conditional shell dialogs and the first-run
 carousel also load through interaction/visibility boundaries rather than the
 normal returning-user entry.
 
+The production build classifies every TypeScript source module. Application
+modules must be reachable from the normal or lazy Vite graph; only component
+stories and an explicit set of type-only modules may remain outside it.
+Obsolete implementations and tests that import only those implementations are
+removed together rather than retained to inflate coverage.
+
 `PublicationBoundary` blocks the normal application until `/api/publication`
 resolves. A publication-change event clears query/song caches, resets the
 WebSocket, and remounts the app with the new publication ID.

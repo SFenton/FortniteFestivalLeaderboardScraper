@@ -166,6 +166,11 @@ route and Rank By closures must exclude metric-help definitions,
 `FirstRunCarousel`, `Math.tsx`, KaTeX, and KaTeX CSS. The lazy metric-help
 closure must contain those modules and retain the direct dynamic edge from Rank
 By. Playwright request tests separately prove that KaTeX JS/CSS waits for the
+
+The same Vite plugin compares every `src/**/*.ts` and `src/**/*.tsx` file with
+the complete production and lazy chunk graph. Only component stories and the
+documented type-only allowlist may be unreachable; any other source file fails
+the build as unclassified dead code. Playwright request tests separately prove that KaTeX JS/CSS waits for the
 per-instrument info action, KaTeX fonts wait for a formula slide, and band,
 combo, and solo-family controls never expose the instrument-only help.
 

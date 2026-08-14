@@ -97,7 +97,6 @@ describe('request cancellation coverage', () => {
     expect(booleanCancellationFiles).toEqual([]);
 
     for (const relativePath of [
-      'hooks/data/useAccountSearch.ts',
       'hooks/data/useUnifiedSearch.ts',
       'hooks/data/useSyncStatus.ts',
       'pages/settings/SettingsPage.tsx',
