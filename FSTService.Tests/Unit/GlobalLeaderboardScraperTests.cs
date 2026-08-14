@@ -362,8 +362,10 @@ public class GlobalLeaderboardScraperTests
         var metaDatabase = Substitute.For<IMetaDatabase>();
         var durableLease =
             Substitute.For<IRegistrationMutationLease>();
-        metaDatabase.AcquireRegistrationMutationLease()
-            .Returns(durableLease);
+        metaDatabase
+            .AcquireRegistrationMutationLeaseAsync(
+                Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(durableLease));
         var registrationMutations =
             new RegistrationMutationCoordinator(
                 metaDatabase,
@@ -371,14 +373,15 @@ public class GlobalLeaderboardScraperTests
                 scraper);
         pathStore.ClearReceivedCalls();
 
-        using (registrationMutations.AcquireLease())
+        await using (await registrationMutations
+                         .AcquireLeaseAsync())
         {
-            Received.InOrder(() =>
-            {
-                metaDatabase.AcquireRegistrationMutationLease();
-                pathStore.InvalidateCachedState();
-                pathStore.GetPathGenerationStates();
-            });
+            await metaDatabase.Received(1)
+                .AcquireRegistrationMutationLeaseAsync(
+                    Arg.Any<CancellationToken>());
+            pathStore.Received(1).InvalidateCachedState();
+            pathStore.Received(1)
+                .GetPathGenerationStates();
 
             handler.EnqueueJsonOk("[]");
             Assert.Null(await scraper.LookupAccountAsync(
@@ -390,7 +393,7 @@ public class GlobalLeaderboardScraperTests
             Assert.Single(handler.Requests);
         }
 
-        durableLease.Received(1).Dispose();
+        await durableLease.Received(1).DisposeAsync();
     }
 
     private static PathGenerationState CreatePromotedPathState(

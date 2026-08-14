@@ -1358,6 +1358,16 @@ public static class DatabaseInitializer
             FOR EACH ROW
             EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
 
+        DROP TRIGGER IF EXISTS
+            trg_registered_user_refresh_scope_maintenance_guard
+            ON registered_user_refresh_scope_progress;
+        CREATE TRIGGER
+            trg_registered_user_refresh_scope_maintenance_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON registered_user_refresh_scope_progress
+            FOR EACH ROW
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
         CREATE TABLE IF NOT EXISTS registered_band_processing_status (
             source_id              TEXT    NOT NULL,
             band_type              TEXT    NOT NULL,
@@ -1375,6 +1385,16 @@ public static class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS ix_registered_band_processing_status
             ON registered_band_processing_status (status);
+
+        DROP TRIGGER IF EXISTS
+            trg_registered_band_processing_status_maintenance_guard
+            ON registered_band_processing_status;
+        CREATE TRIGGER
+            trg_registered_band_processing_status_maintenance_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON registered_band_processing_status
+            FOR EACH ROW
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
 
         CREATE TABLE IF NOT EXISTS registered_band_processing_progress (
             source_id   TEXT        NOT NULL,
@@ -1396,6 +1416,16 @@ public static class DatabaseInitializer
         CREATE INDEX IF NOT EXISTS ix_registered_band_processing_progress_band
             ON registered_band_processing_progress (source_id, band_type, team_key);
 
+        DROP TRIGGER IF EXISTS
+            trg_registered_band_processing_progress_maintenance_guard
+            ON registered_band_processing_progress;
+        CREATE TRIGGER
+            trg_registered_band_processing_progress_maintenance_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON registered_band_processing_progress
+            FOR EACH ROW
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
         CREATE TABLE IF NOT EXISTS registered_player_band_discovery_progress (
             account_id  TEXT        NOT NULL,
             song_id     TEXT        NOT NULL,
@@ -1414,6 +1444,16 @@ public static class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS ix_registered_player_band_discovery_progress_account
             ON registered_player_band_discovery_progress (account_id);
+
+        DROP TRIGGER IF EXISTS
+            trg_registered_player_band_discovery_maintenance_guard
+            ON registered_player_band_discovery_progress;
+        CREATE TRIGGER
+            trg_registered_player_band_discovery_maintenance_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON registered_player_band_discovery_progress
+            FOR EACH ROW
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
 
         -- =====================================================================
         -- USER SESSIONS (from fst-meta.db)
@@ -1530,6 +1570,16 @@ public static class DatabaseInitializer
         CREATE INDEX IF NOT EXISTS ix_hr_status
             ON history_recon_status (status);
 
+        DROP TRIGGER IF EXISTS
+            trg_history_recon_status_maintenance_guard
+            ON history_recon_status;
+        CREATE TRIGGER
+            trg_history_recon_status_maintenance_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON history_recon_status
+            FOR EACH ROW
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
+
         -- =====================================================================
         -- HISTORY RECON PROGRESS (from fst-meta.db)
         -- =====================================================================
@@ -1555,6 +1605,16 @@ public static class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS ix_hrp_account
             ON history_recon_progress (account_id);
+
+        DROP TRIGGER IF EXISTS
+            trg_history_recon_progress_maintenance_guard
+            ON history_recon_progress;
+        CREATE TRIGGER
+            trg_history_recon_progress_maintenance_guard
+            BEFORE INSERT OR UPDATE OR DELETE
+            ON history_recon_progress
+            FOR EACH ROW
+            EXECUTE FUNCTION fst_assert_registration_mutation_allowed();
 
         -- =====================================================================
         -- SEASON WINDOWS (from fst-meta.db)

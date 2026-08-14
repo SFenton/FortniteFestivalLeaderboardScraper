@@ -3189,38 +3189,35 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             Assert.IsType<DelegatingScoreBackfiller>(
                 factory.Services.GetRequiredService<
                     ScoreBackfiller>());
+        var publicationId =
+            metaDb.GetPublicationPointerState()
+                .CurrentPublicationId
+            ?? 1;
 
-        using var lockConnection =
-            factory.Services
-                .GetRequiredService<NpgsqlDataSource>()
-                .OpenConnection();
-        using var lockTransaction =
-            lockConnection.BeginTransaction();
-        using (var freeze = lockConnection.CreateCommand())
+        Task<HttpResponseMessage> responseTask;
+        await using (var maintenanceLease =
+                     await metaDb
+                         .AcquireMaxScoreMaintenanceLeaseAsync(
+                             publicationId))
         {
-            freeze.Transaction = lockTransaction;
-            freeze.CommandText = """
-                UPDATE scrape_publication_state
-                SET public_reads_frozen = TRUE,
-                    public_reads_frozen_at = now(),
-                    public_reads_frozen_reason = @reason,
-                    updated_at = now()
-                WHERE id = TRUE
-                """;
-            freeze.Parameters.AddWithValue(
-                "reason",
-                freezeReason);
-            Assert.Equal(1, freeze.ExecuteNonQuery());
+            using var ambientLease =
+                maintenanceLease.EnterAmbientScope();
+            responseTask =
+                client.PostAsync(
+                    $"/api/backfill/{accountId}",
+                    content: null);
+            await Task.Delay(150);
+            Assert.False(responseTask.IsCompleted);
+            Assert.False(
+                metaDb.GetPublicReadFreezeState()
+                    .IsFrozen);
+
+            metaDb.SetPublicReadFreeze(
+                true,
+                reason: freezeReason);
+            await maintenanceLease
+                .AcquireSourceLocksAsync();
         }
-
-        var responseTask =
-            client.PostAsync(
-                $"/api/backfill/{accountId}",
-                content: null);
-        await Task.Delay(150);
-        Assert.False(responseTask.IsCompleted);
-
-        lockTransaction.Commit();
         var response =
             await responseTask.WaitAsync(
                 TimeSpan.FromSeconds(5));
@@ -3241,6 +3238,9 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             persistence
                 .GetOrCreateInstrumentDb("Solo_Guitar")
                 .GetEntry("testSong1", accountId));
+        metaDb.SetPublicReadFreeze(
+            false,
+            reason: freezeReason);
     }
 
     [Fact]
@@ -3287,11 +3287,10 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var metaDb =
             factory.Services.GetRequiredService<MetaDatabase>();
         metaDb.RegisterUser("backfill-device", accountId);
-        var freezeAttempted =
-            new TaskCompletionSource(
-                TaskCreationOptions.RunContinuationsAsynchronously);
-        metaDb.PublicReadFreezeWriteTestHook =
-            () => freezeAttempted.TrySetResult();
+        var publicationId =
+            metaDb.GetPublicationPointerState()
+                .CurrentPublicationId
+            ?? 1;
 
         using var requestCancellation =
             new CancellationTokenSource();
@@ -3302,20 +3301,30 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         await historyStarted.Task.WaitAsync(
             TimeSpan.FromSeconds(5));
 
-        var freezeTask = Task.Run(
-            () => metaDb.SetPublicReadFreeze(
-                true,
-                reason: freezeReason));
-        await freezeAttempted.Task.WaitAsync(
-            TimeSpan.FromSeconds(5));
+        var maintenanceTask =
+            metaDb.AcquireMaxScoreMaintenanceLeaseAsync(
+                publicationId);
         await Task.Delay(150);
-        Assert.False(freezeTask.IsCompleted);
+        Assert.False(maintenanceTask.IsCompleted);
+        Assert.False(
+            metaDb.GetPublicReadFreezeState()
+                .IsFrozen);
 
         requestCancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             async () => await responseTask);
-        await freezeTask.WaitAsync(
-            TimeSpan.FromSeconds(5));
+        await using (var maintenanceLease =
+                     await maintenanceTask.WaitAsync(
+                         TimeSpan.FromSeconds(5)))
+        {
+            using var ambientLease =
+                maintenanceLease.EnterAmbientScope();
+            metaDb.SetPublicReadFreeze(
+                true,
+                reason: freezeReason);
+            await maintenanceLease
+                .AcquireSourceLocksAsync();
+        }
 
         Assert.True(
             metaDb.GetPublicReadFreezeState()
@@ -3332,7 +3341,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(1, history.CallCount);
         Assert.Empty(metaDb.GetScoreHistory(accountId));
 
-        metaDb.PublicReadFreezeWriteTestHook = null;
         metaDb.SetPublicReadFreeze(
             false,
             reason: freezeReason);

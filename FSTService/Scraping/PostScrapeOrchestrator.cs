@@ -77,6 +77,8 @@ public sealed class PostScrapeOrchestrator
     private readonly IPostScrapePhaseFaultInjector? _phaseFaultInjector;
     private readonly WorkerStatusPublisher? _workerStatus;
     private readonly DurablePhaseProgressSink? _phaseProgress;
+    private readonly RegistrationMutationCoordinator
+        _registrationMutations;
 
     public PostScrapeOrchestrator(
         GlobalLeaderboardPersistence persistence,
@@ -101,6 +103,8 @@ public sealed class PostScrapeOrchestrator
         BandLeaderboardPersistence bandPersistence,
         IOptions<ScraperOptions> options,
         ILogger<PostScrapeOrchestrator> log,
+        RegistrationMutationCoordinator
+            registrationMutations,
         BandSearchProjectionBuilder? bandSearchProjectionBuilder,
         RegisteredBandProcessingOrchestrator? registeredBandProcessingOrchestrator = null,
         RegisteredPlayerBandDiscoveryOrchestrator? registeredPlayerBandDiscoveryOrchestrator = null,
@@ -154,6 +158,7 @@ public sealed class PostScrapeOrchestrator
         _phaseFaultInjector = phaseFaultInjector;
         _workerStatus = workerStatus;
         _phaseProgress = phaseProgress;
+        _registrationMutations = registrationMutations;
     }
 
     /// <summary>
@@ -2458,6 +2463,9 @@ public sealed class PostScrapeOrchestrator
             if (ctx.RegisteredIds.Count == 0)
                 return new SongProcessingMachine.MachineResult();
 
+            await using var registrationLease =
+                await _registrationMutations
+                    .AcquireLeaseAsync(refreshCt);
             var chartedSongIds = ctx.ScrapeRequests
                 .Select(static request => request.SongId)
                 .Distinct(StringComparer.Ordinal)

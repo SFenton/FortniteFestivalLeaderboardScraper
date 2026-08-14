@@ -20,21 +20,49 @@ public sealed class RegistrationMutationCoordinator
 
     public IRegistrationMutationLease AcquireLease(
         CancellationToken ct = default)
+        => AcquireLeaseAsync(ct)
+            .GetAwaiter()
+            .GetResult();
+
+    public Task<IRegistrationMutationLease>
+        AcquireLeaseAsync(CancellationToken ct = default)
+        => AcquireLeaseCoreAsync(
+            refreshPathAdmission: true,
+            ct);
+
+    public Task<IRegistrationMutationLease>
+        AcquireWriteLeaseAsync(
+            CancellationToken ct = default)
+        => AcquireLeaseCoreAsync(
+            refreshPathAdmission: false,
+            ct);
+
+    private async Task<IRegistrationMutationLease>
+        AcquireLeaseCoreAsync(
+            bool refreshPathAdmission,
+            CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        var lease = _metaDatabase.AcquireRegistrationMutationLease();
+        var lease =
+            await _metaDatabase
+                .AcquireRegistrationMutationLeaseAsync(ct);
         try
         {
             ct.ThrowIfCancellationRequested();
-            _pathStore.InvalidateCachedState();
-            _instrumentSupportCache.InvalidateSongInstrumentSupport();
-            _instrumentSupportCache.RefreshSongInstrumentSupport();
+            if (refreshPathAdmission)
+            {
+                _pathStore.InvalidateCachedState();
+                _instrumentSupportCache
+                    .InvalidateSongInstrumentSupport();
+                _instrumentSupportCache
+                    .RefreshSongInstrumentSupport();
+            }
             ct.ThrowIfCancellationRequested();
             return lease;
         }
         catch
         {
-            lease.Dispose();
+            await lease.DisposeAsync();
             throw;
         }
     }

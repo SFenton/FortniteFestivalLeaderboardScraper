@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: e0ec87d3
+last_verified_commit: eb593898
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -92,16 +92,18 @@ boundaries so it cannot race publication-critical work.
 
 Registration-sync work also observes the durable max-score maintenance freeze.
 The worker reports a pause before invoking a writer, and each backfill/history
-orchestrator entry acquires a shared publication-row registration lease before
-its first account/seasonal lookup or persistence mutation. Immediately after
-acquisition it invalidates path-maxima state and synchronously refreshes the
-singleton scraper's song/instrument support. This covers registration-only
-hosting, including the interval before a publication monitor observes a
-same-publication release. Freeze establishment cannot cross an active lease;
-failed/resumed maintenance remains blocked, cancellation disposes the lease,
-and each polling resume revalidates. Ordinary scrape freezes continue to use
-the existing background-work boundary rather than this max-score-only
-rejection.
+orchestrator entry acquires the shared session advisory mutation gate before
+its first account/seasonal lookup or persistence mutation. Registered-user
+refresh, registered-band discovery/processing, and stale registration pruning
+use the same gate. Immediately after acquisition it invalidates path-maxima
+state and synchronously refreshes the singleton scraper's song/instrument
+support. The gate holds no transaction, so long Epic/history waits cannot be
+expired by `idle_in_transaction_session_timeout`. This covers
+registration-only hosting, including the interval before a publication monitor
+observes a same-publication release. Exclusive maintenance admission waits for
+active holders, blocks later holders, and remains fail-closed across
+cancellation/resume. Ordinary scrape freezes continue to use the existing
+background-work boundary rather than this max-score-only rejection.
 
 Optimal-path generation is a separate coordinated workload. Automatic path
 generation remains disabled by default and selects only pending songs; the
@@ -112,8 +114,9 @@ remain sequential and resumable. See [Path generation](path-generation.md).
 Max-score correction is a separate CLI-only one-shot mode. It registers no
 hosted scraper/background services and requires the real `fstworker` offline.
 Stage shares the path-generation admission lock without promoting. Plan/apply
-take the path-generation lock before the global publication lock. Apply holds
-solo source and band-member-stat share locks and rechecks that the worker
+take the exclusive mutation gate before the path-generation and global
+publication locks. Apply establishes or revalidates the freeze before taking
+solo source and band-member-stat share locks, then rechecks that the worker
 remains offline around each mutable phase. Maintenance ranking mode suppresses
 `WorkerStatusPublisher`, rebuilds changed solo instruments plus aggregate
 dependencies, recalculates target-song band validity, refreshes affected band

@@ -266,12 +266,15 @@ public static partial class ApiEndpoints
 
         // ─── Web tracking: register + backfill for web-viewed players ────
 
-        app.MapPost("/api/player/{accountId}/track", (
+        app.MapPost("/api/player/{accountId}/track", async (
             string accountId,
             IMetaDatabase metaDb,
             FestivalService festivalService,
             UserSyncProgressTracker syncTracker,
-            ILoggerFactory loggerFactory) =>
+            RegistrationMutationCoordinator registrationMutations,
+            ILoggerFactory loggerFactory,
+            HttpContext httpContext,
+            CancellationToken ct) =>
         {
             var log = loggerFactory.CreateLogger("FSTService.Api.PlayerTrack");
 
@@ -283,63 +286,82 @@ public static partial class ApiEndpoints
             if (displayName is null)
                 return Results.NotFound(new { error = "Unknown account." });
 
-            // Register with a synthetic device ID for web tracking
-            const string webDeviceId = "web-tracker";
-            metaDb.RegisterUser(webDeviceId, accountId);
-            metaDb.RegisterKnownBandsForAccountActivity(accountId);
-
-            // Enqueue for backfill if missing, retryable, or completed against an older/smaller catalog.
-            var existingStatus = metaDb.GetBackfillStatus(accountId);
-            var existingHistory = metaDb.GetHistoryReconStatus(accountId);
-            var existingDisplay = existingStatus is null
-                ? null
-                : metaDb.GetBackfillSongProgress(
-                    accountId,
-                    existingStatus.SongsChecked,
-                    existingStatus.TotalSongsToCheck);
-            var estimatedPairs = Math.Max(festivalService.Songs.Count, 200)
-                * GlobalLeaderboardScraper.AllInstruments.Count;
-            var completedAgainstSmallerCatalog =
-                existingStatus?.Status == "complete"
-                && existingStatus.TotalSongsToCheck < estimatedPairs;
-            var backgroundRefresh = completedAgainstSmallerCatalog
-                || BackfillSyncClassification.IsBackgroundRefresh(
-                    existingStatus,
-                    existingHistory,
-                    existingDisplay);
-            bool backfillKicked = false;
-            bool syncDeferred = false;
-            if (existingStatus is null
-                || existingStatus.Status is "error" or "deferred"
-                || completedAgainstSmallerCatalog)
+            try
             {
-                syncDeferred = true;
-                metaDb.DeferBackfill(
+                await using var registrationLease =
+                    await registrationMutations
+                        .AcquireWriteLeaseAsync(ct);
+
+                // Register with a synthetic device ID for web tracking
+                const string webDeviceId = "web-tracker";
+                metaDb.RegisterUser(webDeviceId, accountId);
+                metaDb.RegisterKnownBandsForAccountActivity(accountId);
+
+                // Enqueue for backfill if missing, retryable, or completed against an older/smaller catalog.
+                var existingStatus = metaDb.GetBackfillStatus(accountId);
+                var existingHistory = metaDb.GetHistoryReconStatus(accountId);
+                var existingDisplay = existingStatus is null
+                    ? null
+                    : metaDb.GetBackfillSongProgress(
+                        accountId,
+                        existingStatus.SongsChecked,
+                        existingStatus.TotalSongsToCheck);
+                var estimatedPairs = Math.Max(festivalService.Songs.Count, 200)
+                    * GlobalLeaderboardScraper.AllInstruments.Count;
+                var completedAgainstSmallerCatalog =
+                    existingStatus?.Status == "complete"
+                    && existingStatus.TotalSongsToCheck < estimatedPairs;
+                var backgroundRefresh = completedAgainstSmallerCatalog
+                    || BackfillSyncClassification.IsBackgroundRefresh(
+                        existingStatus,
+                        existingHistory,
+                        existingDisplay);
+                bool backfillKicked = false;
+                bool syncDeferred = false;
+                if (existingStatus is null
+                    || existingStatus.Status is "error" or "deferred"
+                    || completedAgainstSmallerCatalog)
+                {
+                    syncDeferred = true;
+                    metaDb.DeferBackfill(
+                        accountId,
+                        estimatedPairs,
+                        backgroundRefresh
+                            ? BackfillDeferredReasons.CatalogRefreshQueue
+                            : BackfillDeferredReasons.WorkerQueue);
+                    log.LogInformation(
+                        backgroundRefresh
+                            ? "Queued worker-owned background catalog refresh for tracked account {AccountId}."
+                            : "Queued worker-owned low-priority backfill for tracked account {AccountId}.",
+                        accountId);
+                }
+
+                var status = metaDb.GetBackfillStatus(accountId);
+                return Results.Ok(new
+                {
                     accountId,
-                    estimatedPairs,
-                    backgroundRefresh
-                        ? BackfillDeferredReasons.CatalogRefreshQueue
-                        : BackfillDeferredReasons.WorkerQueue);
-                log.LogInformation(
-                    backgroundRefresh
-                        ? "Queued worker-owned background catalog refresh for tracked account {AccountId}."
-                        : "Queued worker-owned low-priority backfill for tracked account {AccountId}.",
-                    accountId);
+                    displayName,
+                    trackingStarted = true,
+                    backfillStatus = status?.Status ?? "pending",
+                    backfillKicked,
+                    syncDeferred,
+                    backgroundRefresh = syncDeferred && backgroundRefresh,
+                    deferredReason = status?.DeferredReason,
+                    pendingRankUpdate = status?.RankingsPending ?? false,
+                });
             }
-
-            var status = metaDb.GetBackfillStatus(accountId);
-            return Results.Ok(new
+            catch (RegistrationMutationBlockedException ex)
             {
-                accountId,
-                displayName,
-                trackingStarted = true,
-                backfillStatus = status?.Status ?? "pending",
-                backfillKicked,
-                syncDeferred,
-                backgroundRefresh = syncDeferred && backgroundRefresh,
-                deferredReason = status?.DeferredReason,
-                pendingRankUpdate = status?.RankingsPending ?? false,
-            });
+                httpContext.Response.Headers.CacheControl =
+                    "no-store";
+                httpContext.Response.Headers["Retry-After"] =
+                    "30";
+                return Results.Problem(
+                    title: "Registration temporarily unavailable",
+                    detail: ex.Message,
+                    statusCode:
+                        StatusCodes.Status503ServiceUnavailable);
+            }
         })
         .WithTags("Players")
         .RequireRateLimiting("public");

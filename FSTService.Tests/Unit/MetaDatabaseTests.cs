@@ -4819,6 +4819,16 @@ public sealed class MetaDatabaseTests : IDisposable
             ["acct1", "acct2"]);
         Db.RegisterUser("web-tracker", "acct1");
         Db.EnqueueBackfill("acct1", 9);
+        Db.AdmitHistoryRecon(
+            "acct1",
+            1,
+            HistoryReconstructor.CurrentReconstructionVersion,
+            "window-fingerprint");
+        Db.EnsureRegisteredBandProcessingStatus(
+            MetaDatabase.WebBandTrackerDeviceId,
+            "Band_Duets",
+            "acct1:acct2",
+            1);
         var reason =
             PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
             + new string('a', 64);
@@ -4864,6 +4874,61 @@ public sealed class MetaDatabaseTests : IDisposable
                     "acct1",
                     9,
                     "worker_backfill_retry"))
+                .SqlState);
+        Assert.Equal(
+            "55000",
+            Assert.Throws<PostgresException>(() =>
+                Db.StartHistoryRecon(
+                    "acct1",
+                    HistoryReconstructor
+                        .CurrentReconstructionVersion,
+                    "window-fingerprint"))
+                .SqlState);
+        Assert.Equal(
+            "55000",
+            Assert.Throws<PostgresException>(() =>
+                Db.UpdateRegisteredBandProcessingProgress(
+                    MetaDatabase.WebBandTrackerDeviceId,
+                    "Band_Duets",
+                    "acct1:acct2",
+                    1,
+                    0,
+                    1))
+                .SqlState);
+        Assert.Equal(
+            "55000",
+            Assert.Throws<PostgresException>(() =>
+                Db.MarkRegisteredBandLookupChecked(
+                    MetaDatabase.WebBandTrackerDeviceId,
+                    "Band_Duets",
+                    "acct1:acct2",
+                    "song-a",
+                    "alltime",
+                    0,
+                    entryFound: false))
+                .SqlState);
+        Assert.Equal(
+            "55000",
+            Assert.Throws<PostgresException>(() =>
+                Db.MarkRegisteredPlayerBandDiscoveryChecked(
+                    "acct1",
+                    "song-a",
+                    "Band_Duets",
+                    "alltime",
+                    0,
+                    entryFound: false))
+                .SqlState);
+        Assert.Equal(
+            "55000",
+            Assert.Throws<PostgresException>(() =>
+                Db.UpsertRegisteredUserRefreshScopes(
+                    0,
+                    [
+                        new SoloCurrentProjectionScopeKey(
+                            "song-a",
+                            "Solo_Guitar"),
+                    ],
+                    DateTime.UtcNow))
                 .SqlState);
 
         Assert.DoesNotContain(
@@ -4915,21 +4980,361 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
-    public async Task RegistrationMutationLease_delays_maintenance_freeze_until_batch_releases()
+    public async Task RegistrationMutationGate_survives_reduced_idle_transaction_timeout()
     {
-        var reason =
-            PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
-            + new string('c', 64);
-        var lease = Db.AcquireRegistrationMutationLease();
+        var connectionString =
+            new NpgsqlConnectionStringBuilder(
+                DataSource.ConnectionString);
+        var containerConnectionString =
+            new NpgsqlConnectionStringBuilder(
+                SharedPostgresContainer.ConnectionString);
+        connectionString.Password =
+            containerConnectionString.Password;
+        connectionString.Options =
+            "-c idle_in_transaction_session_timeout=100ms";
+        connectionString.MinPoolSize = 0;
+        connectionString.MaxPoolSize = 8;
+        using var timeoutDataSource =
+            NpgsqlDataSource.Create(
+                connectionString.ConnectionString);
+        using var timeoutDb = new MetaDatabase(
+            timeoutDataSource,
+            Substitute.For<ILogger<MetaDatabase>>());
 
-        var freezeTask = Task.Run(
-            () => Db.SetPublicReadFreeze(true, reason: reason));
-        await Task.Delay(100);
-        Assert.False(freezeTask.IsCompleted);
+        await using var registrationLease =
+            await timeoutDb
+                .AcquireRegistrationMutationLeaseAsync();
+        var maintenanceTask =
+            timeoutDb.AcquireMaxScoreMaintenanceLeaseAsync(1);
 
-        lease.Dispose();
-        await freezeTask.WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.Delay(350);
+
+        Assert.False(maintenanceTask.IsCompleted);
+        using (var probe =
+               timeoutDataSource.OpenConnection())
+        using (var state = probe.CreateCommand())
+        {
+            state.CommandText = """
+                SELECT state,
+                       xact_start IS NULL
+                FROM pg_stat_activity
+                WHERE datname = current_database()
+                  AND application_name =
+                      'fst-registration-mutation'
+                ORDER BY backend_start DESC
+                LIMIT 1
+                """;
+            using var reader = state.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.Equal("idle", reader.GetString(0));
+            Assert.True(reader.GetBoolean(1));
+        }
+
+        await registrationLease.DisposeAsync();
+        await using var maintenanceLease =
+            await maintenanceTask.WaitAsync(
+                TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task MutationGate_orders_registration_freeze_source_locks_cancellation_and_resume()
+    {
+        const long publicationId = 501;
+        const string accountId = "active-registration";
+        const string canceledAccountId =
+            "canceled-registration";
+        const string resumedAccountId =
+            "resumed-registration";
+        var freezeReason =
+            PublicReadFreezeState
+                .MaxScoreMaintenanceReasonPrefix
+            + new string('d', 64);
+        var registrationStarted =
+            new TaskCompletionSource(
+                TaskCreationOptions
+                    .RunContinuationsAsynchronously);
+        var releaseRegistration =
+            new TaskCompletionSource(
+                TaskCreationOptions
+                    .RunContinuationsAsynchronously);
+
+        var registrationTask = Task.Run(async () =>
+        {
+            await using var registrationLease =
+                await Db
+                    .AcquireRegistrationMutationLeaseAsync();
+            Assert.True(
+                Db.RegisterUser(
+                    "active-device",
+                    accountId));
+            Db.EnqueueBackfill(accountId, 1);
+            Db.StartBackfill(accountId);
+            var historyRevision =
+                Db.AdmitHistoryRecon(
+                    accountId,
+                    1,
+                    HistoryReconstructor
+                        .CurrentReconstructionVersion,
+                    "window-fingerprint");
+            Db.StartHistoryRecon(
+                accountId,
+                HistoryReconstructor
+                    .CurrentReconstructionVersion,
+                "window-fingerprint",
+                historyRevision);
+            WriteScoreAndHistory(100_000, 1);
+            registrationStarted.TrySetResult();
+
+            await releaseRegistration.Task;
+            WriteScoreAndHistory(101_000, 2);
+            Db.MarkBackfillSongChecked(
+                accountId,
+                "song-a",
+                "Solo_Guitar",
+                entryFound: true);
+            Db.CompleteBackfill(accountId);
+            Db.MarkHistoryReconSongProcessed(
+                accountId,
+                "song-a",
+                "Solo_Guitar",
+                HistoryReconstructor
+                    .CurrentReconstructionVersion,
+                "window-fingerprint",
+                historyRevision);
+            Db.CompleteHistoryRecon(
+                accountId,
+                HistoryReconstructor
+                    .CurrentReconstructionVersion,
+                "window-fingerprint",
+                historyRevision);
+        });
+        await registrationStarted.Task.WaitAsync(
+            TimeSpan.FromSeconds(5));
+
+        var maintenanceTask =
+            Db.AcquireMaxScoreMaintenanceLeaseAsync(
+                publicationId);
+        await Task.Delay(150);
+
+        Assert.False(maintenanceTask.IsCompleted);
+        Assert.False(
+            Db.GetPublicReadFreezeState().IsFrozen);
+        Assert.Empty(ReadMaxScoreSourceLocks());
+
+        releaseRegistration.TrySetResult();
+        await registrationTask.WaitAsync(
+            TimeSpan.FromSeconds(5));
+
+        await using (var maintenanceLease =
+                     await maintenanceTask.WaitAsync(
+                         TimeSpan.FromSeconds(5)))
+        {
+            using var ambientLease =
+                maintenanceLease.EnterAmbientScope();
+            Assert.False(
+                Db.GetPublicReadFreezeState().IsFrozen);
+
+            Db.SetPublicReadFreeze(
+                true,
+                reason: freezeReason);
+            await maintenanceLease
+                .AcquireSourceLocksAsync();
+
+            Assert.True(
+                Db.GetPublicReadFreezeState()
+                    .MaxScoreMaintenance);
+            Assert.Equal(
+                [
+                    "band_member_stats",
+                    "leaderboard_entries",
+                    "leaderboard_entries_overlay",
+                ],
+                ReadMaxScoreSourceLocks());
+
+            using var cancellation =
+                new CancellationTokenSource();
+            var canceledRegistration = Task.Run(async () =>
+            {
+                await using var registrationLease =
+                    await Db
+                        .AcquireRegistrationMutationLeaseAsync(
+                            cancellation.Token);
+                Db.RegisterUser(
+                    "canceled-device",
+                    canceledAccountId);
+            });
+            await Task.Delay(150);
+            Assert.False(
+                canceledRegistration.IsCompleted);
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<
+                OperationCanceledException>(
+                async () =>
+                    await canceledRegistration.WaitAsync(
+                        TimeSpan.FromSeconds(5)));
+            Assert.False(
+                Db.IsAccountRegistered(
+                    canceledAccountId));
+        }
+
         Assert.True(Db.AreRegistrationMutationsBlocked());
+        await Assert.ThrowsAsync<
+            RegistrationMutationBlockedException>(
+            () => Db
+                .AcquireRegistrationMutationLeaseAsync());
+
+        Task resumedRegistration;
+        await using (var resumeLease =
+                     await Db
+                         .AcquireMaxScoreMaintenanceLeaseAsync(
+                             publicationId))
+        {
+            using var ambientLease =
+                resumeLease.EnterAmbientScope();
+            Assert.Equal(
+                freezeReason,
+                Db.GetPublicReadFreezeState().Reason);
+            await resumeLease.AcquireSourceLocksAsync();
+            Db.SetPublicReadFreeze(
+                false,
+                reason: freezeReason);
+
+            resumedRegistration = Task.Run(async () =>
+            {
+                await using var registrationLease =
+                    await Db
+                        .AcquireRegistrationMutationLeaseAsync();
+                Db.RegisterUser(
+                    "resumed-device",
+                    resumedAccountId);
+            });
+            await Task.Delay(150);
+            Assert.False(
+                resumedRegistration.IsCompleted);
+            Assert.False(
+                Db.IsAccountRegistered(
+                    resumedAccountId));
+        }
+
+        await resumedRegistration.WaitAsync(
+            TimeSpan.FromSeconds(5));
+        Assert.True(
+            Db.IsAccountRegistered(resumedAccountId));
+        Assert.Equal(
+            "complete",
+            Db.GetBackfillStatus(accountId)?.Status);
+        Assert.Equal(
+            "complete",
+            Db.GetHistoryReconStatus(accountId)?.Status);
+        Assert.Equal(
+            2,
+            Db.GetScoreHistory(accountId).Count);
+
+        void WriteScoreAndHistory(
+            int score,
+            int sequence)
+        {
+            using var connection =
+                DataSource.OpenConnection();
+            using var command =
+                connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO leaderboard_entries (
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    rank,
+                    source,
+                    first_seen_at,
+                    last_updated_at)
+                VALUES (
+                    'song-a',
+                    'Solo_Guitar',
+                    @accountId,
+                    @score,
+                    1,
+                    'backfill',
+                    now(),
+                    now())
+                ON CONFLICT (
+                    song_id,
+                    instrument,
+                    account_id)
+                DO UPDATE SET
+                    score = EXCLUDED.score,
+                    last_updated_at = now();
+
+                INSERT INTO score_history (
+                    song_id,
+                    instrument,
+                    account_id,
+                    old_score,
+                    new_score,
+                    new_rank,
+                    changed_at,
+                    score_achieved_at)
+                VALUES (
+                    'song-a',
+                    'Solo_Guitar',
+                    @accountId,
+                    @score - 1,
+                    @score,
+                    1,
+                    now(),
+                    @achievedAt);
+                """;
+            command.Parameters.AddWithValue(
+                "accountId",
+                accountId);
+            command.Parameters.AddWithValue(
+                "score",
+                score);
+            command.Parameters.AddWithValue(
+                "achievedAt",
+                new DateTime(
+                    2026,
+                    8,
+                    sequence,
+                    0,
+                    0,
+                    0,
+                    DateTimeKind.Utc));
+            command.ExecuteNonQuery();
+        }
+
+        string[] ReadMaxScoreSourceLocks()
+        {
+            using var connection =
+                DataSource.OpenConnection();
+            using var command =
+                connection.CreateCommand();
+            command.CommandText = """
+                SELECT COALESCE(
+                    array_agg(
+                        relation.relname
+                        ORDER BY relation.relname),
+                    ARRAY[]::text[])
+                FROM pg_locks held
+                JOIN pg_class relation
+                  ON relation.oid = held.relation
+                JOIN pg_stat_activity activity
+                  ON activity.pid = held.pid
+                WHERE activity.datname =
+                        current_database()
+                  AND activity.application_name =
+                        'fst-max-score-maintenance'
+                  AND held.granted
+                  AND held.mode = 'ShareLock'
+                  AND relation.relname = ANY(
+                      ARRAY[
+                          'leaderboard_entries_overlay',
+                          'leaderboard_entries',
+                          'band_member_stats'])
+                """;
+            return (string[])(command.ExecuteScalar()
+                ?? Array.Empty<string>());
+        }
     }
 
     [Fact]

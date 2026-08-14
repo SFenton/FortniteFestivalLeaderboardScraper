@@ -110,6 +110,8 @@ public sealed class RegisteredBandProcessingOrchestrator
     private readonly ScraperOptions _options;
     private readonly ILogger<RegisteredBandProcessingOrchestrator> _log;
     private readonly SongMachineApiLookupRunner _lookupRunner;
+    private readonly RegistrationMutationCoordinator
+        _registrationMutations;
 
     internal RegisteredBandProcessingOrchestrator(
         IMetaDatabase metaDb,
@@ -118,6 +120,7 @@ public sealed class RegisteredBandProcessingOrchestrator
         ScrapeProgressTracker progress,
         IOptions<ScraperOptions> options,
         ILogger<RegisteredBandProcessingOrchestrator> log,
+        RegistrationMutationCoordinator registrationMutations,
         ResilientHttpExecutor? executor = null)
     {
         _metaDb = metaDb;
@@ -127,6 +130,7 @@ public sealed class RegisteredBandProcessingOrchestrator
         _options = options.Value;
         _log = log;
         _lookupRunner = new SongMachineApiLookupRunner(executor, progress);
+        _registrationMutations = registrationMutations;
     }
 
     public async Task<RegisteredBandProcessingResult> RunAsync(
@@ -142,6 +146,9 @@ public sealed class RegisteredBandProcessingOrchestrator
         if (songIds.Count == 0)
             return RegisteredBandProcessingResult.Empty;
 
+        await using var registrationLease =
+            await _registrationMutations
+                .AcquireLeaseAsync(ct);
         var registeredBands = _metaDb.GetRegisteredBands();
         if (registeredBands.Count == 0)
             return RegisteredBandProcessingResult.Empty;

@@ -293,8 +293,9 @@ public static partial class ApiEndpoints
 
             try
             {
-                using var registrationLease =
-                    registrationMutations.AcquireLease(ct);
+                await using var registrationLease =
+                    await registrationMutations
+                        .AcquireLeaseAsync(ct);
 
                 // ── Step 1: Backfill missing scores ──
                 var found = await backfiller.BackfillAccountAsync(

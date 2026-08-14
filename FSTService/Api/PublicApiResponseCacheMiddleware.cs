@@ -1,4 +1,5 @@
 using FSTService.Persistence;
+using FSTService.Scraping;
 
 namespace FSTService.Api;
 
@@ -109,17 +110,21 @@ public sealed class PublicApiResponseCacheMiddleware
                     telemetry.Record(context, PublicApiCacheOutcome.Hit);
                 context.Response.Headers["X-FST-Public-Cache"] = "hit";
                 await cachedResult.ExecuteAsync(context);
-                SelectedProfileActivityMiddleware
-                    .RecordActivityIfNeeded(
+                await SelectedProfileActivityMiddleware
+                    .RecordActivityIfNeededAsync(
                         context,
                         metaDb,
+                        context.RequestServices
+                            .GetService<
+                                RegistrationMutationCoordinator>(),
                         context.RequestServices
                             .GetService<
                                 Microsoft.Extensions.Options
                                     .IOptions<ScraperOptions>>()
                             ?.Value.RolloutReadOnlyStartup
                         == true,
-                        gate.GetState().MaxScoreMaintenance);
+                        gate.GetState().MaxScoreMaintenance,
+                        context.RequestAborted);
                 return;
             }
 

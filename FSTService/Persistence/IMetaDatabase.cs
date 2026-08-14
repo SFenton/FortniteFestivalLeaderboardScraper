@@ -174,6 +174,9 @@ public interface IMetaDatabase : IDisposable
     List<string> GetRegisteredAccountIdsForBandDiscovery();
     bool AreRegistrationMutationsBlocked();
     IRegistrationMutationLease AcquireRegistrationMutationLease();
+    Task<IRegistrationMutationLease>
+        AcquireRegistrationMutationLeaseAsync(
+            CancellationToken ct = default);
     bool IsAccountRegistered(string accountId);
     bool RegisterUser(string deviceId, string accountId);
     bool UnregisterUser(string deviceId, string accountId);
@@ -383,10 +386,13 @@ public interface IMetaDatabase : IDisposable
         bool requireCurrentPublication);
     IDisposable AcquireCurrentPublicationMaintenanceLease(
         long publicationId);
-    IDisposable AcquireMaxScoreMaintenanceLease(
-        long publicationId)
-        => throw new NotSupportedException(
-            "Max-score maintenance leases are not supported by this metadata store.");
+    Task<IMaxScoreMaintenanceLease>
+        AcquireMaxScoreMaintenanceLeaseAsync(
+            long publicationId,
+            CancellationToken ct = default)
+        => Task.FromException<IMaxScoreMaintenanceLease>(
+            new NotSupportedException(
+                "Max-score maintenance leases are not supported by this metadata store."));
     void SwapCachedResponsesFromStagingAndReleaseMaxScoreMaintenance(
         long publicationId,
         long publishedScrapeId,

@@ -122,6 +122,8 @@ public sealed class ScraperWorker : BackgroundService
     private readonly NotificationService _notifications;
     private readonly DeferredRetentionMaintenanceRunner? _deferredRetentionMaintenance;
     private readonly WorkerStatusPublisher? _workerStatus;
+    private readonly RegistrationMutationCoordinator
+        _registrationMutations;
     private readonly IOptions<ScraperOptions> _options;
     private readonly PublicationCommitOptions
         _publicationCommitOptions;
@@ -162,6 +164,8 @@ public sealed class ScraperWorker : BackgroundService
         IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> jsonOptions,
         IHostApplicationLifetime lifetime,
         ILogger<ScraperWorker> log,
+        RegistrationMutationCoordinator
+            registrationMutations,
         DeferredRetentionMaintenanceRunner? deferredRetentionMaintenance = null,
         WorkerStatusPublisher? workerStatus = null,
         IOptions<PublicationCommitOptions>?
@@ -189,6 +193,7 @@ public sealed class ScraperWorker : BackgroundService
         _notifications = notifications;
         _deferredRetentionMaintenance = deferredRetentionMaintenance;
         _workerStatus = workerStatus;
+        _registrationMutations = registrationMutations;
         _options = options;
         _publicationCommitOptions =
             publicationCommitOptions?.Value
@@ -765,7 +770,9 @@ public sealed class ScraperWorker : BackgroundService
                 resolvedPhases.HasFlag(ScrapePhase.SoloScrape)
                 || resolvedPhases.HasFlag(ScrapePhase.BandScrape);
 
-            PruneStaleWebRegistrationsIfEligible(opts);
+            await PruneStaleWebRegistrationsIfEligibleAsync(
+                opts,
+                ct);
 
             // Stale precomputed data (from last scrape) is served during the scrape pass.
             // PrecomputeAllAsync at post-scrape overwrites entries atomically, so we don't
@@ -1932,7 +1939,9 @@ public sealed class ScraperWorker : BackgroundService
         }
     }
 
-    private void PruneStaleWebRegistrationsIfEligible(ScraperOptions opts)
+    private async Task PruneStaleWebRegistrationsIfEligibleAsync(
+        ScraperOptions opts,
+        CancellationToken ct)
     {
         var now = DateTime.UtcNow;
         if (now - _serviceStartedAtUtc < WebRegistrationStartupProtection)
@@ -1940,6 +1949,9 @@ public sealed class ScraperWorker : BackgroundService
 
         var retentionWindow = TimeSpan.FromDays(Math.Max(1, opts.WebRegistrationRetentionDays));
         var staleBeforeUtc = now - retentionWindow;
+        await using var registrationLease =
+            await _registrationMutations
+                .AcquireWriteLeaseAsync(ct);
         var pruned = _persistence.Meta.PruneStaleWebRegistrations(staleBeforeUtc);
         if (pruned > 0)
         {

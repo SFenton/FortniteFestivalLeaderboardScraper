@@ -7,11 +7,13 @@ public static partial class ApiEndpoints
 {
     public static void MapBandSyncEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/bands/{bandType}/{teamKey}/sync-status", (
+        app.MapGet("/api/bands/{bandType}/{teamKey}/sync-status", async (
             HttpContext httpContext,
             string bandType,
             string teamKey,
-            IMetaDatabase metaDb) =>
+            IMetaDatabase metaDb,
+            RegistrationMutationCoordinator registrationMutations,
+            CancellationToken ct) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=5";
 
@@ -23,26 +25,51 @@ public static partial class ApiEndpoints
             var normalizedBandType = bandType.Trim();
             var normalizedTeamKey = teamKey.Trim();
             var canonicalBandId = BandIdentity.CreateBandId(normalizedBandType, normalizedTeamKey);
-            var registration = metaDb.RegisterSelectedBandActivity(normalizedBandType, normalizedTeamKey);
-            var status = metaDb.GetRegisteredBandProcessingStatus(MetaDatabase.WebBandTrackerDeviceId, normalizedBandType, normalizedTeamKey);
-
-            return Results.Ok(new
+            try
             {
-                bandId = string.IsNullOrWhiteSpace(registration.BandId) ? canonicalBandId : registration.BandId,
-                bandType = normalizedBandType,
-                teamKey = normalizedTeamKey,
-                isTracked = registration.Registered || status is not null,
-                processing = status is null ? null : new
+                await using var registrationLease =
+                    await registrationMutations
+                        .AcquireWriteLeaseAsync(ct);
+                var registration =
+                    metaDb.RegisterSelectedBandActivity(
+                        normalizedBandType,
+                        normalizedTeamKey);
+                var status =
+                    metaDb.GetRegisteredBandProcessingStatus(
+                        MetaDatabase.WebBandTrackerDeviceId,
+                        normalizedBandType,
+                        normalizedTeamKey);
+
+                return Results.Ok(new
                 {
-                    status = status.Status,
-                    lookupsChecked = status.LookupsChecked,
-                    totalLookupsToCheck = status.TotalLookupsToCheck,
-                    entriesFound = status.EntriesFound,
-                    startedAt = status.StartedAt,
-                    completedAt = status.CompletedAt,
-                    lastResumedAt = status.LastResumedAt,
-                },
-            });
+                    bandId = string.IsNullOrWhiteSpace(registration.BandId) ? canonicalBandId : registration.BandId,
+                    bandType = normalizedBandType,
+                    teamKey = normalizedTeamKey,
+                    isTracked = registration.Registered || status is not null,
+                    processing = status is null ? null : new
+                    {
+                        status = status.Status,
+                        lookupsChecked = status.LookupsChecked,
+                        totalLookupsToCheck = status.TotalLookupsToCheck,
+                        entriesFound = status.EntriesFound,
+                        startedAt = status.StartedAt,
+                        completedAt = status.CompletedAt,
+                        lastResumedAt = status.LastResumedAt,
+                    },
+                });
+            }
+            catch (RegistrationMutationBlockedException ex)
+            {
+                httpContext.Response.Headers.CacheControl =
+                    "no-store";
+                httpContext.Response.Headers["Retry-After"] =
+                    "30";
+                return Results.Problem(
+                    title: "Registration temporarily unavailable",
+                    detail: ex.Message,
+                    statusCode:
+                        StatusCodes.Status503ServiceUnavailable);
+            }
         })
         .WithTags("Bands")
         .RequireRateLimiting("public");

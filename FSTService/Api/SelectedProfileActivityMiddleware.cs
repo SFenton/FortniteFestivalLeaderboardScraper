@@ -1,4 +1,5 @@
 using FSTService.Persistence;
+using FSTService.Scraping;
 using Microsoft.Extensions.Options;
 
 namespace FSTService.Api;
@@ -22,23 +23,32 @@ public sealed class SelectedProfileActivityMiddleware
         var metaDatabase =
             context.RequestServices
                 .GetRequiredService<IMetaDatabase>();
+        var registrationMutations =
+            context.RequestServices
+                .GetRequiredService<
+                    RegistrationMutationCoordinator>();
         var maxScoreMaintenance =
             context.RequestServices
                 .GetService<PublicReadGateService>()
                 ?.GetState()
                 .MaxScoreMaintenance == true;
-        RecordActivityIfNeeded(
+        await RecordActivityIfNeededAsync(
             context,
             metaDatabase,
+            registrationMutations,
             _rolloutReadOnly,
-            maxScoreMaintenance);
+            maxScoreMaintenance,
+            context.RequestAborted);
     }
 
-    internal static void RecordActivityIfNeeded(
+    internal static async Task RecordActivityIfNeededAsync(
         HttpContext context,
         IMetaDatabase metaDatabase,
+        RegistrationMutationCoordinator?
+            registrationMutations,
         bool rolloutReadOnly,
-        bool maxScoreMaintenance = false)
+        bool maxScoreMaintenance = false,
+        CancellationToken ct = default)
     {
         if (rolloutReadOnly
             || maxScoreMaintenance
@@ -58,17 +68,34 @@ public sealed class SelectedProfileActivityMiddleware
             return;
         }
 
-        switch (selection)
+        if (registrationMutations is null)
+            return;
+
+        try
         {
-            case SelectedPlayerSelection player:
-                metaDatabase.TouchWebRegistrationActivity(player.AccountId);
-                break;
-            case SelectedBandSelection band:
-                metaDatabase.RegisterSelectedBandActivity(
-                    band.BandType,
-                    band.TeamKey,
-                    band.BandId);
-                break;
+            await using var registrationLease =
+                await registrationMutations
+                    .AcquireWriteLeaseAsync(ct);
+            switch (selection)
+            {
+                case SelectedPlayerSelection player:
+                    metaDatabase.TouchWebRegistrationActivity(
+                        player.AccountId);
+                    break;
+                case SelectedBandSelection band:
+                    metaDatabase.RegisterSelectedBandActivity(
+                        band.BandType,
+                        band.TeamKey,
+                        band.BandId);
+                    break;
+            }
+        }
+        catch (RegistrationMutationBlockedException)
+        {
+        }
+        catch (OperationCanceledException)
+            when (ct.IsCancellationRequested)
+        {
         }
     }
 }

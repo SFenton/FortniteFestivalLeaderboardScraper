@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-14
-last_verified_commit: e0ec87d3
+last_verified_commit: eb593898
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -133,11 +133,13 @@ Aggregate player scopes intentionally use different formulas:
   `POST /api/backfill/{accountId}`, and
   `GET /api/bands/{bandType}/{teamKey}/sync-status` return `503` with
   `Retry-After` before their registration or score-history side effects. The
-  manual backfill endpoint holds the durable registration lease across both
-  all-time backfill and optional history reconstruction, including
-  cancellation cleanup. Selected-profile headers never touch player activity
-  or register a selected band/member set until maintenance releases the
-  freeze.
+  manual backfill endpoint holds the shared session advisory mutation gate
+  across both all-time backfill and optional history reconstruction, including
+  cancellation cleanup. Player tracking, band sync, and selected-profile
+  activity use the same gate, so an exclusive maintenance holder prevents
+  their writes even before freeze-state caches observe the transition.
+  Selected-profile headers never touch player activity or register a selected
+  band/member set until maintenance releases the gate/freeze.
 - Freeze release invalidates path-maxima, song, and response caches and forces
   a WebSocket same-publication refresh.
 - Operational-live endpoints expose current process/coordination state.

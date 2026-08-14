@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-14
-last_verified_commit: e0ec87d3
+last_verified_commit: eb593898
 sources:
   - FSTService/Program.cs
   - FSTService/HostedWorkerMode.cs
@@ -101,17 +101,20 @@ and cold exact solo leaderboard reads, including leeway requests, return
 While that freeze is active, the public-read gate rejects player tracking,
 manual `POST /api/backfill/{accountId}`, and the registration-changing band
 sync-status route. The manual endpoint also acquires the durable registration
-lease before its first all-time write and holds it through optional history
-reconstruction; a freeze that wins the middleware/lease race returns `503`
-with `Retry-After`, while cancellation disposes the lease. Selected-profile
-activity tracking performs no player touch or band/member registration,
-including when the outer response cache handles the request. When the same
-publication is released, every API process invalidates response caches, the
-path-maxima cache, and `SongsCacheService`, then broadcasts a forced
-publication refresh so browsers do not retain the pre-maintenance maxima.
-Before any later registration lookup, lease acquisition also refreshes only
-path/instrument support synchronously; it does not broadly invalidate API
-caches.
+shared session advisory gate before its first all-time write and holds it
+through optional history reconstruction; player tracking, band sync, and
+selected-profile activity use the same gate around their registration writes.
+A maintenance exclusive waiter drains admitted work and prevents any later
+mutation from starting. A freeze that wins the middleware/gate race returns
+`503` with `Retry-After`, while cancellation safely closes the held/waiting
+session without relying on an idle transaction. Selected-profile activity
+tracking performs no player touch or band/member registration, including when
+the outer response cache handles the request. When the same publication is
+released, every API process invalidates response caches, the path-maxima cache,
+and `SongsCacheService`, then broadcasts a forced publication refresh so
+browsers do not retain the pre-maintenance maxima. Before any later
+registration lookup, gate acquisition also refreshes only path/instrument
+support synchronously; it does not broadly invalidate API caches.
 
 ## Operational progress
 

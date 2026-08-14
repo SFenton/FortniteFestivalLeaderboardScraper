@@ -8,7 +8,7 @@ namespace FSTService.Tests.Unit;
 public sealed class RegistrationMutationCoordinatorTests
 {
     [Fact]
-    public void AcquireLease_RefreshFailureDisposesDurableLease()
+    public async Task AcquireLease_RefreshFailureDisposesDurableLease()
     {
         var metaDatabase = Substitute.For<IMetaDatabase>();
         var pathStore = Substitute.For<IPathDataStore>();
@@ -16,8 +16,10 @@ public sealed class RegistrationMutationCoordinatorTests
             Substitute.For<ISongInstrumentSupportCache>();
         var durableLease =
             Substitute.For<IRegistrationMutationLease>();
-        metaDatabase.AcquireRegistrationMutationLease()
-            .Returns(durableLease);
+        metaDatabase
+            .AcquireRegistrationMutationLeaseAsync(
+                Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(durableLease));
         supportCache
             .When(cache =>
                 cache.RefreshSongInstrumentSupport())
@@ -28,14 +30,14 @@ public sealed class RegistrationMutationCoordinatorTests
             pathStore,
             supportCache);
 
-        Assert.Throws<InvalidOperationException>(
-            () => coordinator.AcquireLease());
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => coordinator.AcquireLeaseAsync());
 
-        durableLease.Received(1).Dispose();
+        await durableLease.Received(1).DisposeAsync();
     }
 
     [Fact]
-    public void AcquireLease_AlreadyCancelledDoesNotAcquireDurableLease()
+    public async Task AcquireLease_AlreadyCancelledDoesNotAcquireDurableLease()
     {
         var metaDatabase = Substitute.For<IMetaDatabase>();
         var coordinator = new RegistrationMutationCoordinator(
@@ -45,10 +47,43 @@ public sealed class RegistrationMutationCoordinatorTests
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
-        Assert.Throws<OperationCanceledException>(
-            () => coordinator.AcquireLease(cts.Token));
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => coordinator.AcquireLeaseAsync(cts.Token));
 
-        metaDatabase.DidNotReceive()
-            .AcquireRegistrationMutationLease();
+        _ = metaDatabase.DidNotReceive()
+            .AcquireRegistrationMutationLeaseAsync(
+                Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AcquireWriteLease_HoldsGateWithoutRefreshingLookupCaches()
+    {
+        var metaDatabase = Substitute.For<IMetaDatabase>();
+        var pathStore = Substitute.For<IPathDataStore>();
+        var supportCache =
+            Substitute.For<ISongInstrumentSupportCache>();
+        var durableLease =
+            Substitute.For<IRegistrationMutationLease>();
+        metaDatabase
+            .AcquireRegistrationMutationLeaseAsync(
+                Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(durableLease));
+        var coordinator = new RegistrationMutationCoordinator(
+            metaDatabase,
+            pathStore,
+            supportCache);
+
+        await using (await coordinator
+                         .AcquireWriteLeaseAsync())
+        {
+            pathStore.DidNotReceive()
+                .InvalidateCachedState();
+            supportCache.DidNotReceive()
+                .InvalidateSongInstrumentSupport();
+            supportCache.DidNotReceive()
+                .RefreshSongInstrumentSupport();
+        }
+
+        await durableLease.Received(1).DisposeAsync();
     }
 }

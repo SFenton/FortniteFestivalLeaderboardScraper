@@ -1,5 +1,6 @@
 using FSTService.Api;
 using FSTService.Persistence;
+using FSTService.Scraping;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -71,6 +72,9 @@ public sealed class RolloutReadOnlyRequestGuardTests
         var services = new ServiceCollection()
             .AddSingleton(metaDatabase)
             .AddSingleton(gate)
+            .AddSingleton(
+                CreateRegistrationMutationCoordinator(
+                    metaDatabase))
             .BuildServiceProvider();
         var middleware = new SelectedProfileActivityMiddleware(
             next: context =>
@@ -245,6 +249,9 @@ public sealed class RolloutReadOnlyRequestGuardTests
     {
         var services = new ServiceCollection()
             .AddSingleton(metaDatabase)
+            .AddSingleton(
+                CreateRegistrationMutationCoordinator(
+                    metaDatabase))
             .BuildServiceProvider();
         return new DefaultHttpContext
         {
@@ -255,5 +262,22 @@ public sealed class RolloutReadOnlyRequestGuardTests
                 Path = path,
             },
         };
+    }
+
+    private static RegistrationMutationCoordinator
+        CreateRegistrationMutationCoordinator(
+            IMetaDatabase metaDatabase)
+    {
+        var lease =
+            Substitute.For<IRegistrationMutationLease>();
+        metaDatabase
+            .AcquireRegistrationMutationLeaseAsync(
+                Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(lease));
+        return new RegistrationMutationCoordinator(
+            metaDatabase,
+            Substitute.For<IPathDataStore>(),
+            Substitute.For<
+                ISongInstrumentSupportCache>());
     }
 }

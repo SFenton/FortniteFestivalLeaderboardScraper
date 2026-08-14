@@ -2745,12 +2745,45 @@ public sealed partial class MetaDatabase : IMetaDatabase
     }
 
     public IRegistrationMutationLease AcquireRegistrationMutationLease()
+        => AcquireRegistrationMutationLeaseAsync(
+                CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+
+    public async Task<IRegistrationMutationLease>
+        AcquireRegistrationMutationLeaseAsync(
+            CancellationToken ct = default)
     {
-        var conn = _ds.OpenConnection();
-        NpgsqlTransaction? tx = null;
+        ct.ThrowIfCancellationRequested();
+        NpgsqlConnection? conn = null;
+        var mutationGateWaitStarted = false;
+        var mutationGateLockAcquired = false;
         try
         {
-            using (var ensure = conn.CreateCommand())
+            conn = await _ds.OpenConnectionAsync(ct);
+            await using (var applicationName =
+                         conn.CreateCommand())
+            {
+                applicationName.CommandTimeout = 5;
+                applicationName.CommandText =
+                    "SELECT set_config('application_name', " +
+                    "'fst-registration-mutation', false)";
+                await applicationName.ExecuteScalarAsync(ct);
+            }
+            await using (var mutationGate =
+                         conn.CreateCommand())
+            {
+                mutationGateWaitStarted = true;
+                mutationGate.CommandTimeout = 0;
+                mutationGate.CommandText =
+                    "SELECT pg_advisory_lock_shared(@lockKey)";
+                mutationGate.Parameters.AddWithValue(
+                    "lockKey",
+                    RegistrationMutationGate.AdvisoryLockKey);
+                await mutationGate.ExecuteScalarAsync(ct);
+                mutationGateLockAcquired = true;
+            }
+            await using (var ensure = conn.CreateCommand())
             {
                 ensure.CommandText = """
                     INSERT INTO scrape_publication_state (
@@ -2761,35 +2794,44 @@ public sealed partial class MetaDatabase : IMetaDatabase
                         now())
                     ON CONFLICT (id) DO NOTHING
                     """;
-                ensure.ExecuteNonQuery();
+                await ensure.ExecuteNonQueryAsync(ct);
             }
-            tx = conn.BeginTransaction(IsolationLevel.ReadCommitted);
-            using var cmd = conn.CreateCommand();
-            cmd.Transaction = tx;
+            await using var cmd = conn.CreateCommand();
             cmd.CommandText = """
                 SELECT public_reads_frozen,
                        public_reads_frozen_reason
                 FROM scrape_publication_state
                 WHERE id = TRUE
-                FOR SHARE
                 """;
-            using var reader = cmd.ExecuteReader();
-            if (!reader.Read())
+            await using var reader =
+                await cmd.ExecuteReaderAsync(ct);
+            if (!await reader.ReadAsync(ct))
                 throw new RegistrationMutationBlockedException();
             var blocked =
                 IsMaxScoreRegistrationFreeze(reader);
-            reader.Close();
+            await reader.CloseAsync();
             if (blocked)
                 throw new RegistrationMutationBlockedException();
 
-            return new PostgresRegistrationMutationLease(
-                conn,
-                tx);
+            return new PostgresRegistrationMutationLease(conn);
         }
         catch
         {
-            tx?.Dispose();
-            conn.Dispose();
+            if (conn is not null)
+            {
+                if (mutationGateLockAcquired)
+                {
+                    await new PostgresRegistrationMutationLease(
+                            conn)
+                        .DisposeAsync();
+                }
+                else
+                {
+                    if (mutationGateWaitStarted)
+                        NpgsqlConnection.ClearPool(conn);
+                    await conn.DisposeAsync();
+                }
+            }
             throw;
         }
     }
@@ -11494,8 +11536,10 @@ public sealed partial class MetaDatabase : IMetaDatabase
         }
     }
 
-    public IDisposable AcquireMaxScoreMaintenanceLease(
-        long publicationId)
+    public async Task<IMaxScoreMaintenanceLease>
+        AcquireMaxScoreMaintenanceLeaseAsync(
+            long publicationId,
+            CancellationToken ct = default)
     {
         if (publicationId <= 0)
         {
@@ -11504,21 +11548,38 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 "Max-score maintenance requires a positive publication ID.");
         }
 
-        var conn = _ds.OpenConnection();
-        NpgsqlTransaction? sourceLockTransaction = null;
+        ct.ThrowIfCancellationRequested();
+        NpgsqlConnection? conn = null;
+        var mutationGateWaitStarted = false;
+        var mutationGateLockAcquired = false;
         var pathLockAcquired = false;
         var publicationLockAcquired = false;
         try
         {
-            using (var applicationName = conn.CreateCommand())
+            conn = await _ds.OpenConnectionAsync(ct);
+            await using (var applicationName =
+                         conn.CreateCommand())
             {
                 applicationName.CommandTimeout = 5;
                 applicationName.CommandText =
                     "SELECT set_config('application_name', " +
                     "'fst-max-score-maintenance', false)";
-                applicationName.ExecuteNonQuery();
+                await applicationName.ExecuteNonQueryAsync(ct);
             }
-            using (var pathLock = conn.CreateCommand())
+            await using (var mutationGate =
+                         conn.CreateCommand())
+            {
+                mutationGateWaitStarted = true;
+                mutationGate.CommandTimeout = 0;
+                mutationGate.CommandText =
+                    "SELECT pg_advisory_lock(@lockKey)";
+                mutationGate.Parameters.AddWithValue(
+                    "lockKey",
+                    RegistrationMutationGate.AdvisoryLockKey);
+                await mutationGate.ExecuteScalarAsync(ct);
+                mutationGateLockAcquired = true;
+            }
+            await using (var pathLock = conn.CreateCommand())
             {
                 pathLock.CommandTimeout = 5;
                 pathLock.CommandText =
@@ -11527,14 +11588,16 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     "lockKey",
                     PathGenerationAdmissionLock.AdvisoryLockKey);
                 pathLockAcquired =
-                    pathLock.ExecuteScalar() is true;
+                    await pathLock.ExecuteScalarAsync(ct)
+                        is true;
                 if (!pathLockAcquired)
                 {
                     throw new InvalidOperationException(
                         "Max-score maintenance is blocked by active path generation.");
                 }
             }
-            using (var publicationLock = conn.CreateCommand())
+            await using (var publicationLock =
+                             conn.CreateCommand())
             {
                 publicationLock.CommandTimeout = 5;
                 publicationLock.CommandText =
@@ -11543,7 +11606,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     "lockKey",
                     PublicationGenerationSchema.AdvisoryLockKey);
                 publicationLockAcquired =
-                    publicationLock.ExecuteScalar() is true;
+                    await publicationLock.ExecuteScalarAsync(ct)
+                        is true;
                 if (!publicationLockAcquired)
                 {
                     throw new InvalidOperationException(
@@ -11551,44 +11615,35 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 }
             }
 
-            sourceLockTransaction = conn.BeginTransaction();
-            using (var timeouts = conn.CreateCommand())
-            {
-                timeouts.Transaction = sourceLockTransaction;
-                timeouts.CommandText = """
-                    SET LOCAL lock_timeout = '5s';
-                    SET LOCAL statement_timeout = '30s';
-                    SET LOCAL idle_in_transaction_session_timeout = 0;
-                    """;
-                timeouts.ExecuteNonQuery();
-            }
-            using (var sourceLocks = conn.CreateCommand())
-            {
-                sourceLocks.Transaction = sourceLockTransaction;
-                sourceLocks.CommandText =
-                    MaxScoreMaintenanceSourceLockSql;
-                sourceLocks.ExecuteNonQuery();
-            }
-
             return new MaxScoreMaintenanceLease(
                 conn,
-                sourceLockTransaction,
                 publicationId);
         }
         catch
         {
-            try
+            if (conn is not null)
             {
-                sourceLockTransaction?.Rollback();
-                sourceLockTransaction?.Dispose();
-                ReleaseMaxScoreMaintenanceLocks(
-                    conn,
-                    pathLockAcquired,
-                    publicationLockAcquired);
-            }
-            finally
-            {
-                conn.Dispose();
+                var clearPool =
+                    mutationGateWaitStarted
+                    && !mutationGateLockAcquired;
+                try
+                {
+                    ReleaseMaxScoreMaintenanceLocks(
+                        conn,
+                        mutationGateLockAcquired,
+                        pathLockAcquired,
+                        publicationLockAcquired);
+                }
+                catch
+                {
+                    clearPool = true;
+                }
+                finally
+                {
+                    if (clearPool)
+                        NpgsqlConnection.ClearPool(conn);
+                    await conn.DisposeAsync();
+                }
             }
             throw;
         }
@@ -12209,15 +12264,18 @@ public sealed partial class MetaDatabase : IMetaDatabase
 
     private static void ReleaseMaxScoreMaintenanceLocks(
         NpgsqlConnection connection,
+        bool mutationGateLockAcquired,
         bool pathLockAcquired,
         bool publicationLockAcquired)
     {
-        if (!pathLockAcquired && !publicationLockAcquired)
+        if (!mutationGateLockAcquired
+            && !pathLockAcquired
+            && !publicationLockAcquired)
             return;
 
         using var unlock = connection.CreateCommand();
         unlock.CommandTimeout = 5;
-        var statements = new List<string>(2);
+        var statements = new List<string>(3);
         if (publicationLockAcquired)
         {
             statements.Add(
@@ -12233,6 +12291,14 @@ public sealed partial class MetaDatabase : IMetaDatabase
             unlock.Parameters.AddWithValue(
                 "pathLockKey",
                 PathGenerationAdmissionLock.AdvisoryLockKey);
+        }
+        if (mutationGateLockAcquired)
+        {
+            statements.Add(
+                "SELECT pg_advisory_unlock(@mutationGateLockKey)");
+            unlock.Parameters.AddWithValue(
+                "mutationGateLockKey",
+                RegistrationMutationGate.AdvisoryLockKey);
         }
         unlock.CommandText = string.Join(";", statements);
         unlock.ExecuteNonQuery();
@@ -12409,26 +12475,75 @@ public sealed partial class MetaDatabase : IMetaDatabase
         }
     }
 
-    private sealed class MaxScoreMaintenanceLease : IDisposable
+    private sealed class MaxScoreMaintenanceLease
+        : IMaxScoreMaintenanceLease
     {
         private NpgsqlConnection? _connection;
         private NpgsqlTransaction? _sourceLockTransaction;
-        private readonly long? _previousTarget;
+        private readonly long _publicationId;
 
         public MaxScoreMaintenanceLease(
             NpgsqlConnection connection,
-            NpgsqlTransaction sourceLockTransaction,
             long publicationId)
         {
             _connection = connection;
-            _sourceLockTransaction = sourceLockTransaction;
-            _previousTarget = PublicationMaintenanceTarget.Value;
-            PublicationMaintenanceTarget.Value = publicationId;
+            _publicationId = publicationId;
+        }
+
+        public IDisposable EnterAmbientScope()
+            => new PublicationMaintenanceAmbientScope(
+                _publicationId);
+
+        public async Task AcquireSourceLocksAsync(
+            CancellationToken ct = default)
+        {
+            if (_sourceLockTransaction is not null)
+                return;
+            var connection = _connection
+                ?? throw new ObjectDisposedException(
+                    nameof(MaxScoreMaintenanceLease));
+            var transaction =
+                await connection.BeginTransactionAsync(ct);
+            try
+            {
+                await using (var timeouts =
+                             connection.CreateCommand())
+                {
+                    timeouts.Transaction = transaction;
+                    timeouts.CommandText = """
+                        SET LOCAL lock_timeout = '5s';
+                        SET LOCAL statement_timeout = '30s';
+                        SET LOCAL idle_in_transaction_session_timeout = 0;
+                        """;
+                    await timeouts.ExecuteNonQueryAsync(ct);
+                }
+                await using (var sourceLocks =
+                             connection.CreateCommand())
+                {
+                    sourceLocks.Transaction = transaction;
+                    sourceLocks.CommandText =
+                        MaxScoreMaintenanceSourceLockSql;
+                    await sourceLocks.ExecuteNonQueryAsync(ct);
+                }
+                _sourceLockTransaction = transaction;
+            }
+            catch
+            {
+                try
+                {
+                    await transaction.RollbackAsync(
+                        CancellationToken.None);
+                }
+                finally
+                {
+                    await transaction.DisposeAsync();
+                }
+                throw;
+            }
         }
 
         public void Dispose()
         {
-            PublicationMaintenanceTarget.Value = _previousTarget;
             var connection = Interlocked.Exchange(ref _connection, null);
             if (connection is null)
                 return;
@@ -12448,12 +12563,13 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 {
                     ReleaseMaxScoreMaintenanceLocks(
                         connection,
+                        mutationGateLockAcquired: true,
                         pathLockAcquired: true,
                         publicationLockAcquired: true);
                 }
                 catch
                 {
-                    // Closing the dedicated session releases both advisory locks.
+                    NpgsqlConnection.ClearPool(connection);
                 }
             }
             finally
@@ -12461,6 +12577,96 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 transaction?.Dispose();
                 connection.Dispose();
             }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            var connection = Interlocked.Exchange(
+                ref _connection,
+                null);
+            if (connection is null)
+                return;
+            var transaction = Interlocked.Exchange(
+                ref _sourceLockTransaction,
+                null);
+            try
+            {
+                if (transaction is not null)
+                {
+                    try
+                    {
+                        await transaction.RollbackAsync(
+                            CancellationToken.None);
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                try
+                {
+                    await using var unlock =
+                        connection.CreateCommand();
+                    unlock.CommandTimeout = 5;
+                    unlock.CommandText = """
+                        SELECT pg_advisory_unlock(
+                            @publicationLockKey);
+                        SELECT pg_advisory_unlock(
+                            @pathLockKey);
+                        SELECT pg_advisory_unlock(
+                            @mutationGateLockKey);
+                        """;
+                    unlock.Parameters.AddWithValue(
+                        "publicationLockKey",
+                        PublicationGenerationSchema
+                            .AdvisoryLockKey);
+                    unlock.Parameters.AddWithValue(
+                        "pathLockKey",
+                        PathGenerationAdmissionLock
+                            .AdvisoryLockKey);
+                    unlock.Parameters.AddWithValue(
+                        "mutationGateLockKey",
+                        RegistrationMutationGate
+                            .AdvisoryLockKey);
+                    await unlock.ExecuteNonQueryAsync(
+                        CancellationToken.None);
+                }
+                catch
+                {
+                    NpgsqlConnection.ClearPool(connection);
+                }
+            }
+            finally
+            {
+                if (transaction is not null)
+                    await transaction.DisposeAsync();
+                await connection.DisposeAsync();
+            }
+        }
+    }
+
+    private sealed class PublicationMaintenanceAmbientScope
+        : IDisposable
+    {
+        private readonly long? _previousTarget;
+        private bool _disposed;
+
+        public PublicationMaintenanceAmbientScope(
+            long publicationId)
+        {
+            _previousTarget =
+                PublicationMaintenanceTarget.Value;
+            PublicationMaintenanceTarget.Value =
+                publicationId;
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+            _disposed = true;
+            PublicationMaintenanceTarget.Value =
+                _previousTarget;
         }
     }
 

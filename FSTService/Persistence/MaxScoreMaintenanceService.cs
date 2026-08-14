@@ -356,9 +356,14 @@ public sealed class MaxScoreMaintenanceService
         MaxScoreMaintenancePlanReport report;
         try
         {
-            using var lease =
-                _metaDatabase.AcquireMaxScoreMaintenanceLease(
-                    manifest.ExpectedPublicationId);
+            await using var lease =
+                await _metaDatabase
+                    .AcquireMaxScoreMaintenanceLeaseAsync(
+                        manifest.ExpectedPublicationId,
+                        ct);
+            using var ambientLease =
+                lease.EnterAmbientScope();
+            await lease.AcquireSourceLocksAsync(ct);
             report = await BuildPlanAsync(
                 manifest,
                 manifestDigest,
@@ -430,9 +435,13 @@ public sealed class MaxScoreMaintenanceService
         MaxScoreMaintenanceApplyReport report;
         try
         {
-            using var lease =
-                _metaDatabase.AcquireMaxScoreMaintenanceLease(
-                    manifest.ExpectedPublicationId);
+            await using var lease =
+                await _metaDatabase
+                    .AcquireMaxScoreMaintenanceLeaseAsync(
+                        manifest.ExpectedPublicationId,
+                        ct);
+            using var ambientLease =
+                lease.EnterAmbientScope();
             var run = await LoadRunAsync(manifestDigest, ct);
             if (run?.Phase == MaxScoreMaintenancePhase.Completed)
             {
@@ -475,6 +484,10 @@ public sealed class MaxScoreMaintenanceService
                         manifestDigest,
                         plan,
                         ct);
+                    await lease.AcquireSourceLocksAsync(ct);
+                    RequireOwnedFreeze(
+                        manifest,
+                        manifestDigest);
                     run = await LoadRequiredRunAsync(
                         manifestDigest,
                         ct);
@@ -485,6 +498,10 @@ public sealed class MaxScoreMaintenanceService
                         run,
                         manifest,
                         normalizedPlanDigest);
+                    RequireOwnedFreeze(
+                        manifest,
+                        manifestDigest);
+                    await lease.AcquireSourceLocksAsync(ct);
                     RequireOwnedFreeze(
                         manifest,
                         manifestDigest);

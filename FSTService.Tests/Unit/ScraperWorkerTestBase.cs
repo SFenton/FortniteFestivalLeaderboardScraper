@@ -208,6 +208,12 @@ public abstract class ScraperWorkerTestBase : IDisposable
                 Substitute.For<ILogger<SoloCurrentProjectionBuilder>>()),
             improvementNotificationOptions,
             Substitute.For<ILogger<ImprovementNotificationRecoveryService>>());
+        var registrationMutations =
+            new RegistrationMutationCoordinator(
+                _persistence.Meta,
+                pathDataStore,
+                Substitute.For<
+                    ISongInstrumentSupportCache>());
 
         var postScrapeOrchestrator = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
@@ -226,6 +232,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             bandPersistence,
             options,
             Substitute.For<ILogger<PostScrapeOrchestrator>>(),
+            registrationMutations,
             null,
             improvementNotifications: improvementNotifications,
             improvementNotificationOptions: improvementNotificationOptions,
@@ -243,10 +250,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _cyclicalMachine, _pool,
             resultProcessor, precomputer,
             new Api.ResponseCacheService(TimeSpan.FromMinutes(5)),
-            new RegistrationMutationCoordinator(
-                _persistence.Meta,
-                pathDataStore,
-                Substitute.For<ISongInstrumentSupportCache>()),
+            registrationMutations,
             Substitute.For<ILogger<BackfillOrchestrator>>());
 
         _shopMetaDb = new FSTService.Persistence.MetaDatabase(
@@ -307,6 +311,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             Options.Create(new Microsoft.AspNetCore.Http.Json.JsonOptions()),
             _lifetime,
             _log,
+            registrationMutations,
             publicationCommitOptions:
                 Options.Create(
                     publicationCommitOptions

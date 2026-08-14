@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: e0ec87d3
+last_verified_commit: eb593898
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -86,8 +86,11 @@ derived rows while retaining the same published scrape/publication ID.
 1. Stage writes complete immutable path directories only.
 2. Plan binds the exact current publication/catalog/path revisions and
    fingerprints published score sources, notification state, and rank history.
-3. Apply acquires path-generation then publication locks, creates a
-   manifest-digest-owned public-read freeze, and persists rollback evidence.
+3. Apply first acquires the exclusive registration mutation advisory gate and
+   waits for active registration/backfill/history lifecycles to drain. It then
+   takes path-generation and publication locks, creates or revalidates the
+   manifest-digest-owned public-read freeze, and only afterward takes source
+   table locks and persists subsequent checkpoints in fixed order.
 4. One transaction promotes every listed song generation. The in-process
    scraper admission cache refreshes immediately. Prior negative backfill
    checks and matching successful history-reconstruction checkpoints are
@@ -116,7 +119,9 @@ derived rows while retaining the same published scrape/publication ID.
    validation requires unchanged rank-history and source fingerprints, exact
    paths/maxima/song stats, rollback coverage, zero visible delivery, and the
    expected staged-cache count.
-8. Cache swap, workflow completion, and freeze release commit atomically.
+8. Cache swap, workflow completion, and freeze release commit atomically while
+   the exclusive mutation gate is still held. No queued registration write can
+   commit between that cache cutover and lease release.
    Service processes invalidate path/song/response and scraper-admission caches
    and force connected clients to refresh the unchanged publication ID.
    Registration lease acquisition independently refreshes path/instrument
@@ -130,11 +135,15 @@ max-score/leeway reads. Player tracking, selected-profile registration
 activity, manual `POST /api/backfill/{accountId}`, and band sync registration
 are paused across resume attempts. Database triggers reject
 registration/backfill scope writes, while registration-only workers and the
-manual all-time/history workflow revalidate and hold a shared publication-row
-lease for their complete mutation lifetime. A freeze that wins the race
-returns `503` before score mutation; normal scrape freezes are unchanged. A
-failure after freeze records a resumable checkpoint and leaves reads and
-registration mutation frozen.
+manual all-time/history workflow, registered-user refresh, registered-band
+discovery/processing, HTTP tracking/activity, and stale-registration pruning
+hold the shared session advisory gate for their complete mutation lifetime.
+The lease has no transaction or publication-row lock and remains valid across
+long external async work under the production idle-transaction timeout. A
+freeze that wins the race returns `503` before score mutation; cancellation
+releases a waiting/held session safely, normal scrape freezes are unchanged,
+and a post-freeze failure leaves reads and registration mutation frozen for
+resume.
 
 ## Publication-aware API and browser
 

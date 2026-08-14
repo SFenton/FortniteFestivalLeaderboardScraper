@@ -2,8 +2,14 @@ using Npgsql;
 
 namespace FSTService.Persistence;
 
-public interface IRegistrationMutationLease : IDisposable
+public interface IRegistrationMutationLease : IDisposable, IAsyncDisposable
 {
+}
+
+public interface IMaxScoreMaintenanceLease : IDisposable, IAsyncDisposable
+{
+    IDisposable EnterAmbientScope();
+    Task AcquireSourceLocksAsync(CancellationToken ct = default);
 }
 
 public sealed class RegistrationMutationBlockedException
@@ -16,36 +22,80 @@ public sealed class RegistrationMutationBlockedException
     }
 }
 
+internal static class RegistrationMutationGate
+{
+    public const long AdvisoryLockKey =
+        PublicationGenerationSchema.AdvisoryLockKey - 1_000L;
+}
+
 internal sealed class PostgresRegistrationMutationLease
     : IRegistrationMutationLease
 {
+    private const int ReleaseCommandTimeoutSeconds = 5;
     private NpgsqlConnection? _connection;
-    private NpgsqlTransaction? _transaction;
 
     public PostgresRegistrationMutationLease(
-        NpgsqlConnection connection,
-        NpgsqlTransaction transaction)
+        NpgsqlConnection connection)
     {
         _connection = connection;
-        _transaction = transaction;
     }
 
     public void Dispose()
     {
-        var transaction = Interlocked.Exchange(
-            ref _transaction,
-            null);
         var connection = Interlocked.Exchange(
             ref _connection,
             null);
+        if (connection is null)
+            return;
+
         try
         {
-            transaction?.Rollback();
+            using var command = connection.CreateCommand();
+            command.CommandTimeout = ReleaseCommandTimeoutSeconds;
+            command.CommandText =
+                "SELECT pg_advisory_unlock_shared(@lockKey)";
+            command.Parameters.AddWithValue(
+                "lockKey",
+                RegistrationMutationGate.AdvisoryLockKey);
+            command.ExecuteScalar();
+        }
+        catch
+        {
+            NpgsqlConnection.ClearPool(connection);
         }
         finally
         {
-            transaction?.Dispose();
-            connection?.Dispose();
+            connection.Dispose();
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        var connection = Interlocked.Exchange(
+            ref _connection,
+            null);
+        if (connection is null)
+            return;
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandTimeout = ReleaseCommandTimeoutSeconds;
+            command.CommandText =
+                "SELECT pg_advisory_unlock_shared(@lockKey)";
+            command.Parameters.AddWithValue(
+                "lockKey",
+                RegistrationMutationGate.AdvisoryLockKey);
+            await command.ExecuteScalarAsync(
+                CancellationToken.None);
+        }
+        catch
+        {
+            NpgsqlConnection.ClearPool(connection);
+        }
+        finally
+        {
+            await connection.DisposeAsync();
         }
     }
 }

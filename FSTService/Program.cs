@@ -613,6 +613,8 @@ builder.Services.AddSingleton<RegisteredPlayerBandDiscoveryOrchestrator>(sp =>
         sp.GetRequiredService<ScrapeProgressTracker>(),
         sp.GetRequiredService<IOptions<ScraperOptions>>(),
         sp.GetRequiredService<ILogger<RegisteredPlayerBandDiscoveryOrchestrator>>(),
+        sp.GetRequiredService<
+            RegistrationMutationCoordinator>(),
         executor);
 });
 builder.Services.AddSingleton<IRegisteredBandLookupStrategy, DirectRegisteredBandLookupStrategy>();
@@ -627,6 +629,8 @@ builder.Services.AddSingleton<RegisteredBandProcessingOrchestrator>(sp =>
         sp.GetRequiredService<ScrapeProgressTracker>(),
         sp.GetRequiredService<IOptions<ScraperOptions>>(),
         sp.GetRequiredService<ILogger<RegisteredBandProcessingOrchestrator>>(),
+        sp.GetRequiredService<
+            RegistrationMutationCoordinator>(),
         executor);
 });
 builder.Services.AddSingleton<BandSearchProjectionBuilder>();

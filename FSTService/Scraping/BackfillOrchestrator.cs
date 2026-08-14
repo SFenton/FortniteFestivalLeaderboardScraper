@@ -111,8 +111,8 @@ public sealed class BackfillOrchestrator
             return 0;
         }
 
-        using var registrationLease =
-            _registrationMutations.AcquireLease(ct);
+        await using var registrationLease =
+            await _registrationMutations.AcquireLeaseAsync(ct);
 
         var opts = _options.Value;
         var foregroundRegistration = opts.RegistrationBackfillMode == RegistrationBackfillMode.ForegroundEpicExclusive;
@@ -349,8 +349,8 @@ public sealed class BackfillOrchestrator
     /// </summary>
     public async Task RunBackfillAsync(FestivalService service, CancellationToken ct)
     {
-        using var registrationLease =
-            _registrationMutations.AcquireLease(ct);
+        await using var registrationLease =
+            await _registrationMutations.AcquireLeaseAsync(ct);
         var queued = _backfillQueue.DrainAll();
         var pending = _persistence.Meta.GetPendingBackfills();
 
@@ -549,8 +549,8 @@ public sealed class BackfillOrchestrator
     /// </summary>
     public async Task RunHistoryReconAsync(FestivalService service, CancellationToken ct)
     {
-        using var registrationLease =
-            _registrationMutations.AcquireLease(ct);
+        await using var registrationLease =
+            await _registrationMutations.AcquireLeaseAsync(ct);
         var registeredIds = _persistence.Meta.GetRegisteredAccountIds();
         if (registeredIds.Count == 0) return;
 

@@ -1201,8 +1201,20 @@ public class PublicReadGateTests
         SetPublicationEndpoint(
             context,
             "/api/rankings/{instrument}");
+        var registrationLease =
+            Substitute.For<IRegistrationMutationLease>();
+        metaDb.AcquireRegistrationMutationLeaseAsync(
+                Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(registrationLease));
+        var registrationMutations =
+            new RegistrationMutationCoordinator(
+                metaDb,
+                Substitute.For<IPathDataStore>(),
+                Substitute.For<
+                    ISongInstrumentSupportCache>());
         context.RequestServices = new ServiceCollection()
             .AddLogging()
+            .AddSingleton(registrationMutations)
             .BuildServiceProvider();
         context.Response.Body = new MemoryStream();
 

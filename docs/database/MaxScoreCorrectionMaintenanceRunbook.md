@@ -2,13 +2,15 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-14
-last_verified_commit: e0ec87d3
+last_verified_commit: eb593898
 sources:
   - FSTService/Api/AdminEndpoints.cs
   - FSTService/Persistence/MaxScoreMaintenanceCommand.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
   - FSTService/Persistence/RegistrationMutationGuard.cs
+  - FSTService/Persistence/MetaDatabase.cs
+  - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Scraping/RegistrationBackfillWorker.cs
   - FSTService/Scraping/RegistrationMutationCoordinator.cs
   - FSTService/Scraping/BackfillOrchestrator.cs
@@ -52,17 +54,21 @@ Before plan or apply:
 
 Stage acquires the distributed path-generation lease, creates complete
 immutable generations serially, and never changes a `songs` pointer. Plan
-briefly acquires the path-generation and publication locks, validates the
-manifest and immutable artifacts, fingerprints score sources, notification
-state, and rank history, and requires zero unexplained routine candidates.
+briefly acquires the exclusive mutation gate, path-generation lock, publication
+lock, and fixed-order source locks. It validates the manifest and immutable
+artifacts, fingerprints score sources, notification state, and rank history,
+and requires zero unexplained routine candidates without creating a freeze.
 
 Apply acquires locks in this order:
 
-1. path-generation advisory lock;
-2. global publication advisory lock;
-3. `leaderboard_entries_overlay`, `leaderboard_entries`, then
+1. exclusive registration/backfill/history mutation advisory gate, waiting for
+   every active shared lifecycle to drain and blocking later admissions;
+2. path-generation advisory lock;
+3. global publication advisory lock;
+4. establish a new digest-owned freeze or revalidate the exact resume freeze;
+5. `leaderboard_entries_overlay`, `leaderboard_entries`, then
    `band_member_stats` share locks in that fixed order;
-4. publication and song row locks inside bounded transactions.
+6. publication and song row locks inside bounded transactions.
 
 Band maintenance is the intentional writer for target-song `band_entries`
 threshold flags and affected projection scopes, so the source lock protects
@@ -82,16 +88,27 @@ The same freeze rejects `POST /api/player/{accountId}/track`,
 `sync-status` request. Selected-profile activity tracking also suppresses
 player touches and band/member registration writes, including on outer
 public-cache hits. PostgreSQL triggers independently reject registered-player,
-registered-band, and backfill status/progress mutations under the digest-owned
-freeze. Registration-only workers and the manual backfill endpoint hold a
-shared publication-row lease across the complete all-time/history mutation
-lifecycle. Freeze establishment therefore waits or refuses before ownership,
-and a freeze that wins the lease race returns `503` before score mutation.
-Cancellation and failures dispose the lease. Immediately after each lease is
-acquired, path-maxima state is invalidated and scraper song/instrument support
-is synchronously refreshed before any account or seasonal lookup. A failed or
+registered-band, registered-user-refresh, band processing/discovery,
+backfill, and history-reconstruction status/progress mutations under the
+digest-owned freeze. Registration-only workers, normal registered-user/band
+phases, HTTP tracking/activity, stale-registration pruning, and the manual
+backfill endpoint hold the shared form of the session advisory gate across the
+complete mutation lifecycle. The gate owns no transaction or publication-row
+lock, so the production `idle_in_transaction_session_timeout=60000` cannot
+release it during long Epic/history work. Exclusive acquisition drains active
+score/history writers before freeze or source locks and prevents later writers
+until final release. A freeze that wins the race returns `503` before score
+mutation. Cancellation and failures explicitly unlock or physically retire an
+uncertain pooled session. Immediately after acquiring the shared gate,
+lookup-bearing backfill/history/band work invalidates path-maxima state and
+synchronously refreshes scraper song/instrument support before any account or
+seasonal lookup; metadata-only tracking/activity/pruning does not incur that
+cache churn. A failed or
 resumed maintenance run remains blocked until its exact freeze is released.
-Normal scrape/publication freezes do not activate this registration guard.
+Cache swap, completed checkpoint, and unfreeze commit while the exclusive gate
+is still held, so no registration commit can land after cache cutover but
+before lease release. Normal scrape/publication freezes do not activate this
+registration guard.
 
 ## Stage request
 

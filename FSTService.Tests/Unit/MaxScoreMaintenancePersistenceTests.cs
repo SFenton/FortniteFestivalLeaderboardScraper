@@ -696,7 +696,7 @@ public sealed class MaxScoreMaintenancePersistenceTests
     }
 
     [Fact]
-    public void Cache_swap_and_owned_unfreeze_commit_together()
+    public async Task Cache_swap_and_owned_unfreeze_commit_before_registration_gate_release()
     {
         using var dataSource = SharedPostgresContainer.CreateDatabase();
         const long scrapeId = 1296;
@@ -835,13 +835,39 @@ public sealed class MaxScoreMaintenancePersistenceTests
             dataSource,
             Microsoft.Extensions.Logging.Abstractions
                 .NullLogger<MetaDatabase>.Instance);
-        using (meta.AcquireMaxScoreMaintenanceLease(publicationId))
+        Task queuedRegistration;
+        await using (var maintenanceLease =
+                     await meta
+                         .AcquireMaxScoreMaintenanceLeaseAsync(
+                             publicationId))
         {
+            using var ambientLease =
+                maintenanceLease.EnterAmbientScope();
+            await maintenanceLease
+                .AcquireSourceLocksAsync();
+            queuedRegistration = Task.Run(async () =>
+            {
+                await using var registrationLease =
+                    await meta
+                        .AcquireRegistrationMutationLeaseAsync();
+                meta.RegisterUser(
+                    "post-cache-device",
+                    "post-cache-account");
+            });
+            await Task.Delay(150);
+            Assert.False(queuedRegistration.IsCompleted);
+
             meta.SwapCachedResponsesFromStagingAndReleaseMaxScoreMaintenance(
                 publicationId,
                 scrapeId,
                 manifestDigest);
+            Assert.False(queuedRegistration.IsCompleted);
+            Assert.False(
+                meta.IsAccountRegistered(
+                    "post-cache-account"));
         }
+        await queuedRegistration.WaitAsync(
+            TimeSpan.FromSeconds(5));
 
         using var verifyConnection = dataSource.OpenConnection();
         using var verify = verifyConnection.CreateCommand();
@@ -876,6 +902,9 @@ public sealed class MaxScoreMaintenancePersistenceTests
         Assert.True(reader.GetBoolean(0));
         Assert.True(reader.GetBoolean(1));
         Assert.True(reader.GetBoolean(2));
+        Assert.True(
+            meta.IsAccountRegistered(
+                "post-cache-account"));
     }
 
     [Fact]

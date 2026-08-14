@@ -235,7 +235,12 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestratorTests : IDisposable
             strategy,
             new ScrapeProgressTracker(),
             options,
-            Substitute.For<ILogger<RegisteredPlayerBandDiscoveryOrchestrator>>());
+            Substitute.For<ILogger<RegisteredPlayerBandDiscoveryOrchestrator>>(),
+            new RegistrationMutationCoordinator(
+                Db,
+                Substitute.For<IPathDataStore>(),
+                Substitute.For<
+                    ISongInstrumentSupportCache>()));
     }
 
     private sealed class FakeDiscoveryStrategy : IRegisteredPlayerBandDiscoveryStrategy

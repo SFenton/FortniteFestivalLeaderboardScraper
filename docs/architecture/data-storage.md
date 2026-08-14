@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-14
-last_verified_commit: e0ec87d3
+last_verified_commit: eb593898
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -17,6 +17,8 @@ sources:
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
   - FSTService/Scraping/BackfillOrchestrator.cs
   - FSTService/Scraping/RegistrationMutationCoordinator.cs
+  - FSTService/Scraping/RegisteredBandProcessing.cs
+  - FSTService/Scraping/RegisteredPlayerBandDiscovery.cs
   - FSTService/FeatureOptions.cs
   - deploy/postgres.Dockerfile
 update_triggers:
@@ -94,22 +96,38 @@ alignment. Missing current band subjects and their song/rank state are created
 inside the same repeatable-read quarantine transaction before candidate
 collection.
 
-The max-score lease takes `SHARE` locks in fixed order on
-`leaderboard_entries_overlay`, `leaderboard_entries`, and
-`band_member_stats`. This protects both solo score identity and the member
-source used by band threshold/projection rebuilds.
+Registration, backfill, registered-user refresh, score-history reconstruction,
+tracked-band discovery/processing, selected-profile activity, and stale
+registration pruning share one PostgreSQL session advisory mutation gate.
+Each complete external async mutation lifecycle holds the shared form on a
+dedicated checked-out session before its first write. The lease owns no
+transaction or publication-row lock, so
+`idle_in_transaction_session_timeout` cannot expire it while Epic/history work
+uses other connections. Cancellation or disposal explicitly unlocks the
+session; an uncertain release evicts that physical pooled connection.
 
-Registration scope is also database-guarded. Row triggers on
-`registered_users`, `registered_bands`, `backfill_status`, and
-`backfill_progress` lock the publication singleton and reject mutations only
-when its reason is `max-score-maintenance:v1:<digest>`. Registration workers
-and the manual backfill endpoint hold a shared publication-row lease across the
-complete all-time and history mutation lifecycle, making freeze acquisition and
-registration persistence mutually exclusive even in the registration-only
-host. Lease acquisition synchronously invalidates cached path maxima and
-refreshes scraper instrument support before lookup work. The maintenance owner
-has one transaction-local, exact-freeze bypass used only to remove stale
-negative backfill checks and matching successful
+Max-score plan/apply takes the exclusive form of the same gate first. It waits
+for every admitted shared lifecycle to finish and prevents later registration
+work from starting. Apply then takes the path-generation and publication
+advisory locks, establishes or revalidates its digest-owned freeze, and only
+then opens the source-lock transaction. That transaction takes `SHARE` locks
+in fixed order on `leaderboard_entries_overlay`, `leaderboard_entries`, and
+`band_member_stats`. This removes publication-row/source-table lock inversion
+while protecting solo score identity and the member source used by band
+threshold/projection rebuilds. The exclusive gate remains held through atomic
+cache swap/unfreeze and the final in-process cache transition.
+
+Row triggers remain a fail-closed second line on registered users/bands,
+registered-user refresh progress, registered-band status/progress,
+registered-player band-discovery progress, backfill status/progress, and
+history-reconstruction status/progress. They lock the publication singleton
+only for their bounded write transaction and reject mutations when its reason
+is `max-score-maintenance:v1:<digest>`. Shared-gate acquisition synchronously
+invalidates cached path maxima and refreshes scraper instrument support before
+lookup-bearing backfill/history/band work; metadata-only HTTP activity and
+pruning take the same gate without that extra cache churn. The maintenance
+owner has one transaction-local, exact-freeze
+bypass used only to remove stale negative backfill checks and matching successful
 `history_recon_progress` rows for newly promoted path-backed pairs. Matching
 history status rows move to `pending`, clear the completion timestamp,
 recompute `songs_processed` from preserved rows, clear aggregate season/entry
