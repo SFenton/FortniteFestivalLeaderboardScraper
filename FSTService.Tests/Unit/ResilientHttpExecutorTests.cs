@@ -1552,12 +1552,18 @@ public sealed class ResilientHttpExecutorTests
         await Assert.ThrowsAsync<CdnBlockedException>(
             () => executor.SendAsync(() => MakeRequest(), label: "setup"));
 
+        await handler.WaitForRequestCountAsync(
+            2,
+            TimeSpan.FromSeconds(5));
         Assert.True(executor.IsProbeRunning);
         executor.ResetCdnState();
 
-        // Immediately after reset, the floor must still be active.
-        Assert.True(executor.IsCdnBlocked,
-            "Cooldown floor should keep IsCdnBlocked=true briefly after reset-with-active-probe");
+        Assert.NotEqual(
+            default,
+            executor.CdnCooldownUntilUtc);
+        Assert.Equal(
+            TimeSpan.FromSeconds(1),
+            ResilientHttpExecutor.ResetCooldownFloor);
     }
 
     [Fact]
