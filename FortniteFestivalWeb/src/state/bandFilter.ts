@@ -6,10 +6,11 @@ import {
 } from '@festival/core/api';
 import type { AppliedBandComboFilter, BandInstrumentFilterAssignment } from '../types/bandFilter';
 import type { SelectedProfile } from './selectedProfile';
+import { BAND_TYPES } from '../utils/bandTypes';
 
 export const BAND_FILTER_STORAGE_KEY = 'fst:bandFilter';
 
-const BAND_TYPES = new Set<PlayerBandType>(['Band_Duets', 'Band_Trios', 'Band_Quad']);
+const BAND_TYPE_SET = new Set<PlayerBandType>(BAND_TYPES);
 const SERVER_INSTRUMENTS = new Set<ServerInstrumentKey>(SERVER_INSTRUMENT_KEYS);
 
 function getStorage(): Storage | null {
@@ -22,7 +23,7 @@ function normalizeText(value: unknown): string {
 }
 
 function isPlayerBandType(value: string): value is PlayerBandType {
-  return BAND_TYPES.has(value as PlayerBandType);
+  return BAND_TYPE_SET.has(value as PlayerBandType);
 }
 
 function isServerInstrument(value: unknown): value is ServerInstrumentKey {

@@ -81,6 +81,7 @@ import {
 } from '../../utils/songSettings';
 import { resolveCompactRowMode } from './layoutMode';
 import { hasVisitedPage, markPageVisited } from '../../hooks/ui/usePageTransition';
+import { resolveVirtualListScrollMargin, useVirtualListScrollMargin } from '../../hooks/ui/useVirtualListScrollMargin';
 import { buildSongQuickLinkSections, type SongQuickLinkSection } from './songQuickLinks';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
@@ -997,50 +998,13 @@ export default function SongsPage() {
   const SECTION_ROW_HEIGHT = songRowMobile ? 44 : 52;
   const VIRTUAL_ROW_GAP = 2;
   const listParentRef = useRef<HTMLDivElement>(null);
-  const [listScrollMargin, setListScrollMargin] = useState(0);
-  const resolveListScrollMargin = useCallback((scrollEl: HTMLElement | null = scrollContainerRef.current) => {
-    const listEl = listParentRef.current;
-    if (!scrollEl || !listEl) {
-      return 0;
-    }
-
-    const scrollRect = scrollEl.getBoundingClientRect();
-    const listRect = listEl.getBoundingClientRect();
-    return Math.max(0, scrollEl.scrollTop + listRect.top - scrollRect.top);
-  }, [scrollContainerRef]);
-
-  useEffect(() => {
-    if (loadPhase !== LoadPhase.ContentIn || filtered.length === 0) {
-      setListScrollMargin(0);
-      return;
-    }
-
-    const updateListScrollMargin = () => {
-      const nextMargin = Math.round(resolveListScrollMargin());
-      setListScrollMargin((current) => current === nextMargin ? current : nextMargin);
-    };
-
-    updateListScrollMargin();
-
-    const resizeObserver = typeof ResizeObserver !== 'undefined'
-      ? new ResizeObserver(updateListScrollMargin)
-      : null;
-    if (containerRef.current) {
-      resizeObserver?.observe(containerRef.current);
-    }
-    if (listParentRef.current) {
-      resizeObserver?.observe(listParentRef.current);
-    }
-    if (scrollContainerRef.current) {
-      resizeObserver?.observe(scrollContainerRef.current);
-    }
-    window.addEventListener('resize', updateListScrollMargin);
-
-    return () => {
-      resizeObserver?.disconnect();
-      window.removeEventListener('resize', updateListScrollMargin);
-    };
-  }, [filtered.length, loadPhase, resolveListScrollMargin, scrollContainerRef]);
+  const listScrollMargin = useVirtualListScrollMargin({
+    scrollContainerRef,
+    listRef: listParentRef,
+    outerLayoutRef: containerRef,
+    enabled: loadPhase === LoadPhase.ContentIn && filtered.length > 0,
+    revision: filtered.length,
+  });
 
   const quickLinkTopById = useMemo(() => {
     const offsets = new Map<string, number>();
@@ -1064,8 +1028,8 @@ export default function SongsPage() {
       return null;
     }
 
-    return resolveListScrollMargin(scrollEl) + rowTop;
-  }, [quickLinkTopById, resolveListScrollMargin]);
+    return resolveVirtualListScrollMargin(scrollEl, listParentRef.current) + rowTop;
+  }, [quickLinkTopById]);
 
   const {
     activeItemId,

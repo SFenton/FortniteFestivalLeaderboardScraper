@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-13
-last_verified_commit: faaa6d73
+last_verified_commit: cb295b7e
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs

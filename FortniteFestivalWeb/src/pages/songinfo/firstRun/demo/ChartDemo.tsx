@@ -1,10 +1,11 @@
 import { useRef, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
-import { Colors, Layout, Size, frostedCard, Radius, Font, Gap, Display, Align, Justify, CssValue, PointerEvents, BoxSizing, flexColumn, padding, transition, CssProp, QUICK_FADE_MS } from '@festival/theme';
+import { ACCURACY_GRADIENT, accuracyColor, Colors, Layout, MetadataSize, frostedCard, Radius, Font, Gap, Display, Align, Justify, CssValue, PointerEvents, BoxSizing, flexColumn, padding, transition, CssProp, QUICK_FADE_MS } from '@festival/theme';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { useChartDimensions } from '../../../../hooks/chart/useChartDimensions';
 import FadeIn from '../../../../components/page/FadeIn';
+import { CHART_AXIS_TICK, CHART_X_AXIS_ANGLE, CHART_X_AXIS_TICK } from '../../../../components/common/chartVisuals';
 
 type ChartPoint = { dateLabel: string; score: number; accuracy: number; isFullCombo: boolean };
 
@@ -20,20 +21,13 @@ function buildDemoData(): ChartPoint[] {
 }
 const DEMO_DATA: ChartPoint[] = buildDemoData();
 
-function barFill(accuracy: number, isFullCombo: boolean): string {
-  if (accuracy >= 100 && isFullCombo) return Colors.gold;
-  const t = Math.min(Math.max(accuracy / 100, 0), 1);
-  const r = Math.round(220 * (1 - t) + 46 * t);
-  const g = Math.round(40 * (1 - t) + 204 * t);
-  const b = Math.round(40 * (1 - t) + 113 * t);
-  return `rgb(${r},${g},${b})`;
-}
-
 const RAD = 4;
 function CustomBar(props: { x: number; y: number; width: number; height: number; payload: ChartPoint }) {
   const { x, y, width: w, height: h, payload } = props;
   if (!h || h <= 0) return null;
-  const fill = barFill(payload.accuracy, payload.isFullCombo);
+  const fill = payload.accuracy >= 100 && payload.isFullCombo
+    ? Colors.gold
+    : accuracyColor(payload.accuracy);
   const path = `M${x + RAD},${y + h} Q${x},${y + h} ${x},${y + h - RAD} L${x},${y + RAD} Q${x},${y} ${x + RAD},${y} L${x + w - RAD},${y} Q${x + w},${y} ${x + w},${y + RAD} L${x + w},${y + h - RAD} Q${x + w},${y + h} ${x + w - RAD},${y + h} Z`;
   return <path d={path} fill={fill} fillOpacity={1} stroke="transparent" strokeWidth={0} />;
 }
@@ -53,8 +47,6 @@ export default function ChartDemo() {
   const hasNonFc = visibleData.some(p => !(p.accuracy >= 100 && p.isFullCombo));
 
   const s = useChartDemoStyles();
-  const AXIS_TICK = { fill: Colors.textPrimary, fontSize: Layout.chartTickFontSize };
-  const X_AXIS_TICK = { ...AXIS_TICK, dy: Layout.chartTickOffset };
 
   return (
     <div style={h ? { ...s.wrapper, height: h } : s.wrapper}>
@@ -65,16 +57,16 @@ export default function ChartDemo() {
               <CartesianGrid strokeDasharray="3 3" stroke={Colors.borderSubtle} horizontal={false} vertical={false} />
               <XAxis
                 dataKey="dateLabel"
-                tick={X_AXIS_TICK}
+                tick={CHART_X_AXIS_TICK}
                 stroke={Colors.borderSubtle}
-                angle={Layout.chartXAxisAngle}
+                angle={CHART_X_AXIS_ANGLE}
                 textAnchor="end"
                 interval="preserveStartEnd"
                 height={Layout.chartXAxisHeight}
               />
               <YAxis
                 yAxisId="score"
-                tick={AXIS_TICK}
+                tick={CHART_AXIS_TICK}
                 stroke={Colors.borderSubtle}
                 tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)}
                 label={({ viewBox }: { viewBox: { x: number; y: number; height: number } }) => {
@@ -91,7 +83,7 @@ export default function ChartDemo() {
                 orientation="right"
                 domain={[0, 100]}
                 padding={{ top: 4 }}
-                tick={AXIS_TICK}
+                tick={CHART_AXIS_TICK}
                 stroke={Colors.borderSubtle}
                 tickFormatter={(v: number) => `${v}%`}
                 label={({ viewBox }: { viewBox: { x: number; y: number; width: number; height: number } }) => {
@@ -129,7 +121,7 @@ export default function ChartDemo() {
                 </div>
               )} />
               <Bar yAxisId="accuracy" dataKey="accuracy" radius={[RAD, RAD, 0, 0]} isAnimationActive={false} shape={CustomBar as any} />
-              <Line yAxisId="score" type="monotone" dataKey="score" stroke={Colors.accentBlueBright} strokeWidth={2} dot={{ fill: Colors.accentBlueBright, r: Size.dotRadius }} isAnimationActive={false} />
+              <Line yAxisId="score" type="monotone" dataKey="score" stroke={Colors.accentBlueBright} strokeWidth={2} dot={{ fill: Colors.accentBlueBright, r: MetadataSize.dotRadius }} isAnimationActive={false} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
@@ -176,7 +168,7 @@ export function useChartDemoStyles() {
         width: Layout.legendSwatchSize,
         height: Layout.legendSwatchSize,
         borderRadius: Gap.xs,
-        background: 'linear-gradient(to right, rgb(220,40,40), rgb(46,204,113))',
+        background: ACCURACY_GRADIENT,
       } as CSSProperties,
       legendSwatchGold: {
         display: Display.inlineBlock,

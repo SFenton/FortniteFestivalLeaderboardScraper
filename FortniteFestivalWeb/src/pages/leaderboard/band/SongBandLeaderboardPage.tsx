@@ -25,7 +25,8 @@ import { useSelectedProfile } from '../../../hooks/data/useSelectedProfile';
 import { parseApiError } from '../../../utils/apiError';
 import { isBandFilterForSelectedProfile } from '../../../state/bandFilter';
 import { formatPageBandComboLabel, getPageBandComboInstruments, PAGE_BAND_COMBO_ALL_VALUE, resolvePageBandComboState } from '../../../utils/pageBandComboFilter';
-import { coerceSongBandType, songBandToPlayerBandEntry, songBandTypeLabel } from '../../../utils/songBandLeaderboards';
+import { coerceSongBandType, songBandToPlayerBandEntry } from '../../../utils/songBandLeaderboards';
+import { bandTypeLabel } from '../../../utils/bandTypes';
 import Page, { PageBackground } from '../../Page';
 import { PageMessage } from '../../PageMessage';
 import PlayerBandCard, { formatPlayerBandNames } from '../../player/components/PlayerBandCard';
@@ -68,7 +69,7 @@ export default function SongBandLeaderboardPage() {
   const selectedProfileKey = selectedAccountId ?? selectedBandTeamKey ?? 'none';
   const selectedBandHasGlobalFilter = isBandFilterForSelectedProfile(appliedBandComboFilter, profile);
   const selectedBandMatchesView = selectedBand?.bandType === bandType;
-  const bandLabel = bandType ? songBandTypeLabel(bandType, t) : '';
+  const bandLabel = bandType ? bandTypeLabel(bandType, t) : '';
   const page = Math.max(1, Number(searchParams.get('page')) || 1);
   const goToSongDetail = useNavigateToSongDetail(songId);
   const [comboModalOpen, setComboModalOpen] = useState(false);

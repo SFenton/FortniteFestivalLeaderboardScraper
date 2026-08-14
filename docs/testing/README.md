@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-14
-last_verified_commit: faaa6d73
+last_verified_commit: cb295b7e
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService/Scraping/Replay/TierZeroRegularFile.cs
@@ -17,6 +17,7 @@ sources:
   - FortniteFestivalWeb/performance-budgets.json
   - FortniteFestivalWeb/scripts/check-performance-budgets.mjs
   - FortniteFestivalWeb/scripts/check-coverage-ignores.mjs
+  - FortniteFestivalWeb/scripts/generate-theme-css.mjs
   - FortniteFestivalWeb/scripts/shared-package-boundary-plugin.mjs
   - FortniteFestivalWeb/e2e/README.md
   - .github/workflows/publish-image.yml
@@ -83,6 +84,7 @@ corepack yarn test:shared
 corepack yarn lint
 corepack yarn lint:css
 corepack yarn check:coverage-ignores
+corepack yarn theme:css:check
 corepack yarn build
 corepack yarn e2e
 corepack yarn e2e:typecheck
@@ -124,6 +126,12 @@ directives are unsupported. Only four verified `ignore next` directives in
 Suggestions first-run demos are permitted; every other executable branch must
 be tested or covered by a bounded range. Coverage thresholds remain 88% lines,
 79% branches, 86% statements, and 87% functions.
+
+Theme/package contracts are also static gates. `theme:css:check` compares the
+generated 115-variable CSS surface with TypeScript tokens, shared-package tests
+exercise root-only portal exports and side-effect declarations, and the
+deprecated `Size` boundary allows reductions while rejecting new consumers,
+properties, or count growth.
 
 The pull-request browser tier runs:
 

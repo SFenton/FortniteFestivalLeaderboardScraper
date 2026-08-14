@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-14
-last_verified_commit: faaa6d73
+last_verified_commit: cb295b7e
 sources:
   - FSTService/Program.cs
   - FSTService/ScrapePhase.cs

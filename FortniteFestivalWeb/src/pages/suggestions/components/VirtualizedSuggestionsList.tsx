@@ -17,6 +17,7 @@ import { Gap } from '@festival/theme';
 import FadeIn from '../../../components/page/FadeIn';
 import { useIsNarrow } from '../../../hooks/ui/useIsMobile';
 import { useScrollFade } from '../../../hooks/ui/useScrollFade';
+import { useVirtualListScrollMargin } from '../../../hooks/ui/useVirtualListScrollMargin';
 import { getCardDelay } from '../suggestionsHelpers';
 import { CategoryCard } from './CategoryCard';
 
@@ -65,45 +66,18 @@ export function VirtualizedSuggestionsList({
 }: VirtualizedSuggestionsListProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const isNarrow = useIsNarrow();
-  const [scrollMargin, setScrollMargin] = useState(0);
   const [focusedRowId, setFocusedRowId] = useState<string | null>(null);
   const focusedRowIndex = useMemo(
     () => focusedRowId ? rows.findIndex(row => row.id === focusedRowId) : -1,
     [focusedRowId, rows],
   );
 
-  const resolveScrollMargin = useCallback(() => {
-    const scrollElement = scrollContainerRef.current;
-    const listElement = listRef.current;
-    if (!scrollElement || !listElement) return 0;
-    const scrollRect = scrollElement.getBoundingClientRect();
-    const listRect = listElement.getBoundingClientRect();
-    return Math.max(0, scrollElement.scrollTop + listRect.top - scrollRect.top);
-  }, [scrollContainerRef]);
-
-  useEffect(() => {
-    if (phase !== LoadPhase.ContentIn || rows.length === 0) {
-      setScrollMargin(0);
-      return;
-    }
-
-    const updateScrollMargin = () => {
-      const nextMargin = Math.round(resolveScrollMargin());
-      setScrollMargin(current => current === nextMargin ? current : nextMargin);
-    };
-    updateScrollMargin();
-
-    const resizeObserver = typeof ResizeObserver === 'undefined'
-      ? null
-      : new ResizeObserver(updateScrollMargin);
-    if (listRef.current) resizeObserver?.observe(listRef.current);
-    if (scrollContainerRef.current) resizeObserver?.observe(scrollContainerRef.current);
-    window.addEventListener('resize', updateScrollMargin);
-    return () => {
-      resizeObserver?.disconnect();
-      window.removeEventListener('resize', updateScrollMargin);
-    };
-  }, [identity, phase, resolveScrollMargin, rows.length, scrollContainerRef]);
+  const scrollMargin = useVirtualListScrollMargin({
+    scrollContainerRef,
+    listRef,
+    enabled: phase === LoadPhase.ContentIn && rows.length > 0,
+    revision: `${identity ?? ''}:${rows.length}`,
+  });
 
   const rangeExtractor = useCallback((range: Parameters<typeof defaultRangeExtractor>[0]) => {
     const indexes = defaultRangeExtractor(range);

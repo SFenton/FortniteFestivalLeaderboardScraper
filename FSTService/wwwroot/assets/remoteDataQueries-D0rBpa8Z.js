@@ -1,1 +1,0 @@
-import{b2 as y,b4 as t,b1 as i}from"./index-K6IRzech.js";function u(r,e){return{queryKey:i.playerHistory(r,e),queryFn:({signal:s})=>t.getPlayerHistory(r,e,void 0,{signal:s}).then(l=>l.history),...y}}function a(r){return{queryKey:i.rivalsAll(r),queryFn:({signal:e})=>t.getRivalsAll(r,{signal:e}),...y}}export{u as p,a as r};

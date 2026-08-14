@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, type RefObject } from 'react';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
+import { useScrollUpdateScheduler } from './useScrollUpdateScheduler';
 
 export interface ScrollMaskOptions {
   /** Fade zone size in pixels. Default: 40 */
@@ -24,15 +25,8 @@ export function useScrollMask(
   const size = options.size ?? DEFAULT_SIZE;
   const selfScroll = options.selfScroll ?? false;
   const disabled = options.disabled ?? false;
-  const rafId = useRef(0);
-  const viewportTimeoutsRef = useRef<number[]>([]);
   const hasMask = useRef(false);
   const scrollContainerRef = useScrollContainer();
-
-  const clearViewportTimeouts = useCallback(() => {
-    for (const id of viewportTimeoutsRef.current) window.clearTimeout(id);
-    viewportTimeoutsRef.current = [];
-  }, []);
 
   const update = useCallback(() => {
     const el = containerRef.current;
@@ -91,55 +85,16 @@ export function useScrollMask(
     el!.style.webkitMaskImage = mask;
   }, [disabled, size, selfScroll, containerRef, scrollContainerRef]);
 
-  /** rAF-throttled wrapper — at most one update per animation frame. */
-  const throttledUpdate = useCallback(() => {
-    if (rafId.current) return;
-    rafId.current = requestAnimationFrame(() => {
-      rafId.current = 0;
-      update();
-    });
-  }, [update]);
-
-  const updateNow = useCallback(() => {
-    cancelAnimationFrame(rafId.current);
-    rafId.current = 0;
-    update();
-  }, [update]);
-
-  const scheduleViewportUpdate = useCallback(() => {
-    clearViewportTimeouts();
-    throttledUpdate();
-    viewportTimeoutsRef.current = [80, 180, 320].map(delay => window.setTimeout(throttledUpdate, delay));
-  }, [clearViewportTimeouts, throttledUpdate]);
-
-  // Cancel pending rAF on unmount
-  useEffect(() => () => {
-    cancelAnimationFrame(rafId.current);
-    clearViewportTimeouts();
-  }, [clearViewportTimeouts]);
+  const { scheduleUpdate, updateNow } = useScrollUpdateScheduler(update, disabled);
 
   // Listen to scroll container (self or app-level)
   useEffect(() => {
     if (disabled) return;
     const target = selfScroll ? containerRef.current : scrollContainerRef.current;
     if (!target) return;
-    target.addEventListener('scroll', throttledUpdate, { passive: true });
-    return () => target.removeEventListener('scroll', throttledUpdate);
-  }, [disabled, selfScroll, throttledUpdate, containerRef, scrollContainerRef]);
-
-  useEffect(() => {
-    if (disabled) return;
-    const visualViewport = window.visualViewport;
-    visualViewport?.addEventListener('resize', scheduleViewportUpdate);
-    visualViewport?.addEventListener('scroll', scheduleViewportUpdate);
-    window.addEventListener('resize', scheduleViewportUpdate);
-    return () => {
-      visualViewport?.removeEventListener('resize', scheduleViewportUpdate);
-      visualViewport?.removeEventListener('scroll', scheduleViewportUpdate);
-      window.removeEventListener('resize', scheduleViewportUpdate);
-      clearViewportTimeouts();
-    };
-  }, [clearViewportTimeouts, disabled, scheduleViewportUpdate]);
+    target.addEventListener('scroll', scheduleUpdate, { passive: true });
+    return () => target.removeEventListener('scroll', scheduleUpdate);
+  }, [disabled, selfScroll, scheduleUpdate, containerRef, scrollContainerRef]);
 
   // Re-evaluate mask when the scroll container or content container resizes.
   // This catches layout changes that happen after the initial mount measurement
@@ -149,11 +104,11 @@ export function useScrollMask(
     const el = containerRef.current;
     const scrollEl = selfScroll ? el : scrollContainerRef.current;
     if (!scrollEl) return;
-    const ro = new ResizeObserver(throttledUpdate);
+    const ro = new ResizeObserver(scheduleUpdate);
     ro.observe(scrollEl);
     if (el && el !== scrollEl) ro.observe(el);
     return () => ro.disconnect();
-  }, [disabled, selfScroll, containerRef, scrollContainerRef, throttledUpdate]);
+  }, [disabled, selfScroll, containerRef, scrollContainerRef, scheduleUpdate]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { update(); }, [update, ...deps]);
