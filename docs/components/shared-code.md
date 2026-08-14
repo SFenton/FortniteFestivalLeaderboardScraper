@@ -1,13 +1,14 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-12
-last_verified_commit: 3ff9cbc8
+last_verified: 2026-08-13
+last_verified_commit: af62aeef
 sources:
   - FortniteFestival.Core/FortniteFestival.Core.csproj
   - FortniteFestival.Core/Config/InstrumentType.cs
   - packages/core/package.json
   - packages/core/src/index.ts
+  - packages/core/src/api/serverTypes.ts
   - packages/theme/src/index.ts
   - packages/ui-utils/src/index.ts
 update_triggers:
@@ -43,6 +44,11 @@ dependencies. Package exports are the public boundary.
 API types in `packages/core/src/api/serverTypes.ts` are manually mirrored from
 the service contract; they are not generated from OpenAPI. The HTTP client
 lives in `FortniteFestivalWeb/src/api/client.ts`.
+
+`ServiceInfoResponse` includes the accepted durable-progress v2 phase plan,
+attempt, units, exact-phase-percent, conservative overall/ETA, heartbeat, and
+last-progress contract. Fields stay optional so an older service response
+remains consumable during rolling deployment.
 
 The mirrored contract includes path JSON notes, activations, legacy start-note
 metadata, and schema-v2 activation fields consumed by the path modal.

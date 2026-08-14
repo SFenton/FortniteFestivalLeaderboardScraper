@@ -93,6 +93,22 @@ public interface IMetaDatabase : IDisposable
     ServiceRuntimeState GetServiceRuntimeState(
         string workerKey,
         int commandTimeoutSeconds = 0);
+    int InterruptOrphanedScrapePhaseAttempts(
+        string workerInstanceId,
+        DateTime interruptedAtUtc,
+        string reason);
+    int StartScrapePhaseAttempt(ScrapePhaseAttemptStart attempt);
+    bool UpdateScrapePhaseAttemptProgress(ScrapePhaseAttemptProgress progress);
+    int HeartbeatScrapePhaseAttempts(
+        long scrapeId,
+        string workerInstanceId,
+        DateTime heartbeatAtUtc);
+    bool CompleteScrapePhaseAttempt(ScrapePhaseAttemptCompletion completion);
+    IReadOnlyList<PhaseDurationSample> GetSuccessfulPhaseDurationSamples(
+        string phaseId,
+        string planVersion,
+        string? configId,
+        int limit);
 
     // ── Score history ────────────────────────────────────────────────
     void InsertScoreChange(string songId, string instrument, string accountId,

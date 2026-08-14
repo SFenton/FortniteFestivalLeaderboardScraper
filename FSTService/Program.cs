@@ -422,6 +422,7 @@ builder.Services.AddSingleton(sp => (FSTService.Scraping.PathDataStore)sp.GetReq
 
 builder.Services.AddSingleton<FSTService.Api.DbStatsService>();
 builder.Services.AddSingleton<FSTService.Exports.PlayerDataExportService>();
+builder.Services.AddSingleton<FSTService.Scraping.DurablePhaseProgressSink>();
 builder.Services.AddSingleton<FSTService.Scraping.WorkerStatusPublisher>();
 builder.Services.AddSingleton<FSTService.Persistence.Maintenance.IDatabasePressureMonitor, FSTService.Persistence.Maintenance.DatabasePressureMonitor>();
 builder.Services.AddSingleton<FSTService.Persistence.Maintenance.DatabaseMaintenanceDryRunReporter>();
@@ -750,6 +751,7 @@ else
         .AddCheck<StartupInitializer>("database", tags: ["ready"]);
     if (hostedServicePlan.RegisterFullWorkerServices)
     {
+        builder.Services.AddHostedService<DurablePhaseProgressBridgeService>();
         builder.Services.AddHostedService<WorkerStatusHeartbeatService>();
         builder.Services.AddHostedService<ScraperWorker>();
         if (hostedServicePlan.RegisterRegistrationBackfill)

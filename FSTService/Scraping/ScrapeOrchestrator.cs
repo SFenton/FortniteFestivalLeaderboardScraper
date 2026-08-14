@@ -25,6 +25,7 @@ public sealed class ScrapeOrchestrator
     private readonly ScrapeProgressTracker _progress;
     private readonly IOptions<ScraperOptions> _options;
     private readonly ILogger<ScrapeOrchestrator> _log;
+    private readonly WorkerStatusPublisher? _workerStatus;
     private readonly object _activeBandSpoolLock = new();
     private SpoolWriter<BandLeaderboardEntry>? _activeBandSpool;
 
@@ -36,7 +37,8 @@ public sealed class ScrapeOrchestrator
         SharedDopPool pool,
         ScrapeProgressTracker progress,
         IOptions<ScraperOptions> options,
-        ILogger<ScrapeOrchestrator> log)
+        ILogger<ScrapeOrchestrator> log,
+        WorkerStatusPublisher? workerStatus = null)
     {
         _globalScraper = globalScraper;
         _persistence = persistence;
@@ -46,6 +48,7 @@ public sealed class ScrapeOrchestrator
         _progress = progress;
         _options = options;
         _log = log;
+        _workerStatus = workerStatus;
     }
 
     /// <summary>
@@ -86,6 +89,7 @@ public sealed class ScrapeOrchestrator
 
         // Start scrape log entry
         var scrapeId = _persistence.Meta.StartScrapeRun(catalogToken);
+        _workerStatus?.AttachScrape(scrapeId);
         _log.LogInformation("Scrape run #{ScrapeId} started.", scrapeId);
         _persistence.CleanupAbandonedStaging(scrapeId);
 

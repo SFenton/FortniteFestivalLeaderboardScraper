@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-13
-last_verified_commit: 96ed9680
+last_verified_commit: 53c11043
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -121,6 +121,37 @@ Aggregate player scopes intentionally use different formulas:
   cache behavior, and route-surface readiness.
 - Operational-live endpoints expose current process/coordination state.
 - Admin/private endpoints must not be reclassified as public data accidentally.
+
+## Service-info durable progress contract
+
+`GET /api/service-info` remains an `OperationalLive` endpoint and retains every
+version-1 field. Contract version 2 adds:
+
+- `phasePlan.version` and ordered descriptors (`id`, label, legacy phase,
+  ordinal, default units kind);
+- stable operation, phase, and subphase IDs plus attempt/ordinal/plan version;
+- units kind/completed/total and `unitsTotalFinal`;
+- exact `phasePercent` only with a final denominator;
+- server-owned `overallPercentKind`, optional value/model version;
+- optional ETA lower/upper seconds, confidence, and sample count;
+- distinct `heartbeatAt` and `lastProgressAt`.
+
+Weak overall or ETA evidence is omitted, not serialized as false precision.
+Initial overall progress is normally `indeterminate`. Existing `phase`,
+`subOperation`, `progressPercent`, labels, branches, and worker-operation fields
+remain available so PR-3 can migrate without coupling this backend change to
+rendered Settings UI.
+
+`service_worker_status.current_operation_json` carries the same additive v2
+summary. PostgreSQL `scrape_phase_attempts` is authoritative for normalized
+attempt/progress timestamps when present; service-info falls back to the
+backward-compatible operation JSON for rolling upgrades.
+
+Matched scrape `1296` accepted this additive contract with complete
+publication parity and `0.0696%` end-to-end wall-clock overhead. Null-valued
+compatibility fields may be omitted by JSON serialization. The brief external
+service reset/502 in that window is separately attributed and excluded from
+latency claims.
 
 ## Change checklist
 

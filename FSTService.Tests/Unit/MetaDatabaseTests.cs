@@ -988,6 +988,7 @@ public sealed class MetaDatabaseTests : IDisposable
             WorkerStatusPublisher.ScraperWorkerKey,
             new WorkerOperationInfo
             {
+                ContractVersion = 2,
                 OperationKey = "rankings.instrument.Solo_Guitar",
                 OperationLabel = "Computing Lead Rankings",
                 Status = "running",
@@ -997,6 +998,21 @@ public sealed class MetaDatabaseTests : IDisposable
                 StartedAtUtc = operationStartedAt,
                 UpdatedAtUtc = operationUpdatedAt,
                 ProgressPercent = 50,
+                OperationId = "scrape.update",
+                PhaseId = "post.compute_rankings",
+                PhaseStatus = "running",
+                SubphaseId = "per_instrument_rankings",
+                PhasePlanVersion = PhaseProgressCatalog.PlanVersion,
+                PhaseOrdinal = 310,
+                PhaseAttempt = 1,
+                UnitsKind = "instruments",
+                UnitsCompleted = 2,
+                UnitsTotal = 9,
+                UnitsTotalFinal = true,
+                PhasePercent = 22.2,
+                OverallPercentKind = "indeterminate",
+                LastProgressAtUtc = operationUpdatedAt,
+                HeartbeatAtUtc = heartbeatAt,
             },
             updatedAtUtc: operationUpdatedAt);
 
@@ -1013,6 +1029,55 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal("Computing Lead Rankings", status.CurrentOperation.OperationLabel);
         Assert.Equal("ComputingRankings", status.CurrentOperation.Phase);
         Assert.Equal(50, status.CurrentOperation.ProgressPercent);
+        Assert.Equal(2, status.CurrentOperation.ContractVersion);
+        Assert.Equal("post.compute_rankings", status.CurrentOperation.PhaseId);
+        Assert.Equal(22.2, status.CurrentOperation.PhasePercent);
+        Assert.Equal(operationUpdatedAt, status.CurrentOperation.LastProgressAtUtc);
+        Assert.Equal(heartbeatAt, status.CurrentOperation.HeartbeatAtUtc);
+    }
+
+    [Fact]
+    public void WorkerStatus_treats_legacy_operation_json_as_contract_v1()
+    {
+        var now = DateTime.UtcNow;
+        Db.UpsertWorkerHeartbeat(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            "running",
+            "scraper",
+            "legacy-operation",
+            now.AddMinutes(-1),
+            now);
+
+        using (var conn = DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                UPDATE service_worker_status
+                SET current_operation_json = @operation::jsonb
+                WHERE worker_key = @workerKey
+                """;
+            cmd.Parameters.AddWithValue(
+                "operation",
+                $$"""
+                {
+                  "OperationKey": "scrape.post_process",
+                  "OperationLabel": "Post-processing leaderboard update",
+                  "Status": "running",
+                  "StartedAtUtc": "{{now.AddMinutes(-1):O}}",
+                  "UpdatedAtUtc": "{{now:O}}"
+                }
+                """);
+            cmd.Parameters.AddWithValue(
+                "workerKey",
+                WorkerStatusPublisher.ScraperWorkerKey);
+            Assert.Equal(1, cmd.ExecuteNonQuery());
+        }
+
+        var operation = Assert.IsType<WorkerOperationInfo>(
+            Db.GetWorkerStatus(WorkerStatusPublisher.ScraperWorkerKey)
+                ?.CurrentOperation);
+        Assert.Equal(1, operation.ContractVersion);
+        Assert.Equal("scrape.post_process", operation.OperationKey);
     }
 
     [Fact]

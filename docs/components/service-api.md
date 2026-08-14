@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-13
-last_verified_commit: 96ed9680
+last_verified_commit: 53c11043
 sources:
   - FSTService/Program.cs
   - FSTService/HostedWorkerMode.cs
@@ -84,3 +84,23 @@ scrape lifecycle. Publication-bound routes declare the generation surfaces they
 require. Read pinning is permitted only when configuration is enabled and all
 required surfaces are ready; stale or unavailable generations fail explicitly
 instead of silently reading candidate state.
+
+## Operational progress
+
+`GET /api/service-info` remains operational-live and exposes additive contract
+version 2 phase-plan, normalized attempt, units, progress, ETA-confidence, and
+separate heartbeat/last-progress fields. It preserves the version-1 labels and
+summary fields for rolling worker and browser compatibility. The normalized
+PostgreSQL ledger is authoritative when a running attempt exists; the worker
+operation JSON remains the fallback summary.
+
+The production API role runs with `--api-only`, which deliberately skips global
+schema initialization. A first deployment to a database without
+`scrape_phase_attempts` must run the existing `--initialize-schema-only`
+command before starting the v2 API. Existing deployments remain idempotent.
+
+Live acceptance observed contract v2 during network collection and verified
+the normalized ledger throughout every later phase. An unrelated service
+deployment caused one explicit 502 and replaced the candidate API for the rest
+of scrape `1296`; it is excluded from service-latency attribution, not hidden
+as candidate behavior.

@@ -2,12 +2,13 @@
 status: canonical
 owner: data
 last_verified: 2026-08-13
-last_verified_commit: 96ed9680
+last_verified_commit: 53c11043
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/InstrumentDatabase.cs
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
+  - FSTService/Persistence/MetaDatabase.PhaseProgress.cs
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
   - FSTService/FeatureOptions.cs
@@ -101,6 +102,42 @@ contained `72`, exactly the three new BandMaintenance rows. Their stored tuple
 size was about `411` bytes in total. Whole-phase reconciliation left only
 `257 ms` (`0.00324%`) outside the timed subphases, a conservative upper bound
 for timing-persistence overhead and well below the `1%` acceptance gate.
+
+## Durable phase-attempt ledger
+
+`scrape_phase_attempts` complements rather than replaces
+`scrape_phase_outcomes`, `scrape_phase_timings`, and
+`service_worker_status.current_operation_json`.
+
+Its primary key is `(scrape_id, phase_id, attempt)`. Typed columns retain the
+stable operation/phase IDs, ordinal and plan version, worker instance,
+subphase, terminal/running status, units and denominator-final flag, exact
+phase percent, conservative overall/ETA fields, start/progress/heartbeat/end
+timestamps, safe build/config hashes, and warning/error text. It intentionally
+has no foreign key so startup is additive and rollback does not couple scrape
+history deletion to telemetry. An FK and explicit row-retention lifecycle are
+an L3 follow-up requiring measured growth, scrape-log retention, delete-lock,
+and rollback evidence; they are not part of PR #15.
+
+Indexes follow the actual paths:
+
+- active service-info/watchdog lookup by scrape, `last_progress_at`, ordinal,
+  and attempt;
+- orphan interruption by running worker instance;
+- successful same-plan/config history for ETA sampling.
+
+The current row is updated rather than appended for every progress tick.
+Expected writes are one start and terminal update per phase, subphase
+transitions, a maximum one meaningful progress update per five seconds, and
+one heartbeat-only update per worker heartbeat interval. Progress updates use
+the greater of the stored and observed progress timestamps, so a backwards
+clock step cannot regress `last_progress_at` or violate its start-time check.
+
+Accepted scrape `1296` produced 24 attempt rows across 22 phase IDs, 2,068
+updates, and a 212,992-byte relation (106,496-byte heap and 65,536-byte
+indexes). It ended with zero running, interrupted, cancelled, orphaned, or
+null-completion rows. The matched wall-clock upper bound for all PR-2 overhead
+was `0.0696%`; summed terminal phase outcomes differed by `0.736%`.
 
 ## Snapshot retention planning evidence
 

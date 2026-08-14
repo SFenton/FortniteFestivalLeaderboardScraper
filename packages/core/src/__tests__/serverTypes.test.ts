@@ -9,12 +9,54 @@ import {
   soloFamilyScopeLabel,
 } from '../api/serverTypes';
 import type {
+  ServiceInfoResponse,
   ServerInstrumentKey,
   ServerSong,
   SoloFamilyScopeId,
 } from '../api/serverTypes';
 
 describe('server API runtime helpers', () => {
+  test('types additive service-info durable progress contract', () => {
+    const response: ServiceInfoResponse = {
+      contractVersion: 2,
+      phasePlan: {
+        version: 'fst.scrape-plan.v2',
+        phases: [{
+          id: 'post.band_maintenance',
+          label: 'Maintaining band projections',
+          legacyPhase: 'BandMaintenance',
+          ordinal: 300,
+          defaultUnitsKind: 'scopes',
+        }],
+      },
+      lastCompletedUpdate: null,
+      currentUpdate: {
+        status: 'updating',
+        startedAt: '2026-08-13T00:00:00Z',
+        phase: 'PostScrapeEnrichment',
+        subOperation: 'BandMaintenance',
+        contractVersion: 2,
+        operationId: 'scrape.update',
+        phaseId: 'post.band_maintenance',
+        subphaseId: 'current_projection_refresh',
+        phasePlanVersion: 'fst.scrape-plan.v2',
+        unitsKind: 'scopes',
+        unitsCompleted: 5,
+        unitsTotal: 10,
+        unitsTotalFinal: true,
+        phasePercent: 50,
+        overallPercentKind: 'indeterminate',
+        heartbeatAt: '2026-08-13T00:00:05Z',
+        lastProgressAt: '2026-08-13T00:00:04Z',
+      },
+      workerStatus: null,
+      nextScheduledUpdateAt: null,
+    };
+
+    expect(response.currentUpdate.phasePercent).toBe(50);
+    expect(response.phasePlan?.phases[0].id).toBe('post.band_maintenance');
+  });
+
   test('formats known labels and preserves unknown values', () => {
     expect(serverInstrumentLabel('Solo_Guitar')).toBe('Lead');
     expect(serverInstrumentLabel('Unknown' as ServerInstrumentKey)).toBe('Unknown');

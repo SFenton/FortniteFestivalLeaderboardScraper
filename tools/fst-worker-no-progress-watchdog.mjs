@@ -30,20 +30,28 @@ export function evaluateNoProgressObservation(
 
   const nowMs = parseTimestamp(observation.observedAt, "observedAt");
   const operation = observation.operation ?? {};
+  const normalizedAttempt = observation.normalizedPhaseAttempt ?? null;
   const subOperation =
     operation.SubOperation
     ?? operation.subOperation
     ?? "";
-  const progressCandidates = [
-    operation.UpdatedAtUtc,
-    operation.updatedAtUtc,
-    operation.StartedAtUtc,
-    operation.startedAtUtc,
-    observation.latestPhaseProgressAt,
-    observation.scrapeStartedAt
-  ];
+  const progressCandidates = normalizedAttempt
+    ? [
+        normalizedAttempt.lastProgressAt,
+        normalizedAttempt.startedAt,
+        observation.scrapeStartedAt
+      ]
+    : [
+        operation.UpdatedAtUtc,
+        operation.updatedAtUtc,
+        operation.StartedAtUtc,
+        operation.startedAtUtc,
+        observation.latestPhaseProgressAt,
+        observation.scrapeStartedAt
+      ];
   if (
-    subOperation === "RefreshRegisteredUsers"
+    (normalizedAttempt?.phaseId === "post.refresh_registered_users"
+      || (!normalizedAttempt && subOperation === "RefreshRegisteredUsers"))
     && observation.registeredRefreshProgressAt
   ) {
     progressCandidates.push(observation.registeredRefreshProgressAt);
@@ -55,7 +63,8 @@ export function evaluateNoProgressObservation(
   const idleForSeconds = Math.max(0, (nowMs - latestProgressMs) / 1000);
 
   const phaseStartedValue =
-    operation.StartedAtUtc
+    normalizedAttempt?.startedAt
+    ?? operation.StartedAtUtc
     ?? operation.startedAtUtc
     ?? observation.scrapeStartedAt;
   const phaseElapsedSeconds = phaseStartedValue
@@ -210,6 +219,18 @@ BEGIN
         RAISE EXCEPTION 'expected to fail one scrape row, changed %', changed_rows;
     END IF;
 
+    IF to_regclass('public.scrape_phase_attempts') IS NOT NULL THEN
+        UPDATE scrape_phase_attempts
+        SET status = 'interrupted',
+            heartbeat_at = GREATEST(heartbeat_at, recovery_at),
+            completed_at = recovery_at,
+            warning_message = COALESCE(
+                warning_message,
+                ${quoteLiteral(failureMessage)})
+        WHERE scrape_id = ${normalizedScrapeId}
+          AND status = 'running';
+    END IF;
+
     IF to_regclass('public.publication_generations') IS NOT NULL THEN
         UPDATE publication_generations
         SET status = 'failed',
@@ -346,7 +367,35 @@ function run(command, args, { cwd, input } = {}) {
   return result.stdout;
 }
 
-function observe({ composeDir, postgresContainer, workerContainer }) {
+function supportsNormalizedPhaseProgress({ postgresContainer }) {
+  const output = run(
+    "docker",
+    [
+      "exec",
+      "-i",
+      postgresContainer,
+      "psql",
+      "-X",
+      "-At",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "fst",
+      "-d",
+      "fstservice",
+      "-c",
+      "SELECT to_regclass('public.scrape_phase_attempts') IS NOT NULL"
+    ]
+  ).trim();
+  return output === "t";
+}
+
+function observe({
+  composeDir,
+  postgresContainer,
+  workerContainer,
+  normalizedProgressAvailable
+}) {
   const workerStatus = run(
     "docker",
     ["inspect", "-f", "{{.State.Status}}", workerContainer]
@@ -370,6 +419,25 @@ function observe({ composeDir, postgresContainer, workerContainer }) {
   const clientPredicate = workerClientIp
     ? ` OR client_addr = ${quoteLiteral(workerClientIp)}::inet`
     : "";
+  const normalizedPhaseCte = normalizedProgressAvailable
+    ? `
+, normalized_phase AS (
+    SELECT phase_id, attempt, status, started_at, last_progress_at, heartbeat_at
+    FROM scrape_phase_attempts
+    WHERE scrape_id = (SELECT id FROM latest_scrape)
+      AND status = 'running'
+    ORDER BY last_progress_at DESC, phase_ordinal DESC, attempt DESC
+    LIMIT 1
+)`
+    : `
+, normalized_phase AS (
+    SELECT NULL::text AS phase_id,
+           NULL::integer AS attempt,
+           NULL::text AS status,
+           NULL::timestamptz AS started_at,
+           NULL::timestamptz AS last_progress_at,
+           NULL::timestamptz AS heartbeat_at
+)`;
   const sql = `
 WITH latest_scrape AS (
     SELECT id, status, started_at
@@ -397,7 +465,7 @@ registered_refresh_progress AS (
     SELECT max(checked_at) AS progress_at
     FROM registered_user_refresh_scope_progress
     WHERE scrape_id = (SELECT id FROM latest_scrape)
-)
+)${normalizedPhaseCte}
 SELECT json_build_object(
     'observedAt', clock_timestamp(),
     'workerRunning', ${workerStatus === "running" ? "TRUE" : "FALSE"},
@@ -412,6 +480,16 @@ SELECT json_build_object(
     'workerLedgerStatus', worker.status,
     'lastHeartbeatAt', worker.last_heartbeat_at,
     'operation', worker.current_operation_json,
+    'normalizedPhaseAttempt', CASE
+        WHEN normalized.phase_id IS NULL THEN NULL
+        ELSE json_build_object(
+            'phaseId', normalized.phase_id,
+            'attempt', normalized.attempt,
+            'status', normalized.status,
+            'startedAt', normalized.started_at,
+            'lastProgressAt', normalized.last_progress_at,
+            'heartbeatAt', normalized.heartbeat_at)
+    END,
     'latestPhaseProgressAt', phase.progress_at,
     'latestPhase', phase.phase,
     'registeredRefreshProgressAt', refresh.progress_at,
@@ -429,6 +507,7 @@ LEFT JOIN service_worker_status worker ON worker.worker_key = 'scraper'
 CROSS JOIN latest_phase phase
 CROSS JOIN worker_activity activity
 CROSS JOIN registered_refresh_progress refresh
+CROSS JOIN normalized_phase normalized
 WHERE publication.id = TRUE;
 `;
   const output = run(
@@ -455,7 +534,22 @@ WHERE publication.id = TRUE;
   return JSON.parse(output);
 }
 
-function captureRollback({ postgresContainer, evidenceDir, scrapeId }) {
+function captureRollback({
+  postgresContainer,
+  evidenceDir,
+  scrapeId,
+  normalizedProgressAvailable
+}) {
+  const phaseAttemptRollback = normalizedProgressAvailable
+    ? `
+SELECT format(
+    'UPDATE scrape_phase_attempts SET status=%L, heartbeat_at=%L::timestamptz, completed_at=%L::timestamptz, warning_message=%L WHERE scrape_id=%L AND phase_id=%L AND attempt=%L;',
+    status, heartbeat_at, completed_at, warning_message,
+    scrape_id, phase_id, attempt)
+FROM scrape_phase_attempts
+WHERE scrape_id=${scrapeId};
+`
+    : "SELECT '-- scrape_phase_attempts did not exist before recovery.';";
   const sql = `
 SELECT 'BEGIN;';
 SELECT 'SET LOCAL lock_timeout = ''5s'';';
@@ -481,6 +575,7 @@ SELECT format(
     status, last_status_change_at, message, current_operation_json,
     last_operation_json, updated_at)
 FROM service_worker_status WHERE worker_key='scraper';
+${phaseAttemptRollback}
 SELECT 'COMMIT;';
 `;
   const rollback = run(
@@ -511,7 +606,8 @@ function stopAndRecover({
   postgresContainer,
   workerContainer,
   evidenceDir,
-  stopTimeoutSeconds
+  stopTimeoutSeconds,
+  normalizedProgressAvailable
 }) {
   const scrapeId = requirePositiveInteger(observation.scrapeId, "scrapeId");
   const publishedScrapeId = requirePositiveInteger(
@@ -538,7 +634,12 @@ function stopAndRecover({
     throw new Error("fstworker is still running after the watchdog stop.");
   }
 
-  captureRollback({ postgresContainer, evidenceDir, scrapeId });
+  captureRollback({
+    postgresContainer,
+    evidenceDir,
+    scrapeId,
+    normalizedProgressAvailable
+  });
 
   const failureMessage =
     `No-progress watchdog abandoned scrape ${scrapeId}: ${decision.reason}; `
@@ -716,12 +817,16 @@ async function main() {
   const maxPhaseSeconds = Number(args.values["max-phase-seconds"] ?? 0);
   const pollSeconds = Number(args.values["poll-seconds"] ?? 60);
   const stopTimeoutSeconds = Number(args.values["stop-timeout-seconds"] ?? 30);
+  const normalizedProgressAvailable = supportsNormalizedPhaseProgress({
+    postgresContainer
+  });
 
   while (true) {
     const observation = observe({
       composeDir,
       postgresContainer,
-      workerContainer
+      workerContainer,
+      normalizedProgressAvailable
     });
     const decision = evaluateNoProgressObservation(observation, {
       idleSeconds,
@@ -747,7 +852,8 @@ async function main() {
           postgresContainer,
           workerContainer,
           evidenceDir,
-          stopTimeoutSeconds
+          stopTimeoutSeconds,
+          normalizedProgressAvailable
         });
       const reportPath = renderReport({
         evidenceDir,

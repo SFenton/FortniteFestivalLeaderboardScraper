@@ -61,6 +61,54 @@ describe("FST worker no-progress watchdog", () => {
     assert.equal(decision.idleForSeconds, 600);
   });
 
+  it("prefers normalized progress over a newer heartbeat-only operation update", () => {
+    const decision = evaluateNoProgressObservation(
+      observation({
+        operation: {
+          OperationKey: "scrape.post_process",
+          StartedAtUtc: "2026-07-27T10:00:00Z",
+          UpdatedAtUtc: "2026-07-27T17:59:00Z"
+        },
+        normalizedPhaseAttempt: {
+          phaseId: "post.band_maintenance",
+          attempt: 1,
+          status: "running",
+          startedAt: "2026-07-27T10:00:00Z",
+          lastProgressAt: "2026-07-27T17:00:00Z",
+          heartbeatAt: "2026-07-27T17:59:00Z"
+        }
+      }),
+      { idleSeconds: 2700 }
+    );
+
+    assert.equal(decision.decision, "timeout");
+    assert.equal(decision.idleForSeconds, 3600);
+  });
+
+  it("accepts recent normalized last-progress time", () => {
+    const decision = evaluateNoProgressObservation(
+      observation({
+        operation: {
+          OperationKey: "scrape.post_process",
+          StartedAtUtc: "2026-07-27T10:00:00Z",
+          UpdatedAtUtc: "2026-07-27T17:00:00Z"
+        },
+        normalizedPhaseAttempt: {
+          phaseId: "post.band_maintenance",
+          attempt: 1,
+          status: "running",
+          startedAt: "2026-07-27T10:00:00Z",
+          lastProgressAt: "2026-07-27T17:55:00Z",
+          heartbeatAt: "2026-07-27T17:59:00Z"
+        }
+      }),
+      { idleSeconds: 2700 }
+    );
+
+    assert.equal(decision.decision, "healthy");
+    assert.equal(decision.idleForSeconds, 300);
+  });
+
   it("accepts recent durable registered refresh scope progress", () => {
     const decision = evaluateNoProgressObservation(
       observation({
@@ -114,6 +162,9 @@ describe("FST worker no-progress watchdog", () => {
     assert.match(sql, /pg_stat_progress_create_index/);
     assert.match(sql, /public_reads_frozen = FALSE/);
     assert.match(sql, /UPDATE publication_generations/);
+    assert.match(sql, /UPDATE scrape_phase_attempts/);
+    assert.match(sql, /status = 'interrupted'/);
+    assert.doesNotMatch(sql, /last_progress_at\s*=/);
     assert.match(sql, /working_publication_id = NULL/);
     assert.match(sql, /DELETE FROM publication_api_response_cache_staging/);
     assert.match(sql, /status = 'offline'/);
