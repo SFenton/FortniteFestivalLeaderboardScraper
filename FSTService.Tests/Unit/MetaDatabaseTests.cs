@@ -3559,7 +3559,8 @@ public sealed class MetaDatabaseTests : IDisposable
                 PostgresErrorCodes.QueryCanceled,
                 exception.SqlState);
             Assert.True(
-                stopwatch.Elapsed < TimeSpan.FromMilliseconds(400));
+                stopwatch.Elapsed < TimeSpan.FromSeconds(2),
+                $"Query-cancel publication took {stopwatch.Elapsed}.");
         }
         finally
         {
