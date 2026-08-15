@@ -419,6 +419,7 @@ public sealed class MaxScoreMaintenanceService
                 PublishedScoreSourceFingerprint: new string('0', 64),
                 NotificationStateFingerprint: new string('0', 64),
                 RankHistoryFingerprint: new string('0', 64),
+                ScoreHistoryFingerprint: new string('0', 64),
                 AffectedInstruments:
                     manifest.Scope.ExpectedChangedInstruments,
                 RoutineCandidateCount: -1,
@@ -505,6 +506,7 @@ public sealed class MaxScoreMaintenanceService
                         "An incomplete maintenance run already exists; use the resume command.");
                 }
 
+                var rollbackEvidenceValidated = false;
                 if (run is null)
                 {
                     await lease.VerifyHeldAsync(
@@ -559,6 +561,27 @@ public sealed class MaxScoreMaintenanceService
                     RequireOwnedFreeze(
                         manifest,
                         manifestDigest);
+                    if (run.Phase
+                        >= MaxScoreMaintenancePhase.RollbackCaptured)
+                    {
+                        if (rollbackOutputPath is not null
+                            && !PathsEquivalent(
+                                ResolveDataPath(rollbackOutputPath),
+                                run.RollbackSnapshotPath
+                                ?? throw new InvalidOperationException(
+                                    "Rollback checkpoint path is missing.")))
+                        {
+                            throw new InvalidOperationException(
+                                "Resume rollback path does not match the persisted rollback evidence path.");
+                        }
+                        await ValidatePersistedRollbackEvidenceAsync(
+                            lease,
+                            manifest,
+                            manifestDigest,
+                            run,
+                            ct);
+                        rollbackEvidenceValidated = true;
+                    }
                     await lease.VerifyHeldAsync(
                         requireSourceLocks: true,
                         ct);
@@ -568,15 +591,23 @@ public sealed class MaxScoreMaintenanceService
                     await lease.VerifyHeldAsync(
                         requireSourceLocks: true,
                         ct);
-                    await MarkRunRunningAsync(
-                        lease,
-                        manifestDigest,
-                        ct);
                     var resumeInspection =
                         await _notifications.InspectRoutineStateAsync(
                             manifest,
                             manifestDigest,
                             requireOwnedFreeze: true,
+                            ct);
+                    var resumeScoreHistoryFingerprint =
+                        await lease.ExecuteTransactionAsync(
+                            "resume-score-history-fingerprint",
+                            requireSourceLocks: true,
+                            (connection, transaction, token) =>
+                                ComputeScoreHistoryFingerprintAsync(
+                                    manifest,
+                                    connection,
+                                    transaction,
+                                    token),
+                            IsolationLevel.RepeatableRead,
                             ct);
                     if (!string.Equals(
                             resumeInspection
@@ -597,11 +628,19 @@ public sealed class MaxScoreMaintenanceService
                         || !string.Equals(
                             await ComputeRankHistoryFingerprintAsync(ct),
                             run.RankHistoryFingerprint,
+                            StringComparison.Ordinal)
+                        || !string.Equals(
+                            resumeScoreHistoryFingerprint,
+                            run.ScoreHistoryFingerprint,
                             StringComparison.Ordinal))
                     {
                         throw new InvalidOperationException(
-                            "Resume source, notification, candidate, or rank-history identity differs from the persisted checkpoint.");
+                            "Resume source, notification, candidate, rank-history, or score-history identity differs from the persisted checkpoint.");
                     }
+                    await MarkRunRunningAsync(
+                        lease,
+                        manifestDigest,
+                        ct);
                 }
 
                 if (run.Phase < MaxScoreMaintenancePhase.RollbackCaptured)
@@ -628,13 +667,24 @@ public sealed class MaxScoreMaintenanceService
                         manifestDigest,
                         ct);
                 }
-                else if (rollbackOutputPath is not null
-                         && !PathsEquivalent(
-                             ResolveDataPath(rollbackOutputPath),
-                             run.RollbackSnapshotPath!))
+                if (rollbackOutputPath is not null
+                    && !PathsEquivalent(
+                        ResolveDataPath(rollbackOutputPath),
+                        run.RollbackSnapshotPath
+                        ?? throw new InvalidOperationException(
+                            "Rollback checkpoint path is missing.")))
                 {
                     throw new InvalidOperationException(
                         "Resume rollback path does not match the persisted rollback evidence path.");
+                }
+                if (!rollbackEvidenceValidated)
+                {
+                    await ValidatePersistedRollbackEvidenceAsync(
+                        lease,
+                        manifest,
+                        manifestDigest,
+                        run,
+                        ct);
                 }
 
                 if (run.Phase < MaxScoreMaintenancePhase.PathsPromoted)
@@ -837,6 +887,7 @@ public sealed class MaxScoreMaintenanceService
                         requireSourceLocks: true,
                         ct);
                     await ValidateCompletedMaintenanceAsync(
+                        lease,
                         manifest,
                         manifestDigest,
                         run,
@@ -859,6 +910,12 @@ public sealed class MaxScoreMaintenanceService
                         ct);
                 }
 
+                await ValidatePersistedRollbackEvidenceAsync(
+                    lease,
+                    manifest,
+                    manifestDigest,
+                    run,
+                    ct);
                 await lease.CompleteAsync(
                     manifest.ExpectedPublishedScrapeId,
                     manifestDigest,
@@ -1010,6 +1067,12 @@ public sealed class MaxScoreMaintenanceService
 
         var rankHistoryFingerprint =
             await ComputeRankHistoryFingerprintAsync(ct);
+        var scoreHistoryFingerprint =
+            await ComputeScoreHistoryFingerprintAsync(
+                manifest,
+                connection,
+                transaction,
+                ct);
         var affectedInstruments =
             manifest.Scope.ExpectedChangedInstruments.ToArray();
         var planDigest = ComputePlanDigest(
@@ -1017,6 +1080,7 @@ public sealed class MaxScoreMaintenanceService
             context,
             notificationInspection,
             rankHistoryFingerprint,
+            scoreHistoryFingerprint,
             affectedInstruments,
             artifactEvidence,
             observedScoreChecks);
@@ -1033,6 +1097,7 @@ public sealed class MaxScoreMaintenanceService
             notificationInspection.PublishedScoreSourceFingerprint,
             notificationInspection.NotificationStateFingerprint,
             rankHistoryFingerprint,
+            scoreHistoryFingerprint,
             affectedInstruments,
             RoutineCandidateCount:
                 notificationInspection.CandidateCount,
@@ -1068,7 +1133,9 @@ public sealed class MaxScoreMaintenanceService
                             observedScoreChecks
                                 .Where(check => !check.Passed)
                                 .Select(check =>
-                                    $"{check.SongId}/{check.Instrument}: observed={check.HighestObservedScore}, newMaximum={check.NewMaximum}"))),
+                                    check.SourceMapped
+                                        ? $"{check.SongId}/{check.Instrument}: observed={check.HighestObservedScore}, newMaximum={check.NewMaximum}"
+                                        : $"{check.SongId}/{check.Instrument}: authoritative published source is missing"))),
                 new(
                     "notifications",
                     routineCandidatesClear,
@@ -1079,6 +1146,10 @@ public sealed class MaxScoreMaintenanceService
                     "rank-history",
                     true,
                     $"baseline fingerprint {rankHistoryFingerprint}"),
+                new(
+                    "score-history",
+                    true,
+                    $"target fallback fingerprint {scoreHistoryFingerprint}"),
             ],
             RoutineCandidates: notificationInspection.Candidates,
             ArtifactEvidence: artifactEvidence,
@@ -1385,6 +1456,7 @@ public sealed class MaxScoreMaintenanceService
                     published_score_source_fingerprint,
                     notification_state_fingerprint,
                     rank_history_fingerprint,
+                    score_history_fingerprint,
                     manifest_json,
                     freeze_reason,
                     phase,
@@ -1401,6 +1473,7 @@ public sealed class MaxScoreMaintenanceService
                     @scoreFingerprint,
                     @notificationFingerprint,
                     @rankHistoryFingerprint,
+                    @scoreHistoryFingerprint,
                     @manifest,
                     @freezeReason,
                     'freeze_established',
@@ -1437,6 +1510,9 @@ public sealed class MaxScoreMaintenanceService
             insert.Parameters.AddWithValue(
                 "rankHistoryFingerprint",
                 plan.RankHistoryFingerprint);
+            insert.Parameters.AddWithValue(
+                "scoreHistoryFingerprint",
+                plan.ScoreHistoryFingerprint);
             insert.Parameters.Add("manifest", NpgsqlDbType.Jsonb).Value =
                 Encoding.UTF8.GetString(manifest.SerializeCanonical());
             insert.Parameters.AddWithValue(
@@ -1644,7 +1720,11 @@ public sealed class MaxScoreMaintenanceService
             planDigest,
             manifest.ExpectedPublishedScrapeId,
             manifest.ExpectedPublicationId,
+            manifest.CatalogVersion,
+            manifest.CatalogSchemaVersion,
             manifest.CatalogContentHash,
+            manifest.CatalogSongCount,
+            manifest.CatalogSourceCapturedAtUtc,
             manifest.Songs
                 .Select(song =>
                     new MaxScoreMaintenanceRollbackSong(
@@ -1654,7 +1734,158 @@ public sealed class MaxScoreMaintenanceService
                 .ToArray())
             .ValidateAndNormalize();
 
+    private async Task ValidatePersistedRollbackEvidenceAsync(
+        IMaxScoreMaintenanceLease lease,
+        MaxScoreMaintenanceManifest manifest,
+        string manifestDigest,
+        MaxScoreMaintenanceRunState run,
+        CancellationToken ct)
+    {
+        if (run.Phase
+            < MaxScoreMaintenancePhase.RollbackCaptured)
+        {
+            throw new InvalidOperationException(
+                "Persisted rollback evidence is required after rollback capture.");
+        }
+        var rollbackPath = run.RollbackSnapshotPath
+            ?? throw new InvalidOperationException(
+                "Rollback checkpoint path is missing.");
+        var rollbackSha256 = run.RollbackSnapshotSha256
+            ?? throw new InvalidOperationException(
+                "Rollback checkpoint SHA-256 is missing.");
+        var resolvedPath = ResolveDataPath(rollbackPath);
+        if (!PathsEquivalent(resolvedPath, rollbackPath))
+        {
+            throw new InvalidOperationException(
+                "Rollback checkpoint path no longer resolves to its persisted identity.");
+        }
+
+        var rollbackSongs =
+            await lease.ExecuteTransactionAsync(
+                "rollback-evidence-validation",
+                requireSourceLocks: true,
+                (connection, transaction, token) =>
+                    LoadRollbackSongsAsync(
+                        connection,
+                        transaction,
+                        manifestDigest,
+                        token),
+                IsolationLevel.RepeatableRead,
+                ct);
+        if (rollbackSongs.Count != manifest.Songs.Count
+            || !rollbackSongs
+                .Select(song => song.SongId)
+                .SequenceEqual(
+                    manifest.Songs.Select(song => song.SongId),
+                    StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Rollback database evidence does not cover the exact manifest song identity.");
+        }
+
+        var expectedSnapshot =
+            new MaxScoreMaintenanceRollbackSnapshot(
+                MaxScoreMaintenanceRollbackSnapshot
+                    .CurrentSnapshotVersion,
+                NormalizeDatabaseTimestamp(run.CreatedAtUtc),
+                manifestDigest,
+                run.PlanDigest,
+                run.ExpectedPublishedScrapeId,
+                run.ExpectedPublicationId,
+                manifest.CatalogVersion,
+                manifest.CatalogSchemaVersion,
+                run.ExpectedCatalogHash,
+                run.ExpectedCatalogSongCount,
+                manifest.CatalogSourceCapturedAtUtc,
+                rollbackSongs)
+            .ValidateAndNormalize();
+        await MaxScoreMaintenanceFileStore
+            .ValidateCanonicalRollbackSnapshotAsync(
+                _options.DataDirectory,
+                resolvedPath,
+                rollbackSha256,
+                expectedSnapshot,
+                ct);
+    }
+
+    private static async Task<
+        IReadOnlyList<MaxScoreMaintenanceRollbackSong>>
+        LoadRollbackSongsAsync(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            string manifestDigest,
+            CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT song_id,
+                   expected_catalog_last_modified,
+                   path_generation_revision,
+                   dat_file_hash,
+                   song_last_modified,
+                   paths_generated_at,
+                   chopt_version,
+                   chopt_binary_sha256,
+                   path_generation_profile,
+                   path_artifact_generation_id,
+                   path_expected_instruments,
+                   max_lead_score,
+                   max_bass_score,
+                   max_drums_score,
+                   max_vocals_score,
+                   max_pro_lead_score,
+                   max_pro_bass_score,
+                   max_pro_cymbals_score,
+                   max_pro_drums_score,
+                   path_generation_pending,
+                   path_artifact_tree_sha256,
+                   path_artifact_file_count
+            FROM max_score_maintenance_rollback_songs
+            WHERE manifest_sha256 = @manifestSha256
+            ORDER BY song_id
+            """;
+        command.Parameters.AddWithValue(
+            "manifestSha256",
+            manifestDigest);
+        var songs =
+            new List<MaxScoreMaintenanceRollbackSong>();
+        await using var reader =
+            await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            songs.Add(
+                new MaxScoreMaintenanceRollbackSong(
+                    reader.GetString(0),
+                    reader.GetString(1),
+                    new MaxScoreMaintenancePathIdentity(
+                        reader.GetInt64(2),
+                        ReadNullableString(reader, 3),
+                        ReadNullableString(reader, 4),
+                        ReadNullableDateTime(reader, 5),
+                        ReadNullableString(reader, 6),
+                        ReadNullableString(reader, 7),
+                        ReadNullableString(reader, 8),
+                        ReadNullableString(reader, 9),
+                        reader.GetFieldValue<string[]>(10),
+                        new MaxScoreMaintenanceMaxima(
+                            ReadNullableInt32(reader, 11),
+                            ReadNullableInt32(reader, 12),
+                            ReadNullableInt32(reader, 13),
+                            ReadNullableInt32(reader, 14),
+                            ReadNullableInt32(reader, 15),
+                            ReadNullableInt32(reader, 16),
+                            ReadNullableInt32(reader, 17),
+                            ReadNullableInt32(reader, 18)),
+                        reader.GetBoolean(19),
+                        ReadNullableString(reader, 20),
+                        ReadNullableInt32(reader, 21))));
+        }
+        return songs;
+    }
+
     private async Task ValidateCompletedMaintenanceAsync(
+        IMaxScoreMaintenanceLease lease,
         MaxScoreMaintenanceManifest manifest,
         string manifestDigest,
         MaxScoreMaintenanceRunState run,
@@ -1684,8 +1915,44 @@ public sealed class MaxScoreMaintenanceService
                 "Rank history changed during max-score maintenance.");
         }
 
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await lease.ExecuteTransactionAsync(
+            "final-state-validation",
+            requireSourceLocks: true,
+            async (conn, transaction, token) =>
+            {
+        var scoreHistoryFingerprint =
+            await ComputeScoreHistoryFingerprintAsync(
+                manifest,
+                conn,
+                transaction,
+                token);
+        if (!string.Equals(
+                scoreHistoryFingerprint,
+                run.ScoreHistoryFingerprint,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Score history changed during max-score maintenance.");
+        }
+
+        var affectedPlayerStatsAccounts =
+            await MaxScoreMaintenanceDerivedStateService
+                .LoadAffectedPlayerStatsAccountsAsync(
+                    manifest,
+                    conn,
+                    transaction,
+                    token);
+        var missingPlayerStatsAccountCount =
+            await MaxScoreMaintenanceDerivedStateService
+                .CountMissingPlayerStatsAccountsAsync(
+                    affectedPlayerStatsAccounts,
+                    NormalizeDatabaseTimestamp(
+                        run.CreatedAtUtc),
+                    conn,
+                    transaction,
+                    token);
         await using var cmd = conn.CreateCommand();
+        cmd.Transaction = transaction;
         cmd.CommandTimeout = 600;
         cmd.CommandText = """
             WITH expected(song_id, instrument, max_score) AS (
@@ -1730,20 +1997,9 @@ public sealed class MaxScoreMaintenanceService
                         AS family_rows,
                     (SELECT COUNT(*) FROM combo_leaderboard)
                         AS combo_rows
-            ), affected_accounts AS (
-                SELECT DISTINCT current.account_id
-                FROM current_leaderboard_entries current
-                JOIN expected
-                  ON expected.song_id = current.song_id
-                 AND expected.instrument = current.instrument
             ), missing_player_stats AS (
-                SELECT COUNT(*)::BIGINT AS row_count
-                FROM affected_accounts affected
-                WHERE NOT EXISTS (
-                    SELECT 1
-                    FROM player_stats_tiers stats
-                    WHERE stats.account_id = affected.account_id
-                )
+                SELECT @missingPlayerStatsAccountCount::BIGINT
+                    AS row_count
             ), missing_leaderboard_rivals AS (
                 SELECT COUNT(*)::BIGINT AS row_count
                 FROM (
@@ -1873,8 +2129,12 @@ public sealed class MaxScoreMaintenanceService
             "rankMethods",
             NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
             LeaderboardRivalsCalculator.RankMethods;
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        if (!await reader.ReadAsync(ct)
+        cmd.Parameters.AddWithValue(
+            "missingPlayerStatsAccountCount",
+            missingPlayerStatsAccountCount);
+        await using var reader =
+            await cmd.ExecuteReaderAsync(token);
+        if (!await reader.ReadAsync(token)
             || reader.GetInt32(0) != changedPairs.Length
             || reader.GetInt64(1) <= 0
             || reader.GetInt32(2) != manifest.Songs.Count
@@ -1891,6 +2151,9 @@ public sealed class MaxScoreMaintenanceService
             throw new InvalidOperationException(
                 "Post-maintenance paths, song stats, rankings, rollback, notification, or cache validation failed.");
         }
+            },
+            IsolationLevel.RepeatableRead,
+            ct);
     }
 
     private async Task<string> ComputeRankHistoryFingerprintAsync(
@@ -1952,7 +2215,7 @@ public sealed class MaxScoreMaintenanceService
                     song.PlasticDrumsEvidence))
             .ToArray();
 
-    private static async Task<
+    internal static async Task<
         IReadOnlyList<MaxScoreMaintenanceObservedScoreCheck>>
         LoadObservedScoreChecksAsync(
             MaxScoreMaintenanceManifest manifest,
@@ -1973,22 +2236,33 @@ public sealed class MaxScoreMaintenanceService
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandTimeout = 60;
-        command.CommandText = """
+        command.CommandText = $"""
             WITH expected(song_id, instrument, new_maximum) AS (
                 SELECT *
                 FROM unnest(
                     @songIds::TEXT[],
                     @instruments::TEXT[],
                     @newMaximums::INTEGER[])
-            )
+            ), affected AS (
+                SELECT song_id, instrument
+                FROM expected
+            ),
+            {PublishedSoloScopeSql.CurrentResolvedAffectedEntriesCte}
             SELECT expected.song_id,
                    expected.instrument,
                    expected.new_maximum,
-                   MAX(current.score)::INTEGER
+                   EXISTS (
+                       SELECT 1
+                       FROM selected_sources selected
+                       WHERE selected.song_id =
+                           expected.song_id
+                         AND selected.instrument =
+                           expected.instrument),
+                   MAX(resolved.score)::INTEGER
             FROM expected
-            LEFT JOIN current_leaderboard_entries current
-              ON current.song_id = expected.song_id
-             AND current.instrument = expected.instrument
+            LEFT JOIN resolved_rows resolved
+              ON resolved.song_id = expected.song_id
+             AND resolved.instrument = expected.instrument
             GROUP BY expected.song_id,
                      expected.instrument,
                      expected.new_maximum
@@ -2016,15 +2290,18 @@ public sealed class MaxScoreMaintenanceService
         while (await reader.ReadAsync(ct))
         {
             var newMaximum = reader.GetInt32(2);
-            var highestObservedScore = reader.IsDBNull(3)
+            var sourceMapped = reader.GetBoolean(3);
+            var highestObservedScore = reader.IsDBNull(4)
                 ? (int?)null
-                : reader.GetInt32(3);
+                : reader.GetInt32(4);
             checks.Add(new MaxScoreMaintenanceObservedScoreCheck(
                 reader.GetString(0),
                 reader.GetString(1),
                 newMaximum,
+                sourceMapped,
                 highestObservedScore,
-                IsObservedScoreCompatible(
+                sourceMapped
+                && IsObservedScoreCompatible(
                     newMaximum,
                     highestObservedScore)));
         }
@@ -2044,11 +2321,164 @@ public sealed class MaxScoreMaintenanceService
            && (highestObservedScore is null
                || highestObservedScore <= newMaximum);
 
+    internal static async Task<string>
+        ComputeScoreHistoryFingerprintAsync(
+            MaxScoreMaintenanceManifest manifest,
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(
+                transaction.Connection,
+                connection))
+        {
+            throw new ArgumentException(
+                "The score-history fingerprint transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
+
+        var changedPairs = manifest.Songs
+            .SelectMany(song => song.ChangedInstruments.Select(
+                instrument => (
+                    song.SongId,
+                    Instrument: instrument,
+                    Maximum: song.StagedPath.Maxima
+                        .GetByInstrument(instrument)!.Value)))
+            .OrderBy(pair => pair.SongId, StringComparer.Ordinal)
+            .ThenBy(pair => pair.Instrument, StringComparer.Ordinal)
+            .ToArray();
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandTimeout = 60;
+        command.CommandText = $"""
+            WITH thresholds(song_id, instrument, max_score) AS (
+                SELECT *
+                FROM unnest(
+                    @songIds::TEXT[],
+                    @instruments::TEXT[],
+                    @maxScores::INTEGER[])
+            ), affected AS (
+                SELECT song_id, instrument
+                FROM thresholds
+            ),
+            {PublishedSoloScopeSql.CurrentResolvedAffectedEntriesCte},
+            fallback_accounts AS MATERIALIZED (
+                SELECT resolved.song_id,
+                       resolved.instrument,
+                       resolved.account_id,
+                       thresholds.max_score
+                FROM resolved_rows resolved
+                JOIN thresholds
+                  ON thresholds.song_id = resolved.song_id
+                 AND thresholds.instrument =
+                     resolved.instrument
+                WHERE resolved.score > thresholds.max_score
+            ), relevant_history AS MATERIALIZED (
+                SELECT history.id,
+                       history.song_id,
+                       history.instrument,
+                       history.account_id,
+                       history.old_score,
+                       history.new_score,
+                       history.old_rank,
+                       history.new_rank,
+                       history.accuracy,
+                       history.is_full_combo,
+                       history.stars,
+                       history.percentile,
+                       history.season,
+                       history.score_achieved_at,
+                       history.season_rank,
+                       history.all_time_rank,
+                       history.difficulty,
+                       history.changed_at
+                FROM score_history history
+                JOIN fallback_accounts fallback
+                  ON fallback.song_id = history.song_id
+                 AND fallback.instrument =
+                     history.instrument
+                 AND fallback.account_id =
+                     history.account_id
+                WHERE history.new_score <= fallback.max_score
+            )
+            SELECT encode(
+                digest(
+                    convert_to(
+                        COALESCE(
+                            string_agg(
+                                jsonb_build_array(
+                                    id,
+                                    song_id,
+                                    instrument,
+                                    account_id,
+                                    old_score,
+                                    new_score,
+                                    old_rank,
+                                    new_rank,
+                                    accuracy,
+                                    is_full_combo,
+                                    stars,
+                                    percentile,
+                                    season,
+                                    CASE
+                                        WHEN score_achieved_at
+                                            IS NULL
+                                            THEN NULL
+                                        ELSE (
+                                            EXTRACT(
+                                                EPOCH FROM
+                                                    score_achieved_at)
+                                            * 1000000)::BIGINT
+                                    END,
+                                    season_rank,
+                                    all_time_rank,
+                                    difficulty,
+                                    (
+                                        EXTRACT(
+                                            EPOCH FROM changed_at)
+                                        * 1000000)::BIGINT)::TEXT,
+                                E'\n'
+                                ORDER BY song_id,
+                                         instrument,
+                                         account_id,
+                                         new_score,
+                                         id),
+                            ''),
+                        'UTF8'),
+                    'sha256'),
+                'hex')
+            FROM relevant_history
+            """;
+        command.Parameters.Add(
+            "songIds",
+            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            changedPairs.Select(pair => pair.SongId).ToArray();
+        command.Parameters.Add(
+            "instruments",
+            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            changedPairs.Select(pair => pair.Instrument).ToArray();
+        command.Parameters.Add(
+            "maxScores",
+            NpgsqlDbType.Array | NpgsqlDbType.Integer).Value =
+            changedPairs.Select(pair =>
+                    RankingsCalculator.ComputeMaxScoreThreshold(
+                        pair.Maximum))
+                .ToArray();
+        return Convert.ToString(
+                   await command.ExecuteScalarAsync(ct))
+               ?? throw new InvalidOperationException(
+                   "Target score-history fingerprint was unavailable.");
+    }
+
     private static string ComputePlanDigest(
         string manifestDigest,
         PublishedContext context,
         MaxScoreMaintenanceNotificationInspection notifications,
         string rankHistoryFingerprint,
+        string scoreHistoryFingerprint,
         IReadOnlyList<string> affectedInstruments,
         IReadOnlyList<MaxScoreMaintenanceArtifactEvidence> artifactEvidence,
         IReadOnlyList<MaxScoreMaintenanceObservedScoreCheck>
@@ -2057,7 +2487,7 @@ public sealed class MaxScoreMaintenanceService
         var canonical = JsonSerializer.Serialize(
             new
             {
-                contractVersion = 2,
+                contractVersion = 3,
                 manifestDigest,
                 publishedScrapeId =
                     context.Pointers.PublishedScrapeId,
@@ -2070,6 +2500,7 @@ public sealed class MaxScoreMaintenanceService
                 notifications.PublishedScoreSourceFingerprint,
                 notifications.NotificationStateFingerprint,
                 rankHistoryFingerprint,
+                scoreHistoryFingerprint,
                 affectedInstruments,
                 artifactEvidence,
                 observedScoreChecks,
@@ -2099,6 +2530,7 @@ public sealed class MaxScoreMaintenanceService
                        published_score_source_fingerprint,
                        notification_state_fingerprint,
                        rank_history_fingerprint,
+                       score_history_fingerprint,
                        freeze_reason,
                        phase,
                        status,
@@ -2155,19 +2587,20 @@ public sealed class MaxScoreMaintenanceService
             reader.GetString(7),
             reader.GetString(8),
             reader.GetString(9),
-            ParsePhase(reader.GetString(10)),
-            reader.GetString(11),
-            reader.IsDBNull(12) ? null : reader.GetString(12),
+            reader.GetString(10),
+            ParsePhase(reader.GetString(11)),
+            reader.GetString(12),
             reader.IsDBNull(13) ? null : reader.GetString(13),
-            reader.IsDBNull(14) ? null : reader.GetInt64(14),
-            reader.GetInt32(15),
+            reader.IsDBNull(14) ? null : reader.GetString(14),
+            reader.IsDBNull(15) ? null : reader.GetInt64(15),
             reader.GetInt32(16),
-            reader.GetInt64(17),
-            reader.GetInt32(18),
-            reader.GetInt64(19),
-            reader.IsDBNull(20) ? null : reader.GetString(20),
+            reader.GetInt32(17),
+            reader.GetInt64(18),
+            reader.GetInt32(19),
+            reader.GetInt64(20),
             reader.IsDBNull(21) ? null : reader.GetString(21),
-            reader.GetDateTime(22));
+            reader.IsDBNull(22) ? null : reader.GetString(22),
+            reader.GetDateTime(23));
 
     private async Task AdvancePhaseAsync(
         IMaxScoreMaintenanceLease lease,
@@ -2977,6 +3410,7 @@ public sealed class MaxScoreMaintenanceService
         string PublishedScoreSourceFingerprint,
         string NotificationStateFingerprint,
         string RankHistoryFingerprint,
+        string ScoreHistoryFingerprint,
         string FreezeReason,
         MaxScoreMaintenancePhase Phase,
         string Status,

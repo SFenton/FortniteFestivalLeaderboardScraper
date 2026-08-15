@@ -184,6 +184,380 @@ public sealed class MaxScoreMaintenancePersistenceTests
     }
 
     [Fact]
+    public async Task Observed_score_validation_rejects_overlay_only_high_score()
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        var manifest = CreateManifest();
+        SeedPublishedSoloCurrentState(
+            dataSource,
+            manifest,
+            overlayScore: 60_000);
+
+        await using var connection =
+            await dataSource.OpenConnectionAsync();
+        await using var transaction =
+            await connection.BeginTransactionAsync();
+        var checks =
+            await MaxScoreMaintenanceService
+                .LoadObservedScoreChecksAsync(
+                    manifest,
+                    connection,
+                    transaction,
+                    CancellationToken.None);
+
+        var check = Assert.Single(checks);
+        Assert.Equal(60_000, check.HighestObservedScore);
+        Assert.Equal(51_573, check.NewMaximum);
+        Assert.True(check.SourceMapped);
+        Assert.False(check.Passed);
+    }
+
+    [Fact]
+    public async Task Affected_player_stats_rebuild_and_validation_include_overlay_only_accounts()
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        var manifest = CreateManifest();
+        SeedPublishedSoloCurrentState(
+            dataSource,
+            manifest,
+            overlayScore: 50_000);
+
+        await using var connection =
+            await dataSource.OpenConnectionAsync();
+        await using var transaction =
+            await connection.BeginTransactionAsync();
+        var affected =
+            await MaxScoreMaintenanceDerivedStateService
+                .LoadAffectedPlayerStatsAccountsAsync(
+                    manifest,
+                    connection,
+                    transaction,
+                    CancellationToken.None);
+        var rebuildStartedAt =
+            DateTime.UtcNow.AddSeconds(-1);
+
+        Assert.Equal(
+            ["account-base", "account-overlay"],
+            affected);
+
+        await using (var seedStats =
+                     connection.CreateCommand())
+        {
+            seedStats.Transaction = transaction;
+            seedStats.CommandText = """
+                INSERT INTO player_stats_tiers (
+                    account_id,
+                    instrument,
+                    tiers_json,
+                    updated_at)
+                VALUES (
+                    'account-base',
+                    'Solo_Guitar',
+                    '[]'::JSONB,
+                    now())
+                """;
+            await seedStats.ExecuteNonQueryAsync();
+        }
+        Assert.Equal(
+            1,
+            await MaxScoreMaintenanceDerivedStateService
+                .CountMissingPlayerStatsAccountsAsync(
+                    affected,
+                    rebuildStartedAt,
+                    connection,
+                    transaction,
+                    CancellationToken.None));
+
+        await using (var seedOverlayStats =
+                     connection.CreateCommand())
+        {
+            seedOverlayStats.Transaction = transaction;
+            seedOverlayStats.CommandText = """
+                INSERT INTO player_stats_tiers (
+                    account_id,
+                    instrument,
+                    tiers_json,
+                    updated_at)
+                VALUES (
+                    'account-overlay',
+                    'Solo_Guitar',
+                    '[]'::JSONB,
+                    now())
+                """;
+            await seedOverlayStats.ExecuteNonQueryAsync();
+        }
+        Assert.Equal(
+            0,
+            await MaxScoreMaintenanceDerivedStateService
+                .CountMissingPlayerStatsAccountsAsync(
+                    affected,
+                    rebuildStartedAt,
+                    connection,
+                    transaction,
+                    CancellationToken.None));
+    }
+
+    [Fact]
+    public void Maintenance_ranking_read_pass_uses_published_source_and_overlay_resolution()
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        var manifest = CreateManifest();
+        SeedPublishedSoloCurrentState(
+            dataSource,
+            manifest,
+            overlayScore: 50_000);
+        ScrapeRunTestHelper.EnsureAllocated(
+            dataSource,
+            1297,
+            completed: true);
+        using (var connection =
+               dataSource.OpenConnection())
+        using (var seed = connection.CreateCommand())
+        {
+            seed.CommandText = """
+                INSERT INTO leaderboard_entries_snapshot (
+                    snapshot_id,
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    rank,
+                    source,
+                    first_seen_at,
+                    last_updated_at)
+                VALUES (
+                    1297,
+                    'song-a',
+                    'Solo_Guitar',
+                    'account-base',
+                    90000,
+                    1,
+                    'scrape',
+                    now(),
+                    now());
+                INSERT INTO leaderboard_snapshot_state (
+                    song_id,
+                    instrument,
+                    active_snapshot_id,
+                    scrape_id,
+                    is_finalized,
+                    updated_at)
+                VALUES (
+                    'song-a',
+                    'Solo_Guitar',
+                    1297,
+                    1297,
+                    TRUE,
+                    now());
+                """;
+            seed.ExecuteNonQuery();
+        }
+
+        using var meta = new MetaDatabase(
+            dataSource,
+            NullLogger<MetaDatabase>.Instance);
+        using var loggerFactory =
+            Microsoft.Extensions.Logging.LoggerFactory
+                .Create(_ => { });
+        using var persistence =
+            new GlobalLeaderboardPersistence(
+                meta,
+                loggerFactory,
+                NullLogger<
+                    GlobalLeaderboardPersistence>.Instance,
+                dataSource,
+                Options.Create(new FeatureOptions()));
+        persistence.InitializeReadOnly();
+        var database =
+            persistence.GetOrCreateInstrumentDb(
+                "Solo_Guitar");
+
+        Assert.Equal(
+            90_000,
+            Assert.Single(
+                database.GetCurrentStatePlayerScores(
+                    "account-base")).Score);
+        using (persistence
+               .BeginMaxScoreMaintenancePublishedReadPass())
+        {
+            Assert.Equal(
+                40_000,
+                Assert.Single(
+                    database.GetCurrentStatePlayerScores(
+                        "account-base")).Score);
+            Assert.Equal(
+                50_000,
+                Assert.Single(
+                    database.GetCurrentStatePlayerScores(
+                        "account-overlay")).Score);
+            Assert.Equal(
+                40_000,
+                Assert.Single(
+                    persistence
+                        .GetCurrentStatePlayerProfile(
+                            "account-base")).Score);
+            Assert.Equal(
+                50_000,
+                Assert.Single(
+                    persistence
+                        .GetCurrentStatePlayerProfile(
+                            "account-overlay")).Score);
+        }
+        Assert.Equal(
+            90_000,
+            Assert.Single(
+                database.GetCurrentStatePlayerScores(
+                    "account-base")).Score);
+    }
+
+    [Fact]
+    public async Task Target_score_history_fingerprint_tracks_only_fallback_relevant_rows()
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        var manifest = CreateManifest();
+        SeedPublishedSoloCurrentState(
+            dataSource,
+            manifest,
+            overlayScore: 60_000);
+        var originalId = InsertHistory(
+            "song-a",
+            "Solo_Guitar",
+            "account-overlay",
+            50_000,
+            accuracy: 95);
+        var baseline = await ComputeFingerprintAsync();
+
+        InsertHistory(
+            "other-song",
+            "Solo_Guitar",
+            "account-overlay",
+            40_000,
+            accuracy: 90);
+        InsertHistory(
+            "song-a",
+            "Solo_Guitar",
+            "account-overlay",
+            70_000,
+            accuracy: 100);
+        Assert.Equal(
+            baseline,
+            await ComputeFingerprintAsync());
+
+        var insertedId = InsertHistory(
+            "song-a",
+            "Solo_Guitar",
+            "account-overlay",
+            51_000,
+            accuracy: 96);
+        Assert.NotEqual(
+            baseline,
+            await ComputeFingerprintAsync());
+        ExecuteHistoryMutation(
+            "DELETE FROM score_history WHERE id = @id",
+            insertedId);
+        Assert.Equal(
+            baseline,
+            await ComputeFingerprintAsync());
+
+        ExecuteHistoryMutation(
+            """
+            UPDATE score_history
+            SET accuracy = 97
+            WHERE id = @id
+            """,
+            originalId);
+        Assert.NotEqual(
+            baseline,
+            await ComputeFingerprintAsync());
+        ExecuteHistoryMutation(
+            "DELETE FROM score_history WHERE id = @id",
+            originalId);
+        Assert.NotEqual(
+            baseline,
+            await ComputeFingerprintAsync());
+
+        long InsertHistory(
+            string songId,
+            string instrument,
+            string accountId,
+            int score,
+            int accuracy)
+        {
+            using var connection =
+                dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO score_history (
+                    song_id,
+                    instrument,
+                    account_id,
+                    new_score,
+                    new_rank,
+                    accuracy,
+                    changed_at)
+                VALUES (
+                    @songId,
+                    @instrument,
+                    @accountId,
+                    @score,
+                    1,
+                    @accuracy,
+                    now())
+                RETURNING id
+                """;
+            command.Parameters.AddWithValue(
+                "songId",
+                songId);
+            command.Parameters.AddWithValue(
+                "instrument",
+                instrument);
+            command.Parameters.AddWithValue(
+                "accountId",
+                accountId);
+            command.Parameters.AddWithValue(
+                "score",
+                score);
+            command.Parameters.AddWithValue(
+                "accuracy",
+                accuracy);
+            return Convert.ToInt64(
+                command.ExecuteScalar());
+        }
+
+        void ExecuteHistoryMutation(
+            string sql,
+            long id)
+        {
+            using var connection =
+                dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            command.Parameters.AddWithValue("id", id);
+            Assert.Equal(1, command.ExecuteNonQuery());
+        }
+
+        async Task<string> ComputeFingerprintAsync()
+        {
+            await using var connection =
+                await dataSource.OpenConnectionAsync();
+            await using var transaction =
+                await connection.BeginTransactionAsync(
+                    System.Data.IsolationLevel
+                        .RepeatableRead);
+            return await MaxScoreMaintenanceService
+                .ComputeScoreHistoryFingerprintAsync(
+                    manifest,
+                    connection,
+                    transaction,
+                    CancellationToken.None);
+        }
+    }
+
+    [Fact]
     public void Generic_notification_audit_is_quarantined_with_zero_visible_delivery()
     {
         using var dataSource = SharedPostgresContainer.CreateDatabase();
@@ -328,6 +702,7 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     published_score_source_fingerprint,
                     notification_state_fingerprint,
                     rank_history_fingerprint,
+                    score_history_fingerprint,
                     manifest_json,
                     freeze_reason,
                     phase,
@@ -344,6 +719,7 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     700,
                     @scoreFingerprint,
                     @notificationFingerprint,
+                    @historyFingerprint,
                     @historyFingerprint,
                     '{}'::jsonb,
                     @freezeReason,
@@ -445,6 +821,7 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     published_score_source_fingerprint,
                     notification_state_fingerprint,
                     rank_history_fingerprint,
+                    score_history_fingerprint,
                     manifest_json,
                     freeze_reason,
                     phase,
@@ -459,6 +836,7 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     @publicationId,
                     @catalogHash,
                     @catalogSongCount,
+                    @fingerprint,
                     @fingerprint,
                     @fingerprint,
                     @fingerprint,
@@ -589,6 +967,173 @@ public sealed class MaxScoreMaintenancePersistenceTests
     }
 
     [Fact]
+    public async Task Persisted_rollback_evidence_accepts_valid_resume_snapshot()
+    {
+        var manifest = CreateManifest();
+        var snapshot =
+            MaxScoreMaintenanceService.CreateRollbackSnapshot(
+                manifest,
+                manifest.ComputeDigest(),
+                new string('a', 64),
+                new DateTime(
+                    2026,
+                    8,
+                    14,
+                    9,
+                    0,
+                    0,
+                    DateTimeKind.Utc));
+        var dataDirectory = CreateEvidenceDirectory();
+        try
+        {
+            var written =
+                await MaxScoreMaintenanceFileStore
+                    .WriteCanonicalRollbackSnapshotAsync(
+                        dataDirectory,
+                        "rollback.json",
+                        snapshot,
+                        CancellationToken.None);
+
+            var validated =
+                await MaxScoreMaintenanceFileStore
+                    .ValidateCanonicalRollbackSnapshotAsync(
+                        dataDirectory,
+                        written.FullPath,
+                        written.Sha256,
+                        snapshot,
+                        CancellationToken.None);
+
+            Assert.Equal(
+                snapshot.SerializeCanonical(),
+                validated.SerializeCanonical());
+        }
+        finally
+        {
+            Directory.Delete(dataDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Persisted_rollback_evidence_rejects_deleted_resume_file()
+    {
+        var manifest = CreateManifest();
+        var snapshot =
+            MaxScoreMaintenanceService.CreateRollbackSnapshot(
+                manifest,
+                manifest.ComputeDigest(),
+                new string('b', 64),
+                DateTime.UtcNow);
+        var dataDirectory = CreateEvidenceDirectory();
+        try
+        {
+            var written =
+                await MaxScoreMaintenanceFileStore
+                    .WriteCanonicalRollbackSnapshotAsync(
+                        dataDirectory,
+                        "rollback.json",
+                        snapshot,
+                        CancellationToken.None);
+            File.Delete(written.FullPath);
+
+            await Assert.ThrowsAsync<ArgumentException>(
+                () => MaxScoreMaintenanceFileStore
+                    .ValidateCanonicalRollbackSnapshotAsync(
+                        dataDirectory,
+                        written.FullPath,
+                        written.Sha256,
+                        snapshot,
+                        CancellationToken.None));
+        }
+        finally
+        {
+            Directory.Delete(dataDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Persisted_rollback_evidence_rejects_corrupted_resume_file()
+    {
+        var manifest = CreateManifest();
+        var snapshot =
+            MaxScoreMaintenanceService.CreateRollbackSnapshot(
+                manifest,
+                manifest.ComputeDigest(),
+                new string('c', 64),
+                DateTime.UtcNow);
+        var dataDirectory = CreateEvidenceDirectory();
+        try
+        {
+            var written =
+                await MaxScoreMaintenanceFileStore
+                    .WriteCanonicalRollbackSnapshotAsync(
+                        dataDirectory,
+                        "rollback.json",
+                        snapshot,
+                        CancellationToken.None);
+            await File.WriteAllTextAsync(
+                written.FullPath,
+                "{");
+
+            await Assert.ThrowsAsync<ArgumentException>(
+                () => MaxScoreMaintenanceFileStore
+                    .ValidateCanonicalRollbackSnapshotAsync(
+                        dataDirectory,
+                        written.FullPath,
+                        written.Sha256,
+                        snapshot,
+                        CancellationToken.None));
+        }
+        finally
+        {
+            Directory.Delete(dataDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Persisted_rollback_evidence_rejects_wrong_canonical_snapshot()
+    {
+        var manifest = CreateManifest();
+        var snapshot =
+            MaxScoreMaintenanceService.CreateRollbackSnapshot(
+                manifest,
+                manifest.ComputeDigest(),
+                new string('d', 64),
+                DateTime.UtcNow);
+        var swapped = snapshot with
+        {
+            PlanDigest = new string('e', 64),
+        };
+        var dataDirectory = CreateEvidenceDirectory();
+        var path = Path.Combine(
+            dataDirectory,
+            "rollback.json");
+        try
+        {
+            await File.WriteAllBytesAsync(
+                path,
+                swapped.SerializeCanonical());
+            var swappedSha =
+                await MaxScoreMaintenanceFileStore
+                    .ComputeSha256Async(
+                        path,
+                        CancellationToken.None);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => MaxScoreMaintenanceFileStore
+                    .ValidateCanonicalRollbackSnapshotAsync(
+                        dataDirectory,
+                        path,
+                        swappedSha,
+                        snapshot,
+                        CancellationToken.None));
+        }
+        finally
+        {
+            Directory.Delete(dataDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Checkpoint_identity_and_rollback_rows_are_immutable()
     {
         using var dataSource = SharedPostgresContainer.CreateDatabase();
@@ -608,6 +1153,7 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     published_score_source_fingerprint,
                     notification_state_fingerprint,
                     rank_history_fingerprint,
+                    score_history_fingerprint,
                     manifest_json,
                     freeze_reason,
                     phase,
@@ -622,6 +1168,7 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     700,
                     @scoreFingerprint,
                     @notificationFingerprint,
+                    @historyFingerprint,
                     @historyFingerprint,
                     '{}'::jsonb,
                     @freezeReason,
@@ -683,6 +1230,27 @@ public sealed class MaxScoreMaintenancePersistenceTests
             () => mutateRun.ExecuteNonQuery());
         Assert.Equal("55000", runError.SqlState);
 
+        using var mutateHistoryFingerprint =
+            conn.CreateCommand();
+        mutateHistoryFingerprint.CommandText = """
+            UPDATE max_score_maintenance_runs
+            SET score_history_fingerprint = @replacement
+            WHERE manifest_sha256 = @manifestDigest
+            """;
+        mutateHistoryFingerprint.Parameters.AddWithValue(
+            "replacement",
+            new string('b', 64));
+        mutateHistoryFingerprint.Parameters.AddWithValue(
+            "manifestDigest",
+            manifestDigest);
+        var historyFingerprintError =
+            Assert.Throws<Npgsql.PostgresException>(
+                () => mutateHistoryFingerprint
+                    .ExecuteNonQuery());
+        Assert.Equal(
+            "55000",
+            historyFingerprintError.SqlState);
+
         using var deleteRollback = conn.CreateCommand();
         deleteRollback.CommandText = """
             DELETE FROM max_score_maintenance_rollback_songs
@@ -694,6 +1262,110 @@ public sealed class MaxScoreMaintenancePersistenceTests
         var rollbackError = Assert.Throws<Npgsql.PostgresException>(
             () => deleteRollback.ExecuteNonQuery());
         Assert.Equal("55000", rollbackError.SqlState);
+    }
+
+    [Fact]
+    public async Task Maintenance_source_lock_and_durable_gate_fence_score_history_writes()
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        using var meta = new MetaDatabase(
+            dataSource,
+            NullLogger<MetaDatabase>.Instance);
+        var lease =
+            await meta.AcquireMaxScoreMaintenanceLeaseAsync(
+                500);
+        try
+        {
+            await lease.ExecuteTransactionAsync(
+                "score-history-lock-probe",
+                requireSourceLocks: true,
+                async (_, _, _) =>
+                {
+                    await using var competing =
+                        await dataSource.OpenConnectionAsync();
+                    await using var insert =
+                        competing.CreateCommand();
+                    insert.CommandText = """
+                        SET lock_timeout = '100ms';
+                        INSERT INTO score_history (
+                            song_id,
+                            instrument,
+                            account_id,
+                            new_score,
+                            new_rank,
+                            changed_at)
+                        VALUES (
+                            'song-lock',
+                            'Solo_Guitar',
+                            'account-lock',
+                            100,
+                            1,
+                            now())
+                        """;
+                    var blocked =
+                        await Assert.ThrowsAsync<
+                            PostgresException>(
+                            () => insert
+                                .ExecuteNonQueryAsync());
+                    Assert.Equal(
+                        PostgresErrorCodes.LockNotAvailable,
+                        blocked.SqlState);
+                });
+
+            await using var fencedConnection =
+                await dataSource.OpenConnectionAsync();
+            await using var fencedInsert =
+                fencedConnection.CreateCommand();
+            fencedInsert.CommandText = """
+                INSERT INTO score_history (
+                    song_id,
+                    instrument,
+                    account_id,
+                    new_score,
+                    new_rank,
+                    changed_at)
+                VALUES (
+                    'song-fenced',
+                    'Solo_Guitar',
+                    'account-fenced',
+                    100,
+                    1,
+                    now())
+                """;
+            var fenced =
+                await Assert.ThrowsAsync<PostgresException>(
+                    () => fencedInsert.ExecuteNonQueryAsync());
+            Assert.Equal("55000", fenced.SqlState);
+        }
+        finally
+        {
+            await lease.DisposeAsync();
+        }
+
+        await using var releasedConnection =
+            await dataSource.OpenConnectionAsync();
+        await using var releasedInsert =
+            releasedConnection.CreateCommand();
+        releasedInsert.CommandText = """
+            INSERT INTO score_history (
+                song_id,
+                instrument,
+                account_id,
+                new_score,
+                new_rank,
+                changed_at)
+            VALUES (
+                'song-released',
+                'Solo_Guitar',
+                'account-released',
+                100,
+                1,
+                now())
+            """;
+        Assert.Equal(
+            1,
+            await releasedInsert.ExecuteNonQueryAsync());
     }
 
     [Fact]
@@ -770,6 +1442,7 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     published_score_source_fingerprint,
                     notification_state_fingerprint,
                     rank_history_fingerprint,
+                    score_history_fingerprint,
                     manifest_json,
                     freeze_reason,
                     phase,
@@ -785,6 +1458,7 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     700,
                     @scoreFingerprint,
                     @notificationFingerprint,
+                    @historyFingerprint,
                     @historyFingerprint,
                     '{}'::jsonb,
                     @freezeReason,
@@ -1227,6 +1901,7 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     published_score_source_fingerprint,
                     notification_state_fingerprint,
                     rank_history_fingerprint,
+                    score_history_fingerprint,
                     manifest_json,
                     freeze_reason,
                     phase,
@@ -1241,6 +1916,7 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     1,
                     @scoreFingerprint,
                     @notificationFingerprint,
+                    @rankFingerprint,
                     @rankFingerprint,
                     '{}'::jsonb,
                     @freezeReason,
@@ -1662,6 +2338,7 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     published_score_source_fingerprint,
                     notification_state_fingerprint,
                     rank_history_fingerprint,
+                    score_history_fingerprint,
                     manifest_json,
                     freeze_reason,
                     phase,
@@ -1674,6 +2351,7 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     @publicationId,
                     @catalogHash,
                     @catalogSongCount,
+                    @placeholderFingerprint,
                     @placeholderFingerprint,
                     @placeholderFingerprint,
                     @placeholderFingerprint,
@@ -2698,6 +3376,7 @@ public sealed class MaxScoreMaintenancePersistenceTests
                 published_score_source_fingerprint,
                 notification_state_fingerprint,
                 rank_history_fingerprint,
+                score_history_fingerprint,
                 manifest_json,
                 freeze_reason,
                 phase,
@@ -2710,6 +3389,7 @@ public sealed class MaxScoreMaintenancePersistenceTests
                 @publicationId,
                 @catalogHash,
                 @catalogSongCount,
+                @placeholderFingerprint,
                 @placeholderFingerprint,
                 @placeholderFingerprint,
                 @placeholderFingerprint,
@@ -2832,6 +3512,7 @@ public sealed class MaxScoreMaintenancePersistenceTests
                 published_score_source_fingerprint,
                 notification_state_fingerprint,
                 rank_history_fingerprint,
+                score_history_fingerprint,
                 manifest_json,
                 freeze_reason,
                 phase,
@@ -2847,6 +3528,7 @@ public sealed class MaxScoreMaintenancePersistenceTests
                 700,
                 @scoreFingerprint,
                 @notificationFingerprint,
+                @historyFingerprint,
                 @historyFingerprint,
                 '{}'::jsonb,
                 @freezeReason,
@@ -2913,6 +3595,170 @@ public sealed class MaxScoreMaintenancePersistenceTests
             "freezeReason",
             freezeReason);
         seed.ExecuteNonQuery();
+    }
+
+    private static void SeedPublishedSoloCurrentState(
+        NpgsqlDataSource dataSource,
+        MaxScoreMaintenanceManifest manifest,
+        int overlayScore)
+    {
+        ScrapeRunTestHelper.EnsureAllocated(
+            dataSource,
+            manifest.ExpectedPublishedScrapeId,
+            completed: true);
+        using var connection = dataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO scrape_publication_state (
+                id,
+                published_scrape_id,
+                published_at,
+                updated_at)
+            VALUES (
+                TRUE,
+                @scrapeId,
+                now(),
+                now())
+            ON CONFLICT (id) DO UPDATE SET
+                published_scrape_id =
+                    EXCLUDED.published_scrape_id,
+                published_at = EXCLUDED.published_at,
+                updated_at = EXCLUDED.updated_at;
+
+            INSERT INTO leaderboard_entries_snapshot (
+                snapshot_id,
+                song_id,
+                instrument,
+                account_id,
+                score,
+                rank,
+                source,
+                first_seen_at,
+                last_updated_at)
+            VALUES (
+                @scrapeId,
+                'song-a',
+                'Solo_Guitar',
+                'account-base',
+                40000,
+                1,
+                'scrape',
+                now(),
+                now());
+
+            INSERT INTO leaderboard_published_scope_source (
+                published_scrape_id,
+                song_id,
+                instrument,
+                scope_kind,
+                source_kind,
+                source_snapshot_id,
+                source_scrape_id,
+                row_count,
+                content_fingerprint,
+                coverage_fingerprint,
+                reported_total_entries,
+                reported_total_pages,
+                is_complete,
+                created_at,
+                validated_at)
+            VALUES (
+                @scrapeId,
+                'song-a',
+                'Solo_Guitar',
+                'alltime',
+                'snapshot',
+                @scrapeId,
+                @scrapeId,
+                1,
+                md5('song-a'),
+                md5('song-a:coverage'),
+                1,
+                1,
+                TRUE,
+                now(),
+                now());
+
+            INSERT INTO leaderboard_entries_overlay (
+                song_id,
+                instrument,
+                account_id,
+                score,
+                rank,
+                source,
+                first_seen_at,
+                last_updated_at,
+                source_priority,
+                overlay_reason)
+            VALUES (
+                'song-a',
+                'Solo_Guitar',
+                'account-overlay',
+                @overlayScore,
+                1,
+                'backfill',
+                now(),
+                now(),
+                200,
+                'max-score-test');
+
+            INSERT INTO solo_current_projection_scope (
+                song_id,
+                instrument,
+                projection_generation,
+                row_count,
+                source_snapshot_id,
+                status,
+                updated_at)
+            VALUES (
+                'song-a',
+                'Solo_Guitar',
+                1,
+                1,
+                @scrapeId,
+                'ready',
+                now());
+
+            INSERT INTO current_leaderboard_entries (
+                song_id,
+                instrument,
+                account_id,
+                score,
+                rank,
+                source,
+                first_seen_at,
+                last_updated_at,
+                projection_generation,
+                computed_at)
+            VALUES (
+                'song-a',
+                'Solo_Guitar',
+                'account-base',
+                40000,
+                1,
+                'projection',
+                now(),
+                now(),
+                1,
+                now());
+            """;
+        command.Parameters.AddWithValue(
+            "scrapeId",
+            manifest.ExpectedPublishedScrapeId);
+        command.Parameters.AddWithValue(
+            "overlayScore",
+            overlayScore);
+        command.ExecuteNonQuery();
+    }
+
+    private static string CreateEvidenceDirectory()
+    {
+        var path = Path.Combine(
+            Directory.GetCurrentDirectory(),
+            ".test-temp",
+            $"max-score-evidence-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(path);
+        return path;
     }
 
     private static MaxScoreMaintenanceCandidate Candidate(

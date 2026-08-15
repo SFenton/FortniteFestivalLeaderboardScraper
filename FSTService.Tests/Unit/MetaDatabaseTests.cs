@@ -1915,7 +1915,7 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
-    public void Max_score_maintenance_locks_solo_and_band_sources_in_fixed_order()
+    public void Max_score_maintenance_locks_solo_history_and_band_sources_in_fixed_order()
     {
         var statements = MetaDatabase.MaxScoreMaintenanceSourceLockSql
             .Split(
@@ -1927,6 +1927,7 @@ public sealed class MetaDatabaseTests : IDisposable
         [
             "LOCK TABLE leaderboard_entries_overlay IN SHARE MODE",
             "LOCK TABLE leaderboard_entries IN SHARE MODE",
+            "LOCK TABLE score_history IN SHARE MODE",
             "LOCK TABLE band_member_stats IN SHARE MODE",
             "LOCK TABLE leaderboard_population IN SHARE MODE",
         ], statements);

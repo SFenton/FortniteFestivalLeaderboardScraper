@@ -26,6 +26,8 @@ internal static class MaxScoreMaintenanceSchema
                 CHECK (length(notification_state_fingerprint) = 64),
             rank_history_fingerprint     TEXT        NOT NULL
                 CHECK (length(rank_history_fingerprint) = 64),
+            score_history_fingerprint    TEXT        NOT NULL
+                CHECK (length(score_history_fingerprint) = 64),
             manifest_json               JSONB       NOT NULL,
             freeze_reason               TEXT        NOT NULL UNIQUE,
             phase                       TEXT        NOT NULL
@@ -62,6 +64,32 @@ internal static class MaxScoreMaintenanceSchema
             updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
             completed_at                TIMESTAMPTZ
         );
+
+        ALTER TABLE max_score_maintenance_runs
+            ADD COLUMN IF NOT EXISTS score_history_fingerprint TEXT;
+        UPDATE max_score_maintenance_runs
+        SET score_history_fingerprint = repeat('0', 64)
+        WHERE score_history_fingerprint IS NULL;
+        ALTER TABLE max_score_maintenance_runs
+            ALTER COLUMN score_history_fingerprint SET NOT NULL;
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conrelid =
+                        'max_score_maintenance_runs'::regclass
+                  AND conname =
+                        'ck_max_score_maintenance_score_history_fingerprint'
+            ) THEN
+                ALTER TABLE max_score_maintenance_runs
+                    ADD CONSTRAINT
+                        ck_max_score_maintenance_score_history_fingerprint
+                    CHECK (
+                        length(score_history_fingerprint) = 64);
+            END IF;
+        END
+        $$;
 
         CREATE TABLE IF NOT EXISTS max_score_maintenance_rollback_songs (
             manifest_sha256             TEXT        NOT NULL
@@ -158,6 +186,7 @@ internal static class MaxScoreMaintenanceSchema
                 NEW.published_score_source_fingerprint,
                 NEW.notification_state_fingerprint,
                 NEW.rank_history_fingerprint,
+                NEW.score_history_fingerprint,
                 NEW.manifest_json,
                 NEW.freeze_reason)
                IS DISTINCT FROM
@@ -172,6 +201,7 @@ internal static class MaxScoreMaintenanceSchema
                 OLD.published_score_source_fingerprint,
                 OLD.notification_state_fingerprint,
                 OLD.rank_history_fingerprint,
+                OLD.score_history_fingerprint,
                 OLD.manifest_json,
                 OLD.freeze_reason)
             THEN

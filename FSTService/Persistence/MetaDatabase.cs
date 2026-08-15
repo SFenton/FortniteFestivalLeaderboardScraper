@@ -62,6 +62,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
     internal const string MaxScoreMaintenanceSourceLockSql = """
         LOCK TABLE leaderboard_entries_overlay IN SHARE MODE;
         LOCK TABLE leaderboard_entries IN SHARE MODE;
+        LOCK TABLE score_history IN SHARE MODE;
         LOCK TABLE band_member_stats IN SHARE MODE;
         LOCK TABLE leaderboard_population IN SHARE MODE;
         """;
@@ -2234,8 +2235,35 @@ public sealed partial class MetaDatabase : IMetaDatabase
         if (entries.Count == 0) return new();
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "CREATE TEMP TABLE _bulk_thresholds (account_id TEXT, song_id TEXT, max_score INTEGER, PRIMARY KEY (account_id, song_id)) ON COMMIT DROP"; c.ExecuteNonQuery(); }
-        using (var writer = conn.BeginBinaryImport("COPY _bulk_thresholds (account_id, song_id, max_score) FROM STDIN (FORMAT BINARY)"))
+        var result = GetBulkBestValidScores(
+            instrument,
+            entries,
+            conn,
+            tx);
+        tx.Commit();
+        return result;
+    }
+
+    public Dictionary<(string AccountId, string SongId), ValidScoreFallback>
+        GetBulkBestValidScores(
+            string instrument,
+            Dictionary<(string AccountId, string SongId), int> entries,
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction)
+    {
+        if (entries.Count == 0)
+            return new();
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(transaction.Connection, connection))
+        {
+            throw new ArgumentException(
+                "The valid-score fallback transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
+
+        using (var c = connection.CreateCommand()) { c.Transaction = transaction; c.CommandText = "CREATE TEMP TABLE _bulk_thresholds (account_id TEXT, song_id TEXT, max_score INTEGER, PRIMARY KEY (account_id, song_id)) ON COMMIT DROP"; c.ExecuteNonQuery(); }
+        using (var writer = connection.BeginBinaryImport("COPY _bulk_thresholds (account_id, song_id, max_score) FROM STDIN (FORMAT BINARY)"))
         {
             foreach (var ((accountId, songId), maxScore) in entries)
             {
@@ -2247,9 +2275,9 @@ public sealed partial class MetaDatabase : IMetaDatabase
 
             writer.Complete();
         }
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "ANALYZE _bulk_thresholds"; c.ExecuteNonQuery(); }
-        using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
+        using (var c = connection.CreateCommand()) { c.Transaction = transaction; c.CommandText = "ANALYZE _bulk_thresholds"; c.ExecuteNonQuery(); }
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
         cmd.CommandText = "SELECT sh.account_id, sh.song_id, sh.new_score, sh.accuracy, sh.is_full_combo, sh.stars FROM score_history sh JOIN _bulk_thresholds bt ON bt.account_id = sh.account_id AND bt.song_id = sh.song_id WHERE sh.instrument = @instrument AND sh.new_score <= bt.max_score AND sh.new_score = (SELECT MAX(sh2.new_score) FROM score_history sh2 WHERE sh2.account_id = sh.account_id AND sh2.song_id = sh.song_id AND sh2.instrument = @instrument AND sh2.new_score <= bt.max_score) GROUP BY sh.account_id, sh.song_id, sh.new_score, sh.accuracy, sh.is_full_combo, sh.stars";
         cmd.Parameters.AddWithValue("instrument", instrument);
         var result = new Dictionary<(string, string), ValidScoreFallback>();
@@ -2257,7 +2285,6 @@ public sealed partial class MetaDatabase : IMetaDatabase
         {
             while (r.Read()) result[(r.GetString(0), r.GetString(1))] = new ValidScoreFallback { Score = r.GetInt32(2), Accuracy = r.IsDBNull(3) ? null : r.GetInt32(3), IsFullCombo = r.IsDBNull(4) ? null : r.GetBoolean(4), Stars = r.IsDBNull(5) ? null : r.GetInt32(5) };
         }
-        tx.Commit();
         return result;
     }
 
@@ -13419,7 +13446,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     AND (
                         NOT @requireSourceLocks
                         OR (
-                            SELECT COUNT(DISTINCT held.relation) = 4
+                            SELECT COUNT(DISTINCT held.relation) = 5
                             FROM pg_locks held
                             WHERE held.pid = pg_backend_pid()
                               AND held.locktype = 'relation'
@@ -13429,6 +13456,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
                                   ARRAY[
                                       'leaderboard_entries_overlay'::REGCLASS,
                                       'leaderboard_entries'::REGCLASS,
+                                      'score_history'::REGCLASS,
                                       'band_member_stats'::REGCLASS,
                                       'leaderboard_population'::REGCLASS
                                   ]::OID[])

@@ -7,6 +7,7 @@ sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/InstrumentDatabase.cs
+  - FSTService/Persistence/PublishedSoloScopeSql.cs
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
   - FSTService/Persistence/MaxScoreMaintenanceSchema.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
@@ -75,9 +76,10 @@ volatile table counts.
 
 `max_score_maintenance_runs` owns the digest-bound workflow checkpoint:
 manifest/plan identities, exact publication/catalog, score-source,
-notification-state and rank-history fingerprints, freeze owner, last durable
-phase, rollback file digest, notification audit link, counters, and bounded
-failure detail. A post-freeze failure changes status to `failed` only while
+notification-state, rank-history, and bounded target fallback
+`score_history` fingerprints, freeze owner, last durable phase, rollback file
+digest, notification audit link, counters, and bounded failure detail. A
+post-freeze failure changes status to `failed` only while
 the lock-owning backend can commit that checkpoint; backend loss leaves the
 last durable status/phase unchanged and never clears the freeze.
 
@@ -88,8 +90,17 @@ rollback JSON. Plan and apply revalidate both current rollback and staged
 generation trees, including every JSON/PNG hash; missing, extra, symlinked, or
 changed artifacts fail closed. Database triggers reject workflow-identity
 changes and rollback-row updates/deletes; neither surface deletes historical
-generations. Rollback JSON timestamps use the immutable run `created_at`, so a
-file-first/database-checkpoint retry validates identical canonical bytes.
+generations. Rollback JSON v3 binds the immutable run `created_at`, exact
+publication/catalog, and database rollback-song identity. Every post-capture
+resume and final completion reloads canonical bytes and requires the
+checkpointed SHA-256; missing, corrupt, or swapped evidence keeps the freeze
+resumable.
+
+Maintenance observed-score bounds, affected-account selection, player-stat
+validation, and ranking/player-stat inputs share the published solo source
+resolver: the current publication's selected snapshot or empty source plus
+supplemental overlay, with overlay precedence per account. They do not trust
+`current_leaderboard_entries`, which can lag overlay-only writes.
 
 `improvement_notification_maintenance_runs` and
 `improvement_notification_maintenance_candidates` retain historical
@@ -130,10 +141,11 @@ publication advisory locks, establishes or revalidates its digest-owned
 freeze. Every dependent mutation or phase checkpoint then opens its own
 bounded transaction on that same unpooled lock-owning session and takes
 `SHARE` locks in fixed order on `leaderboard_entries_overlay`,
-`leaderboard_entries`, `band_member_stats`, and `leaderboard_population`
-before doing work. Checkpoints therefore remain durable between resumable
-phases without moving writes onto unrelated pooled sessions. The durable owner
-and table triggers bridge the short gaps between transactions.
+`leaderboard_entries`, `score_history`, `band_member_stats`, and
+`leaderboard_population` before doing work. Checkpoints therefore remain
+durable between resumable phases without moving writes onto unrelated pooled
+sessions. The durable owner and table triggers bridge the short gaps between
+transactions.
 
 Row triggers remain a fail-closed second line on registered users/bands,
 registered-user refresh progress, registered-band status/progress,
@@ -156,7 +168,7 @@ without taking a second advisory lock on a pooled connection.
 Both lease types set an independent random session token and capture the
 backend PID. Every max-score write explicitly executes through the lease API;
 inside that same transaction it verifies the token, backend, advisory locks,
-durable owner, and all four source locks both before work and immediately
+durable owner, and all five source locks both before work and immediately
 before ordinary commits. Final completion validates its exact owner/freeze,
 publishes the cache, marks the workflow complete, and unfreezes in one
 source-locked transaction while retaining the durable owner token. Lease

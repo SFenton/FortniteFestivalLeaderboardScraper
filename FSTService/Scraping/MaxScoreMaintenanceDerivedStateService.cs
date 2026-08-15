@@ -70,6 +70,9 @@ public sealed class MaxScoreMaintenanceDerivedStateService
         }
 
         _persistence.InitializeReadOnly();
+        using var publishedReadPass =
+            _persistence
+                .BeginMaxScoreMaintenancePublishedReadPass();
         foreach (var instrument in GlobalLeaderboardScraper.AllInstruments)
             _persistence.GetOrCreateInstrumentDb(instrument);
 
@@ -130,9 +133,16 @@ public sealed class MaxScoreMaintenanceDerivedStateService
             ct);
 
         var affectedStatsAccounts =
-            await LoadAffectedPlayerStatsAccountsAsync(
-                manifest,
-                ct);
+            await maintenanceLease.ExecuteTransactionAsync(
+                "derived-affected-player-stats-accounts",
+                requireSourceLocks: true,
+                (connection, transaction, token) =>
+                    LoadAffectedPlayerStatsAccountsAsync(
+                        manifest,
+                        connection,
+                        transaction,
+                        token),
+                ct: ct);
         await PlayerStatsTierRebuilder
             .RebuildForMaxScoreMaintenanceAsync(
             _persistence,
@@ -203,11 +213,25 @@ public sealed class MaxScoreMaintenanceDerivedStateService
         return result;
     }
 
-    private async Task<IReadOnlyList<string>>
+    internal static async Task<IReadOnlyList<string>>
         LoadAffectedPlayerStatsAccountsAsync(
             MaxScoreMaintenanceManifest manifest,
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
             CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(manifest);
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(
+                transaction.Connection,
+                connection))
+        {
+            throw new ArgumentException(
+                "The affected-account transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
+
         var songIds = new List<string>();
         var instruments = new List<string>();
         foreach (var song in manifest.Songs)
@@ -219,22 +243,20 @@ public sealed class MaxScoreMaintenanceDerivedStateService
             }
         }
 
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
-        await using var cmd = conn.CreateCommand();
+        await using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
         cmd.CommandTimeout = 600;
-        cmd.CommandText = """
+        cmd.CommandText = $"""
             WITH affected(song_id, instrument) AS (
                 SELECT *
                 FROM unnest(
                     @songIds::TEXT[],
                     @instruments::TEXT[])
-            )
-            SELECT DISTINCT current.account_id
-            FROM current_leaderboard_entries current
-            JOIN affected
-              ON affected.song_id = current.song_id
-             AND affected.instrument = current.instrument
-            ORDER BY current.account_id
+            ),
+            {PublishedSoloScopeSql.CurrentResolvedAffectedEntriesCte}
+            SELECT DISTINCT resolved.account_id
+            FROM resolved_rows resolved
+            ORDER BY resolved.account_id
             """;
         cmd.Parameters.Add(
             "songIds",
@@ -249,5 +271,59 @@ public sealed class MaxScoreMaintenanceDerivedStateService
         while (await reader.ReadAsync(ct))
             result.Add(reader.GetString(0));
         return result;
+    }
+
+    internal static async Task<long>
+        CountMissingPlayerStatsAccountsAsync(
+            IReadOnlyCollection<string> accountIds,
+            DateTime minimumUpdatedAtUtc,
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(accountIds);
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(
+                transaction.Connection,
+                connection))
+        {
+            throw new ArgumentException(
+                "The player-stats validation transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
+        if (accountIds.Count == 0)
+            return 0;
+        if (minimumUpdatedAtUtc.Kind != DateTimeKind.Utc)
+        {
+            throw new ArgumentException(
+                "The player-stats validation timestamp must be UTC.",
+                nameof(minimumUpdatedAtUtc));
+        }
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT COUNT(*)::BIGINT
+            FROM unnest(@accountIds::TEXT[])
+                affected(account_id)
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM player_stats_tiers stats
+                WHERE stats.account_id =
+                    affected.account_id
+                  AND stats.updated_at >=
+                      @minimumUpdatedAt
+            )
+            """;
+        command.Parameters.Add(
+            "accountIds",
+            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            accountIds.ToArray();
+        command.Parameters.AddWithValue(
+            "minimumUpdatedAt",
+            minimumUpdatedAtUtc);
+        return Convert.ToInt64(
+            await command.ExecuteScalarAsync(ct));
     }
 }

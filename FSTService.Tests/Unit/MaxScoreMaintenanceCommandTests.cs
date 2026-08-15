@@ -840,7 +840,11 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
             new string('d', 64),
             manifest.ExpectedPublishedScrapeId,
             manifest.ExpectedPublicationId,
+            manifest.CatalogVersion,
+            manifest.CatalogSchemaVersion,
             manifest.CatalogContentHash,
+            manifest.CatalogSongCount,
+            manifest.CatalogSourceCapturedAtUtc,
             manifest.Songs.Select(song =>
                 new MaxScoreMaintenanceRollbackSong(
                     song.SongId,
@@ -874,6 +878,7 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
                 path,
                 CancellationToken.None));
         Assert.Equal(2, loaded.Songs.Count);
+        Assert.Equal(3, loaded.SnapshotVersion);
         Assert.All(
             loaded.Songs,
             song =>

@@ -62,6 +62,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     /// </summary>
     public bool UseStoredProjectionRanksForFilteredReads { get; set; }
 
+    internal bool BypassCurrentProjectionForMaintenance
+    { get; set; }
+
     /// <summary>
     /// When true, supplemental backfill, refresh, and neighbor writes continue
     /// to maintain leaderboard_entries in addition to leaderboard_entries_overlay.
@@ -78,7 +81,8 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     internal const int RankHistoryCleanupMaxBatches = 1;
 
     private bool MustBypassCurrentProjection =>
-        UseSnapshotOverlayWorkerReaders
+        BypassCurrentProjectionForMaintenance
+        || UseSnapshotOverlayWorkerReaders
         && !UseValidatedCurrentProjectionForWorkerReaders;
 
     private const string LeaderboardEntryConflictUpdateWhere =
@@ -2440,7 +2444,29 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public List<(string AccountId, string SongId)> GetCurrentStateOverThresholdEntries()
     {
         using var conn = _ds.OpenConnection();
-        using var cmd = conn.CreateCommand();
+        using var tx = conn.BeginTransaction();
+        var result =
+            GetCurrentStateOverThresholdEntries(conn, tx);
+        tx.Commit();
+        return result;
+    }
+
+    public List<(string AccountId, string SongId)>
+        GetCurrentStateOverThresholdEntries(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(transaction.Connection, connection))
+        {
+            throw new ArgumentException(
+                "The over-threshold transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
+
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
         cmd.CommandText = $"""
             WITH current_rows AS (
                 {BuildCurrentStateResolvedEntriesSql()}
@@ -3836,6 +3862,45 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             ? "account_id = ANY(@accountIds)"
             : "account_id = @accountId";
         var accountProjection = includeAccountId ? "account_id, " : string.Empty;
+        if (UsePublishedScopeSources)
+        {
+            return $"""
+                WITH {PublishedSoloScopeSql.CurrentResolvedEntriesCte},
+                ranked_rows AS (
+                    SELECT song_id,
+                           account_id,
+                           score,
+                           accuracy,
+                           is_full_combo,
+                           stars,
+                           season,
+                           difficulty,
+                           percentile,
+                           end_time,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY song_id
+                               ORDER BY {SoloLeaderboardOrderingSql.OrderBy()})
+                               AS rank,
+                           api_rank
+                    FROM resolved_rows
+                )
+                SELECT {accountProjection}song_id,
+                       score,
+                       accuracy,
+                       is_full_combo,
+                       stars,
+                       season,
+                       difficulty,
+                       percentile,
+                       end_time,
+                       rank,
+                       api_rank
+                FROM ranked_rows
+                WHERE {accountFilter} {songFilter}
+                ORDER BY {accountProjection}song_id
+                """;
+        }
+
         var allowLegacyRows = !UsePublishedScopeSources && !UseSnapshotOverlayWorkerReaders ? "TRUE" : "FALSE";
         var allowUnmappedOverlayRows = UsePublishedScopeSources ? "FALSE" : "TRUE";
         return $"""

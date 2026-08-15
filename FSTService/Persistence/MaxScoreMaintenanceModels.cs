@@ -1074,17 +1074,26 @@ public sealed record MaxScoreMaintenanceRollbackSnapshot(
     string PlanDigest,
     long ExpectedPublishedScrapeId,
     long ExpectedPublicationId,
+    long CatalogVersion,
+    int CatalogSchemaVersion,
     string CatalogContentHash,
+    int CatalogSongCount,
+    DateTime CatalogSourceCapturedAtUtc,
     IReadOnlyList<MaxScoreMaintenanceRollbackSong> Songs)
 {
-    public const int CurrentSnapshotVersion = 2;
+    public const int CurrentSnapshotVersion = 3;
 
     public MaxScoreMaintenanceRollbackSnapshot ValidateAndNormalize()
     {
         if (SnapshotVersion != CurrentSnapshotVersion
             || CreatedAtUtc.Kind != DateTimeKind.Utc
             || ExpectedPublishedScrapeId <= 0
-            || ExpectedPublicationId <= 0)
+            || ExpectedPublicationId <= 0
+            || CatalogVersion <= 0
+            || CatalogSchemaVersion <= 0
+            || CatalogSongCount <= 0
+            || CatalogSourceCapturedAtUtc.Kind
+                != DateTimeKind.Utc)
         {
             throw new ArgumentException(
                 "Rollback snapshot identity is invalid.");
@@ -1113,6 +1122,11 @@ public sealed record MaxScoreMaintenanceRollbackSnapshot(
             Songs = songs,
         };
     }
+
+    internal byte[] SerializeCanonical()
+        => JsonSerializer.SerializeToUtf8Bytes(
+            ValidateAndNormalize(),
+            MaxScoreMaintenanceJson.Canonical);
 }
 
 public sealed record MaxScoreMaintenanceRollbackSong(
@@ -1199,6 +1213,7 @@ public sealed record MaxScoreMaintenanceObservedScoreCheck(
     string SongId,
     string Instrument,
     int NewMaximum,
+    bool SourceMapped,
     int? HighestObservedScore,
     bool Passed);
 
@@ -1213,6 +1228,7 @@ public sealed record MaxScoreMaintenancePlanReport(
     string PublishedScoreSourceFingerprint,
     string NotificationStateFingerprint,
     string RankHistoryFingerprint,
+    string ScoreHistoryFingerprint,
     IReadOnlyList<string> AffectedInstruments,
     long RoutineCandidateCount,
     IReadOnlyList<MaxScoreMaintenancePlanCheck> Checks,
@@ -1220,7 +1236,7 @@ public sealed record MaxScoreMaintenancePlanReport(
     IReadOnlyList<MaxScoreMaintenanceArtifactEvidence> ArtifactEvidence,
     IReadOnlyList<MaxScoreMaintenanceObservedScoreCheck> ObservedScoreChecks)
 {
-    public const int CurrentReportVersion = 2;
+    public const int CurrentReportVersion = 3;
 }
 
 public enum MaxScoreMaintenancePhase

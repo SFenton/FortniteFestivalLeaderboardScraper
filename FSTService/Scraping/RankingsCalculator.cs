@@ -286,7 +286,6 @@ public sealed class RankingsCalculator
             // Finds entries whose current score exceeds 1.05× CHOpt max, then looks up
             // the best valid historical score from ScoreHistory to use in rankings.
             var overridesSw = System.Diagnostics.Stopwatch.StartNew();
-            var overThreshold = db.GetCurrentStateOverThresholdEntries();
             long overrideRows = 0;
             IReadOnlyList<(
                 string SongId,
@@ -294,10 +293,22 @@ public sealed class RankingsCalculator
                 int Score,
                 int? Accuracy,
                 bool? IsFullCombo,
-                int? Stars)> overridesToPersist = [];
-            if (overThreshold.Count > 0)
+                int? Stars)> LoadOverrides(
+                    IReadOnlyList<(
+                        string AccountId,
+                        string SongId)> overThreshold,
+                    Func<
+                        Dictionary<
+                            (string AccountId, string SongId),
+                            int>,
+                        Dictionary<
+                            (string AccountId, string SongId),
+                            ValidScoreFallback>> loadFallbacks)
             {
-                var thresholds = new Dictionary<(string AccountId, string SongId), int>();
+                var thresholds =
+                    new Dictionary<
+                        (string AccountId, string SongId),
+                        int>();
                 foreach (var (accountId, songId) in overThreshold)
                 {
                     if (maxScoresForInstrument.TryGetValue(songId, out var raw) && raw.HasValue)
@@ -307,7 +318,7 @@ public sealed class RankingsCalculator
 
                 if (thresholds.Count > 0)
                 {
-                    var fallbacks = _metaDb.GetBulkBestValidScores(instrument, thresholds);
+                    var fallbacks = loadFallbacks(thresholds);
                     var overrides = fallbacks.Select(kvp => (
                         SongId: kvp.Key.SongId,
                         AccountId: kvp.Key.AccountId,
@@ -316,15 +327,26 @@ public sealed class RankingsCalculator
                         IsFullCombo: kvp.Value.IsFullCombo,
                         Stars: kvp.Value.Stars
                     )).ToList();
-                    overridesToPersist = overrides;
-                    overrideRows = overrides.Count;
                     if (overrides.Count > 0)
                         _log.LogInformation("{Instrument}: {OverCount} over-threshold entries, {FallbackCount} valid fallbacks found.",
                             instrument, overThreshold.Count, overrides.Count);
+                    return overrides;
                 }
+
+                return [];
             }
+
             if (maintenanceLease is null)
             {
+                var overThreshold =
+                    db.GetCurrentStateOverThresholdEntries();
+                var overridesToPersist = LoadOverrides(
+                    overThreshold,
+                    thresholds =>
+                        _metaDb.GetBulkBestValidScores(
+                            instrument,
+                            thresholds));
+                overrideRows = overridesToPersist.Count;
                 db.PopulateValidScoreOverrides(
                     overridesToPersist);
             }
@@ -335,6 +357,19 @@ public sealed class RankingsCalculator
                     requireSourceLocks: true,
                     (connection, transaction, _) =>
                     {
+                        var overThreshold =
+                            db.GetCurrentStateOverThresholdEntries(
+                                connection,
+                                transaction);
+                        var overridesToPersist = LoadOverrides(
+                            overThreshold,
+                            thresholds =>
+                                _metaDb.GetBulkBestValidScores(
+                                    instrument,
+                                    thresholds,
+                                    connection,
+                                    transaction));
+                        overrideRows = overridesToPersist.Count;
                         db.PopulateValidScoreOverrides(
                             overridesToPersist,
                             connection,

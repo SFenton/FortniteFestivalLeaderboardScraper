@@ -9,6 +9,8 @@ sources:
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
   - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
+  - FSTService/Persistence/PublishedSoloScopeSql.cs
+  - FSTService/Persistence/GlobalLeaderboardPersistence.cs
   - FSTService/Persistence/RegistrationMutationGuard.cs
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/DatabaseInitializer.cs
@@ -64,9 +66,12 @@ complete old/new maxima and exact scope. Plan
 briefly acquires the exclusive mutation gate, path-generation lock, publication
 lock, and fixed-order source locks on one isolated unpooled session. It records
 a durable random gate-owner token/backend identity while admitted, validates
-the manifest and immutable artifacts, fingerprints score sources, notification
-state, and rank history, and requires zero unexplained routine candidates
-without creating a freeze.
+the manifest and immutable artifacts, resolves observed scores from the exact
+published source plus supplemental overlay, fingerprints score sources,
+notification state, rank history, and fallback-relevant target
+`score_history`, and requires zero unexplained routine candidates without
+creating a freeze. Any relevant history insert, update, or delete after plan
+changes the plan digest and rejects apply.
 
 Apply acquires locks in this order:
 
@@ -78,9 +83,9 @@ Apply acquires locks in this order:
 3. global publication advisory lock;
 4. establish a new digest-owned freeze or revalidate the exact resume freeze;
 5. for each mutation/checkpoint transaction,
-   `leaderboard_entries_overlay`, `leaderboard_entries`, then
-   `band_member_stats` and `leaderboard_population` share locks in that fixed
-   order;
+   `leaderboard_entries_overlay`, `leaderboard_entries`, `score_history`,
+   `band_member_stats`, then `leaderboard_population` share locks in that
+   fixed order;
 6. publication and song row locks inside that same bounded transaction.
 
 Band maintenance is the intentional writer for target-song `band_entries`
@@ -363,6 +368,7 @@ PLAN_DIGEST=$(
   jq -er '
     select(
       .canApply == true and
+      (.scoreHistoryFingerprint | length) == 64 and
       .affectedInstruments == ["Solo_Guitar","Solo_PeripheralGuitar","Solo_PeripheralCymbals","Solo_PeripheralDrums"] and
       .routineCandidateCount == 0 and
       all(.checks[]; .passed) and
@@ -379,8 +385,11 @@ PLAN_DIGEST=$(
 )
 ```
 
-Each observed-score row requires `highestObservedScore` to be null or less
-than/equal to `newMaximum`. Apply uses both approved digests:
+Each observed-score row requires `sourceMapped=true` and
+`highestObservedScore` to be null or less than/equal to `newMaximum`.
+Snapshot rows and supplemental overlay-only rows use the same authoritative
+resolver as production `InstrumentDatabase` reads. Apply uses both approved
+digests:
 
 ```bash
 docker compose run --rm --no-deps --entrypoint dotnet fstservice \
@@ -397,9 +406,11 @@ docker compose run --rm --no-deps --entrypoint dotnet fstservice \
 Apply:
 
 - persists file and PostgreSQL rollback evidence before promotion; canonical
-  rollback JSON uses the durable run creation timestamp so file-first,
-  checkpoint-second retries reproduce identical bytes, and each song records
-  the validated current-v2 generation file count and artifact-tree SHA-256;
+  rollback JSON v3 uses the durable run creation timestamp, exact
+  publication/catalog identity, and database rollback-song identity so
+  file-first, checkpoint-second retries reproduce identical bytes, and each
+  song records the validated current-v2 generation file count and
+  artifact-tree SHA-256;
 - promotes every song in one transaction;
 - refreshes in-process song/instrument admission immediately after promotion,
   removes only prior negative backfill checks for newly usable path-backed
@@ -408,8 +419,10 @@ Apply:
   history status is fenced to a new admission revision and returned to
   `pending`; positive backfill checks and unrelated history pairs remain
   intact;
-- rebuilds all four affected `song_stats`/solo ranking instruments, then composite,
-  solo-family, and combo rankings; recalculates target-song band
+- rebuilds all four affected `song_stats`/solo ranking instruments from the
+  exact published snapshot/empty source plus supplemental overlay, bypassing a
+  stale current projection, then rebuilds composite, solo-family, and combo
+  rankings; recalculates target-song band
   over-threshold flags, refreshes affected band current-projection scopes, and
   rebuilds dependent band rankings without rank-history snapshots;
 - rebuilds affected player-stat tiers and every registered player's
@@ -428,9 +441,10 @@ Apply:
   audit advances matching state, emits no visible event, and leaves publication
   `1296`'s completed notification marker unchanged;
 - stages a complete current-publication API cache; and
-- validates paths, maxima, rankings, rollback coverage, rank-history
-  fingerprint, notification audit, and staged cache before atomically swapping
-  the cache and releasing the freeze.
+- validates paths, maxima, rankings, exact rollback file/database identity,
+  rank-history and target fallback score-history fingerprints, notification
+  audit, and staged cache before atomically swapping the cache and releasing
+  the freeze.
 
 Freeze release invalidates API/path/song and scraper admission caches in every
 monitoring role and forces connected clients to refresh even though the
@@ -458,12 +472,18 @@ docker compose run --rm --no-deps --entrypoint dotnet fstservice \
 ```
 
 Resume rejects a changed digest, publication, catalog, source fingerprint,
-notification state at pre-quarantine phases, rank-history fingerprint, freeze
-owner, rollback path, or phase identity. Completed phases are not deleted;
+notification state at pre-quarantine phases, rank-history fingerprint,
+fallback-relevant target score-history fingerprint, freeze owner, rollback
+path, or phase identity. Completed phases are not deleted;
 idempotent derived work may be rerun when a crash occurred before its durable
 checkpoint. A rollback file written before its database phase checkpoint is
 loaded through the same persisted run timestamp and must match byte-for-byte;
-resume never invents a new evidence timestamp.
+resume never invents a new evidence timestamp. Before any phase later than
+`rollback_captured`, and again immediately before the final cache
+swap/unfreeze, the file must exist as canonical JSON and match its checkpointed
+SHA-256, manifest/plan/run timestamp, publication/catalog, and immutable
+database rollback-song rows. Missing, corrupted, or swapped files leave reads
+frozen and fail at the existing resumable phase.
 
 If `pg_terminate_backend`, network loss, or session failure removes the
 advisory locks, the current transaction is aborted with its mutation and phase

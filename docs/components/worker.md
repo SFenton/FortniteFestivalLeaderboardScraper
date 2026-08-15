@@ -17,6 +17,8 @@ sources:
   - FSTService/Scraping/DurablePhaseProgressSink.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
+  - FSTService/Persistence/GlobalLeaderboardPersistence.cs
+  - FSTService/Persistence/PublishedSoloScopeSql.cs
   - FSTService/Scraping/ScrapeTimePrecomputer.cs
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/DatabaseInitializer.cs
@@ -132,12 +134,15 @@ Plan/apply reject plastic-drums v3, revalidate current rollback and staged
 artifact trees/hashes, then take the exclusive mutation gate before the
 path-generation and global publication locks. Apply establishes or revalidates
 the freeze before taking
-solo entry/overlay, band-member-stat, and leaderboard-population share locks,
-then rechecks that the worker remains offline around each mutable phase.
-Maintenance ranking mode suppresses `WorkerStatusPublisher`, rebuilds changed
-solo instruments plus aggregate dependencies, recalculates target-song band
-validity, refreshes affected band current-projection scopes, rebuilds dependent
-band rankings, and explicitly skips solo/composite/band rank-history snapshots.
+solo overlay/entry, score-history, band-member-stat, and
+leaderboard-population share locks in fixed order, then rechecks that the
+worker remains offline around each mutable phase. Maintenance ranking mode
+suppresses `WorkerStatusPublisher`, bypasses the mutable current projection,
+resolves the exact published snapshot/empty source plus supplemental overlay,
+rebuilds changed solo instruments plus aggregate dependencies, recalculates
+target-song band validity, refreshes affected band current-projection scopes,
+rebuilds dependent band rankings, and explicitly skips
+solo/composite/band rank-history snapshots.
 See the
 [max-score correction runbook](../database/MaxScoreCorrectionMaintenanceRunbook.md).
 Every max-score database mutation and checkpoint commits through a bounded

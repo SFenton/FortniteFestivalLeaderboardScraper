@@ -86,6 +86,10 @@ public interface IInstrumentDatabase : IDisposable
         Npgsql.NpgsqlTransaction transaction);
     List<(string AccountId, string SongId)> GetOverThresholdEntries();
     List<(string AccountId, string SongId)> GetCurrentStateOverThresholdEntries();
+    List<(string AccountId, string SongId)>
+        GetCurrentStateOverThresholdEntries(
+            Npgsql.NpgsqlConnection connection,
+            Npgsql.NpgsqlTransaction transaction);
     void PopulateValidScoreOverrides(IReadOnlyList<(string SongId, string AccountId, int Score, int? Accuracy, bool? IsFullCombo, int? Stars)> overrides);
     void PopulateValidScoreOverrides(
         IReadOnlyList<(string SongId, string AccountId, int Score, int? Accuracy, bool? IsFullCombo, int? Stars)> overrides,

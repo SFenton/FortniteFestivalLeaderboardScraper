@@ -27,6 +27,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     private const int MaxBandSearchCandidateAccounts = 32;
     private readonly Dictionary<string, IInstrumentDatabase> _instrumentDbs = new(StringComparer.OrdinalIgnoreCase);
     private volatile bool _useValidatedCurrentProjectionForWorkerReaders;
+    private int _maxScoreMaintenancePublishedReadPass;
     private readonly IMetaDatabase _metaDb;
     private readonly ILogger<GlobalLeaderboardPersistence> _log;
     private readonly ILoggerFactory _loggerFactory;
@@ -91,6 +92,16 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         UseSnapshotOverlayWorkerReaders
         && _useValidatedCurrentProjectionForWorkerReaders;
 
+    private bool UsePublishedScopeSourcesForCurrentRead =>
+        UsePublishedScopeSources
+        || Volatile.Read(
+            ref _maxScoreMaintenancePublishedReadPass) != 0;
+
+    private bool UseSnapshotOverlayWorkerReadersForCurrentRead =>
+        Volatile.Read(
+            ref _maxScoreMaintenancePublishedReadPass) == 0
+        && UseSnapshotOverlayWorkerReaders;
+
     public void SetValidatedCurrentProjectionForWorkerReaders(bool enabled)
     {
         if (enabled && !UseSnapshotOverlayWorkerReaders)
@@ -112,6 +123,26 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         return new ValidatedCurrentProjectionReadPass(this);
     }
 
+    internal IDisposable
+        BeginMaxScoreMaintenancePublishedReadPass()
+    {
+        if (Interlocked.CompareExchange(
+                ref _maxScoreMaintenancePublishedReadPass,
+                1,
+                0) != 0)
+        {
+            throw new InvalidOperationException(
+                "A max-score authoritative published read pass is already active.");
+        }
+
+        foreach (var database in _instrumentDbs.Values
+                     .Cast<InstrumentDatabase>())
+        {
+            ConfigureInstrumentDatabaseCurrentRead(database);
+        }
+        return new MaxScoreMaintenancePublishedReadPass(this);
+    }
+
     private sealed class ValidatedCurrentProjectionReadPass(
         GlobalLeaderboardPersistence owner) : IDisposable
     {
@@ -121,6 +152,29 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         {
             Interlocked.Exchange(ref _owner, null)
                 ?.SetValidatedCurrentProjectionForWorkerReaders(false);
+        }
+    }
+
+    private sealed class MaxScoreMaintenancePublishedReadPass(
+        GlobalLeaderboardPersistence owner) : IDisposable
+    {
+        private GlobalLeaderboardPersistence? _owner = owner;
+
+        public void Dispose()
+        {
+            var owner = Interlocked.Exchange(ref _owner, null);
+            if (owner is null)
+                return;
+
+            Interlocked.Exchange(
+                ref owner._maxScoreMaintenancePublishedReadPass,
+                0);
+            foreach (var database in owner._instrumentDbs.Values
+                         .Cast<InstrumentDatabase>())
+            {
+                owner.ConfigureInstrumentDatabaseCurrentRead(
+                    database);
+            }
         }
     }
 
@@ -195,15 +249,8 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         {
             var db = new InstrumentDatabase(
                 instrument, _pgDataSource,
-                _loggerFactory.CreateLogger<InstrumentDatabase>())
-            {
-                UsePublishedScopeSources = UsePublishedScopeSources,
-                UseSnapshotOverlayWorkerReaders = UseSnapshotOverlayWorkerReaders,
-                UseValidatedCurrentProjectionForWorkerReaders =
-                    UseValidatedCurrentProjectionForWorkerReaders,
-                UseStoredProjectionRanksForFilteredReads = _features.UseStoredSoloProjectionRanksForFilteredReads,
-                WriteLegacyLiveLeaderboardSupplementalRows = _features.WriteLegacyLiveLeaderboardSupplementalRows,
-            };
+                _loggerFactory.CreateLogger<InstrumentDatabase>());
+            ConfigureInstrumentDatabaseCurrentRead(db);
             _instrumentDbs[instrument] = db;
             _log.LogDebug("Opened PG instrument DB: {Instrument}", instrument);
         }
@@ -307,20 +354,33 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         if (!CanonicalInstrumentKeys.ContainsKey(instrument))
             throw new ArgumentException($"Unknown instrument key: '{instrument}'. Valid keys: {string.Join(", ", ComboIds.CanonicalOrder)}");
 
-        db = new InstrumentDatabase(
+        var instrumentDatabase = new InstrumentDatabase(
             instrument, _pgDataSource,
-            _loggerFactory.CreateLogger<InstrumentDatabase>())
-        {
-            UsePublishedScopeSources = UsePublishedScopeSources,
-            UseSnapshotOverlayWorkerReaders = UseSnapshotOverlayWorkerReaders,
-            UseValidatedCurrentProjectionForWorkerReaders =
-                UseValidatedCurrentProjectionForWorkerReaders,
-            UseStoredProjectionRanksForFilteredReads = _features.UseStoredSoloProjectionRanksForFilteredReads,
-            WriteLegacyLiveLeaderboardSupplementalRows = _features.WriteLegacyLiveLeaderboardSupplementalRows,
-        };
+            _loggerFactory.CreateLogger<InstrumentDatabase>());
+        ConfigureInstrumentDatabaseCurrentRead(
+            instrumentDatabase);
 
-        _instrumentDbs[instrument] = db;
-        return db;
+        _instrumentDbs[instrument] = instrumentDatabase;
+        return instrumentDatabase;
+    }
+
+    private void ConfigureInstrumentDatabaseCurrentRead(
+        InstrumentDatabase database)
+    {
+        database.UsePublishedScopeSources =
+            UsePublishedScopeSourcesForCurrentRead;
+        database.UseSnapshotOverlayWorkerReaders =
+            UseSnapshotOverlayWorkerReadersForCurrentRead;
+        database.UseValidatedCurrentProjectionForWorkerReaders =
+            UseSnapshotOverlayWorkerReadersForCurrentRead
+            && _useValidatedCurrentProjectionForWorkerReaders;
+        database.BypassCurrentProjectionForMaintenance =
+            Volatile.Read(
+                ref _maxScoreMaintenancePublishedReadPass) != 0;
+        database.UseStoredProjectionRanksForFilteredReads =
+            _features.UseStoredSoloProjectionRanksForFilteredReads;
+        database.WriteLegacyLiveLeaderboardSupplementalRows =
+            _features.WriteLegacyLiveLeaderboardSupplementalRows;
     }
 
     /// <summary>
@@ -3143,7 +3203,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         HashSet<string>? instruments = null)
     {
         var current = GetCurrentStatePlayerProfile(accountId, songId, instruments);
-        if (UsePublishedScopeSources)
+        if (UsePublishedScopeSourcesForCurrentRead)
             return current;
 
         var resolved = GetResolvedCurrentStatePlayerProfile(accountId, songId, instruments);
@@ -3157,7 +3217,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         HashSet<string>? instruments = null)
     {
         var currentProfiles = GetCurrentStatePlayerProfiles(accountIds, songId, instruments);
-        if (UsePublishedScopeSources)
+        if (UsePublishedScopeSourcesForCurrentRead)
             return currentProfiles;
 
         var result = new Dictionary<string, List<PlayerScoreDto>>(currentProfiles, StringComparer.OrdinalIgnoreCase);
@@ -3412,12 +3472,17 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         if (normalizedAccountIds.Length == 0)
             return new Dictionary<string, List<PlayerScoreDto>>(StringComparer.OrdinalIgnoreCase);
 
-        if (UsePublishedScopeSources)
+        var maintenancePublishedReadPass =
+            Volatile.Read(
+                ref _maxScoreMaintenancePublishedReadPass) != 0;
+        if (!maintenancePublishedReadPass
+            && UsePublishedScopeSourcesForCurrentRead)
             return GetPublishedScopePlayerProfiles(normalizedAccountIds, songId, instruments);
 
-        if (UseSnapshotOverlayWorkerReaders
-            && !UseValidatedCurrentProjectionForWorkerReaders
-            && !preferValidatedProjection)
+        if (maintenancePublishedReadPass
+            || UseSnapshotOverlayWorkerReadersForCurrentRead
+               && !UseValidatedCurrentProjectionForWorkerReaders
+               && !preferValidatedProjection)
         {
             var dbs = instruments is null
                 ? _instrumentDbs.ToArray()
@@ -3468,7 +3533,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         using var cmd = conn.CreateCommand();
         var songFilter = songId is not null ? "\n  AND projection.song_id = @songId" : string.Empty;
         var instrumentFilter = instruments is { Count: > 0 } ? "\n  AND projection.instrument = ANY(@instruments)" : string.Empty;
-        var projectionSourceJoin = UseSnapshotOverlayWorkerReaders
+        var projectionSourceJoin = UseSnapshotOverlayWorkerReadersForCurrentRead
             ? """
               JOIN solo_current_projection_scope scope
                 ON scope.song_id = projection.song_id
@@ -3477,7 +3542,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                AND scope.status = 'ready'
               """
             : string.Empty;
-        var projectionSourceFilter = UseSnapshotOverlayWorkerReaders
+        var projectionSourceFilter = UseSnapshotOverlayWorkerReadersForCurrentRead
             ? """
                 AND (
                         (
@@ -3584,7 +3649,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        var publishedSourceCtes = UsePublishedScopeSources
+        var publishedSourceCtes = UsePublishedScopeSourcesForCurrentRead
             ? $"""
                 {PublishedSoloScopeSql.CurrentSourcesCte},
                 eligible_sources AS (
@@ -3619,7 +3684,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 ),
                 """
             : string.Empty;
-        var currentScoreSource = UsePublishedScopeSources
+        var currentScoreSource = UsePublishedScopeSourcesForCurrentRead
             ? "resolved_scores cle"
             : "current_leaderboard_entries cle";
 
@@ -5473,7 +5538,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
     public Dictionary<(string SongId, string Instrument), long> GetCurrentStateLeaderboardPopulation()
     {
-        if (!UsePublishedScopeSources)
+        if (!UsePublishedScopeSourcesForCurrentRead)
             return _metaDb.GetAllLeaderboardPopulation();
 
         using var conn = _pgDataSource.OpenConnection();
@@ -5492,7 +5557,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
     public long GetCurrentStateLeaderboardPopulation(string songId, string instrument)
     {
-        if (!UsePublishedScopeSources)
+        if (!UsePublishedScopeSourcesForCurrentRead)
             return _metaDb.GetLeaderboardPopulation(songId, instrument);
 
         using var conn = _pgDataSource.OpenConnection();

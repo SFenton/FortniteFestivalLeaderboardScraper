@@ -123,6 +123,12 @@ public interface IMetaDatabase : IDisposable
         string accountId, Dictionary<(string SongId, string Instrument), int> thresholds);
     Dictionary<(string AccountId, string SongId), ValidScoreFallback> GetBulkBestValidScores(
         string instrument, Dictionary<(string AccountId, string SongId), int> entries);
+    Dictionary<(string AccountId, string SongId), ValidScoreFallback>
+        GetBulkBestValidScores(
+            string instrument,
+            Dictionary<(string AccountId, string SongId), int> entries,
+            Npgsql.NpgsqlConnection connection,
+            Npgsql.NpgsqlTransaction transaction);
 
     /// <summary>
     /// Returns ALL distinct historical scores per (songId, instrument) for a given account

@@ -14,6 +14,8 @@ sources:
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
   - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
+  - FSTService/Persistence/PublishedSoloScopeSql.cs
+  - FSTService/Persistence/GlobalLeaderboardPersistence.cs
   - FSTService/Persistence/RegistrationMutationGuard.cs
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/DatabaseInitializer.cs
@@ -94,24 +96,29 @@ derived rows while retaining the same published scrape/publication ID.
    discovery and emits the only manifest class accepted by plan/apply.
 3. Plan binds the exact current publication/catalog/path revisions, validates
    current rollback and staged artifact trees/hashes plus observed-score
-   bounds, and fingerprints published score sources, notification state, and
-   rank history.
+   bounds through the authoritative published snapshot/empty source plus
+   supplemental overlay, and fingerprints published score sources,
+   notification state, rank history, and fallback-relevant target
+   `score_history`.
 4. Apply first acquires the exclusive registration mutation advisory gate and
    waits for active registration/backfill/history lifecycles to drain. Its
    isolated lock session records a durable random owner token/backend identity,
    then takes path-generation and publication locks, creates or revalidates the
    manifest-digest-owned public-read freeze, and persists every later mutation
    and checkpoint through bounded transactions on that same session. Each
-   dependent transaction takes source table locks in fixed order and verifies
-   the lease again immediately before commit.
+   dependent transaction takes source table locks in fixed order, including
+   `score_history` after the solo entry tables, and verifies the lease again
+   immediately before commit.
 5. One lock-session transaction promotes every listed song generation. The in-process
    scraper admission cache refreshes immediately. Prior negative backfill
    checks and matching successful history-reconstruction checkpoints are
    removed only for newly usable path-backed pairs. Affected history status is
    fenced and returned to `pending`; unrelated pairs remain complete and only
    affected accounts are requeued.
-6. Maintenance ranking mode rebuilds affected instruments plus composite,
-   family, and combo dependencies. Target-song band over-threshold flags are
+6. Maintenance ranking mode bypasses `current_leaderboard_entries` and rebuilds
+   affected instruments from the exact published source plus supplemental
+   overlay, then rebuilds composite, family, and combo dependencies.
+   Target-song band over-threshold flags are
    recalculated, prior/current affected band projection scopes are refreshed,
    and dependent band rankings are rebuilt. Solo/composite/band rank history is
    not written. Chart denominators include matching promoted path-expected
@@ -129,9 +136,10 @@ derived rows while retaining the same published scrape/publication ID.
    relevant state is aligned, visible delivery remains zero, and the
    publication's completed notification marker is not reopened.
 8. A complete current-publication API cache is built in staging. Final
-   validation requires unchanged rank-history and source fingerprints, exact
-   paths/maxima/song stats, rollback coverage, zero visible delivery, and the
-   expected staged-cache count.
+   validation requires unchanged rank-history, target score-history, and
+   source fingerprints, exact paths/maxima/song stats, canonical rollback
+   file SHA/identity matching immutable database rows, zero visible delivery,
+   and the expected staged-cache count.
 9. Cache swap, workflow completion, and freeze release commit atomically in a
    source-locked transaction on the live advisory-lock session while its
    durable mutation token remains set. Disposal releases the publication,
@@ -164,7 +172,8 @@ async work under the production idle-transaction timeout.
 
 Each max-score mutation is explicitly submitted to the unpooled lease session;
 its transaction revalidates the random token, backend PID, advisory/durable
-owner, and source locks before work and immediately before commit. The durable
+owner, and all five source locks before work and immediately before commit.
+The durable
 band-write gate is unconditional for `band_entries`, members, member stats, and
 membership state, including memberless entries. Registration/source-table
 triggers, including the `leaderboard_population` statement guard, also reject
@@ -175,6 +184,13 @@ publication, and unfreeze. Loss during post-commit advisory-release/token-clear
 handoff leaves the completed cache coherent and guarded mutations fail-closed;
 only a newly validated lease may replace the stale owner and finish release.
 Normal scrape freezes are unchanged.
+
+After `rollback_captured`, every resume validates the persisted rollback file
+before marking the run active or entering a later phase. Final completion
+repeats that validation immediately before cache publication/unfreeze.
+Deletion, corruption, noncanonical bytes, SHA mismatch, or a snapshot from a
+different manifest/plan/run/publication/catalog/database rollback identity
+fails resumably and leaves public reads frozen.
 
 ## Publication-aware API and browser
 

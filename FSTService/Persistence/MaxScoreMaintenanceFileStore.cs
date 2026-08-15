@@ -97,6 +97,20 @@ internal static class MaxScoreMaintenanceFileStore
             string dataDirectory,
             string requestedPath,
             CancellationToken ct)
+        => (await LoadCanonicalRollbackSnapshotAsync(
+            dataDirectory,
+            requestedPath,
+            ct)).Snapshot;
+
+    internal static async Task<(
+            string FullPath,
+            string Sha256,
+            MaxScoreMaintenanceRollbackSnapshot Snapshot,
+            byte[] CanonicalBytes)>
+        LoadCanonicalRollbackSnapshotAsync(
+            string dataDirectory,
+            string requestedPath,
+            CancellationToken ct)
     {
         var path = ResolveExistingJsonInputPath(
             dataDirectory,
@@ -119,11 +133,57 @@ internal static class MaxScoreMaintenanceFileStore
                 ex);
         }
 
-        return (snapshot
+        var normalized = (snapshot
                 ?? throw new ArgumentException(
                     "Max-score maintenance rollback snapshot cannot be JSON null.",
                     nameof(requestedPath)))
             .ValidateAndNormalize();
+        var canonical = normalized.SerializeCanonical();
+        if (!payload.AsSpan().SequenceEqual(canonical))
+        {
+            throw new ArgumentException(
+                "Max-score maintenance rollback snapshot must use the canonical versioned JSON encoding.",
+                nameof(requestedPath));
+        }
+
+        return (
+            path,
+            Convert.ToHexStringLower(SHA256.HashData(payload)),
+            normalized,
+            canonical);
+    }
+
+    internal static async Task<MaxScoreMaintenanceRollbackSnapshot>
+        ValidateCanonicalRollbackSnapshotAsync(
+            string dataDirectory,
+            string requestedPath,
+            string expectedSha256,
+            MaxScoreMaintenanceRollbackSnapshot expectedSnapshot,
+            CancellationToken ct)
+    {
+        expectedSha256 =
+            MaxScoreMaintenanceManifest.NormalizeSha256(
+                expectedSha256,
+                nameof(expectedSha256));
+        var loaded = await LoadCanonicalRollbackSnapshotAsync(
+            dataDirectory,
+            requestedPath,
+            ct);
+        var expectedBytes =
+            expectedSnapshot.ValidateAndNormalize()
+                .SerializeCanonical();
+        if (!string.Equals(
+                loaded.Sha256,
+                expectedSha256,
+                StringComparison.Ordinal)
+            || !loaded.CanonicalBytes.AsSpan()
+                .SequenceEqual(expectedBytes))
+        {
+            throw new InvalidOperationException(
+                "Persisted rollback snapshot does not match its checkpointed SHA-256 and maintenance identity.");
+        }
+
+        return loaded.Snapshot;
     }
 
     internal static async Task<(string FullPath, string Sha256)>
@@ -145,9 +205,7 @@ internal static class MaxScoreMaintenanceFileStore
             MaxScoreMaintenanceRollbackSnapshot snapshot,
             CancellationToken ct)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(
-            snapshot.ValidateAndNormalize(),
-            MaxScoreMaintenanceJson.Canonical);
+        var payload = snapshot.SerializeCanonical();
         return await WriteOrValidateBytesAsync(
             dataDirectory,
             requestedPath,
