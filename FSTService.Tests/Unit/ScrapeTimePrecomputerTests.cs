@@ -436,6 +436,87 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
         _metaDb.PublishScrapeRun(
             scrapeId,
             promoteCachedResponses: false);
+        using (var published = _metaFixture.DataSource
+                   .OpenConnection())
+        using (var seedPublished =
+               published.CreateCommand())
+        {
+            seedPublished.CommandText = """
+                INSERT INTO leaderboard_entries_snapshot (
+                    snapshot_id,
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    accuracy,
+                    stars,
+                    season,
+                    rank,
+                    source,
+                    first_seen_at,
+                    last_updated_at)
+                SELECT @scrapeId,
+                       song_id,
+                       instrument,
+                       account_id,
+                       score,
+                       accuracy,
+                       stars,
+                       season,
+                       rank,
+                       source,
+                       first_seen_at,
+                       last_updated_at
+                FROM leaderboard_entries
+                WHERE song_id = @songId
+                  AND instrument = @instrument;
+
+                INSERT INTO leaderboard_published_scope_source (
+                    published_scrape_id,
+                    song_id,
+                    instrument,
+                    scope_kind,
+                    source_kind,
+                    source_snapshot_id,
+                    source_scrape_id,
+                    row_count,
+                    content_fingerprint,
+                    coverage_fingerprint,
+                    reported_total_entries,
+                    reported_total_pages,
+                    is_complete,
+                    created_at,
+                    validated_at)
+                VALUES (
+                    @scrapeId,
+                    @songId,
+                    @instrument,
+                    'alltime',
+                    'snapshot',
+                    @scrapeId,
+                    @scrapeId,
+                    2,
+                    md5('population-cache-source'),
+                    md5('population-cache-coverage'),
+                    100,
+                    1,
+                    TRUE,
+                    now(),
+                    now());
+                """;
+            seedPublished.Parameters.AddWithValue(
+                "scrapeId",
+                scrapeId);
+            seedPublished.Parameters.AddWithValue(
+                "songId",
+                songId);
+            seedPublished.Parameters.AddWithValue(
+                "instrument",
+                instrument);
+            seedPublished.ExecuteNonQuery();
+        }
+        _metaDb.UpsertLeaderboardPopulation(
+            [(songId, instrument, 200L)]);
         var publicationId = _metaDb
             .GetPublicationPointerState()
             .CurrentPublicationId!.Value;
@@ -469,18 +550,25 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
                 _metaDb.RaiseLeaderboardPopulationFloor(
                     songId,
                     instrument,
-                    200));
+                    300));
         Assert.Equal("55000", blockedPopulation.SqlState);
 
+        using var publishedReadPass =
+            _persistence
+                .BeginMaxScoreMaintenancePublishedReadPass();
+        var publicationPopulation =
+            _persistence.GetCurrentStateLeaderboardPopulation();
         await rankings.ComputeForMaxScoreMaintenanceAsync(
             festivalService,
             [instrument],
+            publicationPopulation,
             maintenanceLease,
             CancellationToken.None);
         var stagedCount =
             await _sut
                 .StageCurrentPublicationCachesForMaintenanceAsync(
                     publicationId,
+                    publicationPopulation,
                     maintenanceLease,
                     CancellationToken.None);
         Assert.True(stagedCount > 0);
@@ -528,7 +616,7 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
             100,
             guitar.GetProperty("totalEntries").GetInt32());
         Assert.Equal(
-            100,
+            200,
             _metaDb.GetLeaderboardPopulation(
                 songId,
                 instrument));

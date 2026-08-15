@@ -2358,7 +2358,10 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return count;
     }
 
-    public int ComputeCurrentStateSongStats(Dictionary<string, int?>? maxScoresByInstrument = null, Dictionary<string, long>? realPopulation = null)
+    public int ComputeCurrentStateSongStats(
+        Dictionary<string, int?>? maxScoresByInstrument = null,
+        IReadOnlyDictionary<string, long>? realPopulation = null,
+        bool preserveExistingEntryCount = true)
     {
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
@@ -2366,16 +2369,18 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             maxScoresByInstrument,
             realPopulation,
             conn,
-            tx);
+            tx,
+            preserveExistingEntryCount);
         tx.Commit();
         return count;
     }
 
     public int ComputeCurrentStateSongStats(
         Dictionary<string, int?>? maxScoresByInstrument,
-        Dictionary<string, long>? realPopulation,
+        IReadOnlyDictionary<string, long>? realPopulation,
         NpgsqlConnection connection,
-        NpgsqlTransaction transaction)
+        NpgsqlTransaction transaction,
+        bool preserveExistingEntryCount = true)
     {
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(transaction);
@@ -2406,7 +2411,11 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         {
             freshCounts.TryGetValue(songId, out var fresh); prevCounts.TryGetValue(songId, out var prev);
             long pop = realPopulation is not null && realPopulation.TryGetValue(songId, out var rp) && rp > 0 ? rp : 0;
-            int entryCount = Math.Max(Math.Max(fresh, prev), (int)pop);
+            int entryCount = Math.Max(
+                fresh,
+                checked((int)pop));
+            if (preserveExistingEntryCount)
+                entryCount = Math.Max(entryCount, prev);
             double logWeight = entryCount > 0 ? Math.Log2(entryCount) : 0.0;
             int? maxScore = maxScoresByInstrument is not null && maxScoresByInstrument.TryGetValue(songId, out var ms) ? ms : null;
             pSong.Value = songId; pEntry.Value = entryCount; pPrev.Value = prev; pLog.Value = logWeight; pMax.Value = (object?)maxScore ?? DBNull.Value; pNow.Value = now;

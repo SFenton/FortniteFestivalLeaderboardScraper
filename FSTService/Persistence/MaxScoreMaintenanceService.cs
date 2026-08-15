@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Data;
 using System.Security.Cryptography;
 using System.Text;
@@ -16,6 +17,7 @@ public sealed class MaxScoreMaintenanceService
         TimeSpan.FromSeconds(90);
     private readonly PathGenerationCoordinator _pathGeneration;
     private readonly IPathDataStore _pathStore;
+    private readonly GlobalLeaderboardPersistence _persistence;
     private readonly IMetaDatabase _metaDatabase;
     private readonly NpgsqlDataSource _dataSource;
     private readonly ScraperOptions _options;
@@ -25,10 +27,16 @@ public sealed class MaxScoreMaintenanceService
     private readonly ISongInstrumentSupportCache
         _instrumentSupportCache;
     private readonly ILogger<MaxScoreMaintenanceService> _log;
+    internal Action<MaxScoreMaintenancePhase>?
+        AfterPhaseCheckpointTestHook
+    { get; set; }
+    internal Action<Exception>? FailureTestHook
+    { get; set; }
 
     public MaxScoreMaintenanceService(
         PathGenerationCoordinator pathGeneration,
         IPathDataStore pathStore,
+        GlobalLeaderboardPersistence persistence,
         IMetaDatabase metaDatabase,
         NpgsqlDataSource dataSource,
         IOptions<ScraperOptions> options,
@@ -40,6 +48,7 @@ public sealed class MaxScoreMaintenanceService
     {
         _pathGeneration = pathGeneration;
         _pathStore = pathStore;
+        _persistence = persistence;
         _metaDatabase = metaDatabase;
         _dataSource = dataSource;
         _options = options.Value;
@@ -420,6 +429,10 @@ public sealed class MaxScoreMaintenanceService
                 NotificationStateFingerprint: new string('0', 64),
                 RankHistoryFingerprint: new string('0', 64),
                 ScoreHistoryFingerprint: new string('0', 64),
+                PopulationEvidence:
+                    EmptyPopulationEvidence(),
+                ScoreHistoryEvidence:
+                    EmptyScoreHistoryEvidence(),
                 AffectedInstruments:
                     manifest.Scope.ExpectedChangedInstruments,
                 RoutineCandidateCount: -1,
@@ -473,6 +486,7 @@ public sealed class MaxScoreMaintenanceService
 
         MaxScoreMaintenanceApplyReport report;
         IMaxScoreMaintenanceLease? activeLease = null;
+        IDisposable? authoritativeReadPass = null;
         try
         {
             activeLease =
@@ -506,6 +520,7 @@ public sealed class MaxScoreMaintenanceService
                         "An incomplete maintenance run already exists; use the resume command.");
                 }
 
+                var resumingExistingRun = run is not null;
                 var rollbackEvidenceValidated = false;
                 if (run is null)
                 {
@@ -551,6 +566,8 @@ public sealed class MaxScoreMaintenanceService
                     run = await LoadRequiredRunAsync(
                         manifestDigest,
                         ct);
+                    AfterPhaseCheckpointTestHook?.Invoke(
+                        run.Phase);
                 }
                 else
                 {
@@ -588,26 +605,42 @@ public sealed class MaxScoreMaintenanceService
                     RequireOwnedFreeze(
                         manifest,
                         manifestDigest);
-                    await lease.VerifyHeldAsync(
-                        requireSourceLocks: true,
+                }
+
+                authoritativeReadPass =
+                    _persistence
+                        .BeginMaxScoreMaintenancePublishedReadPass();
+                var readSnapshot =
+                    await CaptureMaintenanceReadSnapshotAsync(
+                        lease,
+                        manifest,
                         ct);
+                if (run is null)
+                {
+                    throw new InvalidOperationException(
+                        "Max-score maintenance run disappeared after freeze establishment.");
+                }
+                if (readSnapshot.PopulationEvidence
+                        != run.PopulationEvidence
+                    || readSnapshot.ScoreHistoryEvidence
+                        != run.ScoreHistoryEvidence
+                    || !string.Equals(
+                        readSnapshot.ScoreHistoryEvidence
+                            .Fingerprint,
+                        run.ScoreHistoryFingerprint,
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        "Publication-bound population or consumed score-history evidence differs from the persisted plan.");
+                }
+
+                if (resumingExistingRun)
+                {
                     var resumeInspection =
                         await _notifications.InspectRoutineStateAsync(
                             manifest,
                             manifestDigest,
                             requireOwnedFreeze: true,
-                            ct);
-                    var resumeScoreHistoryFingerprint =
-                        await lease.ExecuteTransactionAsync(
-                            "resume-score-history-fingerprint",
-                            requireSourceLocks: true,
-                            (connection, transaction, token) =>
-                                ComputeScoreHistoryFingerprintAsync(
-                                    manifest,
-                                    connection,
-                                    transaction,
-                                    token),
-                            IsolationLevel.RepeatableRead,
                             ct);
                     if (!string.Equals(
                             resumeInspection
@@ -628,14 +661,10 @@ public sealed class MaxScoreMaintenanceService
                         || !string.Equals(
                             await ComputeRankHistoryFingerprintAsync(ct),
                             run.RankHistoryFingerprint,
-                            StringComparison.Ordinal)
-                        || !string.Equals(
-                            resumeScoreHistoryFingerprint,
-                            run.ScoreHistoryFingerprint,
                             StringComparison.Ordinal))
                     {
                         throw new InvalidOperationException(
-                            "Resume source, notification, candidate, rank-history, or score-history identity differs from the persisted checkpoint.");
+                            "Resume source, notification, candidate, or rank-history identity differs from the persisted checkpoint.");
                     }
                     await MarkRunRunningAsync(
                         lease,
@@ -666,6 +695,8 @@ public sealed class MaxScoreMaintenanceService
                     run = await LoadRequiredRunAsync(
                         manifestDigest,
                         ct);
+                    AfterPhaseCheckpointTestHook?.Invoke(
+                        run.Phase);
                 }
                 if (rollbackOutputPath is not null
                     && !PathsEquivalent(
@@ -774,10 +805,13 @@ public sealed class MaxScoreMaintenanceService
                         promotedSongCount: manifest.Songs.Count,
                         rebuiltInstrumentCount: null,
                         stagedCacheEntryCount: null,
-                        ct);
+                        cacheEvidence: null,
+                        ct: ct);
                     run = await LoadRequiredRunAsync(
                         manifestDigest,
                         ct);
+                    AfterPhaseCheckpointTestHook?.Invoke(
+                        run.Phase);
                 }
 
                 if (run.Phase
@@ -804,6 +838,8 @@ public sealed class MaxScoreMaintenanceService
                     var derived = await _derivedState.RebuildAsync(
                         manifest,
                         context.CatalogSongs,
+                        readSnapshot.Population,
+                        readSnapshot.AffectedPlayerStatsAccounts,
                         lease,
                         ct);
                     await lease.VerifyHeldAsync(
@@ -820,10 +856,13 @@ public sealed class MaxScoreMaintenanceService
                         rebuiltInstrumentCount:
                             derived.RebuiltInstrumentCount,
                         stagedCacheEntryCount: null,
-                        ct);
+                        cacheEvidence: null,
+                        ct: ct);
                     run = await LoadRequiredRunAsync(
                         manifestDigest,
                         ct);
+                    AfterPhaseCheckpointTestHook?.Invoke(
+                        run.Phase);
                 }
 
                 if (run.Phase
@@ -843,6 +882,8 @@ public sealed class MaxScoreMaintenanceService
                     run = await LoadRequiredRunAsync(
                         manifestDigest,
                         ct);
+                    AfterPhaseCheckpointTestHook?.Invoke(
+                        run.Phase);
                 }
 
                 if (run.Phase < MaxScoreMaintenancePhase.CachesStaged)
@@ -855,12 +896,24 @@ public sealed class MaxScoreMaintenanceService
                         await _precomputer
                             .StageCurrentPublicationCachesForMaintenanceAsync(
                                 manifest.ExpectedPublicationId,
+                                readSnapshot.Population,
                                 lease,
                                 ct);
                     if (stagedCacheEntries <= 0)
                     {
                         throw new InvalidOperationException(
                             "Maintenance cache staging produced no entries.");
+                    }
+                    var cacheEvidence =
+                        await BuildCacheEvidenceAsync(
+                            manifest,
+                            readSnapshot,
+                            ct);
+                    if (cacheEvidence.EntryCount
+                        != stagedCacheEntries)
+                    {
+                        throw new InvalidOperationException(
+                            "Maintenance cache staging count differs from its validated content evidence.");
                     }
                     await lease.VerifyHeldAsync(
                         requireSourceLocks: true,
@@ -875,10 +928,13 @@ public sealed class MaxScoreMaintenanceService
                         promotedSongCount: null,
                         rebuiltInstrumentCount: null,
                         stagedCacheEntryCount: stagedCacheEntries,
-                        ct);
+                        cacheEvidence: cacheEvidence,
+                        ct: ct);
                     run = await LoadRequiredRunAsync(
                         manifestDigest,
                         ct);
+                    AfterPhaseCheckpointTestHook?.Invoke(
+                        run.Phase);
                 }
 
                 if (run.Phase < MaxScoreMaintenancePhase.Validated)
@@ -891,6 +947,7 @@ public sealed class MaxScoreMaintenanceService
                         manifest,
                         manifestDigest,
                         run,
+                        readSnapshot,
                         ct);
                     await lease.VerifyHeldAsync(
                         requireSourceLocks: true,
@@ -904,7 +961,8 @@ public sealed class MaxScoreMaintenanceService
                         promotedSongCount: null,
                         rebuiltInstrumentCount: null,
                         stagedCacheEntryCount: null,
-                        ct);
+                        cacheEvidence: null,
+                        ct: ct);
                     run = await LoadRequiredRunAsync(
                         manifestDigest,
                         ct);
@@ -934,6 +992,13 @@ public sealed class MaxScoreMaintenanceService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            try
+            {
+                FailureTestHook?.Invoke(ex);
+            }
+            catch
+            {
+            }
             MaxScoreMaintenanceRunState? run = null;
             try
             {
@@ -998,6 +1063,7 @@ public sealed class MaxScoreMaintenanceService
                     QuarantinedCandidateCount: 0,
                     VisibleDeliveryCount: 0,
                     StagedCacheEntryCount: 0,
+                    CacheEvidence: null,
                     FailureStage: ownedFreeze
                         ? "checkpoint_unavailable"
                         : "pre_freeze",
@@ -1010,6 +1076,7 @@ public sealed class MaxScoreMaintenanceService
         }
         finally
         {
+            authoritativeReadPass?.Dispose();
             if (activeLease is not null)
                 await activeLease.DisposeAsync();
         }
@@ -1067,9 +1134,18 @@ public sealed class MaxScoreMaintenanceService
 
         var rankHistoryFingerprint =
             await ComputeRankHistoryFingerprintAsync(ct);
-        var scoreHistoryFingerprint =
-            await ComputeScoreHistoryFingerprintAsync(
+        var postPromotionMaxScores =
+            BuildPostPromotionMaxScores(manifest);
+        var populationSnapshot =
+            await LoadPublishedPopulationSnapshotAsync(
                 manifest,
+                connection,
+                transaction,
+                ct);
+        var scoreHistoryEvidence =
+            await ComputeScoreHistoryEvidenceAsync(
+                manifest,
+                postPromotionMaxScores,
                 connection,
                 transaction,
                 ct);
@@ -1080,7 +1156,8 @@ public sealed class MaxScoreMaintenanceService
             context,
             notificationInspection,
             rankHistoryFingerprint,
-            scoreHistoryFingerprint,
+            populationSnapshot.Evidence,
+            scoreHistoryEvidence,
             affectedInstruments,
             artifactEvidence,
             observedScoreChecks);
@@ -1097,7 +1174,9 @@ public sealed class MaxScoreMaintenanceService
             notificationInspection.PublishedScoreSourceFingerprint,
             notificationInspection.NotificationStateFingerprint,
             rankHistoryFingerprint,
-            scoreHistoryFingerprint,
+            scoreHistoryEvidence.Fingerprint,
+            populationSnapshot.Evidence,
+            scoreHistoryEvidence,
             affectedInstruments,
             RoutineCandidateCount:
                 notificationInspection.CandidateCount,
@@ -1143,13 +1222,17 @@ public sealed class MaxScoreMaintenanceService
                         ? "completed marker and visible routine lanes current; zero candidates"
                         : $"completed marker is current but {notificationInspection.CandidateCount:N0} routine candidate(s) remain"),
                 new(
+                    "population",
+                    true,
+                    $"published scopes={populationSnapshot.Evidence.ScopeCount:N0}, min={populationSnapshot.Evidence.MinimumTotalEntries:N0}, max={populationSnapshot.Evidence.MaximumTotalEntries:N0}, fingerprint={populationSnapshot.Evidence.Fingerprint}"),
+                new(
                     "rank-history",
                     true,
                     $"baseline fingerprint {rankHistoryFingerprint}"),
                 new(
                     "score-history",
                     true,
-                    $"target fallback fingerprint {scoreHistoryFingerprint}"),
+                    $"consumed rows={scoreHistoryEvidence.RowCount:N0}, id-range={FormatNullableRange(scoreHistoryEvidence.MinimumId, scoreHistoryEvidence.MaximumId)}, changed-range={FormatNullableRange(scoreHistoryEvidence.MinimumChangedAtUtc, scoreHistoryEvidence.MaximumChangedAtUtc)}, fingerprint={scoreHistoryEvidence.Fingerprint}"),
             ],
             RoutineCandidates: notificationInspection.Candidates,
             ArtifactEvidence: artifactEvidence,
@@ -1457,6 +1540,8 @@ public sealed class MaxScoreMaintenanceService
                     notification_state_fingerprint,
                     rank_history_fingerprint,
                     score_history_fingerprint,
+                    population_evidence,
+                    score_history_evidence,
                     manifest_json,
                     freeze_reason,
                     phase,
@@ -1474,6 +1559,8 @@ public sealed class MaxScoreMaintenanceService
                     @notificationFingerprint,
                     @rankHistoryFingerprint,
                     @scoreHistoryFingerprint,
+                    @populationEvidence,
+                    @scoreHistoryEvidence,
                     @manifest,
                     @freezeReason,
                     'freeze_established',
@@ -1513,6 +1600,18 @@ public sealed class MaxScoreMaintenanceService
             insert.Parameters.AddWithValue(
                 "scoreHistoryFingerprint",
                 plan.ScoreHistoryFingerprint);
+            insert.Parameters.Add(
+                "populationEvidence",
+                NpgsqlDbType.Jsonb).Value =
+                JsonSerializer.Serialize(
+                    plan.PopulationEvidence,
+                    MaxScoreMaintenanceJson.Canonical);
+            insert.Parameters.Add(
+                "scoreHistoryEvidence",
+                NpgsqlDbType.Jsonb).Value =
+                JsonSerializer.Serialize(
+                    plan.ScoreHistoryEvidence,
+                    MaxScoreMaintenanceJson.Canonical);
             insert.Parameters.Add("manifest", NpgsqlDbType.Jsonb).Value =
                 Encoding.UTF8.GetString(manifest.SerializeCanonical());
             insert.Parameters.AddWithValue(
@@ -1889,8 +1988,15 @@ public sealed class MaxScoreMaintenanceService
         MaxScoreMaintenanceManifest manifest,
         string manifestDigest,
         MaxScoreMaintenanceRunState run,
+        MaxScoreMaintenanceReadSnapshot readSnapshot,
         CancellationToken ct)
     {
+        if (!_persistence
+                .IsMaxScoreMaintenancePublishedReadPassActive)
+        {
+            throw new InvalidOperationException(
+                "Final max-score validation requires the strict published-source read context.");
+        }
         RequireOwnedFreeze(manifest, manifestDigest);
         if (run.PromotedSongCount != manifest.Songs.Count
             || run.RebuiltInstrumentCount
@@ -1914,38 +2020,43 @@ public sealed class MaxScoreMaintenanceService
             throw new InvalidOperationException(
                 "Rank history changed during max-score maintenance.");
         }
+        var cacheEvidence =
+            await BuildCacheEvidenceAsync(
+                manifest,
+                readSnapshot,
+                ct);
+        if (run.CacheEvidence is null
+            || run.CacheEvidence != cacheEvidence)
+        {
+            throw new InvalidOperationException(
+                "Staged cache content evidence changed or no longer matches the authoritative target scopes/accounts.");
+        }
 
         await lease.ExecuteTransactionAsync(
             "final-state-validation",
             requireSourceLocks: true,
             async (conn, transaction, token) =>
             {
-        var scoreHistoryFingerprint =
-            await ComputeScoreHistoryFingerprintAsync(
+        var scoreHistoryEvidence =
+            await ComputeScoreHistoryEvidenceAsync(
                 manifest,
+                readSnapshot.PostPromotionMaxScores,
                 conn,
                 transaction,
                 token);
-        if (!string.Equals(
-                scoreHistoryFingerprint,
-                run.ScoreHistoryFingerprint,
-                StringComparison.Ordinal))
+        if (scoreHistoryEvidence
+                != readSnapshot.ScoreHistoryEvidence
+            || scoreHistoryEvidence
+                != run.ScoreHistoryEvidence)
         {
             throw new InvalidOperationException(
                 "Score history changed during max-score maintenance.");
         }
 
-        var affectedPlayerStatsAccounts =
-            await MaxScoreMaintenanceDerivedStateService
-                .LoadAffectedPlayerStatsAccountsAsync(
-                    manifest,
-                    conn,
-                    transaction,
-                    token);
         var missingPlayerStatsAccountCount =
             await MaxScoreMaintenanceDerivedStateService
                 .CountMissingPlayerStatsAccountsAsync(
-                    affectedPlayerStatsAccounts,
+                    readSnapshot.AffectedPlayerStatsAccounts,
                     NormalizeDatabaseTimestamp(
                         run.CreatedAtUtc),
                     conn,
@@ -1955,12 +2066,17 @@ public sealed class MaxScoreMaintenanceService
         cmd.Transaction = transaction;
         cmd.CommandTimeout = 600;
         cmd.CommandText = """
-            WITH expected(song_id, instrument, max_score) AS (
+            WITH expected(
+                song_id,
+                instrument,
+                max_score,
+                total_entries) AS (
                 SELECT *
                 FROM unnest(
                     @songIds::TEXT[],
                     @instruments::TEXT[],
-                    @maxScores::INTEGER[])
+                    @maxScores::INTEGER[],
+                    @totalEntries::BIGINT[])
             ), stats AS (
                 SELECT COUNT(*)::INTEGER AS matched
                 FROM expected
@@ -1968,6 +2084,8 @@ public sealed class MaxScoreMaintenanceService
                   ON current.song_id = expected.song_id
                  AND current.instrument = expected.instrument
                  AND current.max_score = expected.max_score
+                  AND current.entry_count =
+                      expected.total_entries
             ), rankings AS (
                 SELECT COUNT(*)::BIGINT AS row_count
                 FROM account_rankings
@@ -2102,6 +2220,17 @@ public sealed class MaxScoreMaintenanceService
             NpgsqlDbType.Array | NpgsqlDbType.Integer).Value =
             changedPairs.Select(pair => pair.MaxScore).ToArray();
         cmd.Parameters.Add(
+            "totalEntries",
+            NpgsqlDbType.Array | NpgsqlDbType.Bigint).Value =
+            changedPairs.Select(pair =>
+                    readSnapshot.Population.TryGetValue(
+                        (pair.SongId, pair.Instrument),
+                        out var population)
+                        ? population
+                        : throw new InvalidOperationException(
+                            $"Publication population is missing for {pair.SongId}/{pair.Instrument}."))
+                .ToArray();
+        cmd.Parameters.Add(
             "affectedInstruments",
             NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
             changedPairs.Select(pair => pair.Instrument)
@@ -2134,27 +2263,474 @@ public sealed class MaxScoreMaintenanceService
             missingPlayerStatsAccountCount);
         await using var reader =
             await cmd.ExecuteReaderAsync(token);
-        if (!await reader.ReadAsync(token)
-            || reader.GetInt32(0) != changedPairs.Length
-            || reader.GetInt64(1) <= 0
-            || reader.GetInt32(2) != manifest.Songs.Count
-            || reader.GetInt32(3) != 1
-            || reader.GetInt32(4) != 0
-            || reader.GetInt64(5) != run.StagedCacheEntryCount
-            || reader.GetInt64(6) <= 0
-            || reader.GetInt64(7) <= 0
-            || reader.GetInt64(8) <= 0
-            || reader.GetInt64(9) != 0
-            || reader.GetInt64(10) != 0
-            || reader.GetInt64(11) != 0)
+        if (!await reader.ReadAsync(token))
         {
             throw new InvalidOperationException(
-                "Post-maintenance paths, song stats, rankings, rollback, notification, or cache validation failed.");
+                "Post-maintenance validation returned no evidence row.");
+        }
+        var validation = new
+        {
+            MatchedStats = reader.GetInt32(0),
+            RankingRows = reader.GetInt64(1),
+            RollbackRows = reader.GetInt32(2),
+            NotificationRows = reader.GetInt32(3),
+            VisibleNotifications = reader.GetInt32(4),
+            StagedCacheRows = reader.GetInt64(5),
+            CompositeRows = reader.GetInt64(6),
+            FamilyRows = reader.GetInt64(7),
+            ComboRows = reader.GetInt64(8),
+            MissingPlayerStats = reader.GetInt64(9),
+            MissingLeaderboardRivals = reader.GetInt64(10),
+            InvalidBandRankings = reader.GetInt64(11),
+        };
+        if (validation.MatchedStats != changedPairs.Length
+            || validation.RankingRows <= 0
+            || validation.RollbackRows != manifest.Songs.Count
+            || validation.NotificationRows != 1
+            || validation.VisibleNotifications != 0
+            || validation.StagedCacheRows
+                != run.StagedCacheEntryCount
+            || validation.CompositeRows <= 0
+            || validation.FamilyRows <= 0
+            || manifest.Scope.ExpectedChangedInstruments.Count > 1
+               && validation.ComboRows <= 0
+            || validation.MissingPlayerStats != 0
+            || validation.MissingLeaderboardRivals != 0
+            || validation.InvalidBandRankings != 0)
+        {
+            throw new InvalidOperationException(
+                $"Post-maintenance validation failed: stats={validation.MatchedStats}/{changedPairs.Length}, rankings={validation.RankingRows}, rollback={validation.RollbackRows}/{manifest.Songs.Count}, notificationRows={validation.NotificationRows}, visible={validation.VisibleNotifications}, cache={validation.StagedCacheRows}/{run.StagedCacheEntryCount}, composite={validation.CompositeRows}, family={validation.FamilyRows}, combo={validation.ComboRows}, missingPlayerStats={validation.MissingPlayerStats}, missingRivals={validation.MissingLeaderboardRivals}, invalidBandRankings={validation.InvalidBandRankings}.");
         }
             },
             IsolationLevel.RepeatableRead,
             ct);
     }
+
+    private async Task<MaxScoreMaintenanceCacheEvidence>
+        BuildCacheEvidenceAsync(
+            MaxScoreMaintenanceManifest manifest,
+            MaxScoreMaintenanceReadSnapshot readSnapshot,
+            CancellationToken ct)
+    {
+        if (!_persistence
+                .IsMaxScoreMaintenancePublishedReadPassActive)
+        {
+            throw new InvalidOperationException(
+                "Cache evidence requires the strict published-source read context.");
+        }
+
+        var targetPairs = manifest.Songs
+            .SelectMany(song => song.ChangedInstruments.Select(
+                instrument => (
+                    song.SongId,
+                    Instrument: instrument)))
+            .OrderBy(pair => pair.SongId, StringComparer.Ordinal)
+            .ThenBy(pair => pair.Instrument, StringComparer.Ordinal)
+            .ToArray();
+        var targetKeys = targetPairs
+            .Select(pair => pair.SongId)
+            .Distinct(StringComparer.Ordinal)
+            .ToDictionary(
+                songId => songId,
+                songId => LeaderboardCacheKeys.LeaderboardAll(
+                    songId,
+                    LeaderboardCacheKeys.SongDetailPreviewTop,
+                    leeway: null),
+                StringComparer.Ordinal);
+        var accountKeys =
+            readSnapshot.AffectedRegisteredAccounts
+                .ToDictionary(
+                    accountId => accountId,
+                    accountId => $"player:{accountId}:::",
+                    StringComparer.OrdinalIgnoreCase);
+        var requestedKeys = targetKeys.Values
+            .Concat(accountKeys.Values)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        long entryCount;
+        string contentFingerprint;
+        var payloads =
+            new Dictionary<string, byte[]>(
+                StringComparer.Ordinal);
+        await using (var connection =
+                     await _dataSource.OpenConnectionAsync(ct))
+        {
+            await using (var aggregate =
+                         connection.CreateCommand())
+            {
+                aggregate.CommandTimeout = 600;
+                aggregate.CommandText = """
+                    WITH rows AS MATERIALIZED (
+                        SELECT cache_key,
+                               etag,
+                               encode(
+                                   digest(
+                                       json_data,
+                                       'sha256'),
+                                   'hex') AS json_sha256
+                        FROM publication_api_response_cache_staging
+                        WHERE publication_id = @publicationId
+                    ), evidence AS (
+                        SELECT COUNT(*)::BIGINT AS row_count,
+                               COALESCE(
+                                   MIN(cache_key),
+                                   '') AS minimum_key,
+                               COALESCE(
+                                   MAX(cache_key),
+                                   '') AS maximum_key,
+                               COALESCE(
+                                   SUM(
+                                       hashtextextended(
+                                           concat_ws(
+                                               ':',
+                                               cache_key,
+                                               etag,
+                                               json_sha256),
+                                           0)::NUMERIC),
+                                   0)::TEXT AS hash_sum,
+                               COALESCE(
+                                   bit_xor(
+                                       hashtextextended(
+                                           concat_ws(
+                                               ':',
+                                               cache_key,
+                                               etag,
+                                               json_sha256),
+                                           1)),
+                                   0)::TEXT AS hash_xor
+                        FROM rows
+                    )
+                    SELECT row_count,
+                           encode(
+                               digest(
+                                   convert_to(
+                                       concat_ws(
+                                           ':',
+                                           row_count,
+                                           minimum_key,
+                                           maximum_key,
+                                           hash_sum,
+                                           hash_xor),
+                                       'UTF8'),
+                                   'sha256'),
+                               'hex')
+                    FROM evidence
+                    """;
+                aggregate.Parameters.AddWithValue(
+                    "publicationId",
+                    manifest.ExpectedPublicationId);
+                await using var reader =
+                    await aggregate.ExecuteReaderAsync(ct);
+                if (!await reader.ReadAsync(ct))
+                {
+                    throw new InvalidOperationException(
+                        "Staged cache aggregate evidence was unavailable.");
+                }
+                entryCount = reader.GetInt64(0);
+                contentFingerprint = reader.GetString(1);
+            }
+
+            if (requestedKeys.Length > 0)
+            {
+                await using var payload = connection.CreateCommand();
+                payload.CommandTimeout = 600;
+                payload.CommandText = """
+                    SELECT cache_key, json_data
+                    FROM publication_api_response_cache_staging
+                    WHERE publication_id = @publicationId
+                      AND cache_key = ANY(@cacheKeys)
+                    """;
+                payload.Parameters.AddWithValue(
+                    "publicationId",
+                    manifest.ExpectedPublicationId);
+                payload.Parameters.Add(
+                    "cacheKeys",
+                    NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+                    requestedKeys;
+                await using var reader =
+                    await payload.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
+                {
+                    payloads[reader.GetString(0)] =
+                        reader.GetFieldValue<byte[]>(1);
+                }
+            }
+        }
+
+        if (entryCount <= 0)
+        {
+            throw new InvalidOperationException(
+                "Maintenance cache staging produced no aggregate evidence.");
+        }
+
+        var expectedScopes = new List<CacheScopeFingerprintRow>();
+        var actualScopes = new List<CacheScopeFingerprintRow>();
+        foreach (var pair in targetPairs)
+        {
+            var result =
+                _persistence
+                    .GetCurrentStateLeaderboardWithCount(
+                        pair.SongId,
+                        pair.Instrument,
+                        LeaderboardCacheKeys.SongDetailPreviewTop)
+                ?? throw new InvalidOperationException(
+                    $"Authoritative target scope {pair.SongId}/{pair.Instrument} is unavailable.");
+            if (!readSnapshot.Population.TryGetValue(
+                    (pair.SongId, pair.Instrument),
+                    out var publishedPopulation))
+            {
+                throw new InvalidOperationException(
+                    $"Publication population is missing for cache scope {pair.SongId}/{pair.Instrument}.");
+            }
+            expectedScopes.Add(new CacheScopeFingerprintRow(
+                pair.SongId,
+                pair.Instrument,
+                Math.Max(
+                    publishedPopulation,
+                    result.TotalCount),
+                result.TotalCount,
+                result.Entries
+                    .Select(entry =>
+                        new CacheEntryFingerprintRow(
+                            entry.AccountId,
+                            entry.Score,
+                            entry.Rank))
+                    .ToArray()));
+
+            var targetKey = targetKeys[pair.SongId];
+            if (!payloads.TryGetValue(
+                    targetKey,
+                    out var payload))
+            {
+                throw new InvalidOperationException(
+                    $"Staged cache is missing target song key {targetKey}.");
+            }
+            using var document = JsonDocument.Parse(payload);
+            var instrumentPayload = document.RootElement
+                .GetProperty("instruments")
+                .EnumerateArray()
+                .SingleOrDefault(item =>
+                    string.Equals(
+                        item.GetProperty("instrument")
+                            .GetString(),
+                        pair.Instrument,
+                        StringComparison.Ordinal));
+            if (instrumentPayload.ValueKind
+                == JsonValueKind.Undefined)
+            {
+                throw new InvalidOperationException(
+                    $"Staged cache is missing target scope {pair.SongId}/{pair.Instrument}.");
+            }
+            actualScopes.Add(new CacheScopeFingerprintRow(
+                pair.SongId,
+                pair.Instrument,
+                instrumentPayload
+                    .GetProperty("totalEntries")
+                    .GetInt64(),
+                instrumentPayload
+                    .GetProperty("localEntries")
+                    .GetInt32(),
+                instrumentPayload
+                    .GetProperty("entries")
+                    .EnumerateArray()
+                    .Select(entry =>
+                        new CacheEntryFingerprintRow(
+                            entry.GetProperty("accountId")
+                                .GetString()
+                            ?? throw new InvalidOperationException(
+                                "Staged target cache entry has no account ID."),
+                            entry.GetProperty("score")
+                                .GetInt32(),
+                            entry.GetProperty("rank")
+                                .GetInt32()))
+                    .ToArray()));
+        }
+
+        var expectedTargetFingerprint =
+            ComputeEvidenceFingerprint(expectedScopes);
+        var actualTargetFingerprint =
+            ComputeEvidenceFingerprint(actualScopes);
+        if (!string.Equals(
+                expectedTargetFingerprint,
+                actualTargetFingerprint,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Staged target leaderboard cache content differs from the exact published source plus overlays.");
+        }
+
+        var expectedAccounts =
+            BuildExpectedAccountCacheRows(
+                readSnapshot.AffectedRegisteredAccounts,
+                readSnapshot.Population);
+        var actualAccounts =
+            BuildActualAccountCacheRows(
+                readSnapshot.AffectedRegisteredAccounts,
+                accountKeys,
+                payloads);
+        var expectedAccountFingerprint =
+            ComputeEvidenceFingerprint(expectedAccounts);
+        var actualAccountFingerprint =
+            ComputeEvidenceFingerprint(actualAccounts);
+        if (!string.Equals(
+                expectedAccountFingerprint,
+                actualAccountFingerprint,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Staged affected-account cache content differs from the exact published source plus overlays.");
+        }
+
+        var overlayAccountSet =
+            readSnapshot.OverlayOnlyRegisteredAccounts
+                .ToHashSet(
+                    StringComparer.OrdinalIgnoreCase);
+        var expectedOverlayAccounts = expectedAccounts
+            .Where(account =>
+                overlayAccountSet.Contains(account.AccountId))
+            .ToArray();
+        var actualOverlayAccounts = actualAccounts
+            .Where(account =>
+                overlayAccountSet.Contains(account.AccountId))
+            .ToArray();
+        var expectedOverlayFingerprint =
+            ComputeEvidenceFingerprint(
+                expectedOverlayAccounts);
+        var actualOverlayFingerprint =
+            ComputeEvidenceFingerprint(
+                actualOverlayAccounts);
+        if (!string.Equals(
+                expectedOverlayFingerprint,
+                actualOverlayFingerprint,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Staged overlay-only account cache content differs from the supplemental overlay.");
+        }
+
+        return new MaxScoreMaintenanceCacheEvidence(
+            entryCount,
+            contentFingerprint,
+            expectedScopes.Count,
+            expectedTargetFingerprint,
+            expectedAccounts.Count,
+            expectedAccountFingerprint,
+            expectedOverlayAccounts.Length,
+            expectedOverlayFingerprint);
+    }
+
+    private List<CacheAccountFingerprintRow>
+        BuildExpectedAccountCacheRows(
+            IReadOnlyCollection<string> accountIds,
+            IReadOnlyDictionary<
+                (string SongId, string Instrument),
+                long> population)
+    {
+        var rows = new List<CacheAccountFingerprintRow>();
+        foreach (var accountId in accountIds
+                     .OrderBy(
+                         value => value,
+                         StringComparer.OrdinalIgnoreCase))
+        {
+            var scores = _persistence
+                .GetCurrentStatePlayerProfile(accountId)
+                .OrderBy(score => score.SongId, StringComparer.Ordinal)
+                .ThenBy(
+                    score => score.Instrument,
+                    StringComparer.Ordinal)
+                .Select(score =>
+                {
+                    if (!population.TryGetValue(
+                            (score.SongId, score.Instrument),
+                            out var totalEntries))
+                    {
+                        throw new InvalidOperationException(
+                            $"Publication population is missing for affected account score {score.SongId}/{score.Instrument}.");
+                    }
+                    return new CachePlayerScoreFingerprintRow(
+                        score.SongId,
+                        ComboIds.FromInstruments(
+                            [score.Instrument]),
+                        score.Score,
+                        score.ApiRank > 0
+                            ? score.ApiRank
+                            : score.Rank,
+                        totalEntries);
+                })
+                .ToArray();
+            rows.Add(new CacheAccountFingerprintRow(
+                accountId,
+                scores));
+        }
+        return rows;
+    }
+
+    private static List<CacheAccountFingerprintRow>
+        BuildActualAccountCacheRows(
+            IReadOnlyCollection<string> accountIds,
+            IReadOnlyDictionary<string, string> accountKeys,
+            IReadOnlyDictionary<string, byte[]> payloads)
+    {
+        var rows = new List<CacheAccountFingerprintRow>();
+        foreach (var accountId in accountIds
+                     .OrderBy(
+                         value => value,
+                         StringComparer.OrdinalIgnoreCase))
+        {
+            var cacheKey = accountKeys[accountId];
+            if (!payloads.TryGetValue(cacheKey, out var payload))
+            {
+                throw new InvalidOperationException(
+                    $"Staged cache is missing affected account key {cacheKey}.");
+            }
+            using var document = JsonDocument.Parse(payload);
+            var root = document.RootElement;
+            if (!string.Equals(
+                    root.GetProperty("accountId").GetString(),
+                    accountId,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"Staged account cache identity differs for {accountId}.");
+            }
+            var scores = root.GetProperty("scores")
+                .EnumerateArray()
+                .Select(score =>
+                    new CachePlayerScoreFingerprintRow(
+                        score.GetProperty("si")
+                            .GetString()
+                        ?? throw new InvalidOperationException(
+                            "Staged player score has no song ID."),
+                        score.GetProperty("ins")
+                            .GetString()
+                        ?? throw new InvalidOperationException(
+                            "Staged player score has no instrument."),
+                        score.GetProperty("sc")
+                            .GetInt32(),
+                        score.GetProperty("rk")
+                            .GetInt32(),
+                        score.GetProperty("te")
+                            .GetInt64()))
+                .OrderBy(score => score.SongId, StringComparer.Ordinal)
+                .ThenBy(
+                    score => score.Instrument,
+                    StringComparer.Ordinal)
+                .ToArray();
+            rows.Add(new CacheAccountFingerprintRow(
+                accountId,
+                scores));
+        }
+        return rows;
+    }
+
+    private static string ComputeEvidenceFingerprint<T>(
+        IReadOnlyCollection<T> rows)
+        => Convert.ToHexStringLower(
+            SHA256.HashData(
+                JsonSerializer.SerializeToUtf8Bytes(
+                    rows,
+                    MaxScoreMaintenanceJson.Canonical)));
 
     private async Task<string> ComputeRankHistoryFingerprintAsync(
         CancellationToken ct)
@@ -2192,6 +2768,11 @@ public sealed class MaxScoreMaintenanceService
                   OR stats.relname = 'composite_rank_history'
                   OR stats.relname LIKE 'band_team_rank_history%'
                   OR stats.relname LIKE 'band_rank_history_%'
+              )
+              AND (
+                  stats.n_tup_ins <> 0
+                  OR stats.n_tup_upd <> 0
+                  OR stats.n_tup_del <> 0
               )
             """;
         return Convert.ToString(await cmd.ExecuteScalarAsync(ct))
@@ -2321,8 +2902,310 @@ public sealed class MaxScoreMaintenanceService
            && (highestObservedScore is null
                || highestObservedScore <= newMaximum);
 
-    internal static async Task<string>
-        ComputeScoreHistoryFingerprintAsync(
+    internal static async Task<MaxScoreMaintenanceScoreHistoryEvidence>
+        ComputeScoreHistoryEvidenceAsync(
+            MaxScoreMaintenanceManifest manifest,
+            IReadOnlyDictionary<string, SongMaxScores>
+                postPromotionMaxScores,
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        ArgumentNullException.ThrowIfNull(postPromotionMaxScores);
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(
+                transaction.Connection,
+                connection))
+        {
+            throw new ArgumentException(
+                "The score-history evidence transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
+
+        var maxima = postPromotionMaxScores
+            .SelectMany(song => GlobalLeaderboardScraper
+                .AllInstruments.Select(instrument => (
+                    SongId: song.Key,
+                    Instrument: instrument,
+                    Maximum: song.Value
+                        .GetByInstrument(instrument))))
+            .Where(item => item.Maximum is > 0)
+            .Select(item => (
+                item.SongId,
+                item.Instrument,
+                Maximum: item.Maximum!.Value,
+                Threshold:
+                    RankingsCalculator.ComputeMaxScoreThreshold(
+                        item.Maximum.Value)))
+            .OrderBy(item => item.SongId, StringComparer.Ordinal)
+            .ThenBy(item => item.Instrument, StringComparer.Ordinal)
+            .ToArray();
+        if (maxima.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "Score-history evidence requires post-promotion maxima.");
+        }
+        var changedPairs = manifest.Songs
+            .SelectMany(song => song.ChangedInstruments.Select(
+                instrument => (
+                    song.SongId,
+                    Instrument: instrument)))
+            .OrderBy(pair => pair.SongId, StringComparer.Ordinal)
+            .ThenBy(pair => pair.Instrument, StringComparer.Ordinal)
+            .ToArray();
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandTimeout = 600;
+        command.CommandText = $"""
+            WITH maxima(
+                song_id,
+                instrument,
+                max_score,
+                max_threshold) AS (
+                SELECT *
+                FROM unnest(
+                    @songIds::TEXT[],
+                    @instruments::TEXT[],
+                    @maxScores::INTEGER[],
+                    @maxThresholds::INTEGER[])
+            ), changed_pairs(song_id, instrument) AS (
+                SELECT *
+                FROM unnest(
+                    @changedSongIds::TEXT[],
+                    @changedInstruments::TEXT[])
+            ), affected_instruments(instrument) AS (
+                SELECT DISTINCT value
+                FROM unnest(@affectedInstruments::TEXT[])
+                    value
+            ),
+            {PublishedSoloScopeSql.CurrentResolvedAllEntriesCte},
+            affected_player_accounts AS MATERIALIZED (
+                SELECT DISTINCT resolved.account_id
+                FROM resolved_rows resolved
+                JOIN changed_pairs changed
+                  ON changed.song_id = resolved.song_id
+                 AND changed.instrument =
+                     resolved.instrument
+            ), registered_accounts AS MATERIALIZED (
+                SELECT account_id
+                FROM registered_users
+            ), player_stats_fallback_scopes AS MATERIALIZED (
+                SELECT resolved.song_id,
+                       resolved.instrument,
+                       resolved.account_id,
+                       maxima.max_threshold
+                FROM resolved_rows resolved
+                JOIN affected_player_accounts affected
+                  ON affected.account_id =
+                     resolved.account_id
+                JOIN maxima
+                  ON maxima.song_id = resolved.song_id
+                 AND maxima.instrument =
+                     resolved.instrument
+                WHERE resolved.score > maxima.max_score
+            ), ranking_fallback_scopes AS MATERIALIZED (
+                SELECT resolved.song_id,
+                       resolved.instrument,
+                       resolved.account_id,
+                       maxima.max_threshold
+                FROM resolved_rows resolved
+                JOIN affected_instruments affected
+                  ON affected.instrument =
+                     resolved.instrument
+                JOIN maxima
+                  ON maxima.song_id = resolved.song_id
+                 AND maxima.instrument =
+                     resolved.instrument
+                WHERE resolved.score >
+                      maxima.max_threshold
+            ), relevant_history AS MATERIALIZED (
+                SELECT history.*
+                FROM score_history history
+                JOIN registered_accounts registered
+                  ON registered.account_id =
+                     history.account_id
+                UNION ALL
+                SELECT history.*
+                FROM score_history history
+                JOIN player_stats_fallback_scopes fallback
+                  ON fallback.song_id = history.song_id
+                 AND fallback.instrument =
+                     history.instrument
+                 AND fallback.account_id =
+                     history.account_id
+                WHERE history.new_score <=
+                      fallback.max_threshold
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM registered_accounts registered
+                      WHERE registered.account_id =
+                          history.account_id)
+                UNION ALL
+                SELECT history.*
+                FROM score_history history
+                JOIN ranking_fallback_scopes fallback
+                  ON fallback.song_id = history.song_id
+                 AND fallback.instrument =
+                     history.instrument
+                 AND fallback.account_id =
+                     history.account_id
+                WHERE history.new_score <=
+                      fallback.max_threshold
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM registered_accounts registered
+                      WHERE registered.account_id =
+                          history.account_id)
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM affected_player_accounts affected
+                      WHERE affected.account_id =
+                          history.account_id)
+            ), canonical_rows AS MATERIALIZED (
+                SELECT id,
+                       changed_at,
+                       jsonb_build_array(
+                           id,
+                           song_id,
+                           instrument,
+                           account_id,
+                           old_score,
+                           new_score,
+                           old_rank,
+                           new_rank,
+                           accuracy,
+                           is_full_combo,
+                           stars,
+                           percentile,
+                           season,
+                           CASE
+                               WHEN score_achieved_at IS NULL
+                                   THEN NULL
+                               ELSE (
+                                   EXTRACT(
+                                       EPOCH FROM
+                                           score_achieved_at)
+                                   * 1000000)::BIGINT
+                           END,
+                           season_rank,
+                           all_time_rank,
+                           difficulty,
+                           (
+                               EXTRACT(
+                                   EPOCH FROM changed_at)
+                               * 1000000)::BIGINT)::TEXT
+                           AS row_identity
+                FROM relevant_history
+            ), aggregate_evidence AS (
+                SELECT COUNT(*)::BIGINT AS row_count,
+                       MIN(id)::BIGINT AS minimum_id,
+                       MAX(id)::BIGINT AS maximum_id,
+                       MIN(changed_at) AS minimum_changed_at,
+                       MAX(changed_at) AS maximum_changed_at,
+                       COALESCE(
+                           SUM(
+                               hashtextextended(
+                                   row_identity,
+                                   0)::NUMERIC),
+                           0)::TEXT AS hash_sum,
+                       COALESCE(
+                           bit_xor(
+                               hashtextextended(
+                                   row_identity,
+                                   1)),
+                           0)::TEXT AS hash_xor
+                FROM canonical_rows
+            )
+            SELECT row_count,
+                   minimum_id,
+                   maximum_id,
+                   minimum_changed_at,
+                   maximum_changed_at,
+                   encode(
+                       digest(
+                           convert_to(
+                               concat_ws(
+                                   ':',
+                                   row_count,
+                                   COALESCE(
+                                       minimum_id::TEXT,
+                                       ''),
+                                   COALESCE(
+                                       maximum_id::TEXT,
+                                       ''),
+                                   COALESCE(
+                                       (
+                                           EXTRACT(
+                                               EPOCH FROM
+                                                   minimum_changed_at)
+                                           * 1000000)::BIGINT::TEXT,
+                                       ''),
+                                   COALESCE(
+                                       (
+                                           EXTRACT(
+                                               EPOCH FROM
+                                                   maximum_changed_at)
+                                           * 1000000)::BIGINT::TEXT,
+                                       ''),
+                                   hash_sum,
+                                   hash_xor),
+                               'UTF8'),
+                           'sha256'),
+                       'hex')
+            FROM aggregate_evidence
+            """;
+        command.Parameters.Add(
+            "songIds",
+            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            maxima.Select(item => item.SongId).ToArray();
+        command.Parameters.Add(
+            "instruments",
+            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            maxima.Select(item => item.Instrument).ToArray();
+        command.Parameters.Add(
+            "maxScores",
+            NpgsqlDbType.Array | NpgsqlDbType.Integer).Value =
+            maxima.Select(item => item.Maximum).ToArray();
+        command.Parameters.Add(
+            "maxThresholds",
+            NpgsqlDbType.Array | NpgsqlDbType.Integer).Value =
+            maxima.Select(item => item.Threshold).ToArray();
+        command.Parameters.Add(
+            "changedSongIds",
+            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            changedPairs.Select(pair => pair.SongId).ToArray();
+        command.Parameters.Add(
+            "changedInstruments",
+            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            changedPairs.Select(pair => pair.Instrument).ToArray();
+        command.Parameters.Add(
+            "affectedInstruments",
+            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            manifest.Scope.ExpectedChangedInstruments.ToArray();
+        await using var reader =
+            await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+        {
+            throw new InvalidOperationException(
+                "Score-history evidence was unavailable.");
+        }
+        return new MaxScoreMaintenanceScoreHistoryEvidence(
+            reader.GetInt64(0),
+            reader.IsDBNull(1) ? null : reader.GetInt64(1),
+            reader.IsDBNull(2) ? null : reader.GetInt64(2),
+            reader.IsDBNull(3)
+                ? null
+                : reader.GetDateTime(3).ToUniversalTime(),
+            reader.IsDBNull(4)
+                ? null
+                : reader.GetDateTime(4).ToUniversalTime(),
+            reader.GetString(5));
+    }
+
+    private async Task<MaxScoreMaintenancePopulationSnapshot>
+        LoadPublishedPopulationSnapshotAsync(
             MaxScoreMaintenanceManifest manifest,
             NpgsqlConnection connection,
             NpgsqlTransaction transaction,
@@ -2336,121 +3219,258 @@ public sealed class MaxScoreMaintenanceService
                 connection))
         {
             throw new ArgumentException(
-                "The score-history fingerprint transaction must belong to the supplied connection.",
+                "The population snapshot transaction must belong to the supplied connection.",
                 nameof(transaction));
         }
 
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandTimeout = 600;
+        command.CommandText = $"""
+            WITH publication_guard AS MATERIALIZED (
+                SELECT 1
+                FROM scrape_publication_state state
+                JOIN publication_generations generation
+                  ON generation.publication_id =
+                     state.current_publication_id
+                 AND generation.scrape_id =
+                     state.published_scrape_id
+                 AND generation.status = 'current'
+                WHERE state.id = TRUE
+                  AND state.current_publication_id =
+                      @publicationId
+                  AND state.published_scrape_id =
+                      @publishedScrapeId
+                  AND state.working_publication_id IS NULL
+            ),
+            {PublishedSoloScopeSql.CurrentResolvedAllEntriesCte},
+            scope_population AS (
+                SELECT source.song_id,
+                       source.instrument,
+                       source.reported_total_entries,
+                       COUNT(resolved.account_id)::BIGINT
+                           AS resolved_row_count
+                FROM published_sources source
+                CROSS JOIN publication_guard
+                LEFT JOIN resolved_rows resolved
+                  ON resolved.song_id = source.song_id
+                 AND resolved.instrument =
+                     source.instrument
+                GROUP BY source.song_id,
+                         source.instrument,
+                         source.reported_total_entries
+            )
+            SELECT song_id,
+                   instrument,
+                   reported_total_entries,
+                   resolved_row_count
+            FROM scope_population
+            ORDER BY song_id, instrument
+            """;
+        command.Parameters.AddWithValue(
+            "publicationId",
+            manifest.ExpectedPublicationId);
+        command.Parameters.AddWithValue(
+            "publishedScrapeId",
+            manifest.ExpectedPublishedScrapeId);
+
+        var rows = new List<PopulationScopeEvidenceRow>();
+        var population =
+            new Dictionary<
+                (string SongId, string Instrument),
+                long>();
+        await using var reader =
+            await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            if (reader.IsDBNull(2))
+            {
+                throw new InvalidOperationException(
+                    $"Published population is missing for {reader.GetString(0)}/{reader.GetString(1)}.");
+            }
+            var reported = reader.GetInt64(2);
+            var resolved = reader.GetInt64(3);
+            if (reported < 0)
+            {
+                throw new InvalidOperationException(
+                    $"Published population is negative for {reader.GetString(0)}/{reader.GetString(1)}.");
+            }
+            var effective = Math.Max(reported, resolved);
+            var key = (
+                SongId: reader.GetString(0),
+                Instrument: reader.GetString(1));
+            population[key] = effective;
+            rows.Add(new PopulationScopeEvidenceRow(
+                key.SongId,
+                key.Instrument,
+                reported,
+                resolved,
+                effective));
+        }
+        if (rows.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "The exact current publication has no population-bound source scopes.");
+        }
+
+        var canonical = JsonSerializer.SerializeToUtf8Bytes(
+            new
+            {
+                manifest.ExpectedPublishedScrapeId,
+                manifest.ExpectedPublicationId,
+                Scopes = rows,
+            },
+            MaxScoreMaintenanceJson.Canonical);
+        var evidence = new MaxScoreMaintenancePopulationEvidence(
+            rows.Count,
+            rows.Min(row => row.EffectiveTotalEntries),
+            rows.Max(row => row.EffectiveTotalEntries),
+            Convert.ToHexStringLower(
+                SHA256.HashData(canonical)));
+        return new MaxScoreMaintenancePopulationSnapshot(
+            population.ToFrozenDictionary(),
+            evidence);
+    }
+
+    private Dictionary<string, SongMaxScores>
+        BuildPostPromotionMaxScores(
+            MaxScoreMaintenanceManifest manifest)
+    {
+        var result = _pathStore.GetAllMaxScores()
+            .ToDictionary(
+                pair => pair.Key,
+                pair => MaxScoreMaintenanceMaxima
+                    .From(pair.Value)
+                    .ToSongMaxScores(),
+                StringComparer.OrdinalIgnoreCase);
+        foreach (var song in manifest.Songs)
+        {
+            result[song.SongId] =
+                song.StagedPath.Maxima.ToSongMaxScores();
+        }
+        return result;
+    }
+
+    private async Task<MaxScoreMaintenanceReadSnapshot>
+        CaptureMaintenanceReadSnapshotAsync(
+            IMaxScoreMaintenanceLease lease,
+            MaxScoreMaintenanceManifest manifest,
+            CancellationToken ct)
+    {
+        if (!_persistence
+                .IsMaxScoreMaintenancePublishedReadPassActive)
+        {
+            throw new InvalidOperationException(
+                "Max-score input capture requires the strict published-source read context.");
+        }
+
+        var postPromotionMaxScores =
+            BuildPostPromotionMaxScores(manifest);
+        return await lease.ExecuteTransactionAsync(
+            "capture-publication-bound-inputs",
+            requireSourceLocks: true,
+            async (connection, transaction, token) =>
+            {
+                var population =
+                    await LoadPublishedPopulationSnapshotAsync(
+                        manifest,
+                        connection,
+                        transaction,
+                        token);
+                var affectedAccounts =
+                    await MaxScoreMaintenanceDerivedStateService
+                        .LoadAffectedPlayerStatsAccountsAsync(
+                            manifest,
+                            connection,
+                            transaction,
+                            token);
+                var cacheAccounts =
+                    await LoadAffectedCacheAccountsAsync(
+                        manifest,
+                        connection,
+                        transaction,
+                        token);
+                var scoreHistory =
+                    await ComputeScoreHistoryEvidenceAsync(
+                        manifest,
+                        postPromotionMaxScores,
+                        connection,
+                        transaction,
+                        token);
+                return new MaxScoreMaintenanceReadSnapshot(
+                    postPromotionMaxScores.ToFrozenDictionary(
+                        StringComparer.OrdinalIgnoreCase),
+                    population.Population,
+                    population.Evidence,
+                    scoreHistory,
+                    affectedAccounts.ToArray(),
+                    cacheAccounts.RegisteredAccounts.ToArray(),
+                    cacheAccounts.OverlayOnlyAccounts.ToArray());
+            },
+            IsolationLevel.RepeatableRead,
+            ct);
+    }
+
+    private static async Task<AffectedCacheAccounts>
+        LoadAffectedCacheAccountsAsync(
+            MaxScoreMaintenanceManifest manifest,
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            CancellationToken ct)
+    {
         var changedPairs = manifest.Songs
             .SelectMany(song => song.ChangedInstruments.Select(
                 instrument => (
                     song.SongId,
-                    Instrument: instrument,
-                    Maximum: song.StagedPath.Maxima
-                        .GetByInstrument(instrument)!.Value)))
+                    Instrument: instrument)))
             .OrderBy(pair => pair.SongId, StringComparer.Ordinal)
             .ThenBy(pair => pair.Instrument, StringComparer.Ordinal)
             .ToArray();
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandTimeout = 60;
+        command.CommandTimeout = 600;
         command.CommandText = $"""
-            WITH thresholds(song_id, instrument, max_score) AS (
+            WITH affected(song_id, instrument) AS (
                 SELECT *
                 FROM unnest(
                     @songIds::TEXT[],
-                    @instruments::TEXT[],
-                    @maxScores::INTEGER[])
-            ), affected AS (
-                SELECT song_id, instrument
-                FROM thresholds
+                    @instruments::TEXT[])
             ),
             {PublishedSoloScopeSql.CurrentResolvedAffectedEntriesCte},
-            fallback_accounts AS MATERIALIZED (
-                SELECT resolved.song_id,
-                       resolved.instrument,
-                       resolved.account_id,
-                       thresholds.max_score
+            affected_accounts AS MATERIALIZED (
+                SELECT DISTINCT resolved.account_id
                 FROM resolved_rows resolved
-                JOIN thresholds
-                  ON thresholds.song_id = resolved.song_id
-                 AND thresholds.instrument =
-                     resolved.instrument
-                WHERE resolved.score > thresholds.max_score
-            ), relevant_history AS MATERIALIZED (
-                SELECT history.id,
-                       history.song_id,
-                       history.instrument,
-                       history.account_id,
-                       history.old_score,
-                       history.new_score,
-                       history.old_rank,
-                       history.new_rank,
-                       history.accuracy,
-                       history.is_full_combo,
-                       history.stars,
-                       history.percentile,
-                       history.season,
-                       history.score_achieved_at,
-                       history.season_rank,
-                       history.all_time_rank,
-                       history.difficulty,
-                       history.changed_at
-                FROM score_history history
-                JOIN fallback_accounts fallback
-                  ON fallback.song_id = history.song_id
-                 AND fallback.instrument =
-                     history.instrument
-                 AND fallback.account_id =
-                     history.account_id
-                WHERE history.new_score <= fallback.max_score
             )
-            SELECT encode(
-                digest(
-                    convert_to(
-                        COALESCE(
-                            string_agg(
-                                jsonb_build_array(
-                                    id,
-                                    song_id,
-                                    instrument,
-                                    account_id,
-                                    old_score,
-                                    new_score,
-                                    old_rank,
-                                    new_rank,
-                                    accuracy,
-                                    is_full_combo,
-                                    stars,
-                                    percentile,
-                                    season,
-                                    CASE
-                                        WHEN score_achieved_at
-                                            IS NULL
-                                            THEN NULL
-                                        ELSE (
-                                            EXTRACT(
-                                                EPOCH FROM
-                                                    score_achieved_at)
-                                            * 1000000)::BIGINT
-                                    END,
-                                    season_rank,
-                                    all_time_rank,
-                                    difficulty,
-                                    (
-                                        EXTRACT(
-                                            EPOCH FROM changed_at)
-                                        * 1000000)::BIGINT)::TEXT,
-                                E'\n'
-                                ORDER BY song_id,
-                                         instrument,
-                                         account_id,
-                                         new_score,
-                                         id),
-                            ''),
-                        'UTF8'),
-                    'sha256'),
-                'hex')
-            FROM relevant_history
+            SELECT affected.account_id,
+                   EXISTS (
+                       SELECT 1
+                       FROM registered_users registered
+                       WHERE registered.account_id =
+                           affected.account_id),
+                   EXISTS (
+                       SELECT 1
+                       FROM leaderboard_entries_overlay overlay
+                       JOIN selected_sources selected
+                         ON selected.song_id = overlay.song_id
+                        AND selected.instrument =
+                            overlay.instrument
+                       WHERE overlay.account_id =
+                                 affected.account_id
+                         AND NOT EXISTS (
+                             SELECT 1
+                             FROM leaderboard_entries_snapshot snapshot
+                             WHERE selected.source_kind =
+                                       'snapshot'
+                               AND snapshot.snapshot_id =
+                                   selected.source_snapshot_id
+                               AND snapshot.song_id =
+                                   selected.song_id
+                               AND snapshot.instrument =
+                                   selected.instrument
+                               AND snapshot.account_id =
+                                   affected.account_id))
+            FROM affected_accounts affected
+            ORDER BY affected.account_id
             """;
         command.Parameters.Add(
             "songIds",
@@ -2460,17 +3480,22 @@ public sealed class MaxScoreMaintenanceService
             "instruments",
             NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
             changedPairs.Select(pair => pair.Instrument).ToArray();
-        command.Parameters.Add(
-            "maxScores",
-            NpgsqlDbType.Array | NpgsqlDbType.Integer).Value =
-            changedPairs.Select(pair =>
-                    RankingsCalculator.ComputeMaxScoreThreshold(
-                        pair.Maximum))
-                .ToArray();
-        return Convert.ToString(
-                   await command.ExecuteScalarAsync(ct))
-               ?? throw new InvalidOperationException(
-                   "Target score-history fingerprint was unavailable.");
+        var registered = new List<string>();
+        var overlayOnly = new List<string>();
+        await using var reader =
+            await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            if (!reader.GetBoolean(1))
+                continue;
+            var accountId = reader.GetString(0);
+            registered.Add(accountId);
+            if (reader.GetBoolean(2))
+                overlayOnly.Add(accountId);
+        }
+        return new AffectedCacheAccounts(
+            registered,
+            overlayOnly);
     }
 
     private static string ComputePlanDigest(
@@ -2478,7 +3503,8 @@ public sealed class MaxScoreMaintenanceService
         PublishedContext context,
         MaxScoreMaintenanceNotificationInspection notifications,
         string rankHistoryFingerprint,
-        string scoreHistoryFingerprint,
+        MaxScoreMaintenancePopulationEvidence populationEvidence,
+        MaxScoreMaintenanceScoreHistoryEvidence scoreHistoryEvidence,
         IReadOnlyList<string> affectedInstruments,
         IReadOnlyList<MaxScoreMaintenanceArtifactEvidence> artifactEvidence,
         IReadOnlyList<MaxScoreMaintenanceObservedScoreCheck>
@@ -2487,7 +3513,7 @@ public sealed class MaxScoreMaintenanceService
         var canonical = JsonSerializer.Serialize(
             new
             {
-                contractVersion = 3,
+                contractVersion = 4,
                 manifestDigest,
                 publishedScrapeId =
                     context.Pointers.PublishedScrapeId,
@@ -2500,7 +3526,8 @@ public sealed class MaxScoreMaintenanceService
                 notifications.PublishedScoreSourceFingerprint,
                 notifications.NotificationStateFingerprint,
                 rankHistoryFingerprint,
-                scoreHistoryFingerprint,
+                populationEvidence,
+                scoreHistoryEvidence,
                 affectedInstruments,
                 artifactEvidence,
                 observedScoreChecks,
@@ -2531,6 +3558,8 @@ public sealed class MaxScoreMaintenanceService
                        notification_state_fingerprint,
                        rank_history_fingerprint,
                        score_history_fingerprint,
+                       population_evidence::TEXT,
+                       score_history_evidence::TEXT,
                        freeze_reason,
                        phase,
                        status,
@@ -2542,6 +3571,7 @@ public sealed class MaxScoreMaintenanceService
                        quarantined_candidate_count,
                        visible_delivery_count,
                        staged_cache_entry_count,
+                       staged_cache_evidence::TEXT,
                        failure_stage,
                        failure_detail,
                        created_at
@@ -2587,20 +3617,31 @@ public sealed class MaxScoreMaintenanceService
             reader.GetString(7),
             reader.GetString(8),
             reader.GetString(9),
-            reader.GetString(10),
-            ParsePhase(reader.GetString(11)),
+            DeserializeEvidence<
+                MaxScoreMaintenancePopulationEvidence>(
+                    reader.GetString(10)),
+            DeserializeEvidence<
+                MaxScoreMaintenanceScoreHistoryEvidence>(
+                    reader.GetString(11)),
             reader.GetString(12),
-            reader.IsDBNull(13) ? null : reader.GetString(13),
-            reader.IsDBNull(14) ? null : reader.GetString(14),
-            reader.IsDBNull(15) ? null : reader.GetInt64(15),
-            reader.GetInt32(16),
-            reader.GetInt32(17),
-            reader.GetInt64(18),
+            ParsePhase(reader.GetString(13)),
+            reader.GetString(14),
+            reader.IsDBNull(15) ? null : reader.GetString(15),
+            reader.IsDBNull(16) ? null : reader.GetString(16),
+            reader.IsDBNull(17) ? null : reader.GetInt64(17),
+            reader.GetInt32(18),
             reader.GetInt32(19),
             reader.GetInt64(20),
-            reader.IsDBNull(21) ? null : reader.GetString(21),
-            reader.IsDBNull(22) ? null : reader.GetString(22),
-            reader.GetDateTime(23));
+            reader.GetInt32(21),
+            reader.GetInt64(22),
+            reader.IsDBNull(23)
+                ? null
+                : DeserializeEvidence<
+                    MaxScoreMaintenanceCacheEvidence>(
+                        reader.GetString(23)),
+            reader.IsDBNull(24) ? null : reader.GetString(24),
+            reader.IsDBNull(25) ? null : reader.GetString(25),
+            reader.GetDateTime(26));
 
     private async Task AdvancePhaseAsync(
         IMaxScoreMaintenanceLease lease,
@@ -2611,6 +3652,7 @@ public sealed class MaxScoreMaintenanceService
         int? promotedSongCount,
         int? rebuiltInstrumentCount,
         long? stagedCacheEntryCount,
+        MaxScoreMaintenanceCacheEvidence? cacheEvidence,
         CancellationToken ct)
     {
         await lease.ExecuteTransactionAsync(
@@ -2633,6 +3675,9 @@ public sealed class MaxScoreMaintenanceService
                 staged_cache_entry_count = COALESCE(
                     @stagedCacheEntryCount,
                     staged_cache_entry_count),
+                staged_cache_evidence = COALESCE(
+                    @cacheEvidence,
+                    staged_cache_evidence),
                 failure_stage = NULL,
                 failure_detail = NULL,
                 updated_at = now()
@@ -2656,6 +3701,14 @@ public sealed class MaxScoreMaintenanceService
             "stagedCacheEntryCount",
             NpgsqlDbType.Bigint).Value =
             (object?)stagedCacheEntryCount ?? DBNull.Value;
+        cmd.Parameters.Add(
+            "cacheEvidence",
+            NpgsqlDbType.Jsonb).Value =
+            cacheEvidence is null
+                ? DBNull.Value
+                : JsonSerializer.Serialize(
+                    cacheEvidence,
+                    MaxScoreMaintenanceJson.Canonical);
         cmd.Parameters.AddWithValue(
             "manifestSha256",
             manifestDigest);
@@ -3297,6 +4350,7 @@ public sealed class MaxScoreMaintenanceService
             run.QuarantinedCandidateCount,
             run.VisibleDeliveryCount,
             run.StagedCacheEntryCount,
+            run.CacheEvidence,
             run.FailureStage,
             run.FailureDetail);
 
@@ -3347,6 +4401,46 @@ public sealed class MaxScoreMaintenanceService
             ? sanitized
             : sanitized[..maximumLength];
     }
+
+    private static T DeserializeEvidence<T>(string json)
+        where T : class
+        => JsonSerializer.Deserialize<T>(
+               json,
+               MaxScoreMaintenanceJson.Strict)
+           ?? throw new InvalidOperationException(
+               $"Max-score maintenance {typeof(T).Name} is invalid.");
+
+    private static MaxScoreMaintenancePopulationEvidence
+        EmptyPopulationEvidence()
+        => new(
+            0,
+            0,
+            0,
+            new string('0', 64));
+
+    private static MaxScoreMaintenanceScoreHistoryEvidence
+        EmptyScoreHistoryEvidence()
+        => new(
+            0,
+            null,
+            null,
+            null,
+            null,
+            new string('0', 64));
+
+    private static string FormatNullableRange(
+        long? minimum,
+        long? maximum)
+        => minimum.HasValue && maximum.HasValue
+            ? $"{minimum.Value}..{maximum.Value}"
+            : "empty";
+
+    private static string FormatNullableRange(
+        DateTime? minimum,
+        DateTime? maximum)
+        => minimum.HasValue && maximum.HasValue
+            ? $"{minimum.Value:O}..{maximum.Value:O}"
+            : "empty";
 
     private static MaxScoreMaintenancePhase ParsePhase(string phase)
         => phase switch
@@ -3400,6 +4494,60 @@ public sealed class MaxScoreMaintenanceService
         IReadOnlyDictionary<string, string>
             CatalogLastModifiedBySong);
 
+    private sealed record PopulationScopeEvidenceRow(
+        string SongId,
+        string Instrument,
+        long ReportedTotalEntries,
+        long ResolvedRowCount,
+        long EffectiveTotalEntries);
+
+    private sealed record MaxScoreMaintenancePopulationSnapshot(
+        IReadOnlyDictionary<
+            (string SongId, string Instrument),
+            long> Population,
+        MaxScoreMaintenancePopulationEvidence Evidence);
+
+    private sealed record AffectedCacheAccounts(
+        IReadOnlyList<string> RegisteredAccounts,
+        IReadOnlyList<string> OverlayOnlyAccounts);
+
+    private sealed record MaxScoreMaintenanceReadSnapshot(
+        IReadOnlyDictionary<string, SongMaxScores>
+            PostPromotionMaxScores,
+        IReadOnlyDictionary<
+            (string SongId, string Instrument),
+            long> Population,
+        MaxScoreMaintenancePopulationEvidence
+            PopulationEvidence,
+        MaxScoreMaintenanceScoreHistoryEvidence
+            ScoreHistoryEvidence,
+        IReadOnlyList<string> AffectedPlayerStatsAccounts,
+        IReadOnlyList<string> AffectedRegisteredAccounts,
+        IReadOnlyList<string> OverlayOnlyRegisteredAccounts);
+
+    private sealed record CacheEntryFingerprintRow(
+        string AccountId,
+        int Score,
+        int Rank);
+
+    private sealed record CacheScopeFingerprintRow(
+        string SongId,
+        string Instrument,
+        long TotalEntries,
+        int LocalEntries,
+        IReadOnlyList<CacheEntryFingerprintRow> Entries);
+
+    private sealed record CachePlayerScoreFingerprintRow(
+        string SongId,
+        string Instrument,
+        int Score,
+        int Rank,
+        long TotalEntries);
+
+    private sealed record CacheAccountFingerprintRow(
+        string AccountId,
+        IReadOnlyList<CachePlayerScoreFingerprintRow> Scores);
+
     private sealed record MaxScoreMaintenanceRunState(
         string ManifestSha256,
         string PlanDigest,
@@ -3411,6 +4559,10 @@ public sealed class MaxScoreMaintenanceService
         string NotificationStateFingerprint,
         string RankHistoryFingerprint,
         string ScoreHistoryFingerprint,
+        MaxScoreMaintenancePopulationEvidence
+            PopulationEvidence,
+        MaxScoreMaintenanceScoreHistoryEvidence
+            ScoreHistoryEvidence,
         string FreezeReason,
         MaxScoreMaintenancePhase Phase,
         string Status,
@@ -3422,6 +4574,7 @@ public sealed class MaxScoreMaintenanceService
         long QuarantinedCandidateCount,
         int VisibleDeliveryCount,
         long StagedCacheEntryCount,
+        MaxScoreMaintenanceCacheEvidence? CacheEvidence,
         string? FailureStage,
         string? FailureDetail,
         DateTime CreatedAtUtc);

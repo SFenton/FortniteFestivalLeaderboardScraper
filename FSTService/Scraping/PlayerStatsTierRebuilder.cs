@@ -23,6 +23,7 @@ public static class PlayerStatsTierRebuilder
             accountIds,
             log,
             maintenanceLease: null,
+            populationOverride: null,
             ct: ct);
 
     internal static Task<PlayerStatsTierRebuildResult>
@@ -31,6 +32,9 @@ public static class PlayerStatsTierRebuilder
             IPathDataStore pathDataStore,
             IReadOnlyCollection<string> accountIds,
             ILogger log,
+            IReadOnlyDictionary<
+                (string SongId, string Instrument),
+                long> publicationPopulation,
             IMaxScoreMaintenanceLease maintenanceLease,
             CancellationToken ct)
         => RebuildCoreAsync(
@@ -41,6 +45,9 @@ public static class PlayerStatsTierRebuilder
             maintenanceLease
                 ?? throw new ArgumentNullException(
                     nameof(maintenanceLease)),
+            publicationPopulation
+                ?? throw new ArgumentNullException(
+                    nameof(publicationPopulation)),
             ct: ct);
 
     private static async Task<PlayerStatsTierRebuildResult>
@@ -50,6 +57,9 @@ public static class PlayerStatsTierRebuilder
             IReadOnlyCollection<string> accountIds,
             ILogger log,
             IMaxScoreMaintenanceLease? maintenanceLease,
+            IReadOnlyDictionary<
+                (string SongId, string Instrument),
+                long>? populationOverride,
             CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(persistence);
@@ -72,7 +82,11 @@ public static class PlayerStatsTierRebuilder
         var metaDb = persistence.Meta;
         var instrumentKeys = persistence.GetInstrumentKeys();
         var totalSongs = persistence.GetTotalSongCount();
-        var population = metaDb.GetAllLeaderboardPopulation();
+        var population = maintenanceLease is null
+            ? metaDb.GetAllLeaderboardPopulation()
+            : populationOverride
+              ?? throw new InvalidOperationException(
+                  "Max-score player stats require an immutable publication population snapshot.");
         var rebuiltAccounts = 0;
         var writtenRows = 0;
 

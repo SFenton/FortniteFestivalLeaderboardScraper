@@ -78,12 +78,16 @@ public interface IInstrumentDatabase : IDisposable
 
     // ── Song stats ───────────────────────────────────────────────────
     int ComputeSongStats(Dictionary<string, int?>? maxScoresByInstrument = null, Dictionary<string, long>? realPopulation = null);
-    int ComputeCurrentStateSongStats(Dictionary<string, int?>? maxScoresByInstrument = null, Dictionary<string, long>? realPopulation = null);
+    int ComputeCurrentStateSongStats(
+        Dictionary<string, int?>? maxScoresByInstrument = null,
+        IReadOnlyDictionary<string, long>? realPopulation = null,
+        bool preserveExistingEntryCount = true);
     int ComputeCurrentStateSongStats(
         Dictionary<string, int?>? maxScoresByInstrument,
-        Dictionary<string, long>? realPopulation,
+        IReadOnlyDictionary<string, long>? realPopulation,
         Npgsql.NpgsqlConnection connection,
-        Npgsql.NpgsqlTransaction transaction);
+        Npgsql.NpgsqlTransaction transaction,
+        bool preserveExistingEntryCount = true);
     List<(string AccountId, string SongId)> GetOverThresholdEntries();
     List<(string AccountId, string SongId)> GetCurrentStateOverThresholdEntries();
     List<(string AccountId, string SongId)>

@@ -137,4 +137,18 @@ internal static class PublishedSoloScopeSql
         ),
         """ +
         ResolvedEntriesFromSelectedSourcesCtes;
+
+    internal const string CurrentResolvedAllEntriesCte =
+        CurrentSourcesCte +
+        """
+        ,
+        selected_sources AS (
+            SELECT source.song_id,
+                   source.instrument,
+                   source.source_kind,
+                   source.source_snapshot_id
+            FROM published_sources source
+        ),
+        """ +
+        ResolvedEntriesFromSelectedSourcesCtes;
 }

@@ -2,10 +2,12 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-14
-last_verified_commit: f8cf6f02
+last_verified_commit: 3bcf03d6
 sources:
   - FSTService/Api/AdminEndpoints.cs
   - FSTService/Persistence/MaxScoreMaintenanceCommand.cs
+  - FSTService/Persistence/MaxScoreMaintenanceModels.cs
+  - FSTService/Persistence/MaxScoreMaintenanceSchema.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
   - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
@@ -68,10 +70,17 @@ lock, and fixed-order source locks on one isolated unpooled session. It records
 a durable random gate-owner token/backend identity while admitted, validates
 the manifest and immutable artifacts, resolves observed scores from the exact
 published source plus supplemental overlay, fingerprints score sources,
-notification state, rank history, and fallback-relevant target
-`score_history`, and requires zero unexplained routine candidates without
-creating a freeze. Any relevant history insert, update, or delete after plan
-changes the plan digest and rejects apply.
+notification state, rank history, publication population, and the complete
+consumed `score_history` set, and requires zero unexplained routine candidates
+without creating a freeze. Population evidence comes only from the current
+publication's complete scope-source rows plus supplemental overlays; mutable
+`leaderboard_population` is never a maintenance fallback. Score-history
+evidence covers the exact union consumed by the rebuild and cache: every
+registered account's history, fallback rows for affected player-stat accounts,
+and fallback rows for every song in each rebuilt instrument. The report records
+scope/row counts, population range, history ID/time ranges, and deterministic
+hashes. Any relevant population/source/history insert, update, or delete after
+plan changes the plan digest and rejects apply.
 
 Apply acquires locks in this order:
 
@@ -130,7 +139,7 @@ seasonal lookup; metadata-only tracking/activity/pruning does not incur that
 cache churn.
 
 The random session token, backend PID, three advisory locks, durable owner, and
-four source relation locks are revalidated inside every dependent transaction
+five source relation locks are revalidated inside every dependent transaction
 and again immediately before ordinary commits. Final completion validates the
 exact owner/freeze, swaps caches, marks the workflow complete, and unfreezes
 inside one source-locked transaction while retaining the durable owner token.
@@ -369,6 +378,11 @@ PLAN_DIGEST=$(
     select(
       .canApply == true and
       (.scoreHistoryFingerprint | length) == 64 and
+      .populationEvidence.scopeCount > 0 and
+      (.populationEvidence.fingerprint | length) == 64 and
+      .scoreHistoryEvidence.rowCount >= 0 and
+      (.scoreHistoryEvidence.fingerprint | length) == 64 and
+      .scoreHistoryEvidence.fingerprint == .scoreHistoryFingerprint and
       .affectedInstruments == ["Solo_Guitar","Solo_PeripheralGuitar","Solo_PeripheralCymbals","Solo_PeripheralDrums"] and
       .routineCandidateCount == 0 and
       all(.checks[]; .passed) and
@@ -390,6 +404,16 @@ Each observed-score row requires `sourceMapped=true` and
 Snapshot rows and supplemental overlay-only rows use the same authoritative
 resolver as production `InstrumentDatabase` reads. Apply uses both approved
 digests:
+
+Plan report version 4 performs two live-scale bounded aggregates. Population
+evidence visits each current published scope and its resolved overlay rows.
+Score-history evidence scans all history for registered accounts plus indexed
+fallback candidates for affected accounts/instruments, but retains only
+count/min/max and two fixed-width hash aggregates; it does not build an
+unbounded `string_agg`. Budget the plan like one full registered-history read
+plus affected-instrument fallback discovery (up to the 600-second command
+timeout), run it only with the worker offline, and keep the resulting evidence
+report.
 
 ```bash
 docker compose run --rm --no-deps --entrypoint dotnet fstservice \
@@ -421,8 +445,13 @@ Apply:
   intact;
 - rebuilds all four affected `song_stats`/solo ranking instruments from the
   exact published snapshot/empty source plus supplemental overlay, bypassing a
-  stale current projection, then rebuilds composite, solo-family, and combo
-  rankings; recalculates target-song band
+  stale current projection and refusing active/legacy fallback. Apply captures
+  the publication-bound population once under the fenced read context and
+  passes that immutable snapshot to song stats, rankings, player stats,
+  scrape-time cache construction, and final validation; a failed/newer
+  scrape's mutable population cannot leak into the current publication. It
+  then rebuilds composite, solo-family, and combo rankings; recalculates
+  target-song band
   over-threshold flags, refreshes affected band current-projection scopes, and
   rebuilds dependent band rankings without rank-history snapshots;
 - rebuilds affected player-stat tiers and every registered player's
@@ -440,11 +469,14 @@ Apply:
   candidate collection, preventing a later visible `band_first_score`. The
   audit advances matching state, emits no visible event, and leaves publication
   `1296`'s completed notification marker unchanged;
-- stages a complete current-publication API cache; and
+- holds the strict published-source read context through cache generation and
+  final validation, stages a complete current-publication API cache, and
+  records a bounded whole-cache fingerprint plus semantic target-scope,
+  affected-account, and overlay-only-account fingerprints; and
 - validates paths, maxima, rankings, exact rollback file/database identity,
-  rank-history and target fallback score-history fingerprints, notification
-  audit, and staged cache before atomically swapping the cache and releasing
-  the freeze.
+  rank-history and complete consumed score-history evidence, immutable
+  publication population, notification audit, and staged cache content before
+  atomically swapping the cache and releasing the freeze.
 
 Freeze release invalidates API/path/song and scraper admission caches in every
 monitoring role and forces connected clients to refresh even though the
@@ -473,8 +505,8 @@ docker compose run --rm --no-deps --entrypoint dotnet fstservice \
 
 Resume rejects a changed digest, publication, catalog, source fingerprint,
 notification state at pre-quarantine phases, rank-history fingerprint,
-fallback-relevant target score-history fingerprint, freeze owner, rollback
-path, or phase identity. Completed phases are not deleted;
+publication-population evidence, complete consumed score-history evidence,
+freeze owner, rollback path, or phase identity. Completed phases are not deleted;
 idempotent derived work may be rerun when a crash occurred before its durable
 checkpoint. A rollback file written before its database phase checkpoint is
 loaded through the same persisted run timestamp and must match byte-for-byte;
@@ -505,7 +537,9 @@ After success, verify:
 - `songs` and `song_stats` contain the approved maxima and every other maximum
   is unchanged;
 - affected rankings, player stats, rivals, band rankings, and precomputed
-  responses are current;
+  responses are current; target leaderboard/player cache fingerprints match
+  the exact published source plus overlays, including every registered
+  overlay-only affected account;
 - the maintenance notification audit has `visible_delivery_count=0`;
 - no player/band visible event or publication notification marker/cursor was
   rewritten; and

@@ -102,6 +102,10 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             ref _maxScoreMaintenancePublishedReadPass) == 0
         && UseSnapshotOverlayWorkerReaders;
 
+    internal bool IsMaxScoreMaintenancePublishedReadPassActive =>
+        Volatile.Read(
+            ref _maxScoreMaintenancePublishedReadPass) != 0;
+
     public void SetValidatedCurrentProjectionForWorkerReaders(bool enabled)
     {
         if (enabled && !UseSnapshotOverlayWorkerReaders)
@@ -135,12 +139,27 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 "A max-score authoritative published read pass is already active.");
         }
 
-        foreach (var database in _instrumentDbs.Values
-                     .Cast<InstrumentDatabase>())
+        try
         {
-            ConfigureInstrumentDatabaseCurrentRead(database);
+            foreach (var instrument in
+                     GlobalLeaderboardScraper.AllInstruments)
+            {
+                GetOrCreateInstrumentDb(instrument);
+            }
+            foreach (var database in _instrumentDbs.Values
+                         .Cast<InstrumentDatabase>())
+            {
+                ConfigureInstrumentDatabaseCurrentRead(database);
+            }
+            return new MaxScoreMaintenancePublishedReadPass(this);
         }
-        return new MaxScoreMaintenancePublishedReadPass(this);
+        catch
+        {
+            Interlocked.Exchange(
+                ref _maxScoreMaintenancePublishedReadPass,
+                0);
+            throw;
+        }
     }
 
     private sealed class ValidatedCurrentProjectionReadPass(

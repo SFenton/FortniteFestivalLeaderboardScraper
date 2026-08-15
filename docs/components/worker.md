@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: e570d468
+last_verified_commit: 3bcf03d6
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -139,7 +139,11 @@ leaderboard-population share locks in fixed order, then rechecks that the
 worker remains offline around each mutable phase. Maintenance ranking mode
 suppresses `WorkerStatusPublisher`, bypasses the mutable current projection,
 resolves the exact published snapshot/empty source plus supplemental overlay,
-rebuilds changed solo instruments plus aggregate dependencies, recalculates
+and holds that strict no-active/no-legacy context through cache staging and
+final validation. It snapshots publication-bound population once and passes
+it to rankings, player stats, cache construction, and validation rather than
+reading mutable `leaderboard_population`. It rebuilds changed solo instruments
+plus aggregate dependencies, recalculates
 target-song band validity, refreshes affected band current-projection scopes,
 rebuilds dependent band rankings, and explicitly skips
 solo/composite/band rank-history snapshots.

@@ -2,7 +2,7 @@
 status: canonical
 owner: data
 last_verified: 2026-08-14
-last_verified_commit: e570d468
+last_verified_commit: 3bcf03d6
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -76,9 +76,13 @@ volatile table counts.
 
 `max_score_maintenance_runs` owns the digest-bound workflow checkpoint:
 manifest/plan identities, exact publication/catalog, score-source,
-notification-state, rank-history, and bounded target fallback
-`score_history` fingerprints, freeze owner, last durable phase, rollback file
-digest, notification audit link, counters, and bounded failure detail. A
+notification-state, rank-history, publication-population evidence, and bounded
+complete consumed `score_history` evidence, freeze owner, last durable phase,
+rollback file digest, notification audit link, counters, staged-cache evidence,
+and bounded failure detail. Population evidence stores scope count, effective
+range, and hash. History evidence stores row count, ID/time ranges, and hash.
+Cache evidence stores the whole-stage hash plus target-scope,
+affected-account, and overlay-only-account hashes. A
 post-freeze failure changes status to `failed` only while
 the lock-owning backend can commit that checkpoint; backend loss leaves the
 last durable status/phase unchanged and never clears the freeze.
@@ -101,6 +105,18 @@ validation, and ranking/player-stat inputs share the published solo source
 resolver: the current publication's selected snapshot or empty source plus
 supplemental overlay, with overlay precedence per account. They do not trust
 `current_leaderboard_entries`, which can lag overlay-only writes.
+Maintenance population is resolved from the same complete source map,
+combining each source's reported population with its resolved overlay row
+count. It is snapshotted once under the exclusive fence and never falls back
+to mutable `leaderboard_population`. The strict read context remains active
+through cache generation and final validation, so active snapshots, the worker
+projection, and legacy rows cannot enter the staged cache.
+
+The score-history aggregate covers all registered-account history consumed by
+player/history caches, fallback tiers for affected player-stat accounts, and
+fallback candidates across every song in each rebuilt instrument. It uses
+fixed-width count/range/sum/xor evidence rather than an unbounded ordered
+payload aggregation.
 
 `improvement_notification_maintenance_runs` and
 `improvement_notification_maintenance_candidates` retain historical

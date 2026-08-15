@@ -28,6 +28,7 @@ public sealed class ScrapeTimePrecomputer
     private readonly LeaderboardRivalsCalculator? _leaderboardRivalsCalculator;
     private readonly SoloCurrentProjectionBuilder? _soloCurrentProjectionBuilder;
     private bool _currentProjectionAuthoritativeForPrecompute;
+    private bool _strictPublishedSourcesForPrecompute;
 
     /// <summary>
     /// Disk staging writer for bulk precomputation. Created per PrecomputeAllAsync call,
@@ -124,10 +125,14 @@ public sealed class ScrapeTimePrecomputer
             publishImmediately,
             useExistingMaintenanceLease: false,
             expectedPublicationId: null,
-            maintenanceLease: null);
+            maintenanceLease: null,
+            populationOverride: null);
 
     internal Task<long> StageCurrentPublicationCachesForMaintenanceAsync(
         long publicationId,
+        IReadOnlyDictionary<
+            (string SongId, string Instrument),
+            long> publicationPopulation,
         IMaxScoreMaintenanceLease maintenanceLease,
         CancellationToken ct)
         => PrecomputeAllCoreAsync(
@@ -136,7 +141,8 @@ public sealed class ScrapeTimePrecomputer
             publishImmediately: false,
             useExistingMaintenanceLease: true,
             expectedPublicationId: publicationId,
-            maintenanceLease: maintenanceLease);
+            maintenanceLease: maintenanceLease,
+            populationOverride: publicationPopulation);
 
     private async Task<long> PrecomputeAllCoreAsync(
         bool showLeaderboardEntryTotals,
@@ -144,7 +150,10 @@ public sealed class ScrapeTimePrecomputer
         bool publishImmediately,
         bool useExistingMaintenanceLease,
         long? expectedPublicationId,
-        IMaxScoreMaintenanceLease? maintenanceLease)
+        IMaxScoreMaintenanceLease? maintenanceLease,
+        IReadOnlyDictionary<
+            (string SongId, string Instrument),
+            long>? populationOverride)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         _log.LogInformation(
@@ -163,10 +172,13 @@ public sealed class ScrapeTimePrecomputer
                 || !expectedPublicationId.HasValue
                 || publicationPointers.CurrentPublicationId
                     != expectedPublicationId
-                || publicationPointers.WorkingPublicationId.HasValue))
+                || publicationPointers.WorkingPublicationId.HasValue
+                || !_persistence
+                    .IsMaxScoreMaintenancePublishedReadPassActive
+                || populationOverride is null))
         {
             throw new InvalidOperationException(
-                "Maintenance cache staging requires the exact current publication, no working publication, and deferred publication.");
+                "Maintenance cache staging requires the strict published-source read context, exact current publication, immutable population snapshot, no working publication, and deferred publication.");
         }
 
         var targetPublicationId = expectedPublicationId
@@ -187,9 +199,15 @@ public sealed class ScrapeTimePrecomputer
                 persistenceTargetPublicationId);
         }
         var instrumentKeys = _persistence.GetInstrumentKeys();
-        var projectionStats = _soloCurrentProjectionBuilder?.Inspect();
-        var candidateProjectionReady = true;
-        if (_features.UseSnapshotOverlayWorkerReaders)
+        _strictPublishedSourcesForPrecompute =
+            useExistingMaintenanceLease;
+        var projectionStats = useExistingMaintenanceLease
+            ? null
+            : _soloCurrentProjectionBuilder?.Inspect();
+        var candidateProjectionReady =
+            !useExistingMaintenanceLease;
+        if (!useExistingMaintenanceLease
+            && _features.UseSnapshotOverlayWorkerReaders)
         {
             if (_soloCurrentProjectionBuilder is null)
             {
@@ -208,7 +226,8 @@ public sealed class ScrapeTimePrecomputer
             }
         }
         _currentProjectionAuthoritativeForPrecompute =
-            projectionStats is
+            !useExistingMaintenanceLease
+            && projectionStats is
             {
                 ProjectionExists: true,
                 ScopeCount: > 0,
@@ -216,7 +235,9 @@ public sealed class ScrapeTimePrecomputer
             }
             && candidateProjectionReady;
         var allMaxScores = _pathStore.GetAllMaxScores();
-        var unfilteredPopulation = _metaDb.GetAllLeaderboardPopulation();
+        var unfilteredPopulation = useExistingMaintenanceLease
+            ? populationOverride!
+            : _metaDb.GetAllLeaderboardPopulation();
         var registeredIds = _metaDb.GetRegisteredAccountIds();
 
         // ── Set up disk staging (shared across phases 2-7) ──────
@@ -224,6 +245,8 @@ public sealed class ScrapeTimePrecomputer
             _loggerFactory.CreateLogger<DiskStagingWriter>(),
             Path.Combine(_scraperOptions.DataDirectory, "precompute-staging"));
         _staging = staging;
+        try
+        {
 
         // ── Phase 1: Leeway metadata (must complete before player phases) ──
         _progress.SetSubOperation("population_tiers");
@@ -315,8 +338,6 @@ public sealed class ScrapeTimePrecomputer
             _log.LogInformation("Scrape-time precompute cache staging responses published.");
         }
         var stagedCount = staging.RecordCount;
-        _staging = null;
-
         sw.Stop();
         _log.LogInformation(
             publishImmediately
@@ -324,6 +345,13 @@ public sealed class ScrapeTimePrecomputer
                 : "Scrape-time precomputation staged for publication: {PlayerCount} players in {Elapsed}s.",
             registeredIds.Count, sw.Elapsed.TotalSeconds);
         return stagedCount;
+        }
+        finally
+        {
+            _staging = null;
+            _strictPublishedSourcesForPrecompute = false;
+            _currentProjectionAuthoritativeForPrecompute = false;
+        }
     }
 
     private static string ExtractAccountId(string cacheKey)
@@ -542,7 +570,7 @@ public sealed class ScrapeTimePrecomputer
     private async Task PrecomputePlayersAsync(
         HashSet<string> registeredIds,
         Dictionary<string, SongMaxScores> allMaxScores,
-        Dictionary<(string SongId, string Instrument), long> unfilteredPopulation,
+        IReadOnlyDictionary<(string SongId, string Instrument), long> unfilteredPopulation,
         IReadOnlyDictionary<(string, string), PopulationTierData> populationTiers,
         Dictionary<(string, string), int[]> bandScoresCache,
         CancellationToken ct)
@@ -588,7 +616,7 @@ public sealed class ScrapeTimePrecomputer
     internal void PrecomputeSinglePlayer(
         string accountId,
         Dictionary<string, SongMaxScores> allMaxScores,
-        Dictionary<(string SongId, string Instrument), long> unfilteredPopulation,
+        IReadOnlyDictionary<(string SongId, string Instrument), long> unfilteredPopulation,
         IReadOnlyDictionary<(string, string), PopulationTierData> populationTiers,
         Dictionary<(string, string), int[]> bandScoresCache,
         Dictionary<string, string>? displayNames = null,
@@ -599,6 +627,7 @@ public sealed class ScrapeTimePrecomputer
             ?? _persistence.GetCurrentStatePlayerProfile(accountId);
         if (scores.Count == 0
             && !_currentProjectionAuthoritativeForPrecompute
+            && !_strictPublishedSourcesForPrecompute
             && !_features.UseSnapshotOverlayWorkerReaders)
         {
             scores = _persistence.GetPlayerProfile(accountId);
@@ -808,7 +837,7 @@ public sealed class ScrapeTimePrecomputer
 
     private void PrecomputeLeaderboardAll(
         Dictionary<string, SongMaxScores> allMaxScores,
-        Dictionary<(string SongId, string Instrument), long> unfilteredPopulation,
+        IReadOnlyDictionary<(string SongId, string Instrument), long> unfilteredPopulation,
         IReadOnlyList<string> instrumentKeys,
         bool showLeaderboardEntryTotals,
         IReadOnlyDictionary<(string SongId, string Instrument), LeaderboardRankOffsetData> rankOffsets)
@@ -848,7 +877,7 @@ public sealed class ScrapeTimePrecomputer
     private void PrecomputeLeaderboardAllForSong(
         string songId, double? leeway,
         Dictionary<string, SongMaxScores> allMaxScores,
-        Dictionary<(string SongId, string Instrument), long> unfilteredPopulation,
+        IReadOnlyDictionary<(string SongId, string Instrument), long> unfilteredPopulation,
         IReadOnlyList<string> instrumentKeys,
         bool showLeaderboardEntryTotals,
         IReadOnlyDictionary<(string SongId, string Instrument), LeaderboardRankOffsetData> rankOffsets)

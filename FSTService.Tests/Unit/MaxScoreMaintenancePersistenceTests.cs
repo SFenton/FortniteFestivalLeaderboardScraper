@@ -352,6 +352,25 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     1297,
                     TRUE,
                     now());
+
+                INSERT INTO leaderboard_entries (
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    rank,
+                    source,
+                    first_seen_at,
+                    last_updated_at)
+                VALUES (
+                    'unmapped-song',
+                    'Solo_Guitar',
+                    'account-unmapped',
+                    88000,
+                    1,
+                    'scrape',
+                    now(),
+                    now());
                 """;
             seed.ExecuteNonQuery();
         }
@@ -380,6 +399,11 @@ public sealed class MaxScoreMaintenancePersistenceTests
             Assert.Single(
                 database.GetCurrentStatePlayerScores(
                     "account-base")).Score);
+        Assert.Equal(
+            88_000,
+            Assert.Single(
+                database.GetCurrentStatePlayerScores(
+                    "account-unmapped")).Score);
         using (persistence
                .BeginMaxScoreMaintenancePublishedReadPass())
         {
@@ -405,16 +429,24 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     persistence
                         .GetCurrentStatePlayerProfile(
                             "account-overlay")).Score);
+            Assert.Empty(
+                database.GetCurrentStatePlayerScores(
+                    "account-unmapped"));
         }
         Assert.Equal(
             90_000,
             Assert.Single(
                 database.GetCurrentStatePlayerScores(
                     "account-base")).Score);
+        Assert.Equal(
+            88_000,
+            Assert.Single(
+                database.GetCurrentStatePlayerScores(
+                    "account-unmapped")).Score);
     }
 
     [Fact]
-    public async Task Target_score_history_fingerprint_tracks_only_fallback_relevant_rows()
+    public async Task Score_history_evidence_tracks_complete_consumed_inputs()
     {
         using var dataSource =
             SharedPostgresContainer.CreateDatabase();
@@ -423,6 +455,83 @@ public sealed class MaxScoreMaintenancePersistenceTests
             dataSource,
             manifest,
             overlayScore: 60_000);
+        using (var connection =
+               dataSource.OpenConnection())
+        using (var seedUnrelated =
+               connection.CreateCommand())
+        {
+            seedUnrelated.CommandText = """
+                INSERT INTO leaderboard_entries_snapshot (
+                    snapshot_id,
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    rank,
+                    source,
+                    first_seen_at,
+                    last_updated_at)
+                VALUES (
+                    @scrapeId,
+                    'other-song',
+                    'Solo_Guitar',
+                    'account-other',
+                    70000,
+                    1,
+                    'scrape',
+                    now(),
+                    now());
+
+                INSERT INTO leaderboard_published_scope_source (
+                    published_scrape_id,
+                    song_id,
+                    instrument,
+                    scope_kind,
+                    source_kind,
+                    source_snapshot_id,
+                    source_scrape_id,
+                    row_count,
+                    content_fingerprint,
+                    coverage_fingerprint,
+                    reported_total_entries,
+                    reported_total_pages,
+                    is_complete,
+                    created_at,
+                    validated_at)
+                VALUES (
+                    @scrapeId,
+                    'other-song',
+                    'Solo_Guitar',
+                    'alltime',
+                    'snapshot',
+                    @scrapeId,
+                    @scrapeId,
+                    1,
+                    md5('other-song'),
+                    md5('other-song:coverage'),
+                    1,
+                    1,
+                    TRUE,
+                    now(),
+                    now());
+                """;
+            seedUnrelated.Parameters.AddWithValue(
+                "scrapeId",
+                manifest.ExpectedPublishedScrapeId);
+            seedUnrelated.ExecuteNonQuery();
+        }
+        var postPromotionMaxScores =
+            new Dictionary<string, SongMaxScores>(
+                StringComparer.OrdinalIgnoreCase)
+            {
+                ["song-a"] = manifest.Songs[0]
+                    .StagedPath.Maxima
+                    .ToSongMaxScores(),
+                ["other-song"] = new SongMaxScores
+                {
+                    MaxLeadScore = 50_000,
+                },
+            };
         var originalId = InsertHistory(
             "song-a",
             "Solo_Guitar",
@@ -443,6 +552,22 @@ public sealed class MaxScoreMaintenancePersistenceTests
             "account-overlay",
             70_000,
             accuracy: 100);
+        Assert.Equal(
+            baseline,
+            await ComputeFingerprintAsync());
+
+        var unrelatedAffectedId = InsertHistory(
+            "other-song",
+            "Solo_Guitar",
+            "account-other",
+            40_000,
+            accuracy: 91);
+        Assert.NotEqual(
+            baseline,
+            await ComputeFingerprintAsync());
+        ExecuteHistoryMutation(
+            "DELETE FROM score_history WHERE id = @id",
+            unrelatedAffectedId);
         Assert.Equal(
             baseline,
             await ComputeFingerprintAsync());
@@ -548,12 +673,15 @@ public sealed class MaxScoreMaintenancePersistenceTests
                 await connection.BeginTransactionAsync(
                     System.Data.IsolationLevel
                         .RepeatableRead);
-            return await MaxScoreMaintenanceService
-                .ComputeScoreHistoryFingerprintAsync(
+            var evidence =
+                await MaxScoreMaintenanceService
+                .ComputeScoreHistoryEvidenceAsync(
                     manifest,
+                    postPromotionMaxScores,
                     connection,
                     transaction,
                     CancellationToken.None);
+            return evidence.Fingerprint;
         }
     }
 

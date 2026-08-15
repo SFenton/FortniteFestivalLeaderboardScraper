@@ -27,7 +27,7 @@ public sealed class PlayerStatsCalculator
         Dictionary<string, SongMaxScores> maxScores,
         string instrument,
         int totalSongs,
-        Dictionary<(string SongId, string Instrument), long> population,
+        IReadOnlyDictionary<(string SongId, string Instrument), long> population,
         Dictionary<(string SongId, string Instrument), List<ValidScoreFallback>>? fallbacks = null)
     {
         if (scores.Count == 0)

@@ -11,7 +11,7 @@ public static class PlayerStatsTierRowBuilder
         IReadOnlyList<string> instrumentKeys,
         int totalSongs,
         Dictionary<string, SongMaxScores> allMaxScores,
-        Dictionary<(string SongId, string Instrument), long> population,
+        IReadOnlyDictionary<(string SongId, string Instrument), long> population,
         Dictionary<(string SongId, string Instrument), List<ValidScoreFallback>>? fallbacks = null)
     {
         if (allScores.Count == 0)

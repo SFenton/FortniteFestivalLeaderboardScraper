@@ -154,10 +154,14 @@ public sealed class RankingsCalculator
     internal Task ComputeForMaxScoreMaintenanceAsync(
         FestivalService festivalService,
         IReadOnlyCollection<string> affectedInstruments,
+        IReadOnlyDictionary<
+            (string SongId, string Instrument),
+            long> publicationPopulation,
         IMaxScoreMaintenanceLease maintenanceLease,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(affectedInstruments);
+        ArgumentNullException.ThrowIfNull(publicationPopulation);
         var instruments = PathGenerationInstruments.NormalizeExpected(
             affectedInstruments);
         if (instruments.Length == 0
@@ -175,7 +179,8 @@ public sealed class RankingsCalculator
             instrumentsToRebuild: instruments,
             includeRankHistory: false,
             rebuildBandRankings: true,
-            maintenanceLease: maintenanceLease);
+            maintenanceLease: maintenanceLease,
+            populationOverride: publicationPopulation);
     }
 
     private async Task ComputeAllCoreAsync(
@@ -185,7 +190,10 @@ public sealed class RankingsCalculator
         IReadOnlyList<string>? instrumentsToRebuild,
         bool includeRankHistory,
         bool rebuildBandRankings,
-        IMaxScoreMaintenanceLease? maintenanceLease)
+        IMaxScoreMaintenanceLease? maintenanceLease,
+        IReadOnlyDictionary<
+            (string SongId, string Instrument),
+            long>? populationOverride = null)
     {
         _activeScrapeId = includeRankHistory ? scrapeId : 0;
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -195,7 +203,11 @@ public sealed class RankingsCalculator
         var instruments = GlobalLeaderboardScraper.AllInstruments;
         instrumentsToRebuild ??= instruments;
         var bandTypes = BandInstrumentMapping.AllBandTypes;
-        var allPopulation = _metaDb.GetAllLeaderboardPopulation();
+        var allPopulation = maintenanceLease is null
+            ? _metaDb.GetAllLeaderboardPopulation()
+            : populationOverride
+              ?? throw new InvalidOperationException(
+                  "Max-score rankings require an immutable publication population snapshot.");
         var totalChartedByInstrument = instruments.ToDictionary(
             instrument => instrument,
             instrument => CountChartedSongs(
@@ -274,7 +286,8 @@ public sealed class RankingsCalculator
                             maxScoresForInstrument,
                             populationForInstrument,
                             connection,
-                            transaction);
+                            transaction,
+                            preserveExistingEntryCount: false);
                         return Task.CompletedTask;
                     },
                     ct: innerCt);

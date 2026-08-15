@@ -28,6 +28,22 @@ internal static class MaxScoreMaintenanceSchema
                 CHECK (length(rank_history_fingerprint) = 64),
             score_history_fingerprint    TEXT        NOT NULL
                 CHECK (length(score_history_fingerprint) = 64),
+            population_evidence          JSONB       NOT NULL
+                DEFAULT
+                    '{"scopeCount":0,"minimumTotalEntries":0,"maximumTotalEntries":0,"fingerprint":"0000000000000000000000000000000000000000000000000000000000000000"}'::JSONB,
+            score_history_evidence       JSONB       NOT NULL
+                DEFAULT
+                    '{"rowCount":0,"minimumId":null,"maximumId":null,"minimumChangedAtUtc":null,"maximumChangedAtUtc":null,"fingerprint":"0000000000000000000000000000000000000000000000000000000000000000"}'::JSONB,
+            CONSTRAINT ck_max_score_population_evidence
+                CHECK (
+                    length(
+                        population_evidence
+                            ->> 'fingerprint') = 64),
+            CONSTRAINT ck_max_score_history_evidence
+                CHECK (
+                    length(
+                        score_history_evidence
+                            ->> 'fingerprint') = 64),
             manifest_json               JSONB       NOT NULL,
             freeze_reason               TEXT        NOT NULL UNIQUE,
             phase                       TEXT        NOT NULL
@@ -58,6 +74,19 @@ internal static class MaxScoreMaintenanceSchema
             visible_delivery_count      INTEGER     NOT NULL DEFAULT 0
                 CHECK (visible_delivery_count = 0),
             staged_cache_entry_count    BIGINT      NOT NULL DEFAULT 0,
+            staged_cache_evidence       JSONB,
+            CONSTRAINT ck_max_score_cache_evidence
+                CHECK (
+                    staged_cache_evidence IS NULL
+                    OR (
+                        length(
+                            staged_cache_evidence
+                                ->> 'contentFingerprint') = 64
+                        AND (
+                            staged_cache_evidence
+                                ->> 'entryCount')::BIGINT =
+                            staged_cache_entry_count
+                    )),
             failure_stage               TEXT,
             failure_detail              TEXT,
             created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -72,6 +101,16 @@ internal static class MaxScoreMaintenanceSchema
         WHERE score_history_fingerprint IS NULL;
         ALTER TABLE max_score_maintenance_runs
             ALTER COLUMN score_history_fingerprint SET NOT NULL;
+        ALTER TABLE max_score_maintenance_runs
+            ADD COLUMN IF NOT EXISTS population_evidence JSONB NOT NULL
+                DEFAULT
+                    '{"scopeCount":0,"minimumTotalEntries":0,"maximumTotalEntries":0,"fingerprint":"0000000000000000000000000000000000000000000000000000000000000000"}'::JSONB;
+        ALTER TABLE max_score_maintenance_runs
+            ADD COLUMN IF NOT EXISTS score_history_evidence JSONB NOT NULL
+                DEFAULT
+                    '{"rowCount":0,"minimumId":null,"maximumId":null,"minimumChangedAtUtc":null,"maximumChangedAtUtc":null,"fingerprint":"0000000000000000000000000000000000000000000000000000000000000000"}'::JSONB;
+        ALTER TABLE max_score_maintenance_runs
+            ADD COLUMN IF NOT EXISTS staged_cache_evidence JSONB;
         DO $$
         BEGIN
             IF NOT EXISTS (
@@ -87,6 +126,61 @@ internal static class MaxScoreMaintenanceSchema
                         ck_max_score_maintenance_score_history_fingerprint
                     CHECK (
                         length(score_history_fingerprint) = 64);
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conrelid =
+                        'max_score_maintenance_runs'::regclass
+                  AND conname =
+                        'ck_max_score_population_evidence'
+            ) THEN
+                ALTER TABLE max_score_maintenance_runs
+                    ADD CONSTRAINT
+                        ck_max_score_population_evidence
+                    CHECK (
+                        length(
+                            population_evidence
+                                ->> 'fingerprint') = 64);
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conrelid =
+                        'max_score_maintenance_runs'::regclass
+                  AND conname =
+                        'ck_max_score_history_evidence'
+            ) THEN
+                ALTER TABLE max_score_maintenance_runs
+                    ADD CONSTRAINT
+                        ck_max_score_history_evidence
+                    CHECK (
+                        length(
+                            score_history_evidence
+                                ->> 'fingerprint') = 64);
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conrelid =
+                        'max_score_maintenance_runs'::regclass
+                  AND conname =
+                        'ck_max_score_cache_evidence'
+            ) THEN
+                ALTER TABLE max_score_maintenance_runs
+                    ADD CONSTRAINT
+                        ck_max_score_cache_evidence
+                    CHECK (
+                        staged_cache_evidence IS NULL
+                        OR (
+                            length(
+                                staged_cache_evidence
+                                    ->> 'contentFingerprint') = 64
+                            AND (
+                                staged_cache_evidence
+                                    ->> 'entryCount')::BIGINT =
+                                staged_cache_entry_count
+                        ));
             END IF;
         END
         $$;
@@ -187,6 +281,8 @@ internal static class MaxScoreMaintenanceSchema
                 NEW.notification_state_fingerprint,
                 NEW.rank_history_fingerprint,
                 NEW.score_history_fingerprint,
+                NEW.population_evidence,
+                NEW.score_history_evidence,
                 NEW.manifest_json,
                 NEW.freeze_reason)
                IS DISTINCT FROM
@@ -202,11 +298,27 @@ internal static class MaxScoreMaintenanceSchema
                 OLD.notification_state_fingerprint,
                 OLD.rank_history_fingerprint,
                 OLD.score_history_fingerprint,
+                OLD.population_evidence,
+                OLD.score_history_evidence,
                 OLD.manifest_json,
                 OLD.freeze_reason)
             THEN
                 RAISE EXCEPTION
                     'Max-score maintenance identity is immutable.'
+                    USING ERRCODE = '55000';
+            END IF;
+            IF OLD.staged_cache_evidence IS NOT NULL
+               AND (
+                   NEW.staged_cache_evidence
+                       IS DISTINCT FROM
+                       OLD.staged_cache_evidence
+                   OR NEW.staged_cache_entry_count
+                       IS DISTINCT FROM
+                       OLD.staged_cache_entry_count
+               )
+            THEN
+                RAISE EXCEPTION
+                    'Max-score staged cache evidence is immutable.'
                     USING ERRCODE = '55000';
             END IF;
             RETURN NEW;

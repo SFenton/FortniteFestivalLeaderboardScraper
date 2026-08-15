@@ -1,0 +1,1686 @@
+using System.Text.Json;
+using FortniteFestival.Core;
+using FSTService.Api;
+using FSTService.Persistence;
+using FSTService.Scraping;
+using FSTService.Tests.Helpers;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using NSubstitute;
+using Npgsql;
+
+namespace FSTService.Tests.Unit;
+
+public sealed class MaxScoreMaintenanceWorkflowTests
+{
+    [Fact]
+    public async Task ApplyOrResume_uses_published_overlay_and_population_for_derived_state_and_caches()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+
+        Assert.True(
+            plan.CanApply,
+            string.Join(
+                "; ",
+                plan.Checks.Select(check =>
+                    $"{check.Name}={check.Passed}:{check.Detail}"))
+            + "; candidates="
+            + string.Join(
+                ",",
+                plan.RoutineCandidates.Select(candidate =>
+                    $"{candidate.Lane}/{candidate.CandidateKind}/{candidate.SubjectKey}/{candidate.SongId}")));
+        Assert.Equal(100, plan.PopulationEvidence.MaximumTotalEntries);
+        Assert.True(plan.ScoreHistoryEvidence.RowCount > 0);
+
+        var result = await fixture.ApplyAsync(
+            resume: false,
+            plan.PlanDigest,
+            rollbackPath: "rollback.json");
+
+        Assert.True(
+            result.Succeeded,
+            $"phase={result.Phase}, stage={result.FailureStage}, detail={result.Detail}, exception={fixture.LastFailure}, rankStats={fixture.ReadRankStatsEvidence()}");
+        Assert.Equal(
+            MaxScoreMaintenancePhase.Completed,
+            result.Phase);
+        Assert.False(result.PublicReadsFrozen);
+        Assert.False(result.Resumable);
+        Assert.NotNull(result.CacheEvidence);
+        Assert.Equal(1, result.CacheEvidence!.OverlayOnlyAccountCount);
+
+        var state = fixture.ReadWorkflowState();
+        Assert.False(state.Frozen);
+        Assert.Equal("completed", state.RunStatus);
+        Assert.Equal("completed", state.RunPhase);
+        Assert.Equal(100, state.SongStatsPopulation);
+        Assert.Equal(200, state.MutablePopulation);
+        Assert.Equal(0, state.VisibleNotifications);
+        Assert.DoesNotContain(90_000, state.TargetCacheScores);
+        Assert.Contains(40_000, state.TargetCacheScores);
+        Assert.Contains(50_000, state.TargetCacheScores);
+        Assert.Equal(
+            [50_000],
+            state.OverlayAccountCacheScores);
+    }
+
+    [Fact]
+    public async Task ApplyOrResume_rejects_post_plan_score_history_mutation_and_accepts_corrected_apply()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var approved = await fixture.PlanAsync();
+        Assert.True(approved.CanApply);
+
+        var insertedHistoryId =
+            fixture.InsertRelevantHistoryMutation();
+        var changed = await fixture.PlanAsync();
+        Assert.True(changed.CanApply);
+        Assert.NotEqual(
+            approved.PlanDigest,
+            changed.PlanDigest);
+        Assert.NotEqual(
+            approved.ScoreHistoryEvidence.Fingerprint,
+            changed.ScoreHistoryEvidence.Fingerprint);
+
+        var rejected = await fixture.ApplyAsync(
+            resume: false,
+            approved.PlanDigest,
+            rollbackPath: "rollback.json");
+
+        Assert.False(rejected.Succeeded);
+        Assert.False(rejected.Resumable);
+        Assert.False(rejected.PublicReadsFrozen);
+        Assert.Equal(
+            MaxScoreMaintenancePhase.None,
+            rejected.Phase);
+        Assert.Equal("pre_freeze", rejected.FailureStage);
+        var rejectedState = fixture.ReadSafetyState();
+        Assert.False(rejectedState.Frozen);
+        Assert.Null(rejectedState.RunPhase);
+        Assert.True(rejectedState.LiveSentinelPresent);
+        Assert.Equal(0, rejectedState.StagedCacheRows);
+        Assert.Equal(0, rejectedState.VisibleNotifications);
+
+        fixture.DeleteHistory(insertedHistoryId);
+        var corrected = await fixture.PlanAsync();
+        Assert.True(corrected.CanApply);
+        var applied = await fixture.ApplyAsync(
+            resume: false,
+            corrected.PlanDigest,
+            rollbackPath: "rollback.json");
+
+        Assert.True(
+            applied.Succeeded,
+            fixture.LastFailure?.ToString());
+        Assert.Equal(
+            MaxScoreMaintenancePhase.Completed,
+            applied.Phase);
+        Assert.False(
+            fixture.ReadSafetyState().Frozen);
+    }
+
+    [Theory]
+    [InlineData("deleted")]
+    [InlineData("corrupted")]
+    [InlineData("swapped")]
+    public async Task ApplyOrResume_keeps_freeze_and_checkpoint_when_rollback_file_changes(
+        string mutation)
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        var plan = await fixture.PlanAsync();
+        Assert.True(plan.CanApply);
+        fixture.Service.AfterPhaseCheckpointTestHook =
+            phase =>
+            {
+                if (phase
+                    == MaxScoreMaintenancePhase
+                        .RollbackCaptured)
+                {
+                    throw new InvalidOperationException(
+                        "checkpoint-stop");
+                }
+            };
+
+        var checkpointed = await fixture.ApplyAsync(
+            resume: false,
+            plan.PlanDigest,
+            rollbackPath: "rollback.json");
+        Assert.False(checkpointed.Succeeded);
+        Assert.True(checkpointed.Resumable);
+        Assert.True(checkpointed.PublicReadsFrozen);
+        Assert.Equal(
+            MaxScoreMaintenancePhase.RollbackCaptured,
+            checkpointed.Phase);
+        var canonicalRollback =
+            File.ReadAllBytes(
+                fixture.RollbackPath);
+        fixture.Service.AfterPhaseCheckpointTestHook = null;
+        await fixture.MutateRollbackAsync(mutation);
+
+        var rejectedResume = await fixture.ApplyAsync(
+            resume: true,
+            plan.PlanDigest,
+            rollbackPath: "rollback.json");
+
+        Assert.False(rejectedResume.Succeeded);
+        Assert.True(rejectedResume.Resumable);
+        Assert.True(rejectedResume.PublicReadsFrozen);
+        Assert.Equal(
+            MaxScoreMaintenancePhase.RollbackCaptured,
+            rejectedResume.Phase);
+        var failedState = fixture.ReadSafetyState();
+        Assert.True(failedState.Frozen);
+        Assert.Equal(
+            "rollback_captured",
+            failedState.RunPhase);
+        Assert.Equal("failed", failedState.RunStatus);
+        Assert.True(failedState.LiveSentinelPresent);
+        Assert.Equal(0, failedState.StagedCacheRows);
+        Assert.Equal(0, failedState.VisibleNotifications);
+
+        File.WriteAllBytes(
+            fixture.RollbackPath,
+            canonicalRollback);
+        var resumed = await fixture.ApplyAsync(
+            resume: true,
+            plan.PlanDigest,
+            rollbackPath: "rollback.json");
+
+        Assert.True(
+            resumed.Succeeded,
+            fixture.LastFailure?.ToString());
+        Assert.Equal(
+            MaxScoreMaintenancePhase.Completed,
+            resumed.Phase);
+        Assert.False(resumed.PublicReadsFrozen);
+        var completedState = fixture.ReadSafetyState();
+        Assert.False(completedState.Frozen);
+        Assert.Equal(
+            "completed",
+            completedState.RunPhase);
+        Assert.Equal("completed", completedState.RunStatus);
+        Assert.False(completedState.LiveSentinelPresent);
+        Assert.Equal(0, completedState.VisibleNotifications);
+    }
+
+    private sealed class WorkflowFixture : IAsyncDisposable
+    {
+        private const long PublishedScrapeId = 1296;
+        private const long ActiveScrapeId = 1297;
+        private const long PublicationId = 500;
+        private const string SongId = "workflow-song";
+        private const string Instrument = "Solo_Guitar";
+        private const string BaseAccount = "published-base";
+        private const string OverlayAccount = "overlay-only";
+        private const string ValidPngBase64 =
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
+        private readonly NpgsqlDataSource _dataSource;
+        private readonly MetaDatabase _meta;
+        private readonly GlobalLeaderboardPersistence _persistence;
+        private readonly ILoggerFactory _loggerFactory;
+        private readonly string _dataDirectory;
+        private int _reportNumber;
+
+        private WorkflowFixture(
+            NpgsqlDataSource dataSource,
+            MetaDatabase meta,
+            GlobalLeaderboardPersistence persistence,
+            ILoggerFactory loggerFactory,
+            string dataDirectory,
+            MaxScoreMaintenanceManifest manifest,
+            MaxScoreMaintenanceService service)
+        {
+            _dataSource = dataSource;
+            _meta = meta;
+            _persistence = persistence;
+            _loggerFactory = loggerFactory;
+            _dataDirectory = dataDirectory;
+            Manifest = manifest;
+            Service = service;
+        }
+
+        internal MaxScoreMaintenanceManifest Manifest { get; }
+        internal MaxScoreMaintenanceService Service { get; }
+        internal Exception? LastFailure { get; private set; }
+        internal string RollbackPath =>
+            Path.Combine(
+                _dataDirectory,
+                "rollback.json");
+
+        internal static async Task<WorkflowFixture> CreateAsync()
+        {
+            var dataDirectory = Path.Combine(
+                Directory.GetCurrentDirectory(),
+                ".test-temp",
+                $"max-score-workflow-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(dataDirectory);
+            var dataSource =
+                SharedPostgresContainer.CreateDatabase();
+            var meta = new MetaDatabase(
+                dataSource,
+                NullLogger<MetaDatabase>.Instance);
+            var loggerFactory =
+                LoggerFactory.Create(_ => { });
+            var features = new FeatureOptions();
+            var persistence =
+                new GlobalLeaderboardPersistence(
+                    meta,
+                    loggerFactory,
+                    NullLogger<
+                        GlobalLeaderboardPersistence>.Instance,
+                    dataSource,
+                    Options.Create(features));
+            persistence.InitializeReadOnly();
+
+            var catalogCapturedAt = new DateTime(
+                2026,
+                8,
+                14,
+                12,
+                0,
+                0,
+                DateTimeKind.Utc);
+            using var providerDocument = JsonDocument.Parse(
+                """
+                {
+                  "lastModified": "2026-08-01T00:00:00Z",
+                  "track": {
+                    "su": "workflow-song",
+                    "tt": "Workflow Song",
+                    "an": "Workflow Artist",
+                    "in": {
+                      "gr": 3
+                    }
+                  }
+                }
+                """);
+            var song = new Song
+            {
+                track = new Track
+                {
+                    su = SongId,
+                    tt = "Workflow Song",
+                    an = "Workflow Artist",
+                    @in = new In { gr = 3 },
+                },
+                providerJson =
+                    providerDocument.RootElement.Clone(),
+            };
+            var catalog =
+                SongCatalogSnapshotBuilder.Create([song]);
+
+            var currentIdentity =
+                new MaxScoreMaintenancePathIdentity(
+                    Revision: 0,
+                    DatFileHash: new string('c', 64),
+                    SongLastModified:
+                        "2026-08-01T00:00:00Z",
+                    GeneratedAtUtc: new DateTime(
+                        2026,
+                        8,
+                        1,
+                        0,
+                        0,
+                        0,
+                        DateTimeKind.Utc),
+                    ChoptVersion: "1.16.2",
+                    ChoptBinarySha256:
+                        new string('d', 64),
+                    GenerationProfile: "profile-v2",
+                    ArtifactGenerationId:
+                        "workflow-current",
+                    ExpectedInstruments: [Instrument],
+                    Maxima: new MaxScoreMaintenanceMaxima(
+                        55_000,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null),
+                    PathGenerationPending: false);
+            var runtime = new PathGenerationRuntimeIdentity(
+                "1.16.3",
+                new string('a', 64),
+                "profile-v3");
+            var stagedIdentity =
+                currentIdentity with
+                {
+                    DatFileHash = new string('b', 64),
+                    GeneratedAtUtc = new DateTime(
+                        2026,
+                        8,
+                        13,
+                        0,
+                        0,
+                        0,
+                        DateTimeKind.Utc),
+                    ChoptVersion = runtime.Version,
+                    ChoptBinarySha256 =
+                        runtime.BinarySha256,
+                    GenerationProfile = runtime.Profile,
+                    ArtifactGenerationId =
+                        "workflow-staged",
+                    Maxima = currentIdentity.Maxima with
+                    {
+                        Lead = 60_000,
+                    },
+                };
+            WriteGeneration(
+                dataDirectory,
+                SongId,
+                currentIdentity);
+            WriteGeneration(
+                dataDirectory,
+                SongId,
+                stagedIdentity);
+            var currentValidated =
+                PathArtifactResolver
+                    .ValidateImmutableGeneration(
+                        dataDirectory,
+                        SongId,
+                        currentIdentity
+                            .ArtifactGenerationId!);
+            var stagedValidated =
+                PathArtifactResolver
+                    .ValidateImmutableGeneration(
+                        dataDirectory,
+                        SongId,
+                        stagedIdentity
+                            .ArtifactGenerationId!);
+            currentIdentity = currentIdentity with
+            {
+                ArtifactTreeSha256 =
+                    currentValidated.ArtifactTreeSha256,
+                ArtifactFileCount =
+                    currentValidated.ArtifactFileCount,
+            };
+            stagedIdentity = stagedIdentity with
+            {
+                ArtifactTreeSha256 =
+                    stagedValidated.ArtifactTreeSha256,
+                ArtifactFileCount =
+                    stagedValidated.ArtifactFileCount,
+            };
+
+            var manifest =
+                new MaxScoreMaintenanceManifest(
+                    MaxScoreMaintenanceManifest
+                        .CurrentManifestVersion,
+                    PublishedScrapeId,
+                    PublicationId,
+                    CatalogVersion: 1,
+                    CatalogSchemaVersion:
+                        SongCatalogSnapshotBuilder
+                            .SchemaVersion,
+                    CatalogContentHash:
+                        catalog.ContentHash,
+                    CatalogSongCount:
+                        catalog.SongCount,
+                    CatalogSourceCapturedAtUtc:
+                        catalogCapturedAt,
+                    CreatedAtUtc: new DateTime(
+                        2026,
+                        8,
+                        14,
+                        12,
+                        5,
+                        0,
+                        DateTimeKind.Utc),
+                    Scope:
+                        new MaxScoreMaintenanceScope(
+                            MaxScoreMaintenanceStagePurposes
+                                .Promotion,
+                            new string('8', 64),
+                            [Instrument],
+                            [Instrument]),
+                    Runtime: runtime,
+                    Songs:
+                    [
+                        new MaxScoreMaintenanceManifestSong(
+                            SongId,
+                            "2026-08-01T00:00:00Z",
+                            currentIdentity,
+                            stagedIdentity,
+                            [Instrument]),
+                    ])
+                .ValidateAndNormalize();
+
+            SeedDatabase(
+                dataSource,
+                catalog,
+                catalogCapturedAt,
+                currentIdentity);
+            meta.InsertAccountIds([OverlayAccount]);
+            meta.InsertAccountNames(
+                [(OverlayAccount, (string?)"Overlay User")]);
+            meta.RegisterUser(
+                "web-tracker",
+                OverlayAccount);
+
+            var options = new ScraperOptions
+            {
+                DataDirectory = dataDirectory,
+                EnablePathGeneration = true,
+                EnableAutomaticPathGeneration = false,
+                PathGenerationParallelism = 1,
+                PrecomputeLeaderboardSongParallelism = 1,
+                PrecomputeLeaderboardInstrumentParallelism = 1,
+                RunPrecomputePhasesInParallel = false,
+                PrecomputeLiveLeaderboardRivals = false,
+            };
+            var optionsWrapper = Options.Create(options);
+            var pathStore =
+                new PathDataStore(dataSource);
+            var progress = new ScrapeProgressTracker();
+            var rivals =
+                new LeaderboardRivalsCalculator(
+                    persistence,
+                    meta,
+                    optionsWrapper,
+                    NullLogger<
+                        LeaderboardRivalsCalculator>.Instance);
+            var rankings = new RankingsCalculator(
+                persistence,
+                meta,
+                pathStore,
+                progress,
+                NullLogger<RankingsCalculator>.Instance,
+                scraperOptions: optionsWrapper);
+            var derived =
+                new MaxScoreMaintenanceDerivedStateService(
+                    persistence,
+                    pathStore,
+                    rankings,
+                    new BandRankingRepairService(
+                        meta,
+                        dataSource,
+                        NullLogger<
+                            BandRankingRepairService>.Instance),
+                    new BandCurrentProjectionBuilder(
+                        dataSource,
+                        NullLogger<
+                            BandCurrentProjectionBuilder>.Instance),
+                    rivals,
+                    dataSource,
+                    optionsWrapper,
+                    NullLogger<
+                        MaxScoreMaintenanceDerivedStateService>.Instance);
+            var precomputer =
+                new ScrapeTimePrecomputer(
+                    persistence,
+                    meta,
+                    pathStore,
+                    progress,
+                    NullLogger<
+                        ScrapeTimePrecomputer>.Instance,
+                    loggerFactory,
+                    new JsonSerializerOptions(
+                        JsonSerializerDefaults.Web),
+                    features,
+                    options,
+                    rivals);
+            var routineNotifications =
+                new ImprovementNotificationService(
+                    dataSource,
+                    NullLogger<
+                        ImprovementNotificationService>.Instance);
+            var notifications =
+                new MaxScoreMaintenanceNotificationService(
+                    dataSource,
+                    routineNotifications,
+                    Options.Create(
+                        new ImprovementNotificationOptions
+                        {
+                            Scope = "registered",
+                        }),
+                    NullLogger<
+                        MaxScoreMaintenanceNotificationService>.Instance);
+            var pathCoordinator =
+                new PathGenerationCoordinator(
+                    new HttpClient(),
+                    pathStore,
+                    new SongsCacheService(),
+                    optionsWrapper,
+                    progress,
+                    NullLogger<
+                        PathGenerationCoordinator>.Instance,
+                    UncontendedPathGenerationAdmissionLeaseProvider
+                        .Instance);
+            var service = new MaxScoreMaintenanceService(
+                pathCoordinator,
+                pathStore,
+                persistence,
+                meta,
+                dataSource,
+                optionsWrapper,
+                notifications,
+                derived,
+                precomputer,
+                Substitute.For<
+                    ISongInstrumentSupportCache>(),
+                NullLogger<
+                    MaxScoreMaintenanceService>.Instance);
+            var fixture = new WorkflowFixture(
+                dataSource,
+                meta,
+                persistence,
+                loggerFactory,
+                dataDirectory,
+                manifest,
+                service);
+            service.FailureTestHook =
+                exception => fixture.LastFailure = exception;
+            await MaxScoreMaintenanceFileStore
+                .WriteCanonicalManifestAsync(
+                    dataDirectory,
+                    "manifest.json",
+                    manifest,
+                    CancellationToken.None);
+            await using (var statistics =
+                         await dataSource.OpenConnectionAsync())
+            await using (var flush =
+                         statistics.CreateCommand())
+            {
+                flush.CommandText =
+                    "SELECT pg_stat_force_next_flush()";
+                await flush.ExecuteNonQueryAsync();
+            }
+            await Task.Delay(1000);
+            return fixture;
+        }
+
+        internal Task<MaxScoreMaintenancePlanReport> PlanAsync()
+            => Service.PlanAsync(
+                PublishedScrapeId,
+                "manifest.json",
+                Manifest.ComputeDigest(),
+                NextReportPath("plan"),
+                CancellationToken.None);
+
+        internal Task<MaxScoreMaintenanceApplyReport> ApplyAsync(
+            bool resume,
+            string planDigest,
+            string rollbackPath)
+        {
+            LastFailure = null;
+            return Service.ApplyOrResumeAsync(
+                resume,
+                PublishedScrapeId,
+                "manifest.json",
+                Manifest.ComputeDigest(),
+                planDigest,
+                rollbackPath,
+                NextReportPath(
+                    resume ? "resume" : "apply"),
+                CancellationToken.None);
+        }
+
+        internal long InsertRelevantHistoryMutation()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO score_history (
+                    song_id,
+                    instrument,
+                    account_id,
+                    old_score,
+                    new_score,
+                    old_rank,
+                    new_rank,
+                    accuracy,
+                    is_full_combo,
+                    stars,
+                    percentile,
+                    season,
+                    score_achieved_at,
+                    season_rank,
+                    all_time_rank,
+                    difficulty,
+                    changed_at)
+                VALUES (
+                    @songId,
+                    @instrument,
+                    @accountId,
+                    45000,
+                    46000,
+                    2,
+                    2,
+                    960000,
+                    TRUE,
+                    5,
+                    0.45,
+                    3,
+                    now() - interval '1 day',
+                    2,
+                    2,
+                    3,
+                    now())
+                RETURNING id
+                """;
+            command.Parameters.AddWithValue(
+                "songId",
+                SongId);
+            command.Parameters.AddWithValue(
+                "instrument",
+                Instrument);
+            command.Parameters.AddWithValue(
+                "accountId",
+                OverlayAccount);
+            return Convert.ToInt64(
+                command.ExecuteScalar());
+        }
+
+        internal void DeleteHistory(long id)
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText =
+                "DELETE FROM score_history WHERE id = @id";
+            command.Parameters.AddWithValue("id", id);
+            Assert.Equal(1, command.ExecuteNonQuery());
+        }
+
+        internal async Task MutateRollbackAsync(
+            string mutation)
+        {
+            switch (mutation)
+            {
+                case "deleted":
+                    File.Delete(RollbackPath);
+                    break;
+                case "corrupted":
+                    await File.WriteAllTextAsync(
+                        RollbackPath,
+                        "{");
+                    break;
+                case "swapped":
+                    var snapshot =
+                        await MaxScoreMaintenanceFileStore
+                            .LoadRollbackSnapshotAsync(
+                                _dataDirectory,
+                                "rollback.json",
+                                CancellationToken.None);
+                    await File.WriteAllBytesAsync(
+                        RollbackPath,
+                        (snapshot with
+                        {
+                            PlanDigest =
+                                new string('f', 64),
+                        }).SerializeCanonical());
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(
+                        nameof(mutation));
+            }
+        }
+
+        internal SafetyState ReadSafetyState()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT publication.public_reads_frozen,
+                       run.phase,
+                       run.status,
+                       (
+                           SELECT COUNT(*)
+                           FROM publication_api_response_cache_staging
+                           WHERE publication_id = @publicationId
+                       ),
+                       EXISTS (
+                           SELECT 1
+                           FROM api_response_cache
+                           WHERE cache_key = 'sentinel'
+                       ),
+                       (
+                           SELECT COUNT(*)
+                           FROM player_improvement_events
+                           WHERE delivery_state = 'visible'
+                       ) + (
+                           SELECT COUNT(*)
+                           FROM band_improvement_events
+                           WHERE delivery_state = 'visible'
+                       )
+                FROM scrape_publication_state publication
+                LEFT JOIN max_score_maintenance_runs run
+                  ON run.manifest_sha256 =
+                     @manifestDigest
+                WHERE publication.id = TRUE
+                """;
+            command.Parameters.AddWithValue(
+                "publicationId",
+                PublicationId);
+            command.Parameters.AddWithValue(
+                "manifestDigest",
+                Manifest.ComputeDigest());
+            using var reader = command.ExecuteReader();
+            Assert.True(reader.Read());
+            return new SafetyState(
+                reader.GetBoolean(0),
+                reader.IsDBNull(1)
+                    ? null
+                    : reader.GetString(1),
+                reader.IsDBNull(2)
+                    ? null
+                    : reader.GetString(2),
+                reader.GetInt64(3),
+                reader.GetBoolean(4),
+                reader.GetInt64(5));
+        }
+
+        internal WorkflowState ReadWorkflowState()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT
+                    publication.public_reads_frozen,
+                    run.status,
+                    run.phase,
+                    stats.entry_count,
+                    population.total_entries,
+                    (
+                        SELECT COUNT(*)
+                        FROM player_improvement_events
+                        WHERE delivery_state = 'visible'
+                    ) + (
+                        SELECT COUNT(*)
+                        FROM band_improvement_events
+                        WHERE delivery_state = 'visible'
+                    ),
+                    (
+                        SELECT json_data
+                        FROM api_response_cache
+                        WHERE cache_key = @targetCacheKey
+                    ),
+                    (
+                        SELECT json_data
+                        FROM api_response_cache
+                        WHERE cache_key = @accountCacheKey
+                    )
+                FROM scrape_publication_state publication
+                JOIN max_score_maintenance_runs run
+                  ON run.manifest_sha256 =
+                     @manifestDigest
+                JOIN song_stats stats
+                  ON stats.song_id = @songId
+                 AND stats.instrument = @instrument
+                JOIN leaderboard_population population
+                  ON population.song_id = @songId
+                 AND population.instrument = @instrument
+                WHERE publication.id = TRUE
+                """;
+            command.Parameters.AddWithValue(
+                "manifestDigest",
+                Manifest.ComputeDigest());
+            command.Parameters.AddWithValue(
+                "songId",
+                SongId);
+            command.Parameters.AddWithValue(
+                "instrument",
+                Instrument);
+            command.Parameters.AddWithValue(
+                "targetCacheKey",
+                LeaderboardCacheKeys.LeaderboardAll(
+                    SongId,
+                    LeaderboardCacheKeys.SongDetailPreviewTop,
+                    null));
+            command.Parameters.AddWithValue(
+                "accountCacheKey",
+                $"player:{OverlayAccount}:::");
+            using var reader = command.ExecuteReader();
+            Assert.True(reader.Read());
+            var targetScores =
+                ReadTargetScores(
+                    reader.GetFieldValue<byte[]>(6));
+            var accountScores =
+                ReadAccountScores(
+                    reader.GetFieldValue<byte[]>(7));
+            return new WorkflowState(
+                reader.GetBoolean(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetInt32(3),
+                reader.GetInt32(4),
+                reader.GetInt64(5),
+                targetScores,
+                accountScores);
+        }
+
+        internal string ReadRankStatsEvidence()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT COALESCE(
+                    string_agg(
+                        concat_ws(
+                            ':',
+                            stats.relname,
+                            stats.n_tup_ins,
+                            stats.n_tup_upd,
+                            stats.n_tup_del),
+                        '|' ORDER BY stats.relname),
+                    '')
+                FROM pg_stat_all_tables stats
+                WHERE stats.schemaname = 'public'
+                  AND (
+                      stats.relname = 'rank_history'
+                      OR stats.relname LIKE 'rank_history_%'
+                      OR stats.relname = 'composite_rank_history'
+                      OR stats.relname LIKE 'band_team_rank_history%'
+                      OR stats.relname LIKE 'band_rank_history_%'
+                  )
+                """;
+            return Convert.ToString(
+                       command.ExecuteScalar())
+                   ?? string.Empty;
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            _persistence.Dispose();
+            _meta.Dispose();
+            _dataSource.Dispose();
+            _loggerFactory.Dispose();
+            if (Directory.Exists(_dataDirectory))
+            {
+                Directory.Delete(
+                    _dataDirectory,
+                    recursive: true);
+            }
+            return ValueTask.CompletedTask;
+        }
+
+        private string NextReportPath(string prefix)
+            => $"{prefix}-{Interlocked.Increment(ref _reportNumber)}.json";
+
+        private static void SeedDatabase(
+            NpgsqlDataSource dataSource,
+            SongCatalogSnapshot catalog,
+            DateTime catalogCapturedAt,
+            MaxScoreMaintenancePathIdentity currentPath)
+        {
+            using var connection = dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO scrape_log (
+                    id,
+                    started_at,
+                    completed_at,
+                    status,
+                    songs_scraped,
+                    total_entries,
+                    total_requests,
+                    total_bytes)
+                VALUES
+                    (
+                        @publishedScrapeId,
+                        now() - interval '2 hours',
+                        now() - interval '1 hour',
+                        'completed',
+                        1,
+                        2,
+                        1,
+                        1
+                    ),
+                    (
+                        @activeScrapeId,
+                        now() - interval '30 minutes',
+                        now() - interval '20 minutes',
+                        'completed',
+                        1,
+                        2,
+                        1,
+                        1
+                    );
+
+                INSERT INTO publication_generations (
+                    publication_id,
+                    scrape_id,
+                    status,
+                    created_at,
+                    published_at)
+                VALUES (
+                    @publicationId,
+                    @publishedScrapeId,
+                    'current',
+                    now() - interval '1 hour',
+                    now() - interval '1 hour');
+
+                INSERT INTO publication_song_catalog (
+                    publication_id,
+                    catalog_version,
+                    schema_version,
+                    catalog_json,
+                    content_hash,
+                    song_count,
+                    source_kind,
+                    is_exact,
+                    source_captured_at,
+                    captured_at)
+                VALUES (
+                    @publicationId,
+                    1,
+                    @catalogSchemaVersion,
+                    @catalogJson::JSONB,
+                    @catalogHash,
+                    @catalogSongCount,
+                    'provider_exact',
+                    TRUE,
+                    @catalogCapturedAt,
+                    now() - interval '1 hour');
+
+                INSERT INTO publication_surface_bindings (
+                    publication_id,
+                    surface_name,
+                    binding_kind,
+                    binding_json,
+                    row_count,
+                    content_hash,
+                    status,
+                    built_at)
+                VALUES (
+                    @publicationId,
+                    'song_catalog',
+                    'generation_catalog_snapshot',
+                    jsonb_build_object(
+                        'table',
+                        'publication_song_catalog',
+                        'publicationId',
+                        @publicationId),
+                    @catalogSongCount,
+                    @catalogHash,
+                    'ready',
+                    now() - interval '1 hour');
+
+                INSERT INTO scrape_publication_state (
+                    id,
+                    current_publication_id,
+                    working_publication_id,
+                    published_scrape_id,
+                    published_at,
+                    public_reads_frozen,
+                    improvement_notifications_scrape_id,
+                    improvement_notifications_status,
+                    improvement_notifications_projection_ready,
+                    improvement_notifications_projection_scrape_id,
+                    updated_at)
+                VALUES (
+                    TRUE,
+                    @publicationId,
+                    NULL,
+                    @publishedScrapeId,
+                    now() - interval '1 hour',
+                    FALSE,
+                    @publishedScrapeId,
+                    'completed',
+                    TRUE,
+                    @publishedScrapeId,
+                    now())
+                ON CONFLICT (id) DO UPDATE SET
+                    current_publication_id =
+                        EXCLUDED.current_publication_id,
+                    working_publication_id = NULL,
+                    published_scrape_id =
+                        EXCLUDED.published_scrape_id,
+                    published_at =
+                        EXCLUDED.published_at,
+                    public_reads_frozen = FALSE,
+                    public_reads_frozen_at = NULL,
+                    public_reads_frozen_scrape_id = NULL,
+                    public_reads_frozen_reason = NULL,
+                    improvement_notifications_scrape_id =
+                        EXCLUDED.improvement_notifications_scrape_id,
+                    improvement_notifications_status =
+                        EXCLUDED.improvement_notifications_status,
+                    improvement_notifications_projection_ready =
+                        TRUE,
+                    improvement_notifications_projection_scrape_id =
+                        EXCLUDED.improvement_notifications_projection_scrape_id,
+                    updated_at = now();
+
+                INSERT INTO improvement_detection_runs (
+                    published_scrape_id,
+                    completed_at,
+                    status,
+                    mode,
+                    baseline_only,
+                    include_players,
+                    include_bands,
+                    include_song_events,
+                    include_rankings,
+                    notification_purpose,
+                    delivery_state)
+                VALUES (
+                    @publishedScrapeId,
+                    now() - interval '50 minutes',
+                    'completed',
+                    'execute',
+                    FALSE,
+                    TRUE,
+                    TRUE,
+                    TRUE,
+                    TRUE,
+                    'routine_score_observation_v1',
+                    'visible');
+
+                INSERT INTO songs (
+                    song_id,
+                    title,
+                    last_modified,
+                    max_lead_score,
+                    dat_file_hash,
+                    song_last_modified,
+                    paths_generated_at,
+                    chopt_version,
+                    chopt_binary_sha256,
+                    path_generation_profile,
+                    path_artifact_generation_id,
+                    path_expected_instruments,
+                    path_generation_revision,
+                    path_generation_pending)
+                VALUES (
+                    @songId,
+                    'Workflow Song',
+                    @lastModified,
+                    @currentMaxScore,
+                    @currentDatHash,
+                    @lastModified,
+                    @currentGeneratedAt,
+                    @currentChoptVersion,
+                    @currentBinaryHash,
+                    @currentProfile,
+                    @currentGenerationId,
+                    ARRAY[@instrument]::TEXT[],
+                    @currentRevision,
+                    FALSE);
+
+                INSERT INTO leaderboard_entries_snapshot (
+                    snapshot_id,
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    accuracy,
+                    is_full_combo,
+                    stars,
+                    season,
+                    difficulty,
+                    percentile,
+                    rank,
+                    api_rank,
+                    source,
+                    first_seen_at,
+                    last_updated_at)
+                VALUES
+                    (
+                        @publishedScrapeId,
+                        @songId,
+                        @instrument,
+                        @baseAccount,
+                        40000,
+                        950000,
+                        TRUE,
+                        5,
+                        3,
+                        3,
+                        0.5,
+                        1,
+                        1,
+                        'scrape',
+                        now() - interval '1 day',
+                        now() - interval '1 hour'
+                    ),
+                    (
+                        @activeScrapeId,
+                        @songId,
+                        @instrument,
+                        @baseAccount,
+                        90000,
+                        990000,
+                        TRUE,
+                        6,
+                        3,
+                        3,
+                        0.1,
+                        1,
+                        1,
+                        'scrape',
+                        now() - interval '1 day',
+                        now() - interval '20 minutes'
+                    );
+
+                INSERT INTO leaderboard_snapshot_state (
+                    song_id,
+                    instrument,
+                    active_snapshot_id,
+                    scrape_id,
+                    is_finalized,
+                    updated_at)
+                VALUES (
+                    @songId,
+                    @instrument,
+                    @activeScrapeId,
+                    @activeScrapeId,
+                    TRUE,
+                    now());
+
+                INSERT INTO leaderboard_published_scope_source (
+                    published_scrape_id,
+                    song_id,
+                    instrument,
+                    scope_kind,
+                    source_kind,
+                    source_snapshot_id,
+                    source_scrape_id,
+                    row_count,
+                    content_fingerprint,
+                    coverage_fingerprint,
+                    reported_total_entries,
+                    reported_total_pages,
+                    is_complete,
+                    created_at,
+                    validated_at)
+                VALUES (
+                    @publishedScrapeId,
+                    @songId,
+                    @instrument,
+                    'alltime',
+                    'snapshot',
+                    @publishedScrapeId,
+                    @publishedScrapeId,
+                    1,
+                    md5('workflow-published-source'),
+                    md5('workflow-published-coverage'),
+                    100,
+                    1,
+                    TRUE,
+                    now() - interval '1 hour',
+                    now() - interval '1 hour');
+
+                INSERT INTO leaderboard_entries_overlay (
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    accuracy,
+                    is_full_combo,
+                    stars,
+                    season,
+                    difficulty,
+                    percentile,
+                    rank,
+                    api_rank,
+                    source,
+                    first_seen_at,
+                    last_updated_at,
+                    source_priority,
+                    overlay_reason)
+                VALUES (
+                    @songId,
+                    @instrument,
+                    @overlayAccount,
+                    50000,
+                    970000,
+                    TRUE,
+                    5,
+                    3,
+                    3,
+                    0.4,
+                    2,
+                    2,
+                    'backfill',
+                    now() - interval '1 day',
+                    now() - interval '40 minutes',
+                    200,
+                    'workflow-test');
+
+                INSERT INTO leaderboard_entries (
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    accuracy,
+                    is_full_combo,
+                    stars,
+                    season,
+                    difficulty,
+                    percentile,
+                    rank,
+                    api_rank,
+                    source,
+                    first_seen_at,
+                    last_updated_at)
+                VALUES
+                    (
+                        @songId,
+                        @instrument,
+                        @baseAccount,
+                        90000,
+                        990000,
+                        TRUE,
+                        6,
+                        3,
+                        3,
+                        0.1,
+                        1,
+                        1,
+                        'scrape',
+                        now() - interval '1 day',
+                        now() - interval '20 minutes'
+                    ),
+                    (
+                        @songId,
+                        @instrument,
+                        @overlayAccount,
+                        50000,
+                        970000,
+                        TRUE,
+                        5,
+                        3,
+                        3,
+                        0.4,
+                        2,
+                        2,
+                        'backfill',
+                        now() - interval '1 day',
+                        now() - interval '40 minutes'
+                    );
+
+                INSERT INTO solo_current_projection_scope (
+                    song_id,
+                    instrument,
+                    projection_generation,
+                    row_count,
+                    source_snapshot_id,
+                    status,
+                    updated_at)
+                VALUES (
+                    @songId,
+                    @instrument,
+                    1,
+                    2,
+                    @activeScrapeId,
+                    'ready',
+                    now());
+
+                INSERT INTO current_leaderboard_entries (
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    accuracy,
+                    is_full_combo,
+                    stars,
+                    season,
+                    difficulty,
+                    percentile,
+                    rank,
+                    api_rank,
+                    source,
+                    first_seen_at,
+                    last_updated_at,
+                    projection_generation,
+                    computed_at)
+                VALUES
+                    (
+                        @songId,
+                        @instrument,
+                        @baseAccount,
+                        90000,
+                        990000,
+                        TRUE,
+                        6,
+                        3,
+                        3,
+                        0.1,
+                        1,
+                        1,
+                        'projection',
+                        now() - interval '1 day',
+                        now() - interval '20 minutes',
+                        1,
+                        now()
+                    ),
+                    (
+                        @songId,
+                        @instrument,
+                        @overlayAccount,
+                        50000,
+                        970000,
+                        TRUE,
+                        5,
+                        3,
+                        3,
+                        0.4,
+                        2,
+                        2,
+                        'projection',
+                        now() - interval '1 day',
+                        now() - interval '40 minutes',
+                        1,
+                        now()
+                    );
+
+                INSERT INTO leaderboard_population (
+                    song_id,
+                    instrument,
+                    total_entries,
+                    updated_at)
+                VALUES (
+                    @songId,
+                    @instrument,
+                    200,
+                    now());
+
+                INSERT INTO score_history (
+                    song_id,
+                    instrument,
+                    account_id,
+                    old_score,
+                    new_score,
+                    old_rank,
+                    new_rank,
+                    accuracy,
+                    is_full_combo,
+                    stars,
+                    percentile,
+                    season,
+                    score_achieved_at,
+                    season_rank,
+                    all_time_rank,
+                    difficulty,
+                    changed_at)
+                VALUES (
+                    @songId,
+                    @instrument,
+                    @overlayAccount,
+                    40000,
+                    45000,
+                    3,
+                    2,
+                    950000,
+                    TRUE,
+                    5,
+                    0.5,
+                    3,
+                    now() - interval '2 days',
+                    2,
+                    2,
+                    3,
+                    now() - interval '2 days');
+
+                INSERT INTO player_improvement_state (
+                    account_id,
+                    song_id,
+                    instrument,
+                    score,
+                    rank,
+                    stars,
+                    is_full_combo,
+                    difficulty,
+                    percentile,
+                    season,
+                    first_seen_at,
+                    last_updated_at,
+                    observed_at,
+                    updated_at)
+                VALUES (
+                    @overlayAccount,
+                    @songId,
+                    @instrument,
+                    50000,
+                    2,
+                    5,
+                    TRUE,
+                    3,
+                    0.4,
+                    3,
+                    now() - interval '1 day',
+                    now() - interval '40 minutes',
+                    now() - interval '50 minutes',
+                    now() - interval '50 minutes');
+
+                INSERT INTO api_response_cache (
+                    cache_key,
+                    json_data,
+                    etag,
+                    cached_at)
+                VALUES (
+                    'sentinel',
+                    convert_to('{"old":true}', 'UTF8'),
+                    'sentinel-etag',
+                    now());
+                """;
+            command.Parameters.AddWithValue(
+                "publishedScrapeId",
+                PublishedScrapeId);
+            command.Parameters.AddWithValue(
+                "activeScrapeId",
+                ActiveScrapeId);
+            command.Parameters.AddWithValue(
+                "publicationId",
+                PublicationId);
+            command.Parameters.AddWithValue(
+                "catalogSchemaVersion",
+                SongCatalogSnapshotBuilder.SchemaVersion);
+            command.Parameters.AddWithValue(
+                "catalogJson",
+                catalog.CatalogJson);
+            command.Parameters.AddWithValue(
+                "catalogHash",
+                catalog.ContentHash);
+            command.Parameters.AddWithValue(
+                "catalogSongCount",
+                catalog.SongCount);
+            command.Parameters.AddWithValue(
+                "catalogCapturedAt",
+                catalogCapturedAt);
+            command.Parameters.AddWithValue(
+                "songId",
+                SongId);
+            command.Parameters.AddWithValue(
+                "instrument",
+                Instrument);
+            command.Parameters.AddWithValue(
+                "baseAccount",
+                BaseAccount);
+            command.Parameters.AddWithValue(
+                "overlayAccount",
+                OverlayAccount);
+            command.Parameters.AddWithValue(
+                "lastModified",
+                currentPath.SongLastModified!);
+            command.Parameters.AddWithValue(
+                "currentMaxScore",
+                currentPath.Maxima.Lead!.Value);
+            command.Parameters.AddWithValue(
+                "currentDatHash",
+                currentPath.DatFileHash!);
+            command.Parameters.AddWithValue(
+                "currentGeneratedAt",
+                currentPath.GeneratedAtUtc!.Value);
+            command.Parameters.AddWithValue(
+                "currentChoptVersion",
+                currentPath.ChoptVersion!);
+            command.Parameters.AddWithValue(
+                "currentBinaryHash",
+                currentPath.ChoptBinarySha256!);
+            command.Parameters.AddWithValue(
+                "currentProfile",
+                currentPath.GenerationProfile!);
+            command.Parameters.AddWithValue(
+                "currentGenerationId",
+                currentPath.ArtifactGenerationId!);
+            command.Parameters.AddWithValue(
+                "currentRevision",
+                currentPath.Revision);
+            command.ExecuteNonQuery();
+        }
+
+        private static void WriteGeneration(
+            string dataDirectory,
+            string songId,
+            MaxScoreMaintenancePathIdentity identity)
+        {
+            var generationDirectory =
+                PathArtifactResolver.GetGenerationDirectory(
+                    dataDirectory,
+                    songId,
+                    identity.ArtifactGenerationId!);
+            Directory.CreateDirectory(generationDirectory);
+            var expertScores =
+                identity.ExpectedInstruments.ToDictionary(
+                    instrument => instrument,
+                    instrument => identity.Maxima
+                        .GetByInstrument(instrument)!.Value,
+                    StringComparer.Ordinal);
+            var manifest = new PathArtifactManifest(
+                identity.ArtifactGenerationId!,
+                songId,
+                identity.DatFileHash!,
+                identity.SongLastModified,
+                identity.ChoptVersion!,
+                identity.ChoptBinarySha256!,
+                identity.GenerationProfile!,
+                identity.ExpectedInstruments.ToArray(),
+                expertScores,
+                identity.GeneratedAtUtc!.Value);
+            File.WriteAllText(
+                Path.Combine(
+                    generationDirectory,
+                    PathArtifactResolver.ManifestFileName),
+                JsonSerializer.Serialize(
+                    manifest,
+                    PathArtifactManifest.JsonOptions));
+            var png =
+                Convert.FromBase64String(
+                    ValidPngBase64);
+            foreach (var instrument in
+                     identity.ExpectedInstruments)
+            {
+                var instrumentDirectory = Path.Combine(
+                    generationDirectory,
+                    instrument);
+                Directory.CreateDirectory(
+                    instrumentDirectory);
+                foreach (var difficulty in
+                         PathGenerationInstruments
+                             .Difficulties)
+                {
+                    File.WriteAllBytes(
+                        Path.Combine(
+                            instrumentDirectory,
+                            $"{difficulty}.png"),
+                        png);
+                    File.WriteAllText(
+                        Path.Combine(
+                            instrumentDirectory,
+                            $"{difficulty}.json"),
+                        BuildPathJson(
+                            difficulty,
+                            difficulty == "expert"
+                                ? expertScores[instrument]
+                                : 0,
+                            instrument));
+                }
+            }
+        }
+
+        private static string BuildPathJson(
+            string difficulty,
+            int totalScore,
+            string instrument)
+            => JsonSerializer.Serialize(new
+            {
+                schemaVersion = 2,
+                songName = "Workflow Song",
+                artist = "Workflow Artist",
+                charter = "Workflow Charter",
+                difficulty,
+                totalScore,
+                pathSummary = string.Empty,
+                activations = Array.Empty<object>(),
+                notes = new[]
+                {
+                    new
+                    {
+                        beat = 1,
+                        seconds = 0.5,
+                        isSpNote = false,
+                        frets =
+                            new Dictionary<string, int>
+                            {
+                                [instrument] = 1,
+                            },
+                    },
+                },
+                spPhrases = Array.Empty<object>(),
+                measures = Array.Empty<object>(),
+                bpms = Array.Empty<object>(),
+                timeSignatures = Array.Empty<object>(),
+                drumFills = Array.Empty<object>(),
+            });
+
+        private static int[] ReadTargetScores(byte[] payload)
+        {
+            using var document = JsonDocument.Parse(payload);
+            return document.RootElement
+                .GetProperty("instruments")
+                .EnumerateArray()
+                .Single(item =>
+                    item.GetProperty("instrument")
+                        .GetString() == Instrument)
+                .GetProperty("entries")
+                .EnumerateArray()
+                .Select(entry =>
+                    entry.GetProperty("score").GetInt32())
+                .Order()
+                .ToArray();
+        }
+
+        private static int[] ReadAccountScores(byte[] payload)
+        {
+            using var document = JsonDocument.Parse(payload);
+            return document.RootElement
+                .GetProperty("scores")
+                .EnumerateArray()
+                .Select(score =>
+                    score.GetProperty("sc").GetInt32())
+                .Order()
+                .ToArray();
+        }
+    }
+
+    private sealed record WorkflowState(
+        bool Frozen,
+        string RunStatus,
+        string RunPhase,
+        int SongStatsPopulation,
+        int MutablePopulation,
+        long VisibleNotifications,
+        IReadOnlyList<int> TargetCacheScores,
+        IReadOnlyList<int> OverlayAccountCacheScores);
+
+    private sealed record SafetyState(
+        bool Frozen,
+        string? RunPhase,
+        string? RunStatus,
+        long StagedCacheRows,
+        bool LiveSentinelPresent,
+        long VisibleNotifications);
+}

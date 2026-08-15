@@ -1217,6 +1217,30 @@ public sealed record MaxScoreMaintenanceObservedScoreCheck(
     int? HighestObservedScore,
     bool Passed);
 
+public sealed record MaxScoreMaintenancePopulationEvidence(
+    int ScopeCount,
+    long MinimumTotalEntries,
+    long MaximumTotalEntries,
+    string Fingerprint);
+
+public sealed record MaxScoreMaintenanceScoreHistoryEvidence(
+    long RowCount,
+    long? MinimumId,
+    long? MaximumId,
+    DateTime? MinimumChangedAtUtc,
+    DateTime? MaximumChangedAtUtc,
+    string Fingerprint);
+
+public sealed record MaxScoreMaintenanceCacheEvidence(
+    long EntryCount,
+    string ContentFingerprint,
+    int TargetScopeCount,
+    string TargetScopeFingerprint,
+    int AffectedAccountCount,
+    string AffectedAccountFingerprint,
+    int OverlayOnlyAccountCount,
+    string OverlayOnlyAccountFingerprint);
+
 public sealed record MaxScoreMaintenancePlanReport(
     int ReportVersion,
     bool CanApply,
@@ -1229,6 +1253,8 @@ public sealed record MaxScoreMaintenancePlanReport(
     string NotificationStateFingerprint,
     string RankHistoryFingerprint,
     string ScoreHistoryFingerprint,
+    MaxScoreMaintenancePopulationEvidence PopulationEvidence,
+    MaxScoreMaintenanceScoreHistoryEvidence ScoreHistoryEvidence,
     IReadOnlyList<string> AffectedInstruments,
     long RoutineCandidateCount,
     IReadOnlyList<MaxScoreMaintenancePlanCheck> Checks,
@@ -1236,7 +1262,7 @@ public sealed record MaxScoreMaintenancePlanReport(
     IReadOnlyList<MaxScoreMaintenanceArtifactEvidence> ArtifactEvidence,
     IReadOnlyList<MaxScoreMaintenanceObservedScoreCheck> ObservedScoreChecks)
 {
-    public const int CurrentReportVersion = 3;
+    public const int CurrentReportVersion = 4;
 }
 
 public enum MaxScoreMaintenancePhase
@@ -1269,10 +1295,11 @@ public sealed record MaxScoreMaintenanceApplyReport(
     long QuarantinedCandidateCount,
     int VisibleDeliveryCount,
     long StagedCacheEntryCount,
+    MaxScoreMaintenanceCacheEvidence? CacheEvidence,
     string? FailureStage,
     string? Detail)
 {
-    public const int CurrentReportVersion = 1;
+    public const int CurrentReportVersion = 2;
 }
 
 internal static class MaxScoreMaintenanceJson

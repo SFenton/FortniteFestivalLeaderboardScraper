@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: f8cf6f02
+last_verified_commit: 3bcf03d6
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -98,8 +98,10 @@ derived rows while retaining the same published scrape/publication ID.
    current rollback and staged artifact trees/hashes plus observed-score
    bounds through the authoritative published snapshot/empty source plus
    supplemental overlay, and fingerprints published score sources,
-   notification state, rank history, and fallback-relevant target
-   `score_history`.
+   notification state, rank history, publication-bound population, and the
+   complete score-history input consumed by registered caches, affected player
+   stats, and all-song rankings for rebuilt instruments. The bounded evidence
+   includes counts/ranges/hashes and never falls back to mutable population.
 4. Apply first acquires the exclusive registration mutation advisory gate and
    waits for active registration/backfill/history lifecycles to drain. Its
    isolated lock session records a durable random owner token/backend identity,
@@ -117,7 +119,9 @@ derived rows while retaining the same published scrape/publication ID.
    affected accounts are requeued.
 6. Maintenance ranking mode bypasses `current_leaderboard_entries` and rebuilds
    affected instruments from the exact published source plus supplemental
-   overlay, then rebuilds composite, family, and combo dependencies.
+   overlay, then rebuilds composite, family, and combo dependencies. One
+   immutable publication-population snapshot is passed to rankings, player
+   stats, and all later cache/validation work.
    Target-song band over-threshold flags are
    recalculated, prior/current affected band projection scopes are refreshed,
    and dependent band rankings are rebuilt. Solo/composite/band rank history is
@@ -135,11 +139,14 @@ derived rows while retaining the same published scrape/publication ID.
    collection. Candidates are persisted in the maintenance quarantine,
    relevant state is aligned, visible delivery remains zero, and the
    publication's completed notification marker is not reopened.
-8. A complete current-publication API cache is built in staging. Final
-   validation requires unchanged rank-history, target score-history, and
-   source fingerprints, exact paths/maxima/song stats, canonical rollback
-   file SHA/identity matching immutable database rows, zero visible delivery,
-   and the expected staged-cache count.
+8. The strict published-source-plus-overlay read context remains active while
+   a complete current-publication API cache is built and validated in staging;
+   active snapshots, worker projection rows, and legacy fallback are forbidden.
+   Final validation requires unchanged rank-history, complete consumed
+   score-history and population evidence, exact paths/maxima/song stats,
+   canonical rollback file SHA/identity matching immutable database rows, zero
+   visible delivery, the whole staged-cache hash, and semantic target-scope,
+   affected-account, and overlay-only-account cache fingerprints.
 9. Cache swap, workflow completion, and freeze release commit atomically in a
    source-locked transaction on the live advisory-lock session while its
    durable mutation token remains set. Disposal releases the publication,

@@ -563,6 +563,90 @@ public sealed class RankingsCalculatorTests : IDisposable
             _metaFixture.Db.PublishScrapeRun(
                 scrapeId,
                 promoteCachedResponses: false);
+            using (var published =
+                   _metaFixture.DataSource.OpenConnection())
+            using (var seedPublished =
+                   published.CreateCommand())
+            {
+                seedPublished.CommandText = """
+                    INSERT INTO leaderboard_entries_snapshot (
+                        snapshot_id,
+                        song_id,
+                        instrument,
+                        account_id,
+                        score,
+                        accuracy,
+                        is_full_combo,
+                        stars,
+                        season,
+                        difficulty,
+                        percentile,
+                        rank,
+                        api_rank,
+                        source,
+                        end_time,
+                        first_seen_at,
+                        last_updated_at)
+                    SELECT @scrapeId,
+                           song_id,
+                           instrument,
+                           account_id,
+                           score,
+                           accuracy,
+                           is_full_combo,
+                           stars,
+                           season,
+                           difficulty,
+                           percentile,
+                           rank,
+                           api_rank,
+                           source,
+                           end_time,
+                           first_seen_at,
+                           last_updated_at
+                    FROM leaderboard_entries
+                    WHERE song_id = 'song_0'
+                      AND instrument =
+                          'Solo_PeripheralGuitar';
+
+                    INSERT INTO leaderboard_published_scope_source (
+                        published_scrape_id,
+                        song_id,
+                        instrument,
+                        scope_kind,
+                        source_kind,
+                        source_snapshot_id,
+                        source_scrape_id,
+                        row_count,
+                        content_fingerprint,
+                        coverage_fingerprint,
+                        reported_total_entries,
+                        reported_total_pages,
+                        is_complete,
+                        created_at,
+                        validated_at)
+                    VALUES (
+                        @scrapeId,
+                        'song_0',
+                        'Solo_PeripheralGuitar',
+                        'alltime',
+                        'snapshot',
+                        @scrapeId,
+                        @scrapeId,
+                        2,
+                        md5('ranking-maintenance-source'),
+                        md5('ranking-maintenance-coverage'),
+                        2,
+                        1,
+                        TRUE,
+                        now(),
+                        now());
+                    """;
+                seedPublished.Parameters.AddWithValue(
+                    "scrapeId",
+                    scrapeId);
+                seedPublished.ExecuteNonQuery();
+            }
             var publicationId = _metaFixture.Db
                 .GetPublicationPointerState()
                 .CurrentPublicationId!.Value;
@@ -570,9 +654,16 @@ public sealed class RankingsCalculatorTests : IDisposable
                 await _metaFixture.Db
                     .AcquireMaxScoreMaintenanceLeaseAsync(
                         publicationId);
+            using var publishedReadPass =
+                _persistence
+                    .BeginMaxScoreMaintenancePublishedReadPass();
+            var publicationPopulation =
+                _persistence
+                    .GetCurrentStateLeaderboardPopulation();
             await _sut.ComputeForMaxScoreMaintenanceAsync(
                 service,
                 ["Solo_PeripheralGuitar"],
+                publicationPopulation,
                 maintenanceLease,
                 CancellationToken.None);
 

@@ -49,11 +49,17 @@ public sealed class MaxScoreMaintenanceDerivedStateService
     public async Task<MaxScoreMaintenanceDerivedStateResult> RebuildAsync(
         MaxScoreMaintenanceManifest manifest,
         IReadOnlyList<Song> publishedCatalogSongs,
+        IReadOnlyDictionary<
+            (string SongId, string Instrument),
+            long> publicationPopulation,
+        IReadOnlyCollection<string> affectedStatsAccounts,
         IMaxScoreMaintenanceLease maintenanceLease,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(publishedCatalogSongs);
+        ArgumentNullException.ThrowIfNull(publicationPopulation);
+        ArgumentNullException.ThrowIfNull(affectedStatsAccounts);
         ArgumentNullException.ThrowIfNull(maintenanceLease);
         if (publishedCatalogSongs.Count != manifest.CatalogSongCount)
         {
@@ -69,12 +75,12 @@ public sealed class MaxScoreMaintenanceDerivedStateService
                 "Max-score derived rebuild has no affected instruments.");
         }
 
-        _persistence.InitializeReadOnly();
-        using var publishedReadPass =
-            _persistence
-                .BeginMaxScoreMaintenancePublishedReadPass();
-        foreach (var instrument in GlobalLeaderboardScraper.AllInstruments)
-            _persistence.GetOrCreateInstrumentDb(instrument);
+        if (!_persistence
+                .IsMaxScoreMaintenancePublishedReadPassActive)
+        {
+            throw new InvalidOperationException(
+                "Max-score derived rebuild requires the strict published-source read context.");
+        }
 
         var festivalService =
             FestivalService.CreateFromSongCatalogSnapshot(
@@ -129,26 +135,17 @@ public sealed class MaxScoreMaintenanceDerivedStateService
         await _rankings.ComputeForMaxScoreMaintenanceAsync(
             festivalService,
             affectedInstruments,
+            publicationPopulation,
             maintenanceLease,
             ct);
 
-        var affectedStatsAccounts =
-            await maintenanceLease.ExecuteTransactionAsync(
-                "derived-affected-player-stats-accounts",
-                requireSourceLocks: true,
-                (connection, transaction, token) =>
-                    LoadAffectedPlayerStatsAccountsAsync(
-                        manifest,
-                        connection,
-                        transaction,
-                        token),
-                ct: ct);
         await PlayerStatsTierRebuilder
             .RebuildForMaxScoreMaintenanceAsync(
             _persistence,
             _pathDataStore,
             affectedStatsAccounts,
             _log,
+            publicationPopulation,
             maintenanceLease,
             ct);
 
