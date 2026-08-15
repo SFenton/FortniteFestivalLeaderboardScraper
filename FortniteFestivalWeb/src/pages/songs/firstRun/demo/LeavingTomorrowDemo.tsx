@@ -18,7 +18,7 @@ const ROW_H_MOBILE = Layout.demoRowMobileHeight;
  * Shows three states: red-pulsing (leaving), green-pulsing (in shop), and plain (not in shop).
  */
 export default function LeavingTomorrowDemo() {
-  const { t } = useTranslation();
+  const { t } = useTranslation(['translation', 'firstRun'], { nsMode: 'fallback' });
   const isMobile = useIsMobile();
   const { state: { songs } } = useFestival();
   const { shopSongIds, leavingTomorrowIds } = useShop();
