@@ -38,6 +38,7 @@ public sealed class RankingsCalculator
 
     /// <summary>Base threshold multiplier for CHOpt max score filtering (+5.0% leeway).</summary>
     private const double BaseThresholdMultiplier = 1.05;
+    private const double RankingRateTolerance = 1e-9;
 
     internal static int ComputeMaxScoreThreshold(int maxScore)
         => (int)(maxScore * BaseThresholdMultiplier);
@@ -208,6 +209,12 @@ public sealed class RankingsCalculator
             : populationOverride
               ?? throw new InvalidOperationException(
                   "Max-score rankings require an immutable publication population snapshot.");
+        var currentCatalogSongIds = festivalService.Songs
+            .Select(static song => song.track?.su)
+            .Where(static songId => !string.IsNullOrWhiteSpace(songId))
+            .Select(static songId => songId!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
         if (maintenanceLease is not null)
         {
             var publishedScopes = allPopulation.Keys.ToHashSet();
@@ -228,7 +235,8 @@ public sealed class RankingsCalculator
                 instrument => CountChartedSongs(
                     festivalService.Songs,
                     instrument,
-                    pathGenerationStates),
+                    pathGenerationStates,
+                    allPopulation),
                 StringComparer.OrdinalIgnoreCase)
             : instruments.ToDictionary(
                 instrument => instrument,
@@ -254,6 +262,8 @@ public sealed class RankingsCalculator
         // Each instrument's ranking pipeline boosts work_mem to 256MB per-session
         // (temp table + indexes + 5 ROW_NUMBER window functions). 6 concurrent
         // pipelines × ~1GB peak would exceed the container memory limit.
+        var rebuiltInstruments = new ConcurrentDictionary<string, byte>(
+            StringComparer.OrdinalIgnoreCase);
         await Parallel.ForEachAsync(instrumentsToRebuild,
             new ParallelOptions
             {
@@ -448,6 +458,7 @@ public sealed class RankingsCalculator
 
                 db.MaterializeCurrentStateValidEntries(
                     conn,
+                    currentCatalogSongIds,
                     BaseThresholdMultiplier);
                 matSw.Stop();
                 arSw.Start();
@@ -477,6 +488,7 @@ public sealed class RankingsCalculator
                         db.MaterializeCurrentStateValidEntries(
                             connection,
                             transaction,
+                            currentCatalogSongIds,
                             BaseThresholdMultiplier);
                         matSw.Stop();
                         arSw.Start();
@@ -492,6 +504,7 @@ public sealed class RankingsCalculator
                     },
                     ct: innerCt);
             }
+            rebuiltInstruments.TryAdd(instrument, 0);
             _log.LogDebug("{Instrument}: materialized valid entries in {Elapsed}.", instrument, matSw.Elapsed);
             LogPhase("per_instrument.materialize_valid_entries", instrument, matSw.Elapsed);
 
@@ -530,7 +543,15 @@ public sealed class RankingsCalculator
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
 
             var full = new Dictionary<string, AccountMetrics>(StringComparer.OrdinalIgnoreCase);
-            foreach (var summary in db.GetAllRankingSummariesDetailed())
+            var summaries = db.GetAllRankingSummariesDetailed();
+            if (rebuiltInstruments.ContainsKey(instrument))
+            {
+                ValidateInstrumentRankingSummaries(
+                    instrument,
+                    totalChartedByInstrument[instrument],
+                    summaries);
+            }
+            foreach (var summary in summaries)
                 full[summary.AccountId] = new AccountMetrics(
                     summary.AdjustedSkillRating,
                     summary.WeightedRating,
@@ -1462,13 +1483,17 @@ public sealed class RankingsCalculator
             songs,
             instrument,
             new Dictionary<string, PathGenerationState>(
-                StringComparer.OrdinalIgnoreCase));
+                StringComparer.OrdinalIgnoreCase),
+            populationByScope: null);
 
     internal static int CountChartedSongs(
         IEnumerable<Song> songs,
         string instrument,
         IReadOnlyDictionary<string, PathGenerationState>
-            pathGenerationStates)
+            pathGenerationStates,
+        IReadOnlyDictionary<
+            (string SongId, string Instrument),
+            long>? populationByScope = null)
     {
         ArgumentNullException.ThrowIfNull(pathGenerationStates);
         if (!GlobalLeaderboardScraper.AllInstruments.Contains(
@@ -1478,26 +1503,103 @@ public sealed class RankingsCalculator
             return 0;
         }
 
-        return songs.Count(song =>
+        var count = 0;
+        var seenSongIds = new HashSet<string>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var song in songs)
         {
+            var songId = song.track?.su;
+            if (string.IsNullOrWhiteSpace(songId)
+                || !seenSongIds.Add(songId))
+            {
+                continue;
+            }
+
             if (GlobalLeaderboardScraper.TrackSupportsInstrument(
                     song.track,
                     instrument))
             {
-                return true;
+                count++;
+                continue;
             }
 
-            var songId = song.track?.su;
-            return songId is not null
-                && pathGenerationStates.TryGetValue(
+            if (pathGenerationStates.TryGetValue(
                     songId,
                     out var pathState)
                 && GlobalLeaderboardScraper
                     .PathStateSupportsInstrument(
                         song,
                         pathState,
-                        instrument);
-        });
+                        instrument))
+            {
+                count++;
+                continue;
+            }
+
+            if (populationByScope is not null
+                && populationByScope.TryGetValue(
+                    (songId, instrument),
+                    out var population)
+                && population > 0)
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    internal static void ValidateInstrumentRankingSummaries(
+        string instrument,
+        int expectedTotalChartedSongs,
+        IReadOnlyCollection<AccountRankingSummary> summaries)
+    {
+        ArgumentNullException.ThrowIfNull(summaries);
+        if (summaries.Count == 0)
+            return;
+
+        var invalidCount = 0;
+        string? firstInvalid = null;
+        foreach (var summary in summaries)
+        {
+            var reasons = new List<string>(5);
+            if (summary.TotalChartedSongs != expectedTotalChartedSongs)
+                reasons.Add("denominator_mismatch");
+            if (summary.SongsPlayed > summary.TotalChartedSongs)
+                reasons.Add("songs_played_exceeds_denominator");
+            if (summary.FullComboCount > summary.TotalChartedSongs)
+                reasons.Add("full_combo_count_exceeds_denominator");
+            if (!double.IsFinite(summary.Coverage)
+                || summary.Coverage < -RankingRateTolerance
+                || summary.Coverage > 1.0 + RankingRateTolerance)
+            {
+                reasons.Add("coverage_out_of_range");
+            }
+            if (!double.IsFinite(summary.FcRate)
+                || summary.FcRate < -RankingRateTolerance
+                || summary.FcRate > 1.0 + RankingRateTolerance)
+            {
+                reasons.Add("fc_rate_out_of_range");
+            }
+
+            if (reasons.Count == 0)
+                continue;
+
+            invalidCount++;
+            firstInvalid ??=
+                $"account={summary.AccountId}, expectedDenominator={expectedTotalChartedSongs}, " +
+                $"denominator={summary.TotalChartedSongs}, songs={summary.SongsPlayed}, " +
+                $"fullCombos={summary.FullComboCount}, coverage={summary.Coverage:R}, " +
+                $"fcRate={summary.FcRate:R}, reason={string.Join(",", reasons)}";
+        }
+
+        if (invalidCount > 0)
+        {
+            throw new InvalidOperationException(
+                $"Instrument ranking build for {instrument} produced " +
+                $"{invalidCount:N0} publication-incompatible row(s). " +
+                $"First invalid row: {firstInvalid}.");
+        }
     }
 
     private static double? GetInstrumentSkill(Dictionary<string, AccountMetrics> data, string instrument)
