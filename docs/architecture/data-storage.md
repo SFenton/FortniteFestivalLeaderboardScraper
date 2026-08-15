@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-08-14
-last_verified_commit: 80346e04
+last_verified: 2026-08-15
+last_verified_commit: afc475f6
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -11,6 +11,7 @@ sources:
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
   - FSTService/Persistence/MaxScoreMaintenanceSchema.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
+  - FSTService/Persistence/MaxScoreMaintenanceScoreHistoryEvidence.cs
   - FSTService/Persistence/MaxScoreMaintenanceCacheEntryEvidenceStore.cs
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
   - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
@@ -146,9 +147,22 @@ those rows cannot leak into the maintenance cache generation.
 
 The score-history aggregate covers all registered-account history consumed by
 player/history caches, fallback tiers for affected player-stat accounts, and
-fallback candidates across every song in each rebuilt instrument. It uses
-fixed-width count/range/sum/xor evidence rather than an unbounded ordered
-payload aggregation.
+fallback candidates across every song in each rebuilt instrument. Narrow
+transaction-local selectors resolve authoritative snapshot rows followed by
+supplemental overlay precedence for all affected-instrument rows and exact
+affected-account rows on other instruments. The resulting affected,
+registered-cache, overlay-only-cache, and fallback sets are reused throughout
+the same read snapshot.
+
+Registered history uses a semi-join against distinct registrations, while
+nonregistered history uses unique account/song/instrument fallback keys and
+the existing score-history lookup index. The two branches aggregate
+independently to count, ID/time ranges, and typed hash sum/xor state, then
+combine associatively into the report fingerprint. No history row is copied to
+a temporary table or serialized as JSON. Selector tables are `ON COMMIT DROP`
+and also removed explicitly; a savepoint restores the caller's maintenance
+transaction after cancellation or timeout without releasing its pre-existing
+publication/source fences.
 
 `improvement_notification_maintenance_runs` and
 `improvement_notification_maintenance_candidates` retain historical

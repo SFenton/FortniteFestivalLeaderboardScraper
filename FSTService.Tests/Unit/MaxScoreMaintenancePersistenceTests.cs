@@ -7,7 +7,7 @@ using Npgsql;
 
 namespace FSTService.Tests.Unit;
 
-public sealed class MaxScoreMaintenancePersistenceTests
+public sealed partial class MaxScoreMaintenancePersistenceTests
 {
     [Fact]
     public void Notification_classification_quarantines_only_affected_rank_lanes()
@@ -713,6 +713,15 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     connection,
                     transaction,
                     CancellationToken.None);
+            var reference =
+                await MaxScoreMaintenanceService
+                    .ComputeScoreHistoryEvidenceReferenceAsync(
+                        manifest,
+                        postPromotionMaxScores,
+                        connection,
+                        transaction,
+                        CancellationToken.None);
+            Assert.Equal(reference, evidence);
             return evidence.Fingerprint;
         }
     }

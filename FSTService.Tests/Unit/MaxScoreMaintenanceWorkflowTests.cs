@@ -53,7 +53,7 @@ public sealed class MaxScoreMaintenanceWorkflowTests
     }
 
     [Fact]
-    public async Task Plan_apply_and_resume_use_the_same_configured_evidence_timeout()
+    public async Task Plan_apply_and_resume_preserve_evidence_and_use_one_configured_deadline()
     {
         const int commandTimeoutSeconds = 1800;
         await using var fixture =
@@ -92,6 +92,9 @@ public sealed class MaxScoreMaintenanceWorkflowTests
         Assert.False(interrupted.Succeeded);
         Assert.True(interrupted.Resumable);
         Assert.True(interrupted.PublicReadsFrozen);
+        Assert.Equal(
+            plan.ScoreHistoryEvidence,
+            fixture.ReadDurableScoreHistoryEvidence());
         AssertConfiguredEvidenceTimeouts(
             configured,
             commandTimeoutSeconds);
@@ -106,6 +109,9 @@ public sealed class MaxScoreMaintenanceWorkflowTests
         Assert.True(
             resumed.Succeeded,
             fixture.LastFailure?.ToString());
+        Assert.Equal(
+            plan.ScoreHistoryEvidence,
+            fixture.ReadDurableScoreHistoryEvidence());
         AssertConfiguredEvidenceTimeouts(
             configured,
             commandTimeoutSeconds);
@@ -145,6 +151,9 @@ public sealed class MaxScoreMaintenanceWorkflowTests
             result.Phase);
         Assert.False(result.PublicReadsFrozen);
         Assert.False(result.Resumable);
+        Assert.Equal(
+            plan.ScoreHistoryEvidence,
+            fixture.ReadDurableScoreHistoryEvidence());
         Assert.NotNull(result.CacheEvidence);
         Assert.Equal(1, result.CacheEvidence!.OverlayOnlyAccountCount);
 
@@ -1116,6 +1125,29 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                        MaxScoreMaintenanceJson.Strict)
                    ?? throw new InvalidOperationException(
                        "Durable cache evidence was not found.");
+        }
+
+        internal MaxScoreMaintenanceScoreHistoryEvidence
+            ReadDurableScoreHistoryEvidence()
+        {
+            using var connection =
+                _dataSource.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT score_history_evidence::TEXT
+                FROM max_score_maintenance_runs
+                WHERE manifest_sha256 = @manifestDigest
+                """;
+            command.Parameters.AddWithValue(
+                "manifestDigest",
+                Manifest.ComputeDigest());
+            return JsonSerializer.Deserialize<
+                       MaxScoreMaintenanceScoreHistoryEvidence>(
+                       Convert.ToString(
+                           command.ExecuteScalar())!,
+                       MaxScoreMaintenanceJson.Strict)
+                   ?? throw new InvalidOperationException(
+                       "Durable score-history evidence was not found.");
         }
 
         internal async Task

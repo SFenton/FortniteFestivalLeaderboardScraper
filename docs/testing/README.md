@@ -2,12 +2,13 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-15
-last_verified_commit: 24a3175c
+last_verified_commit: afc475f6
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
   - FSTService.Tests/Unit/MaxScoreMaintenanceCommandTests.cs
   - FSTService.Tests/Unit/MaxScoreMaintenancePersistenceTests.cs
+  - FSTService.Tests/Unit/MaxScoreMaintenanceScoreHistoryEvidenceTests.cs
   - FSTService.Tests/Unit/MaxScoreMaintenanceWorkflowTests.cs
   - FSTService.Tests/Unit/ScraperOptionsAndModelsTests.cs
   - FSTService.Tests/Unit/PlayerStatsTierPersistenceTests.cs
@@ -68,6 +69,13 @@ dotnet test FSTService.Tests/FSTService.Tests.csproj \
   --filter 'FullyQualifiedName~MaxScoreMaintenance|FullyQualifiedName~PlayerStatsTierPersistenceTests|FullyQualifiedName~RankingsCalculatorTests|FullyQualifiedName~ScrapeTimePrecomputerTests|FullyQualifiedName~MetaDatabaseTests'
 ```
 
+Focused score-history selector differential and cleanup validation:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj \
+  --filter 'FullyQualifiedName~Score_history_evidence_|FullyQualifiedName~Plan_apply_and_resume_preserve_evidence'
+```
+
 This matrix covers the `caches_staged` non-owner lease/DML/truncate fence and
 owner resume, immutable cache-entry evidence, zero-entry published
 `song_stats`, active-only row/ranking removal, complete affected-account tier
@@ -79,6 +87,17 @@ and resume. Final-completion coverage also verifies that PostgreSQL uses the
 configured timeout for immutable cache validation, retains the `5s` lock
 timeout and serializable transaction, restores the `120s` mutation timeout,
 and leaves validation failures frozen.
+
+The focused score-history matrix compares the optimized selector/branch
+aggregates with the former global resolver on a deterministic randomized
+fixture. Named cases cover multi-device registration deduplication, registered
+history outside affected scopes, player fallback on another instrument,
+ranking fallback on another song, strict current/history thresholds,
+player/ranking overlap, and snapshot/overlay precedence. Lock-blocked
+cancellation and shared-deadline timeout cases require savepoint cleanup, no
+remaining selector temp tables, and two successful repeated invocations in the
+same repeatable-read transaction. Workflow assertions require plan, apply, and
+resume to persist identical score-history evidence.
 
 The Tier-0 native filesystem syscall shim is excluded from the aggregate line
 denominator because its branches are operating-system ABI specific. Focused

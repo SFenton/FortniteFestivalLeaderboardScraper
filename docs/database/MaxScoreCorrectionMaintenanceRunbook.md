@@ -2,7 +2,7 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-15
-last_verified_commit: 24a3175c
+last_verified_commit: afc475f6
 sources:
   - FSTService/ScraperOptions.cs
   - FSTService/Api/AdminEndpoints.cs
@@ -11,6 +11,7 @@ sources:
   - FSTService/Persistence/MaxScoreMaintenanceFileStore.cs
   - FSTService/Persistence/MaxScoreMaintenanceSchema.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
+  - FSTService/Persistence/MaxScoreMaintenanceScoreHistoryEvidence.cs
   - FSTService/Persistence/MaxScoreMaintenanceCommandTimeout.cs
   - FSTService/Persistence/MaxScoreMaintenanceCacheEntryEvidenceStore.cs
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
@@ -421,18 +422,71 @@ digests:
 
 Plan report version 4 performs two live-scale bounded aggregates. Population
 evidence visits each current published scope and its resolved overlay rows.
-Score-history evidence scans all history for registered accounts plus indexed
-fallback candidates for affected accounts/instruments, but retains only
-count/min/max and two fixed-width hash aggregates; it does not build an
-unbounded `string_agg`. Budget the plan like one full registered-history read
-plus affected-instrument fallback discovery. The behavior-safe default is 600
-seconds; this production procedure uses the reviewed 1,800-second override for
-every plan/apply/resume evidence and revalidation command. Valid values are
-`1`-`86400`. Cancellation remains fail-closed, and the same value is installed
-as the transaction-local PostgreSQL statement timeout where maintenance
-transactions require one. A failed plan's `plan` check reports
+Score-history evidence now prepares narrow `ON COMMIT DROP` selectors under the
+existing repeatable-read/source-lock transaction:
+
+- post-promotion maxima and current published source bindings;
+- resolved current candidates for every row in an affected instrument, plus
+  exact snapshot/overlay primary-key lookups for affected accounts on other
+  instruments;
+- one deduplicated affected-account set, including registered and
+  overlay-only cache subsets;
+- unique nonregistered fallback scopes.
+
+Published snapshot rows are inserted first and supplemental overlay rows use
+deterministic `ON CONFLICT` precedence identical to the authoritative
+`InstrumentDatabase` resolver. The selector path has no publication-wide
+`DISTINCT ON` sort. It reuses the affected/cache account sets for downstream
+player-stat and cache work instead of resolving them again.
+
+The registered branch reads all history once through an `EXISTS` semi-join
+against distinct account registrations, so multiple registered devices cannot
+duplicate a history row. The nonregistered branch probes the existing
+`ix_sh_valid_lookup` account/song/instrument/score index from unique exact
+fallback scopes. Player fallbacks still require current score greater than the
+maximum; ranking fallbacks require current score greater than the 5% threshold;
+both admit only history at or below that threshold. Overlap is unique.
+Each branch emits only count, ID/time extrema, and typed 64-bit hash sum/XOR
+state. The application combines those associative values into the unchanged
+report fingerprint envelope. There is no history-sized temporary relation,
+ordered payload aggregation, or per-row JSON serialization.
+
+Expected work is:
+
+```text
+selector I/O =
+  affected-instrument current rows
+  + affected-account exact lookups on other instruments
+history I/O =
+  one registered-history semi-join
+  + indexed rows for unique nonregistered fallback scopes
+temporary space =
+  narrow current selectors and fallback keys, never score_history rows
+```
+
+No new index is part of this optimization; differential fixtures exercise the
+existing snapshot/overlay primary keys and `ix_sh_valid_lookup`.
+
+The configured timeout is one shared wall-clock deadline across selector
+preparation and both aggregates, not a fresh allowance per command. A
+savepoint plus explicit cleanup keeps cancellation/timeout safe and permits a
+repeat invocation in the same maintenance transaction without changing the
+source locks or publication fence. The behavior-safe default remains 600
+seconds; this production procedure uses the reviewed 1,800-second override.
+Valid values are `1`-`86400`. A failed plan's `plan` check reports
 `stage=<sanitized-evidence-stage>` plus the base exception message, never SQL or
 connection data.
+
+### 2026-08-15 production evidence
+
+Publication `1299` remained authoritative and unfrozen, notifications were
+complete, and the worker was stopped. The exact promotion manifest was staged
+immutably. The pre-optimization plan failed closed at
+`complete-score-history-evidence` under both 600-second and 1,800-second
+deadlines; PostgreSQL used about 6 GB of temporary space and remained
+I/O-bound. No freeze, path promotion, database mutation, merge, or deployment
+occurred. These are before-only measurements; rerun plan after review/deploy to
+capture matched after evidence before authorizing apply.
 
 Apply/resume reports use strict version 3. Legacy version 2, unknown fields,
 and a report at `caches_staged` or later without the complete

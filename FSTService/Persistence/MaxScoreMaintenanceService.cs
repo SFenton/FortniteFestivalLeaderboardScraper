@@ -2149,8 +2149,9 @@ public sealed class MaxScoreMaintenanceService
                 token,
                 _options
                     .MaxScoreMaintenanceCommandTimeoutSeconds);
-        var scoreHistoryEvidence =
-            await ComputeScoreHistoryEvidenceAsync(
+        var scoreHistorySnapshot =
+            await MaxScoreMaintenanceScoreHistoryEvidenceCalculator
+                .ComputeAsync(
                 manifest,
                 readSnapshot.PostPromotionMaxScores,
                 conn,
@@ -2159,6 +2160,8 @@ public sealed class MaxScoreMaintenanceService
                 _options
                     .MaxScoreMaintenanceCommandTimeoutSeconds,
                 EvidenceCommandTimeoutTestHook);
+        var scoreHistoryEvidence =
+            scoreHistorySnapshot.Evidence;
         if (scoreHistoryEvidence
                 != readSnapshot.ScoreHistoryEvidence
             || scoreHistoryEvidence
@@ -2166,6 +2169,28 @@ public sealed class MaxScoreMaintenanceService
         {
             throw new InvalidOperationException(
                 "Score history changed during max-score maintenance.");
+        }
+        if (!scoreHistorySnapshot
+                .AffectedPlayerStatsAccounts
+                .SequenceEqual(
+                    readSnapshot
+                        .AffectedPlayerStatsAccounts,
+                    StringComparer.Ordinal)
+            || !scoreHistorySnapshot
+                .AffectedRegisteredAccounts
+                .SequenceEqual(
+                    readSnapshot
+                        .AffectedRegisteredAccounts,
+                    StringComparer.Ordinal)
+            || !scoreHistorySnapshot
+                .OverlayOnlyRegisteredAccounts
+                .SequenceEqual(
+                    readSnapshot
+                        .OverlayOnlyRegisteredAccounts,
+                    StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Affected score-history account selectors changed during max-score maintenance.");
         }
 
         var publishedInstruments = readSnapshot.PublishedScopes
@@ -3219,6 +3244,31 @@ public sealed class MaxScoreMaintenanceService
                 ScraperOptions
                     .DefaultMaxScoreMaintenanceCommandTimeoutSeconds,
             Action<string, int>? commandTimeoutConfigured = null)
+        => (
+            await MaxScoreMaintenanceScoreHistoryEvidenceCalculator
+                .ComputeAsync(
+                    manifest,
+                    postPromotionMaxScores,
+                    connection,
+                    transaction,
+                    ct,
+                    commandTimeoutSeconds,
+                    commandTimeoutConfigured))
+            .Evidence;
+
+    // Differential-test oracle for the pre-optimization selector semantics.
+    internal static async Task<MaxScoreMaintenanceScoreHistoryEvidence>
+        ComputeScoreHistoryEvidenceReferenceAsync(
+            MaxScoreMaintenanceManifest manifest,
+            IReadOnlyDictionary<string, SongMaxScores>
+                postPromotionMaxScores,
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            CancellationToken ct,
+            int commandTimeoutSeconds =
+                ScraperOptions
+                    .DefaultMaxScoreMaintenanceCommandTimeoutSeconds,
+            Action<string, int>? commandTimeoutConfigured = null)
     {
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(postPromotionMaxScores);
@@ -3302,7 +3352,7 @@ public sealed class MaxScoreMaintenanceService
                  AND changed.instrument =
                      resolved.instrument
             ), registered_accounts AS MATERIALIZED (
-                SELECT account_id
+                SELECT DISTINCT account_id
                 FROM registered_users
             ), player_stats_fallback_scopes AS MATERIALIZED (
                 SELECT resolved.song_id,
@@ -3376,60 +3426,95 @@ public sealed class MaxScoreMaintenanceService
                       FROM affected_player_accounts affected
                       WHERE affected.account_id =
                           history.account_id)
-            ), canonical_rows AS MATERIALIZED (
-                SELECT id,
-                       changed_at,
-                       jsonb_build_array(
-                           id,
-                           song_id,
-                           instrument,
-                           account_id,
-                           old_score,
-                           new_score,
-                           old_rank,
-                           new_rank,
-                           accuracy,
-                           is_full_combo,
-                           stars,
-                           percentile,
-                           season,
-                           CASE
-                               WHEN score_achieved_at IS NULL
-                                   THEN NULL
-                               ELSE (
-                                   EXTRACT(
-                                       EPOCH FROM
-                                           score_achieved_at)
-                                   * 1000000)::BIGINT
-                           END,
-                           season_rank,
-                           all_time_rank,
-                           difficulty,
-                           (
-                               EXTRACT(
-                                   EPOCH FROM changed_at)
-                               * 1000000)::BIGINT)::TEXT
-                           AS row_identity
-                FROM relevant_history
             ), aggregate_evidence AS (
                 SELECT COUNT(*)::BIGINT AS row_count,
-                       MIN(id)::BIGINT AS minimum_id,
-                       MAX(id)::BIGINT AS maximum_id,
-                       MIN(changed_at) AS minimum_changed_at,
-                       MAX(changed_at) AS maximum_changed_at,
+                       MIN(history.id)::BIGINT AS minimum_id,
+                       MAX(history.id)::BIGINT AS maximum_id,
+                       MIN(history.changed_at)
+                           AS minimum_changed_at,
+                       MAX(history.changed_at)
+                           AS maximum_changed_at,
                        COALESCE(
                            SUM(
-                               hashtextextended(
-                                   row_identity,
+                               hash_record_extended(
+                                   ROW(
+                                       history.id,
+                                       history.song_id,
+                                       history.instrument,
+                                       history.account_id,
+                                       history.old_score,
+                                       history.new_score,
+                                       history.old_rank,
+                                       history.new_rank,
+                                       history.accuracy,
+                                       history.is_full_combo,
+                                       history.stars,
+                                       history.percentile,
+                                       history.season,
+                                       CASE
+                                           WHEN
+                                               history
+                                                   .score_achieved_at
+                                               IS NULL
+                                               THEN NULL::BIGINT
+                                           ELSE (
+                                               EXTRACT(
+                                                   EPOCH FROM
+                                                       history
+                                                           .score_achieved_at)
+                                               * 1000000)::BIGINT
+                                       END,
+                                       history.season_rank,
+                                       history.all_time_rank,
+                                       history.difficulty,
+                                       (
+                                           EXTRACT(
+                                               EPOCH FROM
+                                                   history.changed_at)
+                                           * 1000000)::BIGINT),
                                    0)::NUMERIC),
                            0)::TEXT AS hash_sum,
                        COALESCE(
                            bit_xor(
-                               hashtextextended(
-                                   row_identity,
+                               hash_record_extended(
+                                   ROW(
+                                       history.id,
+                                       history.song_id,
+                                       history.instrument,
+                                       history.account_id,
+                                       history.old_score,
+                                       history.new_score,
+                                       history.old_rank,
+                                       history.new_rank,
+                                       history.accuracy,
+                                       history.is_full_combo,
+                                       history.stars,
+                                       history.percentile,
+                                       history.season,
+                                       CASE
+                                           WHEN
+                                               history
+                                                   .score_achieved_at
+                                               IS NULL
+                                               THEN NULL::BIGINT
+                                           ELSE (
+                                               EXTRACT(
+                                                   EPOCH FROM
+                                                       history
+                                                           .score_achieved_at)
+                                               * 1000000)::BIGINT
+                                       END,
+                                       history.season_rank,
+                                       history.all_time_rank,
+                                       history.difficulty,
+                                       (
+                                           EXTRACT(
+                                               EPOCH FROM
+                                                   history.changed_at)
+                                           * 1000000)::BIGINT),
                                    1)),
                            0)::TEXT AS hash_xor
-                FROM canonical_rows
+                FROM relevant_history history
             )
             SELECT row_count,
                    minimum_id,
@@ -3725,23 +3810,9 @@ public sealed class MaxScoreMaintenanceService
                         manifest,
                         publishedCatalogSongs,
                         publishedScopes);
-                var affectedAccounts =
-                    await MaxScoreMaintenanceDerivedStateService
-                        .LoadAffectedPlayerStatsAccountsAsync(
-                            manifest,
-                            connection,
-                            transaction,
-                            token,
-                            _options
-                                .MaxScoreMaintenanceCommandTimeoutSeconds);
-                var cacheAccounts =
-                    await LoadAffectedCacheAccountsAsync(
-                        manifest,
-                        connection,
-                        transaction,
-                        token);
                 var scoreHistory =
-                    await ComputeScoreHistoryEvidenceAsync(
+                    await MaxScoreMaintenanceScoreHistoryEvidenceCalculator
+                        .ComputeAsync(
                         manifest,
                         postPromotionMaxScores,
                         connection,
@@ -3755,11 +3826,14 @@ public sealed class MaxScoreMaintenanceService
                         StringComparer.OrdinalIgnoreCase),
                     population.Population,
                     population.Evidence,
-                    scoreHistory,
+                    scoreHistory.Evidence,
                     publishedScopes,
-                    affectedAccounts.ToArray(),
-                    cacheAccounts.RegisteredAccounts.ToArray(),
-                    cacheAccounts.OverlayOnlyAccounts.ToArray());
+                    scoreHistory
+                        .AffectedPlayerStatsAccounts,
+                    scoreHistory
+                        .AffectedRegisteredAccounts,
+                    scoreHistory
+                        .OverlayOnlyRegisteredAccounts);
             },
             IsolationLevel.RepeatableRead,
             ct);
@@ -3808,95 +3882,6 @@ public sealed class MaxScoreMaintenanceService
                 }
             }
         }
-    }
-
-    private async Task<AffectedCacheAccounts>
-        LoadAffectedCacheAccountsAsync(
-            MaxScoreMaintenanceManifest manifest,
-            NpgsqlConnection connection,
-            NpgsqlTransaction transaction,
-            CancellationToken ct)
-    {
-        var changedPairs = manifest.Songs
-            .SelectMany(song => song.ChangedInstruments.Select(
-                instrument => (
-                    song.SongId,
-                    Instrument: instrument)))
-            .OrderBy(pair => pair.SongId, StringComparer.Ordinal)
-            .ThenBy(pair => pair.Instrument, StringComparer.Ordinal)
-            .ToArray();
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        ConfigureEvidenceCommandTimeout(
-            command,
-            "affected-cache-account-evidence");
-        command.CommandText = $"""
-            WITH affected(song_id, instrument) AS (
-                SELECT *
-                FROM unnest(
-                    @songIds::TEXT[],
-                    @instruments::TEXT[])
-            ),
-            {PublishedSoloScopeSql.CurrentResolvedAffectedEntriesCte},
-            affected_accounts AS MATERIALIZED (
-                SELECT DISTINCT resolved.account_id
-                FROM resolved_rows resolved
-            )
-            SELECT affected.account_id,
-                   EXISTS (
-                       SELECT 1
-                       FROM registered_users registered
-                       WHERE registered.account_id =
-                           affected.account_id),
-                   EXISTS (
-                       SELECT 1
-                       FROM leaderboard_entries_overlay overlay
-                       JOIN selected_sources selected
-                         ON selected.song_id = overlay.song_id
-                        AND selected.instrument =
-                            overlay.instrument
-                       WHERE overlay.account_id =
-                                 affected.account_id
-                         AND NOT EXISTS (
-                             SELECT 1
-                             FROM leaderboard_entries_snapshot snapshot
-                             WHERE selected.source_kind =
-                                       'snapshot'
-                               AND snapshot.snapshot_id =
-                                   selected.source_snapshot_id
-                               AND snapshot.song_id =
-                                   selected.song_id
-                               AND snapshot.instrument =
-                                   selected.instrument
-                               AND snapshot.account_id =
-                                   affected.account_id))
-            FROM affected_accounts affected
-            ORDER BY affected.account_id
-            """;
-        command.Parameters.Add(
-            "songIds",
-            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
-            changedPairs.Select(pair => pair.SongId).ToArray();
-        command.Parameters.Add(
-            "instruments",
-            NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
-            changedPairs.Select(pair => pair.Instrument).ToArray();
-        var registered = new List<string>();
-        var overlayOnly = new List<string>();
-        await using var reader =
-            await command.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
-        {
-            if (!reader.GetBoolean(1))
-                continue;
-            var accountId = reader.GetString(0);
-            registered.Add(accountId);
-            if (reader.GetBoolean(2))
-                overlayOnly.Add(accountId);
-        }
-        return new AffectedCacheAccounts(
-            registered,
-            overlayOnly);
     }
 
     private static string ComputePlanDigest(
@@ -4963,10 +4948,6 @@ public sealed class MaxScoreMaintenanceService
             (string SongId, string Instrument),
             long> Population,
         MaxScoreMaintenancePopulationEvidence Evidence);
-
-    private sealed record AffectedCacheAccounts(
-        IReadOnlyList<string> RegisteredAccounts,
-        IReadOnlyList<string> OverlayOnlyAccounts);
 
     private sealed record MaxScoreMaintenanceReadSnapshot(
         IReadOnlyDictionary<string, SongMaxScores>
