@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using FortniteFestival.Core;
 using FSTService.Api;
@@ -14,6 +15,102 @@ namespace FSTService.Tests.Unit;
 
 public sealed class MaxScoreMaintenanceWorkflowTests
 {
+    [Fact]
+    public async Task Plan_failure_reports_evidence_stage_and_base_exception_message()
+    {
+        await using var fixture =
+            await WorkflowFixture.CreateAsync();
+        fixture.Service.PlanEvidenceStageFailureTestHook =
+            stage => stage == "complete-score-history-evidence"
+                ? new InvalidOperationException(
+                    "outer failure included SELECT and credentials",
+                    new TimeoutException(
+                        "Timeout during reading attempt"))
+                : null;
+
+        var plan = await fixture.PlanAsync();
+
+        Assert.False(plan.CanApply);
+        var failure = Assert.Single(plan.Checks);
+        Assert.Equal("plan", failure.Name);
+        Assert.False(failure.Passed);
+        Assert.Contains(
+            "stage=complete-score-history-evidence",
+            failure.Detail,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "Timeout during reading attempt",
+            failure.Detail,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "SELECT",
+            failure.Detail,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "credentials",
+            failure.Detail,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Plan_apply_and_resume_use_the_same_configured_evidence_timeout()
+    {
+        const int commandTimeoutSeconds = 1800;
+        await using var fixture =
+            await WorkflowFixture.CreateAsync(
+                maxScoreMaintenanceCommandTimeoutSeconds:
+                    commandTimeoutSeconds);
+        var configured =
+            new ConcurrentQueue<(string Stage, int Seconds)>();
+        fixture.Service.EvidenceCommandTimeoutTestHook =
+            (stage, seconds) =>
+                configured.Enqueue((stage, seconds));
+
+        var plan = await fixture.PlanAsync();
+
+        Assert.True(plan.CanApply);
+        AssertConfiguredEvidenceTimeouts(
+            configured,
+            commandTimeoutSeconds);
+        Clear(configured);
+
+        fixture.Service.AfterPhaseCheckpointTestHook =
+            phase =>
+            {
+                if (phase
+                    == MaxScoreMaintenancePhase.RollbackCaptured)
+                {
+                    throw new InvalidOperationException(
+                        "Stop after rollback capture.");
+                }
+            };
+        var interrupted = await fixture.ApplyAsync(
+            resume: false,
+            plan.PlanDigest,
+            rollbackPath: "rollback.json");
+
+        Assert.False(interrupted.Succeeded);
+        Assert.True(interrupted.Resumable);
+        Assert.True(interrupted.PublicReadsFrozen);
+        AssertConfiguredEvidenceTimeouts(
+            configured,
+            commandTimeoutSeconds);
+        Clear(configured);
+
+        fixture.Service.AfterPhaseCheckpointTestHook = null;
+        var resumed = await fixture.ApplyAsync(
+            resume: true,
+            plan.PlanDigest,
+            rollbackPath: "rollback.json");
+
+        Assert.True(
+            resumed.Succeeded,
+            fixture.LastFailure?.ToString());
+        AssertConfiguredEvidenceTimeouts(
+            configured,
+            commandTimeoutSeconds);
+    }
+
     [Fact]
     public async Task ApplyOrResume_uses_published_overlay_and_population_for_derived_state_and_caches()
     {
@@ -326,6 +423,34 @@ public sealed class MaxScoreMaintenanceWorkflowTests
         Assert.False(completedState.LiveSentinelPresent);
     }
 
+    private static void AssertConfiguredEvidenceTimeouts(
+        ConcurrentQueue<(string Stage, int Seconds)> configured,
+        int expectedSeconds)
+    {
+        var observed = configured.ToArray();
+        Assert.NotEmpty(observed);
+        Assert.Contains(
+            observed,
+            item => item.Stage
+                == "publication-population-evidence");
+        Assert.Contains(
+            observed,
+            item => item.Stage
+                == "complete-score-history-evidence");
+        Assert.All(
+            observed,
+            item => Assert.Equal(
+                expectedSeconds,
+                item.Seconds));
+    }
+
+    private static void Clear<T>(ConcurrentQueue<T> queue)
+    {
+        while (queue.TryDequeue(out _))
+        {
+        }
+    }
+
     private sealed class WorkflowFixture : IAsyncDisposable
     {
         private const long PublishedScrapeId = 1296;
@@ -382,18 +507,36 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                 "rollback.json");
 
         internal static async Task<WorkflowFixture> CreateAsync(
-            bool includeScopeDivergence = false)
+            bool includeScopeDivergence = false,
+            int maxScoreMaintenanceCommandTimeoutSeconds =
+                ScraperOptions
+                    .DefaultMaxScoreMaintenanceCommandTimeoutSeconds)
         {
             var dataDirectory = Path.Combine(
                 Directory.GetCurrentDirectory(),
                 ".test-temp",
                 $"max-score-workflow-{Guid.NewGuid():N}");
             Directory.CreateDirectory(dataDirectory);
+            var options = new ScraperOptions
+            {
+                DataDirectory = dataDirectory,
+                EnablePathGeneration = true,
+                EnableAutomaticPathGeneration = false,
+                PathGenerationParallelism = 1,
+                PrecomputeLeaderboardSongParallelism = 1,
+                PrecomputeLeaderboardInstrumentParallelism = 1,
+                RunPrecomputePhasesInParallel = false,
+                PrecomputeLiveLeaderboardRivals = false,
+                MaxScoreMaintenanceCommandTimeoutSeconds =
+                    maxScoreMaintenanceCommandTimeoutSeconds,
+            };
+            var optionsWrapper = Options.Create(options);
             var dataSource =
                 SharedPostgresContainer.CreateDatabase();
             var meta = new MetaDatabase(
                 dataSource,
-                NullLogger<MetaDatabase>.Instance);
+                NullLogger<MetaDatabase>.Instance,
+                scraperOptions: options);
             var loggerFactory =
                 LoggerFactory.Create(_ => { });
             var features = new FeatureOptions();
@@ -672,18 +815,6 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                     UnrelatedTierAccount);
             }
 
-            var options = new ScraperOptions
-            {
-                DataDirectory = dataDirectory,
-                EnablePathGeneration = true,
-                EnableAutomaticPathGeneration = false,
-                PathGenerationParallelism = 1,
-                PrecomputeLeaderboardSongParallelism = 1,
-                PrecomputeLeaderboardInstrumentParallelism = 1,
-                RunPrecomputePhasesInParallel = false,
-                PrecomputeLiveLeaderboardRivals = false,
-            };
-            var optionsWrapper = Options.Create(options);
             var pathStore =
                 new PathDataStore(dataSource);
             var progress = new ScrapeProgressTracker();
@@ -749,7 +880,8 @@ public sealed class MaxScoreMaintenanceWorkflowTests
                             Scope = "registered",
                         }),
                     NullLogger<
-                        MaxScoreMaintenanceNotificationService>.Instance);
+                        MaxScoreMaintenanceNotificationService>.Instance,
+                    optionsWrapper);
             var pathCoordinator =
                 new PathGenerationCoordinator(
                     new HttpClient(),

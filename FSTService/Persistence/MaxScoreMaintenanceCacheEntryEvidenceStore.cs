@@ -115,7 +115,10 @@ internal static class MaxScoreMaintenanceCacheEntryEvidenceStore
         long expectedEntryCount,
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
-        CancellationToken ct)
+        CancellationToken ct,
+        int commandTimeoutSeconds =
+            ScraperOptions
+                .DefaultMaxScoreMaintenanceCommandTimeoutSeconds)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(manifestSha256);
         ArgumentNullException.ThrowIfNull(connection);
@@ -130,7 +133,10 @@ internal static class MaxScoreMaintenanceCacheEntryEvidenceStore
         await using (var compare = connection.CreateCommand())
         {
             compare.Transaction = transaction;
-            compare.CommandTimeout = 600;
+            MaxScoreMaintenanceCommandTimeout.Configure(
+                compare,
+                commandTimeoutSeconds,
+                "cache-entry-comparison-evidence");
             compare.CommandText = StagingComparisonSql;
             compare.Parameters.AddWithValue(
                 "publicationId",
@@ -160,7 +166,10 @@ internal static class MaxScoreMaintenanceCacheEntryEvidenceStore
 
         await using var capture = connection.CreateCommand();
         capture.Transaction = transaction;
-        capture.CommandTimeout = 600;
+        MaxScoreMaintenanceCommandTimeout.Configure(
+            capture,
+            commandTimeoutSeconds,
+            "cache-entry-capture-evidence");
         capture.CommandText = """
             INSERT INTO max_score_maintenance_cache_entries (
                 manifest_sha256,
@@ -196,14 +205,18 @@ internal static class MaxScoreMaintenanceCacheEntryEvidenceStore
         long expectedEntryCount,
         NpgsqlConnection connection,
         NpgsqlTransaction? transaction,
-        CancellationToken ct)
+        CancellationToken ct,
+        int commandTimeoutSeconds =
+            ScraperOptions
+                .DefaultMaxScoreMaintenanceCommandTimeoutSeconds)
     {
         var validation = await ReadAsync(
             manifestSha256,
             publicationId,
             connection,
             transaction,
-            ct);
+            ct,
+            commandTimeoutSeconds);
         ThrowIfInvalid(validation, expectedEntryCount);
     }
 
@@ -212,13 +225,17 @@ internal static class MaxScoreMaintenanceCacheEntryEvidenceStore
         long publicationId,
         long expectedEntryCount,
         NpgsqlConnection connection,
-        NpgsqlTransaction transaction)
+        NpgsqlTransaction transaction,
+        int commandTimeoutSeconds =
+            ScraperOptions
+                .DefaultMaxScoreMaintenanceCommandTimeoutSeconds)
     {
         using var command = CreateValidationCommand(
             manifestSha256,
             publicationId,
             connection,
-            transaction);
+            transaction,
+            commandTimeoutSeconds);
         using var reader = command.ExecuteReader();
         if (!reader.Read())
         {
@@ -234,13 +251,15 @@ internal static class MaxScoreMaintenanceCacheEntryEvidenceStore
             long publicationId,
             NpgsqlConnection connection,
             NpgsqlTransaction? transaction,
-            CancellationToken ct)
+            CancellationToken ct,
+            int commandTimeoutSeconds)
     {
         await using var command = CreateValidationCommand(
             manifestSha256,
             publicationId,
             connection,
-            transaction);
+            transaction,
+            commandTimeoutSeconds);
         await using var reader =
             await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct))
@@ -255,13 +274,17 @@ internal static class MaxScoreMaintenanceCacheEntryEvidenceStore
         string manifestSha256,
         long publicationId,
         NpgsqlConnection connection,
-        NpgsqlTransaction? transaction)
+        NpgsqlTransaction? transaction,
+        int commandTimeoutSeconds)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(manifestSha256);
         ArgumentNullException.ThrowIfNull(connection);
         var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandTimeout = 600;
+        MaxScoreMaintenanceCommandTimeout.Configure(
+            command,
+            commandTimeoutSeconds,
+            "cache-entry-validation-evidence");
         command.CommandText = ValidationSql;
         command.Parameters.AddWithValue(
             "manifestSha256",

@@ -32,6 +32,12 @@ public sealed class MaxScoreMaintenanceService
     { get; set; }
     internal Action<Exception>? FailureTestHook
     { get; set; }
+    internal Func<string, Exception?>?
+        PlanEvidenceStageFailureTestHook
+    { get; set; }
+    internal Action<string, int>?
+        EvidenceCommandTimeoutTestHook
+    { get; set; }
 
     public MaxScoreMaintenanceService(
         PathGenerationCoordinator pathGeneration,
@@ -393,6 +399,7 @@ public sealed class MaxScoreMaintenanceService
             expectedManifestDigest);
 
         MaxScoreMaintenancePlanReport report;
+        var failureStage = "lease-acquisition";
         try
         {
             await using var lease =
@@ -400,9 +407,11 @@ public sealed class MaxScoreMaintenanceService
                     .AcquireMaxScoreMaintenanceLeaseAsync(
                         manifest.ExpectedPublicationId,
                         ct);
+            failureStage = "lease-validation";
             await lease.VerifyHeldAsync(
                 requireSourceLocks: false,
                 ct);
+            failureStage = "plan-inspection";
             report = await lease.ExecuteTransactionAsync(
                 "plan-inspection",
                 requireSourceLocks: true,
@@ -411,7 +420,8 @@ public sealed class MaxScoreMaintenanceService
                     manifestDigest,
                     connection,
                     transaction,
-                    token),
+                    token,
+                    stage => failureStage = stage),
                 IsolationLevel.RepeatableRead,
                 ct);
         }
@@ -441,7 +451,9 @@ public sealed class MaxScoreMaintenanceService
                     new MaxScoreMaintenancePlanCheck(
                         "plan",
                         Passed: false,
-                        BoundDetail(ex.Message)),
+                        FormatPlanFailureDetail(
+                            failureStage,
+                            ex)),
                 ],
                 RoutineCandidates: [],
                 ArtifactEvidence:
@@ -1121,8 +1133,12 @@ public sealed class MaxScoreMaintenanceService
         string manifestDigest,
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
-        CancellationToken ct)
+        CancellationToken ct,
+        Action<string>? stageStarted = null)
     {
+        BeginPlanEvidenceStage(
+            "manifest-promotion-readiness",
+            stageStarted);
         manifest = manifest.RequirePromotionReady();
         if (_options.EnableAutomaticPathGeneration)
         {
@@ -1130,18 +1146,36 @@ public sealed class MaxScoreMaintenanceService
                 "Max-score maintenance requires automatic path generation to remain disabled.");
         }
 
+        BeginPlanEvidenceStage(
+            "published-context",
+            stageStarted);
         var context = LoadPublishedContext(
             manifest.ExpectedPublishedScrapeId,
             manifest.ExpectedPublicationId,
             manifest.Songs.Select(song => song.SongId).ToArray(),
             requireUnfrozen: true);
+        BeginPlanEvidenceStage(
+            "catalog-identity",
+            stageStarted);
         ValidateManifestCatalogIdentity(manifest, context.Catalog);
+        BeginPlanEvidenceStage(
+            "worker-state",
+            stageStarted);
         ValidateWorkerOffline();
+        BeginPlanEvidenceStage(
+            "path-evidence",
+            stageStarted);
         ValidatePathPhase(
             manifest,
             postPromotion: false,
             throwOnMismatch: true);
+        BeginPlanEvidenceStage(
+            "artifact-evidence",
+            stageStarted);
         var artifactEvidence = CreateArtifactEvidence(manifest);
+        BeginPlanEvidenceStage(
+            "observed-score-evidence",
+            stageStarted);
         var observedScoreChecks =
             await LoadObservedScoreChecksAsync(
                 manifest,
@@ -1150,6 +1184,9 @@ public sealed class MaxScoreMaintenanceService
                 ct);
         var observedScoresClear =
             observedScoreChecks.All(check => check.Passed);
+        BeginPlanEvidenceStage(
+            "notification-evidence",
+            stageStarted);
         var notificationInspection =
             await _notifications.InspectRoutineStateAsync(
                 manifest,
@@ -1159,8 +1196,14 @@ public sealed class MaxScoreMaintenanceService
         var routineCandidatesClear =
             notificationInspection.CandidateCount == 0;
 
+        BeginPlanEvidenceStage(
+            "rank-history-evidence",
+            stageStarted);
         var rankHistoryFingerprint =
             await ComputeRankHistoryFingerprintAsync(ct);
+        BeginPlanEvidenceStage(
+            "publication-population-evidence",
+            stageStarted);
         var populationSnapshot =
             await LoadPublishedPopulationSnapshotAsync(
                 manifest,
@@ -1173,20 +1216,32 @@ public sealed class MaxScoreMaintenanceService
         ValidateManifestPopulationCoverage(
             manifest,
             populationSnapshot.Population);
+        BeginPlanEvidenceStage(
+            "post-promotion-maxima",
+            stageStarted);
         var postPromotionMaxScores =
             BuildPostPromotionMaxScores(
                 manifest,
                 context.CatalogSongs,
                 populationSnapshot.Population.Keys);
+        BeginPlanEvidenceStage(
+            "complete-score-history-evidence",
+            stageStarted);
         var scoreHistoryEvidence =
             await ComputeScoreHistoryEvidenceAsync(
                 manifest,
                 postPromotionMaxScores,
                 connection,
                 transaction,
-                ct);
+                ct,
+                _options
+                    .MaxScoreMaintenanceCommandTimeoutSeconds,
+                EvidenceCommandTimeoutTestHook);
         var affectedInstruments =
             manifest.Scope.ExpectedChangedInstruments.ToArray();
+        BeginPlanEvidenceStage(
+            "plan-digest",
+            stageStarted);
         var planDigest = ComputePlanDigest(
             manifestDigest,
             context,
@@ -2091,14 +2146,19 @@ public sealed class MaxScoreMaintenanceService
                 run.StagedCacheEntryCount,
                 conn,
                 transaction,
-                token);
+                token,
+                _options
+                    .MaxScoreMaintenanceCommandTimeoutSeconds);
         var scoreHistoryEvidence =
             await ComputeScoreHistoryEvidenceAsync(
                 manifest,
                 readSnapshot.PostPromotionMaxScores,
                 conn,
                 transaction,
-                token);
+                token,
+                _options
+                    .MaxScoreMaintenanceCommandTimeoutSeconds,
+                EvidenceCommandTimeoutTestHook);
         if (scoreHistoryEvidence
                 != readSnapshot.ScoreHistoryEvidence
             || scoreHistoryEvidence
@@ -2127,7 +2187,9 @@ public sealed class MaxScoreMaintenanceService
                     token);
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = transaction;
-        cmd.CommandTimeout = 600;
+        ConfigureEvidenceCommandTimeout(
+            cmd,
+            "final-state-evidence");
         cmd.CommandText = $"""
             WITH {PublishedSoloScopeSql.CurrentResolvedAllEntriesCte},
             expected(
@@ -2502,7 +2564,9 @@ public sealed class MaxScoreMaintenanceService
             await using (var aggregate =
                          connection.CreateCommand())
             {
-                aggregate.CommandTimeout = 600;
+                ConfigureEvidenceCommandTimeout(
+                    aggregate,
+                    "publication-cache-aggregate-evidence");
                 aggregate.CommandText = """
                     WITH rows AS MATERIALIZED (
                         SELECT cache_key,
@@ -2576,7 +2640,9 @@ public sealed class MaxScoreMaintenanceService
 
             await using (var keys = connection.CreateCommand())
             {
-                keys.CommandTimeout = 600;
+                ConfigureEvidenceCommandTimeout(
+                    keys,
+                    "publication-cache-key-evidence");
                 keys.CommandText = """
                     SELECT cache_key
                     FROM publication_api_response_cache_staging
@@ -2604,7 +2670,9 @@ public sealed class MaxScoreMaintenanceService
             if (requestedKeys.Length > 0)
             {
                 await using var payload = connection.CreateCommand();
-                payload.CommandTimeout = 600;
+                ConfigureEvidenceCommandTimeout(
+                    payload,
+                    "publication-cache-payload-evidence");
                 payload.CommandText = """
                     SELECT cache_key, json_data
                     FROM publication_api_response_cache_staging
@@ -3146,7 +3214,11 @@ public sealed class MaxScoreMaintenanceService
                 postPromotionMaxScores,
             NpgsqlConnection connection,
             NpgsqlTransaction transaction,
-            CancellationToken ct)
+            CancellationToken ct,
+            int commandTimeoutSeconds =
+                ScraperOptions
+                    .DefaultMaxScoreMaintenanceCommandTimeoutSeconds,
+            Action<string, int>? commandTimeoutConfigured = null)
     {
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(postPromotionMaxScores);
@@ -3194,7 +3266,11 @@ public sealed class MaxScoreMaintenanceService
             .ToArray();
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandTimeout = 600;
+        MaxScoreMaintenanceCommandTimeout.Configure(
+            command,
+            commandTimeoutSeconds,
+            "complete-score-history-evidence",
+            commandTimeoutConfigured);
         command.CommandText = $"""
             WITH maxima(
                 song_id,
@@ -3462,7 +3538,9 @@ public sealed class MaxScoreMaintenanceService
 
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandTimeout = 600;
+        ConfigureEvidenceCommandTimeout(
+            command,
+            "publication-population-evidence");
         command.CommandText = $"""
             WITH publication_guard AS MATERIALIZED (
                 SELECT 1
@@ -3653,7 +3731,9 @@ public sealed class MaxScoreMaintenanceService
                             manifest,
                             connection,
                             transaction,
-                            token);
+                            token,
+                            _options
+                                .MaxScoreMaintenanceCommandTimeoutSeconds);
                 var cacheAccounts =
                     await LoadAffectedCacheAccountsAsync(
                         manifest,
@@ -3666,7 +3746,10 @@ public sealed class MaxScoreMaintenanceService
                         postPromotionMaxScores,
                         connection,
                         transaction,
-                        token);
+                        token,
+                        _options
+                            .MaxScoreMaintenanceCommandTimeoutSeconds,
+                        EvidenceCommandTimeoutTestHook);
                 return new MaxScoreMaintenanceReadSnapshot(
                     postPromotionMaxScores.ToFrozenDictionary(
                         StringComparer.OrdinalIgnoreCase),
@@ -3727,7 +3810,7 @@ public sealed class MaxScoreMaintenanceService
         }
     }
 
-    private static async Task<AffectedCacheAccounts>
+    private async Task<AffectedCacheAccounts>
         LoadAffectedCacheAccountsAsync(
             MaxScoreMaintenanceManifest manifest,
             NpgsqlConnection connection,
@@ -3744,7 +3827,9 @@ public sealed class MaxScoreMaintenanceService
             .ToArray();
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandTimeout = 600;
+        ConfigureEvidenceCommandTimeout(
+            command,
+            "affected-cache-account-evidence");
         command.CommandText = $"""
             WITH affected(song_id, instrument) AS (
                 SELECT *
@@ -3995,7 +4080,9 @@ public sealed class MaxScoreMaintenanceService
                     stagedCacheEntryCount.Value,
                     conn,
                     tx,
-                    token);
+                    token,
+                    _options
+                        .MaxScoreMaintenanceCommandTimeoutSeconds);
         }
         else if (cachePublicationId.HasValue)
         {
@@ -4735,6 +4822,33 @@ public sealed class MaxScoreMaintenanceService
             && !string.IsNullOrWhiteSpace(
                 lastModified = property.GetString());
     }
+
+    private void BeginPlanEvidenceStage(
+        string stage,
+        Action<string>? stageStarted)
+    {
+        stageStarted?.Invoke(stage);
+        var injectedFailure =
+            PlanEvidenceStageFailureTestHook?.Invoke(stage);
+        if (injectedFailure is not null)
+            throw injectedFailure;
+    }
+
+    private void ConfigureEvidenceCommandTimeout(
+        NpgsqlCommand command,
+        string evidenceStage)
+        => MaxScoreMaintenanceCommandTimeout.Configure(
+            command,
+            _options.MaxScoreMaintenanceCommandTimeoutSeconds,
+            evidenceStage,
+            EvidenceCommandTimeoutTestHook);
+
+    private static string FormatPlanFailureDetail(
+        string evidenceStage,
+        Exception error)
+        => BoundDetail(
+            $"stage={evidenceStage}; "
+            + error.GetBaseException().Message);
 
     private static string BoundDetail(string detail)
     {

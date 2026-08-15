@@ -36,6 +36,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
     private readonly ILogger<MetaDatabase> _log;
     private readonly BandRankHistoryOptions _bandRankHistoryOptions;
     private readonly PublicationCommitOptions _publicationCommitOptions;
+    private readonly int
+        _maxScoreMaintenanceCommandTimeoutSeconds;
     private readonly object _bandRankHistoryPollingSchemaLock = new();
     private bool _bandRankHistoryPollingSchemaEnsured;
     private int _bandRankHistoryCompactV3DuetsReady;
@@ -109,7 +111,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
         BandRankHistoryOptions? bandRankHistoryOptions = null,
         PublicationCommitOptions? publicationCommitOptions = null,
         PostgresUnpooledConnectionFactory?
-            unpooledConnections = null)
+            unpooledConnections = null,
+        ScraperOptions? scraperOptions = null)
     {
         _ds = dataSource;
         _unpooledConnections =
@@ -127,6 +130,11 @@ public sealed partial class MetaDatabase : IMetaDatabase
         _bandRankHistoryOptions = bandRankHistoryOptions ?? new BandRankHistoryOptions();
         _publicationCommitOptions =
             publicationCommitOptions ?? new PublicationCommitOptions();
+        _maxScoreMaintenanceCommandTimeoutSeconds =
+            scraperOptions?
+                .MaxScoreMaintenanceCommandTimeoutSeconds
+            ?? ScraperOptions
+                .DefaultMaxScoreMaintenanceCommandTimeoutSeconds;
     }
 
     public MetaDatabase(
@@ -135,13 +143,15 @@ public sealed partial class MetaDatabase : IMetaDatabase
         IOptions<BandRankHistoryOptions> bandRankHistoryOptions,
         IOptions<PublicationCommitOptions> publicationCommitOptions,
         PostgresUnpooledConnectionFactory?
-            unpooledConnections = null)
+            unpooledConnections = null,
+        IOptions<ScraperOptions>? scraperOptions = null)
         : this(
             dataSource,
             log,
             bandRankHistoryOptions.Value,
             publicationCommitOptions.Value,
-            unpooledConnections)
+            unpooledConnections,
+            scraperOptions?.Value)
     {
     }
 
@@ -12532,7 +12542,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
             publicationId,
             stagedCacheEntryCount,
             conn,
-            tx);
+            tx,
+            _maxScoreMaintenanceCommandTimeoutSeconds);
 
         using (var swap = conn.CreateCommand())
         {

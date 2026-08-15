@@ -29,22 +29,28 @@ public sealed record MaxScoreMaintenanceNotificationQuarantineResult(
 
 public sealed class MaxScoreMaintenanceNotificationService
 {
-    private const int DefaultCommandTimeoutSeconds = 600;
     private const int MaximumMaintenanceCandidates = 100_000;
     private readonly NpgsqlDataSource _dataSource;
     private readonly ImprovementNotificationService _routine;
     private readonly ImprovementNotificationOptions _options;
+    private readonly int _commandTimeoutSeconds;
     private readonly ILogger<MaxScoreMaintenanceNotificationService> _log;
 
     public MaxScoreMaintenanceNotificationService(
         NpgsqlDataSource dataSource,
         ImprovementNotificationService routine,
         IOptions<ImprovementNotificationOptions> options,
-        ILogger<MaxScoreMaintenanceNotificationService> log)
+        ILogger<MaxScoreMaintenanceNotificationService> log,
+        IOptions<ScraperOptions>? scraperOptions = null)
     {
         _dataSource = dataSource;
         _routine = routine;
         _options = options.Value;
+        _commandTimeoutSeconds =
+            scraperOptions?.Value
+                .MaxScoreMaintenanceCommandTimeoutSeconds
+            ?? ScraperOptions
+                .DefaultMaxScoreMaintenanceCommandTimeoutSeconds;
         _log = log;
     }
 
@@ -539,9 +545,7 @@ public sealed class MaxScoreMaintenanceNotificationService
             IncludeSongEvents: true,
             IncludeRankings: true,
             PruneExpired: false,
-            CommandTimeoutSeconds: _options.CommandTimeoutSeconds > 0
-                ? _options.CommandTimeoutSeconds
-                : DefaultCommandTimeoutSeconds,
+            CommandTimeoutSeconds: _commandTimeoutSeconds,
             DetectedAtUtc: DateTime.UtcNow,
             Source: "max-score-maintenance-plan",
             PublishedScrapeId: publishedScrapeId);
@@ -553,7 +557,10 @@ public sealed class MaxScoreMaintenanceNotificationService
     {
         await using var conn = await _dataSource.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandTimeout = DefaultCommandTimeoutSeconds;
+        MaxScoreMaintenanceCommandTimeout.Configure(
+            cmd,
+            _commandTimeoutSeconds,
+            "notification-publication-input-evidence");
         cmd.CommandText = """
             SELECT publication.published_scrape_id,
                    publication.current_publication_id,
@@ -692,9 +699,10 @@ public sealed class MaxScoreMaintenanceNotificationService
     {
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = transaction;
-        cmd.CommandTimeout = _options.CommandTimeoutSeconds > 0
-            ? _options.CommandTimeoutSeconds
-            : DefaultCommandTimeoutSeconds;
+        MaxScoreMaintenanceCommandTimeout.Configure(
+            cmd,
+            _commandTimeoutSeconds,
+            "notification-candidate-evidence");
         cmd.CommandText = sql;
         cmd.Parameters.AddWithValue(
             "registeredOnly",
@@ -746,9 +754,10 @@ public sealed class MaxScoreMaintenanceNotificationService
     {
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        cmd.CommandTimeout = _options.CommandTimeoutSeconds > 0
-            ? _options.CommandTimeoutSeconds
-            : DefaultCommandTimeoutSeconds;
+        MaxScoreMaintenanceCommandTimeout.Configure(
+            cmd,
+            _commandTimeoutSeconds,
+            "notification-band-baseline-evidence");
         cmd.CommandText = BaselineMissingBandSubjectsSql;
         cmd.Parameters.AddWithValue(
             "registeredOnly",
@@ -767,7 +776,10 @@ public sealed class MaxScoreMaintenanceNotificationService
             manifest.Scope.ExpectedChangedInstruments.ToArray();
         await using var conn = await _dataSource.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandTimeout = DefaultCommandTimeoutSeconds;
+        MaxScoreMaintenanceCommandTimeout.Configure(
+            cmd,
+            _commandTimeoutSeconds,
+            "published-score-source-evidence");
         cmd.CommandText = """
             WITH source_identity AS (
                 SELECT COALESCE(
@@ -983,7 +995,10 @@ public sealed class MaxScoreMaintenanceNotificationService
     {
         await using var conn = await _dataSource.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandTimeout = DefaultCommandTimeoutSeconds;
+        MaxScoreMaintenanceCommandTimeout.Configure(
+            cmd,
+            _commandTimeoutSeconds,
+            "notification-state-evidence");
         cmd.CommandText = """
             WITH state_rows AS (
                 SELECT 'player_song' AS lane,
@@ -1098,17 +1113,30 @@ public sealed class MaxScoreMaintenanceNotificationService
             },
             MaxScoreMaintenanceJson.Canonical);
 
-    private static async Task ConfigureTransactionAsync(
+    private async Task ConfigureTransactionAsync(
         NpgsqlConnection conn,
         NpgsqlTransaction tx,
         CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
+        MaxScoreMaintenanceCommandTimeout.Configure(
+            cmd,
+            _commandTimeoutSeconds,
+            "notification-transaction-timeout");
         cmd.CommandText = """
-            SET LOCAL lock_timeout = '5s';
-            SET LOCAL statement_timeout = '600s';
+            SELECT set_config(
+                'lock_timeout',
+                '5s',
+                TRUE);
+            SELECT set_config(
+                'statement_timeout',
+                @statementTimeout,
+                TRUE);
             """;
+        cmd.Parameters.AddWithValue(
+            "statementTimeout",
+            $"{_commandTimeoutSeconds}s");
         await cmd.ExecuteNonQueryAsync(ct);
     }
 

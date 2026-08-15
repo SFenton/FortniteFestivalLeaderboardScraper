@@ -1,10 +1,11 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-14
-last_verified_commit: 80346e04
+last_verified: 2026-08-15
+last_verified_commit: ba2907a8
 sources:
   - FSTService/Program.cs
+  - FSTService/ScraperOptions.cs
   - FSTService/ScrapePhase.cs
   - FSTService/Persistence/PublishedScrapeIdArgument.cs
   - FSTService/Persistence/MaxScoreMaintenanceCommand.cs
@@ -174,6 +175,14 @@ cost. The strict apply-report parser rejects legacy version 2, unknown
 properties, and version 3 reports missing `cacheEvidence` at
 `caches_staged` or any later phase. Version 3 failures before cache staging
 retain `cacheEvidence=null`.
+
+Plan/apply/resume evidence and revalidation use
+`Scraper:MaxScoreMaintenanceCommandTimeoutSeconds` uniformly. The default is
+`600`; production may pass
+`Scraper__MaxScoreMaintenanceCommandTimeoutSeconds=1800`, and startup rejects
+values outside `1`-`86400`. This does not alter normal scrape timeouts. A
+failed plan's `plan` check identifies the sanitized evidence stage and the
+base exception message without serializing SQL or connection data.
 
 The retired `--path-repair-*` and
 `--notification-maintenance-pro-lead-max-score-repair` families remain startup

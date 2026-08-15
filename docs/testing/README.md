@@ -1,14 +1,15 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-14
-last_verified_commit: e570d468
+last_verified: 2026-08-15
+last_verified_commit: ba2907a8
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
   - FSTService.Tests/Unit/MaxScoreMaintenanceCommandTests.cs
   - FSTService.Tests/Unit/MaxScoreMaintenancePersistenceTests.cs
   - FSTService.Tests/Unit/MaxScoreMaintenanceWorkflowTests.cs
+  - FSTService.Tests/Unit/ScraperOptionsAndModelsTests.cs
   - FSTService.Tests/Unit/PlayerStatsTierPersistenceTests.cs
   - FSTService/Scraping/Replay/TierZeroRegularFile.cs
   - FSTService.Tests/Unit/ReplayContractTests.cs
@@ -71,7 +72,10 @@ This matrix covers the `caches_staged` non-owner lease/DML/truncate fence and
 owner resume, immutable cache-entry evidence, zero-entry published
 `song_stats`, active-only row/ranking removal, complete affected-account tier
 replacement, unrelated-account preservation, frozen-scope cache filtering,
-and strict apply/resume report version 3 compatibility/rejection.
+strict apply/resume report version 3 compatibility/rejection, the max-score
+timeout default/environment binding/bounds, stage-specific timeout reporting,
+and identical configured evidence timeouts across plan, apply revalidation,
+and resume.
 
 The Tier-0 native filesystem syscall shim is excluded from the aggregate line
 denominator because its branches are operating-system ABI specific. Focused

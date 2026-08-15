@@ -1,15 +1,17 @@
 ---
 status: living-runbook
 owner: data
-last_verified: 2026-08-14
-last_verified_commit: 80346e04
+last_verified: 2026-08-15
+last_verified_commit: ba2907a8
 sources:
+  - FSTService/ScraperOptions.cs
   - FSTService/Api/AdminEndpoints.cs
   - FSTService/Persistence/MaxScoreMaintenanceCommand.cs
   - FSTService/Persistence/MaxScoreMaintenanceModels.cs
   - FSTService/Persistence/MaxScoreMaintenanceFileStore.cs
   - FSTService/Persistence/MaxScoreMaintenanceSchema.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
+  - FSTService/Persistence/MaxScoreMaintenanceCommandTimeout.cs
   - FSTService/Persistence/MaxScoreMaintenanceCacheEntryEvidenceStore.cs
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
   - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
@@ -185,12 +187,13 @@ are rejected.
 
 Run from the production-owned Compose directory. Host-side request/report
 files belong below the mounted FST data directory; command paths below are
-relative to `Scraper:DataDirectory`. Replace `1296` only with the exact current
+relative to `Scraper:DataDirectory`. Replace `1298` only with the exact current
 published scrape confirmed during preflight.
 
 ```bash
 FST_DATA=/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data
-PUBLISHED_SCRAPE_ID=1296
+PUBLISHED_SCRAPE_ID=1298
+MAX_SCORE_MAINTENANCE_TIMEOUT_SECONDS=1800
 EVIDENCE_REL="maintenance/max-score-${PUBLISHED_SCRAPE_ID}-v4-canary"
 EVIDENCE="$FST_DATA/$EVIDENCE_REL"
 install -d "$EVIDENCE"
@@ -374,7 +377,9 @@ copied from discovery. Plan then validates observed scores and both artifact
 trees before it can return `canApply=true`:
 
 ```bash
-docker compose run --rm --no-deps --entrypoint dotnet fstservice \
+docker compose run --rm --no-deps \
+  -e Scraper__MaxScoreMaintenanceCommandTimeoutSeconds="$MAX_SCORE_MAINTENANCE_TIMEOUT_SECONDS" \
+  --entrypoint dotnet fstservice \
   FSTService.dll \
   --max-score-maintenance-plan \
   --published-scrape-id "$PUBLISHED_SCRAPE_ID" \
@@ -420,9 +425,14 @@ Score-history evidence scans all history for registered accounts plus indexed
 fallback candidates for affected accounts/instruments, but retains only
 count/min/max and two fixed-width hash aggregates; it does not build an
 unbounded `string_agg`. Budget the plan like one full registered-history read
-plus affected-instrument fallback discovery (up to the 600-second command
-timeout), run it only with the worker offline, and keep the resulting evidence
-report.
+plus affected-instrument fallback discovery. The behavior-safe default is 600
+seconds; this production procedure uses the reviewed 1,800-second override for
+every plan/apply/resume evidence and revalidation command. Valid values are
+`1`-`86400`. Cancellation remains fail-closed, and the same value is installed
+as the transaction-local PostgreSQL statement timeout where maintenance
+transactions require one. A failed plan's `plan` check reports
+`stage=<sanitized-evidence-stage>` plus the base exception message, never SQL or
+connection data.
 
 Apply/resume reports use strict version 3. Legacy version 2, unknown fields,
 and a report at `caches_staged` or later without the complete
@@ -430,7 +440,9 @@ and a report at `caches_staged` or later without the complete
 legitimately omits that object.
 
 ```bash
-docker compose run --rm --no-deps --entrypoint dotnet fstservice \
+docker compose run --rm --no-deps \
+  -e Scraper__MaxScoreMaintenanceCommandTimeoutSeconds="$MAX_SCORE_MAINTENANCE_TIMEOUT_SECONDS" \
+  --entrypoint dotnet fstservice \
   FSTService.dll \
   --max-score-maintenance-apply \
   --published-scrape-id "$PUBLISHED_SCRAPE_ID" \
@@ -492,7 +504,7 @@ Apply:
   song/rank state is baselined inside the quarantine transaction before
   candidate collection, preventing a later visible `band_first_score`. The
   audit advances matching state, emits no visible event, and leaves publication
-  `1296`'s completed notification marker unchanged;
+  the exact published scrape's completed notification marker unchanged;
 - holds the strict published-source read context through cache generation and
   final validation, stages a complete current-publication API cache, and
   requires the exact solo base/leeway/rank-offset key inventory derived from
@@ -523,15 +535,17 @@ reads frozen. Do not manually clear the freeze. Correct only the reported
 cause, then rerun with the same manifest, digests, and rollback path:
 
 ```bash
-docker compose run --rm --no-deps --entrypoint dotnet fstservice \
+docker compose run --rm --no-deps \
+  -e Scraper__MaxScoreMaintenanceCommandTimeoutSeconds="$MAX_SCORE_MAINTENANCE_TIMEOUT_SECONDS" \
+  --entrypoint dotnet fstservice \
   FSTService.dll \
   --max-score-maintenance-resume \
---published-scrape-id "$PUBLISHED_SCRAPE_ID" \
---max-score-maintenance-manifest "$EVIDENCE_REL/promotion-manifest.json" \
+  --published-scrape-id "$PUBLISHED_SCRAPE_ID" \
+  --max-score-maintenance-manifest "$EVIDENCE_REL/promotion-manifest.json" \
   --expected-max-score-manifest-digest "$MANIFEST_SHA" \
   --expected-max-score-plan-digest "$PLAN_DIGEST" \
---max-score-maintenance-rollback-output "$EVIDENCE_REL/rollback.json" \
---max-score-maintenance-report-output "$EVIDENCE_REL/resume-report-1.json"
+  --max-score-maintenance-rollback-output "$EVIDENCE_REL/rollback.json" \
+  --max-score-maintenance-report-output "$EVIDENCE_REL/resume-report-1.json"
 ```
 
 Resume rejects a changed digest, publication, catalog, source fingerprint,
