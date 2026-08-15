@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-08-14
-last_verified_commit: c0e0f775
+last_verified: 2026-08-15
+last_verified_commit: fca22bbb
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -22,6 +22,7 @@ sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Scraping/MaxScoreMaintenanceDerivedStateService.cs
   - FSTService/Scraping/RankingsCalculator.cs
+  - FSTService.Tests/Unit/RankingsCalculatorTests.cs
   - FSTService/Scraping/PlayerStatsTierRebuilder.cs
   - FSTService/Scraping/ScrapeTimePrecomputer.cs
   - FSTService/Scraping/GlobalLeaderboardScraper.cs
@@ -74,6 +75,20 @@ diagnostic or replay data without becoming the published generation.
      is not a publication phase.
    - Per-instrument validity, leeway, and ranking calculations consume the
      eight persisted CHOpt maxima, including distinct plastic-drums modes.
+   - A missing provider difficulty remains scrape-eligible unless an explicit
+     non-charted value is present. Ranking denominators stay bounded to the
+     exact current catalog while unioning provider support, promoted path
+     support, and positive population for the same song/instrument.
+   - Current ranking materialization filters retained score/stat sources to
+     exact current-catalog song IDs without deleting their historical rows.
+     Positive current-catalog population may retain a denominator scope even
+     when an explicit provider sentinel blocks its current refresh.
+   - For each successfully rebuilt instrument, the summary pass fails
+     publication-critical ranking work before aggregate calculation when
+     denominators differ by account, counts exceed the denominator, or
+     coverage/FC rates are non-finite or outside the valid range. A
+     zero-denominator instrument remains an explicit warn-and-skip, not a
+     rebuilt partition.
    - Publication-critical outcomes can reject the candidate; best-effort
      failures and intentional skips remain visible without silently changing
      their classification.
@@ -89,6 +104,17 @@ diagnostic or replay data without becoming the published generation.
    - Unfreeze public reads and invalidate in-process caches.
    - Run post-publication notification detection.
    - Notify connected clients only after the new generation can be served.
+
+Matched control scrape `1299` and candidate scrape `1300` accepted the retired
+post-scrape path cleanup. Their manifest and published-source key sets were
+exactly equal (8,424 and 6,318 respectively), every source contract validated,
+both publication generations became ready/current normally, and the
+publication cache retained the same 9,251-key surface. Live score movement
+changed values and ETags as expected, but the song-catalog hash, route/cache
+shape, critical outcomes, freeze/unfreeze behavior, and notification outbox
+shape remained exact. Candidate `1300` emitted no retired phase
+attempt/outcome and no critical skip; its three best-effort pressure skips were
+nonblocking and reasoned in durable progress.
 
 ## Failure behavior
 
@@ -186,7 +212,12 @@ derived rows while retaining the same published scrape/publication ID.
    completion, and freeze release then commit
    atomically in a source-locked transaction on the live advisory-lock session
    while its durable mutation token remains set; staging share locks and an
-   exact immutable-entry comparison run before the swap. Disposal releases the
+   exact immutable-entry comparison run before the swap. The transaction keeps
+   `lock_timeout=5s`, uses the configured maintenance `statement_timeout` only
+   around that final comparison, and restores `statement_timeout=120s` before
+   the bounded swap/checkpoint/verification/unfreeze mutations. Failure to
+   validate or restore the bounded timeout rolls back without releasing the
+   freeze or durable gate. Disposal releases the
    publication, path-generation, and exclusive mutation advisory locks before
    clearing the token. Queued holders cannot pass the advisory gate early, and
    stale direct entry or population writers remain durably blocked throughout

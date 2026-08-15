@@ -15,6 +15,12 @@ internal sealed record MaxScoreMaintenanceCommitTestContext(
     string Operation,
     int BackendProcessId);
 
+internal sealed record MaxScoreMaintenanceServerTimeoutTestContext(
+    string Stage,
+    int StatementTimeoutSeconds,
+    int LockTimeoutSeconds,
+    string TransactionIsolation);
+
 /// <summary>
 /// Central metadata database (<see cref="IMetaDatabase"/> implementation).
 /// Uses NpgsqlDataSource (connection pooling) — MVCC handles concurrent reads/writes natively.
@@ -36,6 +42,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
     private readonly ILogger<MetaDatabase> _log;
     private readonly BandRankHistoryOptions _bandRankHistoryOptions;
     private readonly PublicationCommitOptions _publicationCommitOptions;
+    private readonly int
+        _maxScoreMaintenanceCommandTimeoutSeconds;
     private readonly object _bandRankHistoryPollingSchemaLock = new();
     private bool _bandRankHistoryPollingSchemaEnsured;
     private int _bandRankHistoryCompactV3DuetsReady;
@@ -50,6 +58,9 @@ public sealed partial class MetaDatabase : IMetaDatabase
     { get; set; }
     internal Action<MaxScoreMaintenanceCommitTestContext>?
         MaxScoreMaintenanceAfterLocksReleasedTestHook
+    { get; set; }
+    internal Action<MaxScoreMaintenanceServerTimeoutTestContext>?
+        MaxScoreMaintenanceServerTimeoutTestHook
     { get; set; }
 
     internal const int DataCollectionVersion = 3;
@@ -90,6 +101,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
         StalePublicationCommitIntentFailurePhase,
     ];
     private const string LeaderboardStagingReadColumns = "scrape_id, song_id, instrument, page_num, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, staged_at";
+    private const int
+        MaxScoreMaintenanceFinalMutationStatementTimeoutSeconds = 120;
     private const string SongInstrumentThresholdsCte = """
         requested_thresholds AS MATERIALIZED (
             SELECT threshold.song_id,
@@ -109,7 +122,8 @@ public sealed partial class MetaDatabase : IMetaDatabase
         BandRankHistoryOptions? bandRankHistoryOptions = null,
         PublicationCommitOptions? publicationCommitOptions = null,
         PostgresUnpooledConnectionFactory?
-            unpooledConnections = null)
+            unpooledConnections = null,
+        ScraperOptions? scraperOptions = null)
     {
         _ds = dataSource;
         _unpooledConnections =
@@ -127,6 +141,11 @@ public sealed partial class MetaDatabase : IMetaDatabase
         _bandRankHistoryOptions = bandRankHistoryOptions ?? new BandRankHistoryOptions();
         _publicationCommitOptions =
             publicationCommitOptions ?? new PublicationCommitOptions();
+        _maxScoreMaintenanceCommandTimeoutSeconds =
+            scraperOptions?
+                .MaxScoreMaintenanceCommandTimeoutSeconds
+            ?? ScraperOptions
+                .DefaultMaxScoreMaintenanceCommandTimeoutSeconds;
     }
 
     public MetaDatabase(
@@ -135,13 +154,15 @@ public sealed partial class MetaDatabase : IMetaDatabase
         IOptions<BandRankHistoryOptions> bandRankHistoryOptions,
         IOptions<PublicationCommitOptions> publicationCommitOptions,
         PostgresUnpooledConnectionFactory?
-            unpooledConnections = null)
+            unpooledConnections = null,
+        IOptions<ScraperOptions>? scraperOptions = null)
         : this(
             dataSource,
             log,
             bandRankHistoryOptions.Value,
             publicationCommitOptions.Value,
-            unpooledConnections)
+            unpooledConnections,
+            scraperOptions?.Value)
     {
     }
 
@@ -12524,12 +12545,23 @@ public sealed partial class MetaDatabase : IMetaDatabase
             }
             stagedCacheEntryCount = Convert.ToInt64(value);
         }
+        ConfigureMaxScoreMaintenanceCompletionStatementTimeout(
+            conn,
+            tx,
+            _maxScoreMaintenanceCommandTimeoutSeconds,
+            "final-cache-validation");
         MaxScoreMaintenanceCacheEntryEvidenceStore.Validate(
             normalizedDigest,
             publicationId,
             stagedCacheEntryCount,
             conn,
-            tx);
+            tx,
+            _maxScoreMaintenanceCommandTimeoutSeconds);
+        ConfigureMaxScoreMaintenanceCompletionStatementTimeout(
+            conn,
+            tx,
+            MaxScoreMaintenanceFinalMutationStatementTimeoutSeconds,
+            "final-bounded-mutations");
 
         using (var swap = conn.CreateCommand())
         {
@@ -12730,6 +12762,58 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     "Atomic max-score cache publication and unfreeze did not complete under the durable mutation gate.");
             }
         }
+    }
+
+    private void ConfigureMaxScoreMaintenanceCompletionStatementTimeout(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        int statementTimeoutSeconds,
+        string stage)
+    {
+        using var command = conn.CreateCommand();
+        command.Transaction = tx;
+        MaxScoreMaintenanceCommandTimeout.Configure(
+            command,
+            statementTimeoutSeconds,
+            stage);
+        command.CommandText = """
+            WITH configured AS MATERIALIZED (
+                SELECT set_config(
+                    'statement_timeout',
+                    @statementTimeout,
+                    TRUE) AS statement_timeout
+            )
+            SELECT
+                (
+                    EXTRACT(
+                        EPOCH FROM
+                        configured.statement_timeout::INTERVAL)
+                )::INTEGER,
+                (
+                    EXTRACT(
+                        EPOCH FROM
+                        current_setting('lock_timeout')::INTERVAL)
+                )::INTEGER,
+                current_setting('transaction_isolation')
+            FROM configured
+            """;
+        command.Parameters.AddWithValue(
+            "statementTimeout",
+            $"{statementTimeoutSeconds}s");
+        using var reader = command.ExecuteReader();
+        if (!reader.Read()
+            || reader.GetInt32(0) != statementTimeoutSeconds)
+        {
+            throw new InvalidOperationException(
+                $"PostgreSQL did not apply the {stage} statement timeout.");
+        }
+
+        MaxScoreMaintenanceServerTimeoutTestHook?.Invoke(
+            new MaxScoreMaintenanceServerTimeoutTestContext(
+                stage,
+                reader.GetInt32(0),
+                reader.GetInt32(1),
+                reader.GetString(2)));
     }
 
     private static long? ReadCacheTargetPublicationId(

@@ -3088,7 +3088,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         using var cmd = conn.CreateCommand();
         if (commandTimeoutSeconds > 0)
             cmd.CommandTimeout = commandTimeoutSeconds;
-        cmd.CommandText = "SELECT account_id, adjusted_skill_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, total_charted_songs, raw_skill_rating, raw_weighted_rating, raw_max_score_percent FROM account_rankings WHERE instrument = @instrument";
+        cmd.CommandText = "SELECT account_id, adjusted_skill_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, total_charted_songs, coverage, raw_skill_rating, raw_weighted_rating, raw_max_score_percent FROM account_rankings WHERE instrument = @instrument";
         cmd.Parameters.AddWithValue("instrument", Instrument);
         var list = new List<AccountRankingSummary>();
         using var r = cmd.ExecuteReader();
@@ -3105,8 +3105,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 r.GetInt32(7),
                 r.GetInt32(8),
                 r.GetDouble(9),
-                r.IsDBNull(10) ? null : r.GetDouble(10),
-                r.IsDBNull(11) ? null : r.GetDouble(11)));
+                r.GetDouble(10),
+                r.IsDBNull(11) ? null : r.GetDouble(11),
+                r.IsDBNull(12) ? null : r.GetDouble(12)));
         }
 
         return list;
@@ -4300,14 +4301,47 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     }
 
     public void MaterializeCurrentStateValidEntries(NpgsqlConnection conn, double baseThreshold)
-        => MaterializeCurrentStateValidEntries(
+        => MaterializeCurrentStateValidEntriesCore(
             conn,
             transaction: null,
+            currentCatalogSongIds: null,
+            baseThreshold);
+
+    public void MaterializeCurrentStateValidEntries(
+        NpgsqlConnection conn,
+        IReadOnlyCollection<string> currentCatalogSongIds,
+        double baseThreshold)
+        => MaterializeCurrentStateValidEntriesCore(
+            conn,
+            transaction: null,
+            currentCatalogSongIds,
             baseThreshold);
 
     public void MaterializeCurrentStateValidEntries(
         NpgsqlConnection conn,
         NpgsqlTransaction? transaction,
+        double baseThreshold)
+        => MaterializeCurrentStateValidEntriesCore(
+            conn,
+            transaction,
+            currentCatalogSongIds: null,
+            baseThreshold);
+
+    public void MaterializeCurrentStateValidEntries(
+        NpgsqlConnection conn,
+        NpgsqlTransaction? transaction,
+        IReadOnlyCollection<string> currentCatalogSongIds,
+        double baseThreshold)
+        => MaterializeCurrentStateValidEntriesCore(
+            conn,
+            transaction,
+            currentCatalogSongIds,
+            baseThreshold);
+
+    private void MaterializeCurrentStateValidEntriesCore(
+        NpgsqlConnection conn,
+        NpgsqlTransaction? transaction,
+        IReadOnlyCollection<string>? currentCatalogSongIds,
         double baseThreshold)
     {
         ArgumentNullException.ThrowIfNull(conn);
@@ -4318,6 +4352,12 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 "The ranking materialization transaction must belong to the supplied connection.",
                 nameof(transaction));
         }
+        var filterCurrentCatalog = currentCatalogSongIds is not null;
+        var catalogSongIds = currentCatalogSongIds?
+            .Where(static songId => !string.IsNullOrWhiteSpace(songId))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray()
+            ?? [];
         using (var c = conn.CreateCommand())
         {
             c.Transaction = transaction;
@@ -4340,9 +4380,17 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 FROM current_rows
                 JOIN song_stats ss ON ss.song_id = current_rows.song_id AND ss.instrument = @instrument
                 WHERE ss.entry_count > 0
+                  AND (NOT @filterCurrentCatalog OR current_rows.song_id = ANY(@currentCatalogSongIds))
                   AND COALESCE(NULLIF(current_rows.api_rank, 0), current_rows.rank) > 0
                 """;
             c.Parameters.AddWithValue("instrument", Instrument);
+            c.Parameters.AddWithValue(
+                "filterCurrentCatalog",
+                filterCurrentCatalog);
+            c.Parameters.Add(
+                "currentCatalogSongIds",
+                NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+                catalogSongIds;
             c.ExecuteNonQuery();
         }
 
@@ -4382,10 +4430,18 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 JOIN current_rows current_member ON current_member.song_id = vso.song_id AND current_member.account_id = vso.account_id
                 JOIN song_stats ss ON ss.song_id = vso.song_id AND ss.instrument = vso.instrument
                 WHERE vso.instrument = @instrument
+                  AND (NOT @filterCurrentCatalog OR vso.song_id = ANY(@currentCatalogSongIds))
                   AND ss.entry_count > 0
                 """;
             c.Parameters.AddWithValue("instrument", Instrument);
             c.Parameters.AddWithValue("threshold", baseThreshold);
+            c.Parameters.AddWithValue(
+                "filterCurrentCatalog",
+                filterCurrentCatalog);
+            c.Parameters.Add(
+                "currentCatalogSongIds",
+                NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+                catalogSongIds;
             c.ExecuteNonQuery();
         }
 

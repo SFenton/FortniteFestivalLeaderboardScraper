@@ -1,4 +1,5 @@
 using FSTService.Scraping;
+using Microsoft.Extensions.Options;
 
 namespace FSTService;
 
@@ -20,6 +21,9 @@ public enum RegistrationBackfillMode
 public sealed class ScraperOptions
 {
     public const string Section = "Scraper";
+    public const int DefaultMaxScoreMaintenanceCommandTimeoutSeconds = 600;
+    public const int MinimumMaxScoreMaintenanceCommandTimeoutSeconds = 1;
+    public const int MaximumMaxScoreMaintenanceCommandTimeoutSeconds = 86_400;
 
     /// <summary>
     /// How often to run a full score scrape (default: 4 hours).
@@ -390,6 +394,13 @@ public sealed class ScraperOptions
         PathGenerationProfiles.PlasticDrumsV4;
 
     /// <summary>
+    /// Positive Npgsql command timeout, in seconds, for live-scale max-score
+    /// maintenance plan/apply/resume evidence and revalidation queries.
+    /// </summary>
+    public int MaxScoreMaintenanceCommandTimeoutSeconds { get; set; } =
+        DefaultMaxScoreMaintenanceCommandTimeoutSeconds;
+
+    /// <summary>
     /// Maximum pages to fetch per leaderboard (100 entries per page).
     /// Caps the number of tasks spawned per song/instrument, regardless of what Epic reports.
     /// Default 100 = top 10,000 entries. Set to 0 for unlimited.
@@ -715,4 +726,35 @@ public sealed class ScraperOptions
     /// Default 10,000.
     /// </summary>
     public int BandValidEntryTarget { get; set; } = 10_000;
+
+    internal static bool IsValidMaxScoreMaintenanceCommandTimeout(
+        int value)
+        => value is >= MinimumMaxScoreMaintenanceCommandTimeoutSeconds
+            and <= MaximumMaxScoreMaintenanceCommandTimeoutSeconds;
+}
+
+internal sealed class ScraperOptionsValidator
+    : IValidateOptions<ScraperOptions>
+{
+    public ValidateOptionsResult Validate(
+        string? name,
+        ScraperOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return ScraperOptions.IsValidMaxScoreMaintenanceCommandTimeout(
+            options.MaxScoreMaintenanceCommandTimeoutSeconds)
+            ? ValidateOptionsResult.Success
+            : ValidateOptionsResult.Fail(
+                $"{ScraperOptions.Section}:"
+                + nameof(
+                    ScraperOptions
+                        .MaxScoreMaintenanceCommandTimeoutSeconds)
+                + " must be between "
+                + ScraperOptions
+                    .MinimumMaxScoreMaintenanceCommandTimeoutSeconds
+                + " and "
+                + ScraperOptions
+                    .MaximumMaxScoreMaintenanceCommandTimeoutSeconds
+                + " seconds.");
+    }
 }

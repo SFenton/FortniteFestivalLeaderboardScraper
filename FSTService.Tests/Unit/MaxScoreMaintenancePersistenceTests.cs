@@ -7,7 +7,7 @@ using Npgsql;
 
 namespace FSTService.Tests.Unit;
 
-public sealed class MaxScoreMaintenancePersistenceTests
+public sealed partial class MaxScoreMaintenancePersistenceTests
 {
     [Fact]
     public void Notification_classification_quarantines_only_affected_rank_lanes()
@@ -713,6 +713,15 @@ public sealed class MaxScoreMaintenancePersistenceTests
                     connection,
                     transaction,
                     CancellationToken.None);
+            var reference =
+                await MaxScoreMaintenanceService
+                    .ComputeScoreHistoryEvidenceReferenceAsync(
+                        manifest,
+                        postPromotionMaxScores,
+                        connection,
+                        transaction,
+                        CancellationToken.None);
+            Assert.Equal(reference, evidence);
             return evidence.Fingerprint;
         }
     }
@@ -1787,6 +1796,71 @@ public sealed class MaxScoreMaintenancePersistenceTests
         Assert.True(
             meta.IsAccountRegistered(
                 "post-cache-account"));
+    }
+
+    [Fact]
+    public async Task Final_cache_validation_uses_configured_server_timeout_and_restores_bounded_mutation_timeout()
+    {
+        using var dataSource =
+            SharedPostgresContainer.CreateDatabase();
+        const long scrapeId = 1297;
+        const long publicationId = 501;
+        const int configuredTimeoutSeconds = 1800;
+        var manifestDigest = new string('5', 64);
+        SeedValidatedCompletionState(
+            dataSource,
+            scrapeId,
+            publicationId,
+            manifestDigest);
+
+        using var meta = new MetaDatabase(
+            dataSource,
+            NullLogger<MetaDatabase>.Instance,
+            scraperOptions: new ScraperOptions
+            {
+                MaxScoreMaintenanceCommandTimeoutSeconds =
+                    configuredTimeoutSeconds,
+            });
+        var observed =
+            new List<MaxScoreMaintenanceServerTimeoutTestContext>();
+        meta.MaxScoreMaintenanceServerTimeoutTestHook =
+            observed.Add;
+
+        await using var lease =
+            await meta.AcquireMaxScoreMaintenanceLeaseAsync(
+                publicationId);
+        await lease.CompleteAsync(
+            scrapeId,
+            manifestDigest);
+
+        Assert.Collection(
+            observed,
+            validation =>
+            {
+                Assert.Equal(
+                    "final-cache-validation",
+                    validation.Stage);
+                Assert.Equal(
+                    configuredTimeoutSeconds,
+                    validation.StatementTimeoutSeconds);
+                Assert.Equal(5, validation.LockTimeoutSeconds);
+                Assert.Equal(
+                    "serializable",
+                    validation.TransactionIsolation);
+            },
+            mutations =>
+            {
+                Assert.Equal(
+                    "final-bounded-mutations",
+                    mutations.Stage);
+                Assert.Equal(
+                    120,
+                    mutations.StatementTimeoutSeconds);
+                Assert.Equal(5, mutations.LockTimeoutSeconds);
+                Assert.Equal(
+                    "serializable",
+                    mutations.TransactionIsolation);
+            });
     }
 
     [Fact]

@@ -747,6 +747,7 @@ public readonly record struct AccountRankingSummary(
     int SongsPlayed,
     int FullComboCount,
     int TotalChartedSongs,
+    double Coverage,
     double RawSkillRating,
     double? RawWeightedRating,
     double? RawMaxScorePercent);

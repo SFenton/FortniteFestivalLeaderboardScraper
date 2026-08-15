@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-08-14
-last_verified_commit: c0e0f775
+last_verified: 2026-08-15
+last_verified_commit: fca22bbb
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -11,7 +11,9 @@ sources:
   - FSTService.Tests/Unit/PhaseProgressCatalogTests.cs
   - FSTService.Tests/Unit/MaxScoreMaintenanceCommandTests.cs
   - FSTService.Tests/Unit/MaxScoreMaintenancePersistenceTests.cs
+  - FSTService.Tests/Unit/MaxScoreMaintenanceScoreHistoryEvidenceTests.cs
   - FSTService.Tests/Unit/MaxScoreMaintenanceWorkflowTests.cs
+  - FSTService.Tests/Unit/ScraperOptionsAndModelsTests.cs
   - FSTService.Tests/Unit/PlayerStatsTierPersistenceTests.cs
   - FSTService/Scraping/Replay/TierZeroRegularFile.cs
   - FSTService.Tests/Unit/ReplayContractTests.cs
@@ -68,6 +70,13 @@ and criticality-aware resume/publication treatment. Focused API/shared tests
 also require `reserved: true` on the two retired v2 descriptors, exclude them
 from active counts, and prove Tier-0 phase manifests remain unchanged.
 
+The corresponding live acceptance used matched full scrapes `1299` and `1300`.
+The candidate retained exact manifest/source/cache key sets and publication
+behavior, produced zero critical skips or retired phase rows, and recorded
+three nonblocking best-effort retention skips with durable pressure reasons.
+No speed claim was made; the unchanged 800/32/4 network lane remained a
+control.
+
 The aggregate line denominator excludes long-running external/process/database
 orchestration already validated through focused contract and integration
 tests. This includes the max-score mutation coordinator and versioned manifest
@@ -84,11 +93,39 @@ dotnet test FSTService.Tests/FSTService.Tests.csproj \
   --filter 'FullyQualifiedName~MaxScoreMaintenance|FullyQualifiedName~PlayerStatsTierPersistenceTests|FullyQualifiedName~RankingsCalculatorTests|FullyQualifiedName~ScrapeTimePrecomputerTests|FullyQualifiedName~MetaDatabaseTests'
 ```
 
+Focused score-history selector differential and cleanup validation:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj \
+  --filter 'FullyQualifiedName~Score_history_evidence_|FullyQualifiedName~Plan_apply_and_resume_preserve_evidence'
+```
+
 This matrix covers the `caches_staged` non-owner lease/DML/truncate fence and
 owner resume, immutable cache-entry evidence, zero-entry published
 `song_stats`, active-only row/ranking removal, complete affected-account tier
 replacement, unrelated-account preservation, frozen-scope cache filtering,
-and strict apply/resume report version 3 compatibility/rejection.
+strict apply/resume report version 3 compatibility/rejection, the max-score
+timeout default/environment binding/bounds, stage-specific timeout reporting,
+and identical configured evidence timeouts across plan, apply revalidation,
+and resume. Final-completion coverage also verifies that PostgreSQL uses the
+configured timeout for immutable cache validation, retains the `5s` lock
+timeout and serializable transaction, restores the `120s` mutation timeout,
+and leaves validation failures frozen.
+
+The focused score-history matrix compares the optimized selector/branch
+aggregates with the exact pre-optimization SQL on a deterministic randomized
+fixture. PostgreSQL 17 golden rows pin the canonical JSON text and both
+`hashtextextended` seeds for null fields, microsecond timestamps, and signed
+scores/ranks; a full golden fingerprint spans both registered and
+nonregistered branches plus established multi-device registration
+multiplicity. Named cases cover registered history outside affected scopes,
+player fallback on another instrument, ranking fallback on another song,
+strict current/history thresholds, player/ranking overlap, and
+snapshot/overlay precedence. Lock-blocked cancellation and shared-deadline
+timeout cases require savepoint cleanup, no remaining selector temp tables,
+and two successful repeated invocations in the same repeatable-read
+transaction. Workflow assertions compare plan evidence with the master SQL
+oracle and require apply/resume revalidation to persist that same evidence.
 
 The Tier-0 native filesystem syscall shim is excluded from the aggregate line
 denominator because its branches are operating-system ABI specific. Focused

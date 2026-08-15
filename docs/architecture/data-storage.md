@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-08-14
-last_verified_commit: 80346e04
+last_verified: 2026-08-15
+last_verified_commit: c7398340
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -11,6 +11,7 @@ sources:
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
   - FSTService/Persistence/MaxScoreMaintenanceSchema.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
+  - FSTService/Persistence/MaxScoreMaintenanceScoreHistoryEvidence.cs
   - FSTService/Persistence/MaxScoreMaintenanceCacheEntryEvidenceStore.cs
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
   - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
@@ -61,6 +62,30 @@ surface is not the production service persistence model.
 | Publication state | Published scrape/generation, source bindings, read freeze, commit intent, leases, cache generations |
 | Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, max-score checkpoints/rollback evidence, maintenance notification quarantine, dedup/recovery audit state |
 | Replay evidence artifacts | Immutable Tier-0 filesystem packages that describe producer/source/build/schema/config/phase lineage and checksummed artifact metadata; never publication authority |
+
+### Solo ranking denominator ownership
+
+Normal per-instrument ranking denominators are catalog-bound. For each exact
+current-catalog song, support is the union of provider admission, a matching
+promoted path instrument, and positive mutable `leaderboard_population` for
+that same song/instrument. The population table is supplementary evidence in
+this path: stale rows whose song is absent from the current catalog are never
+counted. Positive population for a current-catalog scope may keep that scope in
+the denominator even when a present provider sentinel prevents a new scrape,
+because retained ranking inputs can still contain it.
+
+Current ranking materialization filters resolved score rows and valid-score
+overrides to current-catalog song IDs. Removed-song leaderboard entries and
+`song_stats` remain stored for history and recovery but do not contribute to
+current songs played, Full Combos, total score, coverage, or FC rate.
+
+Every successfully rebuilt account-ranking partition must carry its selected
+uniform denominator. The post-ranking summary pass rejects rows whose
+denominator differs, whose songs/full combos exceed it, or whose coverage/FC
+rate is non-finite or outside `[0,1]`. Instruments skipped because their
+selected denominator is zero are not newly validated or rewritten. This keeps
+downstream family, combo, history, and cached responses from normalizing or
+publishing inconsistent per-account values.
 
 The `songs` path-generation state stores distinct theoretical maxima for all
 eight path instruments. Plastic drums use separate
@@ -146,9 +171,26 @@ those rows cannot leak into the maintenance cache generation.
 
 The score-history aggregate covers all registered-account history consumed by
 player/history caches, fallback tiers for affected player-stat accounts, and
-fallback candidates across every song in each rebuilt instrument. It uses
-fixed-width count/range/sum/xor evidence rather than an unbounded ordered
-payload aggregation.
+fallback candidates across every song in each rebuilt instrument. Narrow
+transaction-local selectors resolve authoritative snapshot rows followed by
+supplemental overlay precedence for all affected-instrument rows and exact
+affected-account rows on other instruments. The resulting affected,
+registered-cache, overlay-only-cache, and fallback sets are reused throughout
+the same read snapshot.
+
+Registered history joins the captured registration rows with the same
+multiplicity as the established contract, while nonregistered history uses
+unique account/song/instrument fallback keys and the existing score-history
+lookup index. Each branch preserves the prior
+`hashtextextended(jsonb_build_array(...)::TEXT, seed)` row identity exactly,
+including field order, JSON nulls, signed values, and epoch-microsecond
+timestamps. The branches aggregate independently to count, ID/time ranges, and
+hash sum/xor state, then combine associatively into the unchanged report
+fingerprint envelope. JSON text is hashed per row but never retained; no
+history row is copied to a temporary table or ordered payload. Selector tables
+are `ON COMMIT DROP` and also removed explicitly; a savepoint restores the
+caller's maintenance transaction after cancellation or timeout without
+releasing its pre-existing publication/source fences.
 
 `improvement_notification_maintenance_runs` and
 `improvement_notification_maintenance_candidates` retain historical

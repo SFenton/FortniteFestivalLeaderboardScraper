@@ -203,8 +203,12 @@ var hostedServicePlan = HostedWorkerModeResolver.ResolveHostedServicePlan(
     runOnceRequested,
     backfillOnlyRequested);
 
-builder.Services.Configure<ScraperOptions>(
-    builder.Configuration.GetSection(ScraperOptions.Section));
+builder.Services.AddSingleton<
+    IValidateOptions<ScraperOptions>,
+    ScraperOptionsValidator>();
+builder.Services.AddOptions<ScraperOptions>()
+    .Bind(builder.Configuration.GetSection(ScraperOptions.Section))
+    .ValidateOnStart();
 builder.Services.AddOptions<FeatureOptions>()
     .Bind(builder.Configuration.GetSection(FeatureOptions.Section))
     .ValidateOnStart();
@@ -454,7 +458,8 @@ builder.Services.AddSingleton<IMetaDatabase>(sp =>
         sp.GetRequiredService<ILogger<FSTService.Persistence.MetaDatabase>>(),
         sp.GetRequiredService<IOptions<BandRankHistoryOptions>>(),
         sp.GetRequiredService<IOptions<PublicationCommitOptions>>(),
-        sp.GetRequiredService<PostgresUnpooledConnectionFactory>()));
+        sp.GetRequiredService<PostgresUnpooledConnectionFactory>(),
+        sp.GetRequiredService<IOptions<ScraperOptions>>()));
 builder.Services.AddSingleton(sp => (FSTService.Persistence.MetaDatabase)sp.GetRequiredService<IMetaDatabase>());
 
 builder.Services.AddSingleton<IPathDataStore>(sp =>

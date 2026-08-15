@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-14
-last_verified_commit: c0e0f775
+last_verified: 2026-08-15
+last_verified_commit: fca22bbb
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -20,6 +20,7 @@ sources:
   - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.tsx
   - FSTService/Persistence/InstrumentDatabase.cs
   - FSTService/Scraping/RankingsCalculator.cs
+  - FortniteFestivalWeb/src/pages/leaderboards/helpers/rankingHelpers.ts
 update_triggers:
   - A route, payload, auth rule, rate limit, publication classification, or client method changes.
 ---
@@ -107,6 +108,14 @@ production meanings:
   pre-adjustment average. A valid score on a chart without a computed maximum
   is omitted from that raw average but remains in the score count used by the
   credibility adjustment.
+
+For one successfully rebuilt per-instrument ranking generation,
+`totalChartedSongs` is uniform across every account row. The server derives it
+from the exact current catalog and validated chart evidence, excludes retained
+removed-song scores from current metrics without deleting their source rows,
+and fails the ranking build instead of emitting mixed or out-of-range rows.
+Browser leaderboard views render each persisted row denominator verbatim; they
+do not clamp or infer a replacement total.
 
 Aggregate player scopes intentionally use different formulas:
 
@@ -202,6 +211,14 @@ diagnostics. The measured evidence is under
 summary. PostgreSQL `scrape_phase_attempts` is authoritative for normalized
 attempt/progress timestamps when present; service-info falls back to the
 backward-compatible operation JSON for rolling upgrades.
+
+Matched candidate scrape `1300` accepted the reserved-descriptor projection:
+the v2 plan remained 28 ordered descriptors, exactly
+`post.checkpoint` and `post.deferred_registration_sync` reported
+`reserved: true`, the other 26 reported `false`, and neither retired ID
+created an attempt or outcome. All 355 candidate monitor samples returned HTTP
+200 for readiness, the web shell, and the representative API probe while the
+candidate published and unfroze.
 
 Matched scrape `1296` accepted this additive contract with complete
 publication parity and `0.0696%` end-to-end wall-clock overhead. Null-valued

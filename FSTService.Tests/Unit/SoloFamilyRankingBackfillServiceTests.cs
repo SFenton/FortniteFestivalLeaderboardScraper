@@ -1022,6 +1022,13 @@ public sealed class SoloFamilyRankingBackfillServiceTests : IDisposable
                 @in = new In
                 {
                     gr = 3,
+                    ba = 99,
+                    ds = 99,
+                    vl = 99,
+                    pg = 99,
+                    pb = 99,
+                    pd = 99,
+                    bd = 99,
                 },
             },
         };

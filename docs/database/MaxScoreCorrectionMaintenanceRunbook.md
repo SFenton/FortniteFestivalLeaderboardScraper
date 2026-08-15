@@ -1,15 +1,18 @@
 ---
 status: living-runbook
 owner: data
-last_verified: 2026-08-14
-last_verified_commit: 80346e04
+last_verified: 2026-08-15
+last_verified_commit: 68ae7e99
 sources:
+  - FSTService/ScraperOptions.cs
   - FSTService/Api/AdminEndpoints.cs
   - FSTService/Persistence/MaxScoreMaintenanceCommand.cs
   - FSTService/Persistence/MaxScoreMaintenanceModels.cs
   - FSTService/Persistence/MaxScoreMaintenanceFileStore.cs
   - FSTService/Persistence/MaxScoreMaintenanceSchema.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
+  - FSTService/Persistence/MaxScoreMaintenanceScoreHistoryEvidence.cs
+  - FSTService/Persistence/MaxScoreMaintenanceCommandTimeout.cs
   - FSTService/Persistence/MaxScoreMaintenanceCacheEntryEvidenceStore.cs
   - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
   - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
@@ -185,12 +188,13 @@ are rejected.
 
 Run from the production-owned Compose directory. Host-side request/report
 files belong below the mounted FST data directory; command paths below are
-relative to `Scraper:DataDirectory`. Replace `1296` only with the exact current
+relative to `Scraper:DataDirectory`. Replace `1298` only with the exact current
 published scrape confirmed during preflight.
 
 ```bash
 FST_DATA=/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data
-PUBLISHED_SCRAPE_ID=1296
+PUBLISHED_SCRAPE_ID=1298
+MAX_SCORE_MAINTENANCE_TIMEOUT_SECONDS=1800
 EVIDENCE_REL="maintenance/max-score-${PUBLISHED_SCRAPE_ID}-v4-canary"
 EVIDENCE="$FST_DATA/$EVIDENCE_REL"
 install -d "$EVIDENCE"
@@ -374,7 +378,9 @@ copied from discovery. Plan then validates observed scores and both artifact
 trees before it can return `canApply=true`:
 
 ```bash
-docker compose run --rm --no-deps --entrypoint dotnet fstservice \
+docker compose run --rm --no-deps \
+  -e Scraper__MaxScoreMaintenanceCommandTimeoutSeconds="$MAX_SCORE_MAINTENANCE_TIMEOUT_SECONDS" \
+  --entrypoint dotnet fstservice \
   FSTService.dll \
   --max-score-maintenance-plan \
   --published-scrape-id "$PUBLISHED_SCRAPE_ID" \
@@ -416,13 +422,79 @@ digests:
 
 Plan report version 4 performs two live-scale bounded aggregates. Population
 evidence visits each current published scope and its resolved overlay rows.
-Score-history evidence scans all history for registered accounts plus indexed
-fallback candidates for affected accounts/instruments, but retains only
-count/min/max and two fixed-width hash aggregates; it does not build an
-unbounded `string_agg`. Budget the plan like one full registered-history read
-plus affected-instrument fallback discovery (up to the 600-second command
-timeout), run it only with the worker offline, and keep the resulting evidence
-report.
+Score-history evidence now prepares narrow `ON COMMIT DROP` selectors under the
+existing repeatable-read/source-lock transaction:
+
+- post-promotion maxima and current published source bindings;
+- resolved current candidates for every row in an affected instrument, plus
+  exact snapshot/overlay primary-key lookups for affected accounts on other
+  instruments;
+- one deduplicated affected-account set, including registered and
+  overlay-only cache subsets;
+- unique nonregistered fallback scopes.
+
+Published snapshot rows are inserted first and supplemental overlay rows use
+deterministic `ON CONFLICT` precedence identical to the authoritative
+`InstrumentDatabase` resolver. The selector path has no publication-wide
+`DISTINCT ON` sort. It reuses the affected/cache account sets for downstream
+player-stat and cache work instead of resolving them again.
+
+The registered branch reads all history once by joining the captured
+registration rows, preserving the established per-device multiplicity in the
+report contract. The nonregistered branch probes the existing
+`ix_sh_valid_lookup` account/song/instrument/score index from unique exact
+fallback scopes. Player fallbacks still require current score greater than the
+maximum; ranking fallbacks require current score greater than the 5% threshold;
+both admit only history at or below that threshold. Overlap is unique.
+Each branch applies the exact prior
+`hashtextextended(jsonb_build_array(...)::TEXT, seed)` expression with the
+original field order, JSON null representation, signed numeric values, and
+epoch-microsecond timestamp conversion, then emits only count, ID/time extrema,
+and hash sum/XOR state. The application combines those associative values into
+the unchanged report fingerprint envelope. The transient JSON text is hashed
+immediately; there is no history-sized temporary relation or ordered payload
+aggregation.
+
+The plan report remains version 4 and the apply/resume report remains version
+3 because the row bytes, seed hashes, aggregate envelope, and resulting
+fingerprint match the pre-optimization contract exactly.
+
+Expected work is:
+
+```text
+selector I/O =
+  affected-instrument current rows
+  + affected-account exact lookups on other instruments
+history I/O =
+  one registered-history semi-join
+  + indexed rows for unique nonregistered fallback scopes
+temporary space =
+  narrow current selectors and fallback keys, never score_history rows
+```
+
+No new index is part of this optimization; differential fixtures exercise the
+existing snapshot/overlay primary keys and `ix_sh_valid_lookup`.
+
+The configured timeout is one shared wall-clock deadline across selector
+preparation and both aggregates, not a fresh allowance per command. A
+savepoint plus explicit cleanup keeps cancellation/timeout safe and permits a
+repeat invocation in the same maintenance transaction without changing the
+source locks or publication fence. The behavior-safe default remains 600
+seconds; this production procedure uses the reviewed 1,800-second override.
+Valid values are `1`-`86400`. A failed plan's `plan` check reports
+`stage=<sanitized-evidence-stage>` plus the base exception message, never SQL or
+connection data.
+
+### 2026-08-15 production evidence
+
+Publication `1299` remained authoritative and unfrozen, notifications were
+complete, and the worker was stopped. The exact promotion manifest was staged
+immutably. The pre-optimization plan failed closed at
+`complete-score-history-evidence` under both 600-second and 1,800-second
+deadlines; PostgreSQL used about 6 GB of temporary space and remained
+I/O-bound. No freeze, path promotion, database mutation, merge, or deployment
+occurred. These are before-only measurements; rerun plan after review/deploy to
+capture matched after evidence before authorizing apply.
 
 Apply/resume reports use strict version 3. Legacy version 2, unknown fields,
 and a report at `caches_staged` or later without the complete
@@ -430,7 +502,9 @@ and a report at `caches_staged` or later without the complete
 legitimately omits that object.
 
 ```bash
-docker compose run --rm --no-deps --entrypoint dotnet fstservice \
+docker compose run --rm --no-deps \
+  -e Scraper__MaxScoreMaintenanceCommandTimeoutSeconds="$MAX_SCORE_MAINTENANCE_TIMEOUT_SECONDS" \
+  --entrypoint dotnet fstservice \
   FSTService.dll \
   --max-score-maintenance-apply \
   --published-scrape-id "$PUBLISHED_SCRAPE_ID" \
@@ -492,7 +566,7 @@ Apply:
   song/rank state is baselined inside the quarantine transaction before
   candidate collection, preventing a later visible `band_first_score`. The
   audit advances matching state, emits no visible event, and leaves publication
-  `1296`'s completed notification marker unchanged;
+  the exact published scrape's completed notification marker unchanged;
 - holds the strict published-source read context through cache generation and
   final validation, stages a complete current-publication API cache, and
   requires the exact solo base/leeway/rank-offset key inventory derived from
@@ -523,15 +597,17 @@ reads frozen. Do not manually clear the freeze. Correct only the reported
 cause, then rerun with the same manifest, digests, and rollback path:
 
 ```bash
-docker compose run --rm --no-deps --entrypoint dotnet fstservice \
+docker compose run --rm --no-deps \
+  -e Scraper__MaxScoreMaintenanceCommandTimeoutSeconds="$MAX_SCORE_MAINTENANCE_TIMEOUT_SECONDS" \
+  --entrypoint dotnet fstservice \
   FSTService.dll \
   --max-score-maintenance-resume \
---published-scrape-id "$PUBLISHED_SCRAPE_ID" \
---max-score-maintenance-manifest "$EVIDENCE_REL/promotion-manifest.json" \
+  --published-scrape-id "$PUBLISHED_SCRAPE_ID" \
+  --max-score-maintenance-manifest "$EVIDENCE_REL/promotion-manifest.json" \
   --expected-max-score-manifest-digest "$MANIFEST_SHA" \
   --expected-max-score-plan-digest "$PLAN_DIGEST" \
---max-score-maintenance-rollback-output "$EVIDENCE_REL/rollback.json" \
---max-score-maintenance-report-output "$EVIDENCE_REL/resume-report-1.json"
+  --max-score-maintenance-rollback-output "$EVIDENCE_REL/rollback.json" \
+  --max-score-maintenance-report-output "$EVIDENCE_REL/resume-report-1.json"
 ```
 
 Resume rejects a changed digest, publication, catalog, source fingerprint,
@@ -556,9 +632,14 @@ operations fail promptly against that exact digest-owned publication
 generation; only the matching maintenance lease owner may continue. The final
 source-locked transaction takes staging-table share locks, repeats the exact
 comparison against `max_score_maintenance_cache_entries`, and only then swaps
-both cache tables, marks completion, and unfreezes. Missing, changed, deleted,
-or extra rows remain frozen and resumable; restore the exact checkpointed
-staging generation before retrying.
+both cache tables, marks completion, and unfreezes. Its `lock_timeout` remains
+`5s`; the validated configured maintenance timeout is applied to both the
+Npgsql validation command and transaction-local PostgreSQL
+`statement_timeout` only for that comparison, then `statement_timeout` is
+restored to `120s` before the bounded swap/checkpoint/verification/unfreeze
+mutations. A validation or timeout-transition failure aborts the transaction,
+so missing, changed, deleted, or extra rows remain frozen and resumable;
+restore the exact checkpointed staging generation before retrying.
 
 If `pg_terminate_backend`, network loss, or session failure removes the
 advisory locks, the current transaction is aborted with its mutation and phase

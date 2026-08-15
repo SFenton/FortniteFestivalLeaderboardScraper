@@ -1,8 +1,8 @@
 ---
 status: roadmap
 owner: worker
-last_verified: 2026-08-14
-last_verified_commit: ba2907a8
+last_verified: 2026-08-15
+last_verified_commit: fca22bbb
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -41,13 +41,14 @@ update_triggers:
   bounded artifact/replay companions.
 - Reject microservices, runtime-loaded plugins, full scrape N+1 overlap, and
   raw-HTTP capture as current implementation directions.
-- Use the accepted timing foundation to optimize measured bottlenecks rather
-  than inferred phase cost. The first BandMaintenance target is current
-  projection refresh.
-- Treat storage capacity as an urgent independent safety lane. The existing
+- Treat storage capacity as the next active safety lane before another
+  post-scrape optimization. The existing
   report-only snapshot-retention planner must fail closed on incomplete
   statistics, and exact reclaim/workspace evidence must pass the current gate
   before any rewrite proposal.
+- After a safe capacity window exists, use the accepted timing foundation to
+  optimize measured bottlenecks rather than inferred phase cost. The first
+  BandMaintenance target remains current projection refresh.
 
 Implementation is approved after this plan is rendered to the local autonomous
 agent outbox. All implementation, evaluation, deployment, and promotion
@@ -94,7 +95,7 @@ resolved through repository and bounded runtime evidence.
 |---|---|---:|
 | Historical correctness and publication safety | Great: candidate isolation, exact catalog binding, complete-scope manifests, critical-phase gates, atomic generation publication, and fail-closed reads are strong | High |
 | Test posture | Good: extensive Postgres, worker, API, publication, web, and browser coverage; CI enforces 94% service line coverage | High |
-| Modularity | Okay: phases are testable, but `PostScrapeOrchestrator.cs` is 2,748 lines and still contains dormant or PostgreSQL-no-op paths | High |
+| Modularity | Good: phases are testable and retired PostgreSQL no-op wrappers, unused refresher wiring, and deferred post-scrape sync are removed; the orchestrator remains large enough to justify stable internal phase contracts | High |
 | Live progress observability | Good: normalized durable attempts, service-info v2, watchdog progress/liveness separation, and the responsive Settings progress experience are accepted | High |
 | Performance | Poor: recent full-scrape p50 is about 8.58 hours and recorded post-processing consumes about 5.6 hours on scrape 1290 | High |
 | Storage sustainability | Poor and urgent: the 3.6 TB drive is 96% used with roughly 170 GB free after scrape 1296 | High |
@@ -638,53 +639,29 @@ Each iteration below is a separate branch/PR.
 - Execution remains `parity-gated-maintenance` and blocked until statistics,
   exact-count, parity, and workspace evidence all agree.
 
-### PR-6: verified dead/no-op path cleanup
-
-**Class:** `full-scrape-ab`
-
-**Starting note:** PR-5 accepted same-binary root confinement, isolated
-PostgreSQL refusal, typed Tier-1 manifests/import, the bounded current-
-projection adapter, and exact output comparison. Full BandMaintenance,
-provider capture, production-derived packages, live replay, and deployment
-remain unsupported and are not prerequisites or authorization for PR-6.
-
-Current candidate scope:
-
-- removes PostgreSQL wrapper checkpoint/cache-warm scheduling and APIs;
-- completes snapshot-only legacy rank recompute without legacy work while
-  allowing explicit skips only for best-effort notification, pressure-gated
-  rank-history, and service-retention phases;
-- removes unused `PostScrapeRefresher` DI/code and the deferred post-scrape
-  registration-sync path whose caller was retired by `01a73d42`; recurring and
-  run-once registration owners remain;
-- retains `LegacyBandScrape` because direct `--band-post-scrape` still reaches
-  it, while deleting only the duplicate unreachable await;
-- preserves plan `fst.scrape-plan.v2` and reserves `post.checkpoint` plus
-  `post.deferred_registration_sync` for historical/Tier-0 lineage, with
-  additive `reserved: true` API metadata and active-progress exclusion.
-
-Promotion remains unresolved. The candidate changes worker phase execution and
-therefore requires full-scrape correctness/publication A/B at a clean boundary;
-repository tests alone do not authorize merge or deployment.
-
-### PR-7 and later: measured optimization iterations
+### Next iterations
 
 Order is evidence-driven:
 
-1. BandMaintenance current projection refresh, starting with the measured
+1. snapshot-capacity recovery investigation: refresh the read-only protected
+   generation, row-distribution, relation-size, and exact workspace evidence;
+   do not reclaim, rewrite, lower the 500 GiB gate, or move data until the
+   existing parity/capacity contract passes;
+2. BandMaintenance current projection refresh, starting with the measured
    `53,543` considered / `8,020` refreshed scope and row-churn path. Current
    replay forces `SkipUnchangedScopes=false`, one band-type worker,
    synchronous commit, and cleanup disabled, so it cannot evaluate this
-   unchanged-scope hypothesis. PR-7 must add an option-parity replay mode or
+   unchanged-scope hypothesis. The next optimization must add an option-parity
+   replay mode or
    use a separate bounded probe before claiming skip-path evidence;
-2. solo current-projection write reduction;
-3. rank-history query path and one-variable concurrency/overlap experiment;
-4. leaderboard-rivals batching/fingerprints;
-5. precompute input reuse/selective concurrency;
-6. best-effort cleanup reorder;
-7. snapshot activation consolidation;
-8. storage-retention execution after parity/capacity gates;
-9. capture-only overlap research after architecture/storage redesign.
+3. solo current-projection write reduction;
+4. rank-history query path and one-variable concurrency/overlap experiment;
+5. leaderboard-rivals batching/fingerprints;
+6. precompute input reuse/selective concurrency;
+7. best-effort cleanup reorder;
+8. snapshot activation consolidation;
+9. storage-retention execution after parity/capacity gates;
+10. capture-only overlap research after architecture/storage redesign.
 
 ## Testing strategy
 
@@ -788,8 +765,6 @@ metrics. Correctness/publication differences reject regardless of speed.
 |---|---|---|---|
 | Current band projection rewrite feasibility | Unknown | Option-parity replay or a separate bounded probe for the `53,543` considered / `8,020` refreshed scope path; deterministic PR-5 timing is not production-comparable | Separate one-variable A/B; exact projection/publication parity; no >10% resource regression |
 | Exact snapshot reclaim plan | Unknown | Establish complete protected-ID row distribution and exact workspace evidence from a bounded validated source | No rewrite or gate reduction |
-| Improvement-notification gaps | Candidate instrumented | Validate skipped/completed outcomes and marker/coverage parity in the PR-6 full scrape | Do not call the phase starved or removable without live evidence |
-| Best-effort skip/starvation | Candidate instrumented | Validate requested phases, skipped outcomes, pressure decisions, and feature conditions in the PR-6 full scrape | Required before promotion |
 | Projection diff ratios | Unknown | Persist aggregate would-insert/update/delete metrics | Required before merge strategy |
 | Rival tail cause | Unknown | Per-account decisions/query counts/timing | No concurrency change before attribution |
 | Precompute subphase cost | Unknown | Stable subphase timing and cache counts | No parallel flag promotion |
@@ -809,9 +784,7 @@ This tandem plan is accepted for implementation after local outbox rendering.
 - Approval of this roadmap is not authorization to bypass the current
   live-safety, parity, publication, provider, storage, rollback, or maintenance
   gate for any later action.
-- PR-6 verified dead/no-op cleanup is a repository candidate awaiting review,
-  CI, and a clean-boundary full-scrape A/B before promotion.
-- Current-projection optimization is a separate future full-scrape A/B; it
-  cannot be combined with PR-3 Settings work.
+- Snapshot-capacity recovery evidence is the next active priority.
+- Current-projection optimization remains a separate later full-scrape A/B.
 - Snapshot-retention execution remains a separate parity- and capacity-gated
   maintenance task.
