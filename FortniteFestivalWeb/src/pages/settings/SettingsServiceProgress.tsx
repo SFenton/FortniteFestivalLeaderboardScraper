@@ -1,13 +1,8 @@
 import { useEffect, useMemo, useRef, type CSSProperties } from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
-import type {
-  BandSyncStatusResponse,
-  ServiceInfoResponse,
-  SyncStatusResponse,
-} from '@festival/core/api';
+import type { ServiceInfoResponse } from '@festival/core/api';
 import { Colors, Gap, Radius, padding } from '@festival/theme';
-import type { SelectedProfile } from '../../hooks/data/useSelectedProfile';
 import { FrostedCard } from '../../components/common/FrostedCard';
 import ArcSpinner, { SpinnerSize } from '../../components/common/ArcSpinner';
 import {
@@ -18,22 +13,14 @@ import {
 import styles from './SettingsServiceProgress.module.css';
 import './settingsEnglish';
 
-type MetricRow = {
+type TimingRow = {
   id: string;
   label: string;
   value: string;
-  spinner?: boolean;
 };
 
 type ServiceProgressCardProps = {
   serviceInfo: ServiceInfoResponse | null;
-  loadFailed: boolean;
-};
-
-type SelectedProfileSyncCardProps = {
-  profile: SelectedProfile;
-  playerStatus: SyncStatusResponse | null;
-  bandStatus: BandSyncStatusResponse | null;
   loadFailed: boolean;
 };
 
@@ -44,12 +31,11 @@ const cardStyle: CSSProperties = {
   borderRadius: Radius.md,
   padding: padding(Gap.lg),
   '--settings-progress-muted': Colors.textSecondary,
+  '--settings-progress-tertiary': Colors.textTertiary,
   '--settings-progress-warning': Colors.gold,
   '--settings-progress-track': Colors.surfaceMuted,
   '--settings-progress-fill': Colors.accentPurple,
-  '--settings-progress-focus': Colors.accentBlue,
-  '--settings-progress-border': Colors.glassBorder,
-  '--settings-progress-group': Colors.glowHighlight,
+  '--settings-progress-divider': Colors.borderSubtle,
 } as CSSProperties;
 
 function formatDateTime(value: string | null | undefined, fallback: string): string {
@@ -105,73 +91,37 @@ function updateStatusText(t: TFunction, serviceInfo: ServiceInfoResponse): strin
 
 function healthMessage(t: TFunction, serviceInfo: ServiceInfoResponse): string {
   const status = serviceInfo.currentUpdate.status;
+  const hasPublication = serviceInfo.publishedScrapeId != null;
   if (status === 'failed') {
-    return serviceInfo.publishedScrapeId
-      ? t('settings.serviceInfo.healthFailedPublished', {
-        scrapeId: serviceInfo.publishedScrapeId,
-      })
-      : t('settings.serviceInfo.healthFailedUnavailable');
+    return t(hasPublication
+      ? 'settings.serviceInfo.healthFailedPublished'
+      : 'settings.serviceInfo.healthFailedUnavailable');
   }
   if (status === 'stalled') {
-    return serviceInfo.publishedScrapeId
-      ? t('settings.serviceInfo.healthStalledPublished', {
-        scrapeId: serviceInfo.publishedScrapeId,
-      })
-      : t('settings.serviceInfo.healthStalledUnavailable');
+    return t(hasPublication
+      ? 'settings.serviceInfo.healthStalledPublished'
+      : 'settings.serviceInfo.healthStalledUnavailable');
   }
   if (serviceInfo.workerStatus?.status === 'stale') {
-    return serviceInfo.publishedScrapeId
-      ? t('settings.serviceInfo.healthWorkerStalePublished', {
-        scrapeId: serviceInfo.publishedScrapeId,
-      })
-      : t('settings.serviceInfo.healthWorkerStaleUnavailable');
+    return t(hasPublication
+      ? 'settings.serviceInfo.healthWorkerStalePublished'
+      : 'settings.serviceInfo.healthWorkerStaleUnavailable');
   }
   if (status === 'updating') {
-    return serviceInfo.publishedScrapeId
-      ? t('settings.serviceInfo.healthUpdatingPublished', {
-        scrapeId: serviceInfo.publishedScrapeId,
-      })
-      : t('settings.serviceInfo.healthUpdatingUnavailable');
+    return t(hasPublication
+      ? 'settings.serviceInfo.healthUpdatingPublished'
+      : 'settings.serviceInfo.healthUpdatingUnavailable');
   }
-  return serviceInfo.publishedScrapeId
-    ? t('settings.serviceInfo.healthIdlePublished', {
-      scrapeId: serviceInfo.publishedScrapeId,
-    })
-    : t('settings.serviceInfo.healthIdleUnavailable');
-}
-
-function operationStatusText(t: TFunction, status: string | null | undefined): string {
-  if (!status) return t('settings.serviceInfo.unavailable');
-  return t(`settings.serviceInfo.operationStates.${status}`, {
-    defaultValue: fallbackLabel(status),
-  });
+  return t(hasPublication
+    ? 'settings.serviceInfo.healthIdlePublished'
+    : 'settings.serviceInfo.healthIdleUnavailable');
 }
 
 function phaseStatusText(t: TFunction, status: string | null | undefined): string | null {
-  if (!status) return null;
+  if (!status || status === 'running') return null;
   return t(`settings.serviceInfo.phaseStates.${status}`, {
     defaultValue: fallbackLabel(status),
   });
-}
-
-function MetricRows({ rows }: { rows: MetricRow[] }) {
-  return (
-    <div className={styles.metricList}>
-      {rows.map(row => (
-        <div
-          key={row.id}
-          className={styles.metricRow}
-          data-testid={`settings-service-info-row-${row.id}`}
-        >
-          <span className={styles.metricLabel}>{row.label}</span>
-          <div className={styles.metricValue}>
-            <span className={styles.metricValueText}>{row.value}</span>
-            {row.spinner ? <ArcSpinner className={styles.spinner} size={SpinnerSize.SM} /> : null}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 function servicePhaseLabel(
@@ -180,13 +130,16 @@ function servicePhaseLabel(
   display: ServiceProgressDisplay,
 ): string {
   const current = serviceInfo.currentUpdate;
+  if (current.status === 'idle') {
+    return t('settings.serviceInfo.waitingForNextUpdate');
+  }
   const descriptor = serviceInfo.phasePlan?.phases.find(phase => phase.id === display.phaseId);
   return translatedStableLabel(
     t,
     'phaseLabels',
     display.phaseId,
     descriptor?.label ?? current.phase,
-  ) ?? t('settings.serviceInfo.progressWaiting');
+  ) ?? updateStatusText(t, serviceInfo);
 }
 
 function serviceSubphaseLabel(
@@ -195,10 +148,12 @@ function serviceSubphaseLabel(
   display: ServiceProgressDisplay,
 ): string | null {
   const current = serviceInfo.currentUpdate;
+  const subphaseId = display.subphaseId ?? current.subOperation;
+  if (!subphaseId || subphaseId === current.status) return null;
   return translatedStableLabel(
     t,
     'subphaseLabels',
-    display.subphaseId ?? current.subOperation,
+    subphaseId,
     current.subOperation,
   );
 }
@@ -233,121 +188,21 @@ function unitsText(
   });
 }
 
-function technicalRows(
-  t: TFunction,
-  serviceInfo: ServiceInfoResponse,
-  fallback: string,
-): MetricRow[] {
-  const current = serviceInfo.currentUpdate;
-  const worker = serviceInfo.workerStatus;
-  const operation = worker?.currentOperation ?? worker?.lastOperation;
-  return [
-    {
-      id: 'last-update-start',
-      label: t('settings.serviceInfo.lastUpdateStart'),
-      value: formatDateTime(serviceInfo.lastCompletedUpdate?.startedAt, fallback),
-    },
-    {
-      id: 'last-update-complete',
-      label: t('settings.serviceInfo.lastUpdateComplete'),
-      value: formatDateTime(serviceInfo.lastCompletedUpdate?.completedAt, fallback),
-    },
-    {
-      id: 'worker-activity',
-      label: t('settings.serviceInfo.workerActivity'),
-      value: operation?.operationLabel ?? t('settings.serviceInfo.workerActivityIdle'),
-    },
-    {
-      id: 'worker-activity-start',
-      label: t('settings.serviceInfo.workerActivityStart'),
-      value: formatDateTime(operation?.startedAt, fallback),
-    },
-    {
-      id: 'worker-activity-update',
-      label: t('settings.serviceInfo.workerActivityUpdate'),
-      value: formatDateTime(operation?.updatedAt, fallback),
-    },
-    {
-      id: 'worker-activity-end',
-      label: t('settings.serviceInfo.workerActivityEnd'),
-      value: formatDateTime(operation?.endedAt, fallback),
-    },
-    {
-      id: 'worker-heartbeat',
-      label: t('settings.serviceInfo.workerHeartbeat'),
-      value: formatDateTime(worker?.lastHeartbeatAt, fallback),
-    },
-    {
-      id: 'worker-instance',
-      label: t('settings.serviceInfo.workerInstance'),
-      value: worker?.instanceId ?? fallback,
-    },
-    {
-      id: 'operation-key',
-      label: t('settings.serviceInfo.operationKey'),
-      value: operation?.operationKey ?? fallback,
-    },
-    {
-      id: 'operation-status',
-      label: t('settings.serviceInfo.operationStatus'),
-      value: operationStatusText(t, operation?.status),
-    },
-    {
-      id: 'phase-plan-version',
-      label: t('settings.serviceInfo.phasePlanVersion'),
-      value: current.phasePlanVersion ?? serviceInfo.phasePlan?.version ?? fallback,
-    },
-    {
-      id: 'phase-id',
-      label: t('settings.serviceInfo.phaseId'),
-      value: current.phaseId ?? fallback,
-    },
-    {
-      id: 'phase-attempt',
-      label: t('settings.serviceInfo.phaseAttempt'),
-      value: current.phaseAttempt?.toLocaleString() ?? fallback,
-    },
-    {
-      id: 'phase-status',
-      label: t('settings.serviceInfo.phaseStatus'),
-      value: operationStatusText(t, current.phaseStatus),
-    },
-    {
-      id: 'operation-detail',
-      label: t('settings.serviceInfo.operationDetail'),
-      value: current.detail ?? operation?.detail ?? fallback,
-    },
-    {
-      id: 'active-scrape-id',
-      label: t('settings.serviceInfo.activeScrapeId'),
-      value: serviceInfo.activeScrapeId?.toLocaleString() ?? fallback,
-    },
-    {
-      id: 'published-scrape-id',
-      label: t('settings.serviceInfo.publishedScrapeId'),
-      value: serviceInfo.publishedScrapeId?.toLocaleString() ?? fallback,
-    },
-    {
-      id: 'overall-model-version',
-      label: t('settings.serviceInfo.overallModelVersion'),
-      value: current.overallModelVersion ?? fallback,
-    },
-    {
-      id: 'last-progress-at',
-      label: t('settings.serviceInfo.lastProgressAt'),
-      value: formatDateTime(current.lastProgressAt, fallback),
-    },
-    {
-      id: 'heartbeat-at',
-      label: t('settings.serviceInfo.heartbeatAt'),
-      value: formatDateTime(current.heartbeatAt, fallback),
-    },
-    {
-      id: 'service-instance',
-      label: t('settings.serviceInfo.serviceInstance'),
-      value: serviceInfo.serviceInstance?.nonce ?? fallback,
-    },
-  ];
+function TimingRows({ rows, label }: { rows: TimingRow[]; label: string }) {
+  return (
+    <dl className={styles.timingGrid} aria-label={label}>
+      {rows.map(row => (
+        <div
+          key={row.id}
+          className={styles.timingItem}
+          data-testid={`settings-service-info-row-${row.id}`}
+        >
+          <dt className={styles.timingLabel}>{row.label}</dt>
+          <dd className={styles.timingValue}>{row.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
 
 export function SettingsServiceProgressCard({
@@ -371,9 +226,11 @@ export function SettingsServiceProgressCard({
 
   if (!serviceInfo || !reduction) {
     return (
-      <FrostedCard className={styles.group} style={cardStyle}>
-        <p className={styles.statusSupporting}>{fallback}</p>
-      </FrostedCard>
+      <div data-testid="settings-service-info-list">
+        <FrostedCard className={styles.card} style={cardStyle}>
+          <p className={styles.statusSupporting}>{fallback}</p>
+        </FrostedCard>
+      </div>
     );
   }
 
@@ -392,7 +249,6 @@ export function SettingsServiceProgressCard({
       confidence: t(`settings.serviceInfo.etaConfidence.${eta.confidence}`, {
         defaultValue: fallbackLabel(eta.confidence),
       }),
-      samples: eta.sampleCount,
     })
     : null;
   const progressText = display.isDeterminate
@@ -407,17 +263,14 @@ export function SettingsServiceProgressCard({
     units,
   ].filter(Boolean).join('. ');
   const warnings = serviceInfo.lastCompletedUpdate?.bestEffortFailureCount ?? 0;
-
   const publishedAt = serviceInfo.lastCompletedUpdate?.publishedAt
     ?? serviceInfo.publication?.publishedAt;
-  const publicationRows: MetricRow[] = [
-    ...(publishedAt
-      ? [{
+  const timingRows: TimingRow[] = [
+    {
       id: 'last-published-at',
       label: t('settings.serviceInfo.lastPublishedAt'),
-      value: formatDateTime(publishedAt, fallback),
-      }]
-      : []),
+      value: formatDateTime(publishedAt, t('settings.serviceInfo.publicationUnavailable')),
+    },
     ...(current.status !== 'idle' && current.startedAt
       ? [{
         id: 'current-update-start',
@@ -433,72 +286,57 @@ export function SettingsServiceProgressCard({
       }]
       : []),
   ];
-  const healthRows: MetricRow[] = [
-    {
-      id: 'worker-status',
-      label: t('settings.serviceInfo.workerStatus'),
-      value: workerStatusText(t, serviceInfo),
-    },
-    {
-      id: 'update-status',
-      label: t('settings.serviceInfo.updateStatus'),
-      value: updateStatusText(t, serviceInfo),
-      spinner: isUpdating,
-    },
-    {
-      id: 'update-sub-status',
-      label: t('settings.serviceInfo.updateSubStatus'),
-      value: healthMessage(t, serviceInfo),
-      spinner: isUpdating,
-    },
-  ];
 
   return (
     <div data-testid="settings-service-info-list">
-      <FrostedCard style={cardStyle}>
-        <div className={styles.overview}>
-          <section
-            className={styles.group}
-            aria-labelledby="settings-service-health-title"
-            data-testid="settings-service-health"
-          >
-            <h2 id="settings-service-health-title" className={styles.groupTitle}>
-              {t('settings.serviceInfo.healthTitle')}
-            </h2>
-            <div aria-live="polite">
-              <MetricRows rows={healthRows} />
-            </div>
-            {warnings > 0 ? (
-              <p className={styles.warning}>
-                {t('settings.serviceInfo.completedWithWarnings', {
-                  count: warnings,
-                })}
-              </p>
-            ) : null}
-          </section>
-
-          <section
-            className={styles.group}
-            aria-labelledby="settings-service-progress-title"
-            data-testid="settings-service-progress"
-          >
-            <h2 id="settings-service-progress-title" className={styles.groupTitle}>
-              {t('settings.serviceInfo.progressTitle')}
-            </h2>
-            <div className={styles.progressBlock} aria-live="polite">
-              <div
-                className={styles.progressText}
-                data-testid="settings-service-info-row-update-step-position"
+      <FrostedCard className={styles.card} style={cardStyle}>
+        <section aria-label={t('settings.serviceInfo.title')}>
+          <div className={styles.liveSummary} aria-live="polite">
+            <div
+              className={styles.statusLine}
+              data-testid="settings-service-info-row-update-status"
+            >
+              {isUpdating ? <ArcSpinner className={styles.spinner} size={SpinnerSize.SM} /> : null}
+              <span className={styles.statusValue}>
+                {updateStatusText(t, serviceInfo)}
+              </span>
+              <span className={styles.statusSeparator} aria-hidden="true">·</span>
+              <span
+                className={styles.workerStatus}
+                data-testid="settings-service-info-row-worker-status"
               >
-                <strong>{phaseLabel}</strong>
-                {subphaseLabel ? ` · ${subphaseLabel}` : ''}
-              </div>
-              {phaseState ? (
-                <span className={styles.statusSupporting}>
-                  {t('settings.serviceInfo.phaseState', { state: phaseState })}
-                </span>
+                {t('settings.serviceInfo.workerSummary', {
+                  status: workerStatusText(t, serviceInfo),
+                })}
+              </span>
+            </div>
+
+            <div
+              className={styles.phaseBlock}
+              data-testid="settings-service-info-row-update-step-position"
+            >
+              <span className={styles.phaseEyebrow}>
+                {t('settings.serviceInfo.currentStep')}
+              </span>
+              <span className={styles.phaseTitle}>{phaseLabel}</span>
+              {subphaseLabel ? (
+                <span className={styles.phaseSubtitle}>{subphaseLabel}</span>
               ) : null}
-              {isUpdating ? (
+            </div>
+
+            {isUpdating ? (
+              <div className={styles.progressBlock}>
+                <div className={styles.progressHeader}>
+                  <span className={styles.progressLabel}>
+                    {t('settings.serviceInfo.phaseProgressLabel')}
+                  </span>
+                  <strong
+                    className={styles.progressValue}
+                    data-testid="settings-service-info-row-update-phase-progress"
+                  >
+                    {progressText}
+                  </strong>
+                </div>
                 <div
                   className={`${styles.progressTrack} ${display.isDeterminate ? '' : styles.progressIndeterminate}`}
                   role="progressbar"
@@ -517,132 +355,50 @@ export function SettingsServiceProgressCard({
                     />
                   ) : null}
                 </div>
-              ) : null}
-              <span
-                className={styles.statusSupporting}
-                data-testid="settings-service-info-row-update-phase-progress"
-              >
-                {isUpdating ? progressText : healthMessage(t, serviceInfo)}
-              </span>
-              {units ? <span className={styles.statusSupporting}>{units}</span> : null}
-              {display.overallPercent != null ? (
-                <span
-                  className={styles.statusSupporting}
-                  data-testid="settings-service-info-row-update-overall-progress"
-                >
-                  {t('settings.serviceInfo.overallEstimate', {
-                    percent: display.overallPercent.toFixed(1),
-                  })}
-                </span>
-              ) : null}
-              {etaText ? (
-                <span
-                  className={styles.statusSupporting}
-                  data-testid="settings-service-info-row-update-eta"
-                >
-                  {etaText}
-                </span>
-              ) : null}
-              {display.restarted ? (
-                <span className={styles.warning}>{t('settings.serviceInfo.progressRestarted')}</span>
-              ) : null}
-            </div>
-          </section>
+                <div className={styles.progressFacts}>
+                  {units ? <span>{units}</span> : null}
+                  {phaseState ? (
+                    <span>{t('settings.serviceInfo.phaseState', { state: phaseState })}</span>
+                  ) : null}
+                  {display.overallPercent != null ? (
+                    <span data-testid="settings-service-info-row-update-overall-progress">
+                      {t('settings.serviceInfo.overallEstimate', {
+                        percent: display.overallPercent.toFixed(1),
+                      })}
+                    </span>
+                  ) : null}
+                  {etaText ? (
+                    <span data-testid="settings-service-info-row-update-eta">
+                      {etaText}
+                    </span>
+                  ) : null}
+                </div>
+                {display.restarted ? (
+                  <span className={styles.warning}>{t('settings.serviceInfo.progressRestarted')}</span>
+                ) : null}
+              </div>
+            ) : null}
 
-          <section
-            className={styles.group}
-            aria-labelledby="settings-service-publication-title"
-            data-testid="settings-service-publication"
-          >
-            <h2 id="settings-service-publication-title" className={styles.groupTitle}>
-              {t('settings.serviceInfo.publicationTitle')}
-            </h2>
-            {publicationRows.length > 0 ? (
-              <MetricRows rows={publicationRows} />
-            ) : (
-              <p className={styles.statusSupporting}>
-                {t('settings.serviceInfo.publicationUnavailable')}
+            <p
+              className={styles.statusSupporting}
+              data-testid="settings-service-info-row-update-sub-status"
+            >
+              {healthMessage(t, serviceInfo)}
+            </p>
+            {warnings > 0 ? (
+              <p className={styles.warning}>
+                {t('settings.serviceInfo.completedWithWarnings', {
+                  count: warnings,
+                })}
               </p>
-            )}
-          </section>
-        </div>
-
-        <details className={styles.technicalDetails} data-testid="settings-service-technical-details">
-          <summary className={styles.technicalSummary}>
-            {t('settings.serviceInfo.technicalDetails')}
-          </summary>
-          <div className={styles.technicalRows}>
-            <MetricRows rows={technicalRows(t, serviceInfo, t('settings.serviceInfo.notApplicable'))} />
+            ) : null}
           </div>
-        </details>
-      </FrostedCard>
-    </div>
-  );
-}
+        </section>
 
-function profileSyncStatus(
-  t: TFunction,
-  profile: SelectedProfile,
-  playerStatus: SyncStatusResponse | null,
-  bandStatus: BandSyncStatusResponse | null,
-  fallback: string,
-): string {
-  if (profile.type === 'player') {
-    if (!playerStatus) return fallback;
-    const status = playerStatus?.rivals?.status
-      ?? (playerStatus?.isTracked ? 'pending' : 'unknown');
-    return t(`settings.serviceInfo.profileSyncStates.${status}`, {
-      defaultValue: fallbackLabel(status),
-    });
-  }
-  if (!bandStatus) return fallback;
-  const status = bandStatus?.processing?.status
-    ?? (bandStatus?.isTracked ? 'pending' : 'unknown');
-  return t(`settings.serviceInfo.profileSyncStates.${status}`, {
-    defaultValue: fallbackLabel(status),
-  });
-}
-
-export function SelectedProfileSyncCard({
-  profile,
-  playerStatus,
-  bandStatus,
-  loadFailed,
-}: SelectedProfileSyncCardProps) {
-  const { t } = useTranslation(['translation', 'settings'], { nsMode: 'fallback' });
-  const fallback = loadFailed
-    ? t('common.failedToLoad')
-    : t('common.loading');
-  const rows: MetricRow[] = profile.type === 'player'
-    ? [
-      {
-        id: 'selected-player-id',
-        label: t('settings.serviceInfo.selectedPlayerId'),
-        value: profile.accountId,
-      },
-      {
-        id: 'selected-player-rivals-status',
-        label: t('settings.serviceInfo.selectedPlayerRivalsStatus'),
-        value: profileSyncStatus(t, profile, playerStatus, bandStatus, fallback),
-      },
-    ]
-    : [
-      {
-        id: 'selected-band-id',
-        label: t('settings.serviceInfo.selectedBandId'),
-        value: profile.bandId,
-      },
-      {
-        id: 'selected-band-sync-status',
-        label: t('settings.serviceInfo.selectedBandSyncStatus'),
-        value: profileSyncStatus(t, profile, playerStatus, bandStatus, fallback),
-      },
-    ];
-
-  return (
-    <div data-testid="settings-selected-profile-sync">
-      <FrostedCard className={styles.profileCard} style={cardStyle}>
-        <MetricRows rows={rows} />
+        <TimingRows
+          rows={timingRows}
+          label={t('settings.serviceInfo.timingLabel')}
+        />
       </FrostedCard>
     </div>
   );

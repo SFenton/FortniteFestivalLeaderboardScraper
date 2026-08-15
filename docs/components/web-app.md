@@ -2,7 +2,7 @@
 status: canonical
 owner: web
 last_verified: 2026-08-14
-last_verified_commit: 76ddfd59
+last_verified_commit: c0e0f775
 sources:
   - FortniteFestivalWeb/package.json
   - FortniteFestivalWeb/.node-version
@@ -19,14 +19,12 @@ sources:
   - FortniteFestivalWeb/src/pages/settings/SettingsPage.tsx
   - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.tsx
   - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.module.css
-  - FortniteFestivalWeb/src/pages/settings/useSelectedProfileSyncStatus.ts
   - FortniteFestivalWeb/src/pages/settings/serviceProgress.ts
   - FortniteFestivalWeb/src/pages/settings/serviceInfo.en.json
   - FortniteFestivalWeb/src/hooks/data/useServiceInfo.ts
   - FortniteFestivalWeb/src/hooks/ui/useScrollUpdateScheduler.ts
   - FortniteFestivalWeb/src/hooks/ui/useVirtualListScrollMargin.ts
   - FortniteFestivalWeb/e2e/specs/responsive/settings-progress.spec.ts
-  - /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/pr27-settings-live-ab-20260814T062455Z
   - FortniteFestivalWeb/src/pages/shop/ShopPage.tsx
   - FortniteFestivalWeb/src/pages/leaderboards/modals/RankByModal.tsx
   - FortniteFestivalWeb/src/pages/leaderboards/firstRun/metricInfo/
@@ -236,25 +234,31 @@ shared React Query key. Visible Settings polling is five seconds; hidden-page
 polling is throttled to 30 seconds. No WebSocket or page-owned duplicate fetch
 is added, and publication-boundary cache/reset ownership is unchanged.
 
-The service area has three primary groups: Health, Progress and ETA, and
-Publication timing. Operational IDs, raw heartbeat/progress timestamps,
-phase-plan/attempt details, and model diagnostics live under a collapsed native
-`details` disclosure. Selected player or band synchronization is a separate
-card rather than global service health.
-
-Selected-profile sync polling is owned by the lazy Settings-local
-`useSelectedProfileSyncStatus` hook. It preserves the existing player/band API
-choice, abort behavior, and recursive five-second cadence without moving this
-volatile progress state into React Query.
+The service area uses one flat `FrostedCard` with no tinted or bordered
+subcards. Its first live summary line combines update and worker state, then
+puts the specific translated phase and subphase in the card's primary visual
+position. Idle state uses that same position to say that the service is waiting
+for the next update.
 
 The browser uses stable phase/subphase IDs for localization with safe label
 fallbacks. A phase bar is determinate only when service-info v2 reports a final
 denominator and exact `phasePercent`; v1 and unknown-total payloads remain
 indeterminate and never reuse legacy `progressPercent` as exact progress.
-Overall percentage and ETA range/confidence/sample count render only when the
-server emits evidence that passes the client trust gate. Display memory rejects
-older payload regressions while allowing a new phase attempt to reset and
-announce itself.
+The visible phase percentage stays on the progress-bar line. Units, exceptional
+phase states, estimated overall progress, and ETA range/confidence wrap beneath
+it without promoting estimated overall progress above the exact phase value.
+ETA sample count remains part of the trust gate but is not user-facing.
+Display memory rejects older payload regressions while allowing a new phase
+attempt to reset and announce itself.
+
+One concise availability sentence distinguishes an existing publication from a
+first publication still in progress without exposing scrape IDs. A flat
+definition-list footer shows last publication, current update start when
+applicable, and next scheduled update behind one subtle divider. Operational
+IDs, raw heartbeat/progress timestamps, attempts, model diagnostics, technical
+disclosures, and selected-profile rival/sync status are not rendered. Settings
+therefore does not add a selected-profile sync polling loop; profile-name
+refresh and export controls keep their existing selected-profile ownership.
 
 English shell/common/Songs resources remain eager in the i18next `translation`
 namespace. App Manual, Settings, and First Run resources use named namespaces
@@ -266,30 +270,10 @@ key. The production graph requires all three JSON resources to stay outside the
 entry and inside their declared lazy owner closures.
 
 Focused unit and Playwright coverage owns v1/v2 rendering, exact and unknown
-denominators, ETA suppression, warnings/failures/restarts, selected-profile
-separation, keyboard disclosure behavior, shared-request concurrency, and
-overflow at 320, 375, 768, and 1440 pixels.
-
-Live candidate validation accepted commit `0af25b3f` on 2026-08-14 against the
-official `aa33576e` web baseline while publication `1296` remained idle and
-unfrozen. At 320/375/768/1440 pixels the visible service card height changed
-from 890/848/512/512 px to about 581/539/448/293 px, the visible `N/A` count
-fell from five to zero, and neither image overflowed horizontally. Every width
-rendered the three groups with Technical details collapsed. Enter opened the
-disclosure and Space closed it. Two service-info requests occurred in the
-initial polling window with at most one in flight.
-
-The service section had zero axe violations in three matched baseline and
-candidate probes. The full Settings page retained the same pre-existing
-unlabelled `#fst-leeway-slider` finding in both images; PR-3 introduced no new
-accessibility finding. Alternating route probes kept every p50 and p95 delta
-below 10%, with exact publication, version, and songs response parity.
-
-The candidate reduced entry gzip by about 0.21%, increased the lazy Settings
-chunk from 9,810 to 14,551 gzip bytes, increased total static bytes by about
-0.028%, and retained 5,682 bytes of required entry-budget headroom. Evidence is
-stored under
-`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/pr27-settings-live-ab-20260814T062455Z`.
+denominators, ETA suppression, warnings/failures/restarts, absence of technical
+and selected-profile sync surfaces, shared-request concurrency, one-card
+overflow at 320, 375, 768, and 1440 pixels, and determinate desktop/mobile axe
+coverage.
 
 The path modal can display the generated PNG or a text table. Text mode renders
 one row per activation, not one row per optional start note. Schema-v2

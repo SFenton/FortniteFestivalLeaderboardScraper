@@ -81,36 +81,6 @@ const defaultServiceInfo = {
   nextScheduledUpdateAt: '2026-04-20T16:30:00Z',
 };
 
-const defaultSyncStatus = {
-  accountId: 'tracked-player-1',
-  isTracked: true,
-  backfill: null,
-  historyRecon: null,
-  rivals: {
-    status: 'complete',
-    combosComputed: 8,
-    totalCombosToCompute: 8,
-    rivalsFound: 14,
-    startedAt: '2026-04-20T12:31:00Z',
-    completedAt: '2026-04-20T12:32:00Z',
-  },
-};
-
-const defaultBandSyncStatus = {
-  bandId: 'band-1',
-  bandType: 'Band_Duets',
-  teamKey: 'member-a:member-b',
-  isTracked: true,
-  processing: {
-    status: 'complete',
-    lookupsChecked: 10,
-    totalLookupsToCheck: 10,
-    entriesFound: 4,
-    startedAt: '2026-04-20T12:31:00Z',
-    completedAt: '2026-04-20T12:32:00Z',
-  },
-};
-
 beforeAll(() => {
   stubScrollTo();
   stubResizeObserver();
@@ -149,12 +119,6 @@ beforeEach(() => {
     if (typeof url === 'string' && url.includes('/api/service-info')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultServiceInfo) });
     }
-    if (typeof url === 'string' && url.includes('/api/bands/') && url.includes('/sync-status')) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultBandSyncStatus) });
-    }
-    if (typeof url === 'string' && url.includes('/sync-status')) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultSyncStatus) });
-    }
     if (typeof url === 'string' && url.includes('/api/account/name-refresh')) {
       const body = typeof init?.body === 'string' ? JSON.parse(init.body) as { accountIds?: string[] } : { accountIds: [] };
       const accountIds = body.accountIds ?? [];
@@ -178,12 +142,6 @@ function mockServiceInfoResponse(serviceInfo: unknown) {
     }
     if (typeof url === 'string' && url.includes('/api/service-info')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve(serviceInfo) });
-    }
-    if (typeof url === 'string' && url.includes('/api/bands/') && url.includes('/sync-status')) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultBandSyncStatus) });
-    }
-    if (typeof url === 'string' && url.includes('/sync-status')) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultSyncStatus) });
     }
     return Promise.resolve({ ok: false, statusText: 'Not Found', json: () => Promise.resolve({}) });
   }) as unknown as typeof fetch;
@@ -409,6 +367,7 @@ describe('SettingsPage', () => {
     expect(within(list).getByTestId('settings-quick-link-service-info')).toHaveTextContent('Service Info');
     expect(within(list).getByTestId('settings-quick-link-first-run')).toHaveTextContent('First Run Guides');
     expect(within(list).getByTestId('settings-quick-link-licenses')).toHaveTextContent('Licenses');
+    expect(within(list).queryByTestId('settings-quick-link-profile-sync')).toBeNull();
     expect(within(list).queryByTestId('settings-quick-link-refresh-profile-name')).toBeNull();
     expect(within(list).getByTestId('settings-quick-link-export')).toHaveTextContent('Export Data');
     expect(within(list).getByTestId('settings-quick-link-reset')).toHaveTextContent('Reset Settings');
@@ -557,9 +516,6 @@ describe('SettingsPage', () => {
       if (typeof url === 'string' && url.includes('/api/service-info')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultServiceInfo) });
       }
-      if (typeof url === 'string' && url.includes('/sync-status')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultSyncStatus) });
-      }
       if (typeof url === 'string' && url.includes('/api/account/name-refresh')) {
         return new Promise(resolve => {
           resolveRefresh = resolve;
@@ -606,9 +562,6 @@ describe('SettingsPage', () => {
       if (typeof url === 'string' && url.includes('/api/service-info')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultServiceInfo) });
       }
-      if (typeof url === 'string' && url.includes('/sync-status')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultSyncStatus) });
-      }
       if (typeof url === 'string' && url.includes('/api/account/name-refresh')) {
         return new Promise(resolve => {
           resolveRefresh = resolve;
@@ -651,12 +604,6 @@ describe('SettingsPage', () => {
       if (typeof url === 'string' && url.includes('/api/service-info')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultServiceInfo) });
       }
-      if (typeof url === 'string' && url.includes('/api/bands/') && url.includes('/sync-status')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultBandSyncStatus) });
-      }
-      if (typeof url === 'string' && url.includes('/sync-status')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultSyncStatus) });
-      }
       if (typeof url === 'string' && url.includes('/api/player/tracked-player-1/export')) {
         return Promise.resolve({
           ok: true,
@@ -684,7 +631,7 @@ describe('SettingsPage', () => {
     clickSpy.mockRestore();
   });
 
-  it('allows player export before selected player sync is complete', async () => {
+  it('allows player export without polling selected player sync', async () => {
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'tracked-player-1', displayName: 'Tracked Player' }));
 
     globalThis.fetch = vi.fn().mockImplementation((url: string) => {
@@ -693,22 +640,6 @@ describe('SettingsPage', () => {
       }
       if (typeof url === 'string' && url.includes('/api/service-info')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultServiceInfo) });
-      }
-      if (typeof url === 'string' && url.includes('/sync-status')) {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({
-            ...defaultSyncStatus,
-            backfill: {
-              status: 'pending',
-              songsChecked: 0,
-              totalSongsToCheck: 100,
-              entriesFound: 0,
-              startedAt: null,
-              completedAt: null,
-            },
-          }),
-        });
       }
       return Promise.resolve({ ok: false, statusText: 'Not Found', json: () => Promise.resolve({}) });
     }) as unknown as typeof fetch;
@@ -719,6 +650,10 @@ describe('SettingsPage', () => {
       expect(screen.getByText('Download an Excel workbook archive with available data for Tracked Player.')).toBeDefined();
     });
     expect(screen.getByRole('button', { name: 'Export Data' })).toHaveProperty('disabled', false);
+    expect(globalThis.fetch).not.toHaveBeenCalledWith(
+      expect.stringContaining('/sync-status'),
+      expect.anything(),
+    );
     expect(globalThis.fetch).not.toHaveBeenCalledWith('/api/player/tracked-player-1/export', expect.anything());
   });
 
@@ -749,9 +684,6 @@ describe('SettingsPage', () => {
       if (typeof url === 'string' && url.includes('/api/service-info')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultServiceInfo) });
       }
-      if (typeof url === 'string' && url.includes('/api/bands/Band_Duets/member-a%3Amember-b/sync-status')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultBandSyncStatus) });
-      }
       if (typeof url === 'string' && url.includes('/api/bands/Band_Duets/member-a%3Amember-b/export')) {
         return Promise.resolve({
           ok: true,
@@ -779,7 +711,7 @@ describe('SettingsPage', () => {
     clickSpy.mockRestore();
   });
 
-  it('allows band export before selected band sync is complete', async () => {
+  it('allows band export without polling selected band sync', async () => {
     localStorage.setItem('fst:selectedProfile', JSON.stringify({
       type: 'band',
       bandId: 'band-1',
@@ -796,15 +728,6 @@ describe('SettingsPage', () => {
       if (typeof url === 'string' && url.includes('/api/service-info')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultServiceInfo) });
       }
-      if (typeof url === 'string' && url.includes('/api/bands/') && url.includes('/sync-status')) {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({
-            ...defaultBandSyncStatus,
-            processing: { ...defaultBandSyncStatus.processing, status: 'pending', lookupsChecked: 2 },
-          }),
-        });
-      }
       return Promise.resolve({ ok: false, statusText: 'Not Found', json: () => Promise.resolve({}) });
     }) as unknown as typeof fetch;
 
@@ -814,6 +737,10 @@ describe('SettingsPage', () => {
       expect(screen.getByText('Download an Excel workbook archive with available data for Band Buddies.')).toBeDefined();
     });
     expect(screen.getByRole('button', { name: 'Export Data' })).toHaveProperty('disabled', false);
+    expect(globalThis.fetch).not.toHaveBeenCalledWith(
+      expect.stringContaining('/sync-status'),
+      expect.anything(),
+    );
   });
 
   it('toggles Show Instrument Icons', () => {
@@ -908,18 +835,16 @@ describe('SettingsPage', () => {
     expect(screen.getByText('Service Version')).toBeDefined();
   });
 
-  it('renders the simplified Health, Progress and ETA, and Publication timing groups', async () => {
+  it('renders one consolidated service card with the current step first', async () => {
     renderSettings();
 
     expect(screen.getByText('Service Info')).toBeDefined();
-    expect(await screen.findByRole('heading', { level: 2, name: 'Health' })).toBeDefined();
-    expect(screen.getByRole('heading', { level: 2, name: 'Progress and ETA' })).toBeDefined();
-    expect(screen.getByRole('heading', { level: 2, name: 'Publication timing' })).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-worker-status')).getByText('Online')).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-update-status')).getByText('Idle')).toBeDefined();
-    expect(within(screen.getByTestId('settings-service-info-row-update-sub-status')).getByText(
-      'Published scrape 1296 is available. The service is waiting for the next update.',
-    )).toBeDefined();
+    const step = await screen.findByTestId('settings-service-info-row-update-step-position');
+    expect(within(step).getByText('Current step')).toBeDefined();
+    expect(within(step).getByText('Waiting for the next update')).toBeDefined();
+    expect(screen.getByTestId('settings-service-info-row-worker-status')).toHaveTextContent('Worker Online');
+    expect(screen.getByTestId('settings-service-info-row-update-status')).toHaveTextContent('Idle');
+    expect(screen.getAllByText('Published leaderboard data is available.')).toHaveLength(1);
     expect(within(screen.getByTestId('settings-service-info-row-last-published-at')).getByText(
       new Date(defaultServiceInfo.lastCompletedUpdate.publishedAt).toLocaleString(),
     )).toBeDefined();
@@ -929,21 +854,11 @@ describe('SettingsPage', () => {
     expect(screen.queryByRole('progressbar')).toBeNull();
     expect(screen.queryByTestId('settings-service-info-row-update-overall-progress')).toBeNull();
     expect(screen.queryByTestId('settings-service-info-row-update-eta')).toBeNull();
-  });
-
-  it('keeps operational diagnostics in a collapsed technical disclosure', async () => {
-    renderSettings();
-
-    const details = await screen.findByTestId('settings-service-technical-details');
-    expect(details).not.toHaveAttribute('open');
-    expect(within(details).getByText('Technical details')).toBeDefined();
-    expect(within(details).getByTestId('settings-service-info-row-worker-activity')).toHaveTextContent('Computing Lead Rankings');
-    expect(within(details).getByTestId('settings-service-info-row-worker-heartbeat')).toHaveTextContent(
-      new Date(defaultServiceInfo.workerStatus.lastHeartbeatAt).toLocaleString(),
-    );
-
-    fireEvent.click(within(details).getByText('Technical details'));
-    expect(details).toHaveAttribute('open');
+    expect(screen.queryByTestId('settings-service-health')).toBeNull();
+    expect(screen.queryByTestId('settings-service-progress')).toBeNull();
+    expect(screen.queryByTestId('settings-service-publication')).toBeNull();
+    expect(screen.queryByTestId('settings-service-technical-details')).toBeNull();
+    expect(screen.queryByText('Technical details')).toBeNull();
   });
 
   it('reuses fresh shared service-info cache without issuing a page-owned request', async () => {
@@ -953,7 +868,7 @@ describe('SettingsPage', () => {
     renderSettings({ queryClient });
 
     await waitFor(() => {
-      expect(within(screen.getByTestId('settings-service-info-row-worker-status')).getByText('Online')).toBeDefined();
+      expect(screen.getByTestId('settings-service-info-row-worker-status')).toHaveTextContent('Worker Online');
     });
     const serviceInfoCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
       .filter(([url]) => typeof url === 'string' && url.includes('/api/service-info'));
@@ -979,11 +894,10 @@ describe('SettingsPage', () => {
     renderSettings();
 
     const statusRow = await screen.findByTestId('settings-service-info-row-update-status');
-    const stepRow = await screen.findByTestId('settings-service-info-row-update-sub-status');
     await waitFor(() => {
       expect(within(statusRow).getByTestId('arc-spinner')).toBeDefined();
-      expect(within(stepRow).getByTestId('arc-spinner')).toBeDefined();
     });
+    expect(screen.getAllByTestId('arc-spinner')).toHaveLength(1);
     const progress = screen.getByRole('progressbar', { name: 'Current phase progress' });
     expect(progress).toHaveAttribute('data-progress-kind', 'indeterminate');
     expect(progress).not.toHaveAttribute('aria-valuemin');
@@ -1052,15 +966,15 @@ describe('SettingsPage', () => {
     expect(progress).toHaveAttribute('aria-valuemax', '100');
     expect(progress).toHaveAttribute('aria-valuenow', '37.5');
     expect(progress).toHaveAttribute('aria-valuetext', expect.stringContaining('3 of 8 instruments completed'));
-    expect(screen.getByTestId('settings-service-info-row-update-step-position')).toHaveTextContent(
-      'Computing rankings · Computing rankings by instrument',
-    );
+    const step = screen.getByTestId('settings-service-info-row-update-step-position');
+    expect(within(step).getByText('Computing rankings')).toBeDefined();
+    expect(within(step).getByText('Computing rankings by instrument')).toBeDefined();
     expect(screen.getByText('Phase state: Retrying')).toBeDefined();
     expect(screen.getByTestId('settings-service-info-row-update-phase-progress')).toHaveTextContent('37.5%');
     expect(screen.getByText('3 of 8 instruments completed')).toBeDefined();
     expect(screen.getByTestId('settings-service-info-row-update-overall-progress')).toHaveTextContent('63.2%');
     expect(screen.getByTestId('settings-service-info-row-update-eta')).toHaveTextContent(
-      'Estimated 2m 0s–4m 0s remaining (medium confidence, 9 samples)',
+      'Estimated 2m 0s–4m 0s remaining (medium confidence)',
     );
   });
 
@@ -1106,6 +1020,7 @@ describe('SettingsPage', () => {
     expect(progress).toHaveAttribute('data-progress-kind', 'indeterminate');
     expect(progress).not.toHaveAttribute('aria-valuenow');
     expect(screen.getByText('12 leaderboards completed; 48 discovered so far')).toBeDefined();
+    expect(screen.queryByText('Phase state: Running')).toBeNull();
     expect(screen.queryByText('25.0%')).toBeNull();
     expect(screen.queryByText('44.0%')).toBeNull();
     expect(screen.queryByTestId('settings-service-info-row-update-eta')).toBeNull();
@@ -1138,9 +1053,9 @@ describe('SettingsPage', () => {
     const statusRow = await screen.findByTestId('settings-service-info-row-update-status');
     expect(within(statusRow).getByText('Failed')).toBeDefined();
     expect(screen.getByTestId('settings-service-info-row-update-sub-status')).toHaveTextContent(
-      'The update failed. Published scrape 1296 remains available.',
+      'The update failed. Previously published leaderboard data remains available.',
     );
-    expect(screen.getByTestId('settings-service-info-row-worker-status')).toHaveTextContent('Stale');
+    expect(screen.getByTestId('settings-service-info-row-worker-status')).toHaveTextContent('Worker Stale');
     expect(screen.getByText('The last completed update reported 2 non-critical warnings.')).toBeDefined();
     expect(within(screen.getByTestId('settings-service-info-row-update-status')).queryByTestId('arc-spinner')).toBeNull();
   });
@@ -1194,40 +1109,23 @@ describe('SettingsPage', () => {
     expect(screen.queryByText('80.0%')).toBeNull();
   });
 
-  it('moves selected-player synchronization outside global service health', async () => {
+  it('does not render or poll the removed selected-profile sync section', async () => {
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'tracked-player-1', displayName: 'Tracked Player' }));
-    renderSettings();
+    renderSettings({ withQuickLinksHarness: true });
 
-    await waitFor(() => {
-      expect(screen.getByText('Selected profile sync')).toBeDefined();
-      expect(within(screen.getByTestId('settings-service-info-row-selected-player-id')).getByText('Selected player ID')).toBeDefined();
-      expect(within(screen.getByTestId('settings-service-info-row-selected-player-id')).getByText('tracked-player-1')).toBeDefined();
-      expect(within(screen.getByTestId('settings-service-info-row-selected-player-rivals-status')).getByText('Selected player Rivals status')).toBeDefined();
-      expect(within(screen.getByTestId('settings-service-info-row-selected-player-rivals-status')).getByText('Complete')).toBeDefined();
-    });
-    const serviceCard = screen.getByTestId('settings-service-info-list');
-    const profileCard = screen.getByTestId('settings-selected-profile-sync');
-    expect(serviceCard.contains(profileCard)).toBe(false);
-  });
+    await screen.findByTestId('settings-service-info-row-worker-status');
+    expect(screen.queryByText('Selected profile sync')).toBeNull();
+    expect(screen.queryByTestId('settings-selected-profile-sync')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Refresh Profile Name' })).toBeDefined();
 
-  it('renders selected-band synchronization in the separate profile card', async () => {
-    localStorage.setItem('fst:selectedProfile', JSON.stringify({
-      type: 'band',
-      bandId: 'band-1',
-      bandType: 'Band_Duets',
-      teamKey: 'member-a:member-b',
-      displayName: 'Band Buddies',
-      members: [],
-    }));
-    renderSettings();
+    fireEvent.click(await screen.findByTestId('test-open-page-quick-links'));
+    const list = await screen.findByTestId('settings-quick-links-modal-list');
+    expect(within(list).queryByTestId('settings-quick-link-profile-sync')).toBeNull();
+    expect(within(list).getByTestId('settings-quick-link-refresh-profile-name')).toBeDefined();
 
-    const bandIdRow = await screen.findByTestId('settings-service-info-row-selected-band-id');
-    expect(bandIdRow).toHaveTextContent('Selected band ID');
-    expect(bandIdRow).toHaveTextContent('band-1');
-    await waitFor(() => {
-      expect(screen.getByTestId('settings-service-info-row-selected-band-sync-status')).toHaveTextContent('Complete');
-    });
-    expect(screen.getByTestId('settings-selected-profile-sync')).toBeDefined();
+    const syncStatusCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+      .filter(([url]) => typeof url === 'string' && url.includes('/sync-status'));
+    expect(syncStatusCalls).toHaveLength(0);
   });
 
   it('displays service version after fetch', async () => {

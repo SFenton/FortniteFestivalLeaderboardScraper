@@ -105,7 +105,7 @@ test.beforeEach(({}, testInfo) => {
 });
 
 for (const width of [320, 375, 768, 1440]) {
-  test(`idle Settings service groups fit without horizontal overflow at ${width}px`, async ({
+  test(`idle Settings service card fits without horizontal overflow at ${width}px`, async ({
     page,
     appState,
     api,
@@ -118,7 +118,10 @@ for (const width of [320, 375, 768, 1440]) {
 
     const serviceInfo = page.getByTestId('settings-service-info-list');
     await expect(serviceInfo).toBeVisible();
-    await expect(page.getByTestId('settings-service-technical-details')).not.toHaveAttribute('open', '');
+    await expect(serviceInfo.getByText('Waiting for the next update')).toBeVisible();
+    await expect(serviceInfo.getByText('Published leaderboard data is available.')).toHaveCount(1);
+    await expect(page.getByTestId('settings-service-technical-details')).toHaveCount(0);
+    await expect(page.getByTestId('settings-selected-profile-sync')).toHaveCount(0);
 
     const geometry = await page.locator('#main-content').evaluate(element => ({
       clientWidth: element.clientWidth,
@@ -126,20 +129,17 @@ for (const width of [320, 375, 768, 1440]) {
     }));
     expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.clientWidth + 1);
 
-    for (const groupId of [
-      'settings-service-health',
-      'settings-service-progress',
-      'settings-service-publication',
-    ]) {
-      const group = page.getByTestId(groupId);
-      await expect(group).toBeVisible();
-      const groupGeometry = await group.evaluate(element => ({
-        clientWidth: element.clientWidth,
-        scrollWidth: element.scrollWidth,
-      }));
-      expect(groupGeometry.scrollWidth).toBeLessThanOrEqual(groupGeometry.clientWidth + 1);
-      await expect(group).not.toContainText('N/A');
-    }
+    const card = serviceInfo.locator(':scope > div');
+    await expect(card).toHaveCount(1);
+    const cardGeometry = await card.evaluate(element => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(cardGeometry.scrollWidth).toBeLessThanOrEqual(cardGeometry.clientWidth + 1);
+    await expect(card).not.toContainText('N/A');
+    await expect(page.getByTestId('settings-service-health')).toHaveCount(0);
+    await expect(page.getByTestId('settings-service-progress')).toHaveCount(0);
+    await expect(page.getByTestId('settings-service-publication')).toHaveCount(0);
 
     await testInfo.attach(`settings-idle-${width}`, {
       body: await serviceInfo.screenshot(),
@@ -148,53 +148,62 @@ for (const width of [320, 375, 768, 1440]) {
   });
 }
 
-test('v2 determinate progress is accessible and technical details are keyboard operable', async ({
-  page,
-  appState,
-  api,
-  scenario,
-}, testInfo) => {
-  await page.setViewportSize({ width: 375, height: 900 });
-  api.use({ ...scenario, serviceInfo: runningServiceInfo(true) });
-  await appState.reset();
-  await appState.selectPlayer();
-  await gotoAppRoute(page, '/settings');
+for (const width of [375, 1440]) {
+  test(`v2 determinate progress keeps the current phase first at ${width}px`, async ({
+    page,
+    appState,
+    api,
+    scenario,
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    api.use({ ...scenario, serviceInfo: runningServiceInfo(true) });
+    await appState.reset();
+    await appState.selectPlayer();
+    await gotoAppRoute(page, '/settings');
 
-  const progress = page.getByRole('progressbar', { name: 'Current phase progress' });
-  await expect(progress).toHaveAttribute('data-progress-kind', 'determinate');
-  await expect(progress).toHaveAttribute('aria-valuemin', '0');
-  await expect(progress).toHaveAttribute('aria-valuemax', '100');
-  await expect(progress).toHaveAttribute('aria-valuenow', '37.5');
-  await expect(progress).toHaveAttribute('aria-valuetext', /3 of 8 instruments completed/);
-  await expect(page.getByText('Estimated overall progress: 63.2%')).toBeVisible();
-  await expect(page.getByText(/Estimated 2m 0s–4m 0s remaining/)).toBeVisible();
+    const progress = page.getByRole('progressbar', { name: 'Current phase progress' });
+    await expect(progress).toHaveAttribute('data-progress-kind', 'determinate');
+    await expect(progress).toHaveAttribute('aria-valuemin', '0');
+    await expect(progress).toHaveAttribute('aria-valuemax', '100');
+    await expect(progress).toHaveAttribute('aria-valuenow', '37.5');
+    await expect(progress).toHaveAttribute('aria-valuetext', /3 of 8 instruments completed/);
+    await expect(page.getByTestId('settings-service-info-row-update-step-position')).toContainText(
+      'Computing rankings',
+    );
+    await expect(page.getByTestId('settings-service-info-row-update-step-position')).toContainText(
+      'Computing rankings by instrument',
+    );
+    await expect(page.getByText('Estimated overall 63.2%')).toBeVisible();
+    await expect(page.getByText('Estimated 2m 0s–4m 0s remaining (medium confidence)')).toBeVisible();
+    await expect(page.getByTestId('settings-service-technical-details')).toHaveCount(0);
+    await expect(page.getByTestId('settings-selected-profile-sync')).toHaveCount(0);
+    await expect(page.getByTestId('settings-quick-link-profile-sync')).toHaveCount(0);
 
-  const details = page.getByTestId('settings-service-technical-details');
-  const summary = details.locator('summary');
-  await summary.focus();
-  await expect(summary).toBeFocused();
-  await summary.press('Enter');
-  await expect(details).toHaveAttribute('open', '');
-  await summary.press('Space');
-  await expect(details).not.toHaveAttribute('open', '');
+    const phasePrecedesProgress = await page.getByTestId('settings-service-info-list').evaluate(service => {
+      const phase = service.querySelector('[data-testid="settings-service-info-row-update-step-position"]');
+      const bar = service.querySelector('[data-testid="settings-service-phase-progress"]');
+      return Boolean(
+        phase
+        && bar
+        && (phase.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING),
+      );
+    });
+    expect(phasePrecedesProgress).toBe(true);
 
-  const profileCard = page.getByTestId('settings-selected-profile-sync');
-  await expect(profileCard).toBeVisible();
-  expect(await page.getByTestId('settings-service-info-list').evaluate(
-    service => service.contains(document.querySelector('[data-testid="settings-selected-profile-sync"]')),
-  )).toBe(false);
+    await page.addScriptTag({ content: axe.source });
+    const results = await page.evaluate(() => window.axe.run('[data-testid="settings-service-info-list"]'));
+    expect(results.violations.filter(
+      violation => violation.impact === 'moderate'
+        || violation.impact === 'serious'
+        || violation.impact === 'critical',
+    )).toEqual([]);
 
-  await page.addScriptTag({ content: axe.source });
-  const results = await page.evaluate(() => window.axe.run('[data-testid="settings-service-info-list"]'));
-  expect(results.violations.filter(
-    violation => violation.impact === 'serious' || violation.impact === 'critical',
-  )).toEqual([]);
-
-  await testInfo.attach('settings-running-determinate', {
-    body: await page.getByTestId('settings-service-info-list').screenshot(),
-    contentType: 'image/png',
+    await testInfo.attach(`settings-running-determinate-${width}`, {
+      body: await page.getByTestId('settings-service-info-list').screenshot(),
+      contentType: 'image/png',
+    });
   });
-});
+}
 
 test('v2 unknown totals stay indeterminate without numeric progress', async ({
   page,
@@ -235,7 +244,7 @@ test('failed update keeps prior publication health visible', async ({
 
   await expect(page.getByTestId('settings-service-info-row-update-status')).toContainText('Failed');
   await expect(page.getByTestId('settings-service-info-row-update-sub-status')).toContainText(
-    'Published scrape 1 remains available',
+    'Previously published leaderboard data remains available',
   );
   await expect(page.getByText('The last completed update reported 2 non-critical warnings.')).toBeVisible();
   await expect(page.getByRole('progressbar')).toHaveCount(0);

@@ -1,78 +1,39 @@
-.overview {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--radius-lg);
-  min-width: 0;
-}
-
-.group {
+.card,
+.liveSummary,
+.phaseBlock,
+.progressBlock {
   display: flex;
   min-width: 0;
   flex-direction: column;
+}
+
+.card {
   gap: var(--gap-xl);
-  padding: 1rem;
-  overflow: hidden;
-  border: 1px solid var(--settings-progress-border);
-  border-radius: var(--radius-md);
-  background: var(--settings-progress-group);
 }
 
-.groupTitle {
-  margin: 0;
-  font-size: var(--font-lg);
-  font-weight: 700;
+.liveSummary {
+  gap: var(--gap-lg);
 }
 
-.metricValue,
-.progressText {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.statusSupporting {
-  margin: 0;
-  color: var(--settings-progress-muted);
-  line-height: 1.45;
-}
-
-.warning {
-  margin: 0;
-  color: var(--settings-progress-warning);
-  line-height: 1.45;
-}
-
-.metricList,
-.technicalRows {
+.statusLine {
   display: flex;
   min-width: 0;
-  flex-direction: column;
-  gap: var(--gap-md);
-}
-
-.metricRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
-  gap: var(--gap-xl);
-  align-items: start;
-  min-width: 0;
-}
-
-.metricLabel {
-  min-width: 0;
-  font-weight: 650;
-}
-
-.metricValue {
-  display: flex;
-  min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
-  gap: var(--gap-md);
+  gap: var(--gap-sm);
   color: var(--settings-progress-muted);
-  text-align: right;
 }
 
-.metricValueText {
+.statusValue {
+  font-weight: 700;
+  color: inherit;
+}
+
+.statusSeparator {
+  color: var(--settings-progress-tertiary);
+}
+
+.workerStatus {
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -81,11 +42,49 @@
   flex: 0 0 auto;
 }
 
+.phaseBlock {
+  gap: var(--gap-xs);
+}
+
+.phaseEyebrow,
+.progressLabel,
+.timingLabel {
+  color: var(--settings-progress-tertiary);
+  font-size: var(--font-sm);
+  font-weight: 650;
+}
+
+.phaseTitle {
+  min-width: 0;
+  color: inherit;
+  font-size: var(--font-xl);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.phaseSubtitle {
+  min-width: 0;
+  color: var(--settings-progress-muted);
+  overflow-wrap: anywhere;
+}
+
 .progressBlock {
+  gap: var(--gap-md);
+}
+
+.progressHeader {
   display: flex;
   min-width: 0;
-  flex-direction: column;
-  gap: var(--gap-md);
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gap-sm);
+}
+
+.progressValue {
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
 
 .progressTrack {
@@ -113,33 +112,56 @@
   animation: settings-progress-indeterminate 1.25s ease-in-out infinite;
 }
 
-.technicalDetails {
-  margin-top: 1rem;
-  border-top: 1px solid var(--settings-progress-border);
-  padding-top: 0.75rem;
+.progressFacts {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--gap-sm) var(--gap-xl);
+  color: var(--settings-progress-muted);
+  font-size: var(--font-sm);
+  line-height: 1.45;
 }
 
-.technicalSummary {
-  cursor: pointer;
-  font-weight: 700;
-  list-style-position: outside;
+.progressFacts > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
-.technicalSummary:focus-visible {
-  border-radius: var(--radius-xs);
-  outline: 2px solid var(--settings-progress-focus);
-  outline-offset: 0.25rem;
+.statusSupporting {
+  margin: 0;
+  color: var(--settings-progress-muted);
+  line-height: 1.45;
 }
 
-.technicalRows {
-  margin-top: 0.75rem;
+.warning {
+  margin: 0;
+  color: var(--settings-progress-warning);
+  line-height: 1.45;
 }
 
-.profileCard {
+.timingGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--gap-xl);
+  min-width: 0;
+  margin: 0;
+  padding-top: 1rem;
+  border-top: 1px solid var(--settings-progress-divider);
+}
+
+.timingItem {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--gap-xl);
+  gap: var(--gap-xs);
+}
+
+.timingValue {
+  min-width: 0;
+  margin: 0;
+  color: var(--settings-progress-muted);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
 
 @keyframes settings-progress-indeterminate {
@@ -156,25 +178,15 @@
   }
 }
 
-@media (width <= 900px) {
-  .overview {
-    grid-template-columns: 1fr;
+@media (width <= 760px) {
+  .timingGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (width <= 480px) {
-  .group {
-    padding: 0.875rem;
-  }
-
-  .metricRow {
+  .timingGrid {
     grid-template-columns: 1fr;
-    gap: var(--gap-xs);
-  }
-
-  .metricValue {
-    justify-content: flex-start;
-    text-align: left;
   }
 }
 
