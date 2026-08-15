@@ -2,13 +2,14 @@
 status: canonical
 owner: operations
 last_verified: 2026-08-15
-last_verified_commit: ba2907a8
+last_verified_commit: 24a3175c
 sources:
   - AGENTS.md
   - .github/copilot-instructions.md
   - .github/instructions/fst-postgres.instructions.md
   - FSTService/Scraping/ScrapeLifecycleNotifier.cs
   - FSTService/ScraperOptions.cs
+  - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - docs/operations/deployment.md
   - tools/fst-worker-compose-guard.sh
@@ -159,11 +160,15 @@ staging generation.
 For a reviewed long-running evidence scan, set the bounded per-command override
 documented in the runbook; production currently uses
 `Scraper__MaxScoreMaintenanceCommandTimeoutSeconds=1800`. The override keeps
-Npgsql cancellation and transaction-local PostgreSQL statement timeouts; it
-does not authorize running with an active worker, weakening source locks, or
-clearing a post-freeze failure. Plan failures identify the evidence stage so
-operators can distinguish publication-population, complete score-history, and
-other evidence without exposing SQL or credentials.
+Npgsql cancellation and transaction-local PostgreSQL statement timeouts. In
+the final completion transaction it applies only to immutable cache validation
+while the `5s` lock timeout remains active, then the server statement timeout
+returns to `120s` before cache mutation and unfreeze. A timeout-transition
+failure leaves the freeze and durable gate intact. The override does not
+authorize running with an active worker, weakening source locks, or clearing a
+post-freeze failure. Plan failures identify the evidence stage so operators
+can distinguish publication-population, complete score-history, and other
+evidence without exposing SQL or credentials.
 
 ## Service availability
 

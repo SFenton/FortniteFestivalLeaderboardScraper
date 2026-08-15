@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-15
-last_verified_commit: ba2907a8
+last_verified_commit: 24a3175c
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/coverage.runsettings
@@ -75,7 +75,10 @@ replacement, unrelated-account preservation, frozen-scope cache filtering,
 strict apply/resume report version 3 compatibility/rejection, the max-score
 timeout default/environment binding/bounds, stage-specific timeout reporting,
 and identical configured evidence timeouts across plan, apply revalidation,
-and resume.
+and resume. Final-completion coverage also verifies that PostgreSQL uses the
+configured timeout for immutable cache validation, retains the `5s` lock
+timeout and serializable transaction, restores the `120s` mutation timeout,
+and leaves validation failures frozen.
 
 The Tier-0 native filesystem syscall shim is excluded from the aggregate line
 denominator because its branches are operating-system ABI specific. Focused

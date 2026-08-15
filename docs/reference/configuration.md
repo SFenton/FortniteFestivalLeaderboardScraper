@@ -2,12 +2,13 @@
 status: canonical
 owner: operations
 last_verified: 2026-08-15
-last_verified_commit: ba2907a8
+last_verified_commit: 24a3175c
 sources:
   - FSTService/appsettings.json
   - FSTService/ScraperOptions.cs
   - FSTService/Scraping/PathGenerationModels.cs
   - FSTService/Program.cs
+  - FSTService/Persistence/MetaDatabase.cs
   - docker-compose.yml
   - .env.example
   - deploy/docker-compose.yml
@@ -78,8 +79,13 @@ The production Compose-form override is
 uniformly to publication population, complete consumed score-history,
 notification, affected-account, cache, final validation, and apply/resume
 revalidation commands. It does not change ordinary scrape or cleanup command
-timeouts. Cancellation still aborts fail-closed, and invalid/non-positive
-values prevent startup.
+timeouts. During final completion, the transaction-local PostgreSQL
+`statement_timeout` uses this value only for the immutable cache-entry
+validation while `lock_timeout` remains `5s`; it is restored to `120s` before
+the cache swap, completed checkpoint, verification, and unfreeze. A validation
+or timeout-transition failure rolls back the transaction and leaves the freeze
+and durable mutation gate intact. Cancellation still aborts fail-closed, and
+invalid/non-positive values prevent startup.
 
 ## Role differences
 

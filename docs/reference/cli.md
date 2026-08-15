@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-15
-last_verified_commit: ba2907a8
+last_verified_commit: 24a3175c
 sources:
   - FSTService/Program.cs
   - FSTService/ScraperOptions.cs
@@ -11,6 +11,7 @@ sources:
   - FSTService/Persistence/MaxScoreMaintenanceCommand.cs
   - FSTService/Persistence/MaxScoreMaintenanceModels.cs
   - FSTService/Persistence/MaxScoreMaintenanceFileStore.cs
+  - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/ScoreHistoryDedupMaintenanceCommand.cs
   - FSTService/Scraping/SoloFamilyRankingBackfillCommand.cs
   - FSTService/Scraping/LeaderboardRivalsRecomputeCommand.cs
@@ -181,8 +182,11 @@ Plan/apply/resume evidence and revalidation use
 `600`; production may pass
 `Scraper__MaxScoreMaintenanceCommandTimeoutSeconds=1800`, and startup rejects
 values outside `1`-`86400`. This does not alter normal scrape timeouts. A
-failed plan's `plan` check identifies the sanitized evidence stage and the
-base exception message without serializing SQL or connection data.
+final completion transaction uses the configured server timeout only for
+immutable cache validation, keeps its `5s` lock timeout, and restores the
+`120s` mutation timeout before swap/checkpoint/unfreeze. Any failure remains
+frozen. A failed plan's `plan` check identifies the sanitized evidence stage
+and the base exception message without serializing SQL or connection data.
 
 The retired `--path-repair-*` and
 `--notification-maintenance-pro-lead-max-score-repair` families remain startup

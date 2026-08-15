@@ -2,7 +2,7 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-15
-last_verified_commit: ba2907a8
+last_verified_commit: 24a3175c
 sources:
   - FSTService/ScraperOptions.cs
   - FSTService/Api/AdminEndpoints.cs
@@ -570,9 +570,14 @@ operations fail promptly against that exact digest-owned publication
 generation; only the matching maintenance lease owner may continue. The final
 source-locked transaction takes staging-table share locks, repeats the exact
 comparison against `max_score_maintenance_cache_entries`, and only then swaps
-both cache tables, marks completion, and unfreezes. Missing, changed, deleted,
-or extra rows remain frozen and resumable; restore the exact checkpointed
-staging generation before retrying.
+both cache tables, marks completion, and unfreezes. Its `lock_timeout` remains
+`5s`; the validated configured maintenance timeout is applied to both the
+Npgsql validation command and transaction-local PostgreSQL
+`statement_timeout` only for that comparison, then `statement_timeout` is
+restored to `120s` before the bounded swap/checkpoint/verification/unfreeze
+mutations. A validation or timeout-transition failure aborts the transaction,
+so missing, changed, deleted, or extra rows remain frozen and resumable;
+restore the exact checkpointed staging generation before retrying.
 
 If `pg_terminate_backend`, network loss, or session failure removes the
 advisory locks, the current transaction is aborted with its mutation and phase
