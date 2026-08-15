@@ -1,18 +1,23 @@
 .card,
 .liveSummary,
-.phaseBlock,
-.progressBlock {
+.progressBlock,
+.timingList {
   display: flex;
   min-width: 0;
   flex-direction: column;
 }
 
 .card {
-  gap: var(--gap-xl);
+  gap: var(--gap-md);
 }
 
 .liveSummary {
-  gap: var(--gap-lg);
+  gap: var(--gap-md);
+}
+
+.phaseBlock {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .statusLine {
@@ -42,30 +47,9 @@
   flex: 0 0 auto;
 }
 
-.phaseBlock {
-  gap: var(--gap-xs);
-}
-
-.phaseEyebrow,
-.progressLabel,
-.timingLabel {
+.progressLabel {
   color: var(--settings-progress-tertiary);
-  font-size: var(--font-sm);
   font-weight: 650;
-}
-
-.phaseTitle {
-  min-width: 0;
-  color: inherit;
-  font-size: var(--font-xl);
-  font-weight: 700;
-  overflow-wrap: anywhere;
-}
-
-.phaseSubtitle {
-  min-width: 0;
-  color: var(--settings-progress-muted);
-  overflow-wrap: anywhere;
 }
 
 .progressBlock {
@@ -118,7 +102,6 @@
   flex-wrap: wrap;
   gap: var(--gap-sm) var(--gap-xl);
   color: var(--settings-progress-muted);
-  font-size: var(--font-sm);
   line-height: 1.45;
 }
 
@@ -139,21 +122,25 @@
   line-height: 1.45;
 }
 
-.timingGrid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--gap-xl);
-  min-width: 0;
+.timingList {
   margin: 0;
-  padding-top: 1rem;
+  padding-top: var(--gap-sm);
   border-top: 1px solid var(--settings-progress-divider);
 }
 
 .timingItem {
   display: flex;
   min-width: 0;
-  flex-direction: column;
-  gap: var(--gap-xs);
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gap-xl);
+  padding: var(--gap-sm) 0;
+  font-size: var(--font-md);
+}
+
+.timingLabel {
+  min-width: 0;
 }
 
 .timingValue {
@@ -162,6 +149,7 @@
   color: var(--settings-progress-muted);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
+  text-align: right;
 }
 
 @keyframes settings-progress-indeterminate {
@@ -178,15 +166,15 @@
   }
 }
 
-@media (width <= 760px) {
-  .timingGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
 @media (width <= 480px) {
-  .timingGrid {
-    grid-template-columns: 1fr;
+  .timingItem {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--gap-xs);
+  }
+
+  .timingValue {
+    text-align: left;
   }
 }
 

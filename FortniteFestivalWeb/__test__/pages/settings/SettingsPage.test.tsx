@@ -840,8 +840,8 @@ describe('SettingsPage', () => {
 
     expect(screen.getByText('Service Info')).toBeDefined();
     const step = await screen.findByTestId('settings-service-info-row-update-step-position');
-    expect(within(step).getByText('Current step')).toBeDefined();
     expect(within(step).getByText('Waiting for the next update')).toBeDefined();
+    expect(screen.queryByText('Current step')).toBeNull();
     expect(screen.getByTestId('settings-service-info-row-worker-status')).toHaveTextContent('Worker Online');
     expect(screen.getByTestId('settings-service-info-row-update-status')).toHaveTextContent('Idle');
     expect(screen.getAllByText('Published leaderboard data is available.')).toHaveLength(1);
