@@ -254,7 +254,9 @@ internal static class MaxScoreMaintenanceFileStore
             T report,
             CancellationToken ct)
     {
-        if (report is MaxScoreMaintenanceApplyReport applyReport)
+        if (report is MaxScoreMaintenancePlanReport planReport)
+            planReport.ValidateContract();
+        else if (report is MaxScoreMaintenanceApplyReport applyReport)
             applyReport.ValidateContract();
         return await WriteNewBytesAsync(
             dataDirectory,

@@ -2,7 +2,7 @@
 status: living-runbook
 owner: data
 last_verified: 2026-08-15
-last_verified_commit: 68ae7e99
+last_verified_commit: dc946315
 sources:
   - FSTService/ScraperOptions.cs
   - FSTService/Api/AdminEndpoints.cs
@@ -391,6 +391,7 @@ docker compose run --rm --no-deps \
 PLAN_DIGEST=$(
   jq -er '
     select(
+      .reportVersion == 5 and
       .canApply == true and
       (.scoreHistoryFingerprint | length) == 64 and
       .populationEvidence.scopeCount > 0 and
@@ -401,7 +402,12 @@ PLAN_DIGEST=$(
       .affectedInstruments == ["Solo_Guitar","Solo_PeripheralGuitar","Solo_PeripheralCymbals","Solo_PeripheralDrums"] and
       .routineCandidateCount == 0 and
       all(.checks[]; .passed) and
-      all(.observedScoreChecks[]; .passed) and
+      all(.observedScoreChecks[];
+        .sourceMapped == true and
+        .validCutoff == ((.newMaximum * 1.05) | floor) and
+        (.highestObservedScore == null or
+          .highestObservedScore <= .validCutoff) and
+        .passed == true) and
       (.artifactEvidence | length) == 2 and
       all(.artifactEvidence[];
         (.currentArtifactTreeSha256 | length) == 64 and
@@ -414,13 +420,21 @@ PLAN_DIGEST=$(
 )
 ```
 
-Each observed-score row requires `sourceMapped=true` and
-`highestObservedScore` to be null or less than/equal to `newMaximum`.
+Each observed-score row requires `sourceMapped=true`. Its `validCutoff` is the
+exact integer returned by
+`RankingsCalculator.ComputeMaxScoreThreshold(newMaximum)`, currently
+`floor(newMaximum × 1.05)`. `highestObservedScore` may be null; otherwise it
+must be less than or equal to that cutoff. A score above the CHOpt denominator
+but within this cutoff is valid evidence. A score above the cutoff, or a
+missing authoritative source mapping, fails closed. This contract does not use
+`Scraper:ValidCutoffMultiplier`; that `0.95` setting belongs to deep-scrape
+counting and pruning, not ranking or maintenance validity.
+
 Snapshot rows and supplemental overlay-only rows use the same authoritative
 resolver as production `InstrumentDatabase` reads. Apply uses both approved
 digests:
 
-Plan report version 4 performs two live-scale bounded aggregates. Population
+Plan report version 5 performs two live-scale bounded aggregates. Population
 evidence visits each current published scope and its resolved overlay rows.
 Score-history evidence now prepares narrow `ON COMMIT DROP` selectors under the
 existing repeatable-read/source-lock transaction:
@@ -455,9 +469,10 @@ the unchanged report fingerprint envelope. The transient JSON text is hashed
 immediately; there is no history-sized temporary relation or ordered payload
 aggregation.
 
-The plan report remains version 4 and the apply/resume report remains version
-3 because the row bytes, seed hashes, aggregate envelope, and resulting
-fingerprint match the pre-optimization contract exactly.
+Plan report version 5 adds the explicit per-row `validCutoff`. Plan-digest
+contract version 5 binds that field and its exact integer rounding. The
+apply/resume report remains version 3 because its output contract did not
+change.
 
 Expected work is:
 
@@ -487,14 +502,23 @@ connection data.
 
 ### 2026-08-15 production evidence
 
-Publication `1299` remained authoritative and unfrozen, notifications were
-complete, and the worker was stopped. The exact promotion manifest was staged
-immutably. The pre-optimization plan failed closed at
-`complete-score-history-evidence` under both 600-second and 1,800-second
-deadlines; PostgreSQL used about 6 GB of temporary space and remained
-I/O-bound. No freeze, path promotion, database mutation, merge, or deployment
-occurred. These are before-only measurements; rerun plan after review/deploy to
-capture matched after evidence before authorizing apply.
+Publication `1300` is authoritative and unfrozen, notifications are complete,
+and the worker is stopped. After the score-history query optimization, the
+two-song plan completed within the reviewed maintenance window but returned
+`canApply=false` only because plan report v4 compared observed scores with the
+CHOpt denominator instead of the ranking validity cutoff:
+
+| Song/instrument | New maximum | Highest observed | Exact ranking cutoff | Result under v5 contract |
+|---|---:|---:|---:|---|
+| Show Them Who We Are / Lead | `63750` | `63764` | `66937` | valid |
+| Run It / Lead | `51573` | `52809` | `54151` | valid; `4/43` rows exceed the denominator and none exceed the cutoff |
+| Run It / Pro Lead | `51573` | `51588` | `54151` | valid; `1/21` row exceeds the denominator and none exceed the cutoff |
+| Show Them Who We Are / Pro Lead | `65367` | `65228` | `68635` | valid |
+
+The old report and digest are not applicable to plan report/digest contract
+v5. No freeze, apply, path promotion, database mutation, merge, or deployment
+occurred. Generate a fresh v5 plan only after this change is reviewed and
+deployed.
 
 Apply/resume reports use strict version 3. Legacy version 2, unknown fields,
 and a report at `caches_staged` or later without the complete
@@ -517,6 +541,10 @@ docker compose run --rm --no-deps \
 
 Apply:
 
+- reloads observed-score evidence after freeze, requires every mapped score to
+  remain at or below its exact ranking cutoff, and reconstructs the v5 plan
+  digest from the persisted plan identities before mutation; resume performs
+  the same check, so even a still-valid evidence change fails digest equality;
 - persists file and PostgreSQL rollback evidence before promotion; canonical
   rollback JSON v3 uses the durable run creation timestamp, exact
   publication/catalog identity, and database rollback-song identity so

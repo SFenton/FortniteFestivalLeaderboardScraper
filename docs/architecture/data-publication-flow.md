@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-15
-last_verified_commit: 6071299d
+last_verified_commit: dc946315
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -114,10 +114,13 @@ derived rows while retaining the same published scrape/publication ID.
 3. Plan binds the exact current publication/catalog/path revisions, validates
    current rollback and staged artifact trees/hashes plus observed-score
    bounds through the authoritative published snapshot/empty source plus
-   supplemental overlay, and fingerprints published score sources,
-   notification state, rank history, publication-bound population, and the
-   complete score-history input consumed by registered caches, affected player
-   stats, and all-song rankings for rebuilt instruments. The bounded evidence
+   supplemental overlay. Each mapped score may exceed the CHOpt denominator
+   but not the exact ranking threshold
+   `floor(newMaximum × 1.05)`. Plan report/digest contract v5 records that
+   integer cutoff and fingerprints published score sources, notification
+   state, rank history, publication-bound population, and the complete
+   score-history input consumed by registered caches, affected player stats,
+   and all-song rankings for rebuilt instruments. The bounded evidence
    includes counts/ranges/hashes and never falls back to mutable population.
 4. Apply first acquires the exclusive registration mutation advisory gate and
    waits for active registration/backfill/history lifecycles to drain. Its
@@ -127,7 +130,9 @@ derived rows while retaining the same published scrape/publication ID.
    and checkpoint through bounded transactions on that same session. Each
    dependent transaction takes source table locks in fixed order, including
    `score_history` after the solo entry tables, and verifies the lease again
-   immediately before commit.
+   immediately before commit. After freeze and on every resume, it reloads the
+   observed-score rows and reconstructs the approved v5 plan digest before any
+   mutation continues.
 5. One lock-session transaction promotes every listed song generation. The in-process
    scraper admission cache refreshes immediately. Prior negative backfill
    checks and matching successful history-reconstruction checkpoints are

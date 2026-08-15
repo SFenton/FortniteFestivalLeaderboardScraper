@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-08-15
-last_verified_commit: 6071299d
+last_verified_commit: dc946315
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -99,12 +99,15 @@ production meanings:
 - FC Rate is `fullComboCount / totalChartedSongs`; unplayed charts remain in
   the denominator and no Bayesian adjustment is applied;
 - Total Score is the sum of eligible scores;
-- Max Score % first excludes scores above the configured 105% CHOpt validity
-  cutoff, averages eligible per-song ratios capped at 105%, and applies the
-  score-count credibility adjustment. `rawMaxScorePercent` retains the
-  pre-adjustment average. A valid score on a chart without a computed maximum
-  is omitted from that raw average but remains in the score count used by the
-  credibility adjustment.
+- Max Score % uses the CHOpt maximum as its ratio denominator, but validity is
+  a separate integer threshold:
+  `floor(CHOpt maximum × 1.05)`. Scores above that threshold are excluded.
+  Scores above the denominator but at or below the threshold remain valid;
+  their ratios are capped at `1.05` before averaging. The score-count
+  credibility adjustment then produces the public value, while
+  `rawMaxScorePercent` retains the pre-adjustment average. A valid score on a
+  chart without a computed maximum is omitted from that raw average but
+  remains in the score count used by the credibility adjustment.
 
 For one successfully rebuilt per-instrument ranking generation,
 `totalChartedSongs` is uniform across every account row. The server derives it

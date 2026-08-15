@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using FSTService.Persistence;
 using FSTService.Scraping;
 
@@ -799,21 +800,170 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
     }
 
     [Theory]
-    [InlineData(60_000, null, true)]
-    [InlineData(60_000, 59_999, true)]
-    [InlineData(60_000, 60_000, true)]
-    [InlineData(60_000, 60_001, false)]
-    public void Observed_score_gate_rejects_maximum_below_live_score(
+    [InlineData(60_000, true, null, 63_000, true)]
+    [InlineData(60_000, true, 60_000, 63_000, true)]
+    [InlineData(60_000, true, 60_001, 63_000, true)]
+    [InlineData(60_000, true, 63_000, 63_000, true)]
+    [InlineData(60_000, true, 63_001, 63_000, false)]
+    [InlineData(60_000, false, null, 63_000, false)]
+    [InlineData(51_573, true, 54_151, 54_151, true)]
+    [InlineData(51_573, true, 54_152, 54_151, false)]
+    public void Observed_score_gate_uses_mapped_ranking_validity_cutoff(
         int newMaximum,
+        bool sourceMapped,
         int? highestObservedScore,
+        int expectedValidCutoff,
         bool expected)
     {
+        var validCutoff =
+            RankingsCalculator.ComputeMaxScoreThreshold(
+                newMaximum);
+
+        Assert.Equal(expectedValidCutoff, validCutoff);
         Assert.Equal(
             expected,
             MaxScoreMaintenanceService
                 .IsObservedScoreCompatible(
                     newMaximum,
+                    sourceMapped,
                     highestObservedScore));
+        new MaxScoreMaintenanceObservedScoreCheck(
+                "song",
+                "Solo_Guitar",
+                newMaximum,
+                validCutoff,
+                sourceMapped,
+                highestObservedScore,
+                expected)
+            .ValidateContract();
+    }
+
+    [Theory]
+    [InlineData(
+        ShowThemWhoWeAreSongId,
+        "Solo_Guitar",
+        63_750,
+        63_764,
+        66_937)]
+    [InlineData(
+        RunItSongId,
+        "Solo_Guitar",
+        51_573,
+        52_809,
+        54_151)]
+    [InlineData(
+        RunItSongId,
+        "Solo_PeripheralGuitar",
+        51_573,
+        51_588,
+        54_151)]
+    [InlineData(
+        ShowThemWhoWeAreSongId,
+        "Solo_PeripheralGuitar",
+        65_367,
+        65_228,
+        68_635)]
+    public void Live_shaped_observed_scores_are_valid(
+        string songId,
+        string instrument,
+        int newMaximum,
+        int highestObservedScore,
+        int expectedValidCutoff)
+    {
+        var check =
+            new MaxScoreMaintenanceObservedScoreCheck(
+                songId,
+                instrument,
+                newMaximum,
+                RankingsCalculator.ComputeMaxScoreThreshold(
+                    newMaximum),
+                SourceMapped: true,
+                highestObservedScore,
+                Passed:
+                    MaxScoreMaintenanceService
+                        .IsObservedScoreCompatible(
+                            newMaximum,
+                            sourceMapped: true,
+                            highestObservedScore));
+
+        Assert.Equal(expectedValidCutoff, check.ValidCutoff);
+        Assert.True(check.Passed);
+        check.ValidateContract();
+    }
+
+    [Fact]
+    public void Plan_report_v5_serializes_valid_cutoff_and_rejects_incompatible_json()
+    {
+        var check =
+            new MaxScoreMaintenanceObservedScoreCheck(
+                RunItSongId,
+                "Solo_Guitar",
+                51_573,
+                54_151,
+                SourceMapped: true,
+                HighestObservedScore: 52_809,
+                Passed: true);
+        var report = CreatePlanReport(check);
+        Assert.Equal(
+            5,
+            MaxScoreMaintenancePlanReport
+                .CurrentPlanDigestContractVersion);
+        var json = JsonSerializer.Serialize(
+            report,
+            MaxScoreMaintenanceJson.Report);
+        using (var document = JsonDocument.Parse(json))
+        {
+            Assert.Equal(
+                MaxScoreMaintenancePlanReport
+                    .CurrentReportVersion,
+                document.RootElement
+                    .GetProperty("reportVersion")
+                    .GetInt32());
+            Assert.Equal(
+                54_151,
+                document.RootElement
+                    .GetProperty("observedScoreChecks")[0]
+                    .GetProperty("validCutoff")
+                    .GetInt32());
+        }
+        JsonSerializer.Deserialize<
+                MaxScoreMaintenancePlanReport>(
+                json,
+                MaxScoreMaintenanceJson.Strict)!
+            .ValidateContract();
+
+        var legacy = JsonNode.Parse(json)!.AsObject();
+        legacy["reportVersion"] = 4;
+        var legacyReport = JsonSerializer.Deserialize<
+            MaxScoreMaintenancePlanReport>(
+            legacy.ToJsonString(),
+            MaxScoreMaintenanceJson.Strict)!;
+        Assert.Throws<ArgumentException>(
+            legacyReport.ValidateContract);
+
+        var missingCutoff =
+            JsonNode.Parse(json)!.AsObject();
+        Assert.True(
+            missingCutoff["observedScoreChecks"]!
+                .AsArray()[0]!
+                .AsObject()
+                .Remove("validCutoff"));
+        var missingCutoffReport =
+            JsonSerializer.Deserialize<
+                MaxScoreMaintenancePlanReport>(
+                missingCutoff.ToJsonString(),
+                MaxScoreMaintenanceJson.Strict)!;
+        Assert.Throws<ArgumentException>(
+            missingCutoffReport.ValidateContract);
+
+        var unknownProperty =
+            JsonNode.Parse(json)!.AsObject();
+        unknownProperty["unexpected"] = true;
+        Assert.Throws<JsonException>(() =>
+            JsonSerializer.Deserialize<
+                MaxScoreMaintenancePlanReport>(
+                unknownProperty.ToJsonString(),
+                MaxScoreMaintenanceJson.Strict));
     }
 
     [Fact]
@@ -1191,6 +1341,52 @@ public sealed class MaxScoreMaintenanceCommandTests : IDisposable
                     }
                     : Array.Empty<object>(),
         });
+
+    private static MaxScoreMaintenancePlanReport CreatePlanReport(
+        params MaxScoreMaintenanceObservedScoreCheck[] checks)
+        => new(
+            MaxScoreMaintenancePlanReport
+                .CurrentReportVersion,
+            CanApply: true,
+            ManifestSha256: new string('a', 64),
+            PlanDigest: new string('b', 64),
+            ExpectedPublishedScrapeId: 1296,
+            ExpectedPublicationId: 500,
+            CatalogContentHash: new string('c', 64),
+            PublishedScoreSourceFingerprint:
+                new string('d', 64),
+            NotificationStateFingerprint:
+                new string('e', 64),
+            RankHistoryFingerprint:
+                new string('f', 64),
+            ScoreHistoryFingerprint:
+                new string('1', 64),
+            PopulationEvidence:
+                new MaxScoreMaintenancePopulationEvidence(
+                    ScopeCount: 1,
+                    MinimumTotalEntries: 1,
+                    MaximumTotalEntries: 1,
+                    Fingerprint: new string('2', 64)),
+            ScoreHistoryEvidence:
+                new MaxScoreMaintenanceScoreHistoryEvidence(
+                    RowCount: 0,
+                    MinimumId: null,
+                    MaximumId: null,
+                    MinimumChangedAtUtc: null,
+                    MaximumChangedAtUtc: null,
+                    Fingerprint: new string('1', 64)),
+            AffectedInstruments: ["Solo_Guitar"],
+            RoutineCandidateCount: 0,
+            Checks:
+            [
+                new MaxScoreMaintenancePlanCheck(
+                    "observed-scores",
+                    Passed: true,
+                    "valid"),
+            ],
+            RoutineCandidates: [],
+            ArtifactEvidence: [],
+            ObservedScoreChecks: checks);
 
     private static MaxScoreMaintenanceApplyReport
         CreateApplyReport(

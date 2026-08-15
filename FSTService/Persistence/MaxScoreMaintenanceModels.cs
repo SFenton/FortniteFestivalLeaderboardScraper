@@ -1213,9 +1213,62 @@ public sealed record MaxScoreMaintenanceObservedScoreCheck(
     string SongId,
     string Instrument,
     int NewMaximum,
+    int ValidCutoff,
     bool SourceMapped,
     int? HighestObservedScore,
-    bool Passed);
+    bool Passed)
+{
+    internal static MaxScoreMaintenanceObservedScoreCheck Create(
+        string songId,
+        string instrument,
+        int newMaximum,
+        bool sourceMapped,
+        int? highestObservedScore)
+        => new(
+            songId,
+            instrument,
+            newMaximum,
+            RankingsCalculator.ComputeMaxScoreThreshold(
+                newMaximum),
+            sourceMapped,
+            highestObservedScore,
+            IsCompatible(
+                newMaximum,
+                sourceMapped,
+                highestObservedScore));
+
+    internal static bool IsCompatible(
+        int newMaximum,
+        bool sourceMapped,
+        int? highestObservedScore)
+        => sourceMapped
+           && newMaximum > 0
+           && (highestObservedScore is null
+               || highestObservedScore
+                  <= RankingsCalculator
+                      .ComputeMaxScoreThreshold(
+                          newMaximum));
+
+    internal MaxScoreMaintenanceObservedScoreCheck ValidateContract()
+    {
+        var expectedCutoff =
+            RankingsCalculator.ComputeMaxScoreThreshold(
+                NewMaximum);
+        if (NewMaximum <= 0
+            || ValidCutoff != expectedCutoff
+            || Passed
+               != IsCompatible(
+                   NewMaximum,
+                   SourceMapped,
+                   HighestObservedScore))
+        {
+            throw new ArgumentException(
+                "Observed-score evidence must use the ranking validity cutoff and a consistent pass result.");
+        }
+
+        return this;
+    }
+}
 
 public sealed record MaxScoreMaintenancePopulationEvidence(
     int ScopeCount,
@@ -1264,7 +1317,27 @@ public sealed record MaxScoreMaintenancePlanReport(
     IReadOnlyList<MaxScoreMaintenanceArtifactEvidence> ArtifactEvidence,
     IReadOnlyList<MaxScoreMaintenanceObservedScoreCheck> ObservedScoreChecks)
 {
-    public const int CurrentReportVersion = 4;
+    public const int CurrentReportVersion = 5;
+    internal const int CurrentPlanDigestContractVersion = 5;
+
+    internal MaxScoreMaintenancePlanReport ValidateContract()
+    {
+        if (ReportVersion != CurrentReportVersion)
+        {
+            throw new ArgumentException(
+                $"reportVersion must be {CurrentReportVersion}.",
+                nameof(ReportVersion));
+        }
+        if (ObservedScoreChecks is null)
+        {
+            throw new ArgumentNullException(
+                nameof(ObservedScoreChecks));
+        }
+        foreach (var check in ObservedScoreChecks)
+            check.ValidateContract();
+
+        return this;
+    }
 }
 
 public enum MaxScoreMaintenancePhase

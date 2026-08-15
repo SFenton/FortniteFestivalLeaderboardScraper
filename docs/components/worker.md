@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-15
-last_verified_commit: 6071299d
+last_verified_commit: dc946315
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -155,6 +155,12 @@ plus frozen publication instruments. It recalculates
 target-song band validity, refreshes affected band current-projection scopes,
 rebuilds dependent band rankings, and explicitly skips
 solo/composite/band rank-history snapshots.
+Before any post-freeze mutation and again on resume, maintenance reloads each
+mapped highest observed score, compares it with the ranking threshold
+`floor(newMaximum × 1.05)` rather than the CHOpt denominator, and reconstructs
+the approved plan-digest v5 evidence. A missing source, score above that
+cutoff, or changed still-valid evidence keeps the workflow frozen and
+resumable.
 See the
 [max-score correction runbook](../database/MaxScoreCorrectionMaintenanceRunbook.md).
 Every max-score database mutation and checkpoint commits through a bounded
