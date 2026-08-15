@@ -1770,7 +1770,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
     }
 
     [Fact]
-    public void PruneStaleWebRegistrations_WithinStartupProtection_PreservesStaleWebRegistrations()
+    public async Task PruneStaleWebRegistrations_WithinStartupProtection_PreservesStaleWebRegistrations()
     {
         _metaDb.RegisterUser("web-tracker", "regAcct");
         SetWebRegistrationActivity("regAcct", DateTime.UtcNow.AddHours(-8));
@@ -1780,13 +1780,17 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
 
         SetWorkerStartedAtUtc(worker, DateTime.UtcNow.AddHours(-2));
 
-        InvokePrivate(worker, "PruneStaleWebRegistrationsIfEligible", opts);
+        await InvokePrivateAsync(
+            worker,
+            "PruneStaleWebRegistrationsIfEligibleAsync",
+            opts,
+            CancellationToken.None);
 
         Assert.Contains("regAcct", _metaDb.GetRegisteredAccountIds());
     }
 
     [Fact]
-    public void PruneStaleWebRegistrations_AfterStartupProtection_PreservesWebRegistrationsInsideRetentionWindow()
+    public async Task PruneStaleWebRegistrations_AfterStartupProtection_PreservesWebRegistrationsInsideRetentionWindow()
     {
         _metaDb.RegisterUser("web-tracker", "regAcct");
         SetWebRegistrationActivity("regAcct", DateTime.UtcNow.AddHours(-8));
@@ -1796,13 +1800,17 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
 
         SetWorkerStartedAtUtc(worker, DateTime.UtcNow.AddHours(-5));
 
-        InvokePrivate(worker, "PruneStaleWebRegistrationsIfEligible", opts);
+        await InvokePrivateAsync(
+            worker,
+            "PruneStaleWebRegistrationsIfEligibleAsync",
+            opts,
+            CancellationToken.None);
 
         Assert.Contains("regAcct", _metaDb.GetRegisteredAccountIds());
     }
 
     [Fact]
-    public void PruneStaleWebRegistrations_AfterStartupProtection_PrunesWebRegistrationsOutsideRetentionWindow()
+    public async Task PruneStaleWebRegistrations_AfterStartupProtection_PrunesWebRegistrationsOutsideRetentionWindow()
     {
         _metaDb.RegisterUser("web-tracker", "regAcct");
         SetWebRegistrationActivity("regAcct", DateTime.UtcNow.AddDays(-8));
@@ -1812,7 +1820,11 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
 
         SetWorkerStartedAtUtc(worker, DateTime.UtcNow.AddHours(-5));
 
-        InvokePrivate(worker, "PruneStaleWebRegistrationsIfEligible", opts);
+        await InvokePrivateAsync(
+            worker,
+            "PruneStaleWebRegistrationsIfEligibleAsync",
+            opts,
+            CancellationToken.None);
 
         Assert.DoesNotContain("regAcct", _metaDb.GetRegisteredAccountIds());
     }
@@ -1839,14 +1851,6 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         var field = typeof(ScraperWorker).GetField("_serviceStartedAtUtc", BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new InvalidOperationException("ScraperWorker startup field not found.");
         field.SetValue(worker, startedAtUtc);
-    }
-
-    private static void InvokePrivate(ScraperWorker worker, string methodName, params object[] args)
-    {
-        var method = typeof(ScraperWorker).GetMethod(methodName,
-            BindingFlags.NonPublic | BindingFlags.Instance);
-        Assert.NotNull(method);
-        method!.Invoke(worker, args);
     }
 
     // ═══════════════════════════════════════════════════════════════

@@ -147,6 +147,65 @@ public sealed class BandRankingRepairServiceTests : IDisposable
             "6:8"));
     }
 
+    [Fact]
+    public void RecomputeOverThresholdFlagsForSongs_DoesNotTouchOtherSongs()
+    {
+        SeedSongWithMaxScores(
+            "target-song",
+            maxVocalsScore: 100_000);
+        SeedSongWithMaxScores(
+            "other-song",
+            maxVocalsScore: 100_000);
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<
+                Microsoft.Extensions.Logging.ILogger<
+                    BandLeaderboardPersistence>>());
+        foreach (var songId in new[] { "target-song", "other-song" })
+        {
+            persistence.UpsertBandEntries(
+                songId,
+                "Band_Duets",
+            [
+                MakeBandEntry(
+                    [$"{songId}-a", $"{songId}-b"],
+                    "2:7",
+                    100_000,
+                    isOverThreshold: true,
+                    memberStats:
+                    [
+                        MakeMember(
+                            0,
+                            $"{songId}-a",
+                            instrumentId: 2,
+                            score: 100_000),
+                        MakeMember(
+                            1,
+                            $"{songId}-b",
+                            instrumentId: 7,
+                            score: 500_000),
+                    ]),
+            ]);
+        }
+
+        var changed =
+            _sut.RecomputeOverThresholdFlagsForSongs(
+                ["target-song"],
+                ["Band_Duets"]);
+
+        Assert.Equal(1, changed);
+        Assert.False(GetIsOverThreshold(
+            "target-song",
+            "Band_Duets",
+            "target-song-a:target-song-b",
+            "2:7"));
+        Assert.True(GetIsOverThreshold(
+            "other-song",
+            "Band_Duets",
+            "other-song-a:other-song-b",
+            "2:7"));
+    }
+
     private void SeedSongs(params string[] songIds)
     {
         using var conn = _fixture.DataSource.OpenConnection();

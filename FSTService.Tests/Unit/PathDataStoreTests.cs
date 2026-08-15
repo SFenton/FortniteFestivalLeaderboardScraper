@@ -1,6 +1,7 @@
 using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FSTService.Tests.Unit;
 
@@ -189,9 +190,13 @@ public sealed class PathDataStoreTests : IDisposable
             GenerationProfile =
                 PathGenerationProfiles.InvalidPlasticDrumsV3,
         };
-        _store.UpdateMaxScores("v3-plastic-drums", scores, "hash");
+        _store.UpdateMaxScores(
+            "v3-plastic-drums",
+            scores,
+            "hash");
 
-        var allScores = _store.GetAllMaxScores()["v3-plastic-drums"];
+        var allScores =
+            _store.GetAllMaxScores()["v3-plastic-drums"];
         var state =
             _store.GetPathGenerationState("v3-plastic-drums");
 
@@ -394,6 +399,169 @@ public sealed class PathDataStoreTests : IDisposable
         Assert.Contains(
             "catalog-race",
             _store.GetPendingPathGenerationSongIds());
+    }
+
+    [Fact]
+    public async Task Atomic_multi_song_promotion_is_all_or_none()
+    {
+        EnsureSongRow("batch-a");
+        EnsureSongRow("batch-b");
+        SetCatalogLastModified(
+            "batch-a",
+            "2026-08-01T00:00:00Z");
+        SetCatalogLastModified(
+            "batch-b",
+            "2026-08-01T00:00:00Z");
+        var runtime = new PathGenerationRuntimeIdentity(
+            "1.16.3",
+            new string('a', 64),
+            "profile-v3");
+        PathGenerationPromotion Promotion(
+            string songId,
+            long revision,
+            int maxScore) =>
+            new(
+                $"attempt-{songId}",
+                songId,
+                revision,
+                $"generation-{songId}",
+                new string(songId[^1], 64),
+                "2026-08-01T00:00:00Z",
+                DateTime.UtcNow,
+                runtime,
+                ["Solo_Guitar"],
+                new SongMaxScores
+                {
+                    MaxLeadScore = maxScore,
+                });
+
+        var conflicted =
+            await _store.TryPromoteGenerationsAtomicallyAsync(
+            [
+                Promotion("batch-a", 0, 100),
+                Promotion("batch-b", 1, 200),
+            ],
+            CancellationToken.None);
+
+        Assert.Equal(
+            PathGenerationPromotionOutcome.Conflict,
+            conflicted.Outcome);
+        Assert.Equal(0, conflicted.PromotedCount);
+        Assert.Equal(
+            0,
+            _store.GetPathGenerationState("batch-a")!.Revision);
+        Assert.Equal(
+            0,
+            _store.GetPathGenerationState("batch-b")!.Revision);
+
+        var freezeReason =
+            PublicReadFreezeState.MaxScoreMaintenanceReasonPrefix
+            + new string('f', 64);
+        using (var conn = _ds.OpenConnection())
+        using (var gateState = conn.CreateCommand())
+        {
+            gateState.CommandText = """
+                INSERT INTO scrape_log (
+                    id, started_at, completed_at, status)
+                VALUES (
+                    1296, now() - interval '1 hour', now(),
+                    'completed');
+                INSERT INTO publication_generations (
+                    publication_id, scrape_id, status, created_at)
+                VALUES (500, 1296, 'current', now());
+                INSERT INTO scrape_publication_state (
+                    id,
+                    current_publication_id,
+                    published_scrape_id,
+                    public_reads_frozen,
+                    public_reads_frozen_at,
+                    public_reads_frozen_scrape_id,
+                    public_reads_frozen_reason,
+                    updated_at)
+                VALUES (
+                    TRUE,
+                    500,
+                    1296,
+                    TRUE,
+                    now(),
+                    1296,
+                    @freezeReason,
+                    now())
+                ON CONFLICT (id) DO UPDATE SET
+                    current_publication_id = 500,
+                    working_publication_id = NULL,
+                    published_scrape_id = 1296,
+                    public_reads_frozen = TRUE,
+                    public_reads_frozen_at = now(),
+                    public_reads_frozen_scrape_id = 1296,
+                    public_reads_frozen_reason = @freezeReason,
+                    updated_at = now();
+                """;
+            gateState.Parameters.AddWithValue(
+                "freezeReason",
+                freezeReason);
+            gateState.ExecuteNonQuery();
+        }
+
+        using var meta = new MetaDatabase(
+            _ds,
+            NullLogger<MetaDatabase>.Instance);
+        await using var maintenanceLease =
+            await meta.AcquireMaxScoreMaintenanceLeaseAsync(
+                500);
+        var wrongFreeze =
+            await _store.TryPromoteGenerationsAtomicallyAsync(
+            [
+                Promotion("batch-a", 0, 100),
+                Promotion("batch-b", 0, 200),
+            ],
+            new PathGenerationBatchPromotionGate(
+                500,
+                1296,
+                freezeReason + "-wrong"),
+            maintenanceLease,
+            CancellationToken.None);
+        Assert.Equal(
+            PathGenerationPromotionOutcome.Conflict,
+            wrongFreeze.Outcome);
+        Assert.Equal(
+            0,
+            _store.GetPathGenerationState("batch-a")!.Revision);
+        Assert.Equal(
+            0,
+            _store.GetPathGenerationState("batch-b")!.Revision);
+
+        var promoted =
+            await _store.TryPromoteGenerationsAtomicallyAsync(
+            [
+                Promotion("batch-a", 0, 100),
+                Promotion("batch-b", 0, 200),
+            ],
+            new PathGenerationBatchPromotionGate(
+                500,
+                1296,
+                freezeReason),
+            maintenanceLease,
+            CancellationToken.None);
+
+        Assert.Equal(
+            PathGenerationPromotionOutcome.Promoted,
+            promoted.Outcome);
+        Assert.Equal(2, promoted.PromotedCount);
+        Assert.Equal(
+            1,
+            _store.GetPathGenerationState("batch-a")!.Revision);
+        Assert.Equal(
+            1,
+            _store.GetPathGenerationState("batch-b")!.Revision);
+        Assert.Equal(
+            100,
+            _store.GetPathGenerationState("batch-a")!
+                .MaxScores.MaxLeadScore);
+        Assert.Equal(
+            200,
+            _store.GetPathGenerationState("batch-b")!
+                .MaxScores.MaxLeadScore);
     }
 
     [Fact]

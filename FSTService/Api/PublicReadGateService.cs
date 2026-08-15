@@ -112,18 +112,13 @@ public sealed class PublicReadGateService
                     failedCandidateIsolation.IsFrozen;
                 _cachedRequiresCachedReads =
                     failedCandidateIsolation.IsFrozen
-                    || freezeState
-                        .PublicationFailureIsolationPending
-                    || freezeState.PublicationCommitDeferred
-                    || freezeState.PublicationCommitPending;
+                    || freezeState.RequiresCachedReads;
                 _cachedState = freezeState.IsFrozen ? freezeState : failedCandidateIsolation;
                 if (_localFailClosedState is not null)
                 {
                     var durableFailClosed =
                         failedCandidateIsolation.IsFrozen
-                        || freezeState.PublicationFailureIsolationPending
-                        || freezeState.PublicationCommitDeferred
-                        || freezeState.PublicationCommitPending;
+                        || freezeState.RequiresCachedReads;
                     if (durableFailClosed)
                     {
                         _localFailClosedState = null;

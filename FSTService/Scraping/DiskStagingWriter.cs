@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Text;
 using System.Threading.Channels;
 using FSTService.Persistence;
+using Npgsql;
 
 namespace FSTService.Scraping;
 
@@ -104,6 +105,34 @@ public sealed class DiskStagingWriter : IAsyncDisposable
             metaDb.BulkSetCachedResponses(ReadStagingFile());
 
         _log.LogInformation("Flush complete. Deleting staging file.");
+        TryDeleteStagingFile();
+    }
+
+    internal void FlushToPostgres(
+        IMetaDatabase metaDb,
+        long publicationId,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction)
+    {
+        ArgumentNullException.ThrowIfNull(metaDb);
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!File.Exists(_stagingPath) || RecordCount == 0)
+        {
+            _log.LogInformation("No staged records to flush.");
+            return;
+        }
+
+        _log.LogInformation(
+            "Flushing {Count:N0} fenced staged records from {Path} to PostgreSQL staging tables...",
+            RecordCount,
+            Path.GetFileName(_stagingPath));
+        metaDb.BulkSetCachedResponsesStaging(
+            ReadStagingFile(),
+            publicationId,
+            connection,
+            transaction);
+        _log.LogInformation("Fenced flush complete. Deleting staging file.");
         TryDeleteStagingFile();
     }
 

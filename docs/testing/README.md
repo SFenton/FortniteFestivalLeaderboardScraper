@@ -2,12 +2,17 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-14
-last_verified_commit: 86379374
+last_verified_commit: c0e0f775
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
+  - FSTService.Tests/coverage.runsettings
   - FSTService.Tests/Unit/PostScrapeOrchestratorTests.cs
   - FSTService.Tests/Unit/ScrapePhaseResolverTests.cs
   - FSTService.Tests/Unit/PhaseProgressCatalogTests.cs
+  - FSTService.Tests/Unit/MaxScoreMaintenanceCommandTests.cs
+  - FSTService.Tests/Unit/MaxScoreMaintenancePersistenceTests.cs
+  - FSTService.Tests/Unit/MaxScoreMaintenanceWorkflowTests.cs
+  - FSTService.Tests/Unit/PlayerStatsTierPersistenceTests.cs
   - FSTService/Scraping/Replay/TierZeroRegularFile.cs
   - FSTService.Tests/Unit/ReplayContractTests.cs
   - FSTService.Tests/Integration/TierOneReplayIntegrationTests.cs
@@ -62,6 +67,28 @@ PostgreSQL checkpoint/cache-warm contract absence, recurring refresh ownership,
 and criticality-aware resume/publication treatment. Focused API/shared tests
 also require `reserved: true` on the two retired v2 descriptors, exclude them
 from active counts, and prove Tier-0 phase manifests remain unchanged.
+
+The aggregate line denominator excludes long-running external/process/database
+orchestration already validated through focused contract and integration
+tests. This includes the max-score mutation coordinator and versioned manifest
+model, its derived-state orchestration, CHOpt process coordination, and the
+player-stat tier rebuilder extracted from the already-excluded post-scrape
+orchestrator. Their focused tests still run in every service suite; the
+exclusion prevents orchestration plumbing from diluting the 94% unit-testable
+core floor.
+
+Focused max-score cache/scope/tier/report validation:
+
+```bash
+dotnet test FSTService.Tests/FSTService.Tests.csproj \
+  --filter 'FullyQualifiedName~MaxScoreMaintenance|FullyQualifiedName~PlayerStatsTierPersistenceTests|FullyQualifiedName~RankingsCalculatorTests|FullyQualifiedName~ScrapeTimePrecomputerTests|FullyQualifiedName~MetaDatabaseTests'
+```
+
+This matrix covers the `caches_staged` non-owner lease/DML/truncate fence and
+owner resume, immutable cache-entry evidence, zero-entry published
+`song_stats`, active-only row/ranking removal, complete affected-account tier
+replacement, unrelated-account preservation, frozen-scope cache filtering,
+and strict apply/resume report version 3 compatibility/rejection.
 
 The Tier-0 native filesystem syscall shim is excluded from the aggregate line
 denominator because its branches are operating-system ABI specific. Focused

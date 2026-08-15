@@ -151,6 +151,9 @@ public sealed class BandLeaderboardPersistence
 
         try
         {
+            RegistrationMutationGate.AssertTransactionAllowed(
+                conn,
+                tx);
             // ── 1. COPY band entries into staging ──
             using (var cmd = conn.CreateCommand())
             {
@@ -391,6 +394,9 @@ public sealed class BandLeaderboardPersistence
         if (entries.Count == 0)
             return (0, 0, 0);
 
+        RegistrationMutationGate.AssertTransactionAllowed(
+            conn,
+            tx);
         var impactedTeamKeys = entries
             .Select(static entry => entry.TeamKey)
             .Where(static teamKey => !string.IsNullOrWhiteSpace(teamKey))
@@ -669,6 +675,9 @@ public sealed class BandLeaderboardPersistence
 
         using (var tx = conn.BeginTransaction())
         {
+            RegistrationMutationGate.AssertTransactionAllowed(
+                conn,
+                tx);
             using (var sc = conn.CreateCommand()) { sc.Transaction = tx; sc.CommandText = "SET LOCAL synchronous_commit = off"; sc.ExecuteNonQuery(); }
 
             // Build a temp table of registered account IDs for the JOIN
@@ -851,6 +860,9 @@ public sealed class BandLeaderboardPersistence
 
         using var conn = _dataSource.OpenConnection();
         using var tx = conn.BeginTransaction();
+        RegistrationMutationGate.AssertTransactionAllowed(
+            conn,
+            tx);
         UpsertBandTeamMembershipStateForAccounts(conn, tx, accountIds);
         tx.Commit();
     }
@@ -895,6 +907,9 @@ public sealed class BandLeaderboardPersistence
         NpgsqlTransaction tx,
         string accountId)
     {
+        RegistrationMutationGate.AssertTransactionAllowed(
+            conn,
+            tx);
         LockBandTeamMembershipRebuild(conn, tx);
         DeleteBandTeamMembershipForAccount(conn, tx, accountId);
 
@@ -953,6 +968,9 @@ public sealed class BandLeaderboardPersistence
         {
             using var conn = _dataSource.OpenConnection();
             using var tx = conn.BeginTransaction();
+            RegistrationMutationGate.AssertTransactionAllowed(
+                conn,
+                tx);
             var rebuilt = RebuildBandTeamMembershipForTeams(conn, tx, bandType, sortedTeamKeys);
             tx.Commit();
             return rebuilt;
@@ -968,6 +986,9 @@ public sealed class BandLeaderboardPersistence
         if (teamKeys.Count == 0)
             return 0;
 
+        RegistrationMutationGate.AssertTransactionAllowed(
+            conn,
+            tx);
         LockBandTeamMembershipRebuild(conn, tx);
         DeleteBandTeamMembershipForTeams(conn, tx, bandType, teamKeys);
 
@@ -1009,6 +1030,9 @@ public sealed class BandLeaderboardPersistence
         NpgsqlTransaction tx,
         IReadOnlyDictionary<string, IReadOnlyCollection<string>> teamKeysByBandType)
     {
+        RegistrationMutationGate.AssertTransactionAllowed(
+            conn,
+            tx);
         var rebuilt = 0;
         foreach (var (bandType, teamKeys) in teamKeysByBandType)
             rebuilt += RebuildBandTeamConfigurationsForTeams(conn, tx, bandType, teamKeys);
@@ -1029,6 +1053,9 @@ public sealed class BandLeaderboardPersistence
         if (sortedTeamKeys.Length == 0)
             return 0;
 
+        RegistrationMutationGate.AssertTransactionAllowed(
+            conn,
+            tx);
         using (var deleteCmd = conn.CreateCommand())
         {
             deleteCmd.Transaction = tx;

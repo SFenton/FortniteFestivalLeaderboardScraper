@@ -162,6 +162,9 @@ public sealed class PathDataStore : IPathDataStore
         }
     }
 
+    public void InvalidateCachedState()
+        => InvalidateMaxScoresCache();
+
     // Test seeding only. Runtime promotions go through the CAS transaction below.
     internal void UpdateMaxScores(
         string songId,
@@ -321,6 +324,323 @@ public sealed class PathDataStore : IPathDataStore
         await tx.CommitAsync(ct);
         InvalidateMaxScoresCache();
         return PathGenerationPromotionOutcome.Promoted;
+    }
+
+    public async Task<PathGenerationBatchPromotionResult>
+        TryPromoteGenerationsAtomicallyAsync(
+            IReadOnlyList<PathGenerationPromotion> promotions,
+            CancellationToken ct)
+        => await TryPromoteGenerationsAtomicallyCoreAsync(
+            promotions,
+            gate: null,
+            connection: null,
+            transaction: null,
+            ct);
+
+    public async Task<PathGenerationBatchPromotionResult>
+        TryPromoteGenerationsAtomicallyAsync(
+            IReadOnlyList<PathGenerationPromotion> promotions,
+            PathGenerationBatchPromotionGate gate,
+            IMaxScoreMaintenanceLease maintenanceLease,
+            CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(maintenanceLease);
+        return await maintenanceLease.ExecuteTransactionAsync(
+            "path-batch-promotion",
+            requireSourceLocks: true,
+            (connection, transaction, token) =>
+                TryPromoteGenerationsAtomicallyCoreAsync(
+                    promotions,
+                    gate ?? throw new ArgumentNullException(
+                        nameof(gate)),
+                    connection,
+                    transaction,
+                    token),
+            ct: ct);
+    }
+
+    private async Task<PathGenerationBatchPromotionResult>
+            TryPromoteGenerationsAtomicallyCoreAsync(
+            IReadOnlyList<PathGenerationPromotion> promotions,
+            PathGenerationBatchPromotionGate? gate,
+            NpgsqlConnection? connection,
+            NpgsqlTransaction? transaction,
+            CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(promotions);
+        if (promotions.Count == 0)
+        {
+            throw new ArgumentException(
+                "Atomic path promotion requires at least one song.",
+                nameof(promotions));
+        }
+
+        var ordered = promotions
+            .OrderBy(promotion => promotion.SongId, StringComparer.Ordinal)
+            .ToArray();
+        if (ordered.Length > MaxScoreMaintenanceManifest.MaximumSongs
+            || ordered
+                .Select(promotion => promotion.SongId)
+                .Distinct(StringComparer.Ordinal)
+                .Count() != ordered.Length)
+        {
+            throw new ArgumentException(
+                "Atomic path promotion requires a bounded unique song set.",
+                nameof(promotions));
+        }
+
+        if ((connection is null) != (transaction is null))
+        {
+            throw new ArgumentException(
+                "A supplied path-promotion connection requires its transaction.");
+        }
+        if (connection is not null
+            && !ReferenceEquals(transaction!.Connection, connection))
+        {
+            throw new ArgumentException(
+                "The path-promotion transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
+
+        NpgsqlConnection? ownedConnection = null;
+        NpgsqlTransaction? ownedTransaction = null;
+        var conn = connection
+            ?? (ownedConnection =
+                await _ds.OpenConnectionAsync(ct));
+        var tx = transaction
+            ?? (ownedTransaction =
+                await conn.BeginTransactionAsync(ct));
+        try
+        {
+        await using (var timeout = conn.CreateCommand())
+        {
+            timeout.Transaction = tx;
+            timeout.CommandText = """
+                SET LOCAL lock_timeout = '5s';
+                SET LOCAL statement_timeout = '30s';
+                """;
+            await timeout.ExecuteNonQueryAsync(ct);
+        }
+
+        if (gate is not null)
+        {
+            bool publicationGateValid;
+            await using var publication = conn.CreateCommand();
+            publication.Transaction = tx;
+            publication.CommandText = """
+                SELECT current_publication_id,
+                       working_publication_id,
+                       published_scrape_id,
+                       public_reads_frozen,
+                       public_reads_frozen_scrape_id,
+                       public_reads_frozen_reason
+                FROM scrape_publication_state
+                WHERE id = TRUE
+                FOR UPDATE
+                """;
+            await using var reader =
+                await publication.ExecuteReaderAsync(ct);
+            publicationGateValid =
+                await reader.ReadAsync(ct)
+                && !reader.IsDBNull(0)
+                && reader.GetInt64(0) == gate.PublicationId
+                && reader.IsDBNull(1)
+                && !reader.IsDBNull(2)
+                && Convert.ToInt64(reader.GetValue(2))
+                    == gate.PublishedScrapeId
+                && reader.GetBoolean(3)
+                && !reader.IsDBNull(4)
+                && Convert.ToInt64(reader.GetValue(4))
+                    == gate.PublishedScrapeId
+                && !reader.IsDBNull(5)
+                && string.Equals(
+                    reader.GetString(5),
+                    gate.FreezeReason,
+                    StringComparison.Ordinal);
+            await reader.DisposeAsync();
+            if (!publicationGateValid)
+            {
+                if (ownedTransaction is not null)
+                    await tx.RollbackAsync(ct);
+                return new PathGenerationBatchPromotionResult(
+                    PathGenerationPromotionOutcome.Conflict,
+                    0);
+            }
+        }
+
+        var current = new Dictionary<
+            string,
+            (long Revision, string? CatalogLastModified)>(
+            StringComparer.Ordinal);
+        await using (var lockRows = conn.CreateCommand())
+        {
+            lockRows.Transaction = tx;
+            lockRows.CommandText = """
+                SELECT song_id,
+                       path_generation_revision,
+                       NULLIF(last_modified, '')
+                FROM songs
+                WHERE song_id = ANY(@songIds)
+                ORDER BY song_id
+                FOR UPDATE
+                """;
+            lockRows.Parameters.Add(
+                "songIds",
+                NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+                ordered.Select(promotion => promotion.SongId).ToArray();
+            await using var reader = await lockRows.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                current[reader.GetString(0)] = (
+                    reader.GetInt64(1),
+                    reader.IsDBNull(2) ? null : reader.GetString(2));
+            }
+        }
+
+        foreach (var promotion in ordered)
+        {
+            if (!current.TryGetValue(promotion.SongId, out var state))
+            {
+                if (ownedTransaction is not null)
+                    await tx.RollbackAsync(ct);
+                return new PathGenerationBatchPromotionResult(
+                    PathGenerationPromotionOutcome.SongMissing,
+                    0,
+                    promotion.SongId);
+            }
+            if (state.Revision != promotion.ExpectedRevision
+                || !ProviderTimestampIdentity.Equivalent(
+                    state.CatalogLastModified,
+                    promotion.SongLastModified))
+            {
+                if (ownedTransaction is not null)
+                    await tx.RollbackAsync(ct);
+                return new PathGenerationBatchPromotionResult(
+                    PathGenerationPromotionOutcome.Conflict,
+                    0,
+                    promotion.SongId);
+            }
+        }
+
+        foreach (var promotion in ordered)
+        {
+            await using var update = conn.CreateCommand();
+            update.Transaction = tx;
+            update.CommandText = """
+                UPDATE songs
+                SET max_lead_score = @lead,
+                    max_bass_score = @bass,
+                    max_drums_score = @drums,
+                    max_vocals_score = @vocals,
+                    max_pro_lead_score = @proLead,
+                    max_pro_bass_score = @proBass,
+                    max_pro_cymbals_score = @proCymbals,
+                    max_pro_drums_score = @proDrums,
+                    dat_file_hash = @datHash,
+                    song_last_modified = @songLastModified,
+                    paths_generated_at = @generatedAt,
+                    chopt_version = @choptVersion,
+                    chopt_binary_sha256 = @binaryHash,
+                    path_generation_profile = @profile,
+                    path_artifact_generation_id = @generationId,
+                    path_expected_instruments = @expectedInstruments,
+                    path_generation_revision =
+                        path_generation_revision + 1,
+                    path_generation_pending = FALSE
+                WHERE song_id = @songId
+                  AND path_generation_revision = @expectedRevision
+                """;
+            update.Parameters.AddWithValue(
+                "songId",
+                promotion.SongId);
+            update.Parameters.AddWithValue(
+                "expectedRevision",
+                promotion.ExpectedRevision);
+            update.Parameters.AddWithValue(
+                "lead",
+                (object?)promotion.MaxScores.MaxLeadScore
+                ?? DBNull.Value);
+            update.Parameters.AddWithValue(
+                "bass",
+                (object?)promotion.MaxScores.MaxBassScore
+                ?? DBNull.Value);
+            update.Parameters.AddWithValue(
+                "drums",
+                (object?)promotion.MaxScores.MaxDrumsScore
+                ?? DBNull.Value);
+            update.Parameters.AddWithValue(
+                "vocals",
+                (object?)promotion.MaxScores.MaxVocalsScore
+                ?? DBNull.Value);
+            update.Parameters.AddWithValue(
+                "proLead",
+                (object?)promotion.MaxScores.MaxProLeadScore
+                ?? DBNull.Value);
+            update.Parameters.AddWithValue(
+                "proBass",
+                (object?)promotion.MaxScores.MaxProBassScore
+                ?? DBNull.Value);
+            update.Parameters.AddWithValue(
+                "proCymbals",
+                (object?)promotion.MaxScores.MaxProCymbalsScore
+                ?? DBNull.Value);
+            update.Parameters.AddWithValue(
+                "proDrums",
+                (object?)promotion.MaxScores.MaxProDrumsScore
+                ?? DBNull.Value);
+            update.Parameters.AddWithValue(
+                "datHash",
+                promotion.DatFileHash);
+            update.Parameters.AddWithValue(
+                "songLastModified",
+                (object?)promotion.SongLastModified
+                ?? DBNull.Value);
+            update.Parameters.AddWithValue(
+                "generatedAt",
+                promotion.GeneratedAtUtc);
+            update.Parameters.AddWithValue(
+                "choptVersion",
+                promotion.Runtime.Version);
+            update.Parameters.AddWithValue(
+                "binaryHash",
+                promotion.Runtime.BinarySha256);
+            update.Parameters.AddWithValue(
+                "profile",
+                promotion.Runtime.Profile);
+            update.Parameters.AddWithValue(
+                "generationId",
+                promotion.ArtifactGenerationId);
+            update.Parameters.Add(
+                "expectedInstruments",
+                NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+                promotion.ExpectedInstruments.ToArray();
+            if (await update.ExecuteNonQueryAsync(ct) != 1)
+            {
+                if (ownedTransaction is not null)
+                    await tx.RollbackAsync(ct);
+                return new PathGenerationBatchPromotionResult(
+                    PathGenerationPromotionOutcome.Conflict,
+                    0,
+                    promotion.SongId);
+            }
+        }
+
+        if (ownedTransaction is not null)
+        {
+            await tx.CommitAsync(ct);
+            InvalidateMaxScoresCache();
+        }
+        return new PathGenerationBatchPromotionResult(
+            PathGenerationPromotionOutcome.Promoted,
+            ordered.Length);
+        }
+        finally
+        {
+            if (ownedTransaction is not null)
+                await ownedTransaction.DisposeAsync();
+            if (ownedConnection is not null)
+                await ownedConnection.DisposeAsync();
+        }
     }
 
     public async Task AppendPathGenerationErrorAsync(

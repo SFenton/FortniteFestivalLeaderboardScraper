@@ -283,7 +283,12 @@ public sealed class RegisteredBandProcessingOrchestratorTests : IDisposable
             strategy,
             new ScrapeProgressTracker(),
             options,
-            Substitute.For<ILogger<RegisteredBandProcessingOrchestrator>>());
+            Substitute.For<ILogger<RegisteredBandProcessingOrchestrator>>(),
+            new RegistrationMutationCoordinator(
+                Db,
+                Substitute.For<IPathDataStore>(),
+                Substitute.For<
+                    ISongInstrumentSupportCache>()));
     }
 
     private void InsertBandProjection(string bandType, string teamKey, string[] memberAccountIds)

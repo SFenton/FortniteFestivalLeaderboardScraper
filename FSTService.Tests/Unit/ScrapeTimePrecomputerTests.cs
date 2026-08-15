@@ -1,4 +1,6 @@
 using System.Text.Json;
+using FortniteFestival.Core;
+using FortniteFestival.Core.Services;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
@@ -408,6 +410,218 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
         Assert.Equal("s1", offsetsJson.RootElement.GetProperty("songId").GetString());
         Assert.Equal("Solo_Guitar", offsetsJson.RootElement.GetProperty("instrument").GetString());
         Assert.Equal(101, offsetsJson.RootElement.GetProperty("removed").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task MaxScoreMaintenance_rankings_and_precompute_share_fenced_population()
+    {
+        const string songId = "population-fence-song";
+        const string instrument = "Solo_Guitar";
+        RegisterUser("population-fence-user");
+        SeedSong(
+            songId,
+            instrument,
+            100_000,
+            ("population-fence-user", 95_000),
+            ("population-fence-peer", 90_000));
+        _metaDb.UpsertLeaderboardPopulation(
+            [(songId, instrument, 100L)]);
+        var scrapeId = _metaDb.StartScrapeRun();
+        _metaDb.CompleteScrapeRun(
+            scrapeId,
+            1,
+            2,
+            1,
+            1);
+        _metaDb.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        using (var published = _metaFixture.DataSource
+                   .OpenConnection())
+        using (var seedPublished =
+               published.CreateCommand())
+        {
+            seedPublished.CommandText = """
+                INSERT INTO leaderboard_entries_snapshot (
+                    snapshot_id,
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    accuracy,
+                    stars,
+                    season,
+                    rank,
+                    source,
+                    first_seen_at,
+                    last_updated_at)
+                SELECT @scrapeId,
+                       song_id,
+                       instrument,
+                       account_id,
+                       score,
+                       accuracy,
+                       stars,
+                       season,
+                       rank,
+                       source,
+                       first_seen_at,
+                       last_updated_at
+                FROM leaderboard_entries
+                WHERE song_id = @songId
+                  AND instrument = @instrument;
+
+                INSERT INTO leaderboard_published_scope_source (
+                    published_scrape_id,
+                    song_id,
+                    instrument,
+                    scope_kind,
+                    source_kind,
+                    source_snapshot_id,
+                    source_scrape_id,
+                    row_count,
+                    content_fingerprint,
+                    coverage_fingerprint,
+                    reported_total_entries,
+                    reported_total_pages,
+                    is_complete,
+                    created_at,
+                    validated_at)
+                VALUES (
+                    @scrapeId,
+                    @songId,
+                    @instrument,
+                    'alltime',
+                    'snapshot',
+                    @scrapeId,
+                    @scrapeId,
+                    2,
+                    md5('population-cache-source'),
+                    md5('population-cache-coverage'),
+                    100,
+                    1,
+                    TRUE,
+                    now(),
+                    now());
+                """;
+            seedPublished.Parameters.AddWithValue(
+                "scrapeId",
+                scrapeId);
+            seedPublished.Parameters.AddWithValue(
+                "songId",
+                songId);
+            seedPublished.Parameters.AddWithValue(
+                "instrument",
+                instrument);
+            seedPublished.ExecuteNonQuery();
+        }
+        _metaDb.UpsertLeaderboardPopulation(
+            [(songId, instrument, 200L)]);
+        var publicationId = _metaDb
+            .GetPublicationPointerState()
+            .CurrentPublicationId!.Value;
+        var festivalService =
+            FestivalService.CreateFromSongCatalogSnapshot(
+            [
+                new Song
+                {
+                    track = new Track
+                    {
+                        su = songId,
+                        tt = "Population Fence Song",
+                        an = "Test Artist",
+                        @in = new In { gr = 3 },
+                    },
+                },
+            ]);
+        var rankings = new RankingsCalculator(
+            _persistence,
+            _metaDb,
+            _pathDataStore,
+            new ScrapeProgressTracker(),
+            Substitute.For<ILogger<RankingsCalculator>>());
+
+        await using var maintenanceLease =
+            await _metaDb
+                .AcquireMaxScoreMaintenanceLeaseAsync(
+                    publicationId);
+        var blockedPopulation =
+            Assert.Throws<Npgsql.PostgresException>(() =>
+                _metaDb.RaiseLeaderboardPopulationFloor(
+                    songId,
+                    instrument,
+                    300));
+        Assert.Equal("55000", blockedPopulation.SqlState);
+
+        using var publishedReadPass =
+            _persistence
+                .BeginMaxScoreMaintenancePublishedReadPass();
+        var publicationPopulation =
+            _persistence.GetCurrentStateLeaderboardPopulation();
+        await rankings.ComputeForMaxScoreMaintenanceAsync(
+            festivalService,
+            [instrument],
+            publicationPopulation,
+            maintenanceLease,
+            CancellationToken.None);
+        var stagedCount =
+            await _sut
+                .StageCurrentPublicationCachesForMaintenanceAsync(
+                    publicationId,
+                    festivalService.Songs,
+                    _pathDataStore.GetAllMaxScores(),
+                    publicationPopulation,
+                    maintenanceLease,
+                    CancellationToken.None);
+        Assert.True(stagedCount > 0);
+
+        using var connection =
+            _metaFixture.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT
+                (
+                    SELECT entry_count
+                    FROM song_stats
+                    WHERE song_id = @songId
+                      AND instrument = @instrument
+                ),
+                (
+                    SELECT json_data
+                    FROM publication_api_response_cache_staging
+                    WHERE publication_id = @publicationId
+                      AND cache_key = @cacheKey
+                )
+            """;
+        command.Parameters.AddWithValue("songId", songId);
+        command.Parameters.AddWithValue(
+            "instrument",
+            instrument);
+        command.Parameters.AddWithValue(
+            "publicationId",
+            publicationId);
+        command.Parameters.AddWithValue(
+            "cacheKey",
+            $"lb:{songId}:10:");
+        using var reader = command.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(100, reader.GetInt32(0));
+        var json =
+            JsonDocument.Parse(reader.GetFieldValue<byte[]>(1));
+        var guitar = json.RootElement
+            .GetProperty("instruments")
+            .EnumerateArray()
+            .Single(entry =>
+                entry.GetProperty("instrument").GetString()
+                == instrument);
+        Assert.Equal(
+            100,
+            guitar.GetProperty("totalEntries").GetInt32());
+        Assert.Equal(
+            200,
+            _metaDb.GetLeaderboardPopulation(
+                songId,
+                instrument));
     }
 
     [Fact]

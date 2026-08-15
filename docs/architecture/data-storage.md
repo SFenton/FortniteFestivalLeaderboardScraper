@@ -2,15 +2,29 @@
 status: canonical
 owner: data
 last_verified: 2026-08-14
-last_verified_commit: cb295b7e
+last_verified_commit: 80346e04
 sources:
   - FSTService/Persistence/DatabaseInitializer.cs
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/InstrumentDatabase.cs
+  - FSTService/Persistence/PublishedSoloScopeSql.cs
   - FSTService/Persistence/GlobalLeaderboardPersistence.cs
+  - FSTService/Persistence/MaxScoreMaintenanceSchema.cs
+  - FSTService/Persistence/MaxScoreMaintenanceService.cs
+  - FSTService/Persistence/MaxScoreMaintenanceCacheEntryEvidenceStore.cs
+  - FSTService/Persistence/MaxScoreMaintenanceArtifactValidator.cs
+  - FSTService/Persistence/MaxScoreMaintenanceNotificationService.cs
+  - FSTService/Persistence/RegistrationMutationGuard.cs
   - FSTService/Persistence/MetaDatabase.PhaseProgress.cs
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
+  - FSTService/Scraping/BackfillOrchestrator.cs
+  - FSTService/Scraping/RegistrationMutationCoordinator.cs
+  - FSTService/Scraping/RegisteredBandProcessing.cs
+  - FSTService/Scraping/RegisteredPlayerBandDiscovery.cs
+  - FSTService/Scraping/RankingsCalculator.cs
+  - FSTService/Scraping/PlayerStatsTierRebuilder.cs
+  - FSTService/Scraping/ScrapeTimePrecomputer.cs
   - FSTService/Scraping/Replay/
   - FSTService/FeatureOptions.cs
   - deploy/postgres.Dockerfile
@@ -45,7 +59,7 @@ surface is not the production service persistence model.
 | Account state | Display names, registrations, selected profiles, refresh/backfill progress |
 | Derived products | Rankings, rivals, statistics, precomputed responses, improvement notifications |
 | Publication state | Published scrape/generation, source bindings, read freeze, commit intent, leases, cache generations |
-| Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, maintenance evidence, dedup/recovery audit state |
+| Operations/audit | Worker heartbeat, terminal scrape-phase outcomes, detailed subphase timings, max-score checkpoints/rollback evidence, maintenance notification quarantine, dedup/recovery audit state |
 | Replay evidence artifacts | Immutable Tier-0 filesystem packages that describe producer/source/build/schema/config/phase lineage and checksummed artifact metadata; never publication authority |
 
 The `songs` path-generation state stores distinct theoretical maxima for all
@@ -59,6 +73,185 @@ The exact relation inventory is intentionally source-driven because it changes
 frequently. `DatabaseInitializer` and its tests are the schema inventory;
 canonical documentation describes ownership and invariants instead of copying
 volatile table counts.
+
+### Max-score maintenance evidence
+
+`max_score_maintenance_runs` owns the digest-bound workflow checkpoint:
+manifest/plan identities, exact publication/catalog, score-source,
+notification-state, rank-history, publication-population evidence, and bounded
+complete consumed `score_history` evidence, freeze owner, last durable phase,
+rollback file digest, notification audit link, counters, staged-cache evidence,
+and bounded failure detail. Population evidence stores scope count, effective
+range, and hash. History evidence stores row count, ID/time ranges, and hash.
+Cache evidence stores the whole-stage hash, the exact publication-scope cache
+key inventory hash, and target-scope, affected-account, and
+overlay-only-account hashes.
+`max_score_maintenance_cache_entries` stores one immutable row per staged
+cache key with its ETag and JSON SHA-256. The evidence is captured atomically
+with the `caches_staged` checkpoint only after the legacy and
+publication-addressed staging tables match exactly; updates/deletes and later
+inserts are rejected. From the committed `caches_staged` checkpoint through
+every later pre-complete state, generation-aware lease checks and statement
+triggers reject ordinary cache-build leases plus staging
+insert/update/delete/truncate operations. Only the live maintenance session
+whose lease token matches the exact frozen run/publication may mutate those
+tables for validation or final publication. A
+post-freeze failure changes status to `failed` only while
+the lock-owning backend can commit that checkpoint; backend loss leaves the
+last durable status/phase unchanged and never clears the freeze.
+
+`max_score_maintenance_rollback_songs` stores every pre-promotion path field,
+all eight maxima, the immutable generation file count, and the exact artifact
+tree SHA-256 for every manifest song. It complements the canonical same-drive
+rollback JSON. Plan and apply revalidate both current rollback and staged
+generation trees, including every JSON/PNG hash; missing, extra, symlinked, or
+changed artifacts fail closed. Database triggers reject workflow-identity
+changes and rollback-row updates/deletes; neither surface deletes historical
+generations. Rollback JSON v3 binds the immutable run `created_at`, exact
+publication/catalog, and database rollback-song identity. Every post-capture
+resume and final completion reloads canonical bytes and requires the
+checkpointed SHA-256; missing, corrupt, or swapped evidence keeps the freeze
+resumable.
+
+Maintenance observed-score bounds, affected-account selection, player-stat
+validation, and ranking/player-stat inputs share the published solo source
+resolver: the current publication's selected snapshot or empty source plus
+supplemental overlay, with overlay precedence per account. They do not trust
+`current_leaderboard_entries`, which can lag overlay-only writes.
+Maintenance population is resolved from the same complete source map,
+combining each source's reported population with its resolved overlay row
+count. It is snapshotted once under the exclusive fence and never falls back
+to mutable `leaderboard_population`. The strict read context remains active
+through cache generation and final validation, so active snapshots, the worker
+projection, and legacy rows cannot enter the staged cache.
+The frozen catalog plus this population map also owns maintenance song and
+instrument scopes, total-song/completion denominators, maximum-score filtering,
+and the expected base/leeway/rank-offset cache keys. Maintenance never uses
+legacy `GetAllSongCounts()`, active `song_stats`/`leaderboard_entries`, or the
+process-cached total-song count for those decisions.
+For each affected instrument, one fenced transaction deletes `song_stats`
+outside the immutable published scope set and upserts every published scope,
+including empty scopes with zero counts. The instrument ranking partition is
+then replaced from that exact source, so active-only accounts and old
+denominators cannot survive. Final validation compares the complete expected
+and actual `song_stats` inventories and rejects ranking rows whose account or
+`total_charted_songs` is not owned by the frozen source.
+
+Affected accounts' `player_stats_tiers` rows are deleted and rebuilt atomically
+per fenced chunk rather than only upserted. This removes stale active-only
+instrument tiers while leaving unrelated accounts untouched. Maintenance cache
+serialization admits `Overall` plus only instruments present in the frozen
+publication scope; unrelated accounts may retain other durable tier rows, but
+those rows cannot leak into the maintenance cache generation.
+
+The score-history aggregate covers all registered-account history consumed by
+player/history caches, fallback tiers for affected player-stat accounts, and
+fallback candidates across every song in each rebuilt instrument. It uses
+fixed-width count/range/sum/xor evidence rather than an unbounded ordered
+payload aggregation.
+
+`improvement_notification_maintenance_runs` and
+`improvement_notification_maintenance_candidates` retain historical
+`maintenance_pro_lead_max_score_repair_v1` rows and accept new
+`maintenance_max_score_correction_v1` audit rows. Both purposes remain
+quarantine-only with a compile/schema-enforced visible delivery count of zero.
+Maintenance candidate parity uses routine visible cardinality rather than raw
+audit-row cardinality: player ranks coalesce by player/instrument, band-song
+metrics coalesce by play, band rank metrics group by subject/scope, progress
+metrics remain individual, and `band_rank_state_missing` is audit/alignment
+only. Max-score-percent rank changes likewise remain in quarantine and state
+alignment. Missing current band subjects and their song/rank state are created
+inside the same repeatable-read quarantine transaction before candidate
+collection.
+
+Registration, backfill, registered-user refresh, score-history reconstruction,
+tracked-band discovery/processing, selected-profile activity, and stale
+registration pruning share one PostgreSQL session advisory mutation gate.
+Each complete external async mutation lifecycle holds the shared form on a
+dedicated unpooled, non-multiplexed session before its first write; gate
+holders and waiters therefore do not consume the normal 15-connection service
+pool. The lease owns no transaction or publication-row lock, so
+`idle_in_transaction_session_timeout` cannot expire it while Epic/history work
+uses ordinary pooled connections. Background/manual workers may wait with
+cancellation on the isolated session. HTTP tracking, manual backfill, and band
+sync use a pool-capacity-bounded `pg_try_advisory_lock_shared` admission and
+return `503`/`Retry-After: 30` instead of queueing behind maintenance.
+Cancellation or disposal explicitly unlocks and physically closes the
+isolated session.
+
+Max-score plan/apply takes the exclusive form of the same gate first. It waits
+for every admitted shared lifecycle to finish and prevents later registration
+work from starting. The lock-owning unpooled session immediately records an
+opaque random owner token, publication ID, backend PID/start, and acquisition
+time in `scrape_publication_state`; this durable fence also blocks HTTP before
+a public-read freeze exists. Apply then takes the path-generation and
+publication advisory locks, establishes or revalidates its digest-owned
+freeze. Every dependent mutation or phase checkpoint then opens its own
+bounded transaction on that same unpooled lock-owning session and takes
+`SHARE` locks in fixed order on `leaderboard_entries_overlay`,
+`leaderboard_entries`, `score_history`, `band_member_stats`, and
+`leaderboard_population` before doing work. Checkpoints therefore remain
+durable between resumable phases without moving writes onto unrelated pooled
+sessions. The durable owner and table triggers bridge the short gaps between
+transactions.
+
+Row triggers remain a fail-closed second line on registered users/bands,
+registered-user refresh progress, registered-band status/progress,
+registered-player band-discovery progress, backfill status/progress, and
+history-reconstruction status/progress. Statement triggers apply the same
+fence to `leaderboard_entries`, `leaderboard_entries_overlay`,
+`leaderboard_population`, and `score_history`, plus `band_entries`,
+`band_member_stats`, `band_members`,
+`band_team_membership`, `band_team_membership_state`, and
+`band_team_configurations`. This prevents a backfill whose shared lock backend
+died after its entry commit from raising the population floor after exclusive
+maintenance has claimed the durable gate. Every band persistence entry point
+also validates and share-locks the durable gate row at the start of its
+complete transaction, even when `MemberStats` is empty. Each trigger rejects
+either the active durable mutation-gate token or a
+`max-score-maintenance:v1:<digest>` freeze. This row lock orders a surviving
+write from a lost shared session before a newly claimed exclusive gate,
+without taking a second advisory lock on a pooled connection.
+
+Both lease types set an independent random session token and capture the
+backend PID. Every max-score write explicitly executes through the lease API;
+inside that same transaction it verifies the token, backend, advisory locks,
+durable owner, and all five source locks both before work and immediately
+before ordinary commits. Final completion validates its exact owner/freeze,
+publishes the cache, marks the workflow complete, and unfreezes in one
+source-locked transaction while retaining the durable owner token. Lease
+disposal then releases the publication, path-generation, and exclusive
+mutation advisory locks before conditionally clearing that token. A queued
+shared holder therefore cannot pass the advisory gate early, and a stale
+direct writer remains blocked by the durable token throughout the handoff. No
+`AsyncLocal` or preflight-only check is accepted as write authority.
+Shared-gate acquisition synchronously invalidates cached path
+maxima and refreshes scraper instrument support before lookup-bearing
+backfill/history/band work;
+metadata-only HTTP activity and pruning take the same gate without that extra
+cache churn. The maintenance owner has one transaction-local owner-token
+bypass used only to remove stale negative backfill checks and matching successful
+`history_recon_progress` rows for newly promoted path-backed pairs. Matching
+history status rows move to `pending`, clear the completion timestamp,
+recompute `songs_processed` from preserved rows, clear aggregate season/entry
+counters, advance their admission revision, and fence preserved unrelated
+progress to that revision.
+Only affected accounts are requeued; positive backfill checks and unrelated
+history pairs are preserved. Ordinary scrape/publication freezes retain their
+existing registration behavior.
+
+Final cache swap, completed checkpoint, and unfreeze run inside one
+source-locked transaction on the live lock-owning session. It share-locks both
+staging tables and compares every key, ETag, and JSON SHA-256 with
+`max_score_maintenance_cache_entries` before any swap. A `caches_staged` or
+later pre-complete freeze rejects ordinary cache-build leases and staging
+writers. The durable gate is cleared
+only after advisory-lock release. Backend loss before the final commit keeps
+the old cache, freeze, and durable owner. Backend loss after that commit but
+before durable-gate clear keeps the completed cache/publication coherent
+and leaves guarded mutations fail-closed. A new validated lease may replace
+the stale owner token and either resume the incomplete workflow or complete
+the post-commit release.
 
 ## Publication ownership
 
@@ -223,6 +416,11 @@ source-of-truth or restore targets.
   retention, rewrite, or reduction of the `500 GiB` free-space gate.
 - Destructive maintenance requires exact affected objects, parity evidence,
   rollback, live preflight, and a bounded maintenance window.
+- Current-publication max-score correction requires the canonical manifest and
+  plan digests, the path-generation/publication lock order, a durable
+  maintenance freeze, complete rollback coverage, and atomic cache
+  swap/unfreeze. Use the
+  [max-score correction runbook](../database/MaxScoreCorrectionMaintenanceRunbook.md).
 - Schema initialization is idempotent but is not a substitute for a bounded
   maintenance command.
 - Preserve Epic/provider provenance, historical leaderboard correctness,

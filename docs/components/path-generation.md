@@ -1,12 +1,17 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-13
-last_verified_commit: 96ed9680
+last_verified: 2026-08-14
+last_verified_commit: f8cf6f02
 sources:
+  - FSTService/Scraping/MidiTrackInspector.cs
   - FSTService/Scraping/PathGenerationCoordinator.cs
+  - FSTService/Scraping/PathGenerationModels.cs
   - FSTService/Scraping/PathArtifactResolver.cs
   - FSTService/Scraping/PathDataStore.cs
+  - FSTService/Scraping/GlobalLeaderboardScraper.cs
+  - FSTService/Scraping/RankingsCalculator.cs
+  - FSTService/Persistence/MaxScoreMaintenanceService.cs
   - FSTService/Api/SongEndpoints.cs
   - FSTService/Api/AdminEndpoints.cs
   - FortniteFestivalWeb/src/pages/songinfo/components/path/PathDataTable.tsx
@@ -31,26 +36,41 @@ together as an immutable generation.
 2. The configured MIDI key decrypts the chart in a private staging directory.
    FST promotes `PLASTIC DRUM` or `PLASTIC DRUMS` to `PART DRUMS` in a
    dedicated MIDI variant and hides the pad `PART DRUMS` track. A `pd` song
-   without the plastic track fails closed. A promoted plastic chart whose
-   expert output has no authored activation windows also fails closed.
-3. CHOpt runs once for each expected instrument and each of `easy`, `medium`,
+   without the plastic track fails closed.
+3. Expected instruments begin with property presence in Epic's raw intensity
+   object. When any supported property is absent, FST decrypts and parses each
+   named MIDI track, then augments only omitted instruments whose track contains
+   a positive-velocity Note On event. Empty placeholder tracks and zero-velocity
+   Note On events do not count. This inspection occurs before the
+   unchanged-generation skip decision, so a prior generation cannot remain
+   current after an omitted real chart is discovered.
+4. CHOpt runs once for each expected instrument and each of `easy`, `medium`,
    `hard`, and `expert`, using the `fnf` engine, zero early whammy, and 20%
    squeeze. Plastic-drums charts generate two modes from Epic's `pd` chart:
    `Solo_PeripheralCymbals` uses the dedicated `prodrums` engine so cymbals
    score 42 and toms score 36, while `Solo_PeripheralDrums` also passes
    `--no-pro-drums` so all gems score 36. Both modes preserve double kicks and
-   restrict activation starts to the scoring gems nearest Epic's authored
-   Overdrive Activation Gem window endpoints.
-4. FST validates every PNG and JSON artifact. Expert scores must be positive.
+   restrict activation starts to scoring gems nearest Epic's authored
+   activation-window endpoints.
+5. FST validates every PNG and JSON artifact. Expert scores must be positive.
+   Plastic-drums expert artifacts must retain non-empty authored activation
+   windows.
    PNGs may be up to 32,768 pixels on either axis, while the independent
    256 MiB decoded-image limit still rejects oversized or compressed-bomb
    payloads. This accommodates the longest current Festival charts.
-5. A manifest records the song identity, `.dat` hash, CHOpt version and binary
+6. A manifest records the song identity, `.dat` hash, CHOpt version and binary
    SHA-256, generation profile, expected instruments, and expert maxima.
-6. The complete directory is moved into
+7. The complete directory is moved into
    `paths/<songId>/generations/<generationId>/` and promoted with a
    compare-and-swap update. Partial or conflicted attempts never replace the
    current generation.
+
+After promotion, `path_expected_instruments` supplements provider intensity
+metadata for scrape admission and ranking chart denominators. This applies only
+to a complete, non-pending immutable generation whose current song ID and
+catalog `lastModified` identity still match the selected provider catalog.
+Provider JSON remains unchanged and authoritative for catalog provenance; a
+stale or identity-mismatched path generation cannot widen scrape scope.
 
 The generation profile is a semantic identity, not a display label. Change it
 whenever CHOpt arguments or the artifact contract change. A version, binary
@@ -100,6 +120,54 @@ raw CHOpt instruction notation.
 submit songs sequentially with `force=false`; the current profile makes the
 run idempotent and resumable while already-promoted songs skip.
 
+After deploying a new stable instrument correction, regenerate each affected
+song sequentially with `force=false`. Do not update nullable maximum columns
+directly: the normal path promotes the complete immutable generation and keeps
+the manifest, maxima, expected instruments, and revision coherent.
+
+## Max-score correction maintenance
+
+A reviewed correction to an already-published song's theoretical maximum uses
+the CLI-only
+[max-score correction runbook](../database/MaxScoreCorrectionMaintenanceRunbook.md),
+not the generic admin endpoint.
+
+`--max-score-maintenance-stage` requires a canonical version-2 request. A
+discovery request binds the exact v4 runtime, eight generated instruments,
+four approved changed instruments, known old-null/new-guitar constraints, and
+cannot be planned or applied. A promotion request then binds complete old/new
+eight-field maxima copied from discovery. Both stages acquire the distributed
+path-generation lease, process songs serially, apply decrypted-MIDI inference,
+write complete immutable generations, and never call the PostgreSQL pointer
+promotion path.
+
+Plan accepts only a promotion-purpose manifest. It revalidates both the
+current rollback generation and staged generation as exact file trees with
+SHA-256 identities, then rejects:
+
+- a changed publication, catalog, provider timestamp, or path revision;
+- an active staged generation;
+- missing, extra, changed, or incoherent current/staged artifacts;
+- known-invalid plastic-drums v3 current or staged state;
+- a runtime/artifact identity mismatch;
+- a nonpositive changed maximum;
+- a plastic-drums maximum below an observed score, cymbal mode below
+  no-cymbal mode, empty authored activation windows, or a plastic note
+  inventory matching `Solo_Drums`;
+- a maximum difference omitted from `changedInstruments`; or
+- any supposedly unchanged maximum that differs.
+
+Apply promotes every manifest generation in one PostgreSQL transaction. It
+does not expose the new path pointer until a digest-owned maintenance freeze is
+active, and it does not release that freeze until all maximum-dependent
+derived state, notification quarantine, current-publication caches, and
+rollback evidence validate. Promotion refreshes cached scraper admission before
+derived work. Any prior negative backfill result for a newly usable
+song/instrument pair is removed and its account requeued, while positive and
+unrelated completed pairs remain untouched. Freeze release invalidates scraper
+admission again so registration-only/service roles reload the same-publication
+path revision. The old exact-four command names remain rejected.
+
 ## Deployment and regeneration
 
 The Linux CLI and runtime libraries are pinned under
@@ -107,14 +175,12 @@ The Linux CLI and runtime libraries are pinned under
 FSTService image. Update the bundled README, source commit, version, SHA, and
 license manifest together.
 
-The profile-derived validator accepts the v2, v3, and v4 profiles as schema-v2
-JSON. The v3 profile used the pad `PART DRUMS` track and is rejected for
-plastic-drums serving; its two plastic maxima are also masked from runtime
-leaderboard and ranking reads. Switching to v4 changes the binary, MIDI
-variant, and activation model and is the atomic fail-closed regeneration
-trigger. While an immutable v2 or v3 song is pending v4 regeneration, the two
-plastic-drums routes return unavailable rather than falling back to stale or
-incorrect artifacts.
+The profile-derived validator accepts v2, v3, and v4 as schema-v2 JSON, but v3
+plastic-drums maxima are known invalid and are masked from serving/ranking and
+rejected by max-score maintenance. Switching to v4 changes the binary, MIDI
+variant, activation model, and expected instrument set. While a v2 or v3 song
+is pending v4 regeneration, plastic-drums routes return unavailable rather
+than falling back to stale or incorrect artifacts.
 
 Before deploying the v4 service, run the existing
 `--initialize-schema-only` one-shot with that image. It adds the nullable,
@@ -134,9 +200,9 @@ Before a canary or full regeneration, apply
    identity, the expected CHOpt version/hash/profile, zero generation errors,
    and accepted expert-score/path parity. Plastic-drums canaries additionally
    require observed leaderboard scores to remain below the applicable CHOpt
-   maximum, require non-empty authored activation windows, require a note
-   inventory distinct from `Solo_Drums`, and require the cymbal-mode maximum
-   to be greater than or equal to the no-cymbal maximum;
+   maximum, non-empty authored activation windows, a note inventory distinct
+   from `Solo_Drums`, and a cymbal-mode maximum greater than or equal to the
+   no-cymbal maximum;
 6. stop on unexplained maximum-score changes because maxima feed ranking and
    leaderboard validity calculations;
 7. run the catalogue sequentially and preserve a resumable state manifest on

@@ -72,6 +72,7 @@ public sealed class ScrapeOrchestrator
             : null;
 
         // Reset CDN cooldown state from any previous pass to avoid stale backoff
+        _globalScraper.RefreshSongInstrumentSupport();
         _globalScraper.ResetCdnState();
 
         // Reset DOP to initial configured value so a CDN slash from a previous

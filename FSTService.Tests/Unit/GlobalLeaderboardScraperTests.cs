@@ -6,6 +6,7 @@ using FortniteFestival.Core;
 using FortniteFestival.Core.Persistence;
 using FortniteFestival.Core.Services;
 using FSTService.Auth;
+using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
@@ -18,11 +19,20 @@ public class GlobalLeaderboardScraperTests
     private readonly ILogger<GlobalLeaderboardScraper> _log = Substitute.For<ILogger<GlobalLeaderboardScraper>>();
     private readonly ScrapeProgressTracker _progress = new();
 
-    private (GlobalLeaderboardScraper scraper, MockHttpMessageHandler handler) CreateScraper(FestivalService? festivalService = null)
+    private (GlobalLeaderboardScraper scraper, MockHttpMessageHandler handler)
+        CreateScraper(
+            FestivalService? festivalService = null,
+            IPathDataStore? pathDataStore = null)
     {
         var handler = new MockHttpMessageHandler();
         var http = new HttpClient(handler);
-        var scraper = new GlobalLeaderboardScraper(http, _progress, _log, maxLookupRetries: 0, festivalService: festivalService);
+        var scraper = new GlobalLeaderboardScraper(
+            http,
+            _progress,
+            _log,
+            maxLookupRetries: 0,
+            festivalService: festivalService,
+            pathDataStore: pathDataStore);
         scraper.Executor.CdnBlockFallbackOverride = (_, _, _) => Task.FromResult<HttpResponseMessage?>(null);
         return (scraper, handler);
     }
@@ -225,6 +235,191 @@ public class GlobalLeaderboardScraperTests
                 track,
                 instrument));
     }
+
+    [Fact]
+    public async Task ShowThem_MidiPromotedInstrumentIsAdmittedWhenProviderMetadataIsOmitted()
+    {
+        var service = CreateFestivalServiceWithMicModeDifficulty(0);
+        var song = service.Songs[0];
+        song.track.tt = "Show Them";
+        song.track.@in = new In { gr = 3 };
+        song.lastModified = new DateTime(
+            2026,
+            8,
+            1,
+            0,
+            0,
+            0,
+            DateTimeKind.Utc);
+        var pathStore = Substitute.For<IPathDataStore>();
+        pathStore.GetPathGenerationStates().Returns(
+            new Dictionary<string, PathGenerationState>(
+                StringComparer.OrdinalIgnoreCase)
+            {
+                ["song-1"] = CreatePromotedPathState(
+                    "song-1",
+                    song.lastModified,
+                    ["Solo_PeripheralGuitar"]),
+            });
+        var (scraper, handler) = CreateScraper(service, pathStore);
+        handler.EnqueueJsonOk("[]");
+
+        var entry = await scraper.LookupAccountAsync(
+            "song-1",
+            "Solo_PeripheralGuitar",
+            "account-1",
+            "token",
+            "caller");
+
+        Assert.Null(entry);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task ShowThem_StalePromotedInstrumentIsNotAdmittedAfterCatalogChange()
+    {
+        var service = CreateFestivalServiceWithMicModeDifficulty(0);
+        var song = service.Songs[0];
+        song.track.tt = "Show Them";
+        song.track.@in = new In { gr = 3 };
+        song.lastModified = new DateTime(
+            2026,
+            8,
+            2,
+            0,
+            0,
+            0,
+            DateTimeKind.Utc);
+        var pathStore = Substitute.For<IPathDataStore>();
+        pathStore.GetPathGenerationStates().Returns(
+            new Dictionary<string, PathGenerationState>(
+                StringComparer.OrdinalIgnoreCase)
+            {
+                ["song-1"] = CreatePromotedPathState(
+                    "song-1",
+                    song.lastModified.AddDays(-1),
+                    ["Solo_PeripheralGuitar"]),
+            });
+        var (scraper, handler) = CreateScraper(service, pathStore);
+
+        var entry = await scraper.LookupAccountAsync(
+            "song-1",
+            "Solo_PeripheralGuitar",
+            "account-1",
+            "token",
+            "caller");
+
+        Assert.Null(entry);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("Solo_Guitar")]
+    [InlineData("Solo_PeripheralGuitar")]
+    public async Task RegistrationLeaseRefresh_beforePublicationMonitor_admits_newly_promoted_midi_instrument(
+        string instrument)
+    {
+        var service = CreateFestivalServiceWithMicModeDifficulty(0);
+        var song = service.Songs[0];
+        song.track.@in = new In();
+        song.lastModified = new DateTime(
+            2026,
+            8,
+            2,
+            0,
+            0,
+            0,
+            DateTimeKind.Utc);
+        var initial = new Dictionary<string, PathGenerationState>(
+            StringComparer.OrdinalIgnoreCase)
+        {
+            ["song-1"] = CreatePromotedPathState(
+                "song-1",
+                song.lastModified,
+                []),
+        };
+        var promoted = new Dictionary<string, PathGenerationState>(
+            StringComparer.OrdinalIgnoreCase)
+        {
+            ["song-1"] = CreatePromotedPathState(
+                "song-1",
+                song.lastModified,
+                [instrument]),
+        };
+        var pathStore = Substitute.For<IPathDataStore>();
+        pathStore.GetPathGenerationStates()
+            .Returns(initial, promoted);
+        var (scraper, handler) = CreateScraper(service, pathStore);
+
+        Assert.Null(await scraper.LookupAccountAsync(
+            "song-1",
+            instrument,
+            "account-1",
+            "token",
+            "caller"));
+        Assert.Empty(handler.Requests);
+
+        var metaDatabase = Substitute.For<IMetaDatabase>();
+        var durableLease =
+            Substitute.For<IRegistrationMutationLease>();
+        metaDatabase
+            .AcquireRegistrationMutationLeaseAsync(
+                Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(durableLease));
+        var registrationMutations =
+            new RegistrationMutationCoordinator(
+                metaDatabase,
+                pathStore,
+                scraper);
+        pathStore.ClearReceivedCalls();
+
+        await using (await registrationMutations
+                         .AcquireLeaseAsync())
+        {
+            await metaDatabase.Received(1)
+                .AcquireRegistrationMutationLeaseAsync(
+                    Arg.Any<CancellationToken>());
+            pathStore.Received(1).InvalidateCachedState();
+            pathStore.Received(1)
+                .GetPathGenerationStates();
+
+            handler.EnqueueJsonOk("[]");
+            Assert.Null(await scraper.LookupAccountAsync(
+                "song-1",
+                instrument,
+                "account-1",
+                "token",
+                "caller"));
+            Assert.Single(handler.Requests);
+        }
+
+        await durableLease.Received(1).DisposeAsync();
+    }
+
+    private static PathGenerationState CreatePromotedPathState(
+        string songId,
+        DateTime catalogLastModified,
+        IReadOnlyList<string> expectedInstruments)
+        => new(
+            songId,
+            Revision: 1,
+            DatFileHash: new string('a', 64),
+            SongLastModified:
+                catalogLastModified.ToString("O"),
+            GeneratedAtUtc: catalogLastModified.AddHours(1),
+            ChoptVersion: "1.16.3",
+            ChoptBinarySha256: new string('b', 64),
+            GenerationProfile: "profile-v3",
+            ArtifactGenerationId: $"generation-{songId}",
+            ExpectedInstruments: expectedInstruments,
+            MaxScores: new SongMaxScores
+            {
+                MaxLeadScore = 123_456,
+                MaxProLeadScore = 123_456,
+            },
+            CatalogLastModified:
+                catalogLastModified.ToString("O"),
+            PathGenerationPending: false);
 
     [Fact]
     public void AllInstruments_Contains9Instruments()

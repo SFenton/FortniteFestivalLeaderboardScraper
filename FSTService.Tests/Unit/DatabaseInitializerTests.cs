@@ -42,6 +42,51 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public void Schema_initialization_creates_publication_singleton_without_scrape()
+    {
+        using var connection =
+            _metaFixture.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(*)
+            FROM scrape_publication_state
+            WHERE id = TRUE
+            """;
+        Assert.Equal(
+            1L,
+            Convert.ToInt64(command.ExecuteScalar()));
+    }
+
+    [Fact]
+    public async Task EnsureSchemaAsync_creates_idempotent_leaderboard_population_guard()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _metaFixture.DataSource);
+        await DatabaseInitializer.EnsureSchemaAsync(
+            _metaFixture.DataSource);
+
+        using var connection =
+            _metaFixture.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_trigger
+                WHERE tgrelid =
+                        'leaderboard_population'::regclass
+                  AND tgname =
+                        'trg_leaderboard_population_registration_mutation_guard'
+                  AND NOT tgisinternal
+                  AND (tgtype & 1) = 0
+                  AND tgfoid =
+                        'fst_assert_registration_mutation_allowed()'::regprocedure
+            )
+            """;
+
+        Assert.True(command.ExecuteScalar() is true);
+    }
+
+    [Fact]
     public async Task CheckHealthAsync_BeforeInit_ReturnsUnhealthy()
     {
         var festivalService = new FestivalService((IFestivalPersistence?)null);
@@ -703,6 +748,7 @@ public class DatabaseInitializerTests : IDisposable
                 "improvement-notifications",
                 "score-history-dedup-audit",
                 "main-publication",
+                "max-score-maintenance",
             },
             plan.Select(static step => step.Name));
         var notification = plan[0];
@@ -720,6 +766,14 @@ public class DatabaseInitializerTests : IDisposable
             ScoreHistoryDedupMaintenanceSchema.Sql,
             scoreHistoryAudit.Sql);
         Assert.False(plan[2].UseShortTransaction);
+        var maxScoreMaintenance = plan[3];
+        Assert.True(maxScoreMaintenance.UseShortTransaction);
+        Assert.Equal(20, maxScoreMaintenance.CommandTimeoutSeconds);
+        Assert.Equal("2s", maxScoreMaintenance.LockTimeout);
+        Assert.Equal("15s", maxScoreMaintenance.StatementTimeout);
+        Assert.Equal(
+            MaxScoreMaintenanceSchema.Sql,
+            maxScoreMaintenance.Sql);
     }
 
     [Fact]

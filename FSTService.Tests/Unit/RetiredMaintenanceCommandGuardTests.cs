@@ -219,6 +219,30 @@ public sealed class RetiredMaintenanceCommandGuardTests
     }
 
     [Fact]
+    public void NewMaxScoreCommandDoesNotUnretireExactFourOptions()
+    {
+        RetiredMaintenanceCommandGuard.ThrowIfPresent(
+        [
+            MaxScoreMaintenanceCommand.StageFlag,
+            MaxScoreMaintenanceCommand.PublishedScrapeIdFlag,
+            "1296",
+            MaxScoreMaintenanceCommand.SongIdFlag,
+            "song-a",
+        ]);
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            RetiredMaintenanceCommandGuard.ThrowIfPresent(
+            [
+                MaxScoreMaintenanceCommand.StageFlag,
+                "--path-repair-stage-exact-four",
+            ]));
+        Assert.Contains(
+            "--path-repair-stage-exact-four",
+            exception.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void GuardMatchesRetiredOptionsCaseInsensitively()
     {
         Assert.Throws<ArgumentException>(
@@ -492,6 +516,67 @@ public sealed class RetiredMaintenanceCommandGuardTests
             StringComparison.Ordinal);
         Assert.DoesNotContain(
             "Retired maintenance option",
+            result.Output,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ProgramStartupRoutesSharedScrapeIdToNotificationRecovery()
+    {
+        var result = await RunProgramAsync(
+            "--recover-improvement-notifications",
+            "--published-scrape-id",
+            "1296",
+            "--notification-dry-run");
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.DoesNotContain(
+            "Specify exactly one of --max-score-maintenance",
+            result.Output,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "Max-score maintenance cannot run with another one-shot",
+            result.Output,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "ConnectionStrings:PostgreSQL is required.",
+            result.Output,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ProgramStartupRoutesEqualsScrapeIdToNotificationRecovery()
+    {
+        var result = await RunProgramAsync(
+            "--recover-improvement-notifications",
+            "--published-scrape-id=1296",
+            "--notification-dry-run");
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.DoesNotContain(
+            "requires exactly one --published-scrape-id",
+            result.Output,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "Max-score maintenance cannot run with another one-shot",
+            result.Output,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "ConnectionStrings:PostgreSQL is required.",
+            result.Output,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ProgramStartupRequiresScrapeIdForNotificationRecovery()
+    {
+        var result = await RunProgramAsync(
+            "--recover-improvement-notifications",
+            "--notification-dry-run");
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains(
+            "requires exactly one --published-scrape-id",
             result.Output,
             StringComparison.Ordinal);
     }

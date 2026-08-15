@@ -1209,6 +1209,8 @@ public sealed class ResilientHttpExecutor
     /// requests racing through the freshly-cleared gate.</summary>
     internal static readonly TimeSpan ResetCooldownFloor = TimeSpan.FromSeconds(1);
 
+    internal DateTimeOffset CdnCooldownUntilUtc => _cdnCooldownUntil;
+
     /// <summary>True iff a background CDN probe is currently in flight.
     /// Test-only visibility for verifying gate lifecycle.</summary>
     internal bool IsProbeRunning => Volatile.Read(ref _probeRunning) == 1;

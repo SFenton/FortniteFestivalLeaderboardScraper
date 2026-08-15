@@ -222,6 +222,56 @@ public sealed class RankingsCalculatorTests : IDisposable
     }
 
     [Fact]
+    public void RunIt_MidiPromotedInstrumentCountsWhenProviderMetadataIsOmitted()
+    {
+        var svc = CreateFestivalServiceWithSongs(1);
+        var song = svc.Songs[0];
+        song.track.tt = "Run It";
+        song.track.@in = new In { gr = 3 };
+        song.lastModified = new DateTime(
+            2026,
+            8,
+            1,
+            0,
+            0,
+            0,
+            DateTimeKind.Utc);
+        var pathStates =
+            new Dictionary<string, PathGenerationState>(
+                StringComparer.OrdinalIgnoreCase)
+            {
+                [song.track.su!] = new PathGenerationState(
+                    song.track.su!,
+                    Revision: 1,
+                    DatFileHash: new string('a', 64),
+                    SongLastModified:
+                        song.lastModified.ToString("O"),
+                    GeneratedAtUtc:
+                        song.lastModified.AddHours(1),
+                    ChoptVersion: "1.16.3",
+                    ChoptBinarySha256: new string('b', 64),
+                    GenerationProfile: "profile-v3",
+                    ArtifactGenerationId: "generation-run-it",
+                    ExpectedInstruments:
+                        ["Solo_PeripheralGuitar"],
+                    MaxScores: new SongMaxScores
+                    {
+                        MaxProLeadScore = 123_456,
+                    },
+                    CatalogLastModified:
+                        song.lastModified.ToString("O"),
+                    PathGenerationPending: false),
+            };
+
+        Assert.Equal(
+            1,
+            RankingsCalculator.CountChartedSongs(
+                svc.Songs,
+                "Solo_PeripheralGuitar",
+                pathStates));
+    }
+
+    [Fact]
     public void CountChartedSongs_ZeroForEmptySongs()
     {
         var svc = new FestivalService((IFestivalPersistence?)null);
@@ -465,6 +515,166 @@ public sealed class RankingsCalculatorTests : IDisposable
         // Verify history snapshotted
         var history = guitarDb.GetRankHistory("p1", 1);
         Assert.Single(history);
+    }
+
+    [Fact]
+    public async Task MaxScoreMaintenance_rebuilds_affected_rankings_without_rank_history()
+    {
+        var guitarDb =
+            _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        var proLeadDb =
+            _persistence.GetOrCreateInstrumentDb(
+                "Solo_PeripheralGuitar");
+        guitarDb.UpsertEntries(
+            "song_0",
+            [
+                MakeEntry("p1", 1000, rank: 1),
+                MakeEntry("p2", 900, rank: 2),
+            ]);
+        proLeadDb.UpsertEntries(
+            "song_0",
+            [
+                MakeEntry("p1", 900, rank: 2),
+                MakeEntry("p2", 1000, rank: 1),
+            ]);
+        guitarDb.RecomputeAllRanks();
+        proLeadDb.RecomputeAllRanks();
+        var service = CreateFestivalServiceWithSongs(1);
+        await _sut.ComputeAllAsync(
+            service,
+            CancellationToken.None);
+        var historyBefore =
+            proLeadDb.GetRankHistory("p1", 100).Count;
+
+        proLeadDb.UpsertEntries(
+            "song_0",
+            [
+                MakeEntry("p1", 1100, rank: 1),
+                MakeEntry("p2", 1000, rank: 2),
+            ]);
+        proLeadDb.RecomputeAllRanks();
+            var scrapeId = _metaFixture.Db.StartScrapeRun();
+            _metaFixture.Db.CompleteScrapeRun(
+                scrapeId,
+                1,
+                1,
+                1,
+                1);
+            _metaFixture.Db.PublishScrapeRun(
+                scrapeId,
+                promoteCachedResponses: false);
+            using (var published =
+                   _metaFixture.DataSource.OpenConnection())
+            using (var seedPublished =
+                   published.CreateCommand())
+            {
+                seedPublished.CommandText = """
+                    INSERT INTO leaderboard_entries_snapshot (
+                        snapshot_id,
+                        song_id,
+                        instrument,
+                        account_id,
+                        score,
+                        accuracy,
+                        is_full_combo,
+                        stars,
+                        season,
+                        difficulty,
+                        percentile,
+                        rank,
+                        api_rank,
+                        source,
+                        end_time,
+                        first_seen_at,
+                        last_updated_at)
+                    SELECT @scrapeId,
+                           song_id,
+                           instrument,
+                           account_id,
+                           score,
+                           accuracy,
+                           is_full_combo,
+                           stars,
+                           season,
+                           difficulty,
+                           percentile,
+                           rank,
+                           api_rank,
+                           source,
+                           end_time,
+                           first_seen_at,
+                           last_updated_at
+                    FROM leaderboard_entries
+                    WHERE song_id = 'song_0'
+                      AND instrument =
+                          'Solo_PeripheralGuitar';
+
+                    INSERT INTO leaderboard_published_scope_source (
+                        published_scrape_id,
+                        song_id,
+                        instrument,
+                        scope_kind,
+                        source_kind,
+                        source_snapshot_id,
+                        source_scrape_id,
+                        row_count,
+                        content_fingerprint,
+                        coverage_fingerprint,
+                        reported_total_entries,
+                        reported_total_pages,
+                        is_complete,
+                        created_at,
+                        validated_at)
+                    VALUES (
+                        @scrapeId,
+                        'song_0',
+                        'Solo_PeripheralGuitar',
+                        'alltime',
+                        'snapshot',
+                        @scrapeId,
+                        @scrapeId,
+                        2,
+                        md5('ranking-maintenance-source'),
+                        md5('ranking-maintenance-coverage'),
+                        2,
+                        1,
+                        TRUE,
+                        now(),
+                        now());
+                    """;
+                seedPublished.Parameters.AddWithValue(
+                    "scrapeId",
+                    scrapeId);
+                seedPublished.ExecuteNonQuery();
+            }
+            var publicationId = _metaFixture.Db
+                .GetPublicationPointerState()
+                .CurrentPublicationId!.Value;
+            await using var maintenanceLease =
+                await _metaFixture.Db
+                    .AcquireMaxScoreMaintenanceLeaseAsync(
+                        publicationId);
+            using var publishedReadPass =
+                _persistence
+                    .BeginMaxScoreMaintenancePublishedReadPass();
+            var publicationPopulation =
+                _persistence
+                    .GetCurrentStateLeaderboardPopulation();
+            await _sut.ComputeForMaxScoreMaintenanceAsync(
+                service,
+                ["Solo_PeripheralGuitar"],
+                publicationPopulation,
+                maintenanceLease,
+                CancellationToken.None);
+
+        Assert.Equal(
+            1,
+            proLeadDb.GetAccountRanking("p1")!
+                .AdjustedSkillRank);
+        Assert.NotNull(guitarDb.GetAccountRanking("p1"));
+        Assert.Equal(
+            historyBefore,
+            proLeadDb.GetRankHistory("p1", 100).Count);
     }
 
     [Fact]

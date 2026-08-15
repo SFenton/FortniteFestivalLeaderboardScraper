@@ -707,6 +707,12 @@ public sealed class ImprovementNotificationService
                 report = report with { RunId = runId };
                 tx = conn.BeginTransaction();
             }
+            else if (options.IncludeBands && registeredOnly)
+            {
+                // Registered-band dry runs use ON COMMIT DROP working tables,
+                // so their creation and all dependent reads must share one transaction.
+                tx = conn.BeginTransaction();
+            }
 
             if (options.PruneExpired)
             {
@@ -872,6 +878,12 @@ public sealed class ImprovementNotificationService
             {
                 UpdateRunSuccess(conn, tx!, runId.Value, report, completedAt);
                 tx!.Commit();
+                tx.Dispose();
+                tx = null;
+            }
+            else if (tx is not null)
+            {
+                tx.Rollback();
                 tx.Dispose();
                 tx = null;
             }

@@ -50,6 +50,7 @@ These procedures remain at their established paths because they may be used
 again. Verify their preconditions and current code before execution.
 
 - [Improvement notification recovery](database/ImprovementNotificationRecoveryRunbook.md)
+- [Max-score correction maintenance](database/MaxScoreCorrectionMaintenanceRunbook.md)
 - [Score-history deduplication maintenance](database/ScoreHistoryDedupMaintenanceRunbook.md)
 - [Snapshot reuse evaluation](database/SnapshotReuseRunbook.md)
 - [Solo-family ranking backfill](database/SoloFamilyRankingBackfillRunbook.md)

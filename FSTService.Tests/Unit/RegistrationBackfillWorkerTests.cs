@@ -123,6 +123,64 @@ public class RegistrationBackfillWorkerTests
     }
 
     [Fact]
+    public async Task RunAvailableRegistrationWorkAsync_PausesBeforeWritesAndRevalidatesOnResume()
+    {
+        var blocked = true;
+        var batchCalls = 0;
+        var historyRuns = 0;
+        var pauses = 0;
+
+        var paused = await RegistrationBackfillWorker
+            .RunAvailableRegistrationWorkAsync(
+                batchSize: 4,
+                runBatchAsync: (_, _) =>
+                {
+                    batchCalls++;
+                    return Task.FromResult(0);
+                },
+                runHistoryReconAsync: _ =>
+                {
+                    historyRuns++;
+                    return Task.CompletedTask;
+                },
+                hasQueuedBackfills: static () => false,
+                onBatchClaimed: static _ => { },
+                ct: CancellationToken.None,
+                registrationMutationsBlocked: () => blocked,
+                onPaused: () => pauses++);
+
+        Assert.Equal(0, paused);
+        Assert.Equal(0, batchCalls);
+        Assert.Equal(0, historyRuns);
+        Assert.Equal(1, pauses);
+
+        blocked = false;
+        var resumed = await RegistrationBackfillWorker
+            .RunAvailableRegistrationWorkAsync(
+                batchSize: 4,
+                runBatchAsync: (_, _) =>
+                {
+                    batchCalls++;
+                    return Task.FromResult(0);
+                },
+                runHistoryReconAsync: _ =>
+                {
+                    historyRuns++;
+                    return Task.CompletedTask;
+                },
+                hasQueuedBackfills: static () => false,
+                onBatchClaimed: static _ => { },
+                ct: CancellationToken.None,
+                registrationMutationsBlocked: () => blocked,
+                onPaused: () => pauses++);
+
+        Assert.Equal(0, resumed);
+        Assert.Equal(1, batchCalls);
+        Assert.Equal(1, historyRuns);
+        Assert.Equal(1, pauses);
+    }
+
+    [Fact]
     public async Task BackgroundWorkCoordinator_WaitsForActiveWriterBeforeScrapeContinues()
     {
         var coordinator = new BackgroundWorkCoordinator();

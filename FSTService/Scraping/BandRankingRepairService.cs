@@ -57,11 +57,96 @@ public sealed class BandRankingRepairService
     }
 
     public int RecomputeOverThresholdFlags(IReadOnlyList<string>? bandTypes = null, double overThresholdMultiplier = 1.05)
+        => RecomputeOverThresholdFlagsCore(
+            bandTypes,
+            songIds: null,
+            overThresholdMultiplier);
+
+    public int RecomputeOverThresholdFlagsForSongs(
+        IReadOnlyCollection<string> songIds,
+        IReadOnlyList<string>? bandTypes = null,
+        double overThresholdMultiplier = 1.05)
+    {
+        ArgumentNullException.ThrowIfNull(songIds);
+        var normalizedSongIds = songIds
+            .Where(songId => !string.IsNullOrWhiteSpace(songId))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(songId => songId, StringComparer.Ordinal)
+            .ToArray();
+        if (normalizedSongIds.Length == 0)
+        {
+            throw new ArgumentException(
+                "Band threshold maintenance requires at least one song.",
+                nameof(songIds));
+        }
+
+        return RecomputeOverThresholdFlagsCore(
+            bandTypes,
+            normalizedSongIds,
+            overThresholdMultiplier);
+    }
+
+    internal int RecomputeOverThresholdFlagsForSongs(
+        IReadOnlyCollection<string> songIds,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        IReadOnlyList<string>? bandTypes = null,
+        double overThresholdMultiplier = 1.05)
+    {
+        ArgumentNullException.ThrowIfNull(songIds);
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(transaction.Connection, connection))
+        {
+            throw new ArgumentException(
+                "The band-threshold transaction must belong to the supplied connection.",
+                nameof(transaction));
+        }
+        var normalizedSongIds = songIds
+            .Where(songId => !string.IsNullOrWhiteSpace(songId))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(songId => songId, StringComparer.Ordinal)
+            .ToArray();
+        if (normalizedSongIds.Length == 0)
+        {
+            throw new ArgumentException(
+                "Band threshold maintenance requires at least one song.",
+                nameof(songIds));
+        }
+
+        return RecomputeOverThresholdFlagsCore(
+            bandTypes,
+            normalizedSongIds,
+            overThresholdMultiplier,
+            connection,
+            transaction);
+    }
+
+    private int RecomputeOverThresholdFlagsCore(
+        IReadOnlyList<string>? bandTypes,
+        IReadOnlyList<string>? songIds,
+        double overThresholdMultiplier)
+    {
+        using var conn = _dataSource.OpenConnection();
+        return RecomputeOverThresholdFlagsCore(
+            bandTypes,
+            songIds,
+            overThresholdMultiplier,
+            conn,
+            transaction: null);
+    }
+
+    private int RecomputeOverThresholdFlagsCore(
+        IReadOnlyList<string>? bandTypes,
+        IReadOnlyList<string>? songIds,
+        double overThresholdMultiplier,
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction)
     {
         var resolved = ResolveBandTypes(bandTypes);
 
-        using var conn = _dataSource.OpenConnection();
-        using var cmd = conn.CreateCommand();
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
         cmd.CommandTimeout = 0;
         cmd.CommandText = """
             WITH member_thresholds AS (
@@ -87,6 +172,10 @@ public sealed class BandRankingRepairService
                     END AS max_score
                 ) max_scores
                 WHERE bms.band_type = ANY(@bandTypes)
+                  AND (
+                      @allSongs
+                      OR bms.song_id = ANY(@songIds)
+                  )
                   AND bms.score IS NOT NULL
                   AND max_scores.max_score IS NOT NULL
                   AND max_scores.max_score > 0
@@ -106,6 +195,10 @@ public sealed class BandRankingRepairService
                  AND mt.team_key = be.team_key
                  AND mt.instrument_combo = be.instrument_combo
                 WHERE be.band_type = ANY(@bandTypes)
+                  AND (
+                      @allSongs
+                      OR be.song_id = ANY(@songIds)
+                  )
             )
             UPDATE band_entries be
             SET is_over_threshold = r.is_over_threshold,
@@ -118,12 +211,21 @@ public sealed class BandRankingRepairService
               AND be.is_over_threshold IS DISTINCT FROM r.is_over_threshold
             """;
         cmd.Parameters.AddWithValue("bandTypes", resolved.ToArray());
+        cmd.Parameters.AddWithValue("allSongs", songIds is null);
+        cmd.Parameters.Add(
+            "songIds",
+            NpgsqlTypes.NpgsqlDbType.Array
+            | NpgsqlTypes.NpgsqlDbType.Text).Value =
+            songIds?.ToArray() ?? [];
         cmd.Parameters.AddWithValue("overThresholdMultiplier", overThresholdMultiplier);
 
         var updated = cmd.ExecuteNonQuery();
         _log.LogInformation(
-            "Recomputed band over-threshold flags for {BandTypes} at multiplier {Multiplier:F3}: {Updated:N0} rows changed.",
+            "Recomputed band over-threshold flags for {BandTypes} and {SongScope} at multiplier {Multiplier:F3}: {Updated:N0} rows changed.",
             string.Join(", ", resolved),
+            songIds is null
+                ? "all songs"
+                : $"{songIds.Count:N0} selected song(s)",
             overThresholdMultiplier,
             updated);
 

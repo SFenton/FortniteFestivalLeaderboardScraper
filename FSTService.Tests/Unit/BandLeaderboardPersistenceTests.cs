@@ -361,6 +361,67 @@ public sealed class BandLeaderboardPersistenceTests : IDisposable
         Assert.False(GetBandEntryIsOverThreshold("song-a", "acct-a:acct-b"));
     }
 
+    [Fact]
+    public async Task Memberless_band_write_after_shared_backend_loss_is_fenced_by_exclusive_maintenance()
+    {
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+        var scrapeId = _fixture.Db.StartScrapeRun();
+        _fixture.Db.CompleteScrapeRun(
+            scrapeId,
+            1,
+            1,
+            1,
+            1);
+        _fixture.Db.PublishScrapeRun(
+            scrapeId,
+            promoteCachedResponses: false);
+        var publicationId = _fixture.Db
+            .GetPublicationPointerState()
+            .CurrentPublicationId!.Value;
+
+        var staleSharedLease =
+            await _fixture.Db
+                .AcquireRegistrationMutationLeaseAsync();
+        await staleSharedLease.VerifyHeldAsync();
+        using (var terminator =
+               _fixture.DataSource.OpenConnection())
+        using (var terminate = terminator.CreateCommand())
+        {
+            terminate.CommandText =
+                "SELECT pg_terminate_backend(@backendProcessId)";
+            terminate.Parameters.AddWithValue(
+                "backendProcessId",
+                staleSharedLease.BackendProcessId);
+            Assert.True(terminate.ExecuteScalar() is true);
+        }
+        await staleSharedLease.DisposeAsync();
+
+        await using var maintenanceLease =
+            await _fixture.Db
+                .AcquireMaxScoreMaintenanceLeaseAsync(
+                    publicationId);
+        var memberless = MakeBandEntry(
+            ["acct-a", "acct-b"],
+            "0:1",
+            1_000);
+        memberless.MemberStats = [];
+
+        Assert.Throws<RegistrationMutationBlockedException>(
+            () => persistence.UpsertBandEntries(
+                "song-memberless",
+                "Band_Duets",
+                [memberless]));
+
+        Assert.Equal(0, CountRows("band_entries"));
+        Assert.Equal(0, CountRows("band_member_stats"));
+        Assert.Equal(0, CountRows("band_members"));
+        Assert.Equal(0, CountRows("band_team_membership"));
+        Assert.Equal(0, CountRows("band_team_membership_state"));
+        Assert.Equal(0, CountRows("band_team_configurations"));
+    }
+
     private void UpsertDirect(
         BandLeaderboardPersistence persistence,
         string songId,

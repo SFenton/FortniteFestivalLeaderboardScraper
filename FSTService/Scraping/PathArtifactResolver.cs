@@ -1,5 +1,7 @@
 using System.Buffers.Binary;
 using System.IO.Compression;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using FSTService.Persistence;
@@ -15,7 +17,9 @@ public sealed record ResolvedPathArtifact(
 internal sealed record ValidatedPathGeneration(
     string GenerationDirectory,
     PathArtifactManifest Manifest,
-    SongMaxScores MaxScores);
+    SongMaxScores MaxScores,
+    string ArtifactTreeSha256,
+    int ArtifactFileCount);
 
 public sealed class PathArtifactResolver
 {
@@ -385,11 +389,151 @@ public sealed class PathArtifactResolver
             scores.SetByInstrument(instrument, expertMaximum);
         }
 
+        var artifactTree = ValidateArtifactTree(
+            dataRoot,
+            generationDirectory,
+            expected);
         return new ValidatedPathGeneration(
             generationDirectory,
             manifest,
-            scores);
+            scores,
+            artifactTree.Sha256,
+            artifactTree.FileCount);
     }
+
+    private static (string Sha256, int FileCount) ValidateArtifactTree(
+        string dataRoot,
+        string generationDirectory,
+        IReadOnlyList<string> expectedInstruments)
+    {
+        var expectedDirectories = expectedInstruments
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        var actualDirectories = Directory
+            .EnumerateDirectories(
+                generationDirectory,
+                "*",
+                SearchOption.TopDirectoryOnly)
+            .Select(directory =>
+            {
+                EnsureNoReparsePoints(dataRoot, directory);
+                return NormalizeRelativePath(
+                    generationDirectory,
+                    directory);
+            })
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        if (!actualDirectories.SequenceEqual(
+                expectedDirectories,
+                StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Immutable path generation contains an unexpected directory tree.");
+        }
+        foreach (var relativeDirectory in actualDirectories)
+        {
+            var directory = Path.Combine(
+                generationDirectory,
+                relativeDirectory.Replace(
+                    '/',
+                    Path.DirectorySeparatorChar));
+            if (Directory.EnumerateDirectories(
+                    directory,
+                    "*",
+                    SearchOption.TopDirectoryOnly).Any())
+            {
+                throw new InvalidOperationException(
+                    "Immutable path generation contains unexpected nested directories.");
+            }
+        }
+
+        var expectedFiles = new List<string>
+        {
+            ManifestFileName,
+        };
+        foreach (var instrument in expectedInstruments)
+        {
+            foreach (var difficulty in PathGenerationInstruments.Difficulties)
+            {
+                expectedFiles.Add($"{instrument}/{difficulty}.json");
+                expectedFiles.Add($"{instrument}/{difficulty}.png");
+            }
+        }
+        expectedFiles.Sort(StringComparer.Ordinal);
+
+        var actualFiles = Directory
+            .EnumerateFiles(
+                generationDirectory,
+                "*",
+                SearchOption.TopDirectoryOnly)
+            .Concat(actualDirectories.SelectMany(relativeDirectory =>
+                Directory.EnumerateFiles(
+                    Path.Combine(
+                        generationDirectory,
+                        relativeDirectory.Replace(
+                            '/',
+                            Path.DirectorySeparatorChar)),
+                    "*",
+                    SearchOption.TopDirectoryOnly)))
+            .Select(file =>
+            {
+                EnsureNoReparsePoints(dataRoot, file);
+                GetRegularFile(file, "artifact tree entry");
+                return NormalizeRelativePath(
+                    generationDirectory,
+                    file);
+            })
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        if (!actualFiles.SequenceEqual(
+                expectedFiles,
+                StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Immutable path generation contains missing or unexpected files.");
+        }
+
+        using var treeHash = IncrementalHash.CreateHash(
+            HashAlgorithmName.SHA256);
+        foreach (var relativePath in actualFiles)
+        {
+            var fullPath = Path.Combine(
+                generationDirectory,
+                relativePath.Replace(
+                    '/',
+                    Path.DirectorySeparatorChar));
+            var file = GetRegularFile(
+                fullPath,
+                relativePath);
+            using var stream = new FileStream(
+                fullPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                16 * 1024,
+                FileOptions.SequentialScan);
+            var fileHash = SHA256.HashData(stream);
+            var identity = Encoding.UTF8.GetBytes(
+                $"{relativePath}\n{file.Length}\n{Convert.ToHexStringLower(fileHash)}\n");
+            treeHash.AppendData(identity);
+        }
+
+        return (
+            Convert.ToHexStringLower(
+                treeHash.GetHashAndReset()),
+            actualFiles.Length);
+    }
+
+    private static string NormalizeRelativePath(
+        string root,
+        string path)
+        => Path.GetRelativePath(root, path)
+            .Replace(
+                Path.DirectorySeparatorChar,
+                '/')
+            .Replace(
+                Path.AltDirectorySeparatorChar,
+                '/');
 
     internal static bool IsWithin(string root, string candidate)
     {

@@ -86,12 +86,18 @@ builder.Services.Configure<Microsoft.AspNetCore.ResponseCompression.BrotliCompre
 
 var improvementNotificationRecoveryRequested = args.Any(
     arg => arg.Equals("--recover-improvement-notifications", StringComparison.OrdinalIgnoreCase));
+var publishedScrapeIdArgument =
+    PublishedScrapeIdArgument.Parse(args);
 var scoreHistoryDedupMaintenanceCommand =
     ScoreHistoryDedupMaintenanceCommand.Parse(args);
 var soloFamilyRankingBackfillCommand =
     SoloFamilyRankingBackfillCommand.Parse(args);
 var leaderboardRivalsRecomputeCommand =
     LeaderboardRivalsRecomputeCommand.Parse(args);
+var maxScoreMaintenanceCommand =
+    MaxScoreMaintenanceCommand.Parse(
+        args,
+        publishedScrapeIdArgument);
 var initializeSchemaOnlyRequested = args.Any(
     arg => arg.Equals(
         "--initialize-schema-only",
@@ -118,6 +124,7 @@ if (rolloutReadOnlyStartupRequested
         || scoreHistoryDedupMaintenanceCommand is not null
         || soloFamilyRankingBackfillCommand is not null
         || leaderboardRivalsRecomputeCommand is not null
+        || maxScoreMaintenanceCommand is not null
         || initializeSchemaOnlyRequested))
 {
     throw new ArgumentException(
@@ -127,6 +134,7 @@ if (scoreHistoryDedupMaintenanceCommand is not null
     && (improvementNotificationRecoveryRequested
         || soloFamilyRankingBackfillCommand is not null
         || leaderboardRivalsRecomputeCommand is not null
+        || maxScoreMaintenanceCommand is not null
         || initializeSchemaOnlyRequested))
 {
     throw new ArgumentException(
@@ -136,6 +144,7 @@ if (scoreHistoryDedupMaintenanceCommand is not null
 if (soloFamilyRankingBackfillCommand is not null
     && (improvementNotificationRecoveryRequested
         || leaderboardRivalsRecomputeCommand is not null
+        || maxScoreMaintenanceCommand is not null
         || initializeSchemaOnlyRequested))
 {
     throw new ArgumentException(
@@ -144,17 +153,34 @@ if (soloFamilyRankingBackfillCommand is not null
 }
 if (leaderboardRivalsRecomputeCommand is not null
     && (improvementNotificationRecoveryRequested
+        || maxScoreMaintenanceCommand is not null
         || initializeSchemaOnlyRequested))
 {
     throw new ArgumentException(
         "Leaderboard-rivals recompute cannot run with another one-shot " +
         "schema or notification command.");
 }
+if (maxScoreMaintenanceCommand is not null
+    && (improvementNotificationRecoveryRequested
+        || initializeSchemaOnlyRequested))
+{
+    throw new ArgumentException(
+        "Max-score maintenance cannot run with another one-shot schema or notification command.");
+}
+publishedScrapeIdArgument.RejectIfOrphaned(
+    improvementNotificationRecoveryRequested
+    || maxScoreMaintenanceCommand is not null);
+var improvementNotificationRecoveryPublishedScrapeId =
+    improvementNotificationRecoveryRequested
+        ? publishedScrapeIdArgument.RequireValue(
+            "--recover-improvement-notifications")
+        : (long?)null;
 
 var apiOnlyRequested = improvementNotificationRecoveryRequested
     || scoreHistoryDedupMaintenanceCommand is not null
     || soloFamilyRankingBackfillCommand is not null
     || leaderboardRivalsRecomputeCommand is not null
+    || maxScoreMaintenanceCommand is not null
     || initializeSchemaOnlyRequested
     || args.Any(arg => arg.Equals("--api-only", StringComparison.OrdinalIgnoreCase))
     || builder.Configuration.GetValue<bool>($"{ScraperOptions.Section}:ApiOnly");
@@ -340,6 +366,8 @@ builder.Services.AddSingleton<ProxyHandlerAccessor>();
 builder.Services.AddSingleton<EpicTrafficCoordinator>();
 
 builder.Services.AddSingleton<ILeaderboardQuerier>(sp => sp.GetRequiredService<GlobalLeaderboardScraper>());
+builder.Services.AddSingleton<ISongInstrumentSupportCache>(
+    sp => sp.GetRequiredService<GlobalLeaderboardScraper>());
 
 // Promote GlobalLeaderboardScraper to singleton so the diagnostic endpoint
 // (/api/diag/inflight) and scrape orchestrator resolve the SAME instance —
@@ -360,7 +388,8 @@ builder.Services.AddSingleton<GlobalLeaderboardScraper>(sp =>
         log,
         festivalService: festival,
         trafficCoordinator: trafficCoordinator,
-        proxyHealth: proxyHealth);
+        proxyHealth: proxyHealth,
+        pathDataStore: sp.GetRequiredService<IPathDataStore>());
 });
 
 builder.Services.AddHttpClient<AccountNameResolver>()
@@ -395,13 +424,13 @@ var pgConnectionStringBuilder = new NpgsqlConnectionStringBuilder(pgConnStr)
     ApplicationName = soloFamilyRankingBackfillCommand is not null
         ? "fstservice-solo-family-backfill"
         : hostedWorkerMode switch
-    {
-        HostedWorkerMode.FullWorker => "fstworker-scraper",
-        HostedWorkerMode.RegistrationSyncWorker => "fstworker-registration",
-        HostedWorkerMode.ApiOnly => "fstservice-api",
-        HostedWorkerMode.FrontendOnly => "fstservice-frontend",
-        _ => "fstservice",
-    },
+        {
+            HostedWorkerMode.FullWorker => "fstworker-scraper",
+            HostedWorkerMode.RegistrationSyncWorker => "fstworker-registration",
+            HostedWorkerMode.ApiOnly => "fstservice-api",
+            HostedWorkerMode.FrontendOnly => "fstservice-frontend",
+            _ => "fstservice",
+        },
 };
 if (rolloutPostgresReadOnlyRequested)
 {
@@ -413,6 +442,9 @@ if (rolloutPostgresReadOnlyRequested)
 }
 var pgDataSource = NpgsqlDataSource.Create(pgConnectionStringBuilder.ConnectionString);
 builder.Services.AddSingleton(pgDataSource);
+builder.Services.AddSingleton(
+    new PostgresUnpooledConnectionFactory(
+        pgConnectionStringBuilder.ConnectionString));
 builder.Services.AddSingleton(sp =>
     PostgresRuntimeTarget.FromConnectionString(
         sp.GetRequiredService<NpgsqlDataSource>().ConnectionString));
@@ -421,7 +453,8 @@ builder.Services.AddSingleton<IMetaDatabase>(sp =>
     new FSTService.Persistence.MetaDatabase(sp.GetRequiredService<NpgsqlDataSource>(),
         sp.GetRequiredService<ILogger<FSTService.Persistence.MetaDatabase>>(),
         sp.GetRequiredService<IOptions<BandRankHistoryOptions>>(),
-        sp.GetRequiredService<IOptions<PublicationCommitOptions>>()));
+        sp.GetRequiredService<IOptions<PublicationCommitOptions>>(),
+        sp.GetRequiredService<PostgresUnpooledConnectionFactory>()));
 builder.Services.AddSingleton(sp => (FSTService.Persistence.MetaDatabase)sp.GetRequiredService<IMetaDatabase>());
 
 builder.Services.AddSingleton<IPathDataStore>(sp =>
@@ -440,7 +473,18 @@ builder.Services.AddSingleton<FSTService.Persistence.Maintenance.DeferredRetenti
 builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationService>();
 builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationRecoveryService>();
 builder.Services.AddSingleton<FSTService.Persistence.ScoreHistoryDedupMaintenanceService>();
-builder.Services.AddSingleton<SoloFamilyRankingBackfillService>();
+builder.Services.AddSingleton<
+    FSTService.Persistence.MaxScoreMaintenanceNotificationService>();
+builder.Services.AddSingleton<
+    FSTService.Persistence.MaxScoreMaintenanceService>();
+builder.Services.AddSingleton<SoloFamilyRankingBackfillService>(sp =>
+    new SoloFamilyRankingBackfillService(
+        sp.GetRequiredService<GlobalLeaderboardPersistence>(),
+        sp.GetRequiredService<IMetaDatabase>(),
+        sp.GetRequiredService<NpgsqlDataSource>(),
+        sp.GetRequiredService<
+            ILogger<SoloFamilyRankingBackfillService>>(),
+        sp.GetRequiredService<IPathDataStore>()));
 
 // ─── Shared services ────────────────────────────────────────
 
@@ -542,6 +586,29 @@ builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("Leaderb
 builder.Services.AddSingleton<ScrapeLifecycleNotifier>();
 builder.Services.AddSingleton<BackgroundWorkCoordinator>();
 builder.Services.AddSingleton<RankingsCalculator>();
+builder.Services.AddSingleton<BandRankingRepairService>();
+builder.Services.AddSingleton<MaxScoreMaintenanceDerivedStateService>(sp =>
+    new MaxScoreMaintenanceDerivedStateService(
+        sp.GetRequiredService<GlobalLeaderboardPersistence>(),
+        sp.GetRequiredService<IPathDataStore>(),
+        new RankingsCalculator(
+            sp.GetRequiredService<GlobalLeaderboardPersistence>(),
+            sp.GetRequiredService<IMetaDatabase>(),
+            sp.GetRequiredService<IPathDataStore>(),
+            sp.GetRequiredService<ScrapeProgressTracker>(),
+            sp.GetRequiredService<ILogger<RankingsCalculator>>(),
+            sp.GetRequiredService<IOptions<BandRankHistoryOptions>>(),
+            sp.GetRequiredService<
+                IOptions<BandTeamRankingRebuildOptions>>(),
+            sp.GetRequiredService<IOptions<ScraperOptions>>(),
+            workerStatus: null),
+        sp.GetRequiredService<BandRankingRepairService>(),
+        sp.GetRequiredService<BandCurrentProjectionBuilder>(),
+        sp.GetRequiredService<LeaderboardRivalsCalculator>(),
+        sp.GetRequiredService<NpgsqlDataSource>(),
+        sp.GetRequiredService<IOptions<ScraperOptions>>(),
+        sp.GetRequiredService<
+            ILogger<MaxScoreMaintenanceDerivedStateService>>()));
 builder.Services.AddSingleton<ScrapeOrchestrator>();
 builder.Services.AddSingleton<PostScrapeOrchestrator>();
 builder.Services.AddSingleton<BandScrapePhase>();
@@ -558,6 +625,8 @@ builder.Services.AddSingleton<RegisteredPlayerBandDiscoveryOrchestrator>(sp =>
         sp.GetRequiredService<ScrapeProgressTracker>(),
         sp.GetRequiredService<IOptions<ScraperOptions>>(),
         sp.GetRequiredService<ILogger<RegisteredPlayerBandDiscoveryOrchestrator>>(),
+        sp.GetRequiredService<
+            RegistrationMutationCoordinator>(),
         executor);
 });
 builder.Services.AddSingleton<IRegisteredBandLookupStrategy, DirectRegisteredBandLookupStrategy>();
@@ -572,12 +641,15 @@ builder.Services.AddSingleton<RegisteredBandProcessingOrchestrator>(sp =>
         sp.GetRequiredService<ScrapeProgressTracker>(),
         sp.GetRequiredService<IOptions<ScraperOptions>>(),
         sp.GetRequiredService<ILogger<RegisteredBandProcessingOrchestrator>>(),
+        sp.GetRequiredService<
+            RegistrationMutationCoordinator>(),
         executor);
 });
 builder.Services.AddSingleton<BandSearchProjectionBuilder>();
 builder.Services.AddSingleton<SoloCurrentProjectionBuilder>();
 builder.Services.AddSingleton<BandCurrentProjectionBuilder>();
 builder.Services.AddSingleton<PostScrapeBandExtractor>();
+builder.Services.AddSingleton<RegistrationMutationCoordinator>();
 builder.Services.AddSingleton<BackfillOrchestrator>();
 builder.Services.AddSingleton<ScrapeTimePrecomputer>(sp =>
 {
@@ -795,6 +867,11 @@ else if (leaderboardRivalsRecomputeCommand is not null)
     app.Logger.LogInformation(
         "Leaderboard-rivals recompute one-shot mode enabled; no hosted services were registered.");
 }
+else if (maxScoreMaintenanceCommand is not null)
+{
+    app.Logger.LogInformation(
+        "Max-score maintenance one-shot mode enabled; no hosted services were registered and schema initialization will not run.");
+}
 else if (rolloutReadOnlyStartupRequested)
 {
     app.Logger.LogWarning(
@@ -935,6 +1012,71 @@ if (leaderboardRivalsRecomputeCommand is not null)
     return;
 }
 
+if (maxScoreMaintenanceCommand is not null)
+{
+    var maintenance = app.Services.GetRequiredService<
+        MaxScoreMaintenanceService>();
+    object report = maxScoreMaintenanceCommand.Action switch
+    {
+        MaxScoreMaintenanceAction.Stage =>
+            await maintenance.StageAsync(
+                maxScoreMaintenanceCommand.ExpectedPublishedScrapeId,
+                maxScoreMaintenanceCommand.StageRequestPath,
+                maxScoreMaintenanceCommand.SongIds,
+                maxScoreMaintenanceCommand.ManifestOutputPath!,
+                maxScoreMaintenanceCommand.ReportOutputPath,
+                CancellationToken.None),
+        MaxScoreMaintenanceAction.Plan =>
+            await maintenance.PlanAsync(
+                maxScoreMaintenanceCommand.ExpectedPublishedScrapeId,
+                maxScoreMaintenanceCommand.ManifestPath!,
+                maxScoreMaintenanceCommand.ExpectedManifestDigest!,
+                maxScoreMaintenanceCommand.ReportOutputPath,
+                CancellationToken.None),
+        MaxScoreMaintenanceAction.Apply =>
+            await maintenance.ApplyOrResumeAsync(
+                resume: false,
+                maxScoreMaintenanceCommand.ExpectedPublishedScrapeId,
+                maxScoreMaintenanceCommand.ManifestPath!,
+                maxScoreMaintenanceCommand.ExpectedManifestDigest!,
+                maxScoreMaintenanceCommand.ExpectedPlanDigest!,
+                maxScoreMaintenanceCommand.RollbackOutputPath,
+                maxScoreMaintenanceCommand.ReportOutputPath,
+                CancellationToken.None),
+        MaxScoreMaintenanceAction.Resume =>
+            await maintenance.ApplyOrResumeAsync(
+                resume: true,
+                maxScoreMaintenanceCommand.ExpectedPublishedScrapeId,
+                maxScoreMaintenanceCommand.ManifestPath!,
+                maxScoreMaintenanceCommand.ExpectedManifestDigest!,
+                maxScoreMaintenanceCommand.ExpectedPlanDigest!,
+                maxScoreMaintenanceCommand.RollbackOutputPath,
+                maxScoreMaintenanceCommand.ReportOutputPath,
+                CancellationToken.None),
+        _ => throw new ArgumentOutOfRangeException(),
+    };
+    Console.WriteLine(
+        System.Text.Json.JsonSerializer.Serialize(
+            report,
+            MaxScoreMaintenanceJson.Report));
+    if (report is MaxScoreMaintenanceStageReport
+        {
+            Succeeded: false,
+        }
+        or MaxScoreMaintenancePlanReport
+        {
+            CanApply: false,
+        }
+        or MaxScoreMaintenanceApplyReport
+        {
+            Succeeded: false,
+        })
+    {
+        Environment.ExitCode = 2;
+    }
+    return;
+}
+
 // One-shot precompute: --precompute
 {
     var scraperOpts2 = app.Services.GetRequiredService<IOptions<ScraperOptions>>().Value;
@@ -987,19 +1129,6 @@ if (improvementNotificationRecoveryRequested)
     var pgDs = app.Services.GetRequiredService<NpgsqlDataSource>();
     await FSTService.Persistence.DatabaseInitializer.EnsureSchemaAsync(pgDs);
 
-    long? expectedPublishedScrapeId = null;
-    for (var i = 0; i < args.Length; i++)
-    {
-        if (!args[i].Equals("--published-scrape-id", StringComparison.OrdinalIgnoreCase))
-            continue;
-
-        if (i + 1 >= args.Length || !long.TryParse(args[i + 1], out var parsedScrapeId) || parsedScrapeId <= 0)
-            throw new ArgumentException("--published-scrape-id requires a positive integer.");
-
-        expectedPublishedScrapeId = parsedScrapeId;
-        break;
-    }
-
     var execute = !args.Any(arg => arg.Equals("--notification-dry-run", StringComparison.OrdinalIgnoreCase));
     var baselineOnly = args.Any(arg => arg.Equals("--notification-baseline-only", StringComparison.OrdinalIgnoreCase));
     var refreshProjection = !args.Any(
@@ -1008,14 +1137,14 @@ if (improvementNotificationRecoveryRequested)
 
     recoveryLog.LogInformation(
         "Recovering improvement notifications for published scrape {ExpectedScrapeId}; execute={Execute}, baselineOnly={BaselineOnly}, refreshProjection={RefreshProjection}.",
-        expectedPublishedScrapeId,
+        improvementNotificationRecoveryPublishedScrapeId,
         execute,
         baselineOnly,
         refreshProjection);
 
     var recovery = app.Services.GetRequiredService<FSTService.Persistence.ImprovementNotificationRecoveryService>();
     var report = await recovery.RunPublishedScrapeAsync(
-        expectedPublishedScrapeId,
+        improvementNotificationRecoveryPublishedScrapeId,
         execute,
         baselineOnly,
         refreshProjection,

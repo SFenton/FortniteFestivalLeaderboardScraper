@@ -167,7 +167,11 @@ test('Suggestions scroll cache is profile-scoped and preserves an intentional to
     window.dispatchEvent(new Event('fst:trackedPlayerChanged'));
   });
   await navigateByHash(page, '/suggestions');
-  await expect(page.getByTestId('suggestions-list')).toBeVisible();
+  await expect(page.getByTestId('suggestions-list'))
+    .toHaveAttribute(
+      'data-suggestions-cache-key',
+      /^solo:suggestions-profile-b:mix:/,
+    );
   await expect.poll(() => scrollContainer.evaluate(element => element.scrollTop)).toBe(0);
 
   await navigateByHash(page, '/settings');
@@ -178,7 +182,11 @@ test('Suggestions scroll cache is profile-scoped and preserves an intentional to
     window.dispatchEvent(new Event('fst:trackedPlayerChanged'));
   }, E2E_PLAYER);
   await navigateByHash(page, '/suggestions');
-  await expect(page.getByTestId('suggestions-list')).toBeVisible();
+  await expect(page.getByTestId('suggestions-list'))
+    .toHaveAttribute(
+      'data-suggestions-cache-key',
+      new RegExp(`^solo:${E2E_PLAYER.accountId}:mix:`),
+    );
   await expect.poll(() => scrollContainer.evaluate(element => element.scrollTop)).toBe(0);
 });
 
