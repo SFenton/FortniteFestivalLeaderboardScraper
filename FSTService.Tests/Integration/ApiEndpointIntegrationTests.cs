@@ -914,6 +914,28 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             Assert.Equal(
                 PhaseProgressCatalog.All.Count,
                 phasePlan.GetProperty("phases").GetArrayLength());
+            var phaseDescriptors = phasePlan.GetProperty("phases")
+                .EnumerateArray()
+                .ToArray();
+            Assert.Equal(
+                PhaseProgressCatalog.Active.Count,
+                phaseDescriptors.Count(static descriptor =>
+                    !descriptor.GetProperty("reserved").GetBoolean()));
+            Assert.True(
+                phaseDescriptors.Single(static descriptor =>
+                    descriptor.GetProperty("id").GetString() == "post.checkpoint")
+                    .GetProperty("reserved")
+                    .GetBoolean());
+            Assert.True(
+                phaseDescriptors.Single(static descriptor =>
+                    descriptor.GetProperty("id").GetString() == "post.deferred_registration_sync")
+                    .GetProperty("reserved")
+                    .GetBoolean());
+            Assert.False(
+                phaseDescriptors.Single(static descriptor =>
+                    descriptor.GetProperty("id").GetString() == "post.band_maintenance")
+                    .GetProperty("reserved")
+                    .GetBoolean());
 
             var current = json.GetProperty("currentUpdate");
             Assert.Equal("updating", current.GetProperty("status").GetString());

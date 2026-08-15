@@ -702,8 +702,35 @@ public sealed class ScraperWorker : BackgroundService
     private static IReadOnlyList<string> GetEnabledInstruments(ScraperOptions opts)
         => ScrapeOrchestrator.GetEnabledInstruments(opts);
 
-    internal static bool IsSuccessfulPhaseOutcomeStatus(string status) =>
-        status is "completed" or "skipped";
+    internal static bool IsSuccessfulPhaseOutcomeStatus(
+        string status,
+        PostScrapePhaseCriticality criticality) =>
+        PostScrapePhasePolicy.IsSuccessfulStatus(status, criticality);
+
+    internal static PostScrapePhaseOutcome RehydratePhaseOutcome(
+        ScrapePhaseOutcomeRecord outcome)
+    {
+        var criticality = outcome.Criticality switch
+        {
+            "publication_critical" =>
+                PostScrapePhaseCriticality.PublicationCritical,
+            "best_effort" =>
+                PostScrapePhaseCriticality.BestEffort,
+            _ => throw new InvalidOperationException(
+                $"Persisted post-scrape phase '{outcome.Phase}' has unknown " +
+                $"criticality '{outcome.Criticality}'."),
+        };
+        return new PostScrapePhaseOutcome(
+            outcome.Phase,
+            criticality,
+            IsSuccessfulPhaseOutcomeStatus(
+                outcome.Status,
+                criticality),
+            outcome.ErrorMessage)
+        {
+            Status = outcome.Status,
+        };
+    }
 
     // ─── Scrape pass (V1 alltime global) ────────────────────────
 
@@ -913,16 +940,8 @@ public sealed class ScraperWorker : BackgroundService
             {
                 foreach (var outcome in resumeState.PhaseOutcomes)
                 {
-                    ctx.PostScrapeOutcomes.Record(new PostScrapePhaseOutcome(
-                        outcome.Phase,
-                        string.Equals(outcome.Criticality, "publication_critical", StringComparison.Ordinal)
-                            ? PostScrapePhaseCriticality.PublicationCritical
-                            : PostScrapePhaseCriticality.BestEffort,
-                        IsSuccessfulPhaseOutcomeStatus(outcome.Status),
-                        outcome.ErrorMessage)
-                    {
-                        Status = outcome.Status,
-                    });
+                    ctx.PostScrapeOutcomes.Record(
+                        RehydratePhaseOutcome(outcome));
                 }
 
                 result = new ScrapePassResult

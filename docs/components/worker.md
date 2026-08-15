@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: 165a5fef
+last_verified_commit: 86379374
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/ScrapePhase.cs
@@ -116,13 +116,13 @@ Normal full and `--band-scrape` passes already fetch band data through
 ## Post-scrape timing
 
 Terminal phase names and publication criticality remain recorded through
-`scrape_phase_outcomes`. Intentional non-execution records `status=skipped`
-instead of looking like starvation: snapshot-only workers skip legacy rank
-recompute, pressure-gated history cleanup records the pressure reason in
-durable progress, notification gating records its reason after publication,
-and service-level retention reports its own skipped disposition. A skipped
-publication-critical rollback phase remains successful for publication; a
-failed one does not.
+`scrape_phase_outcomes`. Only explicitly best-effort phases may record
+`status=skipped`, with the reason in durable progress. Pressure-gated history
+cleanup, notification gating, and service-level retention use that contract.
+Publication-critical phases may never be skipped: snapshot-only legacy rank
+recompute completes its critical contract without running the legacy update,
+and any persisted critical `skipped` row is invalid and blocks resume or
+publication regardless of the critical-failure rollout switch.
 
 PostgreSQL has no per-wrapper cache warm or manual checkpoint implementation.
 The worker no longer schedules those retired calls at startup, after network
@@ -169,8 +169,11 @@ catalog does not add a DAG, reorder work, or replace legacy labels; descriptors
 carry both the stable ID and the current human-readable phase name.
 `post.checkpoint` and `post.deferred_registration_sync` remain reserved for
 historical manifests and persisted progress rows but have no current execution
-policy. Registration backlog/history work is owned by the dedicated recurring
-and run-once drain paths; recurring registered-user refresh remains in
+policy. Service-info descriptors expose `reserved: true`; the active catalog
+and durable progress sink exclude/reject those descriptors so retired phases
+cannot contribute to active phase counts or future overall-progress models.
+Registration backlog/history work is owned by the dedicated recurring and
+run-once drain paths; recurring registered-user refresh remains in
 `RefreshRegisteredUsers`.
 
 The worker writes additive `scrape_phase_attempts` rows:

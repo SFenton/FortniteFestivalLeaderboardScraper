@@ -1363,7 +1363,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task RunEnrichmentAsync_WhenLegacyWritesAreDisabled_RecordsRankSkip()
+    public async Task RunEnrichmentAsync_WhenLegacyWritesAreDisabled_CompletesRankContractWithoutWork()
     {
         using var snapshotOnlyPersistence = new GlobalLeaderboardPersistence(
             _metaDb,
@@ -1393,14 +1393,14 @@ public class PostScrapeOrchestratorTests : IDisposable
             ctx.PostScrapeOutcomes.Outcomes,
             item => item.Phase == "RankRecompute");
         Assert.True(outcome.Success);
-        Assert.Equal("skipped", outcome.Status);
+        Assert.Equal("completed", outcome.Status);
         Assert.Contains(
             _log.Entries,
             entry => entry.Message.Contains(
                 "legacy live leaderboard writes are disabled",
                 StringComparison.Ordinal));
         Assert.Equal(
-            "skipped",
+            "completed",
             Assert.Single(
                 _metaDb.GetScrapeResumeState(scrapeId)!.PhaseOutcomes,
                 item => item.Phase == "RankRecompute").Status);
@@ -3111,7 +3111,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task LeaderboardRivals_NoRegisteredAccounts_RecordsIntentionalSkip()
+    public async Task LeaderboardRivals_NoRegisteredAccounts_CompletesCriticalContractWithoutWork()
     {
         var ctx = CreateContext();
 
@@ -3122,7 +3122,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         var outcome = Assert.Single(ctx.PostScrapeOutcomes.Outcomes);
         Assert.Equal("LeaderboardRivals", outcome.Phase);
         Assert.True(outcome.Success);
-        Assert.Equal("skipped", outcome.Status);
+        Assert.Equal("completed", outcome.Status);
         ScrapePublicationGuard.EnsureCanPublish(
             42,
             ctx.PostScrapeOutcomes,
@@ -3130,7 +3130,28 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task IntentionalSkip_PersistsDurableReason()
+    public void CriticalSkipRecorder_RejectsBeforePersisting()
+    {
+        var scrapeId = _metaDb.StartScrapeRun();
+        _workerStatus.AttachScrape(scrapeId);
+        var ctx = CreateContext(scrapeId);
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            _sut.RecordSkippedPhaseForTest(
+                ctx,
+                "RankRecompute",
+                "corrupt skip"));
+
+        Assert.Contains(
+            "Publication-critical phase 'RankRecompute' cannot be recorded as skipped",
+            error.Message);
+        Assert.Empty(ctx.PostScrapeOutcomes.Outcomes);
+        Assert.Empty(
+            _metaDb.GetScrapeResumeState(scrapeId)!.PhaseOutcomes);
+    }
+
+    [Fact]
+    public void BestEffortSkip_PersistsDurableReasonAndRemainsNonblocking()
     {
         var scrapeId = _metaDb.StartScrapeRun();
         _workerStatus.BeginOperation(
@@ -3139,9 +3160,11 @@ public class PostScrapeOrchestratorTests : IDisposable
             phase: "PostScrapeEnrichment");
         _workerStatus.AttachScrape(scrapeId);
 
-        await _sut.RunLeaderboardRivalsPhaseAsync(
-            CreateContext(scrapeId),
-            CancellationToken.None);
+        var ctx = CreateContext(scrapeId);
+        _sut.RecordSkippedPhaseForTest(
+            ctx,
+            "FirstSeenSeason",
+            "no access token");
 
         using var conn = _metaFixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -3149,14 +3172,21 @@ public class PostScrapeOrchestratorTests : IDisposable
             SELECT status, warning_message, error_message
             FROM scrape_phase_attempts
             WHERE scrape_id = @scrapeId
-              AND phase_id = 'post.leaderboard_rivals'
+              AND phase_id = 'post.first_seen_season'
             """;
         cmd.Parameters.AddWithValue("scrapeId", scrapeId);
         using var reader = cmd.ExecuteReader();
         Assert.True(reader.Read());
         Assert.Equal("skipped", reader.GetString(0));
-        Assert.Equal("no registered accounts were available", reader.GetString(1));
+        Assert.Equal("no access token", reader.GetString(1));
         Assert.True(reader.IsDBNull(2));
+        Assert.Equal(
+            "skipped",
+            Assert.Single(ctx.PostScrapeOutcomes.Outcomes).Status);
+        ScrapePublicationGuard.EnsureCanPublish(
+            scrapeId,
+            ctx.PostScrapeOutcomes,
+            enforcePublicationCriticalPhases: true);
     }
 
     [Theory]
@@ -3314,6 +3344,52 @@ public class PostScrapeOrchestratorTests : IDisposable
         Assert.True(ledger.CanPublish);
         Assert.Empty(ledger.FailedPublicationCriticalPhases);
         Assert.Equal("FirstSeenSeason", Assert.Single(ledger.FailedBestEffortPhases).Phase);
+    }
+
+    [Fact]
+    public void CorruptCriticalSkippedOutcome_BlocksPublication()
+    {
+        var ledger = new PostScrapeExecutionLedger();
+        ledger.Record(new PostScrapePhaseOutcome(
+            "RankRecompute",
+            PostScrapePhaseCriticality.PublicationCritical,
+            true,
+            null)
+        {
+            Status = "skipped",
+        });
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            ScrapePublicationGuard.EnsureCanPublish(
+                42,
+                ledger,
+                enforcePublicationCriticalPhases: false));
+
+        Assert.Contains(
+            "publication-critical phase(s) were invalidly skipped: RankRecompute",
+            error.Message);
+        Assert.False(ledger.CanPublish);
+    }
+
+    [Fact]
+    public void BestEffortSkippedOutcome_RemainsNonblocking()
+    {
+        var ledger = new PostScrapeExecutionLedger();
+        ledger.Record(new PostScrapePhaseOutcome(
+            "FirstSeenSeason",
+            PostScrapePhaseCriticality.BestEffort,
+            false,
+            null)
+        {
+            Status = "skipped",
+        });
+
+        ScrapePublicationGuard.EnsureCanPublish(
+            42,
+            ledger,
+            enforcePublicationCriticalPhases: true);
+        Assert.True(ledger.CanPublish);
+        Assert.Empty(ledger.FailedBestEffortPhases);
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•

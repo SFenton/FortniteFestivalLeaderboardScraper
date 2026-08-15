@@ -228,6 +228,12 @@ public sealed class DurablePhaseProgressSink
         PhaseProgressDescriptor descriptor,
         string? subphaseId = null)
     {
+        if (descriptor.Reserved)
+        {
+            throw new InvalidOperationException(
+                $"Reserved phase '{descriptor.Id}' cannot start an active progress attempt.");
+        }
+
         long scrapeId;
         string workerInstanceId;
         lock (_gate)

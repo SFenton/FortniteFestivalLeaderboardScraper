@@ -2,7 +2,7 @@
 status: roadmap
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: 165a5fef
+last_verified_commit: 86379374
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -316,7 +316,7 @@ Exact catalog selection
 
 | Phase | Owner | Primary inputs | Primary outputs | Criticality |
 |---|---|---|---|---|
-| `RankRecompute` | `GlobalLeaderboardPersistence` | Changed songs and legacy live rows | Legacy stored ranks | Publication-critical rollback path; records `skipped` while legacy writes are off |
+| `RankRecompute` | `GlobalLeaderboardPersistence` | Changed songs and legacy live rows | Legacy stored ranks | Publication-critical rollback path; completes without update while legacy writes are off and may never be skipped |
 | `FirstSeenSeason` | `FirstSeenSeasonCalculator` | Catalog, season windows, Epic history | First-seen season rows | Best effort |
 | `AccountNameResolution` | `AccountNameResolver` | Unresolved account IDs | Display-name state | Best effort |
 | `RefreshRegisteredUsers` | `CyclicalSongMachine` | Registered accounts, catalog, seasons, Epic lookups | Overlays, session history, scope checkpoints | Publication-critical |
@@ -370,7 +370,7 @@ required before performance acceptance.
 
 | Phase | Candidate | Parallel/reorder/remove assessment | Smallest falsifying probe | Acceptance metrics | Rollback | Execution class |
 |---|---|---|---|---|---|---|
-| `RankRecompute` | Candidate records `skipped` when legacy live writes are disabled | Retains rollback behavior and criticality when the flag is on | Unit/integration tests with legacy flag on/off plus full scrape parity | Zero output difference; no missing legacy rollback behavior | Revert conditional skip | `full-scrape-ab` |
+| `RankRecompute` | Candidate completes the critical contract without legacy work when writes are disabled | Retains rollback behavior and criticality when the flag is on; critical skips fail closed | Unit/integration tests with legacy flag on/off plus full scrape parity | Zero output difference; no missing legacy rollback behavior | Revert conditional no-work path | `full-scrape-ab` |
 | `FirstSeenSeason` | Add song/request counts only | Already parallel; current cost too small for algorithm work | Three comparable scrape observations | No telemetry overhead above 1%; optimize only if >2% wall | Remove counters | `continuous-safe` |
 | `AccountNameResolution` | Add batch/account counts only | Already parallel; not a bottleneck | Three scrape observations | Same names and retries | Remove counters | `continuous-safe` |
 | `RefreshRegisteredUsers` | Measure planned scopes, skipped/fetched/update counts, and per-account tails; then evaluate freshness-driven reduction | Do not raise concurrency before provider/load evidence | Identical captured response replay on isolated inputs | Exact overlay/history/scope parity; lower requests or wall; no retry amplification | Feature flag to full recurring path | `full-scrape-ab` |
@@ -694,15 +694,17 @@ remain unsupported and are not prerequisites or authorization for PR-6.
 Current candidate scope:
 
 - removes PostgreSQL wrapper checkpoint/cache-warm scheduling and APIs;
-- records truthful skips for snapshot-only legacy rank recompute, notification
-  gates, pressure-gated rank-history cleanup, and service-retention refusal;
+- completes snapshot-only legacy rank recompute without legacy work while
+  allowing explicit skips only for best-effort notification, pressure-gated
+  rank-history, and service-retention phases;
 - removes unused `PostScrapeRefresher` DI/code and the deferred post-scrape
   registration-sync path whose caller was retired by `01a73d42`; recurring and
   run-once registration owners remain;
 - retains `LegacyBandScrape` because direct `--band-post-scrape` still reaches
   it, while deleting only the duplicate unreachable await;
 - preserves plan `fst.scrape-plan.v2` and reserves `post.checkpoint` plus
-  `post.deferred_registration_sync` for historical/Tier-0 lineage.
+  `post.deferred_registration_sync` for historical/Tier-0 lineage, with
+  additive `reserved: true` API metadata and active-progress exclusion.
 
 Promotion remains unresolved. The candidate changes worker phase execution and
 therefore requires full-scrape correctness/publication A/B at a clean boundary;

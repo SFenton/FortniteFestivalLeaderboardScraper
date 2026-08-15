@@ -2,7 +2,7 @@
 status: canonical
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: 165a5fef
+last_verified_commit: 86379374
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/ScrapeOrchestrator.cs
@@ -42,9 +42,13 @@ diagnostic or replay data without becoming the published generation.
 6. **Post-processing**
    - `PostScrapeOrchestrator` owns enrichment, registered-user refresh,
      projections, rankings, rivals, statistics, precomputation, and cleanup.
-   - Snapshot-only production workers record legacy `RankRecompute` as
-     intentionally skipped; enabling the legacy-write rollback flag restores
-     the existing recompute path and its publication-critical failure policy.
+   - Snapshot-only production workers complete the publication-critical legacy
+     `RankRecompute` contract without executing the legacy update; enabling the
+     legacy-write rollback flag restores the existing recompute path.
+   - Only best-effort phases may persist `skipped`. Resume rejects every
+     non-completed critical outcome. Publication rejects corrupt critical
+     `skipped` rows regardless of the rollout enforcement switch; normal
+     critical failures retain the existing enforcement policy.
    - PostgreSQL finalization does not schedule retired wrapper checkpoint or
      rankings-cache-warm calls.
    - Dedicated registration workers and the run-once drain own durable

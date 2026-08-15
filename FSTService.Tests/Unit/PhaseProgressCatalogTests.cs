@@ -83,7 +83,21 @@ public sealed class PhaseProgressCatalogTests
             {
                 var descriptor = Assert.IsType<PhaseProgressDescriptor>(
                     PhaseProgressCatalog.FindById(phaseId));
+                Assert.True(descriptor.Reserved);
                 Assert.False(PostScrapePhasePolicy.All.ContainsKey(descriptor.LegacyPhase));
             });
+
+        Assert.Equal(
+            PhaseProgressCatalog.All.Count - PhaseProgressCatalog.Reserved.Count,
+            PhaseProgressCatalog.Active.Count);
+        Assert.DoesNotContain(
+            PhaseProgressCatalog.Active,
+            descriptor => descriptor.Reserved);
+        Assert.Equal(
+            ["post.checkpoint", "post.deferred_registration_sync"],
+            PhaseProgressCatalog.All
+                .Where(static descriptor => descriptor.Reserved)
+                .Select(static descriptor => descriptor.Id)
+                .Order(StringComparer.Ordinal));
     }
 }

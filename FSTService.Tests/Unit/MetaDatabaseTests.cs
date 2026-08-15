@@ -826,6 +826,65 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void PersistedCriticalSkippedOutcome_RemainsPublicationBlocking()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        var now = DateTime.UtcNow;
+        Db.RecordScrapePhaseOutcome(new ScrapePhaseOutcomeRecord(
+            scrapeId,
+            "RankRecompute",
+            "publication_critical",
+            "skipped",
+            now,
+            now,
+            0,
+            null));
+
+        var resume = Db.GetScrapeResumeState(scrapeId)!;
+        Assert.Equal(1, resume.CriticalPhaseFailureCount);
+        var ledger = new PostScrapeExecutionLedger();
+        ledger.Record(
+            ScraperWorker.RehydratePhaseOutcome(
+                Assert.Single(resume.PhaseOutcomes)));
+
+        Assert.Throws<InvalidOperationException>(() =>
+            ScrapePublicationGuard.EnsureCanPublish(
+                scrapeId,
+                ledger,
+                enforcePublicationCriticalPhases: true));
+        Assert.False(ledger.CanPublish);
+    }
+
+    [Fact]
+    public void PersistedBestEffortSkippedOutcome_RemainsNonblocking()
+    {
+        var scrapeId = Db.StartScrapeRun();
+        var now = DateTime.UtcNow;
+        Db.RecordScrapePhaseOutcome(new ScrapePhaseOutcomeRecord(
+            scrapeId,
+            "FirstSeenSeason",
+            "best_effort",
+            "skipped",
+            now,
+            now,
+            0,
+            null));
+
+        var resume = Db.GetScrapeResumeState(scrapeId)!;
+        Assert.Equal(0, resume.CriticalPhaseFailureCount);
+        var ledger = new PostScrapeExecutionLedger();
+        ledger.Record(
+            ScraperWorker.RehydratePhaseOutcome(
+                Assert.Single(resume.PhaseOutcomes)));
+
+        ScrapePublicationGuard.EnsureCanPublish(
+            scrapeId,
+            ledger,
+            enforcePublicationCriticalPhases: true);
+        Assert.True(ledger.CanPublish);
+    }
+
+    [Fact]
     public void WriterFailuresPersistExactScopesAndFailedCandidateState()
     {
         var scrapeId = Db.StartScrapeRun();

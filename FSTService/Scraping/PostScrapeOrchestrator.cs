@@ -1805,6 +1805,8 @@ public sealed class PostScrapeOrchestrator
         }
         sw.Stop();
         var completion = completionSelector?.Invoke(result) ?? PhaseCompletion.Completed;
+        if (completion.Status == "skipped")
+            EnsureSkipIsAllowed(phaseName, criticality);
         var detail = completion.Status == "skipped"
             ? $"Skipped {phaseName}: {completion.WarningMessage}"
             : $"Completed {phaseName}";
@@ -1900,6 +1902,7 @@ public sealed class PostScrapeOrchestrator
         string reason)
     {
         var criticality = PostScrapePhasePolicy.GetCriticality(phaseName);
+        EnsureSkipIsAllowed(phaseName, criticality);
         var recordedAt = DateTime.UtcNow;
         StartDurablePhase(phaseName);
         UpdatePostProcessOperation(phaseName, $"Skipped {phaseName}: {reason}");
@@ -1919,6 +1922,12 @@ public sealed class PostScrapeOrchestrator
             reason);
     }
 
+    internal void RecordSkippedPhaseForTest(
+        ScrapePassContext ctx,
+        string phaseName,
+        string reason) =>
+        RecordSkippedPhase(ctx, phaseName, reason);
+
     internal Task RunClassifiedPhaseForTestAsync(
         ScrapePassContext ctx,
         string phaseName,
@@ -1937,6 +1946,8 @@ public sealed class PostScrapeOrchestrator
         string? status = null)
     {
         var outcomeStatus = status ?? (success ? "completed" : "failed");
+        if (outcomeStatus == "skipped")
+            EnsureSkipIsAllowed(phaseName, criticality);
         ctx.PostScrapeOutcomes.Record(new PostScrapePhaseOutcome(
             phaseName,
             criticality,
@@ -1976,6 +1987,17 @@ public sealed class PostScrapeOrchestrator
                     $"Unable to persist publication-critical phase outcome for {phaseName}.",
                     ex);
             }
+        }
+    }
+
+    private static void EnsureSkipIsAllowed(
+        string phaseName,
+        PostScrapePhaseCriticality criticality)
+    {
+        if (criticality != PostScrapePhaseCriticality.BestEffort)
+        {
+            throw new InvalidOperationException(
+                $"Publication-critical phase '{phaseName}' cannot be recorded as skipped.");
         }
     }
 
@@ -2021,16 +2043,20 @@ public sealed class PostScrapeOrchestrator
         Task rankTask;
         if (!_persistence.WriteLegacyLiveLeaderboardDuringScrape)
         {
-            _progress.StartBranch("rank_recompute");
-            _progress.CompleteBranch(
-                "rank_recompute",
-                "skipped",
-                "legacy live leaderboard writes are disabled");
-            RecordSkippedPhase(
+            rankTask = RunPhaseAsync(
                 ctx,
                 "RankRecompute",
-                "legacy live leaderboard writes are disabled");
-            rankTask = Task.CompletedTask;
+                () =>
+                {
+                    _progress.StartBranch("rank_recompute");
+                    _progress.CompleteBranch(
+                        "rank_recompute",
+                        "skipped",
+                        "legacy live leaderboard writes are disabled");
+                    _log.LogInformation(
+                        "Legacy rank recompute requires no work because legacy live leaderboard writes are disabled.");
+                    return Task.CompletedTask;
+                });
         }
         else
         {
@@ -2510,23 +2536,12 @@ public sealed class PostScrapeOrchestrator
 
     internal Task RunLeaderboardRivalsPhaseAsync(
         ScrapePassContext ctx,
-        CancellationToken ct)
-    {
-        if (ctx.RegisteredIds.Count == 0)
-        {
-            RecordSkippedPhase(
-                ctx,
-                "LeaderboardRivals",
-                "no registered accounts were available");
-            return Task.CompletedTask;
-        }
-
-        return RunPhaseAsync(
+        CancellationToken ct) =>
+        RunPhaseAsync(
             ctx,
             "LeaderboardRivals",
             () => ComputeLeaderboardRivalsAsync(ctx, ct),
             alwaysPropagateFailure: true);
-    }
 
     /// <summary>
     /// Prune excess entries from instrument DBs down to the configured max per song,

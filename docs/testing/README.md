@@ -2,7 +2,7 @@
 status: canonical
 owner: repository
 last_verified: 2026-08-14
-last_verified_commit: 165a5fef
+last_verified_commit: 86379374
 sources:
   - FSTService.Tests/FSTService.Tests.csproj
   - FSTService.Tests/Unit/PostScrapeOrchestratorTests.cs
@@ -59,7 +59,9 @@ dotnet test FSTService.Tests/FSTService.Tests.csproj \
 This matrix locks legacy-write rank behavior on/off, intentional skip
 dispositions, reserved phase IDs, direct legacy band-mode reachability,
 PostgreSQL checkpoint/cache-warm contract absence, recurring refresh ownership,
-and resume treatment of skipped critical phases.
+and criticality-aware resume/publication treatment. Focused API/shared tests
+also require `reserved: true` on the two retired v2 descriptors, exclude them
+from active counts, and prove Tier-0 phase manifests remain unchanged.
 
 The Tier-0 native filesystem syscall shim is excluded from the aggregate line
 denominator because its branches are operating-system ABI specific. Focused

@@ -1,14 +1,16 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-08-13
-last_verified_commit: 53c11043
+last_verified: 2026-08-14
+last_verified_commit: 86379374
 sources:
   - FSTService/Program.cs
   - FSTService/HostedWorkerMode.cs
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
+  - FSTService/Api/HealthEndpoints.cs
   - FSTService/Api/PublicationRouteSurfaceContract.cs
+  - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
 update_triggers:
   - Hosting modes, middleware, endpoints, auth, rate limits, cache behavior, or publication contracts change.
@@ -93,6 +95,11 @@ separate heartbeat/last-progress fields. It preserves the version-1 labels and
 summary fields for rolling worker and browser compatibility. The normalized
 PostgreSQL ledger is authoritative when a running attempt exists; the worker
 operation JSON remains the fallback summary.
+
+Each phase-plan descriptor includes additive `reserved`. The accepted ordered
+v2 list/version remains unchanged; `true` identifies retired IDs retained only
+for historical and Tier-0 lineage. Consumers exclude those descriptors from
+active phase counts.
 
 The production API role runs with `--api-only`, which deliberately skips global
 schema initialization. A first deployment to a database without

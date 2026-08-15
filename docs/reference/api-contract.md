@@ -2,10 +2,11 @@
 status: canonical
 owner: service
 last_verified: 2026-08-14
-last_verified_commit: 165a5fef
+last_verified_commit: 86379374
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
+  - FSTService/Api/HealthEndpoints.cs
   - FSTService/Api/PublicationRouteSurfaceContract.cs
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -132,7 +133,7 @@ Aggregate player scopes intentionally use different formulas:
 version-1 field. Contract version 2 adds:
 
 - `phasePlan.version` and ordered descriptors (`id`, label, legacy phase,
-  ordinal, default units kind);
+  ordinal, default units kind, additive `reserved`);
 - stable operation, phase, and subphase IDs plus attempt/ordinal/plan version;
 - units kind/completed/total and `unitsTotalFinal`;
 - exact `phasePercent` only with a final denominator;
@@ -143,9 +144,12 @@ version-1 field. Contract version 2 adds:
 Plan `fst.scrape-plan.v2` remains a stable superset for evidence-package and
 historical compatibility. `post.checkpoint` and
 `post.deferred_registration_sync` are reserved descriptors and are not current
-worker execution policies. Current conditional phases use
-`phaseStatus=skipped` plus a warning reason when work is intentionally omitted;
-absence alone is not evidence that a best-effort phase starved.
+worker execution policies. They emit `reserved: true`; active descriptors emit
+`false`, allowing counts to exclude retired IDs without changing the ordered
+list or plan version. Only best-effort phases may use `phaseStatus=skipped`
+with a warning reason. Critical skipped rows are invalid and fail closed
+regardless of the critical-failure rollout switch.
+Absence alone is not evidence that a best-effort phase starved.
 
 Weak overall or ETA evidence is omitted, not serialized as false precision.
 Initial overall progress is normally `indeterminate`. Existing `phase`,

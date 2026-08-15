@@ -543,7 +543,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     FROM scrape_phase_outcomes
                     WHERE scrape_id = scrape.id
                       AND criticality = 'publication_critical'
-                      AND status = 'failed'
+                      AND status <> 'completed'
                 )
             FROM scrape_log scrape
             LEFT JOIN scrape_publication_state publication ON publication.id = TRUE
