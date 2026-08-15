@@ -2,7 +2,7 @@
 status: roadmap
 owner: worker
 last_verified: 2026-08-14
-last_verified_commit: cb295b7e
+last_verified_commit: c0e0f775
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/Scraping/PostScrapeOrchestrator.cs
@@ -18,10 +18,6 @@ sources:
   - FSTService/Persistence/MetaDatabase.cs
   - FSTService/Persistence/Maintenance/DatabaseRetentionMaintenanceService.cs
   - FSTService/Api/HealthEndpoints.cs
-  - FortniteFestivalWeb/src/pages/settings/SettingsPage.tsx
-  - FortniteFestivalWeb/src/pages/settings/SettingsServiceProgress.tsx
-  - FortniteFestivalWeb/src/pages/settings/serviceProgress.ts
-  - /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/pr27-settings-live-ab-20260814T062455Z
   - packages/core/src/api/serverTypes.ts
   - docs/architecture/data-publication-flow.md
   - docs/architecture/data-storage.md
@@ -403,45 +399,6 @@ required before performance acceptance.
 Default rejection is any correctness/publication difference or a sustained
 greater-than-10% regression in API p95, phase wall clock, CPU, memory, WAL,
 temp bytes, or disk I/O. Observability-only work targets less than 1% overhead.
-
-## Settings simplification
-
-Settings will use three primary visual groups:
-
-1. **Health**
-   - worker online/stale/offline;
-   - update running/failed/stalled/idle;
-   - retain prior-publication availability in failure copy.
-2. **Progress and ETA**
-   - stable current phase/subphase label;
-   - exact phase progress and units when determinate;
-   - indeterminate treatment when no final denominator exists;
-   - estimated overall progress and ETA range/confidence.
-3. **Publication timing**
-   - current update start;
-   - last successful publication;
-   - next scheduled update.
-
-Move worker instance IDs, operation timestamps, raw heartbeat age, diagnostic
-details, phase attempts, and branches under a collapsed technical-details
-disclosure. Move selected-player/band synchronization into a separate
-selected-profile card because it is user-specific state, not service health.
-
-### Browser acceptance
-
-- No horizontal overflow or marquee for core status at 320, 375, 768, and
-  1,440 CSS pixels.
-- Determinate progress exposes accessible min/max/current values and meaningful
-  text.
-- Indeterminate progress exposes no numeric percentage.
-- State changes appear within two foreground polls.
-- One shared service-info request and at most one in flight.
-- Worker stale, failed, deferred, restarted, unknown-total, resumed, and
-  completed-with-warning states have tests.
-- Default view contains no wall of `N/A` rows.
-- Technical details are keyboard accessible and collapsed by default.
-- Profile sync remains independently testable.
-- Existing publication bootstrap/cache-reset behavior is unchanged.
 
 ## Architecture decision
 
