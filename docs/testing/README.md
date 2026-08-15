@@ -170,7 +170,9 @@ By.
 The same Vite plugin compares every `src/**/*.ts` and `src/**/*.tsx` file with
 the complete production and lazy chunk graph. Only component stories and the
 documented type-only allowlist may be unreachable; any other source file fails
-the build as unclassified dead code.
+the build as unclassified dead code. It also requires App Manual, Settings, and
+First Run English resources to remain outside the entry and inside their
+declared lazy owner closures.
 
 Playwright request tests separately prove that KaTeX JS/CSS waits for the
 per-instrument info action, KaTeX fonts wait for a formula slide, and band,
@@ -191,6 +193,11 @@ request bounds, dimensions, lazy mounting, and layout stability. The
 cross-engine browser suite forces one selected WebP candidate to fail and
 requires exactly one successful full-resolution WebP fallback without a PNG
 request or retry loop.
+
+`specs/browser/i18n-namespaces.spec.ts` navigates Songs to Manual to Settings,
+opens a First Run replay, and observes every DOM mutation. Chromium, WebKit,
+and Firefox must render translated content without exposing an
+`appManual.*`, `settings.*`, or `firstRun.*` key.
 
 ## Suggestions performance
 

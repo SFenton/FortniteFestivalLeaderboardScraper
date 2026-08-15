@@ -16,7 +16,7 @@ const META = {
   statistics: ['nav.statistics', 'Statistics'],
   suggestions: ['nav.suggestions', 'Suggestions'],
   shop: ['nav.shop', 'Item Shop'],
-  manual: ['appManual.title', 'Manual'],
+  manual: ['nav.manual', 'App Manual'],
   leaderboards: ['rankings.title', 'Leaderboards'],
   fullRankings: ['rankings.title', 'Rankings'],
   bandRankings: ['rankings.title', 'Band Rankings'],

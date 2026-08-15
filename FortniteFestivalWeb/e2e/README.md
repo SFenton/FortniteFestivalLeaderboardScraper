@@ -96,6 +96,10 @@ Chromium, WebKit, and Firefox engine tiers and proves that a failed responsive
 WebP candidate receives one full-resolution WebP fallback without a PNG
 request or retry loop.
 
+`specs/browser/i18n-namespaces.spec.ts` covers direct lazy-route and First Run
+replay translation ownership in the same engine tiers. It records DOM changes
+and rejects visible lazy-namespace key flashes.
+
 Component projects use `ct-chromium`, `ct-webkit`, and `ct-firefox`.
 Publication uses a dedicated `publication-chromium` config and a second Vite
 server with the normal e2e publication stub disabled.

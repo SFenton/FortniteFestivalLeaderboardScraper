@@ -9,6 +9,28 @@ const METRIC_INFO_INDEX_SUFFIX = '/FortniteFestivalWeb/src/pages/leaderboards/fi
 const FIRST_RUN_CAROUSEL_SUFFIX = '/FortniteFestivalWeb/src/components/firstRun/FirstRunCarousel.tsx';
 const MATH_SUFFIX = '/FortniteFestivalWeb/src/components/common/Math.tsx';
 const KATEX_MARKER = '/node_modules/katex/';
+const LAZY_TRANSLATION_BOUNDARIES = [
+  {
+    label: 'Manual',
+    ownerSuffix: '/FortniteFestivalWeb/src/pages/manual/ManualPage.tsx',
+    resourceSuffix: '/FortniteFestivalWeb/src/i18n/appManual.en.json',
+  },
+  {
+    label: 'Settings',
+    ownerSuffix: '/FortniteFestivalWeb/src/pages/settings/SettingsPage.tsx',
+    resourceSuffix: '/FortniteFestivalWeb/src/i18n/settings.en.json',
+  },
+  {
+    label: 'Licenses',
+    ownerSuffix: '/FortniteFestivalWeb/src/pages/settings/LicensesPage.tsx',
+    resourceSuffix: '/FortniteFestivalWeb/src/i18n/settings.en.json',
+  },
+  {
+    label: 'First Run',
+    ownerSuffix: FIRST_RUN_CAROUSEL_SUFFIX,
+    resourceSuffix: '/FortniteFestivalWeb/src/i18n/firstRun.en.json',
+  },
+];
 const SECONDARY_CONTROL_BOUNDARIES = [
   {
     label: 'SearchModal',
@@ -51,6 +73,7 @@ const INITIAL_FORBIDDEN_MODULE_SUFFIXES = [
   '/FortniteFestivalWeb/src/components/sort/ReorderList.tsx',
   '/FortniteFestivalWeb/src/components/sort/SortableRow.tsx',
   '/FortniteFestivalWeb/src/pages/songinfo/components/path/PathDataTable.tsx',
+  ...LAZY_TRANSLATION_BOUNDARIES.map(boundary => boundary.resourceSuffix),
   RANK_BY_MODAL_SUFFIX,
   MATH_SUFFIX,
 ];
@@ -148,6 +171,19 @@ export function sharedPackageBoundaryPlugin({ webRoot, graphOutput }) {
       for (const marker of INITIAL_FORBIDDEN_MODULE_MARKERS) {
         if (initialModules.some(id => normalizeId(id).includes(marker))) {
           this.error(`${marker} must not be reachable from the initial Songs chunk graph.`);
+        }
+      }
+      for (const boundary of LAZY_TRANSLATION_BOUNDARIES) {
+        const ownerChunk = findChunkContainingModule(chunks, boundary.ownerSuffix);
+        if (!ownerChunk) {
+          this.error(`Unable to locate the lazy ${boundary.label} owner chunk.`);
+        }
+        const ownerModules = modulesForFiles(
+          staticClosure([ownerChunk.fileName], chunksByFile),
+          chunksByFile,
+        );
+        if (!ownerModules.some(id => normalizeId(id).endsWith(boundary.resourceSuffix))) {
+          this.error(`${boundary.label} must retain its lazy translation resource.`);
         }
       }
       const unreachableSourceModules = findUnclassifiedSourceModules(webRoot, chunks);

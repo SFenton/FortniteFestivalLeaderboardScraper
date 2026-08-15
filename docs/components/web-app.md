@@ -36,6 +36,10 @@ sources:
   - FortniteFestivalWeb/src/pages/manual/ManualPage.tsx
   - FortniteFestivalWeb/src/pages/manual/manualScreenshotAssets.ts
   - FortniteFestivalWeb/manual-assets/generated/manifest.json
+  - FortniteFestivalWeb/src/i18n/en.json
+  - FortniteFestivalWeb/src/i18n/appManual.en.json
+  - FortniteFestivalWeb/src/i18n/settings.en.json
+  - FortniteFestivalWeb/src/i18n/firstRun.en.json
   - FortniteFestivalWeb/performance-budgets.json
   - FortniteFestivalWeb/scripts/check-performance-budgets.mjs
   - FortniteFestivalWeb/scripts/generate-manual-image-variants.mjs
@@ -252,11 +256,14 @@ server emits evidence that passes the client trust gate. Display memory rejects
 older payload regressions while allowing a new phase attempt to reset and
 announce itself.
 
-The English service-progress resource is co-located with the lazy Settings
-route and registered into the existing i18next `translation` namespace when
-that route loads. This keeps the stable phase/subphase vocabulary out of the
-eager application entry while retaining the repository's one-locale key
-contract and browser fallback behavior.
+English shell/common/Songs resources remain eager in the i18next `translation`
+namespace. App Manual, Settings, and First Run resources use named namespaces
+registered synchronously by their lazy page/carousel owners. The Settings
+namespace also owns the co-located service-progress vocabulary. Existing key
+paths remain unchanged because route components use translation-first namespace
+fallback; direct-route and replay browser tests reject any visible untranslated
+key. The production graph requires all three JSON resources to stay outside the
+entry and inside their declared lazy owner closures.
 
 Focused unit and Playwright coverage owns v1/v2 rendering, exact and unknown
 denominators, ETA suppression, warnings/failures/restarts, selected-profile
