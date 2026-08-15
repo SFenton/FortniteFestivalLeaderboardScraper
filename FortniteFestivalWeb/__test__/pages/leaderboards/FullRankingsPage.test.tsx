@@ -345,6 +345,35 @@ describe('FullRankingsPage', () => {
     expect(screen.queryByText(/^25$/)).toBeNull();
   });
 
+  it('renders the persisted instrument denominator without client-side clamping', async () => {
+    mockApi.getRankings.mockResolvedValue({
+      instrument: 'Solo_Guitar',
+      rankBy: 'totalscore',
+      page: 1,
+      pageSize: 25,
+      totalAccounts: 1,
+      entries: [
+        makeAccountRankingEntry(1, {
+          accountId: 'denominator-player',
+          displayName: 'Denominator Player',
+          songsPlayed: 702,
+          totalChartedSongs: 700,
+        }),
+      ],
+    });
+
+    render(
+      <TestProviders route="/leaderboards/all?instrument=Solo_Guitar&rankBy=totalscore">
+        <Routes>
+          <Route path="/leaderboards/all" element={<FullRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    expect(await screen.findByText('702 / 700')).toBeTruthy();
+    expect(screen.queryByText('702 / 702')).toBeNull();
+  });
+
   it('keeps family rankings text-only in the mobile page header', async () => {
     stubMatchMedia(true);
     mockApi.getSoloFamilyRankings.mockResolvedValue({

@@ -80,6 +80,28 @@ public sealed class RankingsCalculatorTests : IDisposable
             ApiRank = apiRank,
         };
 
+    private static AccountRankingSummary MakeRankingSummary(
+        string accountId,
+        int songsPlayed,
+        int fullComboCount,
+        int totalChartedSongs,
+        double coverage,
+        double fcRate) =>
+        new(
+            accountId,
+            AdjustedSkillRating: 0.2,
+            WeightedRating: 0.3,
+            FcRate: fcRate,
+            TotalScore: 1_000,
+            MaxScorePercent: 0.9,
+            SongsPlayed: songsPlayed,
+            FullComboCount: fullComboCount,
+            TotalChartedSongs: totalChartedSongs,
+            Coverage: coverage,
+            RawSkillRating: 0.2,
+            RawWeightedRating: 0.3,
+            RawMaxScorePercent: 0.9);
+
     private static BandLeaderboardEntry MakeBandEntry(string[] teamMembers, string instrumentCombo, int score, bool isFullCombo = false) =>
         new()
         {
@@ -204,10 +226,10 @@ public sealed class RankingsCalculatorTests : IDisposable
     }
 
     [Fact]
-    public void CountChartedSongs_requires_provider_property_presence()
+    public void CountChartedSongs_MissingLeadPropertiesRemainCharted()
     {
         var svc = CreateFestivalServiceWithSongs(1);
-        svc.Songs[0].track.@in = new In { gr = 3 };
+        svc.Songs[0].track.@in = new In { ba = 3 };
 
         Assert.Equal(
             1,
@@ -215,7 +237,7 @@ public sealed class RankingsCalculatorTests : IDisposable
                 svc,
                 "Solo_Guitar"));
         Assert.Equal(
-            0,
+            1,
             RankingsCalculator.CountChartedSongs(
                 svc,
                 "Solo_PeripheralGuitar"));
@@ -227,7 +249,7 @@ public sealed class RankingsCalculatorTests : IDisposable
         var svc = CreateFestivalServiceWithSongs(1);
         var song = svc.Songs[0];
         song.track.tt = "Run It";
-        song.track.@in = new In { gr = 3 };
+        song.track.@in = null!;
         song.lastModified = new DateTime(
             2026,
             8,
@@ -272,6 +294,91 @@ public sealed class RankingsCalculatorTests : IDisposable
     }
 
     [Fact]
+    public void CountChartedSongs_UsesCurrentCatalogSetUnionWithPositivePopulation()
+    {
+        var svc = CreateFestivalServiceWithSongs(3);
+        svc.Songs[2].track.@in.gr = 99;
+        var population = new Dictionary<
+            (string SongId, string Instrument),
+            long>
+        {
+            [("song_1", "Solo_Guitar")] = 10,
+            [("song_2", "Solo_Guitar")] = 20,
+        };
+
+        Assert.Equal(
+            2,
+            RankingsCalculator.CountChartedSongs(
+                svc.Songs,
+                "Solo_Guitar",
+                new Dictionary<string, PathGenerationState>()));
+        Assert.Equal(
+            3,
+            RankingsCalculator.CountChartedSongs(
+                svc.Songs,
+                "Solo_Guitar",
+                new Dictionary<string, PathGenerationState>(),
+                population));
+    }
+
+    [Fact]
+    public void CountChartedSongs_IgnoresPositivePopulationOutsideCurrentCatalog()
+    {
+        var svc = CreateFestivalServiceWithSongs(1);
+        svc.Songs[0].track.@in.gr = 99;
+        var population = new Dictionary<
+            (string SongId, string Instrument),
+            long>
+        {
+            [("retired_song", "Solo_Guitar")] = 10,
+        };
+
+        Assert.Equal(
+            0,
+            RankingsCalculator.CountChartedSongs(
+                svc.Songs,
+                "Solo_Guitar",
+                new Dictionary<string, PathGenerationState>(),
+                population));
+    }
+
+    [Fact]
+    public void CountChartedSongs_PopulationBackedLeadCatalogCountsAll702Songs()
+    {
+        var svc = CreateFestivalServiceWithSongs(702);
+        svc.Songs[700].track.@in.gr = 99;
+        svc.Songs[701].track.@in.gr = 99;
+        svc.Songs[700].track.@in.pg = 99;
+        svc.Songs[701].track.@in.pg = 99;
+        var population = new Dictionary<
+            (string SongId, string Instrument),
+            long>
+        {
+            [("song_0", "Solo_Guitar")] = 100,
+            [("song_700", "Solo_Guitar")] = 10,
+            [("song_701", "Solo_Guitar")] = 20,
+            [("song_0", "Solo_PeripheralGuitar")] = 100,
+            [("song_700", "Solo_PeripheralGuitar")] = 10,
+            [("song_701", "Solo_PeripheralGuitar")] = 20,
+        };
+
+        Assert.Equal(
+            702,
+            RankingsCalculator.CountChartedSongs(
+                svc.Songs,
+                "Solo_Guitar",
+                new Dictionary<string, PathGenerationState>(),
+                population));
+        Assert.Equal(
+            702,
+            RankingsCalculator.CountChartedSongs(
+                svc.Songs,
+                "Solo_PeripheralGuitar",
+                new Dictionary<string, PathGenerationState>(),
+                population));
+    }
+
+    [Fact]
     public void CountChartedSongs_ZeroForEmptySongs()
     {
         var svc = new FestivalService((IFestivalPersistence?)null);
@@ -287,6 +394,91 @@ public sealed class RankingsCalculatorTests : IDisposable
         svc.Songs[2].track.@in.bd = 4;
 
         Assert.Equal(2, RankingsCalculator.CountChartedSongs(svc, "Solo_PeripheralVocals"));
+    }
+
+    [Fact]
+    public async Task ComputeAllAsync_PopulationBackedCatalogScopeUsesUniformDenominator()
+    {
+        var svc = CreateFestivalServiceWithSongs(3);
+        svc.Songs[2].track.@in.gr = 99;
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries(
+            "song_0",
+            [MakeEntry("complete", 1_000, rank: 1, fc: true)]);
+        guitarDb.UpsertEntries(
+            "song_2",
+            [MakeEntry("complete", 900, rank: 1, fc: true)]);
+        guitarDb.RecomputeAllRanks();
+        _metaFixture.Db.UpsertLeaderboardPopulation(
+        [
+            ("song_0", "Solo_Guitar", 100L),
+            ("song_2", "Solo_Guitar", 50L),
+        ]);
+
+        await _sut.ComputeAllAsync(svc, CancellationToken.None);
+
+        var ranking = guitarDb.GetAccountRanking("complete");
+        Assert.NotNull(ranking);
+        Assert.Equal(2, ranking.SongsPlayed);
+        Assert.Equal(3, ranking.TotalChartedSongs);
+        Assert.Equal(2.0 / 3.0, ranking.Coverage, precision: 6);
+        Assert.Equal(2.0 / 3.0, ranking.FcRate, precision: 6);
+    }
+
+    [Fact]
+    public void ValidateInstrumentRankingSummaries_AcceptsEmptyAndValidRows()
+    {
+        RankingsCalculator.ValidateInstrumentRankingSummaries(
+            "Solo_Guitar",
+            2,
+            []);
+        RankingsCalculator.ValidateInstrumentRankingSummaries(
+            "Solo_Guitar",
+            2,
+            [
+                MakeRankingSummary(
+                    "valid",
+                    songsPlayed: 2,
+                    fullComboCount: 1,
+                    totalChartedSongs: 2,
+                    coverage: 1,
+                    fcRate: 0.5),
+            ]);
+    }
+
+    [Fact]
+    public void ValidateInstrumentRankingSummaries_RejectsMixedAndOutOfRangeRows()
+    {
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => RankingsCalculator.ValidateInstrumentRankingSummaries(
+                "Solo_Guitar",
+                2,
+                [
+                    MakeRankingSummary(
+                        "valid",
+                        songsPlayed: 1,
+                        fullComboCount: 1,
+                        totalChartedSongs: 2,
+                        coverage: 0.5,
+                        fcRate: 0.5),
+                    MakeRankingSummary(
+                        "invalid",
+                        songsPlayed: 2,
+                        fullComboCount: 2,
+                        totalChartedSongs: 1,
+                        coverage: 2,
+                        fcRate: double.NaN),
+                ]));
+
+        Assert.Contains(
+            "Instrument ranking build for Solo_Guitar produced 1 publication-incompatible row",
+            exception.Message,
+            StringComparison.Ordinal);
+        Assert.Contains("denominator_mismatch", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("songs_played_exceeds_denominator", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("full_combo_count_exceeds_denominator", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("coverage_out_of_range", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("fc_rate_out_of_range", exception.Message, StringComparison.Ordinal);
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -953,6 +1145,59 @@ public sealed class RankingsCalculatorTests : IDisposable
     }
 
     [Fact]
+    public async Task ComputeAllAsync_ZeroDenominatorSkipDoesNotValidateStaleRankingRows()
+    {
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries(
+            "retained_song",
+            [MakeEntry("retained", 1_000, rank: 1)]);
+        guitarDb.RecomputeAllRanks();
+        guitarDb.ComputeSongStats();
+        guitarDb.ComputeAccountRankings(totalChartedSongs: 1);
+        var before = guitarDb.GetAccountRanking("retained");
+        Assert.NotNull(before);
+
+        await _sut.ComputeAllAsync(
+            new FestivalService((IFestivalPersistence?)null),
+            CancellationToken.None);
+
+        var after = guitarDb.GetAccountRanking("retained");
+        Assert.NotNull(after);
+        Assert.Equal(before.TotalChartedSongs, after.TotalChartedSongs);
+        Assert.Equal(before.TotalScore, after.TotalScore);
+    }
+
+    [Fact]
+    public async Task ComputeAllAsync_ExcludesOutOfCatalogScoresWithoutDeletingSourceData()
+    {
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries(
+            "song_0",
+            [MakeEntry("current", 1_000, rank: 1, fc: false)]);
+        guitarDb.UpsertEntries(
+            "retired_song",
+            [MakeEntry("current", 900, rank: 1, fc: true)]);
+        guitarDb.RecomputeAllRanks();
+
+        await _sut.ComputeAllAsync(
+            CreateFestivalServiceWithSongs(1),
+            CancellationToken.None);
+
+        var ranking = guitarDb.GetAccountRanking("current");
+        Assert.NotNull(ranking);
+        Assert.Equal(1, ranking.SongsPlayed);
+        Assert.Equal(0, ranking.FullComboCount);
+        Assert.Equal(1_000, ranking.TotalScore);
+        Assert.Equal(1, ranking.TotalChartedSongs);
+        Assert.Equal(1, ranking.Coverage, precision: 6);
+        Assert.Equal(0, ranking.FcRate, precision: 6);
+
+        Assert.NotNull(guitarDb.GetEntry("retired_song", "current"));
+        Assert.Equal(1, guitarDb.GetLeaderboardCount("retired_song"));
+        Assert.True(guitarDb.GetAllSongCounts().ContainsKey("retired_song"));
+    }
+
+    [Fact]
     public async Task ComputeAllAsync_Cancellation_Throws()
     {
         var cts = new CancellationTokenSource();
@@ -1006,6 +1251,7 @@ public sealed class RankingsCalculatorTests : IDisposable
 
         // Run full computation
         var festivalService = CreateFestivalServiceWithSongs(1);
+        festivalService.Songs[0].track.su = "song_ot";
         await _sut.ComputeAllAsync(festivalService, CancellationToken.None);
 
         // The over-threshold player should still have rankings
@@ -1032,7 +1278,12 @@ public sealed class RankingsCalculatorTests : IDisposable
             accuracy: 98, isFullCombo: true, stars: 6,
             scoreAchievedAt: "2025-01-01T00:00:00Z");
 
-        await _sut.ComputeAllAsync(CreateFestivalServiceWithSongs(1), CancellationToken.None);
+        var festivalService = CreateFestivalServiceWithSongs(1);
+        festivalService.Songs[0].track.su =
+            "song_snapshot_rankings";
+        await _sut.ComputeAllAsync(
+            festivalService,
+            CancellationToken.None);
 
         var snapshotRanking = guitarDb.GetAccountRanking("snapshot_only");
         var liveRanking = guitarDb.GetAccountRanking("live_only");
@@ -1509,6 +1760,24 @@ public sealed class RankingsCalculatorTests : IDisposable
         proxy.OpenConnection().Returns(_ => inner.OpenConnection());
         proxy.When(x => x.MaterializeCurrentStateValidEntries(Arg.Any<NpgsqlConnection>(), Arg.Any<double>()))
             .Do(call => inner.MaterializeCurrentStateValidEntries(call.Arg<NpgsqlConnection>(), call.Arg<double>()));
+        proxy.When(x => x.MaterializeCurrentStateValidEntries(
+                Arg.Any<NpgsqlConnection>(),
+                Arg.Any<IReadOnlyCollection<string>>(),
+                Arg.Any<double>()))
+            .Do(call => inner.MaterializeCurrentStateValidEntries(
+                call.ArgAt<NpgsqlConnection>(0),
+                call.ArgAt<IReadOnlyCollection<string>>(1),
+                call.ArgAt<double>(2)));
+        proxy.When(x => x.MaterializeCurrentStateValidEntries(
+                Arg.Any<NpgsqlConnection>(),
+                Arg.Any<NpgsqlTransaction?>(),
+                Arg.Any<IReadOnlyCollection<string>>(),
+                Arg.Any<double>()))
+            .Do(call => inner.MaterializeCurrentStateValidEntries(
+                call.ArgAt<NpgsqlConnection>(0),
+                call.ArgAt<NpgsqlTransaction?>(1),
+                call.ArgAt<IReadOnlyCollection<string>>(2),
+                call.ArgAt<double>(3)));
         proxy.ComputeAccountRankingsFromMaterialized(Arg.Any<NpgsqlConnection>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<double>(), Arg.Any<double>())
             .Returns(call => inner.ComputeAccountRankingsFromMaterialized(
                 call.ArgAt<NpgsqlConnection>(0),

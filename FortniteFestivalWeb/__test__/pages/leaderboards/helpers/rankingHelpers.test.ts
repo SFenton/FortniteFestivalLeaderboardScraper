@@ -227,4 +227,15 @@ describe('getSongsLabel', () => {
       expect(getSongsLabel(entry, metric)).toBe('632 / 633');
     },
   );
+
+  it('renders the API denominator verbatim without client-side clamping', () => {
+    const inconsistent = {
+      fullComboCount: 701,
+      songsPlayed: 702,
+      totalChartedSongs: 700,
+    };
+
+    expect(getSongsLabel(inconsistent, 'totalscore')).toBe('702 / 700');
+    expect(getSongsLabel(inconsistent, 'fcrate')).toBe('701 / 700');
+  });
 });

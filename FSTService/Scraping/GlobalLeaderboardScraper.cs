@@ -278,31 +278,58 @@ public class GlobalLeaderboardScraper
         return instrument switch
         {
             "Solo_Guitar" =>
-                intensity.HasProviderProperty("gr") &&
-                Track.HasChartedDifficulty(intensity.gr),
+                ProviderChartIsSupportedOrUnknown(
+                    intensity,
+                    "gr",
+                    intensity.gr),
             "Solo_Bass" =>
-                intensity.HasProviderProperty("ba") &&
-                Track.HasChartedDifficulty(intensity.ba),
+                ProviderChartIsSupportedOrUnknown(
+                    intensity,
+                    "ba",
+                    intensity.ba),
             "Solo_Drums" =>
-                intensity.HasProviderProperty("ds") &&
-                Track.HasChartedDifficulty(intensity.ds),
+                ProviderChartIsSupportedOrUnknown(
+                    intensity,
+                    "ds",
+                    intensity.ds),
             "Solo_Vocals" =>
-                intensity.HasProviderProperty("vl") &&
-                Track.HasChartedDifficulty(intensity.vl),
+                ProviderChartIsSupportedOrUnknown(
+                    intensity,
+                    "vl",
+                    intensity.vl),
             "Solo_PeripheralGuitar" =>
-                intensity.HasProviderProperty("pg") &&
-                Track.HasChartedDifficulty(intensity.pg),
+                ProviderChartIsSupportedOrUnknown(
+                    intensity,
+                    "pg",
+                    intensity.pg),
             "Solo_PeripheralBass" =>
-                intensity.HasProviderProperty("pb") &&
-                Track.HasChartedDifficulty(intensity.pb),
+                ProviderChartIsSupportedOrUnknown(
+                    intensity,
+                    "pb",
+                    intensity.pb),
             "Solo_PeripheralDrums" or "Solo_PeripheralCymbals" =>
-                intensity.HasProviderProperty("pd") &&
-                Track.HasChartedDifficulty(intensity.pd),
+                ProviderChartIsSupportedOrUnknown(
+                    intensity,
+                    "pd",
+                    intensity.pd),
             "Solo_PeripheralVocals" =>
-                intensity.HasProviderProperty("bd") &&
-                Track.HasChartedDifficulty(intensity.bd),
+                ProviderChartIsSupportedOrUnknown(
+                    intensity,
+                    "bd",
+                    intensity.bd),
             _ => true,
         };
+    }
+
+    private static bool ProviderChartIsSupportedOrUnknown(
+        In intensity,
+        string propertyName,
+        int difficulty)
+    {
+        // Epic can omit an instrument difficulty even when its leaderboard exists.
+        // Only an explicit non-charted sentinel is authoritative enough to skip.
+        return !intensity.HasProviderProperty(propertyName)
+               || Track.HasChartedDifficulty(difficulty);
     }
 
     /// <summary>
