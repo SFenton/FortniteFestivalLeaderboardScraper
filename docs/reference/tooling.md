@@ -61,7 +61,12 @@ ranges over 50 lines, unsupported counted-next syntax, and stale verified-next
 allowlist entries before coverage cleanup or shard execution begins.
 
 Yarn 4 is authoritative for the web app. Standalone tools such as `tools/mcp/`
-may use their own npm lockfile and commands.
+may use their own npm lockfile and commands. The web workspace ignores
+`package-lock.json`, and both contributor and container installs use the
+committed Yarn lock through `corepack yarn install --immutable`.
+Web tests declare Node 20 types directly; KaTeX and jsdom use their maintained
+package declarations rather than redundant `@types/katex` or `@types/jsdom`
+dependencies.
 
 ## Database and deployment tools
 

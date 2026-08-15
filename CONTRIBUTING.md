@@ -73,7 +73,9 @@ Public feature changes must review:
 ## Dependencies
 
 Yarn 4 is authoritative for `FortniteFestivalWeb`. Other standalone tooling may
-use its own package manager and lockfile.
+use its own package manager and lockfile. Do not run `npm install` or create an
+npm lockfile in the web workspace; update `yarn.lock` with Corepack and Yarn
+instead.
 
 When a third-party npm, NuGet, or bundled dependency changes, update the
 license manifest workflow and run:

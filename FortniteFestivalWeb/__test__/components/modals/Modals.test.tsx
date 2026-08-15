@@ -109,27 +109,6 @@ describe('ChangelogModal', () => {
   });
 });
 
-// ---- PathImage.tsx ----
-import { PathImage } from '../../../src/pages/songinfo/components/path/PathImage';
-import { Difficulty } from '@festival/core/runtime';
-
-describe('PathImage', () => {
-  it('renders without crashing', () => {
-    render(
-      <PathImage songId="song-1" instrument={'Solo_Guitar' as any} difficulty={Difficulty.Expert} />,
-    );
-    expect(document.body.innerHTML).toBeTruthy();
-  });
-
-  it('renders loading state initially', () => {
-    render(
-      <PathImage songId="song-1" instrument={'Solo_Guitar' as any} difficulty={Difficulty.Hard} />,
-    );
-    // Should show spinner or loading state before image loads
-    expect(document.body.innerHTML).toBeTruthy();
-  });
-});
-
 // ---- PlayerScoreSortModal.tsx ----
 import PlayerScoreSortModal from '../../../src/pages/leaderboard/player/modals/PlayerScoreSortModal';
 
@@ -206,43 +185,6 @@ describe('ReorderList', () => {
   });
 });
 
-// ---- Filter toggle components ----
-import { DifficultyToggles } from '../../../src/pages/songs/modals/components/filters/DifficultyToggles';
-import { PercentileToggles } from '../../../src/pages/songs/modals/components/filters/PercentileToggles';
-import { SeasonToggles } from '../../../src/pages/songs/modals/components/filters/SeasonToggles';
-import { StarsToggles } from '../../../src/pages/songs/modals/components/filters/StarsToggles';
-
-describe('DifficultyToggles', () => {
-  it('renders difficulty options', () => {
-    const onChange = vi.fn();
-    render(<DifficultyToggles difficultyFilter={{ 1: true, 2: true, 3: false, 4: false, 5: false }} onChange={onChange} />);
-    expect(screen.getAllByRole('button').length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('calls onChange when toggled', () => {
-    const onChange = vi.fn();
-    render(<DifficultyToggles difficultyFilter={{ 1: true, 2: false, 3: false, 4: false, 5: false }} onChange={onChange} />);
-    const btn = document.body.querySelector('button');
-    if (btn) fireEvent.click(btn);
-    expect(onChange).toHaveBeenCalled();
-  });
-});
-
-describe('PercentileToggles', () => {
-  it('renders percentile ranges', () => {
-    render(<PercentileToggles percentileFilter={{ 0: true, 25: false, 50: false, 75: false, 90: false }} onChange={vi.fn()} />);
-    expect(document.body.querySelectorAll('button').length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('calls onChange when toggled', () => {
-    const onChange = vi.fn();
-    render(<PercentileToggles percentileFilter={{ 0: true }} onChange={onChange} />);
-    const btn = document.body.querySelector('button');
-    if (btn) fireEvent.click(btn);
-    expect(onChange).toHaveBeenCalled();
-  });
-});
-
 import { SettingsProvider } from '../../../src/contexts/SettingsContext';
 import { FestivalProvider } from '../../../src/contexts/FestivalContext';
 import { ShopProvider } from '../../../src/contexts/ShopContext';
@@ -252,36 +194,6 @@ function ModalProviders({ children }: { children: React.ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return <QueryClientProvider client={qc}><SettingsProvider><FestivalProvider><ShopProvider>{children}</ShopProvider></FestivalProvider></SettingsProvider></QueryClientProvider>;
 }
-
-describe('SeasonToggles', () => {
-  it('renders season options', () => {
-    render(<ModalProviders><SeasonToggles seasonFilter={{ 1: true, 2: false, 3: false }} onChange={vi.fn()} /></ModalProviders>);
-    expect(document.body.querySelectorAll('button').length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('calls onChange when toggled', () => {
-    const onChange = vi.fn();
-    render(<ModalProviders><SeasonToggles seasonFilter={{ 1: true }} onChange={onChange} /></ModalProviders>);
-    const btn = document.body.querySelector('button');
-    if (btn) fireEvent.click(btn);
-    expect(onChange).toHaveBeenCalled();
-  });
-});
-
-describe('StarsToggles', () => {
-  it('renders star options', () => {
-    render(<StarsToggles starsFilter={{ 0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true }} onChange={vi.fn()} />);
-    expect(document.body.querySelectorAll('button').length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('calls onChange when toggled', () => {
-    const onChange = vi.fn();
-    render(<StarsToggles starsFilter={{ 6: true }} onChange={onChange} />);
-    const btn = document.body.querySelector('button');
-    if (btn) fireEvent.click(btn);
-    expect(onChange).toHaveBeenCalled();
-  });
-});
 
 // ---- FilterModal.tsx ----
 import FilterModal from '../../../src/pages/songs/modals/FilterModal';

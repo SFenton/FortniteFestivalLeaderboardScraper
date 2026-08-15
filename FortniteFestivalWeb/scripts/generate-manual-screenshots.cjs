@@ -3,7 +3,7 @@ const fs = require('fs/promises');
 const path = require('path');
 
 const BASE_URL = process.env.MANUAL_SCREENSHOT_BASE_URL ?? 'http://127.0.0.1:5173';
-const OUT_DIR = path.resolve(__dirname, '../public/manual/screenshots');
+const OUT_DIR = path.resolve(__dirname, '../manual-assets/source/screenshots');
 const CHROMIUM_FALLBACK = '/home/sfenton/.cache/ms-playwright/chromium-1208/chrome-linux64/chrome';
 
 const PLAYER = {

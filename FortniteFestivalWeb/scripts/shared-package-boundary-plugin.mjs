@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const CORE_GENERATOR_SUFFIX = '/packages/core/src/suggestions/suggestionGenerator.ts';
@@ -58,6 +58,14 @@ const INITIAL_FORBIDDEN_MODULE_MARKERS = [
   '/node_modules/@dnd-kit/',
   KATEX_MARKER,
 ];
+const ALLOWED_UNREACHABLE_SOURCE_MODULES = new Set([
+  'src/components/notifications/notificationTypes.ts',
+  'src/components/sort/reorderTypes.ts',
+  'src/pages/player/helpers/playerPageTypes.ts',
+  'src/pages/songinfo/songDetailTypes.ts',
+  'src/types/bandFilter.ts',
+  'src/vite-env.d.ts',
+]);
 
 export function sharedPackageBoundaryPlugin({ webRoot, graphOutput }) {
   return {
@@ -142,6 +150,14 @@ export function sharedPackageBoundaryPlugin({ webRoot, graphOutput }) {
           this.error(`${marker} must not be reachable from the initial Songs chunk graph.`);
         }
       }
+      const unreachableSourceModules = findUnclassifiedSourceModules(webRoot, chunks);
+      if (unreachableSourceModules.length > 0) {
+        this.error(
+          `Production graph contains unclassified source modules:\n${
+            unreachableSourceModules.map(fileName => `- ${fileName}`).join('\n')
+          }`,
+        );
+      }
       for (const boundary of SECONDARY_CONTROL_BOUNDARIES) {
         const files = secondaryControlFiles[boundary.label];
         if (files.length === 0) {
@@ -220,6 +236,39 @@ function findChunkContainingModule(chunks, suffix) {
   return chunks.find(chunk =>
     Object.keys(chunk.modules).some(id => normalizeId(id).endsWith(suffix)),
   );
+}
+
+function findUnclassifiedSourceModules(webRoot, chunks) {
+  const reached = new Set(
+    chunks.flatMap(chunk => Object.keys(chunk.modules))
+      .map(id => sourceRelativePath(webRoot, id))
+      .filter(Boolean),
+  );
+  return sourceFiles(path.resolve(webRoot, 'src'))
+    .map(fileName => normalizeId(path.relative(webRoot, fileName)))
+    .filter(fileName => (
+      !reached.has(fileName)
+      && !fileName.endsWith('.story.tsx')
+      && !ALLOWED_UNREACHABLE_SOURCE_MODULES.has(fileName)
+    ))
+    .sort();
+}
+
+function sourceRelativePath(webRoot, id) {
+  const fileName = normalizeId(id).split('?')[0];
+  const sourceRoot = `${normalizeId(path.resolve(webRoot, 'src'))}/`;
+  if (!fileName.startsWith(sourceRoot)) return null;
+  return normalizeId(path.relative(webRoot, fileName));
+}
+
+function sourceFiles(root) {
+  return readdirSync(root, { withFileTypes: true }).flatMap(entry => {
+    const fileName = path.join(root, entry.name);
+    if (entry.isDirectory()) return sourceFiles(fileName);
+    return entry.isFile() && /\.(?:ts|tsx)$/.test(entry.name)
+      ? [fileName]
+      : [];
+  });
 }
 
 function normalizeId(id) {

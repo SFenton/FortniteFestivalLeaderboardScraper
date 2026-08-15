@@ -25,7 +25,6 @@ import ChartDemo from '../../../../src/pages/songinfo/firstRun/demo/ChartDemo';
 import BarSelectDemo from '../../../../src/pages/songinfo/firstRun/demo/BarSelectDemo';
 import TopScoresDemo from '../../../../src/pages/songinfo/firstRun/demo/TopScoresDemo';
 import ViewAllDemo from '../../../../src/pages/songinfo/firstRun/demo/ViewAllDemo';
-import HistoryDemo from '../../../../src/pages/songinfo/firstRun/demo/HistoryDemo';
 
 beforeAll(() => {
   stubResizeObserver();
@@ -155,35 +154,6 @@ describe('ViewAllDemo', () => {
   });
 });
 
-describe('HistoryDemo', () => {
-  it('renders score entries', () => {
-    wrap(<HistoryDemo />);
-    expect(screen.getByText('486,500')).toBeTruthy();
-    expect(screen.getByText('412,300')).toBeTruthy();
-  });
-
-  it('renders date labels with full format', () => {
-    wrap(<HistoryDemo />);
-    // Labels use toLocaleDateString format, just check one exists
-    const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    expect(screen.getByText(today)).toBeTruthy();
-  });
-
-  it('limits rows based on slide height', () => {
-    // With height 400 and ROW_HEIGHT 44, maxRows = min(5, floor(400/44)) = min(5,9) = 5
-    wrap(<HistoryDemo />);
-    expect(screen.getByText('218,400')).toBeTruthy(); // 5th entry visible
-  });
-
-  it('uses default maxRows when slide height is 0', () => {
-    mockSlideHeight = 0;
-    wrap(<HistoryDemo />);
-    // Default is 5, and all 5 scores should render
-    expect(screen.getByText('486,500')).toBeTruthy();
-    expect(screen.getByText('218,400')).toBeTruthy();
-  });
-});
-
 describe('edge cases — zero slide height', () => {
   beforeEach(() => { mockSlideHeight = 0; });
 
@@ -252,9 +222,4 @@ describe('edge cases — tiny slide height', () => {
     expect(screen.getByText('486,500')).toBeTruthy();
   });
 
-  it('HistoryDemo shows at least 1 row with small height', () => {
-    mockSlideHeight = 50;
-    wrap(<HistoryDemo />);
-    expect(screen.getByText('486,500')).toBeTruthy();
-  });
 });

@@ -90,6 +90,12 @@ src/**/*.story.tsx      Production component scenarios
 | `webkit-desktop` | Scheduled Safari-engine desktop coverage |
 | `firefox-desktop` | Scheduled Gecko coverage |
 
+Manual responsive loading and layout boundaries remain in the wide/mobile
+page suite. `specs/browser/manual-image-fallback.spec.ts` runs in the current
+Chromium, WebKit, and Firefox engine tiers and proves that a failed responsive
+WebP candidate receives one full-resolution WebP fallback without a PNG
+request or retry loop.
+
 Component projects use `ct-chromium`, `ct-webkit`, and `ct-firefox`.
 Publication uses a dedicated `publication-chromium` config and a second Vite
 server with the normal e2e publication stub disabled.

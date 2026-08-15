@@ -122,7 +122,7 @@ test('mobile Manual selects the small source and keeps swipe/button behavior wit
 
   const carousel = page.getByTestId('manual-carousel-navigation-overview');
   const mobileImage = carousel.getByRole('img', { name: 'Navigation overview screenshot for Mobile' });
-  await expect.poll(() => mobileImage.evaluate(image => (image as HTMLImageElement).currentSrc)).toMatch(/navigation-overview-mobile-[a-f0-9]{12}-(240|390|640)\.webp$/);
+  await expect.poll(() => mobileImage.evaluate(image => (image as HTMLImageElement).currentSrc)).toMatch(/navigation-overview-mobile-[a-f0-9]{12}-(240|390)\.webp$/);
   await waitForRequestSettle(page);
 
   expect(manualRequests.length).toBeGreaterThan(0);
@@ -130,6 +130,7 @@ test('mobile Manual selects the small source and keeps swipe/button behavior wit
   const requestCounts = new Map<string, number>();
   for (const request of manualRequests) requestCounts.set(request, (requestCounts.get(request) ?? 0) + 1);
   expect(Math.max(...requestCounts.values())).toBeLessThanOrEqual(2);
+  expect(manualRequests.every(url => url.endsWith('.webp'))).toBe(true);
   expect(manualRequests.some(url => url.includes('songs-'))).toBe(false);
 
   const frame = page.getByTestId('manual-carousel-frame-navigation-overview');

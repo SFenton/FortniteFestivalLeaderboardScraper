@@ -45,6 +45,8 @@ const largestChunkGzipBytes = Math.max(
     .filter((file) => file.file.endsWith('.js') && file.file !== entryFile)
     .map((file) => file.gzipBytes),
 );
+const manualDeployBytes = listFiles(path.join(distDir, 'manual/screenshots'))
+  .reduce((sum, fileName) => sum + statSync(fileName).size, 0);
 const failures = [];
 if (process.versions.node !== requiredNodeVersion) {
   failures.push({
@@ -64,6 +66,7 @@ check('entryJsRawMaxBytes', entry.rawBytes);
 check('entryJsGzipMaxBytes', entry.gzipBytes);
 check('entryJsBrotliMaxBytes', entry.brotliBytes);
 check('largestChunkGzipMaxBytes', largestChunkGzipBytes);
+check('manualDeployMaxBytes', manualDeployBytes);
 if (!Number.isFinite(budgets.entryJsGzipMinHeadroomBytes) || budgets.entryJsGzipMinHeadroomBytes < 0) {
   throw new Error('entryJsGzipMinHeadroomBytes must be a non-negative number.');
 }
@@ -92,6 +95,7 @@ const report = {
   entry,
   entryJsGzipHeadroomBytes,
   largestChunkGzipBytes,
+  manualDeployBytes,
   budgets,
   failures,
   files,
@@ -104,6 +108,7 @@ console.log(JSON.stringify({
   entry: report.entry,
   entryJsGzipHeadroomBytes,
   largestChunkGzipBytes,
+  manualDeployBytes,
   files: files.length,
   failures,
   outputPath,

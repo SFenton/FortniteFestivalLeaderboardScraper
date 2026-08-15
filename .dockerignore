@@ -19,6 +19,7 @@
 # ── Projects not needed for Docker builds ─────────────────────
 FSTService.Tests/
 docs/
+FortniteFestivalWeb/manual-assets/
 
 # ── Data / credentials (never bake into an image) ───────────
 FSTService/data/

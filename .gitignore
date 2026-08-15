@@ -309,7 +309,9 @@ FSTService/data/
 .fst-worker-compose-guard.lock
 # Web stuff
 FortniteFestivalWeb/.yarn
+FortniteFestivalWeb/package-lock.json
 FortniteFestivalWeb/coverage
+FortniteFestivalWeb/coverage-shared
 FortniteFestivalWeb/.vitest-coverage-reports
 #Playwright
 .playwright-mcp

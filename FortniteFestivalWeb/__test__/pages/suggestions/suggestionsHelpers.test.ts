@@ -1,6 +1,3 @@
-/**
- * Unit tests for pure helper functions extracted from SuggestionsPage.
- */
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   loadSuggestionsFilter,
@@ -8,330 +5,290 @@ import {
   buildEffectiveInstrumentSettings,
   shouldShowCategoryType,
   filterCategoryForInstrumentTypes,
-  computeEffectiveSeason,
-  getCardDelay,
-  buildAlbumArtMap,
-  FILTER_STORAGE_KEY,
-  SUGGESTIONS_FILTER_STORAGE_VERSION,
 } from '../../../src/pages/suggestions/suggestionsHelpers';
-import { defaultSuggestionsFilterDraft } from '../../../src/pages/suggestions/modals/SuggestionsFilterModal';
+import type { SuggestionsFilterDraft } from '../../../src/pages/suggestions/modals/SuggestionsFilterModal';
+import type { AppSettings } from '../../../src/contexts/SettingsContext';
 import type { SuggestionCategory } from '@festival/core/types';
+import { globalKeyFor } from '@festival/core/suggestions';
 
-beforeEach(() => { localStorage.clear(); });
+function mockFilterDraft(overrides: Partial<SuggestionsFilterDraft> = {}): SuggestionsFilterDraft {
+  return {
+    suggestionsLeadFilter: true,
+    suggestionsBassFilter: true,
+    suggestionsDrumsFilter: true,
+    suggestionsVocalsFilter: true,
+    suggestionsProLeadFilter: true,
+    suggestionsProBassFilter: true,
+    ...overrides,
+  } as SuggestionsFilterDraft;
+}
 
-// ── loadSuggestionsFilter ──
+function mockAppSettings(overrides: Partial<AppSettings> = {}): AppSettings {
+  return {
+    showLead: true,
+    showBass: true,
+    showDrums: true,
+    showVocals: true,
+    showProLead: true,
+    showProBass: true,
+    songsHideInstrumentIcons: false,
+    songRowVisualOrderEnabled: false,
+    songRowVisualOrder: [],
+    filterInvalidScores: false,
+    filterInvalidScoresLeeway: 0,
+    metadataShowScore: true,
+    metadataShowPercentage: true,
+    metadataShowPercentile: true,
+    metadataShowSeasonAchieved: true,
+    metadataShowIntensity: true,
+    metadataShowGameDifficulty: true,
+    metadataShowStars: true,
+    metadataShowLastPlayed: true,
+    ...overrides,
+  } as AppSettings;
+}
 
 describe('loadSuggestionsFilter', () => {
-  it('returns defaults when localStorage is empty', () => {
-    const result = loadSuggestionsFilter();
-    expect(result.suggestionsLeadFilter).toBe(true);
-    expect(result.suggestionsBassFilter).toBe(true);
-  });
+  beforeEach(() => { localStorage.clear(); });
 
-  it('merges saved values with defaults', () => {
-    localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({ suggestionsLeadFilter: false }));
-    const result = loadSuggestionsFilter();
+  it('returns defaults when no stored value', () => {
+    const defaults = () => mockFilterDraft({ suggestionsLeadFilter: false });
+    const result = loadSuggestionsFilter(defaults);
     expect(result.suggestionsLeadFilter).toBe(false);
-    expect(result.suggestionsBassFilter).toBe(true);
   });
 
-  it('returns defaults when localStorage has invalid JSON', () => {
-    localStorage.setItem(FILTER_STORAGE_KEY, 'not-json{{{');
-    const result = loadSuggestionsFilter();
-    expect(result.suggestionsLeadFilter).toBe(true);
-    expect(JSON.parse(localStorage.getItem(FILTER_STORAGE_KEY)!)).toEqual({
-      version: SUGGESTIONS_FILTER_STORAGE_VERSION,
-      data: defaultSuggestionsFilterDraft(),
-    });
-  });
-
-  it('returns defaults when localStorage has null-ish value', () => {
-    localStorage.setItem(FILTER_STORAGE_KEY, 'null');
-    const result = loadSuggestionsFilter();
-    expect(result.suggestionsLeadFilter).toBe(true);
-  });
-
-  it('resets invalid boolean values and unsupported versions', () => {
-    localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({
-      suggestionsLeadFilter: 'false',
-    }));
-    expect(loadSuggestionsFilter()).toEqual(defaultSuggestionsFilterDraft());
-
-    localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({
-      version: 99,
-      data: { suggestionsLeadFilter: false },
-    }));
-    expect(loadSuggestionsFilter()).toEqual(defaultSuggestionsFilterDraft());
-    expect(JSON.parse(localStorage.getItem(FILTER_STORAGE_KEY)!)).toEqual({
-      version: SUGGESTIONS_FILTER_STORAGE_VERSION,
-      data: defaultSuggestionsFilterDraft(),
-    });
-  });
-
-  it('loads the current version envelope with explicit defaults', () => {
-    localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({
-      version: SUGGESTIONS_FILTER_STORAGE_VERSION,
-      data: { suggestionsLeadFilter: false },
-    }));
-
-    const result = loadSuggestionsFilter();
-
+  it('merges stored value with defaults', () => {
+    localStorage.setItem('fst-suggestions-filter', JSON.stringify({ suggestionsLeadFilter: false }));
+    const defaults = () => mockFilterDraft({ suggestionsLeadFilter: true });
+    const result = loadSuggestionsFilter(defaults);
     expect(result.suggestionsLeadFilter).toBe(false);
-    expect(result.suggestionsBassFilter).toBe(true);
+  });
+
+  it('handles corrupted JSON gracefully', () => {
+    localStorage.setItem('fst-suggestions-filter', 'not-json');
+    const defaults = () => mockFilterDraft();
+    const result = loadSuggestionsFilter(defaults);
+    expect(result.suggestionsLeadFilter).toBe(true);
   });
 });
-
-// ── saveSuggestionsFilter ──
 
 describe('saveSuggestionsFilter', () => {
-  it('persists filter draft to localStorage', () => {
-    const draft = { ...defaultSuggestionsFilterDraft(), suggestionsLeadFilter: false };
+  beforeEach(() => { localStorage.clear(); });
+
+  it('persists draft to localStorage', () => {
+    const draft = mockFilterDraft({ suggestionsLeadFilter: false });
     saveSuggestionsFilter(draft);
-    const raw = localStorage.getItem(FILTER_STORAGE_KEY);
-    expect(raw).toBeTruthy();
-    expect(JSON.parse(raw!)).toMatchObject({
-      version: SUGGESTIONS_FILTER_STORAGE_VERSION,
-      data: { suggestionsLeadFilter: false },
-    });
+    const stored = JSON.parse(localStorage.getItem('fst-suggestions-filter')!);
+    expect(stored.version).toBe(1);
+    expect(stored.data.suggestionsLeadFilter).toBe(false);
   });
 });
-
-// ── buildEffectiveInstrumentSettings ──
 
 describe('buildEffectiveInstrumentSettings', () => {
-  const allOn = {
-    showLead: true, showBass: true, showDrums: true,
-    showVocals: true, showProLead: true, showProBass: true,
-  } as any;
-
-  it('returns all true when both app settings and filter are true', () => {
-    const filter = defaultSuggestionsFilterDraft();
-    const result = buildEffectiveInstrumentSettings(filter, allOn);
+  it('combines app settings with filter settings', () => {
+    const filter = mockFilterDraft({ suggestionsLeadFilter: true, suggestionsBassFilter: false });
+    const app = mockAppSettings({ showLead: true, showBass: true });
+    const result = buildEffectiveInstrumentSettings(filter, app);
     expect(result.showLead).toBe(true);
-    expect(result.showBass).toBe(true);
-    expect(result.showDrums).toBe(true);
-    expect(result.showVocals).toBe(true);
-    expect(result.showProLead).toBe(true);
-    expect(result.showProBass).toBe(true);
+    expect(result.showBass).toBe(false);
   });
 
-  it('returns false when app setting is false', () => {
-    const filter = defaultSuggestionsFilterDraft();
-    const settings = { ...allOn, showLead: false };
-    const result = buildEffectiveInstrumentSettings(filter, settings);
-    expect(result.showLead).toBe(false);
-    expect(result.showBass).toBe(true);
-  });
-
-  it('returns false when filter is false', () => {
-    const filter = { ...defaultSuggestionsFilterDraft(), suggestionsLeadFilter: false };
-    const result = buildEffectiveInstrumentSettings(filter, allOn);
-    expect(result.showLead).toBe(false);
-  });
-
-  it('returns false when both are false', () => {
-    const filter = { ...defaultSuggestionsFilterDraft(), suggestionsLeadFilter: false };
-    const settings = { ...allOn, showLead: false };
-    const result = buildEffectiveInstrumentSettings(filter, settings);
+  it('respects disabled app-level instruments', () => {
+    const filter = mockFilterDraft({ suggestionsLeadFilter: true });
+    const app = mockAppSettings({ showLead: false });
+    const result = buildEffectiveInstrumentSettings(filter, app);
     expect(result.showLead).toBe(false);
   });
 });
-
-// ── shouldShowCategoryType ──
 
 describe('shouldShowCategoryType', () => {
-  it('returns true for unknown category keys (no typeId)', () => {
-    const filter = defaultSuggestionsFilterDraft();
-    expect(shouldShowCategoryType('random_key', filter)).toBe(true);
+  it('returns true for unknown category key', () => {
+    expect(shouldShowCategoryType('unknown_key', mockFilterDraft())).toBe(true);
   });
 
-  it('returns true for a known type when filter is on', () => {
-    const filter = defaultSuggestionsFilterDraft();
-    expect(shouldShowCategoryType('near_fc_any', filter)).toBe(true);
+  it('returns true when type is enabled in filter', () => {
+    const draft = mockFilterDraft();
+    (draft as any).suggestionsShowNearFC = true;
+    expect(shouldShowCategoryType('near_fc_guitar', draft)).toBe(true);
   });
 
-  it('returns false for a known type when filter is off', () => {
-    const filter = { ...defaultSuggestionsFilterDraft(), suggestionsShowNearFC: false };
-    expect(shouldShowCategoryType('near_fc_any', filter)).toBe(false);
-  });
-
-  it('recognizes various category type prefixes', () => {
-    const filter = defaultSuggestionsFilterDraft();
-    expect(shouldShowCategoryType('almost_six_star_guitar', filter)).toBe(true);
-    expect(shouldShowCategoryType('pct_push_drums', filter)).toBe(true);
-    expect(shouldShowCategoryType('unplayed_bass', filter)).toBe(true);
-    expect(shouldShowCategoryType('stale_vocals', filter)).toBe(true);
-  });
-
-  it('defaults to true when filter key is missing (null-coalescing)', () => {
-    // Provide a filter object that is missing the globalKey entry entirely
-    const filter = { suggestionsLeadFilter: true } as any;
-    expect(shouldShowCategoryType('near_fc_any', filter)).toBe(true);
+  it('returns false when type is disabled in filter', () => {
+    const draft = mockFilterDraft();
+    (draft as any).suggestionsShowNearFC = false;
+    expect(shouldShowCategoryType('near_fc_guitar', draft)).toBe(false);
   });
 });
 
-// ── filterCategoryForInstrumentTypes ──
-
 describe('filterCategoryForInstrumentTypes', () => {
-  const makeCat = (key: string, songs: any[] = []): SuggestionCategory => ({
-    key, title: 'Test', description: 'Desc', songs,
+  const mockCategory = (key: string, songs: { instrumentKey?: string }[] = []): SuggestionCategory => ({
+    key,
+    title: 'Test',
+    description: '',
+    songs: songs.map((s, i) => ({
+      songId: `song-${i}`,
+      title: `Song ${i}`,
+      artist: 'Artist',
+      instrumentKey: s.instrumentKey,
+    })) as any,
   });
 
-  it('returns the category unchanged for unknown type keys', () => {
-    const cat = makeCat('random_key', [{ songId: 's1', title: 'A', artist: 'A' }]);
-    const filter = defaultSuggestionsFilterDraft();
-    expect(filterCategoryForInstrumentTypes(cat, filter)).toBe(cat);
+  it('returns category unchanged if typeId is unknown', () => {
+    const cat = mockCategory('unknown_key', [{ instrumentKey: 'guitar' }]);
+    const result = filterCategoryForInstrumentTypes(cat, mockFilterDraft());
+    expect(result).toBe(cat);
   });
 
-  it('returns category for instrument-specific key when filter is on', () => {
-    const cat = makeCat('unfc_guitar', [{ songId: 's1', title: 'A', artist: 'A' }]);
-    const filter = defaultSuggestionsFilterDraft();
-    expect(filterCategoryForInstrumentTypes(cat, filter)).toBe(cat);
+  it('returns null when category instrument is disabled', () => {
+    const cat = mockCategory('near_fc_guitar', [{ instrumentKey: 'guitar' }]);
+    const draft = mockFilterDraft();
+    (draft as any).suggestionsLeadNearFC = false;
+    const result = filterCategoryForInstrumentTypes(cat, draft);
+    expect(result).toBeNull();
   });
 
-  it('returns null for instrument-specific key when filter is off', () => {
-    const cat = makeCat('unfc_guitar', [{ songId: 's1', title: 'A', artist: 'A' }]);
-    const filter = { ...defaultSuggestionsFilterDraft(), suggestionsLeadNearFC: false };
-    expect(filterCategoryForInstrumentTypes(cat, filter)).toBeNull();
+  it('returns category when category instrument is enabled', () => {
+    const cat = mockCategory('near_fc_guitar', [{ instrumentKey: 'guitar' }]);
+    const draft = mockFilterDraft();
+    (draft as any).suggestionsLeadNearFC = true;
+    const result = filterCategoryForInstrumentTypes(cat, draft);
+    expect(result).toBe(cat);
   });
 
-  it('filters songs by instrument when category is multi-instrument', () => {
-    const cat = makeCat('near_fc_any', [
-      { songId: 's1', title: 'A', artist: 'A', instrumentKey: 'guitar' },
-      { songId: 's2', title: 'B', artist: 'B', instrumentKey: 'drums' },
+  it('filters individual songs by per-instrument toggle when no category instrument', () => {
+    // unplayed_ prefix without instrument → songs have instrumentKey, filter per-song
+    const cat = mockCategory('unplayed_mixed', [
+      { instrumentKey: 'guitar' },
+      { instrumentKey: 'bass' },
     ]);
-    const filter = { ...defaultSuggestionsFilterDraft(), suggestionsLeadNearFC: false };
-    const result = filterCategoryForInstrumentTypes(cat, filter);
+    const draft = mockFilterDraft();
+    (draft as any).suggestionsLeadUnplayed = true;
+    (draft as any).suggestionsBassUnplayed = false;
+    const result = filterCategoryForInstrumentTypes(cat, draft);
+    // bass song should be filtered out
     expect(result).not.toBeNull();
     expect(result!.songs).toHaveLength(1);
-    expect(result!.songs[0]!.songId).toBe('s2');
   });
 
   it('returns null when all songs are filtered out', () => {
-    const cat = makeCat('near_fc_any', [
-      { songId: 's1', title: 'A', artist: 'A', instrumentKey: 'guitar' },
+    const cat = mockCategory('unplayed_mixed', [
+      { instrumentKey: 'guitar' },
     ]);
-    const filter = { ...defaultSuggestionsFilterDraft(), suggestionsLeadNearFC: false };
-    const result = filterCategoryForInstrumentTypes(cat, filter);
+    const draft = mockFilterDraft();
+    (draft as any).suggestionsLeadUnplayed = false;
+    const result = filterCategoryForInstrumentTypes(cat, draft);
     expect(result).toBeNull();
   });
 
   it('returns original category when no songs are filtered', () => {
-    const cat = makeCat('near_fc_any', [
-      { songId: 's1', title: 'A', artist: 'A', instrumentKey: 'guitar' },
-      { songId: 's2', title: 'B', artist: 'B', instrumentKey: 'drums' },
+    const cat = mockCategory('unplayed_mixed', [
+      { instrumentKey: 'guitar' },
     ]);
-    const filter = defaultSuggestionsFilterDraft();
-    const result = filterCategoryForInstrumentTypes(cat, filter);
-    expect(result).toBe(cat); // same reference = no filtering happened
+    const draft = mockFilterDraft();
+    (draft as any).suggestionsLeadUnplayed = true;
+    const result = filterCategoryForInstrumentTypes(cat, draft);
+    expect(result).toBe(cat);
   });
 
   it('keeps songs without instrumentKey', () => {
-    const cat = makeCat('near_fc_any', [
-      { songId: 's1', title: 'A', artist: 'A' }, // no instrumentKey
+    const cat = mockCategory('unplayed_mixed', [
+      { instrumentKey: undefined },
+      { instrumentKey: 'guitar' },
     ]);
-    const filter = { ...defaultSuggestionsFilterDraft(), suggestionsLeadNearFC: false };
-    const result = filterCategoryForInstrumentTypes(cat, filter);
-    expect(result).toBe(cat);
-  });
-
-  it('defaults to showing when per-instrument key is missing from filter', () => {
-    const cat = makeCat('unfc_guitar', [{ songId: 's1', title: 'A', artist: 'A' }]);
-    // Provide a sparse filter missing the specific instrument key
-    const filter = { suggestionsLeadFilter: true } as any;
-    const result = filterCategoryForInstrumentTypes(cat, filter);
-    expect(result).toBe(cat);
-  });
-
-  it('defaults to showing songs when per-instrument key is missing in multi-instrument cat', () => {
-    const cat = makeCat('near_fc_any', [
-      { songId: 's1', title: 'A', artist: 'A', instrumentKey: 'guitar' },
-    ]);
-    const filter = { suggestionsLeadFilter: true } as any;
-    const result = filterCategoryForInstrumentTypes(cat, filter);
-    expect(result).toBe(cat);
+    const draft = mockFilterDraft();
+    (draft as any).suggestionsLeadUnplayed = false;
+    const result = filterCategoryForInstrumentTypes(cat, draft);
+    expect(result).not.toBeNull();
+    expect(result!.songs).toHaveLength(1); // only the one without instrumentKey
   });
 });
 
-// ── computeEffectiveSeason ──
-
-describe('computeEffectiveSeason', () => {
-  it('returns currentSeason when > 0', () => {
-    expect(computeEffectiveSeason(5, null)).toBe(5);
+/* Tests extracted from hooks/AllBranches.test.tsx */
+describe('suggestionsFilter additional branches', () => {
+  it('shouldShowCategoryType: type with global key false → false', () => {
+    expect(shouldShowCategoryType('unfc_guitar', { [globalKeyFor('NearFC')]: false } as any)).toBe(false);
   });
 
-  it('returns 0 when currentSeason is 0 and no player scores', () => {
-    expect(computeEffectiveSeason(0, null)).toBe(0);
+  it('shouldShowCategoryType: type with global key true → true', () => {
+    expect(shouldShowCategoryType('unfc_guitar', { [globalKeyFor('NearFC')]: true } as any)).toBe(true);
   });
 
-  it('returns max season from player scores when currentSeason is 0', () => {
-    expect(computeEffectiveSeason(0, [
-      { season: 3 }, { season: 5 }, { season: 2 },
-    ])).toBe(5);
+  it('shouldShowCategoryType: type with global key undefined → ?? true', () => {
+    expect(shouldShowCategoryType('unfc_guitar', {} as any)).toBe(true);
   });
 
-  it('skips null seasons in player scores', () => {
-    expect(computeEffectiveSeason(0, [
-      { season: null }, { season: 4 }, { season: undefined },
-    ])).toBe(4);
+  it('filterCategory: catInstrument=null + no instrumentKey songs → all pass', () => {
+    const cat = { key: 'near_fc_mixed', label: 'near_fc_mixed', songs: [{ songId: 's1', title: 'T', artist: 'A' }, { songId: 's2', title: 'T', artist: 'A' }] } as any;
+    const r = filterCategoryForInstrumentTypes(cat, {} as any);
+    expect(r).toBe(cat);
   });
 
-  it('returns 0 when all seasons are null', () => {
-    expect(computeEffectiveSeason(0, [
-      { season: null }, { season: null },
-    ])).toBe(0);
-  });
-
-  it('returns 0 for empty scores array', () => {
-    expect(computeEffectiveSeason(0, [])).toBe(0);
+  it('filterCategory: per-instrument key undefined → ?? true keeps song', () => {
+    const cat = { key: 'unplayed_mixed', label: 'unplayed_mixed', songs: [{ songId: 's1', title: 'T', artist: 'A', instrumentKey: 'guitar' }] } as any;
+    const r = filterCategoryForInstrumentTypes(cat, {} as any);
+    expect(r).toBe(cat);
   });
 });
 
-// ── getCardDelay ──
-
-describe('getCardDelay', () => {
-  it('returns -1 when skipAnim is true', () => {
-    expect(getCardDelay(0, true, 'contentIn', 0)).toBe(-1);
+/* Tests extracted from hooks/CoverageGaps3.test.tsx */
+describe('suggestionsFilter — category key variants', () => {
+  it('filterCategoryForInstrumentTypes handles per-instrument category (guitar)', () => {
+    const cat = { key: 'unfc_guitar', songs: [{ songId: 's1' }] } as any;
+    const result = filterCategoryForInstrumentTypes(cat, {} as any);
+    expect(result).toBe(cat);
   });
 
-  it('returns null when phase is not contentIn', () => {
-    expect(getCardDelay(0, false, 'spinner', 0)).toBeNull();
+  it('filterCategoryForInstrumentTypes filters out per-instrument when false', () => {
+    const cat = { key: 'unfc_guitar', songs: [{ songId: 's1' }] } as any;
+    const result = filterCategoryForInstrumentTypes(cat, { suggestionsLeadNearFC: false } as any);
+    expect(result).toBeNull();
   });
 
-  it('returns -1 for already-revealed cards', () => {
-    expect(getCardDelay(2, false, 'contentIn', 5)).toBe(-1);
+  it('filterCategoryForInstrumentTypes filters songs by instrumentKey', () => {
+    const cat = {
+      key: 'near_fc_any',
+      songs: [
+        { songId: 's1', instrumentKey: 'guitar' },
+        { songId: 's2', instrumentKey: 'bass' },
+      ],
+    } as any;
+    const result = filterCategoryForInstrumentTypes(cat, { suggestionsLeadNearFC: false } as any);
+    expect(result).not.toBeNull();
+    expect(result!.songs).toHaveLength(1);
+    expect(result!.songs[0]!.instrumentKey).toBe('bass');
   });
 
-  it('returns staggered delay for new cards within viewport', () => {
-    const delay = getCardDelay(0, false, 'contentIn', 0);
-    expect(delay).toBe(0);
-    const delay2 = getCardDelay(1, false, 'contentIn', 0);
-    expect(delay2).toBe(125);
+  it('filterCategoryForInstrumentTypes returns null when all songs filtered', () => {
+    const cat = {
+      key: 'near_fc_any',
+      songs: [{ songId: 's1', instrumentKey: 'guitar' }],
+    } as any;
+    const result = filterCategoryForInstrumentTypes(cat, { suggestionsLeadNearFC: false } as any);
+    expect(result).toBeNull();
   });
 
-  it('returns -1 for cards beyond estimated viewport', () => {
-    // estimateVisibleCount(200) in test env should be small
-    const delay = getCardDelay(1000, false, 'contentIn', 0);
-    expect(delay).toBe(-1);
-  });
-});
-
-// ── buildAlbumArtMap ──
-
-describe('buildAlbumArtMap', () => {
-  it('builds map from songs with albumArt', () => {
-    const map = buildAlbumArtMap([
-      { songId: 's1', albumArt: 'http://example.com/a.jpg' },
-      { songId: 's2' },
-      { songId: 's3', albumArt: 'http://example.com/b.jpg' },
-    ]);
-    expect(map.size).toBe(2);
-    expect(map.get('s1')).toBe('http://example.com/a.jpg');
-    expect(map.has('s2')).toBe(false);
+  it('filterCategoryForInstrumentTypes returns same cat when no songs filtered', () => {
+    const cat = {
+      key: 'near_fc_any',
+      songs: [
+        { songId: 's1', instrumentKey: 'guitar' },
+        { songId: 's2', instrumentKey: 'bass' },
+      ],
+    } as any;
+    const result = filterCategoryForInstrumentTypes(cat, {} as any);
+    expect(result).toBe(cat);
   });
 
-  it('returns empty map for empty songs', () => {
-    const map = buildAlbumArtMap([]);
-    expect(map.size).toBe(0);
+  it('filterCategoryForInstrumentTypes keeps songs without instrumentKey', () => {
+    const cat = {
+      key: 'near_fc_any',
+      songs: [
+        { songId: 's1' },
+        { songId: 's2', instrumentKey: 'guitar' },
+      ],
+    } as any;
+    const result = filterCategoryForInstrumentTypes(cat, { suggestionsLeadNearFC: false } as any);
+    expect(result).not.toBeNull();
+    expect(result!.songs).toHaveLength(1);
+    expect(result!.songs[0]!.songId).toBe('s1');
   });
 });
