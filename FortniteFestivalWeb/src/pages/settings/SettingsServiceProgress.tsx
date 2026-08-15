@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, type CSSProperties } from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import type { ServiceInfoResponse } from '@festival/core/api';
-import { Colors, Gap, Radius, padding } from '@festival/theme';
+import { Colors, Layout, Radius, padding } from '@festival/theme';
 import { FrostedCard } from '../../components/common/FrostedCard';
 import ArcSpinner, { SpinnerSize } from '../../components/common/ArcSpinner';
+import SectionHeader from '../../components/common/SectionHeader';
 import {
   reduceServiceProgress,
   type ServiceProgressDisplay,
@@ -29,7 +30,7 @@ const SECONDS_PER_HOUR = 60 * SECONDS_PER_MINUTE;
 
 const cardStyle: CSSProperties = {
   borderRadius: Radius.md,
-  padding: padding(Gap.lg),
+  padding: padding(Layout.paddingTop),
   '--settings-progress-muted': Colors.textSecondary,
   '--settings-progress-tertiary': Colors.textTertiary,
   '--settings-progress-warning': Colors.gold,
@@ -190,7 +191,7 @@ function unitsText(
 
 function TimingRows({ rows, label }: { rows: TimingRow[]; label: string }) {
   return (
-    <dl className={styles.timingGrid} aria-label={label}>
+    <dl className={styles.timingList} aria-label={label}>
       {rows.map(row => (
         <div
           key={row.id}
@@ -296,6 +297,17 @@ export function SettingsServiceProgressCard({
         <section aria-label={t('settings.serviceInfo.title')}>
           <div className={styles.liveSummary} aria-live="polite">
             <div
+              className={styles.phaseBlock}
+              data-testid="settings-service-info-row-update-step-position"
+            >
+              <SectionHeader
+                title={phaseLabel}
+                description={subphaseLabel ?? undefined}
+                flush
+              />
+            </div>
+
+            <div
               className={styles.statusLine}
               data-testid="settings-service-info-row-update-status"
             >
@@ -312,19 +324,6 @@ export function SettingsServiceProgressCard({
                   status: workerStatusText(t, serviceInfo),
                 })}
               </span>
-            </div>
-
-            <div
-              className={styles.phaseBlock}
-              data-testid="settings-service-info-row-update-step-position"
-            >
-              <span className={styles.phaseEyebrow}>
-                {t('settings.serviceInfo.currentStep')}
-              </span>
-              <span className={styles.phaseTitle}>{phaseLabel}</span>
-              {subphaseLabel ? (
-                <span className={styles.phaseSubtitle}>{subphaseLabel}</span>
-              ) : null}
             </div>
 
             {isUpdating ? (

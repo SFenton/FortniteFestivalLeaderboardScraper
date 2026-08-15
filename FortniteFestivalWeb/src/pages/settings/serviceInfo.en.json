@@ -2,7 +2,6 @@
   "title": "Service Info",
   "hint": "Live leaderboard update status, exact phase progress when available, and publication timing.",
   "workerSummary": "Worker {{status}}",
-  "currentStep": "Current step",
   "lastPublishedAt": "Last successful publication",
   "currentUpdateStart": "Current leaderboard update start",
   "nextScheduledUpdate": "Next leaderboard scheduled update",
